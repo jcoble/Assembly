@@ -3,11 +3,13 @@
 # Test host, against this commit. It needs both running from this commit: the local backend on MAC_PORT (the window,
 # `shell/assembly.sh start` with ASSEMBLY_REMOTE=workbox-test, or the headless backend on the workbox) and the host
 # (`dotnet/scripts/workbox.sh serve`). Evidence goes to evidence/<commit>/four-way/: per case its rows and the
-# agent's transcript path and size, and summary.json and summary.md. Commit that folder; a feature commit pushed
+# agent's transcript path and size, and summary.json and summary.md. Commit that folder; a code commit pushed
 # to main without a passing summary for it or a later commit fails CI (scripts/check-evidence.sh).
-#   scripts/check4.sh [--feature <name>]...   runs the four turns, and with --feature that feature's scenario
-#                       (scripts/features/<name>.sh, see its README) in each case while the turn streams; exits 0
-#                       only if all four cases passed, each with its turn and every scenario
+#   scripts/check4.sh   runs the four turns, and every feature scenario (scripts/features/*.sh, see the README
+#                       there) in each case while the turn streams; exits 0 only if all four cases passed, each with
+#                       its turn and every scenario
+#   scripts/check4.sh --feature <name>...   the same with only those scenarios, for quick runs while working; it
+#                       writes to evidence/<commit>/four-way-partial/, with "partial": true, and isn't evidence
 #   scripts/check4.sh window <commit> <file>...   records the window screenshots' names in that commit's summary;
 #                       the files themselves stay in the project's private files, not in this repo
 set -euo pipefail
@@ -36,11 +38,16 @@ while [ $# -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+partial=true
+if [ ${#features[@]} = 0 ]; then
+  partial=false
+  for f in scripts/features/*.sh; do [ -e "$f" ] && features+=("$(basename "$f" .sh)"); done
+fi
 for f in ${features[@]+"${features[@]}"}; do
   [ -x "scripts/features/$f.sh" ] || { echo "no scenario scripts/features/$f.sh (or it isn't executable)" >&2; exit 2; }
 done
 commit=$(git rev-parse HEAD)
-out=evidence/$commit/four-way
+out=evidence/$commit/four-way; [ "$partial" = true ] && out+=-partial
 rm -rf "$out"
 mkdir -p "$out"
 
@@ -157,11 +164,11 @@ done
 printf '%s\n' "${cases[@]}" | jq -s --arg commit "$commit" --arg lane "${LANE_NAME:-main}" --arg host "$host_local" \
   --arg started "$started" --arg finished "$(now)" \
   --argjson features "$(printf '%s\n' ${features[@]+"${features[@]}"} | jq -R 'select(length > 0)' | jq -s .)" \
-  --arg localBuilt "$local_commit" --arg boxBuilt "$box_commit" \
+  --arg localBuilt "$local_commit" --arg boxBuilt "$box_commit" --argjson partial "$partial" \
   '{commit: $commit, lane: $lane, localMachine: $host, startedAt: $started, finishedAt: $finished,
-    builtFrom: {local: $localBuilt, workboxTest: $boxBuilt}, features: $features,
+    builtFrom: {local: $localBuilt, workboxTest: $boxBuilt}, features: $features, partial: $partial,
     pass: (length == 4 and all(.pass)), cases: ., windowScreenshots: "missing"}' > "$out/summary.json"
-jq -r '"# Four-way check of \(.commit)\n\nLane \(.lane), local machine \(.localMachine), \(.startedAt) to \(.finishedAt): \(if .pass then "all four passed" else "FAILED" end).\nFeature scenarios: \(if (.features | length) > 0 then .features | join(", ") else "none" end).\n",
+jq -r '"# Four-way check of \(.commit)\n\nLane \(.lane), local machine \(.localMachine), \(.startedAt) to \(.finishedAt): \(if .pass then "all four passed" else "FAILED" end).\nFeature scenarios: \(if (.features | length) > 0 then .features | join(", ") else "none" end)\(if .partial then " (partial run, not evidence)" else "" end).\n",
   (.cases[] | "- \(.agent) on \(.machine): \(if .pass then "pass" else "FAIL: \(.reason)" end) (thread \(.threadId), transcript \(.transcript.path) \(.transcript.bytes) bytes)"),
   "\nWindow screenshots: missing"' "$out/summary.json" > "$out/summary.md"
 echo "summary: $out/summary.json"

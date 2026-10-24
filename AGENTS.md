@@ -55,12 +55,12 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
   commit's backend running locally and its host deployed (`dotnet/scripts/workbox.sh serve`). It writes
   `evidence/<commit>/four-way/`; commit that folder with the feature.
 - The plain check proves turns run, not that the feature works. A feature's lane writes its scenario,
-  `scripts/features/<feature>.sh` (see the README there), from the corrected spec, and checks with
-  `scripts/check4.sh --feature <feature>`. A commit touching `dotnet/Assembly.Engine/<Feature>/` or
-  `app/src/lib/<feature>/` needs a passing summary that ran that feature's scenario. Folders in
-  `scripts/features/base-folders` are the shared base and need only the plain check.
+  `scripts/features/<feature>.sh` (see the README there), from the corrected spec. `scripts/check4.sh` runs every
+  scenario in every case, so a change that breaks a feature already landed fails its check. Keep a scenario short
+  (seconds, not minutes) so a full run stays cheap. `--feature <name>` runs one scenario for quick runs while
+  working; that run isn't evidence.
 - A lane may not call a feature checked without a passing summary for its commit. CI fails a push to main whose
-  feature commits have none (`scripts/check-evidence.sh`). Never write or edit evidence by hand.
+  code commits have none (`scripts/check-evidence.sh`). Never write or edit evidence by hand.
 - Window screenshots before and after go in the project's private files, not this repo (they show machine names
   and paths). `scripts/check4.sh window <commit> <file>...` records their names in the summary.
 - Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).

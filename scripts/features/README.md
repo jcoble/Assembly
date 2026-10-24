@@ -1,6 +1,6 @@
 # Feature scenarios
 
-A feature's scenario proves the feature works, not only that a turn runs. `scripts/check4.sh --feature <name>` runs
+A feature's scenario proves the feature works, not only that a turn runs. `scripts/check4.sh` runs every
 `scripts/features/<name>.sh` in each of the four cases (Claude Code and Codex, on the local backend and on the
 lane's Workbox Test host), while that case's turn streams. A case passes only if its turn and every scenario pass.
 
@@ -31,6 +31,6 @@ else
 fi
 ```
 
-Which commits need which scenarios: a commit touching `dotnet/Assembly.Engine/<Feature>/` or
-`app/src/lib/<feature>/` needs a passing summary with `--feature <feature>` (lower case). Folders listed in
-`base-folders` are the shared base and need only the plain four-way check.
+Every check runs every scenario, so a lane that breaks a feature already landed finds out. Keep a scenario short,
+seconds rather than minutes, so a full run stays cheap. `scripts/check4.sh --feature <name>` runs only that one, for
+quick runs while working; its summary goes to `four-way-partial/` and isn't evidence.
