@@ -45,11 +45,13 @@ blocked=""
 [ -z "$(git status --porcelain -- . ':!evidence')" ] || blocked="the checkout has uncommitted changes, so this isn't a check of $commit"
 local_commit=$(api local GET /version | jq -r '.commit // empty' 2>/dev/null || true)
 box_commit=$(api box GET /version | jq -r '.commit // empty' 2>/dev/null || true)
+# A backend built from an earlier commit counts when the code between the two is the same (only scripts or docs moved).
+same_code() { [ "$1" = "$commit" ] || { git cat-file -e "$1^{commit}" 2>/dev/null && git diff --quiet "$1" "$commit" -- dotnet app shell; }; }
 if [ -z "$blocked" ]; then
   if [ -z "$local_commit" ]; then blocked="the local backend on $local_base didn't answer /version"
-  elif [ "$local_commit" != "$commit" ]; then blocked="the local backend runs $local_commit, not $commit"
+  elif ! same_code "$local_commit"; then blocked="the local backend runs $local_commit, not the code of $commit"
   elif [ -z "$box_commit" ]; then blocked="the Workbox Test host (through $box_base) didn't answer /version"
-  elif [ "$box_commit" != "$commit" ]; then blocked="the Workbox Test host runs $box_commit, not $commit"
+  elif ! same_code "$box_commit"; then blocked="the Workbox Test host runs $box_commit, not the code of $commit"
   fi
 fi
 
@@ -95,7 +97,7 @@ for agent in claude codex; do
           sleep 2
         done
         jq --arg r "$run" '[.rows[] | select(.runId == $r)]' <<<"$rows" > "$out/$name.rows.json"
-        reply=$(jq -r '[.[] | select(.kind == "message") | .payload.blocks[]? | (.value // .text // "")] | join("\n")' "$out/$name.rows.json")
+        reply=$(jq -r '[.[] | select(.kind == "message") | .payload | .. | objects | .value? | strings] | join("\n")' "$out/$name.rows.json")
         sid=$(api "$where" GET "/threads/$thread" | jq -r '.acpSessionId // empty' 2>/dev/null || true)
         [ -n "$sid" ] && IFS=$'\t' read -r tpath tsize < <(transcript "$agent" "$sid" "$where"; echo) || true
         if [ "$state" != finished ]; then reason="the turn ended ${state:-never (timed out after 240 s)}"
@@ -118,7 +120,9 @@ done
 
 printf '%s\n' "${cases[@]}" | jq -s --arg commit "$commit" --arg lane "${LANE_NAME:-main}" --arg host "$host_local" \
   --arg started "$started" --arg finished "$(now)" --argjson window "$(screenshots)" \
+  --arg localBuilt "$local_commit" --arg boxBuilt "$box_commit" \
   '{commit: $commit, lane: $lane, localMachine: $host, startedAt: $started, finishedAt: $finished,
+    builtFrom: {local: $localBuilt, workboxTest: $boxBuilt},
     pass: (length == 4 and all(.pass)), cases: ., windowScreenshots: $window}' > "$out/summary.json"
 jq -r '"# Four-way check of \(.commit)\n\nLane \(.lane), local machine \(.localMachine), \(.startedAt) to \(.finishedAt): \(if .pass then "all four passed" else "FAILED" end).\n",
   (.cases[] | "- \(.agent) on \(.machine): \(if .pass then "pass" else "FAIL: \(.reason)" end) (thread \(.threadId), transcript \(.transcript.path) \(.transcript.bytes) bytes)"),
