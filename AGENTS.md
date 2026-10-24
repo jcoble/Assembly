@@ -18,7 +18,19 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 ## Checking a feature
 
 - Check every feature with both Claude Code and Codex, on the Mac and on Workbox Test.
-- Remote tests run only on Workbox Test (SSH alias `workbox-test`). Never connect to any other machine.
+- Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).
+- Real-window checks (the lag meter, memory) run on the Mac: pull the lane's branch into a Mac lane and run
+  `shell/assembly.sh start --counters` there.
+
+## Lanes
+
+- Parallel work runs in lanes: `scripts/lane.sh new <name>` makes `~/dev/work/worktrees/Assembly/<name>` on branch
+  `lane/<name>`, with its own ports, data folder, app id and Workbox Test host (`scripts/lane-env.sh`).
+  `scripts/lane.sh remove <name>` tears it down; `scripts/lane.sh list` shows them. Main keeps the defaults.
+- Lanes may run on the Mac or on the workbox (SSH alias `workbox`), each in its own lane folder. On the workbox,
+  never touch the old Assembly host (`assembly-remote`), `tanstack-relay`, `tanstack-agent-server`, or Jesse's own
+  sessions and data. Connect to no other machine.
+- Builds share the machine: run at most 2 or 3 .NET builds at once across lanes, each with `MSBUILDDISABLENODEREUSE=1`.
 
 ## Safety
 

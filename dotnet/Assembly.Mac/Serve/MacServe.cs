@@ -18,7 +18,7 @@ public static class MacServe
 
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var launcher = new AdapterLauncher(AgentDescriptor.Load(options.AgentsFile), options.Checkouts, new UnclaimedPermissions());
-        var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, Console.Out) : (null, null);
+        var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, options.RemotePort, options.RemoteTokenFile, Console.Out) : (null, null);
         await using var stopTunnel = tunnel;
         await using var backend = await MacBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out, remote);
         Console.WriteLine($"listening on {backend.Address}");

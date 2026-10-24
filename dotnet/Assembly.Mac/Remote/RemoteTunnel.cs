@@ -60,20 +60,17 @@ internal sealed class RemoteTunnel : IAsyncDisposable
             ],
             log);
 
-    private const int RemotePort = 9797;
-    private const string RemoteTokenFile = ".config/assembly-dotnet/env";
-    private const string RemoteTokenPrefix = "ASSEMBLY_TOKEN=";
-
     /// <summary>
-    /// Starts the tunnel to <paramref name="host"/>'s API on its port 9797, reached here on 19797, and reads its token.
+    /// Starts the tunnel to <paramref name="host"/>'s API on <paramref name="remotePort"/>, reached here on that port
+    /// plus 10000, and reads its token from <paramref name="tokenFile"/> there.
     /// </summary>
-    public static async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> ConnectAsync(string host, TextWriter log)
+    public static async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> ConnectAsync(string host, int remotePort, string tokenFile, TextWriter log)
     {
-        const int localPort = 19797;
-        var tunnel = ForSsh(host, localPort, remotePort: RemotePort, log);
+        var localPort = remotePort + 10000;
+        var tunnel = ForSsh(host, localPort, remotePort, log);
         try
         {
-            var token = await ReadTokenAsync(host, CancellationToken.None);
+            var token = await ReadTokenAsync(host, tokenFile, CancellationToken.None);
             await WaitForPortAsync(localPort, TimeSpan.FromSeconds(15));
             log.WriteLine($"tunnel: {host} on 127.0.0.1:{localPort} (ssh pid {tunnel.Pid})");
             return (tunnel, new RemoteConfig(host, new Uri($"http://127.0.0.1:{localPort}"), token));
@@ -89,17 +86,17 @@ internal sealed class RemoteTunnel : IAsyncDisposable
     /// The remote's API token, from its token file, over ssh. Kept in memory only: it is never in an argument, a URL,
     /// a log line or a file here.
     /// </summary>
-    public static async Task<string> ReadTokenAsync(string host, CancellationToken cancellationToken)
+    public static async Task<string> ReadTokenAsync(string host, string tokenFile, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo("ssh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { "-o", "BatchMode=yes", host, $"cat {RemoteTokenFile}" })
+        foreach (var arg in new[] { "-o", "BatchMode=yes", host, $"cat {tokenFile}" })
             start.ArgumentList.Add(arg);
         using var ssh = Process.Start(start)!;
         var output = await ssh.StandardOutput.ReadToEndAsync(cancellationToken);
         await ssh.WaitForExitAsync(cancellationToken);
-        const string prefix = RemoteTokenPrefix;
+        const string prefix = "ASSEMBLY_TOKEN=";
         return output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal))?[prefix.Length..]
-            ?? throw new InvalidOperationException($"{host} has no token in ~/{RemoteTokenFile} (ssh exit {ssh.ExitCode})");
+            ?? throw new InvalidOperationException($"{host} has no token in ~/{tokenFile} (ssh exit {ssh.ExitCode})");
     }
 
     /// <summary>Waits until the forward accepts connections.</summary>

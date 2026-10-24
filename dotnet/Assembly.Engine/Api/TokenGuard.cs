@@ -11,7 +11,9 @@ namespace Assembly.Engine.Api;
 /// </summary>
 internal sealed class TokenGuard
 {
-    private static readonly string[] Origins = ["tauri://localhost", "http://tauri.localhost", "http://localhost:1430"];
+    // The shell's page, and vite dev: main on 1430, each lane worktree on 1431 to 1439.
+    private static readonly string[] Origins =
+        ["tauri://localhost", "http://tauri.localhost", .. Enumerable.Range(1430, 10).Select(port => $"http://localhost:{port}")];
 
     private readonly byte[] _token;
 
