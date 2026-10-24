@@ -11,8 +11,9 @@
 #   dotnet/scripts/workbox.sh row-log <thread|latest> [--follow SECONDS]
 #                                               a thread's rows by seq and by page, checked (row-log.mjs)
 # Pushes the branch to the box's bare repo ~/assembly.git (never GitHub, same as scripts/deploy.sh),
-# checks it out at ~/assembly/<branch>, installs the .NET 10 SDK under ~/.dotnet and
-# the adapters under ~/assembly-dotnet/adapters (agents-file.sh) if they're missing, and runs with the box's
+# checks it out at ~/assembly/<branch>, installs the .NET 10 SDK under ~/.dotnet if it's missing, uses the
+# adapters the TanStack AI spike installed under ~/spike-dotnet/adapters (no download; Assembly gets its own copy
+# later), and runs with the box's
 # own Claude and Codex logins. It touches nothing the tanstack-agent-server and tanstack-relay services use.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -62,7 +63,7 @@ if ! dotnet --list-sdks 2>/dev/null | grep -q '^10\.'; then
   rm -f /tmp/dotnet-install-$$.sh
 fi
 
-adapters=~/assembly-dotnet/adapters
+adapters=~/spike-dotnet/adapters
 entry=$adapters/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 # The box has pnpm but no npm.
 mkdir -p ~/assembly-dotnet/serve

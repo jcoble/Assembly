@@ -60,14 +60,12 @@ internal sealed class RemoteTunnel : IAsyncDisposable
             ],
             log);
 
-    private const int RemotePort = 9787;
-    private const string RemoteTokenFile = ".config/spike-dotnet/env";
-    private const string RemoteTokenPrefix = "SPIKE_TOKEN=";
+    private const int RemotePort = 9797;
+    private const string RemoteTokenFile = ".config/assembly-dotnet/env";
+    private const string RemoteTokenPrefix = "ASSEMBLY_TOKEN=";
 
     /// <summary>
-    /// Starts the tunnel to <paramref name="host"/>'s API, reached here on 19797, and reads its token. Until Workbox
-    /// Test runs Assembly's remote host, it's the TanStack AI spike's host there: port 9787, token in
-    /// ~/.config/spike-dotnet/env as SPIKE_TOKEN (Assembly's is 9797, ~/.config/assembly-dotnet/env, ASSEMBLY_TOKEN).
+    /// Starts the tunnel to <paramref name="host"/>'s API on its port 9797, reached here on 19797, and reads its token.
     /// </summary>
     public static async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> ConnectAsync(string host, TextWriter log)
     {
