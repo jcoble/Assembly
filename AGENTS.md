@@ -50,9 +50,11 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 - Parallel work runs in lanes: `scripts/lane.sh new <name>` makes `~/dev/work/worktrees/Assembly/<name>` on branch
   `lane/<name>`, with its own ports, data folder, app id and Workbox Test host (`scripts/lane-env.sh`).
   `scripts/lane.sh remove <name>` tears it down; `scripts/lane.sh list` shows them. Main keeps the defaults.
-- Lanes may run on the Mac or on the workbox (SSH alias `workbox`), each in its own lane folder. On the workbox,
-  never touch the old Assembly host (`assembly-remote`), `tanstack-relay`, `tanstack-agent-server`, or Jesse's own
-  sessions and data. Connect to no other machine.
+- Lanes work only on agent-workbox (SSH alias `workbox`), in their own lane folders, and on Workbox Test
+  (`workbox-test`), on their own host and checkout there. No other machine. The Mac runs the real-window checks, in a
+  lane adopted there (`scripts/lane.sh adopt`).
+- On agent-workbox, never touch the old Assembly host (`assembly-remote`), `tanstack-relay`, `tanstack-agent-server`,
+  or Jesse's own sessions and data.
 - Builds share the machine: run at most 2 or 3 .NET builds at once across lanes, each with `MSBUILDDISABLENODEREUSE=1`.
 
 ## Safety
