@@ -2,4 +2,4 @@ bin/
 obj/
 logs/
 *.jsonl
-!Assembly.Backend.Tests/Fixtures/**/*.jsonl
+!Assembly.Tests/Fixtures/**/*.jsonl

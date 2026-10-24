@@ -1,0 +1,5 @@
+{"t":"2026-10-24T07:10:00.000+00:00","dir":"out","line":{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"Make a plan and do it."}]}}}
+{"t":"2026-10-24T07:10:00.100+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"plan","entries":[{"content":"Read the file","priority":"high","status":"in_progress"},{"content":"Fix the bug","priority":"medium","status":"pending"}]}}}}
+{"t":"2026-10-24T07:10:00.200+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Working on it."}}}}}
+{"t":"2026-10-24T07:10:00.300+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"plan","entries":[{"content":"Read the file","priority":"high","status":"completed"},{"content":"Fix the bug","priority":"medium","status":"in_progress"}]}}}}
+{"t":"2026-10-24T07:10:00.400+00:00","dir":"in","line":{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}}

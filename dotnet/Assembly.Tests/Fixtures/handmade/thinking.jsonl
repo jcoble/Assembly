@@ -1,0 +1,7 @@
+{"t":"2026-10-24T07:00:00.000+00:00","dir":"out","line":{"jsonrpc":"2.0","id":3,"method":"session/prompt","params":{"sessionId":"s1","prompt":[{"type":"text","text":"Think first, then answer."}]}}}
+{"t":"2026-10-24T07:00:00.100+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"Let me "}}}}}
+{"t":"2026-10-24T07:00:00.150+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"think about "}}}}}
+{"t":"2026-10-24T07:00:00.300+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"this."}}}}}
+{"t":"2026-10-24T07:00:00.400+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The answer"}}}}}
+{"t":"2026-10-24T07:00:00.450+00:00","dir":"in","line":{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":" is 42."}}}}}
+{"t":"2026-10-24T07:00:00.500+00:00","dir":"in","line":{"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}}
