@@ -1,4 +1,4 @@
-using Assembly.Mac.Window;
+using Assembly.Mac.Page;
 
 namespace Assembly.Tests.Mac;
 

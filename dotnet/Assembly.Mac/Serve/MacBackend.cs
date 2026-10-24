@@ -13,6 +13,7 @@ using Assembly.Engine.Sessions;
 using Assembly.Engine.Store;
 using Assembly.Engine.Threads;
 using Assembly.Mac.Debug;
+using Assembly.Mac.Page;
 using Assembly.Mac.Remote;
 
 namespace Assembly.Mac.Serve;
@@ -71,9 +72,16 @@ public sealed class MacBackend : IAsyncDisposable
         // Turns a remote was running when the Mac stopped: catch up on them rather than mark them lost.
         remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.ThreadId).Where(id => threads.Get(id)?.Machine == remote!.Name));
 
-        var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), port, new DebugRoutes(hub).Map);
+        Uri? address = null;
+        var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
+        var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), port, routes =>
+        {
+            new DebugRoutes(hub).Map(routes);
+            page.Map(routes);
+        });
         await app.StartAsync();
         var backend = new MacBackend(store, threads, hub, sessions, remoteMachine, outbox, app);
+        address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
         return backend;

@@ -1,7 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The Mac's backend: the engine plus its API on 127.0.0.1:18797, which the webview talks to. Local threads only
-       for now; remote machines come in step 5. -->
+  <!-- The Mac's backend: the engine plus its API on 127.0.0.1:18797, which the page in the shell talks to. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsAotCompatible>true</IsAotCompatible>
@@ -14,10 +13,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Assembly.Engine\Assembly.Engine.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Photino.NET" Version="4.0.16" />
   </ItemGroup>
 
 </Project>

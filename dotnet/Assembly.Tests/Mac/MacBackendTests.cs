@@ -5,7 +5,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Mac.Serve;
-using Assembly.Mac.Window;
+using Assembly.Mac.Page;
 using Assembly.Tests.Api;
 using Assembly.Tests.Sessions;
 
@@ -87,21 +87,24 @@ public sealed class MacBackendTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_window_uploads_a_chosen_image_to_the_backend_until_it_is_discarded()
+    public async Task The_page_uploads_an_image_by_its_path_and_appends_soak_lines_and_an_unknown_call_is_404()
     {
         var threadId = await CreateThreadAsync();
         var image = Path.Combine(_home, "shot.png");
         await File.WriteAllBytesAsync(image, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
-        var bridge = new WindowBridge(Token, Path.Combine(_home, "soak"), _backend.Address, () => []);
-        bridge.Chosen.Add([image]);
-        var upload = JsonSerializer.Serialize(new { id = 1, method = "attachment.upload_path", @params = new { threadId, path = image } });
 
-        var uploaded = JsonDocument.Parse((await bridge.AnswerAsync(upload))!).RootElement;
-        await bridge.AnswerAsync(JsonSerializer.Serialize(new { id = 2, method = "attachment.discard", @params = new { path = image } }));
-        var again = JsonDocument.Parse((await bridge.AnswerAsync(upload))!).RootElement;
+        var uploaded = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { threadId, path = image })));
+        var soak = await _http.PostAsync("/page/soak.append", Json("""{"name":"run.csv","line":"a,b"}"""));
+        var notAnImage = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { threadId, path = _home })));
+        var unknown = await _http.PostAsync("/page/token.get", null);
 
-        Assert.False(string.IsNullOrEmpty(uploaded.GetProperty("result").GetProperty("path").GetString()), uploaded.ToString());
-        Assert.Equal("Only images you picked or dropped can be attached", again.GetProperty("error").GetString());
+        var result = JsonDocument.Parse(await uploaded.Content.ReadAsStringAsync()).RootElement;
+        Assert.False(string.IsNullOrEmpty(result.GetProperty("result").GetProperty("path").GetString()), result.ToString());
+        Assert.Equal(HttpStatusCode.OK, soak.StatusCode);
+        Assert.Equal("a,b\n", await File.ReadAllTextAsync(Path.Combine(_home, "soak-results", "run.csv")));
+        Assert.Equal(HttpStatusCode.BadRequest, notAnImage.StatusCode);
+        Assert.Equal("Only files can be attached", JsonDocument.Parse(await notAnImage.Content.ReadAsStringAsync()).RootElement.GetProperty("error").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 
     private async Task<string> CreateThreadAsync()
