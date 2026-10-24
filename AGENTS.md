@@ -46,10 +46,15 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 - Check every feature with both Claude Code and Codex, on the Mac and on Workbox Test: `scripts/check4.sh`, with this
   commit's backend running locally and its host deployed (`dotnet/scripts/workbox.sh serve`). It writes
   `evidence/<commit>/four-way/`; commit that folder with the feature.
+- The plain check proves turns run, not that the feature works. A feature's lane writes its scenario,
+  `scripts/features/<feature>.sh` (see the README there), from the corrected spec, and checks with
+  `scripts/check4.sh --feature <feature>`. A commit touching `dotnet/Assembly.Engine/<Feature>/` or
+  `app/src/lib/<feature>/` needs a passing summary that ran that feature's scenario. Folders in
+  `scripts/features/base-folders` are the shared base and need only the plain check.
 - A lane may not call a feature checked without a passing summary for its commit. CI fails a push to main whose
   feature commits have none (`scripts/check-evidence.sh`). Never write or edit evidence by hand.
-- Window screenshots before and after go in `evidence/<commit>/four-way/window/`; `scripts/check4.sh window` lists
-  them in the summary.
+- Window screenshots before and after go in the project's private files, not this repo (they show machine names
+  and paths). `scripts/check4.sh window <commit> <file>...` records their names in the summary.
 - Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).
 - Real-window checks (the lag meter, memory) run on the Mac: pull the lane's branch into a Mac lane and run
   `shell/assembly.sh start --counters` there.

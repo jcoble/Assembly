@@ -5,26 +5,44 @@
 # (`dotnet/scripts/workbox.sh serve`). Evidence goes to evidence/<commit>/four-way/: per case its rows and the
 # agent's transcript path and size, and summary.json and summary.md. Commit that folder; a feature commit pushed
 # to main without a passing summary for it or a later commit fails CI (scripts/check-evidence.sh).
-#   scripts/check4.sh          runs the four turns; exits 0 only if all four passed
-#   scripts/check4.sh window   lists the window screenshots in evidence/<commit>/four-way/window/ in the summary
+#   scripts/check4.sh [--feature <name>]...   runs the four turns, and with --feature that feature's scenario
+#                       (scripts/features/<name>.sh, see its README) in each case while the turn streams; exits 0
+#                       only if all four cases passed, each with its turn and every scenario
+#   scripts/check4.sh window <commit> <file>...   records the window screenshots' names in that commit's summary;
+#                       the files themselves stay in the project's private files, not in this repo
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lane-env.sh
-commit=$(git rev-parse HEAD)
-out=evidence/$commit/four-way
-mkdir -p "$out/window"
 
-screenshots() {
-  local files; files=$(cd "$out/window" && ls -1 2>/dev/null | grep -vE '^\.' || true)
-  if [ -n "$files" ]; then jq -R . <<<"$files" | jq -s .; else echo '"missing"'; fi
-}
 if [ "${1:-}" = window ]; then
-  [ -f "$out/summary.json" ] || { echo "no summary for $commit yet; run scripts/check4.sh first" >&2; exit 1; }
-  jq --argjson w "$(screenshots)" '.windowScreenshots = $w' "$out/summary.json" > "$out/summary.json.new"
-  mv "$out/summary.json.new" "$out/summary.json"
-  jq -r '"window screenshots: \(.windowScreenshots | if type == "array" then join(", ") else . end)"' "$out/summary.json"
+  commit=${2:?usage: scripts/check4.sh window <commit> <file>...}; shift 2
+  [ $# -gt 0 ] || { echo "usage: scripts/check4.sh window <commit> <file>..." >&2; exit 2; }
+  summary=evidence/$commit/four-way/summary.json
+  [ -f "$summary" ] || { echo "no summary for $commit; run scripts/check4.sh on it first" >&2; exit 1; }
+  lane=$(jq -r .lane "$summary")
+  jq --arg where "project files: notes/evidence/four-way/$lane/${commit:0:7}/window/" --args \
+    '.windowScreenshots = {where: $where, files: $ARGS.positional}' "$@" < "$summary" > "$summary.new"
+  jq -e .commit "$summary.new" >/dev/null || { rm -f "$summary.new"; echo "couldn't update $summary" >&2; exit 1; }
+  mv "$summary.new" "$summary"
+  sed -i.bak '/^Window screenshots:/d' "${summary%.json}.md" && rm -f "${summary%.json}.md.bak"
+  jq -r '"Window screenshots: \(.windowScreenshots.files | join(", ")) (\(.windowScreenshots.where))"' "$summary" | tee -a "${summary%.json}.md"
   exit
 fi
+
+features=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --feature) features+=("${2:?--feature needs a name}"); shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+for f in ${features[@]+"${features[@]}"}; do
+  [ -x "scripts/features/$f.sh" ] || { echo "no scenario scripts/features/$f.sh (or it isn't executable)" >&2; exit 2; }
+done
+commit=$(git rev-parse HEAD)
+out=evidence/$commit/four-way
+rm -rf "$out"
+mkdir -p "$out"
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 started=$(now)
@@ -78,7 +96,8 @@ cases=()
 for agent in claude codex; do
   for where in local box; do
     name=$agent-$([ $where = local ] && echo local || echo workbox-test)
-    case_started=$(now) thread="" run="" state="" reply="" sid="" tpath="" tsize=0 reason=""
+    case_started=$(now) thread="" run="" state="" reply="" sid="" tpath="" tsize=0 reason="" failed_feature=""
+    feature_results=()
     if [ -n "$blocked" ]; then
       reason=$blocked
     else
@@ -90,6 +109,13 @@ for agent in claude codex; do
       if [ -z "$thread" ]; then reason="the thread wasn't created"
       elif [ -z "$run" ]; then reason="the turn didn't start"
       else
+        # Each feature scenario runs against this case's thread while its turn streams.
+        pids=()
+        for f in ${features[@]+"${features[@]}"}; do
+          CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_THREAD=$thread CHECK4_RUN=$run CHECK4_AGENT=$agent \
+            CHECK4_MACHINE=${name#*-} CHECK4_REPO=$repo "scripts/features/$f.sh" > "$out/$name.$f.log" 2>&1 &
+          pids+=($!)
+        done
         for _ in $(seq 120); do
           rows=$(api local GET "/threads/$thread/rows?limit=500" || true)
           state=$(jq -r --arg r "$run" '[.rows[] | select(.runId == $r and .kind == "turn" and .payload.state != "started")][-1].payload.state // empty' <<<"$rows" 2>/dev/null || true)
@@ -100,10 +126,19 @@ for agent in claude codex; do
         reply=$(jq -r '[.[] | select(.kind == "message") | .payload | .. | objects | .value? | strings] | join("\n")' "$out/$name.rows.json")
         sid=$(api "$where" GET "/threads/$thread" | jq -r '.acpSessionId // empty' 2>/dev/null || true)
         [ -n "$sid" ] && IFS=$'\t' read -r tpath tsize < <(transcript "$agent" "$sid" "$where"; echo) || true
+        feature_results=()
+        i=0
+        for f in ${features[@]+"${features[@]}"}; do
+          code=0; wait "${pids[$i]}" || code=$?; i=$((i + 1))
+          feature_results+=("$(jq -cn --arg name "$f" --argjson code "$code" --rawfile log "$out/$name.$f.log" \
+            '{name: $name, pass: ($code == 0), exitCode: $code, steps: ($log | split("\n") | map(select(length > 0)))}')")
+          [ "$code" = 0 ] || failed_feature=${failed_feature:-$f}
+        done
         if [ "$state" != finished ]; then reason="the turn ended ${state:-never (timed out after 240 s)}"
         elif ! grep -qF "$host" <<<"$reply"; then reason="the reply doesn't show this machine's hostname ($host)"
         elif ! grep -qF four-way-ok <<<"$reply"; then reason="the reply doesn't end with four-way-ok"
         elif [ -z "$tpath" ]; then reason="no $agent transcript found for session ${sid:-unknown}"
+        elif [ -n "${failed_feature:-}" ]; then reason="the $failed_feature scenario failed (see $name.$failed_feature.log)"
         fi
       fi
     fi
@@ -112,20 +147,22 @@ for agent in claude codex; do
     cases+=("$(jq -cn --arg agent "$agent" --arg machine "${name#*-}" --arg thread "$thread" --arg run "$run" \
       --arg started "$case_started" --arg finished "$(now)" --arg state "$state" --arg reply "$reply" \
       --arg session "$sid" --arg path "$tpath" --argjson size "${tsize:-0}" --argjson pass "$pass" --arg reason "$reason" \
+      --argjson scenarios "$(printf '%s\n' ${feature_results[@]+"${feature_results[@]}"} | jq -s .)" \
       '{agent: $agent, machine: $machine, threadId: $thread, runId: $run, startedAt: $started, finishedAt: $finished,
         state: $state, reply: $reply, acpSessionId: $session, transcript: {path: $path, bytes: $size},
-        rows: "\($agent)-\($machine).rows.json", pass: $pass, reason: $reason}')")
+        rows: "\($agent)-\($machine).rows.json", features: $scenarios, pass: $pass, reason: $reason}')")
   done
 done
 
 printf '%s\n' "${cases[@]}" | jq -s --arg commit "$commit" --arg lane "${LANE_NAME:-main}" --arg host "$host_local" \
-  --arg started "$started" --arg finished "$(now)" --argjson window "$(screenshots)" \
+  --arg started "$started" --arg finished "$(now)" \
+  --argjson features "$(printf '%s\n' ${features[@]+"${features[@]}"} | jq -R 'select(length > 0)' | jq -s .)" \
   --arg localBuilt "$local_commit" --arg boxBuilt "$box_commit" \
   '{commit: $commit, lane: $lane, localMachine: $host, startedAt: $started, finishedAt: $finished,
-    builtFrom: {local: $localBuilt, workboxTest: $boxBuilt},
-    pass: (length == 4 and all(.pass)), cases: ., windowScreenshots: $window}' > "$out/summary.json"
-jq -r '"# Four-way check of \(.commit)\n\nLane \(.lane), local machine \(.localMachine), \(.startedAt) to \(.finishedAt): \(if .pass then "all four passed" else "FAILED" end).\n",
+    builtFrom: {local: $localBuilt, workboxTest: $boxBuilt}, features: $features,
+    pass: (length == 4 and all(.pass)), cases: ., windowScreenshots: "missing"}' > "$out/summary.json"
+jq -r '"# Four-way check of \(.commit)\n\nLane \(.lane), local machine \(.localMachine), \(.startedAt) to \(.finishedAt): \(if .pass then "all four passed" else "FAILED" end).\nFeature scenarios: \(if (.features | length) > 0 then .features | join(", ") else "none" end).\n",
   (.cases[] | "- \(.agent) on \(.machine): \(if .pass then "pass" else "FAIL: \(.reason)" end) (thread \(.threadId), transcript \(.transcript.path) \(.transcript.bytes) bytes)"),
-  "\nWindow screenshots: \(.windowScreenshots | if type == "array" then join(", ") else . end)"' "$out/summary.json" > "$out/summary.md"
+  "\nWindow screenshots: missing"' "$out/summary.json" > "$out/summary.md"
 echo "summary: $out/summary.json"
 jq -e .pass "$out/summary.json" >/dev/null

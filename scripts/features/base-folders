@@ -1,0 +1,22 @@
+# Folders that are the shared base, not a feature: a commit touching only these needs the plain four-way check.
+# Any other folder under dotnet/Assembly.Engine/ or app/src/lib/ is a feature, named by its folder in lower case,
+# and a commit touching it needs a passing `scripts/check4.sh --feature <name>` (scripts/check-evidence.sh).
+dotnet/Assembly.Engine/Acp
+dotnet/Assembly.Engine/Agents
+dotnet/Assembly.Engine/Api
+dotnet/Assembly.Engine/Attachments
+dotnet/Assembly.Engine/Events
+dotnet/Assembly.Engine/Helpers
+dotnet/Assembly.Engine/Live
+dotnet/Assembly.Engine/Machines
+dotnet/Assembly.Engine/Markdown
+dotnet/Assembly.Engine/Rows
+dotnet/Assembly.Engine/Sessions
+dotnet/Assembly.Engine/Store
+dotnet/Assembly.Engine/Threads
+dotnet/Assembly.Engine/Transcript
+app/src/lib/chat
+app/src/lib/composer
+app/src/lib/host
+app/src/lib/rows
+app/src/lib/thread
