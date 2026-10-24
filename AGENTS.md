@@ -29,6 +29,10 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
   quoting or linking his correction. Only Jesse's correction changes it from a draft.
 - Tests pin that list. Each pinned test names the line it pins in a comment, for example `// Pins: base#2`. The old code (mac-command-bar 2089290, listed in `docs/backend-commands.md`) is a reference
   for details such as formats and edge cases. It is never the source of truth.
+- While the list is a draft, the lane writes its tests in `dotnet/Assembly.Tests/Draft/<Feature>/` (namespace
+  `Assembly.Tests.Draft.<Feature>`) and `app/test/draft/<feature>/`. They aren't locked and follow the normal test
+  rules on main. Once Jesse has corrected the list, make any changes his correction needs, then run
+  `scripts/pin.sh <feature>`. It moves the tests into the pinned folders and refuses while the list is a draft.
 - Pinned tests live in `dotnet/Assembly.Tests/Pinned/<Feature>/` and `app/test/pinned/<feature>/`. Commit them on
   their own, before the port.
 - On a lane branch, pinned tests may fail. They land on main only together with the code that makes them pass:
