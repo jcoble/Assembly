@@ -99,6 +99,7 @@ internal sealed class ThreadRoutes(ThreadStore threads, MachineSet machines)
         json.WriteString("title", thread.Title);
         json.WriteString("machine", thread.Machine);
         json.WriteString("parentThreadId", thread.ParentThreadId);
+        json.WriteString("acpSessionId", thread.AcpSessionId);
         json.WriteNumber("updatedAt", thread.UpdatedAt);
         json.WriteEndObject();
     }

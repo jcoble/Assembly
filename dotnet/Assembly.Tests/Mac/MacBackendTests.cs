@@ -53,6 +53,21 @@ public sealed class MacBackendTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Version_names_the_commit_built_and_a_thread_names_its_agent_session()
+    {
+        var threadId = await CreateThreadAsync();
+        await SendAsync(threadId);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+
+        Assert.Matches("^[0-9a-f]{40}$", (await GetJsonAsync("/version")).GetProperty("commit").GetString());
+        await Until(() => GetJsonAsync($"/threads/{threadId}").Result.GetProperty("acpSessionId").ValueKind == JsonValueKind.String);
+        await agent.CloseAsync();
+    }
+
+    [Fact]
     public async Task Debug_drop_closes_the_webviews_sockets_and_a_reopened_one_gets_what_it_missed()
     {
         var threadId = await CreateThreadAsync();
