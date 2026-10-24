@@ -60,13 +60,19 @@ internal sealed class RemoteTunnel : IAsyncDisposable
             ],
             log);
 
+    private const int RemotePort = 9787;
+    private const string RemoteTokenFile = ".config/spike-dotnet/env";
+    private const string RemoteTokenPrefix = "SPIKE_TOKEN=";
+
     /// <summary>
-    /// Starts the tunnel to <paramref name="host"/>'s API on its port 9797, reached here on 19797, and reads its token.
+    /// Starts the tunnel to <paramref name="host"/>'s API, reached here on 19797, and reads its token. Until Workbox
+    /// Test runs Assembly's remote host, it's the TanStack AI spike's host there: port 9787, token in
+    /// ~/.config/spike-dotnet/env as SPIKE_TOKEN (Assembly's is 9797, ~/.config/assembly-dotnet/env, ASSEMBLY_TOKEN).
     /// </summary>
     public static async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> ConnectAsync(string host, TextWriter log)
     {
         const int localPort = 19797;
-        var tunnel = ForSsh(host, localPort, remotePort: 9797, log);
+        var tunnel = ForSsh(host, localPort, remotePort: RemotePort, log);
         try
         {
             var token = await ReadTokenAsync(host, CancellationToken.None);
@@ -88,14 +94,14 @@ internal sealed class RemoteTunnel : IAsyncDisposable
     public static async Task<string> ReadTokenAsync(string host, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo("ssh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { "-o", "BatchMode=yes", host, "cat .config/assembly-dotnet/env" })
+        foreach (var arg in new[] { "-o", "BatchMode=yes", host, $"cat {RemoteTokenFile}" })
             start.ArgumentList.Add(arg);
         using var ssh = Process.Start(start)!;
         var output = await ssh.StandardOutput.ReadToEndAsync(cancellationToken);
         await ssh.WaitForExitAsync(cancellationToken);
-        const string prefix = "ASSEMBLY_TOKEN=";
+        const string prefix = RemoteTokenPrefix;
         return output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal))?[prefix.Length..]
-            ?? throw new InvalidOperationException($"{host} has no token in ~/.config/assembly-dotnet/env (ssh exit {ssh.ExitCode})");
+            ?? throw new InvalidOperationException($"{host} has no token in ~/{RemoteTokenFile} (ssh exit {ssh.ExitCode})");
     }
 
     /// <summary>Waits until the forward accepts connections.</summary>

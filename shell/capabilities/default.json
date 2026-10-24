@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The page's native jobs: dropped paths, links, notifications, the clipboard and the file picker.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:allow-open-url",
+    "notification:default",
+    "clipboard-manager:allow-write-text",
+    "dialog:allow-open"
+  ]
+}
