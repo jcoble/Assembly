@@ -9,11 +9,24 @@ namespace Assembly.Mac.Page;
 /// <c>memory.sample</c>: the RSS of the app (the shell that started this backend), of its WebContent process, and of
 /// this backend. WebContent is an XPC service launchd starts, not a child; macOS holds the app responsible for it and
 /// for this backend, so the app is this process's responsible pid and WebContent is the one the app is responsible for.
+/// Elsewhere (a lane on the workbox, headless) there's no app, so only the backend is measured.
 /// </summary>
 internal static class MemorySample
 {
     public static void Write(Utf8JsonWriter writer)
     {
+        if (!OperatingSystem.IsMacOS())
+        {
+            writer.WriteStartObject("result");
+            writer.WriteNull("appPid");
+            writer.WriteNull("appRssKb");
+            writer.WriteNull("webContentPid");
+            writer.WriteNull("webContentRssKb");
+            writer.WriteNumber("backendPid", Environment.ProcessId);
+            WriteRss(writer, "backendRssKb", Environment.ProcessId);
+            writer.WriteEndObject();
+            return;
+        }
         var appPid = ResponsibleFor(Environment.ProcessId);
         var webPid = WebContentPid(appPid) ?? throw new InvalidOperationException("no WebContent process for this app");
         writer.WriteStartObject("result");

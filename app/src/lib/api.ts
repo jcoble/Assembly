@@ -9,7 +9,7 @@ export { BASE, BASE_WS };
 
 // `parentThreadId` is set on a subagent's thread: the thread whose agent runs it.
 export type Thread = { threadId: string; agent: string; repoUrl: string; title: string | null; machine: string | null; parentThreadId?: string | null; updatedAt: number };
-export type MemorySample = { appPid: number; appRssKb: number | null; webContentPid: number; webContentRssKb: number | null; backendPid: number; backendRssKb: number | null };
+export type MemorySample = { appPid: number | null; appRssKb: number | null; webContentPid: number | null; webContentRssKb: number | null; backendPid: number; backendRssKb: number | null };
 
 // Every HTTP call takes its owner's signal and is counted while pending.
 // A Blob body is sent as-is with its own type; anything else as JSON. An image
