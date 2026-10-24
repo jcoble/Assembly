@@ -23,7 +23,7 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 ## Porting a feature: spec first, then pinned tests
 
 - Each feature lane first drafts a short spec of what the feature should do, in plain user-level terms. It works
-  from the old UI and Jesse's recorded decisions (port-product-decisions), posts the spec to Jesse, and Jesse
+  from the old UI and Jesse's recorded decisions (`docs/port-product-decisions.md`), posts the spec to Jesse, and Jesse
   corrects it.
 - Tests pin that spec. The old code (mac-command-bar 2089290, listed in `docs/backend-commands.md`) is a reference
   for details such as formats and edge cases. It is never the source of truth.
