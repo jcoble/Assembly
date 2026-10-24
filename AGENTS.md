@@ -9,6 +9,29 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 - One class per file. Keep classes small, with one job each.
 - Keep it simple: the smallest change that does the job. No abstraction, option or fallback the task didn't ask for.
 
+## Backend conventions
+
+- A feature's calls are `POST /<feature>/<method>` with the args as the JSON body. They answer `{result}`, or 400
+  `{error}` for a call that fails, and 404 for an unknown method. `dotnet/Assembly.Mac/Page/PageRoutes.cs` is the model.
+- Every route needs the bearer token (`TokenGuard`), and the API listens on 127.0.0.1 only.
+- Each feature lives in `dotnet/Assembly.Engine/<Feature>/`: a routes class plus small classes, one class per file.
+- Anything that streams or changes goes to the page over the one WebSocket, as a named topic. Never make the page
+  poll. The socket carries only chat's rows today; the first feature that needs a topic adds topics to it.
+- Chat's existing REST routes (`/threads`, `/runs`, `/outbox`, `/agents`, `/machines`) stay as they are.
+- `docs/backend-commands.md` lists the old UI's commands per feature and the old Rust handler behind each.
+
+## Porting a feature: spec first, then pinned tests
+
+- Each feature lane first drafts a short spec of what the feature should do, in plain user-level terms. It works
+  from the old UI and Jesse's recorded decisions (port-product-decisions), posts the spec to Jesse, and Jesse
+  corrects it.
+- Tests pin that spec. The old code (mac-command-bar 2089290, listed in `docs/backend-commands.md`) is a reference
+  for details such as formats and edge cases. It is never the source of truth.
+- Pinned tests live in `dotnet/Assembly.Tests/Pinned/<Feature>/` and `app/test/pinned/<feature>/`. Commit them on
+  their own, before the port.
+- After that, never edit or delete a pinned test without Jesse's OK. If one looks wrong, stop and ask him.
+  `scripts/check-pinned.sh` fails on any change to a pinned file he hasn't approved, locally and on every push to main.
+
 ## Commits
 
 - Every commit message ends with `Committed-by: <who did the work>`, for example `Committed-by: Claude` or `Committed-by: Codex`.
