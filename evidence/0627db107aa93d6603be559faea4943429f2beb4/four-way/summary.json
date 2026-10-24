@@ -83,5 +83,13 @@
       "reason": ""
     }
   ],
-  "windowScreenshots": "missing"
+  "windowScreenshots": {
+    "where": "project files: notes/evidence/four-way/main/0627db1/window/",
+    "files": [
+      "1-claude-mac.jpg",
+      "2-claude-workbox-test.jpg",
+      "3-codex-mac.jpg",
+      "4-codex-workbox-test.jpg"
+    ]
+  }
 }

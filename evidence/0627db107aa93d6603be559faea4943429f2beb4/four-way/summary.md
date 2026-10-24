@@ -7,4 +7,4 @@ Lane main, local machine Jesses-MacBook-Air.local, 2026-10-24T23:39:43Z to 2026-
 - codex on local: pass (thread a3c12036-ee5e-49aa-972d-f5a77df6347c, transcript /Users/blackcolours/.codex/sessions/2026/10/24/rollout-2026-10-24T19-40-15-01a17049-50bd-7a52-a9fe-9fa5d3356bde.jsonl 142078 bytes)
 - codex on workbox-test: pass (thread 5d0ed834-fa9e-4255-8a7f-013901f89b48, transcript /home/blackcolours/.codex/sessions/2026/10/24/rollout-2026-10-24T23-40-22-01a17049-6ad8-7f13-84fe-63607952f51d.jsonl 73194 bytes)
 
-Window screenshots: missing
+Window screenshots: 1-claude-mac.jpg, 2-claude-workbox-test.jpg, 3-codex-mac.jpg, 4-codex-workbox-test.jpg (project files: notes/evidence/four-way/main/0627db1/window/)
