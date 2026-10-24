@@ -62,7 +62,7 @@ case "$mode" in
     fi
     git -C "$main" worktree remove "$dir"
     git -C "$main" worktree prune
-    git -C "$main" branch -d "lane/$name" 2>/dev/null && echo "deleted lane/$name (merged)" || echo "kept branch lane/$name (not merged into main)"
+    git -C "$main" branch -d "lane/$name" 2>/dev/null && echo "deleted the local branch lane/$name (merged, or all of it pushed)" || echo "kept branch lane/$name (it has commits that aren't merged or pushed)"
     echo "removed lane $name; its Mac data folder, if any, stays at ~/assembly-dotnet-$name" ;;
   list)
     git -C "$main" worktree list | grep "$lanes/" || echo "no lanes here"
