@@ -3,7 +3,11 @@
 # .lane file that gives it its own ports, folders, app id and Workbox Test host (scripts/lane-env.sh). Works on the
 # Mac and on the workbox; a lane's number (1 to 9) is reserved on Workbox Test, which every lane's host shares.
 #   scripts/lane.sh new <name>      makes the worktree from main and installs app/'s packages (and shell/'s on the Mac)
-#   scripts/lane.sh remove <name>   stops its window (Mac), removes its Workbox Test host and folders, then the
+#   scripts/lane.sh adopt <name>    makes a worktree here for a lane made elsewhere (its branch lane/<name> pushed
+#                                   to GitHub), with the same number, so its ports, folders, app id and Workbox Test
+#                                   host match: the Mac adopts a workbox lane for the real-window checks
+#   scripts/lane.sh remove <name>   stops its window (Mac), removes its Workbox Test host and folders (unless the
+#                                   lane was adopted here: the machine that made it removes those), then the
 #                                   worktree; refuses a worktree with uncommitted changes. The branch stays unless merged
 #   scripts/lane.sh list            the lanes here and the numbers reserved on Workbox Test
 set -euo pipefail
@@ -31,6 +35,18 @@ case "$mode" in
     (cd "$dir" && . scripts/lane-env.sh && echo "lane $name (number $number) is at $dir on lane/$name:
   Mac backend 127.0.0.1:$MAC_PORT, vite dev localhost:$DEV_PORT, data $DATA
   Workbox Test host 127.0.0.1:$BOX_PORT, unit $BOX_UNIT, folder ~/$BOX_DATA") ;;
+  adopt)
+    [ -n "$name" ] || { echo "usage: scripts/lane.sh adopt <name>" >&2; exit 2; }
+    [ ! -e "$dir" ] || { echo "$dir already exists" >&2; exit 1; }
+    number=$(ssh workbox-test "cat ~/assembly-dotnet-$name/lane-number 2>/dev/null" || true)
+    [ -n "$number" ] || { echo "no lane named '$name' is reserved on Workbox Test" >&2; exit 1; }
+    git -C "$main" fetch -q origin "lane/$name"
+    git -C "$main" worktree add -q -B "lane/$name" "$dir" FETCH_HEAD
+    git -C "$dir" branch -q --set-upstream-to="origin/lane/$name"
+    printf 'LANE_NAME=%s\nLANE_NUMBER=%s\nLANE_ADOPTED=1\n' "$name" "$number" > "$dir/.lane"
+    (cd "$dir/app" && pnpm install --silent --prefer-offline)
+    [ "$(uname)" = Darwin ] && (cd "$dir/shell" && pnpm install --silent --prefer-offline)
+    echo "adopted lane $name (number $number) at $dir on lane/$name" ;;
   remove)
     [ -n "$name" ] && [ -f "$dir/.lane" ] || { echo "no lane named '$name' at $dir" >&2; exit 1; }
     dirty=$(git -C "$dir" status --short)
@@ -39,7 +55,11 @@ case "$mode" in
       (cd "$dir" && . scripts/lane-env.sh && [ -f "$DATA/mac/app.pid" ] && kill -0 "$(cat "$DATA/mac/app.pid")" 2>/dev/null) \
         && "$dir/shell/assembly.sh" stop
     fi
-    "$dir/dotnet/scripts/workbox.sh" remove "lane/$name"
+    if grep -q '^LANE_ADOPTED=1' "$dir/.lane"; then
+      echo "lane $name was adopted here; its Workbox Test host stays for the machine that made it to remove"
+    else
+      "$dir/dotnet/scripts/workbox.sh" remove "lane/$name"
+    fi
     git -C "$main" worktree remove "$dir"
     git -C "$main" worktree prune
     git -C "$main" branch -d "lane/$name" 2>/dev/null && echo "deleted lane/$name (merged)" || echo "kept branch lane/$name (not merged into main)"
