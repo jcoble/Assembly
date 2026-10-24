@@ -1,0 +1,87 @@
+{
+  "commit": "0627db107aa93d6603be559faea4943429f2beb4",
+  "lane": "main",
+  "localMachine": "Jesses-MacBook-Air.local",
+  "startedAt": "2026-10-24T23:39:43Z",
+  "finishedAt": "2026-10-24T23:40:31Z",
+  "builtFrom": {
+    "local": "9fa51378bc246ee8a0496ae8a8c969f2bf053037",
+    "workboxTest": "9fa51378bc246ee8a0496ae8a8c969f2bf053037"
+  },
+  "pass": true,
+  "cases": [
+    {
+      "agent": "claude",
+      "machine": "local",
+      "threadId": "f2875246-a6e4-4770-9ac0-67d327f06dcf",
+      "runId": "2408ea87-9ca2-48e5-bdb3-2e7e3ae507e0",
+      "startedAt": "2026-10-24T23:39:51Z",
+      "finishedAt": "2026-10-24T23:40:03Z",
+      "state": "finished",
+      "reply": "Jesses-MacBook-Air.local\nfour-way-ok",
+      "acpSessionId": "e6074ec6-0894-490d-8702-43e527f8c740",
+      "transcript": {
+        "path": "/Users/blackcolours/.claude/projects/-Users-blackcolours-assembly-dotnet-mac-threads-f2875246-a6e4-4770-9ac0-67d327f06dcf/e6074ec6-0894-490d-8702-43e527f8c740.jsonl",
+        "bytes": 442581
+      },
+      "rows": "claude-local.rows.json",
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "claude",
+      "machine": "workbox-test",
+      "threadId": "11a3d1ca-74ed-4dd2-8ea1-6b1b8d10fbfe",
+      "runId": "21be0b7c-c094-46de-ab99-a51b4ee7e421",
+      "startedAt": "2026-10-24T23:40:03Z",
+      "finishedAt": "2026-10-24T23:40:14Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "24608264-f94c-484b-a37c-379b429a990b",
+      "transcript": {
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-serve-threads-11a3d1ca-74ed-4dd2-8ea1-6b1b8d10fbfe/24608264-f94c-484b-a37c-379b429a990b.jsonl",
+        "bytes": 232300
+      },
+      "rows": "claude-workbox-test.rows.json",
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "local",
+      "threadId": "a3c12036-ee5e-49aa-972d-f5a77df6347c",
+      "runId": "a6b3ccca-f21c-4fae-a1b7-7af3f403dde6",
+      "startedAt": "2026-10-24T23:40:14Z",
+      "finishedAt": "2026-10-24T23:40:20Z",
+      "state": "finished",
+      "reply": "Jesses-MacBook-Air.local\nfour-way-ok",
+      "acpSessionId": "01a17049-50bd-7a52-a9fe-9fa5d3356bde",
+      "transcript": {
+        "path": "/Users/blackcolours/.codex/sessions/2026/10/24/rollout-2026-10-24T19-40-15-01a17049-50bd-7a52-a9fe-9fa5d3356bde.jsonl",
+        "bytes": 142078
+      },
+      "rows": "codex-local.rows.json",
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "workbox-test",
+      "threadId": "5d0ed834-fa9e-4255-8a7f-013901f89b48",
+      "runId": "909a5834-4fa0-4e7f-a2be-971f8fd2a6f8",
+      "startedAt": "2026-10-24T23:40:20Z",
+      "finishedAt": "2026-10-24T23:40:31Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "01a17049-6ad8-7f13-84fe-63607952f51d",
+      "transcript": {
+        "path": "/home/blackcolours/.codex/sessions/2026/10/24/rollout-2026-10-24T23-40-22-01a17049-6ad8-7f13-84fe-63607952f51d.jsonl",
+        "bytes": 73194
+      },
+      "rows": "codex-workbox-test.rows.json",
+      "pass": true,
+      "reason": ""
+    }
+  ],
+  "windowScreenshots": "missing"
+}
