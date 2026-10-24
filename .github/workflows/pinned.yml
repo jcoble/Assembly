@@ -15,3 +15,21 @@ jobs:
           before=${{ github.event.before }}
           if [ "$before" = 0000000000000000000000000000000000000000 ]; then before=$(git rev-list --max-parents=0 HEAD | tail -1); fi
           scripts/check-pinned.sh "$before" "${{ github.sha }}"
+  run:
+    # Every pinned test runs and passes on main: none failing, none skipped (but MacFact off macOS), none dropped.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install app packages for app pinned tests
+        run: |
+          if [ -n "$(find app/test/pinned -name '*.test.ts' 2>/dev/null)" ]; then
+            npm install -g pnpm@11.5.1 && (cd app && pnpm install --frozen-lockfile)
+          fi
+      - name: Run the pinned tests
+        run: scripts/run-pinned.sh

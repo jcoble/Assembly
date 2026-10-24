@@ -23,12 +23,15 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 ## Porting a feature: spec first, then pinned tests
 
 - Each feature lane first drafts a short spec of what the feature should do, in plain user-level terms. It works
-  from the old UI and Jesse's recorded decisions (`docs/port-product-decisions.md`), posts the spec to Jesse, and Jesse
-  corrects it.
+  from the old UI and Jesse's recorded decisions (`docs/port-product-decisions.md`), posts the spec to Jesse, and
+  Jesse corrects it.
 - Tests pin that spec. The old code (mac-command-bar 2089290, listed in `docs/backend-commands.md`) is a reference
   for details such as formats and edge cases. It is never the source of truth.
 - Pinned tests live in `dotnet/Assembly.Tests/Pinned/<Feature>/` and `app/test/pinned/<feature>/`. Commit them on
   their own, before the port.
+- On a lane branch, pinned tests may fail. They land on main only together with the code that makes them pass:
+  `scripts/run-pinned.sh` runs them on every push to main and fails if any fails, is skipped (other than a MacFact
+  off macOS) or no longer runs.
 - After that, never edit or delete a pinned test without Jesse's OK. If one looks wrong, stop and ask him.
   `scripts/check-pinned.sh` fails on any change to a pinned file he hasn't approved, locally and on every push to main.
 
