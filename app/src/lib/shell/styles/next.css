@@ -1,0 +1,294 @@
+/* ============================================================
+ * next.css — Tailwind + the shadcn component variables for Assembly.
+ *
+ * WHO LOADS THIS
+ * `src/routes/+page.svelte` and nobody else. Keep this out of the shared
+ * layout so secondary routes do not inherit the workbench chrome.
+ *
+ * WHY NOT PLAIN `@import "tailwindcss"`
+ * The full Tailwind entry point drags in "preflight", a global
+ * reset that rewrites margins, borders, headings and form controls
+ * for the WHOLE document. This app already has its own baseline in
+ * `src/app.css`, shared with the old shell, and preflight would
+ * fight it. So we import only the two pieces we actually want:
+ *   - the theme (the design-token variables Tailwind's classes read)
+ *   - the utility classes themselves
+ * and hand-write the two or three base rules the shadcn components
+ * genuinely need, further down.
+ *
+ * WHY THE THEME IS IN A CASCADE LAYER AND THE UTILITIES ARE NOT
+ * A browser gives plain, un-layered CSS the final say over anything
+ * inside an `@layer`. That is exactly what we want in each case:
+ *
+ *   - THEME IN A LAYER. Tailwind's variable names overlap this app's
+ *     own token names on purpose-free accident: `--text-sm`,
+ *     `--radius-md`, `--shadow-lg` mean something in both. Because
+ *     `tokens.css` and `nextTokens.css` are un-layered, THEY WIN.
+ *     So inside /next, `text-sm` is this app's 12px small text,
+ *     `rounded-md` is its 8px corner, `shadow-lg` is its dialog
+ *     shadow. That is deliberate: the library components come out
+ *     in this app's existing density and depth with no extra work.
+ *     Two things follow for anyone writing markup here:
+ *       * `text-sm` is 12px and `text-xs` is 11px, NOT Tailwind's
+ *         14px/12px. Body text in cards and rails has a 13px floor,
+ *         so write those sizes explicitly (`text-[13px]`).
+ *       * Anything Tailwind names that this app does not define
+ *         (`text-base`, `rounded-xl`, `shadow-xs`) keeps Tailwind's
+ *         own value.
+ *
+ *   - UTILITIES NOT IN A LAYER. `app.css` sets un-layered defaults on
+ *     bare elements — `button { border: 0; background: none; font:
+ *     inherit }` is the important one. If the utilities sat in a
+ *     layer, those element rules would beat every `bg-primary` and
+ *     `text-sm` a shadcn button carries, and the buttons would come
+ *     out transparent and the wrong size. Un-layered, the utilities
+ *     are ordinary classes and win on specificity, the way they do
+ *     in a normal Tailwind app. Component styles (Svelte scopes
+ *     them, which adds specificity) still win over a utility, which
+ *     is the behaviour you want.
+ *
+ * WHERE THE COLORS COME FROM
+ * Every shadcn variable below is defined FROM an existing token in
+ * `nextTokens.css` — no hex values are repeated here. Change the
+ * palette there and the library components follow.
+ * ============================================================ */
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css';
+@import 'tw-animate-css';
+
+@layer theme, base;
+
+/* ------------------------------------------------------------------
+ * Which files to read class names out of.
+ *
+ * Tailwind only writes CSS for classes it can see. We point it at
+ * the three places the /next shell lives, and nowhere else — in
+ * particular NOT at the old shell's `src/routes/+page.svelte`, so
+ * no class name of its can quietly acquire a Tailwind meaning.
+ * ------------------------------------------------------------------ */
+@source '../components';
+@source '../../components/ui';
+@source '../../../routes/+page.svelte';
+
+/* ------------------------------------------------------------------
+ * The `dark:` prefix is always on here.
+ *
+ * Some shadcn components carry small `dark:` touch-ups. Out of the
+ * box that prefix follows the operating system's light/dark setting,
+ * which would leave those touch-ups off on a Mac in light mode even
+ * though this shell is always dark. So `dark:` simply means "yes"
+ * inside /next.
+ * ------------------------------------------------------------------ */
+@custom-variant dark (&:where(:root, :root *));
+
+/* ------------------------------------------------------------------
+ * `data-checked:`, `data-open:` and friends, taught the spelling the
+ * component library actually writes.
+ *
+ * THE PROBLEM. The components under `src/lib/components/ui` were
+ * copied from a registry written against a newer bits-ui, which marks
+ * a control's state with its own attribute: `data-checked`,
+ * `data-open`, `data-active`. The version this app is pinned to
+ * (bits-ui 2.18.1) writes ONE attribute with the state as its value
+ * instead — `data-state="checked"`, `data-state="open"`,
+ * `data-state="active"`. Out of the box Tailwind reads a bare
+ * `data-checked:` prefix as "does this element carry an attribute
+ * literally named data-checked", which is never true here, so every
+ * rule behind those prefixes was dead: the settings switches did not
+ * move or change colour when toggled, and nothing marked which
+ * settings tab was open.
+ *
+ * THE FIX. Redefine those five names so each one matches BOTH
+ * spellings. New components copied from the registry then work as
+ * written, and a component that uses the presence form (the slider
+ * thumb's own `data-active`, for instance) keeps working too.
+ *
+ * If you vendor another component, check the attributes it styles
+ * against the pinned bits-ui before trusting them; this is the second
+ * mismatch of exactly this kind (the first was `data-horizontal` /
+ * `data-vertical`, fixed by rewriting them to `data-[orientation=…]`
+ * in the components themselves).
+ * ------------------------------------------------------------------ */
+@custom-variant data-checked (&[data-state='checked'], &[data-checked]);
+@custom-variant data-unchecked (&[data-state='unchecked'], &[data-unchecked]);
+@custom-variant data-active (&[data-state='active'], &[data-active]);
+@custom-variant data-open (&[data-state='open'], &[data-open]);
+@custom-variant data-closed (&[data-state='closed'], &[data-closed]);
+
+/* ------------------------------------------------------------------
+ * The shadcn color names, pointed at this app's tokens.
+ *
+ * `inline` means Tailwind writes the token straight into each class
+ * (`bg-card` becomes `background-color: var(--card)`), so the values
+ * are resolved on the element itself. That is what lets the block
+ * below re-point them per shell.
+ * ------------------------------------------------------------------ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+/* ------------------------------------------------------------------
+ * The values themselves.
+ *
+ * Same two selectors as `nextTokens.css`, and for the same reason:
+ * dialogs, menus and tooltips are moved to the end of <body> when
+ * they open, so they end up OUTSIDE `.next-shell` and a rule scoped
+ * to `.next-shell` alone would never reach them. The route-owned
+ * `next-shell-document` class covers the document while /next is on screen.
+ * /next and the old page are separate routes and are never mounted
+ * at the same time, so this cannot reach the old shell.
+ *
+ * Left column = the shadcn name. Right column = the existing token.
+ * Where shadcn has a slot this app has no token for, the closest
+ * token is used and the comment says which and why.
+ * ------------------------------------------------------------------ */
+:is(:root.next-shell-document, .next-shell) {
+  /* Page and text. */
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+
+  /* A raised sheet — cards, panel bodies. */
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+
+  /* Menus, dialogs and tooltips sit on the same raised sheet as a
+     card; this app has one surface color for both. */
+  --popover: var(--color-overlay);
+  --popover-foreground: var(--color-text);
+
+  /* The one brand color: the mint accent, with the near-black this
+     app already uses for text printed on top of it. */
+  --primary: var(--color-accent);
+  --primary-foreground: var(--color-on-accent);
+
+  /* A quiet, filled button. No token of its own — the "elevated"
+     fill is what this app already uses for a raised/pressed row,
+     which is what a secondary button looks like here. */
+  --secondary: var(--color-selected);
+  --secondary-foreground: var(--color-text);
+
+  /* Muted = a de-emphasised fill plus the second text tier. */
+  --muted: var(--color-elevated);
+  --muted-foreground: var(--color-text-2);
+
+  /* Careful: shadcn's "accent" is NOT the brand color — it is the
+     hover/highlight fill behind a menu item or a selected row. This
+     app's hover fill is the elevated layer, so that is what it maps
+     to. The mint lives in --primary above. */
+  --accent: var(--color-hover);
+  --accent-foreground: var(--color-text);
+
+  /* Danger. Text printed on the danger fill uses the same near-black
+     as text on the accent — both fills are bright. */
+  --destructive: var(--color-bad);
+  --destructive-foreground: var(--color-on-accent);
+
+  /* Hairlines. shadcn's "input" is the outline of a form field,
+     which in this app is the same hairline as everything else. */
+  --border: var(--color-border);
+  --input: var(--color-field-border);
+
+  /* The focus ring color — this app's translucent mint. */
+  --ring: var(--color-focus);
+
+  /* Corner rounding. shadcn keeps one base radius and derives the
+     rest from it; this app's medium corner is the base. */
+  --radius: var(--radius-md);
+
+  /* The sidebar set, used by shadcn's sidebar and by anything that
+     borrows its names. Same palette, one step quieter: the sidebar
+     sits on the shell backdrop rather than on a raised sheet. */
+  --sidebar: var(--color-rail);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-accent);
+  --sidebar-primary-foreground: var(--color-on-accent);
+  --sidebar-accent: var(--color-hover);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border);
+  --sidebar-ring: var(--color-focus);
+}
+
+/* ------------------------------------------------------------------
+ * The only base rules we add.
+ *
+ * Tailwind's preflight would have set a default border color for
+ * every element; without it, a `border` class with no color falls
+ * back to the text color and draws a pale line. shadcn's own
+ * stylesheet does the same one-liner, and its components rely on
+ * it. Box sizing is already handled globally by `app.css`.
+ *
+ * This lives in the `base` layer so that ANY other stylesheet in the
+ * document — Monaco's, xterm's, dockview's, or a component's own —
+ * beats it automatically. It can only affect an element that draws a
+ * border and never says what color it should be.
+ * ------------------------------------------------------------------ */
+@layer base {
+  :root.next-shell-document *,
+  :root.next-shell-document *::before,
+  :root.next-shell-document *::after {
+    border-color: var(--border);
+  }
+}
+
+/* ------------------------------------------------------------------
+ * Scrollbars.
+ *
+ * These are rules, not tokens, so they live here rather than in
+ * `nextTokens.css` — that file is checked to contain nothing but
+ * custom properties, and a `width` in it fails the check. The names
+ * they read are still declared there with the rest of the palette.
+ * ------------------------------------------------------------------ */
+/* Applies to the shell and to anything portalled out of it. */
+:is(:root.next-shell-document, .next-shell) ::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+:is(:root.next-shell-document, .next-shell) ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:is(:root.next-shell-document, .next-shell) ::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  /* Keeps the thumb off the very edge of its track without a track colour. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+:is(:root.next-shell-document, .next-shell) ::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+:is(:root.next-shell-document, .next-shell) ::-webkit-scrollbar-corner {
+  background: transparent;
+}

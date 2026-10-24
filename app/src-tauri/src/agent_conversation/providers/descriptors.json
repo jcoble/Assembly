@@ -1,0 +1,35 @@
+{
+  "providers": [
+    {
+      "id": "codex",
+      "adapter_id": "codex-acp",
+      "display_name": "Codex",
+      "initialize_meta": { "jetbrains": { "air": { "version": 1, "capabilities": ["recommendedValue"] } }, "terminal_output_delta": true },
+      "effort_in_model_id": true,
+      "unattended": { "mode": "agent" },
+      "pre_approval": { "env": { "CODEX_CONFIG": { "mcp_servers.assembly.default_tools_approval_mode": "approve" } } },
+      "proof_home": { "env": { "CODEX_HOME": "{home}" } },
+      "read_only": { "mode": "read-only", "env": { "CODEX_CONFIG": { "sandbox_mode": "read-only" } } },
+      "login": { "file": "auth.json", "refresh_field": "/tokens/refresh_token", "action": "blank" }
+    },
+    {
+      "id": "claude",
+      "adapter_id": "claude-agent-acp",
+      "display_name": "Claude",
+      "initialize_meta": { "jetbrains": { "air": { "version": 1, "capabilities": ["asyncTasks", "nativeSubagentSessions", "backgroundSubagents"] } } },
+      "elicitation": true,
+      "unattended": { "mode": "auto" },
+      "pre_approval": { "meta": { "claudeCode": { "options": { "allowedTools": ["mcp__assembly"] } } } },
+      "proof_home": { "env": { "CLAUDE_CONFIG_DIR": "{home}" } },
+      "read_only": { "meta": { "claudeCode": { "options": { "tools": [] } } } },
+      "login": { "file": ".credentials.json", "refresh_field": "/claudeAiOauth/refreshToken", "action": "delete" }
+    },
+    {
+      "id": "antigravity",
+      "adapter_id": "agy-acp",
+      "display_name": "Antigravity",
+      "canonical_cwd": true,
+      "pre_approval": { "permission_handler": true }
+    }
+  ]
+}

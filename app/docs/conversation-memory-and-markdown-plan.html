@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Assembly conversation: memory, markdown conversion, and TSK-928</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --panel:#fff; --ink:#1a1a19; --ink-2:#55534e; --ink-3:#83807a;
+    --line:#e3e0da; --accent:#8a5a2b; --accent-soft:#f3ece3;
+    --bad:#a33a2a; --bad-soft:#fbeeeb; --good:#2f6b46; --good-soft:#eaf4ee;
+    --code-bg:#f4f2ee;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#161614; --panel:#1e1d1a; --ink:#eceae5; --ink-2:#b3afa7; --ink-3:#88847c;
+      --line:#33302b; --accent:#d09a5f; --accent-soft:#2a231a;
+      --bad:#e08573; --bad-soft:#2e1d19; --good:#7fc39a; --good-soft:#18251d;
+      --code-bg:#26241f;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#161614; --panel:#1e1d1a; --ink:#eceae5; --ink-2:#b3afa7; --ink-3:#88847c;
+    --line:#33302b; --accent:#d09a5f; --accent-soft:#2a231a;
+    --bad:#e08573; --bad-soft:#2e1d19; --good:#7fc39a; --good-soft:#18251d;
+    --code-bg:#26241f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 ui-sans-serif,-apple-system,"SF Pro Text",Segoe UI,sans-serif}
+  .wrap{max-width:900px;margin:0 auto;padding:48px 24px 96px}
+  h1{font-size:27px;line-height:1.25;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--ink-3);font-size:13px;margin:0 0 36px}
+  h2{font-size:19px;margin:44px 0 12px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+  h3{font-size:15px;margin:26px 0 8px;color:var(--accent)}
+  h4{font-size:13px;margin:18px 0 6px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-3)}
+  p,li{color:var(--ink-2)}
+  li{margin:4px 0}
+  code{font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+    background:var(--code-bg);padding:1px 5px;border-radius:4px;color:var(--ink)}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .flag{border-left:3px solid var(--bad);background:var(--bad-soft);border-radius:0 8px 8px 0;
+    padding:12px 16px;margin:14px 0}
+  .flag strong{color:var(--bad)}
+  .ok{border-left:3px solid var(--good);background:var(--good-soft);border-radius:0 8px 8px 0;
+    padding:12px 16px;margin:14px 0}
+  .ok strong{color:var(--good)}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;display:block;overflow-x:auto}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--ink-3);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.06em}
+  .phase{display:inline-block;background:var(--accent-soft);color:var(--accent);
+    font-size:11px;font-weight:700;letter-spacing:.08em;padding:3px 9px;border-radius:20px;
+    text-transform:uppercase;margin-bottom:8px}
+  .rec{font-size:12px;color:var(--ink-3);font-family:ui-monospace,Menlo,monospace}
+  ul.tight{margin:6px 0;padding-left:20px}
+  .kv{display:grid;grid-template-columns:150px 1fr;gap:4px 14px;font-size:13.5px;margin:10px 0}
+  .kv dt{color:var(--ink-3)}
+  .kv dd{margin:0;color:var(--ink-2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Assembly conversation: memory, markdown conversion, and TSK-928</h1>
+<p class="sub">Branch <code>tsk-808-assembly-wave</code> · written 2026-08-29 · every claim below carries a <code>file:line</code> receipt verified against the working tree</p>
+
+<div class="card">
+<p style="margin:0"><strong>The goal, in the owner's words:</strong> the chat "can take up some mem, but not make it rise steadily and not be able to be gc'd." The app is deliberately stripped down and subsystems are being reconnected one at a time to find what costs memory. Chat is one of the big ones.</p>
+</div>
+
+<h2>01 · What is actually wrong</h2>
+
+<p>Four findings, all verified by reading the code. They are independent, and the first two are the ones that make memory climb.</p>
+
+<h3>Finding 1 — the whole transcript lives in a deep <code>$state</code></h3>
+<p class="rec">conversationStore.svelte.ts:166</p>
+<pre><code>export const conversationSessions = $state&lt;Record&lt;string, ConversationWorkspaceState&gt;&gt;({});</code></pre>
+<p>This is the only <code>$state</code> in the file and it is <em>deep</em>. Everything reachable from it is proxied: <code>loadedEvents</code>, <code>timeline</code>, <code>agentItems</code>, <code>childTimeline</code>, <code>recentEvents</code>, plus roughly a dozen <code>Record&lt;&gt;</code> fields — about 60 fields per session.</p>
+<p>In Svelte 5 every nested object becomes a <code>Proxy</code> with a signal per touched property, and arrays additionally carry version signals. So appending one streamed delta does not just add an event object; it materialises proxies and signals for that object and its payload, all strongly reachable from a module-level root. They are not garbage — they are live reactive state, and nothing drops them until the whole session record is evicted.</p>
+<p>That is precisely the reported symptom: rises steadily, cannot be collected.</p>
+
+<h3>Finding 2 — two O(n²) re-computations per streamed token</h3>
+<p class="rec">ConversationMessage.svelte:24</p>
+<pre><code>const blocks = $derived(parseSafeMarkdown(text));</code></pre>
+<p><code>text</code> is a prop that changes on every delta, so the <em>entire</em> message is re-tokenised through <code>marked</code> from scratch on every token, and the previous block tree becomes garbage. Because the list is virtualised, this also re-runs on every scroll-driven remount.</p>
+<p class="rec">ConversationSurface.svelte:107-121</p>
+<pre><code>const visibleTimeline = $derived.by((): ConversationDisplayItem[] =&gt; {
+  ...
+  const items = typedConversationTimeline(
+    conversation.agentItems,      // reads the whole array
+    legacyTimeline,
+    {},
+    previousVisibleTimeline,
+    conversation.sentAttachments
+  );</code></pre>
+<p>Reading <code>conversation.agentItems</code> inside a <code>$derived</code> subscribes to it, so any delta invalidates the derivation and the <strong>whole transcript is re-projected per token</strong>.</p>
+<p>Neither of these is a leak in the strict sense, but together they generate constant allocation churn that reads as steadily rising memory and keeps the collector busy.</p>
+
+<h3>Finding 3 — the ceiling is high, and until this wave it never fired</h3>
+<p class="rec">conversationStore.svelte.ts:84-86</p>
+<p>The old cap was 8&nbsp;MiB measured by <code>textBytes()</code>, which returns <code>0</code> unless <code>import.meta.env.DEV</code>. Shipped builds run <code>vite build</code>, so the cap was dead code and no trim ever ran. It is now an event count:</p>
+<pre><code>export const CONVERSATION_RECENT_EVENT_CAP = 200;
+const ACTIVE_EVENT_WINDOW_EVENTS = 20_000;
+const ACTIVE_EVENT_WINDOW_TRIM_EVENTS = 15_000;</code></pre>
+<p>So a working ceiling exists for the first time, but 20&nbsp;000 raw events — including every <code>assistantDelta</code> — is a lot to hold proxied. <code>timeline</code> (<code>:410</code>) and <code>agentItems</code> (<code>:639</code>) have no cap of their own; they are bounded only indirectly, by the rebuild that runs when the event window trims.</p>
+
+<h3>Finding 4 — the refetch path that trimming depends on is broken</h3>
+<div class="flag">
+<p style="margin:0 0 6px"><strong>Blocks lowering the cap.</strong> <code>prependOlderConversationEvents</code> loses the transcript. Prepending a two-event older page onto a two-event transcript returns a timeline of <em>one</em> row:</p>
+<pre style="margin:6px 0 0"><code>expected ['Older question','Older answer','Newer question','Newer answer']
+actual   ['Older question']</code></pre>
+<p style="margin:6px 0 0">Reproduce with <code>node --experimental-strip-types scripts/agentConversationStore.test.ts</code>. It is pre-existing — the leak commit touched only the trim arithmetic in that function, not the snapshot rebuild underneath it. Trimming is only safe because trimmed rows are refetchable, so this must be fixed before the window is lowered.</p>
+</div>
+
+<h2>02 · The plan</h2>
+
+<table>
+<tr><th>Phase</th><th>What it fixes</th><th>Size</th><th>Depends on</th></tr>
+<tr><td><strong>1</strong> Transcript out of deep <code>$state</code></td><td>Retention. Findings 1 and 2.</td><td>~250 lines, 1 store + 3 components</td><td>—</td></tr>
+<tr><td><strong>2</strong> Fix <code>prependOlderConversationEvents</code></td><td>Finding 4; unblocks a lower cap</td><td>~40 lines</td><td>—</td></tr>
+<tr><td><strong>3</strong> Markdown conversion moves to Rust</td><td>CPU, bundle, repeat conversion</td><td>Rust module + schema migration</td><td>1</td></tr>
+<tr><td><strong>4</strong> Reconnect TSK-928 surface</td><td>Turn folds, tool rows, diffs, attachments</td><td>Wiring, per the task</td><td>1, 3</td></tr>
+<tr><td><strong>5</strong> Editor per-tab retention</td><td>Text held 2-3× per tab plus syntax tree</td><td>Measure first, then 1-2 small fixes</td><td>—</td></tr>
+<tr><td><strong>6</strong> Oversized stored payloads</td><td>Diffs store the file, sometimes twice</td><td>~30 lines Rust + a unit test</td><td>—</td></tr>
+<tr><td><strong>7</strong> Language server lifetime</td><td>No quiescence rule; excluded from every measurement so far</td><td>Measure first — likely the largest term</td><td>—</td></tr>
+</table>
+
+<p>Phases 1 and 2 are independent and can run in parallel. Phase 3 should not start until 1 has landed, or it will be written against a store shape that is about to change.</p>
+
+<h2>03 · Phase 1 — move the transcript out of the reactive root</h2>
+<span class="phase">Phase 1</span>
+
+<div class="ok">
+<p style="margin:0"><strong>The pattern is already half-built.</strong> <code>ConversationTimeline.svelte:621-622</code> already gates its work on a revision counter, not on the array:</p>
+<pre style="margin:6px 0 0"><code>if (timelineRevision === lastContentRevision) return;
+lastContentRevision = timelineRevision;</code></pre>
+<p style="margin:6px 0 0">and the store already bumps it at <code>conversationStore.svelte.ts:362</code> and <code>:621</code>. The components do not need the transcript to be reactive; they need <code>timelineRevision</code> to be reactive.</p>
+</div>
+
+<h4>Contract</h4>
+<ul class="tight">
+<li><code>conversationSessions</code> stays <code>$state</code> and keeps the small UI fields that genuinely want per-property reactivity and do not grow: <code>draft</code>, <code>sending</code>, <code>sendError</code>, <code>attachmentError</code>, <code>mode</code>, <code>scrollTop</code>, <code>metadata</code>, <code>pendingApprovals</code>, <code>pendingInputs</code>, <code>connectionState</code>, <code>timelineRevision</code>.</li>
+<li>Five growing arrays move to a plain module-level <code>Map&lt;string, ConversationTranscript&gt;</code> keyed by <code>ownedId</code>, with no proxies: <code>loadedEvents</code>, <code>timeline</code>, <code>agentItems</code>, <code>childTimeline</code>, <code>recentEvents</code>.</li>
+<li>Mutation stays in place and O(1) per delta. Writers bump <code>timelineRevision</code> exactly where they do today.</li>
+<li>Readers go through accessors — <code>conversationTimeline(ownedId)</code>, <code>conversationAgentItems(ownedId)</code> — and re-read when <code>timelineRevision</code> changes.</li>
+<li><code>evictConversationSession</code> (<code>conversationStore.svelte.ts:1752-1759</code>) additionally deletes the Map entry. One reference drop then releases the whole transcript to GC.</li>
+</ul>
+
+<h4>Blast radius — only three components read those arrays</h4>
+<table>
+<tr><th>File</th><th>Reads</th></tr>
+<tr><td><code>ConversationSurface.svelte:104,119</code></td><td><code>timeline</code>, <code>childTimeline</code>, <code>agentItems</code></td></tr>
+<tr><td><code>ConversationHistorySurface.svelte:28-29</code></td><td><code>agentItems</code>, <code>timeline</code></td></tr>
+<tr><td><code>SourceControlPanel.svelte:153</code></td><td><code>timeline.some(...)</code></td></tr>
+</table>
+
+<h4>Also fix, in the same phase</h4>
+<ul class="tight">
+<li><code>ConversationSurface.svelte:107</code> — <code>visibleTimeline</code> must stop re-projecting the whole transcript per token. Key the projection on <code>timelineRevision</code> and reuse <code>previousVisibleTimeline</code>, which the function already accepts for this purpose.</li>
+<li>Give <code>timeline</code> and <code>agentItems</code> explicit caps, mirroring the existing event-window shape with 0.75 hysteresis. After trimming from the front, rebuild the affected index Map — <code>timelineIndexBySession</code> / <code>agentItemIndexBySession</code> at <code>:223-224</code> store array positions, which every trim invalidates. Drop trimmed items from <code>activeReasoningBySession</code> (<code>:225</code>), which otherwise holds strong references to them.</li>
+</ul>
+
+<h4>Do not</h4>
+<ul class="tight">
+<li>Do not convert the arrays to <code>$state.raw</code>. That forbids in-place mutation, so every delta would copy the array — O(n) per token, worse than today.</li>
+<li>Do not change what any counter in <code>resourceDiagnostics</code> means.</li>
+<li>Do not change the props the 15 TSK-928 components expect. Phase 4 depends on that shape.</li>
+</ul>
+
+<h4>Verification</h4>
+<pre><code>npx tsc --noEmit
+pnpm run check:svelte
+node --experimental-strip-types scripts/agentConversationStore.test.ts</code></pre>
+<p>Then in the running app, with a long turn streaming: RSS rises while the turn runs, flattens when it ends, and drops when the session is switched away. Record all three numbers. Flattening is the acceptance criterion — not a particular figure.</p>
+
+<h2>04 · Phase 2 — fix the older-page rebuild</h2>
+<span class="phase">Phase 2</span>
+<p>Make the failing case in <code>scripts/agentConversationStore.test.ts</code> pass without touching the test. The bug is in the snapshot rebuild reached from <code>prependOlderConversationEvents</code> (<code>conversationStore.svelte.ts:920-931</code>), not in the trim arithmetic above it. Once this is green, the event window can be lowered from 20&nbsp;000 with confidence, because trimmed rows come back on scroll.</p>
+
+<h2>05 · Phase 3 — markdown conversion moves to Rust</h2>
+<span class="phase">Phase 3</span>
+
+<p>Today the frontend tokenises markdown in JS. <code>conversationMessageSafety.ts:1-14</code> is explicit that the output is <em>data, not markup</em>:</p>
+<blockquote style="border-left:3px solid var(--line);margin:10px 0;padding:2px 0 2px 16px;color:var(--ink-3);font-size:13.5px">
+The renderer deliberately returns data rather than HTML. Svelte renders every text value as text, so a partial fence or a provider supplied <code>&lt;script&gt;</code> can never become executable markup while a turn is streaming. Nothing here produces a string of markup, and nothing downstream needs a sanitizer.
+</blockquote>
+
+<p>That is what makes moving it to Rust safe and correct. What gets stored is a parse tree of the message's own markdown, which is as stable as the markdown itself — not a rendering, and not a view-layer decision.</p>
+
+<h4>The stored shape</h4>
+<p><code>SafeMarkdownBlock</code> is already fully specified at <code>conversationMessageSafety.ts:18-44</code> and is the wire format. Rust must produce exactly this, serialised with the same tag names:</p>
+<pre><code>type SafeMarkdownBlock =
+  | { kind: 'paragraph'; parts: SafeInlinePart[] }
+  | { kind: 'heading'; level: number; parts: SafeInlinePart[] }
+  | { kind: 'code'; language: string; value: string; complete: boolean }
+  | { kind: 'quote'; blocks: SafeMarkdownBlock[] }
+  | { kind: 'list'; ordered: boolean; items: SafeListItem[] }
+  | { kind: 'table'; headers: SafeInlinePart[][]; rows: SafeInlinePart[][][] }
+  | { kind: 'rule' };</code></pre>
+<p>Note <code>complete: boolean</code> on a code block. The type already models a half-written fence, which is what makes streaming from the backend workable rather than a second path.</p>
+
+<h4>Decisions to hold to</h4>
+<dl class="kv">
+<dt>Parser</dt><dd><code>comrak</code>, not <code>pulldown-cmark</code>. The frontend uses <code>marked</code>'s GFM tokenizer (<code>marked ^18.0.10</code>), so tables, strikethrough, task lists and autolinks must match. A parser that disagrees on edge cases silently changes how existing transcripts render.</dd>
+<dt>Storage unit</dt><dd>The finished message, not the delta. This is where the memory win is: <code>events</code> currently takes one row per event (<code>core/src/session_store.rs:433</code>, insert at <code>:857</code>) and the frontend holds up to 20&nbsp;000 of them. Per-message rows reduce that to hundreds.</dd>
+<dt>Versioning</dt><dd>Add a <code>format_version</code> column now. <code>SCHEMA_VERSION</code> is <code>12</code> at <code>core/src/session_store.rs:9</code> with an established <code>user_version</code> migration pattern. TSK-928 will add block kinds; stored rows then need re-conversion on read. Cheap to design in, expensive to retrofit.</dd>
+<dt>Streaming</dt><dd>The backend tokenises incrementally and streams blocks over the existing channel (<code>registerAgentConversationStream</code>, <code>conversationService.ts:63,774</code>). One path, not a live path plus a stored path.</dd>
+<dt>Frontend</dt><dd><code>parseSafeMarkdown</code> and the <code>marked</code> dependency leave the conversation path. <code>ConversationMessage.svelte</code> takes <code>blocks</code> as a prop instead of deriving them from <code>text</code>, which also deletes the O(n²) in Finding 2.</dd>
+</dl>
+
+<div class="flag">
+<p style="margin:0"><strong>Keep expectations honest.</strong> Phase 3 is mainly a CPU and bundle win. It reduces memory only through the per-message storage unit, and the block trees still land in whatever the store holds — so it complements Phase 1 rather than replacing it. Done without Phase 1, the app holds block trees instead of event objects and the curve looks the same.</p>
+</div>
+
+<h4>Note from TSK-928 worth acting on early</h4>
+<p>An imported conversation stores a narrower record set than a live run. Confirm what is in the store before blaming the renderer:</p>
+<pre><code>sqlite3 &lt;copy of sessions.db&gt; "select json_extract(payload,'$.payload.kind') k, count(*) from events group by k"</code></pre>
+
+<h2>06 · Phase 4 — reconnect the TSK-928 surface</h2>
+<span class="phase">Phase 4</span>
+<p>TSK-928 is <em>Conversation surface: restore turn folds, inline diffs, tool/search rows, message actions and attachments</em>, priority High, status To&nbsp;Do, with ten reference screenshots attached to the task.</p>
+<div class="ok">
+<p style="margin:0"><strong>The task's own instruction:</strong> "almost none of this needs to be written from scratch… Treat writing a new component as evidence of a wrong diagnosis." All fifteen components already exist under <code>src/lib/shell/components/conversation/</code>: <code>TurnMetadata</code>, <code>ReasoningItem</code>, <code>ToolItem</code>, <code>FileChangeItem</code>, <code>SubagentSection</code>, <code>TaskListItem</code>, <code>AttachmentLightbox</code>, <code>UserMessageItem</code>, <code>AssistantMessageItem</code>, <code>CodeBlock</code>, <code>ApprovalItem</code>, <code>CommandItem</code>, <code>ErrorItem</code>, <code>PlanItem</code>, <code>TimelineItem</code>. The turn model exists too: <code>conversationTimeline.ts:96</code> carries <code>elapsedMs</code>, <code>:157</code> is <code>conversationTurnGroups</code>, <code>:179</code> is <code>formatWorkedFor</code>.</p>
+</div>
+<p>The work is finding why a transcript no longer reaches them and reconnecting it. Acceptance is listed in the task; screenshots are the approval artifact. Any agent dispatched on this must be given the Notion task id and told to <code>notion-fetch</code> it and read it verbatim, plus absolute paths to the screenshots — they are not on local disk yet (the presigned Notion URLs expire; local <code>~/dev/work/reports/tsk-ui-base/screenshots/</code> only goes to 288, TSK-928's are 359-368).</p>
+
+<h2>07 · Phase 5 — the editor holds each open file several times over</h2>
+<span class="phase">Phase 5</span>
+
+<p>Reported separately by the owner: the editor adds a lot of memory, "esp if you open more than one tab." Independent of the conversation work; can run at any point.</p>
+
+<h4>What one open tab costs today</h4>
+<p class="rec">editorStore.svelte.ts:164-165</p>
+<pre><code>preview,
+draftContent: readOnly ? null : retainedDraft ?? preview.content,</code></pre>
+<table>
+<tr><th>Held</th><th>Clean tab</th><th>Dirty tab</th></tr>
+<tr><td><code>openFiles[i].preview.content</code></td><td>full text</td><td>full text</td></tr>
+<tr><td><code>openFiles[i].draftContent</code></td><td>same string reference — free</td><td><strong>second full copy</strong></td></tr>
+<tr><td><code>sessionEditorStates[path]</code> document rope</td><td><strong>another copy</strong> — CodeMirror re-chunks the string</td><td>another copy</td></tr>
+<tr><td>Lezer syntax tree inside that state</td><td><strong>roughly 2-5× the text</strong></td><td>roughly 2-5× the text</td></tr>
+</table>
+<p>One <code>EditorView</code> is created and reused across tabs (<code>CodeMirrorSourceEditor.svelte:861</code>), which is correct. The cost is the retained per-path <code>EditorState</code>s: <code>sessionEditorStates</code> at <code>:149</code>, limit <code>retainedEditorStateLimit = 24</code> at <code>:151</code>.</p>
+<p>Undo is not a factor — <code>history({ minDepth: 5 })</code> at <code>:651</code> keeps roughly five events.</p>
+
+<h4>Two aggravating factors, both verified</h4>
+<div class="flag">
+<p style="margin:0 0 6px"><strong>1 · Closing a dirty tab frees nothing.</strong> <code>editorStoreOps.ts:165-169</code>:</p>
+<pre style="margin:6px 0"><code>/** A clean closed tab can release its Monaco model; a draft cannot. */
+export function modelPathToDisposeOnClose(
+  file: Pick&lt;OpenEditorFile, 'path' | 'dirty'&gt; | null
+): string | null {
+  return file &amp;&amp; !file.dirty ? file.path : null;
+}</code></pre>
+<p style="margin:6px 0 0">So <code>closeFileNow</code> (<code>EditorPanel.svelte:1042-1046</code>) never calls <code>disposeTabModel</code> for a dirty file. <code>closeEditorFile</code> drops it from <code>openFiles</code>, but the <code>EditorState</code> — rope, syntax tree and history — stays in <code>sessionEditorStates</code> until the 24-entry LRU evicts it. This is deliberate: it preserves the draft if the file is reopened. The consequence is that closing tabs does not give memory back.</p>
+</div>
+<div class="flag">
+<p style="margin:0"><strong>2 · No file-size guard anywhere in the open path.</strong> Grepping <code>src/lib/shell/editor/</code>, <code>src/lib/sourceData.ts</code> and <code>EditorPanel.svelte</code> finds none. A 4&nbsp;MB file becomes a 4&nbsp;MB string plus a 4&nbsp;MB rope plus a tree several times that, and up to 24 such states can be retained.</p>
+</div>
+
+<h4>Measure before changing anything — it is already instrumented</h4>
+<p><code>resourceDiagnostics.svelte.ts:32-36</code> already tracks the four numbers that settle which term dominates:</p>
+<pre><code>codeMirrorEditorViews    // must stay 1
+codeMirrorEditorStates   // retained states, ceiling 24
+codeMirrorDocBytes       // the state on screen
+openTabDocumentBytes     // sum across the strip</code></pre>
+<p>Open several tabs of known size, read these four, and compare against process RSS. Only then decide which of the fixes below is worth making.</p>
+
+<h4>Candidate fixes, cheapest first — pick from measurement, do not do all of them</h4>
+<ol>
+<li><strong>Stop holding the text twice for a dirty file.</strong> <code>draftContent</code> and <code>preview.content</code> are distinct strings once edited. The <code>EditorState</code> is already the authority on current text, so the store may not need <code>draftContent</code> at all — check every reader before removing it.</li>
+<li><strong>Lower <code>retainedEditorStateLimit</code></strong> from 24. It exists to make tab switching instant; a smaller number with the same LRU keeps that for the tabs actually in rotation.</li>
+<li><strong>Release the syntax tree for tabs not on screen.</strong> The tree is the largest single term and is rebuilt on demand. Retaining the document and view position while dropping the parse is the best ratio available here.</li>
+<li><strong>Add a size threshold</strong> above which a file opens without language support — no tree, no semantic features, plain text. Large files are exactly where the multiplier hurts.</li>
+<li><strong>Give the dirty-close case a bound.</strong> Either persist the draft outside CodeMirror so the state can be disposed, or cap how many dirty closed states are retained.</li>
+</ol>
+<p>Items 1 and 2 are small. Items 3 to 5 are design changes and each needs its own spec — do not start one without measurement pointing at it.</p>
+
+<h4>Verification</h4>
+<pre><code>npx tsc --noEmit
+pnpm run check:svelte
+node --experimental-strip-types scripts/editorStore.test.ts</code></pre>
+<p>Then: open the same set of tabs before and after, compare the four counters and process RSS, and confirm closing every tab returns memory to roughly the pre-open baseline. That last check is the one that matters — it is what "can be gc'd" means here.</p>
+
+<h2>08 · Phase 6 — stored payloads are far larger than what is displayed</h2>
+<span class="phase">Phase 6</span>
+
+<p>Raised by the owner: "we should cut down on things like file diffs, where it's saving the entire file. We don't need all that… Makes what's actually displayed way less as well since it goes by bytes and not what's actually displayed."</p>
+
+<h3>The diff builder has no hunk splitting</h3>
+<p class="rec">src-tauri/src/agent_conversation/manager.rs:5876</p>
+<pre><code>fn unified_diff(old_text: &amp;str, new_text: &amp;str) -&gt; String {
+    let old: Vec&lt;&amp;str&gt; = old_text.split('\n').collect();
+    let new: Vec&lt;&amp;str&gt; = new_text.split('\n').collect();
+    let mut prefix = 0;
+    while prefix &lt; old.len() &amp;&amp; prefix &lt; new.len() &amp;&amp; old[prefix] == new[prefix] {
+        prefix += 1;
+    }
+    let mut suffix = 0;
+    while suffix &lt; old.len() - prefix
+        &amp;&amp; suffix &lt; new.len() - prefix
+        &amp;&amp; old[old.len() - 1 - suffix] == new[new.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    let removed = &amp;old[prefix..old.len() - suffix];
+    let added = &amp;new[prefix..new.len() - suffix];</code></pre>
+<p>It trims one common prefix and one common suffix, then emits <em>everything between them</em> — every line of <code>removed</code>, then every line of <code>added</code>, as a single hunk.</p>
+<div class="flag">
+<p style="margin:0"><strong>Two distant edits defeat it completely.</strong> Change line 10 and line 900 of a 1000-line file: the prefix stops at line 10, the suffix stops at line 900, and the emitted patch contains lines 10-900 as <code>-</code> lines <em>and again</em> as <code>+</code> lines. Roughly 1,780 lines to describe a two-line change — the file stored nearly twice over, per edit event.</p>
+</div>
+<p>The input is the ACP diff content block, whose <code>oldText</code> / <code>newText</code> are whole file contents (read at <code>manager.rs:5759-5760</code>). So the whole file arrives, and for any non-adjacent pair of edits nearly all of it is retained.</p>
+
+<h4>Fix</h4>
+<p>Replace the hand-rolled function with a real line diff that splits into hunks with a small context radius. The <code>similar</code> crate does exactly this and is the smallest change:</p>
+<pre><code>TextDiff::from_lines(old_text, new_text)
+    .unified_diff()
+    .context_radius(3)
+    .to_string()</code></pre>
+<p>Output stays a unified diff, so <code>FileChangeItem.svelte</code>'s parser (<code>:41-63</code>, which already skips <code>diff --git</code>, <code>index</code>, <code>+++</code>, <code>---</code>) needs no change. Verify against a fixture with two edits 800 lines apart and assert the patch is tens of lines, not thousands.</p>
+
+<h3>Twelve lines are displayed; the whole patch is retained</h3>
+<p class="rec">FileChangeItem.svelte:15,80-81</p>
+<pre><code>const DIFF_LINES_KEPT = 12;
+const rows = $derived(foldable &amp;&amp; !diffOpen ? allRows.slice(0, DIFF_LINES_KEPT) : allRows);</code></pre>
+<p>A collapsed file row shows twelve lines. The full diff string is held in the event payload, in <code>loadedEvents</code>, in <code>agentItems</code>, and — until Phase 1 lands — inside the deep <code>$state</code> proxy graph. Fixing the hunk splitting above removes most of this; a further clamp at ingest (store at most N lines, refetch the rest on expand) is only worth doing if measurement still shows diffs dominating.</p>
+
+<h3>The event-count ceiling is blind to payload size</h3>
+<div class="flag">
+<p style="margin:0"><strong>A weakness introduced by the current fix, and the owner is right about it.</strong> <code>ACTIVE_EVENT_WINDOW_EVENTS = 20_000</code> counts events, not bytes. One event carrying a multi-megabyte diff counts as <strong>one</strong>. So the window can hold hundreds of megabytes while the counter reads a few dozen events. The previous byte cap would have caught this — except it never ran, because <code>textBytes()</code> returned <code>0</code> outside dev.</p>
+</div>
+<p>The budget needs both terms: a count ceiling <em>and</em> a bound on any single payload. Order matters — fix the diff builder first, measure, and only then decide whether a per-payload clamp is still needed. Do not reinstate a whole-window byte measure that walks every event on every append; that cost is why the original was written to be skipped outside dev.</p>
+
+<h4>Verification</h4>
+<pre><code>cd tauri-svelte-preview
+MCB_RUN_CSHARP_LSP_SMOKE=0 cargo test --manifest-path src-tauri/Cargo.toml unified_diff -- --nocapture</code></pre>
+<p>Add a Rust unit test with two edits 800 lines apart, asserting the emitted patch line count. That is a data test, not a UI test, so it is in scope under the no-UI-regression-tests rule.</p>
+
+<h2>09 · Phase 7 — language servers, not yet in any measurement</h2>
+<span class="phase">Phase 7</span>
+
+<div class="card">
+<p style="margin:0"><strong>Read this before trusting any number in this document.</strong> The owner has had the language server switched off for every measurement taken so far, and reports it "adds so much more memory." So every figure gathered to date is a floor, not a ceiling, and the phases above are ranked against a workload that excludes the largest single term.</p>
+</div>
+
+<h3>Most of the cost is not in the JS heap</h3>
+<p>A language server is a separate process. Roslyn in particular runs to hundreds of megabytes for a real solution. That memory is process RSS and will not appear in a webview heap snapshot, in <code>resourceDiagnostics</code>, or in any of the counters the other phases rely on. Measuring it means sampling the server's process tree, which the Resource Manager already does through <code>resourceSampleBackend</code> / <code>readResourceTotals</code>.</p>
+<p>Practical consequence: the conversation and editor phases should be measured with the server off, so their effect is visible. The server is measured separately, by process. Mixing them hides both.</p>
+
+<h3>The asymmetry worth fixing</h3>
+<p class="rec">src-tauri/src/lsp.rs:2499, :2520, :2589, :3162</p>
+<p>The stop paths are explicit and well built — <code>stop_all_servers</code>, <code>stop_servers_for_language</code>, <code>stop_servers_for_root</code>, and <code>stop_lsp_process_tree</code> kills the whole process group rather than orphaning children (<code>:3162-3172</code>), which is the same hygiene the ACP sidecars use.</p>
+<div class="flag">
+<p style="margin:0"><strong>What is missing is a quiescence rule.</strong> Servers are keyed per root and language (<code>preload_languages_by_root</code>, <code>:1676</code>), so several can run at once, and the stop paths found are all <em>explicit</em> — triggered by a root change, a language change, or shutdown. Nothing observed stops a server that has simply gone idle.</p>
+<p style="margin:6px 0 0">Compare the project's own rule for ACP runtimes: once a turn and all its related work are quiescent, <code>suspend_if_quiescent</code> detaches the session and stops the sidecar process group when its pool has no other members. Language servers have no equivalent. A server started for a project the reader has stopped looking at stays resident with its full index.</p>
+</div>
+
+<h4>Investigate before designing</h4>
+<ol>
+<li>Confirm the gap. Search <code>lsp.rs</code> for any idle timer or activity-driven stop; <code>LanguageServerActivity</code> (<code>:428</code>) already tracks activity per key and may be the hook a quiescence rule would hang from. Do not assume it is absent because this pass did not find it.</li>
+<li>Measure per server: RSS of each language-server process tree, with one project open and then several, idle and during a burst of edits. Distinguish steady-state index size from working set during a parse.</li>
+<li>Count concurrent servers in a realistic session. Servers × roots × languages is the multiplier that matters.</li>
+</ol>
+
+<h4>Likely shape of the fix, if the gap is confirmed</h4>
+<ul class="tight">
+<li>Stop a server whose root has had no open file and no request for some interval, reusing the existing <code>stop_servers_for_root</code> path. The next request restarts it, exactly as a suspended ACP session resumes.</li>
+<li>Cap how many servers may run at once, evicting least-recently-used by root.</li>
+<li>Do not preload a language until a file of that language is actually opened, if <code>preload_languages_by_root</code> currently does otherwise.</li>
+</ul>
+<p>Each of these is a lifecycle change to a subsystem the owner depends on. None should be written without the measurements above — a server stopped too eagerly turns every file open into a cold start, which is the failure mode this app exists to avoid.</p>
+
+<h2>10 · Open question, not yet diagnosed</h2>
+<p>Row spacing in the transcript was widened on 2026-08-29 — <code>.turn-row</code> gap 16px&nbsp;→&nbsp;22px (<code>ConversationTimeline.svelte:821</code>), work-row pull &minus;8px&nbsp;→&nbsp;&minus;6px and user margin 12px&nbsp;→&nbsp;16px (<code>TimelineItem.svelte:86-87</code>).</p>
+<p>If the reported symptom was rows <em>overlapping</em> rather than merely tight, that is a virtualisation measurement bug and the spacing change only masks it. Rows are absolutely positioned at <code>transform:translateY(row.start)</code> with heights from <code>measureElement</code> (<code>:679</code>); any row whose real height exceeds its measured height pushes every row below it too high. Unmeasured rows fall back to <code>ROW_MIN_HEIGHT = 44</code> (<code>:138,:166</code>), far short of a real message. Needs eyes on the running app before anyone changes the measurement path.</p>
+
+<h2>11 · Rules every lane on this work carries</h2>
+<ul class="tight">
+<li><strong>KISS.</strong> The smallest diff that makes the named behaviour work. If two designs work, ship the one with fewer moving parts.</li>
+<li><strong>YAGNI.</strong> No code for hypothetical futures. A new interface, config flag, compatibility shim, factory around one call site, drive-by refactor, or speculative caching layer that this spec did not ask for is a defect, not a bonus.</li>
+<li><strong>One way only.</strong> A change is finished when the old path is deleted. No legacy fallback kept "just in case", no feature flag keeping both alive.</li>
+<li><strong>No new UI regression tests.</strong> Nothing asserting on component structure, layout, panels, menus, styling or colour. Tests for logic and data are still expected.</li>
+<li><strong>No CSS <code>:has()</code></strong>, and no Tailwind <code>has-[…]</code>. Banned repo-wide.</li>
+<li><strong>Performance is the product.</strong> Anything animated or periodic must prove it does not add idle cost: near-0% CPU at rest over ~10s, <code>document.getAnimations().length</code> at rest, click-to-interactive under ~350ms.</li>
+<li><strong>Architecture page.</strong> Any commit changing what <code>main-architecture-explained.html</code> describes updates it in the same commit and adds a change-log row; otherwise the message carries <code>Architecture: unchanged</code>. Enforced by <code>.githooks/commit-msg</code>.</li>
+<li><strong>Commits</strong> end with <code>Committed-by: &lt;name&gt;</code>. Never a co-author trailer.</li>
+<li>Exceeding roughly twice the stated diff size, or needing a file this spec did not name, means stop and send back a one-paragraph proposal.</li>
+</ul>
+
+<h2>12 · Order of work</h2>
+<ol>
+<li><strong>Phase 1</strong> and <strong>Phase 2</strong> in parallel — different files, no overlap.</li>
+<li>Measure. If RSS still climbs after Phase 1, the culprit is outside the conversation store and the next step is a heap snapshot, not more refactoring.</li>
+<li>Lower <code>ACTIVE_EVENT_WINDOW_EVENTS</code> once Phase 2 is green.</li>
+<li><strong>Phase 3</strong>, then <strong>Phase 4</strong>.</li>
+<li><strong>Phase 5</strong> is independent of all of the above and can be measured at any time; it needs its counters read before any code changes.</li>
+<li><strong>Phase 6</strong> is a small, self-contained Rust fix and can go at any time. Doing it early makes every later measurement cleaner, because diff payloads stop distorting the event window.</li>
+<li><strong>Phase 7</strong> has not been measured at all. Turn the language server on, measure by process, and re-rank everything above against that number before committing to an order.</li>
+</ol>
+
+</div>
+</body>
+</html>

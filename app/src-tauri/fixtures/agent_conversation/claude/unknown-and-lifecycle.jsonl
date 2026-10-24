@@ -1,0 +1,10 @@
+{"jsonrpc":"2.0","id":10,"method":"initialize","params":{"protocolVersion":1}}
+{"jsonrpc":"2.0","id":10,"result":{"agentInfo":{"name":"claude-agent-acp-fixture","version":"0.23.1"},"agentCapabilities":{"sessionCapabilities":{"resume":true}},"sessionConfigOptions":[{"id":"future-claude-option","label":"Future Claude option","category":"claude.future","value":{"nested":["preserved",3]},"vendorField":"kept"}]}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"claude-session-fixture","update":{"sessionUpdate":"future_update","future":"kept","nested":{"answer":42}}}}
+{"jsonrpc":"2.0","id":11,"method":"session/load","params":{"sessionId":"claude-session-fixture","cwd":"/tmp/assembly-claude-fixture"}}
+{"jsonrpc":"2.0","id":11,"result":{"configOptions":[{"id":"future-claude-option","label":"Future Claude option","category":"claude.future","value":{"nested":["preserved",3]},"vendorField":"kept"}]}}
+{"jsonrpc":"2.0","id":12,"method":"session/resume","params":{"sessionId":"claude-session-fixture","cwd":"/tmp/assembly-claude-fixture"}}
+{"jsonrpc":"2.0","id":12,"result":{"configOptions":[{"id":"future-claude-option","label":"Future Claude option","category":"claude.future","value":{"nested":["preserved",3]},"vendorField":"kept"}]}}
+{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"claude-session-fixture","turnId":"turn-old"}}
+{"jsonrpc":"2.0","id":13,"method":"session/close","params":{"sessionId":"claude-session-fixture"}}
+{"jsonrpc":"2.0","id":13,"result":{}}

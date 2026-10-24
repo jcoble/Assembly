@@ -1,0 +1,4 @@
+{"type":"event_msg","payload":{"type":"turn_started","turn_id":"historical-turn"}}
+{"type":"event_msg","payload":{"type":"approval_requested","request_id":"historical-approval"}}
+{"type":"response_item","payload":{"type":"function_call","id":"tool-running","status":"in_progress"}}
+{"type":"response_item","payload":{"type":"message","id":"durable-message","role":"assistant","content":[{"type":"output_text","text":"durable only"}]}}

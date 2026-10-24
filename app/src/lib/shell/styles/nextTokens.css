@@ -1,0 +1,310 @@
+/* ============================================================
+ * nextTokens.css — the /next shell's colors, expressed in the
+ * SAME token names the shared UI kit already reads.
+ *
+ * WHY THIS FILE EXISTS
+ * The shared components (Dialog, Tabs, Select, Slider, Switch,
+ * Button) are painted entirely
+ * from the `--color-*` / `--shadow-*` names defined in
+ * `src/lib/styles/tokens.css`. That file is loaded for the whole
+ * app and carries the OLD shell's palette (#17191e greys), which
+ * is shared with the old page and must not change. So instead of
+ * restyling those components, this file re-points the same names
+ * at the /next palette wherever the /next shell is on screen.
+ * Drop a shared component into /next and it comes out in the
+ * /next colors with no edits.
+ *
+ * WHERE IT APPLIES (both selectors are needed)
+ *   .next-shell               — the shell element and everything
+ *                               rendered inside it.
+ *   :root.next-shell-document — the explicit route-state class installed by
+ *                               `/next` while the shell is mounted. Dialogs, menus
+ *                               and popovers from bits-ui are moved
+ *                               ("portaled") to the end of <body>,
+ *                               OUTSIDE .next-shell, so a rule
+ *                               scoped to .next-shell alone would
+ *                               never reach the settings dialog.
+ *                               /next and the old page are separate
+ *                               routes and never mounted together,
+ *                               so this cannot recolor the old shell.
+ * The route owns that class at the same point it owns theme setup and teardown;
+ * no relational selector is registered against every DOM mutation.
+ *
+ * SCOPE: colors, elevation, and the /next shell's three-step corner scale.
+ * Spacing, font sizes, and weights remain shared with the old shell. Shape is
+ * scoped here so softening /next cannot silently reshape the legacy route.
+ * Most names below already exist in tokens.css. The semantic interaction
+ * and status names are owned by the /next theme registry until the old shell
+ * adopts them deliberately. The shipped Assembly palette is a dark surface ladder:
+ * surfaces carry hierarchy, while controls use fills and focus rings instead
+ * of bright outlines. Contrast is a property of semantic roles, not a
+ * separate high-contrast theme.
+ * ============================================================ */
+
+:is(:root.next-shell-document, .next-shell) {
+  /* ------------------------------------------------------------------
+   * Background layers — the /next shell's surface ladder.
+   *   bg       the quiet shell backdrop.
+   *   surface  a raised sheet for panel bodies and active tabs.
+   *   elevated the quiet fill ON a panel: the composer, inputs, the
+   *            island track, cards and badges (shadcn's --muted).
+   *   rail     the sessions rail (shadcn's --sidebar).
+   *   overlay  menus, tooltips and dialogs, one step above everything.
+   * Hover (--color-hover) and selected (--color-selected) sit above
+   * elevated, so no stock shadcn surface vanishes into its panel.
+   * The values are intentionally close, opaque grays: depth comes from
+   * layering and spacing, not a grid of bright outlines.
+   * ------------------------------------------------------------------ */
+  --color-bg: #000000;
+  --color-surface: #121212;
+  --color-elevated: #1f1f1f;
+
+  --color-rail: #121212;
+  --color-overlay: #282828;
+
+  /* ------------------------------------------------------------------
+   * Text hierarchy — primary carries body copy; the secondary and tertiary
+   * tiers carry metadata and remain readable at the 3:1 secondary floor.
+   * Disabled labels have their own token so their state is intentional.
+   * ------------------------------------------------------------------ */
+  --color-text: #f5f5f5;
+  --color-text-2: #a7a7a7;
+  --color-text-3: #6e6e6e;
+  --color-disabled-text: #6e6e6e;
+  --secondary-label: var(--color-text-3);
+
+  /* Shared shell insets keep dense rows and floating detail surfaces aligned. */
+  --rail-content-inset: 12px;
+  --rail-row-content-inset: 4px 11px 4px 13px;
+  --floating-content-inset: 14px 15px 13px;
+  --floating-row-gap: 9px;
+
+  /* ------------------------------------------------------------------
+   * Accent, hairlines and the focus tint.
+   * Assembly has one green accent. Borders are surface hairlines,
+   * not text or status indicators, so they stay quiet; focus and selected
+   * states carry the stronger green signal.
+   * ------------------------------------------------------------------ */
+  --color-accent: #1ed760;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-field-border: rgba(255, 255, 255, 0.1);
+  --color-focus: rgba(30, 215, 96, 0.45);
+  --color-focus-solid: #1ed760;
+
+  /* A field says it has focus with its own edge, not with a halo drawn
+     around it: the border colour takes the accent and nothing moves or grows.
+     Buttons and rows keep the ring above — they have no edge to change. */
+  --focus-border: color-mix(in srgb, var(--color-accent) 60%, transparent);
+
+  /* Interaction surfaces are opaque so text contrast is deterministic. */
+  --color-selected: #2f2f2f;
+  --color-selected-border: #1ed760;
+  --color-hover: #242424;
+  --row-selected: color-mix(in srgb, var(--color-accent) 7%, transparent);
+
+  /* Panel fade — an image layer painted over each panel's surface. The
+     Assembly look is flat surface tone, so it is empty; the name stays
+     because the panels still read it. */
+  --panel-fade: none;
+
+  /* ------------------------------------------------------------------
+   * Status tones — live is blue and good is green so running and done
+   * never collapse into the same signal. Idle is opaque so its computed
+   * contrast remains stable on every interaction surface.
+   * ------------------------------------------------------------------ */
+  --color-live: #6fb6ff;
+  --color-good: #1ed760;
+  --color-bad: #f15e6c;
+  --color-attention: #f3c969;
+  --color-idle: #a7a7a7;
+  /* A merged pull request, in GitHub's purple so it reads the same as there. */
+  --color-merged: #a371f7;
+  --color-status-idle: #a7a7a7;
+
+  /* ------------------------------------------------------------------
+   * Derived color — text printed on top of the accent, plus translucent
+   * status fills. Each fill is its status tone at low opacity.
+   * ------------------------------------------------------------------ */
+  --color-on-accent: #06140b;
+  --color-live-bg: rgba(111, 182, 255, 0.12);
+  --color-good-bg: rgba(30, 215, 96, 0.12);
+  --color-bad-bg: rgba(241, 94, 108, 0.12);
+  --color-bad-bg-strong: rgba(241, 94, 108, 0.2);
+  --color-attention-bg: rgba(243, 201, 105, 0.12);
+
+  /* ------------------------------------------------------------------
+   * Focus ring — same shorthand as tokens.css, restated here so it
+   * picks up the /next focus tint above.
+   * ------------------------------------------------------------------ */
+  --focus-ring: 0 0 0 2px var(--color-focus);
+
+  /* ------------------------------------------------------------------
+   * Elevation — drop shadows and the dimming layer behind a dialog.
+   * Diffused over tokens.css: larger footprints preserve depth while lower
+   * opacity keeps overlays from looking cut out against the quiet backdrop.
+   * ------------------------------------------------------------------ */
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.16);
+  --shadow-lg: 0 16px 42px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.2);
+  --shadow-thumb: 0 1px 4px rgba(0, 0, 0, 0.3);
+  --shadow-thumb-sm: 0 1px 3px rgba(0, 0, 0, 0.26);
+  --color-scrim: rgba(0, 0, 0, 0.6);
+  /* Selected text: a highlighter pink that stands out from every surface. */
+  --color-text-selection: rgba(255, 56, 152, 0.6);
+
+  /* Shape — 4 for tree rows, 6 for tabs and rows, 8 for panels and cards,
+     12 for the composer and popovers, plus the capsule every control,
+     chip and single-line input is cut to. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Spacing — the six steps every panel measures itself in. 4 is the gap
+     inside a control, 8 between a label and its value, 12 between rows, 16
+     between cards, and 24 / 32 for the air that separates whole sections.
+     Anything that needs a number reaches for one of these rather than
+     inventing a value. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Type — three sizes carry everything a person reads: the heading that
+     names a card or a section, the body copy under it, and the quieter
+     line of metadata beside that. The old 11 and 12px sizes stay for
+     small-caps group labels only. */
+  --text-heading: 16px;
+  --text-heading-weight: 700;
+  --text-body: 14px;
+  --text-quiet: 13px;
+
+  /* ------------------------------------------------------------------
+   * Menu sheets — one look for every menu the shell opens from a control:
+   * the composer's add menu, its approvals chip, its model chip and that
+   * chip's submenus, and the narrow-width overflow menu. The shared
+   * dropdown primitive is painted from these names, so all of them move
+   * together and none of them states a colour of its own.
+   *
+   * The sheet is mixed out of the theme's own text and surface colours
+   * rather than named as a grey, which is what lets a theme repaint it.
+   * ------------------------------------------------------------------ */
+  --menu-sheet-surface: color-mix(in srgb, var(--color-text) 7%, var(--color-surface));
+  --menu-sheet-radius: var(--radius-lg);
+  --menu-sheet-inset: 6px;
+  --menu-sheet-min-width: 240px;
+  --menu-label-inset: 6px 10px 3px;
+  --menu-row-radius: var(--radius-sm);
+  --menu-row-inset: 7px 10px;
+  --menu-row-gap: 10px;
+  --menu-row-hover: color-mix(in srgb, var(--color-text) 9%, transparent);
+  --menu-row-active: var(--color-hover);
+  --menu-row-description-gap: 2px;
+  --menu-separator-inset: 5px;
+
+  /* ------------------------------------------------------------------
+   * The message composer — the capsule at the foot of a conversation, and
+   * the row of controls along its bottom edge.
+   *
+   * Empty, it is a single capsule line. With something in it, the box
+   * relaxes to a rounded rectangle and the message takes a line of its
+   * own above the controls, so the two radii are separate values: the
+   * box eases between them as the message grows.
+   * ------------------------------------------------------------------ */
+  /* The capsule sits LIGHTER than the page it floats on, which is what makes
+     it read as a raised control rather than a well cut into the backdrop. */
+  --composer-surface: var(--color-elevated);
+  --composer-surface-drop: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+  --composer-border: color-mix(in srgb, var(--color-border) 82%, transparent);
+  --composer-border-locked: color-mix(in srgb, var(--color-attention) 30%, var(--color-border));
+  --composer-border-focus: color-mix(in srgb, var(--color-text) 28%, var(--color-border));
+  --composer-radius-capsule: var(--radius-pill);
+  --composer-radius-relaxed: var(--radius-lg);
+  --composer-inset: 9px;
+  /* How far the transcript takes to dissolve into the bar. The composer area
+     reserves exactly this much room above the box and spends all of it on the
+     ramp, so the fade is long and soft rather than a cut at the bar's edge. */
+  --composer-fade: 72px;
+  --composer-prompt-inset: 4px 8px 2px;
+  --composer-prompt-inset-capsule: 0 6px;
+  --composer-row-gap: 6px;
+  --composer-control-size: 34px;
+  --composer-meter-inset: 4px 8px;
+  --composer-attachment-inset: 6px;
+  --composer-attachment-surface: color-mix(in srgb, var(--color-bg) 62%, var(--color-surface));
+  --composer-attachment-border: color-mix(in srgb, var(--color-border) 76%, transparent);
+  --composer-attachment-scrim: color-mix(in srgb, var(--color-bg) 88%, transparent);
+
+  /* A control on the composer's row — the add button, the mic, and the
+     approvals and model chips — is one pill in three states.
+     Rest carries NO fill: the controls read as marks on the composer's own
+     surface. The fill is what says "this control's menu is the one on
+     screen", so giving it away at rest would leave the open state with
+     nothing to say. */
+  --composer-pill-surface: transparent;
+  --composer-pill-surface-hover: color-mix(in srgb, var(--color-text) 9%, transparent);
+  --composer-pill-surface-open: color-mix(in srgb, var(--color-text) 16%, transparent);
+  --composer-pill-text: var(--color-text-2);
+  --composer-pill-text-open: var(--color-text);
+  --composer-pill-inset: 7px 12px;
+  --composer-pill-gap: 5px;
+
+  /* ------------------------------------------------------------------
+   * Pill tabs — the capsule row that names the centre pane's surface.
+   * The group floats over whatever surface it names, so a rest pill is
+   * mixed INTO the surface rather than laid over it as a wash: over code
+   * or a transcript a translucent fill let the content read through and
+   * the labels came apart. Both tab strips share one white-16% selector, which
+   * makes "which surface am I on" answerable without competing with status
+   * colours such as green, amber, or red.
+   * ------------------------------------------------------------------ */
+  --segmented-tab-active: color-mix(in srgb, var(--color-text) 16%, transparent);
+  --segmented-tab-surface: color-mix(in srgb, var(--color-text) 7%, var(--color-elevated));
+  --pill-surface: var(--segmented-tab-surface);
+  --pill-surface-hover: color-mix(in srgb, var(--color-text) 18%, var(--color-surface));
+  --pill-surface-active: var(--segmented-tab-active);
+  --pill-text-active: var(--color-text);
+
+  /* ------------------------------------------------------------------
+   * The language switch that travels with those pills. Its knob POSITION
+   * says what was asked for; its track COLOUR says what is actually true,
+   * so the two are separate values and never collapse into one.
+   * ------------------------------------------------------------------ */
+  --switch-track-off: color-mix(in srgb, var(--color-idle) 36%, var(--color-surface));
+  --switch-track-waiting: var(--color-attention);
+  --switch-track-running: var(--color-good);
+  --switch-knob: var(--color-text);
+
+  /* The height of the editor's row of file tabs. Read by the row itself so it
+     cannot drift from what anything else assumes about it. */
+  --editor-tab-row-height: 35px;
+
+  /* The center surface capsule now lives in the window chrome. Content no
+     longer reserves an overlay inset for it. */
+  --center-head-row-height: 42px;
+
+
+  /* ------------------------------------------------------------------
+   * Provider marks. Each is the colour the vendor publishes its own mark
+   * in, read off the vendor's own file rather than matched by eye:
+   * Anthropic's clay orange fills claude.ai/favicon.svg, and the blue is
+   * the disc behind the blossom in developers.openai.com/favicon.svg.
+   * Providers with no official mark keep the theme's own text colour.
+   * ------------------------------------------------------------------ */
+  --agent-mark-claude: #d97757;
+  --agent-mark-codex: #0080f7;
+
+  /* A right-click menu is lighter than everything under it, so it reads as a
+     sheet laid on top rather than a hole cut into the surface. */
+  --menu-surface: var(--color-overlay);
+
+  /* Scrollbars — one thin style for every scrolling surface in the shell.
+     Native scrolling, styled: the transcript's virtualiser measures real
+     scroll offsets, so a synthetic scrollbar would fight it. */
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: color-mix(in srgb, var(--color-text) 18%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--color-text) 30%, transparent);
+}

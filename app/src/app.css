@@ -1,0 +1,640 @@
+@import './lib/styles/tokens.css';
+@import './lib/styles/fonts.css';
+
+/* ============================================================
+ * Global baseline — Assembly
+ * Modern, minimal, spacious defaults built on the design tokens.
+ * Component-specific styling lives with its component, not here.
+ * ============================================================ */
+
+/* ------------------------------------------------------------------
+ * Box model + color scheme reset
+ * ------------------------------------------------------------------ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Clean, native UI font stack for chrome/interface text.
+     The system face leads deliberately. Interface text here sits at 13-14px on
+     a near-black ground, and macOS hints its own UI face for exactly that; a
+     geometric webfont draws the same sizes with rounder bowls and flatter stems
+     and reads soft next to it. */
+  font-family: var(--font-ui);
+  /* 1rem stays 16px so every rem size (the type scale, 24/28/32 controls)
+     comes out as written; body text is set to 14px on <body> below. */
+  font-size: 16px;
+  line-height: 1.5;
+
+  background: var(--color-bg);
+  color: var(--color-text);
+
+  /* Grayscale smoothing was thinning every glyph against the dark background,
+     which is most of why small interface text read badly. The default keeps the
+     stems the weight the typeface actually draws them. */
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  /* Hidden scrollbars (Firefox / standards side of the rule above). */
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+
+/* ------------------------------------------------------------------
+ * Document + body
+ * ------------------------------------------------------------------ */
+html {
+  height: 100%;
+}
+
+body {
+  min-width: 900px;
+  min-height: 100dvh;
+  margin: 0;
+  overflow: hidden;
+  /* The window is the theme's flat backdrop; panels separate by tone. */
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-md);
+  line-height: inherit;
+}
+
+/* ------------------------------------------------------------------
+ * Typographic reset — strip stray default margins.
+ * Inherit type by default so the app font stack flows everywhere.
+ * ------------------------------------------------------------------ */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: var(--weight-semibold);
+  line-height: 1.25;
+}
+
+/* Inherit type into form controls so nothing falls back to UA defaults. */
+button,
+input,
+select,
+textarea,
+optgroup {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* Media should never overflow its container. */
+img,
+picture,
+svg,
+video,
+canvas {
+  display: block;
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------------
+ * Text selection — a highlighter color each theme sets.
+ * ------------------------------------------------------------------ */
+::selection {
+  background: var(--color-text-selection);
+  color: var(--color-text);
+}
+
+/* ------------------------------------------------------------------
+ * App chrome is NOT text-selectable (standard IDE-shell behavior).
+ * A pointer drag on the chrome — splitter resize, panel/tab drag, even a
+ * stray click-drag — must never sweep a native TEXT SELECTION across the
+ * UI. On the native macOS WKWebView that selection renders in the teal
+ * `::selection` color above = the "green flash". WKWebView also IGNORES
+ * unprefixed `user-select`, so the `-webkit-` prefix is required (Chrome
+ * honored the unprefixed form, which is why it never reproduced on web).
+ * A drag-only scope via dockview drag classes missed because not every
+ * splitter carries one — this blanket chrome rule is the robust fix.
+ * Content surfaces opt back in below so copying from them still works.
+ * Surfaced after the +page.svelte extraction.
+ * ------------------------------------------------------------------ */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable='true'],
+.selectable,
+[data-selectable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ------------------------------------------------------------------
+ * Focus — single, visible, token-driven ring.
+ * Drop the UA outline only where our ring already shows focus,
+ * so keyboard users always keep a clear indicator.
+ * ------------------------------------------------------------------ */
+:focus-visible:not([data-testid='conversation-composer-input']) {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* A field is the exception, and only inside the /next shell: it says it has
+   focus by turning its own border the accent colour (`--focus-border`) rather than by
+   drawing a ring around itself. The ring above still carries buttons, rows
+   and menu items, which have no edge of their own to change. */
+:root.next-shell-document :is(input, textarea):focus-visible {
+  box-shadow: none;
+}
+
+/* Never strip focus styling for users without :focus-visible support. */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ------------------------------------------------------------------
+ * Scrollbars — hidden everywhere. They took up real width down the side
+ * of every list and across the bottom of the center, and read as chrome
+ * bolted onto the panels. Scrolling itself is untouched: wheel, trackpad,
+ * keyboard and programmatic scrolling all behave exactly as before.
+ * WebKit/Blink here; the standards property is set on :root above.
+ * ------------------------------------------------------------------ */
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Except the middle. That is the one surface long enough that losing the
+   position indicator hurts — a conversation can run for hours and there is no
+   other clue how far up it you are. Thin, and only while the pointer is over
+   it, so it stays out of the way the rest of the time. */
+.shell-region-host-center ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.shell-region-host-center ::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  transition: background-color 160ms ease;
+}
+
+.shell-region-host-center *:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+.shell-region-host-center *:hover::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.32);
+}
+
+/* ------------------------------------------------------------------
+ * Accessibility helper — visually hidden, screen-reader available.
+ * ------------------------------------------------------------------ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ------------------------------------------------------------------
+ * BrowserPanel — Dockview shell ancestor combos.
+ *
+ * These select on `.source-dockview-*-shell` hosts that BrowserPanel does NOT
+ * render, so they cannot be scoped inside the component (a child can't scope an
+ * ancestor it doesn't own). They live here as `:global` instead. Extracted from
+ * `+page.svelte` with the BrowserPanel markup. The matching terminal-launchpad
+ * shell rules stay in `+page.svelte` (the terminal is not extracted in 0b).
+ * ------------------------------------------------------------------ */
+.source-dockview-workbench-shell .source-dockview-attached-panel.browser-dock,
+.source-dockview-center-shell .source-dockview-attached-panel.browser-dock {
+  flex: 1 1 0;
+  align-self: stretch;
+  width: 100%;
+  height: 100% !important;
+  min-height: 0;
+  max-height: none;
+  margin-top: 0;
+}
+
+.source-dockview-workbench-shell .source-dockview-attached-panel.browser-dock,
+.source-dockview-center-shell .source-dockview-attached-panel.browser-dock {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.source-dockview-workbench-shell .browser-frame-wrap,
+.source-dockview-workbench-shell .browser-frame,
+.source-dockview-center-shell .browser-frame-wrap,
+.source-dockview-center-shell .browser-frame {
+  height: 100% !important;
+  min-height: 0;
+}
+
+.source-dockview-bottom-shell .browser-dock {
+  flex: 0 0 auto;
+  height: var(--bottom-dock-height);
+  min-height: 96px;
+  margin-top: 6px;
+}
+
+/* ------------------------------------------------------------------
+ * ActivityWorktreesPanel — .activity-panel-list ancestor combos.
+ *
+ * Open-menu reflow rules whose selectors include `.activity-panel-list` — the
+ * container is rendered by `+page.svelte` (it stays in the page; the panel
+ * renders its body inline), so a child can't scope an ancestor it doesn't own.
+ * They live here as global rules (same pattern as the BrowserPanel dock shells
+ * above). Extracted from `+page.svelte` with the ActivityWorktreesPanel markup;
+ * the worktree arms were the only ones removed from the page's shared multi-panel
+ * `.menu-open` groups — the other panels' arms stay in `+page.svelte`.
+ * ------------------------------------------------------------------ */
+.activity-panel-list .activity-worktree-row.menu-open {
+  align-items: start;
+}
+
+.activity-panel-list .worktree-activity-actions.menu-open {
+  display: contents;
+}
+
+.activity-panel-list .worktree-activity-actions.menu-open > button {
+  grid-column: 3;
+  grid-row: 1;
+  justify-self: end;
+}
+
+/*
+ * The shared `.activity-panel-list .row-action-menu` rule stays scoped in
+ * `+page.svelte` (it serves every activity panel). Scoped there, it can't reach
+ * this component's menu, so the same positioning is restated globally, narrowed
+ * to the worktree row so it does not broaden the shared rule.
+ */
+.activity-panel-list .activity-worktree-row .row-action-menu {
+  position: static;
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-top: -1px;
+}
+
+/* ------------------------------------------------------------------
+ * View-menu + hidden-dock-rail base chrome — shared across components.
+ *
+ * These rules are used by the editor-topbar View menu (`EditorTopbarViewMenu`,
+ * the single View affordance) and the hidden-dock rail (`HiddenDockRail`); the
+ * editor-topbar's `.view-menu-anchor`/`.view-menu-button` markup stays inline
+ * in `+page.svelte`. A scoped copy in a component would hash its selectors and
+ * so would not reach the inline-page elements, so the shared base lives here as
+ * global rules. The only workbench-specific modifier still in use is
+ * `.workbench-hidden-dock-panel-rail`, scoped inside `HiddenDockRail`.
+ * Moved verbatim from the `+page.svelte` `<style>` block.
+ * ------------------------------------------------------------------ */
+.view-menu-anchor {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+}
+
+.view-menu {
+  position: absolute;
+  z-index: 9;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 8px;
+  width: 270px;
+  min-width: 0;
+  max-height: min(680px, calc(100vh - 104px));
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 9px;
+  background: rgba(22, 25, 25, 0.98);
+  box-shadow: 0 20px 54px rgba(0, 0, 0, 0.36);
+  scrollbar-color: transparent transparent;
+  scrollbar-width: none;
+}
+
+.view-menu-section {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.view-menu-section > span,
+.view-terminal-picker > span {
+  color: #7f8b88;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.view-menu-button-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.view-menu-button-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.view-menu-button-grid button,
+.view-menu-wide-button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 0;
+  height: 25px;
+  padding: 0 7px;
+  color: #aab6b2;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 10px;
+  font-weight: 820;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.view-menu-button-grid button:hover,
+.view-menu-button-grid button:focus-visible,
+.view-menu-wide-button:hover,
+.view-menu-wide-button:focus-visible {
+  color: #edf4f2;
+  outline: 0;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.view-menu-button-grid button.active,
+.view-menu-wide-button.active {
+  color: #dffdf8;
+  background: rgba(92, 226, 207, 0.18);
+}
+
+.view-menu-wide-button {
+  width: 100%;
+  justify-content: start;
+}
+
+.hidden-dock-panel-rail {
+  position: absolute;
+  top: 38px;
+  right: 7px;
+  z-index: 18;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  max-height: calc(100% - 76px);
+  padding: 3px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 9px;
+  background: rgba(12, 16, 16, 0.86);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+}
+
+.hidden-dock-panel-button {
+  display: inline-grid;
+  place-items: center;
+  grid-template-columns: 20px;
+  min-width: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  overflow: hidden;
+  color: #aeb8b5;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  font: inherit;
+  cursor: pointer;
+}
+
+.hidden-dock-panel-button span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hidden-dock-panel-button:hover,
+.hidden-dock-panel-button:focus-visible {
+  color: #dffdf8;
+  border-color: rgba(92, 226, 207, 0.32);
+  outline: 0;
+  background: rgba(92, 226, 207, 0.1);
+}
+
+/* ------------------------------------------------------------------
+ * .file-action-button — shared icon/text action button chrome.
+ *
+ * Used across multiple surfaces: the editor toolbar + terminal launchpad
+ * (rendered by `+page.svelte`), the Browser dock (`BrowserPanel.svelte`), and
+ * the clipboard activity panel (`ActivityClipboardPanel.svelte`). The base rule
+ * was previously copied verbatim into each of those scopes; it lives here once
+ * as `:global` so every surface shares it. Compound overrides that qualify the
+ * button with a component-rendered ancestor (e.g. `.browser-dock-actions
+ * .file-action-button`, `.terminal-launchpad-actions .file-action-button`) stay
+ * scoped in their component — they are more specific and still layer on top.
+ * Moved verbatim from the `+page.svelte` `<style>` block.
+ * ------------------------------------------------------------------ */
+.file-action-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  color: #b9c5c1;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  cursor: pointer;
+}
+
+.file-action-button:hover {
+  color: #f2f6f5;
+  background: rgba(92, 226, 207, 0.1);
+}
+
+.file-action-button:focus-visible {
+  border-color: rgba(92, 226, 207, 0.58);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(92, 226, 207, 0.13);
+}
+
+.file-action-button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+/* ------------------------------------------------------------------
+ * Shared activity-row chrome — base rules used by BOTH the activity
+ * panels in `+page.svelte` (sessions / agents / runs / repos / commits /
+ * task-ledger rows) AND `ActivityWorktreesPanel.svelte`. The page `<style>`
+ * is scoped, so its copies could not reach the worktree rows the panel now
+ * authors; the panel had copied each rule verbatim. These BARE bases live
+ * here once as `:global`.
+ *
+ * Only the bare bases are globalized. Descendant/compound rules that qualify
+ * these classes (`.activity-row-main strong`, `.activity-row-actions button`,
+ * `.row-action-menu button`, the `.activity-panel-list .X.menu-open`
+ * reflow rules, the `.activity-panel-list .row-action-menu { position: static }`
+ * override, and the `.git-task-link` ancestor combos) stay scoped where they
+ * are — they layer on top of these globals and several are grouped with
+ * surface-only sibling classes. Moved verbatim from the respective `<style>`
+ * blocks (page + ActivityWorktreesPanel; identical bodies).
+ * ------------------------------------------------------------------ */
+.activity-row-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.activity-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-width: 0;
+}
+
+.row-action-menu-anchor {
+  position: relative;
+  overflow: visible;
+}
+
+.row-action-menu {
+  position: absolute;
+  z-index: 14;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  width: 196px;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-radius: 8px;
+  background: rgba(21, 24, 24, 0.98);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+}
+
+.git-task-link {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 19px;
+  padding: 0 6px;
+  color: #071b18;
+  border-radius: 999px;
+  background: #6fdfcf;
+  font-size: 8.5px;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------
+ * .icon-button — shared square icon-button chrome for the activity
+ * sidebar's project header (the +/search/remove controls now rendered by
+ * `ActivityProjectControls.svelte`). The base previously lived in the
+ * `+page.svelte` `<style>`, split across the grouped `select, .scan-button,
+ * .icon-button, .form-button` base/focus rules; it lives here once as a global
+ * so the extracted component shares it without duplication. The page keeps its
+ * own `select` base (still used by the terminal-app picker). The narrow
+ * `@container` arm queries the page-owned `.sidebar` (container-type:
+ * inline-size). Moved verbatim from the `+page.svelte` `<style>` block.
+ * ------------------------------------------------------------------ */
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  min-width: 0;
+  padding: 0;
+  color: var(--color-text-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  color: var(--color-text);
+  background: var(--color-live-bg);
+}
+
+.icon-button:focus-visible {
+  border-color: var(--color-focus);
+  box-shadow: var(--focus-ring);
+}
+
+.icon-button.danger {
+  width: 28px;
+  height: 28px;
+  color: var(--color-bad);
+  border-radius: var(--radius-md);
+}
+
+.icon-button.danger:hover {
+  background: var(--color-bad-bg);
+}
+
+@container (max-width: 330px) {
+  .icon-button {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+  }
+}

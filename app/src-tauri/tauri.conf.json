@@ -1,0 +1,100 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Assembly",
+  "version": "0.1.6",
+  "identifier": "dev.blackcolours.MacCommandBarWebviewPreview",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://127.0.0.1:5177/",
+    "frontendDist": "../build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Assembly",
+        "width": 1600,
+        "height": 1000,
+        "minWidth": 900,
+        "minHeight": 600,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "url": "/",
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/conversation-attachments/**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "app",
+    "resources": [],
+    "fileAssociations": [
+      {
+        "ext": [
+          "md",
+          "markdown",
+          "txt",
+          "json",
+          "yaml",
+          "yml",
+          "toml",
+          "cs",
+          "ts",
+          "tsx",
+          "js",
+          "jsx",
+          "svelte",
+          "rs",
+          "py",
+          "go",
+          "java",
+          "kt",
+          "swift",
+          "html",
+          "css",
+          "sh",
+          "sql",
+          "xml",
+          "csproj",
+          "sln"
+        ],
+        "name": "Document or source file",
+        "role": "Editor",
+        "rank": "Alternate"
+      }
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "assembly"
+        ]
+      }
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlFNEY5NDczNkUwMkJEMTkKUldRWnZRSnVjNVJQbnA5eE84K1Y5cHBFM2NDaW9kRUZIUFlxSnBJTU1WUmhBbmF4bzB1ZHA4eGgK",
+      "endpoints": [
+        "https://github.com/jcoble/mac-command-bar/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

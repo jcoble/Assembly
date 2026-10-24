@@ -1,0 +1,42 @@
+/* ============================================================
+ * themeChrome.css — four colors the dock needs that the shared
+ * token file has no name for.
+ *
+ * WHY THIS FILE EXISTS
+ * dockview paints itself from its own `--dv-…` names, and those
+ * were set to colors typed straight into the shell components,
+ * which is why the dock never followed a theme. Pointing them at
+ * `var(--color-…)` fixes that — except for four tones that exist
+ * nowhere in `tokens.css` or `nextTokens.css`: a semantic header text,
+ * the ring dockview
+ * draws around the section you are working in, and the two tones
+ * a visible tab takes when its group is not the focused one.
+ *
+ * They are declared here, rather than added to `nextTokens.css`,
+ * for two reasons. That file's rule is that it only re-points
+ * names the shared components already read, and these four are
+ * new. And this file must be reachable from the /next page BEFORE
+ * any theme has been applied, so the dock is right on the very
+ * first frame instead of flashing an unpainted edge.
+ *
+ * The values below are the default Assembly theme's.
+ * `themeRegistry.ts` holds the same four values for Assembly, and `scripts/themeRegistry.test.mjs` fails if the
+ * two ever disagree.
+ *
+ * Same two selectors as nextTokens.css, and for the same reason:
+ * the shell element, plus the whole document while the shell is
+ * mounted, because menus and dialogs are moved outside it.
+ * ============================================================ */
+
+:is(:root.next-shell-document, .next-shell) {
+  /* Sidebar section headers ("EXPLORER", "OUTLINE"), and the ring
+     dockview draws around the section that has focus. */
+  --color-section-header-text: #a7a7a7;
+  --color-section-focus-ring: #1ed760;
+
+  /* A tab that is showing, in a group you are not working in: the
+     panel colour, so it still reads as attached to its pane, with
+     quieter text than the focused group's tab. */
+  --color-tab-unfocused-surface: #121212;
+  --color-tab-unfocused-text: #a7a7a7;
+}

@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mac Command Bar — Extension Integration Review</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0e12;
+      --panel: #12171d;
+      --panel-2: #171e26;
+      --line: #27313d;
+      --text: #edf2f7;
+      --muted: #9aa7b5;
+      --aqua: #66e3c4;
+      --blue: #72a7ff;
+      --gold: #e8be65;
+      --rose: #ff849f;
+      --green-bg: #102820;
+      --red-bg: #2b171d;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 90% -10%, rgba(102, 227, 196, .09), transparent 30rem),
+        radial-gradient(circle at -5% 25%, rgba(114, 167, 255, .07), transparent 28rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.55 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--aqua); text-decoration-color: rgba(102, 227, 196, .45); }
+    a:hover { text-decoration-color: currentColor; }
+    code { font: .92em ui-monospace, SFMono-Regular, Menlo, monospace; color: #bfd7ff; }
+    .shell { width: min(1180px, calc(100% - 38px)); margin: 0 auto; padding: 54px 0 80px; }
+    header { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 28px; margin-bottom: 32px; }
+    .eyebrow { color: var(--aqua); font: 700 12px/1.2 ui-monospace, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 820px; margin: 11px 0 14px; font-size: clamp(36px, 6vw, 68px); line-height: .98; letter-spacing: -.045em; }
+    .lede { max-width: 760px; margin: 0; color: #c4ced8; font-size: 18px; }
+    .stamp { border: 1px solid var(--line); background: rgba(18, 23, 29, .75); padding: 10px 13px; color: var(--muted); font: 12px/1.4 ui-monospace, monospace; }
+    .decision {
+      padding: 24px 26px; border: 1px solid rgba(102, 227, 196, .32); border-left: 4px solid var(--aqua);
+      border-radius: 0 14px 14px 0; background: linear-gradient(100deg, var(--green-bg), var(--panel));
+      margin-bottom: 28px;
+    }
+    .decision strong { display: block; margin-bottom: 7px; font-size: 18px; }
+    nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 42px; }
+    nav a { border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; color: #c4ced8; text-decoration: none; background: rgba(18, 23, 29, .72); }
+    nav a:hover { border-color: var(--aqua); color: var(--text); }
+    section { margin-top: 52px; scroll-margin-top: 24px; }
+    h2 { margin: 0 0 7px; font-size: 27px; letter-spacing: -.025em; }
+    .section-intro { max-width: 800px; color: var(--muted); margin: 0 0 20px; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .card { border: 1px solid var(--line); background: rgba(18, 23, 29, .9); border-radius: 13px; padding: 18px; }
+    .card h3 { margin: 0 0 7px; font-size: 16px; }
+    .card p { margin: 0; color: var(--muted); }
+    .number { color: var(--aqua); font: 700 12px/1 ui-monospace, monospace; margin-bottom: 12px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 13px; background: rgba(18, 23, 29, .92); }
+    table { width: 100%; min-width: 900px; border-collapse: collapse; }
+    th, td { text-align: left; vertical-align: top; padding: 14px 15px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font: 700 11px/1.25 ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; background: #10151a; }
+    tr:last-child td { border-bottom: 0; }
+    td:first-child { font-weight: 700; min-width: 145px; }
+    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; font: 700 10px/1.4 ui-monospace, monospace; text-transform: uppercase; letter-spacing: .05em; }
+    .yes { color: var(--aqua); background: var(--green-bg); border-color: rgba(102,227,196,.28); }
+    .spike { color: var(--gold); background: #2a2416; border-color: rgba(232,190,101,.27); }
+    .no { color: var(--rose); background: var(--red-bg); border-color: rgba(255,132,159,.26); }
+    .flow { display: grid; grid-template-columns: 1.1fr 34px 1fr 34px 1.15fr; align-items: stretch; }
+    .flow-box { border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 17px; }
+    .flow-box strong { display: block; margin-bottom: 5px; }
+    .flow-box span { color: var(--muted); font-size: 13px; }
+    .arrow { display: grid; place-items: center; color: var(--aqua); font-size: 21px; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .good { border-top: 3px solid var(--aqua); }
+    .bad { border-top: 3px solid var(--rose); }
+    ul, ol { margin: 10px 0 0; padding-left: 20px; }
+    li + li { margin-top: 7px; }
+    .phases { counter-reset: phase; display: grid; gap: 12px; }
+    .phase { display: grid; grid-template-columns: 64px 1fr auto; gap: 16px; align-items: start; border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 17px; }
+    .phase-id { color: var(--aqua); font: 700 12px/1.3 ui-monospace, monospace; }
+    .phase h3 { margin: 0 0 5px; font-size: 16px; }
+    .phase p { margin: 0; color: var(--muted); }
+    .time { white-space: nowrap; color: #c9d3dc; font: 12px/1.3 ui-monospace, monospace; }
+    .gate { margin-top: 12px; color: var(--gold); font-size: 13px; }
+    .sources { columns: 2; column-gap: 28px; }
+    .sources li { break-inside: avoid; }
+    .note { margin-top: 20px; color: var(--muted); font-size: 13px; }
+    footer { margin-top: 54px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+    @media (max-width: 800px) {
+      header { grid-template-columns: 1fr; }
+      .stamp { justify-self: start; }
+      .grid, .split { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: 1fr; gap: 8px; }
+      .arrow { transform: rotate(90deg); }
+      .phase { grid-template-columns: 48px 1fr; }
+      .time { grid-column: 2; }
+      .sources { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">Extension integration review</div>
+        <h1>Use the ecosystem without rebuilding VS Code.</h1>
+        <p class="lede">Mac Command Bar already contains the difficult foundation: one Monaco/VS Code compatibility runtime, an extension-host worker, real file models, and trusted Rust services. The next move is a curated extension layer—not a second editor architecture.</p>
+      </div>
+      <div class="stamp">REPOSITORY REVIEW<br>2026-08-03</div>
+    </header>
+
+    <div class="decision">
+      <strong>Recommendation</strong>
+      Install full extensions only when they are declarative or explicitly browser-compatible. For Git, files, processes, and workspace state, expose the app's existing Rust services through a small VS Code-compatible provider rather than allowing another extension to run a competing backend.
+    </div>
+
+    <nav aria-label="Report sections">
+      <a href="#already">What exists</a>
+      <a href="#matrix">Decision matrix</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#git">Git and diff</a>
+      <a href="#plan">Phased plan</a>
+      <a href="#sources">Sources</a>
+    </nav>
+
+    <section id="already">
+      <h2>The app is already halfway there</h2>
+      <p class="section-intro">This is not plain Monaco. The current dependency and worker setup is specifically designed to run VS Code services and selected extensions.</p>
+      <div class="grid">
+        <article class="card">
+          <div class="number">01</div>
+          <h3>One VS Code-compatible runtime</h3>
+          <p><code>csharpLanguageClient.ts</code> imports the local extension host and starts one global <code>MonacoVscodeApiWrapper</code>. New extensions must attach to it, never initialize another copy.</p>
+        </article>
+        <article class="card">
+          <div class="number">02</div>
+          <h3>Extension worker already wired</h3>
+          <p><code>monacoWorkers.ts</code> routes the extension-host worker. That makes curated local web extensions realistic without introducing a Node process.</p>
+        </article>
+        <article class="card">
+          <div class="number">03</div>
+          <h3>Trusted native services exist</h3>
+          <p>Rust already owns Git, file access, Roslyn lifecycle, validation, and session/workspace boundaries. Extensions should consume these services rather than duplicate them.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="matrix">
+      <h2>Which integration method fits each feature?</h2>
+      <p class="section-intro">“Use an extension” is not one technical choice. The safe method depends on whether the package is declarative, browser-compatible, or depends on desktop Node APIs.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Capability</th><th>Best method</th><th>Decision</th><th>Why</th><th>Expected effort</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Houston theme</td>
+              <td>Use the real theme contribution/assets</td>
+              <td><span class="pill yes">Do now</span></td>
+              <td>Theme JSON is declarative. Use its actual token/workbench colors, then map the same palette into the app shell and terminal. Do not run Houston's extra mascot webview code.</td>
+              <td>0.5–1 day</td>
+            </tr>
+            <tr>
+              <td>Diff viewer</td>
+              <td>Use Monaco/VS Code's native DiffEditor API</td>
+              <td><span class="pill yes">Do now</span></td>
+              <td>The editor engine is already installed. Replace the custom colored unified-diff renderer with paired original/modified file models; retain a small fallback for binary or unavailable content.</td>
+              <td>1–2 days</td>
+            </tr>
+            <tr>
+              <td>Themes, grammars, snippets, keymaps</td>
+              <td>Load full declarative contribution or curated VSIX</td>
+              <td><span class="pill yes">Supported</span></td>
+              <td>These normally do not need Node or shell access. They are the lowest-risk way to prove packaging and extension enable/disable behavior.</td>
+              <td>Hours each after runtime</td>
+            </tr>
+            <tr>
+              <td>Source control API</td>
+              <td>First-party internal extension/provider over Rust Git</td>
+              <td><span class="pill yes">Recommended</span></td>
+              <td>Register a VS Code SCM provider while Rust remains the sole Git authority. This enables standard commands and future extension consumers without running Git twice.</td>
+              <td>2–4 days</td>
+            </tr>
+            <tr>
+              <td>GitLens</td>
+              <td>Full browser extension compatibility spike</td>
+              <td><span class="pill spike">Spike only</span></td>
+              <td>GitLens supplies a browser entry, but repository access, views, storage, authentication, and provider assumptions still need proof. Some advanced features are commercial/account-bound.</td>
+              <td>1–2 day spike</td>
+            </tr>
+            <tr>
+              <td>Git Graph extension</td>
+              <td>Do not embed; keep native Git model and graph UI</td>
+              <td><span class="pill no">Do not use</span></td>
+              <td>It is a workspace-only Node extension with no browser entry, depends on the Git executable, is stale, and its license does not grant ordinary redistribution of derivative works.</td>
+              <td>Not applicable</td>
+            </tr>
+            <tr>
+              <td>Desktop-only extensions</td>
+              <td>Remote/sidecar Node extension host</td>
+              <td><span class="pill no">Defer</span></td>
+              <td>Possible, but it adds a second process platform, filesystem bridge, lifecycle, memory, security, packaging, and update responsibilities. Add only for a proven, high-value need.</td>
+              <td>Weeks, not days</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <h2>Minimal-disruption architecture</h2>
+      <p class="section-intro">One runtime, one workspace identity, one native authority. Extensions add commands and UI contributions; they do not become a parallel application.</p>
+      <div class="flow" role="img" aria-label="Curated extensions flow through one VS Code-compatible runtime into existing Rust services">
+        <div class="flow-box"><strong>Curated extension catalog</strong><span>Declarative VSIX contributions, approved browser extensions, enable state, license metadata</span></div>
+        <div class="arrow">→</div>
+        <div class="flow-box"><strong>One Monaco / VS Code runtime</strong><span>Local web-worker extension host, editor services, active session workspace routing</span></div>
+        <div class="arrow">→</div>
+        <div class="flow-box"><strong>Existing Rust authority</strong><span>Git, files, Roslyn, terminals, permissions, session and workspace isolation</span></div>
+      </div>
+      <div class="split" style="margin-top:14px">
+        <article class="card good">
+          <h3>Add beside the editor</h3>
+          <ul>
+            <li><code>src/lib/shell/extensions/extensionRuntime.ts</code> — attaches registrations to the existing singleton runtime.</li>
+            <li><code>extensionCatalog.ts</code> — explicit allowlist, kind, license, and enable state.</li>
+            <li><code>extensionWorkspace.ts</code> — maps the active session's workspace into the extension API.</li>
+            <li><code>MonacoDiffEditor.svelte</code> — isolated native diff surface.</li>
+          </ul>
+        </article>
+        <article class="card bad">
+          <h3>Do not add to the giant components</h3>
+          <ul>
+            <li>Do not put extension management into the roughly 2,900-line <code>MonacoSourceEditor.svelte</code>.</li>
+            <li>Do not put more Git integration into the multi-thousand-line Rust <code>main.rs</code>; extract a <code>git</code> module when that bridge changes.</li>
+            <li>Do not let a third-party extension spawn Git or Roslyn beside the existing Rust processes.</li>
+            <li>Do not initialize the compatibility layer on every session/workspace switch.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="git">
+      <h2>Git, graph, and diff: use the APIs we already own</h2>
+      <p class="section-intro">The app already has native Git commands for status, history, diff, stage, unstage, commit, fetch, pull, and push. That is more valuable than replacing the backend with an extension.</p>
+      <div class="grid">
+        <article class="card">
+          <div class="number">SCM</div>
+          <h3>Expose Rust Git as a VS Code provider</h3>
+          <p>An internal extension calls <code>vscode.scm.createSourceControl</code>, translates existing stores into resource groups, and forwards actions to Tauri commands. One source of truth, standard extension-facing API.</p>
+        </article>
+        <article class="card">
+          <div class="number">DIFF</div>
+          <h3>Use original and modified models</h3>
+          <p>The current custom diff component parses unified text. Native DiffEditor needs the base file plus the current file; Rust can provide both safely for the selected workspace and revision.</p>
+        </article>
+        <article class="card">
+          <div class="number">GRAPH</div>
+          <h3>Keep the current data path</h3>
+          <p>Continue using the existing Rust history model and graph lanes. A later rendering library may replace only the visual layer, but neither GitLens nor Git Graph should become the repository authority.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="plan">
+      <h2>Recommended sequence</h2>
+      <p class="section-intro">Each phase has an explicit stop condition so an experiment cannot quietly turn into a second IDE platform.</p>
+      <div class="phases">
+        <article class="phase">
+          <div class="phase-id">PHASE A</div>
+          <div><h3>Exact Houston theme + native diff</h3><p>Register the official theme colors through the existing theme service; keep app, Monaco, and terminal colors coordinated. Replace text-only diff for normal files with DiffEditor.</p><div class="gate">Stop condition: theme survives editor/session switching, and working-tree plus committed diffs render from real models.</div></div>
+          <div class="time">1–3 days</div>
+        </article>
+        <article class="phase">
+          <div class="phase-id">PHASE B</div>
+          <div><h3>Curated extension runtime</h3><p>Add the allowlisted catalog, registration lifecycle, active-workspace adapter, and one harmless declarative or browser extension as the packaging proof.</p><div class="gate">Stop condition: exactly one runtime and one registration per extension across repeated switching among five workspaces.</div></div>
+          <div class="time">2–4 days</div>
+        </article>
+        <article class="phase">
+          <div class="phase-id">PHASE C</div>
+          <div><h3>Internal SCM provider</h3><p>Project existing Rust Git state and commands into VS Code's SCM API. Keep current panels while adding standard commands and interoperability.</p><div class="gate">Stop condition: no duplicate Git subprocess, no cross-session repository state, and existing Git workflows remain intact.</div></div>
+          <div class="time">2–4 days</div>
+        </article>
+        <article class="phase">
+          <div class="phase-id">PHASE D</div>
+          <div><h3>GitLens browser compatibility spike</h3><p>Load it only in a disposable feature flag and inventory missing services. Use the spike to learn which reusable views or commands are attainable—not to commit to the extension.</p><div class="gate">Stop within four hours if it cannot consume the existing repository provider without a Node/remote extension host; do not add that host during the spike.</div></div>
+          <div class="time">1–2 days max</div>
+        </article>
+      </div>
+    </section>
+
+    <section id="gate">
+      <h2>Full-extension admission gate</h2>
+      <div class="split">
+        <article class="card">
+          <h3>Required before bundling</h3>
+          <ol>
+            <li>The manifest has a <code>browser</code> entry, or all needed contributions are declarative.</li>
+            <li>It does not require direct Node <code>fs</code>, <code>child_process</code>, sockets, or a local executable.</li>
+            <li>The current runtime has every required VS Code service/view API.</li>
+            <li>The license permits bundling and distribution in this app.</li>
+            <li>It remains isolated while switching among several session workspaces.</li>
+          </ol>
+        </article>
+        <article class="card">
+          <h3>Implementation guardrails</h3>
+          <ol>
+            <li>Extensions are allowlisted and pinned—not installed from arbitrary marketplace URLs.</li>
+            <li>Filesystem and process access always crosses validated Rust commands.</li>
+            <li>Extension startup never blocks Monaco mounting or the conversation surface.</li>
+            <li>Failures disable the extension, not the editor.</li>
+            <li>Native Tauri behavior—not a browser-only preview—is the acceptance target.</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section id="sources">
+      <h2>Primary sources</h2>
+      <ul class="sources">
+        <li><a href="https://www.npmjs.com/package/@codingame/monaco-vscode-api">Monaco VS Code API compatibility layer</a></li>
+        <li><a href="https://code.visualstudio.com/api/extension-guides/web-extensions">VS Code: Web Extensions</a></li>
+        <li><a href="https://code.visualstudio.com/api/extension-capabilities/overview">VS Code: Extension Capabilities</a></li>
+        <li><a href="https://github.com/microsoft/vscode-extension-samples">Official VS Code extension samples</a></li>
+        <li><a href="https://marketplace.visualstudio.com/items?itemName=astro-build.houston">Houston theme extension</a></li>
+        <li><a href="https://github.com/withastro/houston-vscode">Houston source and license</a></li>
+        <li><a href="https://github.com/gitkraken/vscode-gitlens">GitLens source</a></li>
+        <li><a href="https://help.gitkraken.com/gitlens/gitlens-start-here/">GitLens feature and licensing documentation</a></li>
+        <li><a href="https://github.com/mhutchie/vscode-git-graph">Git Graph source and manifest</a></li>
+      </ul>
+      <p class="note">Repository inspection was read-only. This report does not alter the product runtime and deliberately preserves the current dirty TSK-799 work.</p>
+    </section>
+
+    <footer>Mac Command Bar · Extension Integration Review · Decision: curated web/declarative extensions over the existing singleton runtime, with Rust remaining the native authority.</footer>
+  </main>
+</body>
+</html>

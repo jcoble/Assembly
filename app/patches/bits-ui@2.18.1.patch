@@ -1,0 +1,39 @@
+diff --git a/dist/bits/scroll-area/scroll-area.svelte.js b/dist/bits/scroll-area/scroll-area.svelte.js
+index b1f93505e7a6d4fc9f984d2ba4d6698fe8de315b..008c54ecbfca5cbc519eb268164b06757d45d59f 100644
+--- a/dist/bits/scroll-area/scroll-area.svelte.js
++++ b/dist/bits/scroll-area/scroll-area.svelte.js
+@@ -5,7 +5,7 @@
+  * Incredible thought must have went into solving all the intricacies of this component.
+  */
+ import { Context, useDebounce, watch } from "runed";
+-import { untrack } from "svelte";
++import { onMount, untrack } from "svelte";
+ import { simpleBox, executeCallbacks, attachRef, DOMContext, getWindow, } from "svelte-toolbelt";
+ import { mergeProps, useId } from "../../shared/index.js";
+ import { clamp } from "../../internal/clamp.js";
+@@ -238,6 +238,7 @@ export class ScrollAreaScrollbarAutoState {
+     scrollbar;
+     root;
+     isVisible = $state(false);
++    resizeObservers = [];
+     constructor(scrollbar) {
+         this.scrollbar = scrollbar;
+         this.root = scrollbar.root;
+@@ -249,8 +250,15 @@ export class ScrollAreaScrollbarAutoState {
+             const isOverflowY = viewportNode.offsetHeight < viewportNode.scrollHeight;
+             this.isVisible = this.scrollbar.isHorizontal ? isOverflowX : isOverflowY;
+         }, 10);
+-        new SvelteResizeObserver(() => this.root.viewportNode, handleResize);
+-        new SvelteResizeObserver(() => this.root.contentNode, handleResize);
++        onMount(() => {
++            this.resizeObservers = [
++                new SvelteResizeObserver(() => this.root.viewportNode, handleResize),
++                new SvelteResizeObserver(() => this.root.contentNode, handleResize),
++            ];
++            return () => {
++                this.resizeObservers = [];
++            };
++        });
+     }
+     props = $derived.by(() => ({
+         "data-state": this.isVisible ? "visible" : "hidden",

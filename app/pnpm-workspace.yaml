@@ -1,0 +1,8 @@
+# A patch that no longer applies fails the install instead of shipping the
+# dependency unpatched.
+ignorePatchFailures: false
+patchedDependencies:
+  '@keenmate/svelte-treeview@4.8.0': patches/@keenmate__svelte-treeview@4.8.0.patch
+  '@tanstack/ai-svelte@0.26.1': patches/@tanstack__ai-svelte@0.26.1.patch
+  bits-ui@2.18.1: patches/bits-ui@2.18.1.patch
+  ghostty-web@0.4.0: patches/ghostty-web@0.4.0.patch

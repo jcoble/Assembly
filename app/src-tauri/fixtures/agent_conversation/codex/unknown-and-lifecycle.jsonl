@@ -1,0 +1,10 @@
+{"jsonrpc":"2.0","id":10,"method":"initialize","params":{"protocolVersion":1}}
+{"jsonrpc":"2.0","id":10,"result":{"agentInfo":{"name":"codex-acp-fixture","version":"1.1.9"},"agentCapabilities":{"sessionCapabilities":{"resume":true}},"sessionConfigOptions":[{"id":"future-option","label":"Future option","category":"provider.future/category","value":{"nested":["kept",3]},"custom":true}]}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"codex-session-fixture","update":{"sessionUpdate":"future_update","futureField":"kept","nested":{"answer":42}}}}
+{"jsonrpc":"2.0","id":11,"method":"session/load","params":{"sessionId":"codex-session-fixture","cwd":"/tmp/assembly-codex-fixture"}}
+{"jsonrpc":"2.0","id":11,"result":{"configOptions":[{"id":"future-option","label":"Future option","category":"provider.future/category","value":{"nested":["kept",3]},"custom":true}]}}
+{"jsonrpc":"2.0","id":12,"method":"session/resume","params":{"sessionId":"codex-session-fixture","cwd":"/tmp/assembly-codex-fixture"}}
+{"jsonrpc":"2.0","id":12,"result":{"configOptions":[{"id":"future-option","label":"Future option","category":"provider.future/category","value":{"nested":["kept",3]},"custom":true}]}}
+{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"codex-session-fixture","turnId":"turn-old"}}
+{"jsonrpc":"2.0","id":13,"method":"session/close","params":{"sessionId":"codex-session-fixture"}}
+{"jsonrpc":"2.0","id":13,"result":{}}

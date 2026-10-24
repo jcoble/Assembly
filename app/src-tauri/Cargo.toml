@@ -1,0 +1,89 @@
+[package]
+name = "mac-command-bar-webview-preview"
+version = "0.1.6"
+description = "Tauri shell for Assembly"
+authors = ["blackcolours"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+yaml-rust = "0.4.5"
+agent-client-protocol = "=2.0.0"
+axum = { version = "0.8", features = ["ws"] }
+base64 = "0.22"
+chrono = "0.4"
+comrak = "0.35"
+flate2 = "1"
+futures-util = "0.3"
+httpdate = "1"
+ring = "0.17"
+jsonwebtoken = "9.3"
+image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+libc = "0.2"
+mcb-core = { path = "../../core" }
+portable-pty = "0.9.0"
+# The official Rust MCP SDK serves the Assembly MCP server; pinned, its majors move fast.
+rmcp = { version = "=3.6.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+# `blocking` is here for the helper module: its transport is one synchronous
+# call made on a blocking task, which keeps the trait behind it plain enough
+# for a test to replace with a fake.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+minisign-verify = "0.2.5"
+notify = "8.2"
+semver = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+security-framework = "3.5.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+similar = "2"
+sysinfo = { version = "=0.38.4", default-features = false, features = ["system"] }
+tar = "0.4"
+tauri = { version = "2", features = ["protocol-asset", "test", "unstable"] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = { version = "2", features = ["watch"] }
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = "2.11.0"
+tokio = { version = "1", features = ["fs", "io-util", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.29"
+# The file-system plugin's `remove` deletes for good. Deleting from the Files
+# panel has to be recoverable, so `move_to_trash` hands the path to the Finder's
+# Trash through this crate instead.
+trash = "5"
+uuid = { version = "1", features = ["v4"] }
+tauri-plugin-deep-link = "2"
+
+[dev-dependencies]
+rmcp = { version = "=3.6.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
+# The rmcp client's reqwest is built without a TLS provider; the test installs the ring one already in the tree.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+# Already in the tree through tauri/wry; declared here so the browser view can
+# ask the NSWindow for its content inset, which Tauri's window APIs do not
+# report.
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFArray", "CFString"] }
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontManager", "CTFontTraits"] }
+objc2-foundation = "0.3"
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "WKNavigation", "WKWebView"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[features]
+default = []
+
+# Dev builds keep the app crate unoptimized (fast rebuilds, debuggable) but
+# compile every dependency — serde, the file walker, the PTY layer, mcb-core —
+# at full optimization. Without this, dev-profile serde and IO run 3-30x slower
+# than release, which read as "the desktop app is slow" while the web preview
+# (optimized Node) felt fast. One long rebuild the first time, cached after.
+[profile.dev.package."*"]
+opt-level = 3

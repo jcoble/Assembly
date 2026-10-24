@@ -1,0 +1,36 @@
+diff --git a/dist/create-chat.svelte.js b/dist/create-chat.svelte.js
+index db5ccdd..cd3eaa5 100644
+--- a/dist/create-chat.svelte.js
++++ b/dist/create-chat.svelte.js
+@@ -1,5 +1,4 @@
+ import { ChatClient } from '@tanstack/ai-client';
+-import { createChatDevtoolsBridge } from '@tanstack/ai-client/devtools';
+ import { onMount } from 'svelte';
+ /**
+  * Creates a reactive chat instance for Svelte 5.
+@@ -49,7 +48,6 @@ export function createChat(options) {
+     // client mints one after mount, so an ephemeral chat still works but is not
+     // restored on reload.
+     const client = new ChatClient({
+-        devtoolsBridgeFactory: createChatDevtoolsBridge,
+         ...transport,
+         ...(options.initialMessages !== undefined && {
+             initialMessages: options.initialMessages,
+diff --git a/src/create-chat.svelte.ts b/src/create-chat.svelte.ts
+index b82cb69..0aaa53f 100644
+--- a/src/create-chat.svelte.ts
++++ b/src/create-chat.svelte.ts
+@@ -1,5 +1,4 @@
+ import { ChatClient } from '@tanstack/ai-client'
+-import { createChatDevtoolsBridge } from '@tanstack/ai-client/devtools'
+ import { onMount } from 'svelte'
+ import type {
+   ResolvableChatInterrupt,
+@@ -90,7 +89,6 @@ export function createChat<
+   // client mints one after mount, so an ephemeral chat still works but is not
+   // restored on reload.
+   const client = new ChatClient<TTools, TContext, TInterrupts>({
+-    devtoolsBridgeFactory: createChatDevtoolsBridge,
+     ...transport,
+     ...(options.initialMessages !== undefined && {
+       initialMessages: options.initialMessages,

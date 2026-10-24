@@ -1,0 +1,1 @@
+{"type":"assistant","uuid":"claude-a1","sessionId":"claude-session","isSidechain":false,"timestamp":"42","message":{"model":"claude-opus","usage":{"input_tokens":4},"content":[{"type":"text","text":"historical answer"}]}}
