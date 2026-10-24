@@ -1,0 +1,119 @@
+using System.Text.Json;
+using Assembly.Engine.Acp.JsonRpc;
+using Assembly.Engine.Threads;
+
+namespace Assembly.Engine.Sessions;
+
+/// <summary>A thread's session, open on the shared adapter. <c>SavedCost</c> is the total its agent reported at its last clean close.</summary>
+internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, string SessionId, bool Resumed, decimal? SavedCost, string? Model = null);
+
+/// <summary>
+/// Opens a thread's ACP session on its agent's shared adapter, in the thread's checkout: its earlier session,
+/// resumed, when the adapter can resume one; otherwise a new session, whose id is saved for next time. A new session
+/// is titled from its first message when the agent takes a title, so it doesn't spend a model call making one. Every
+/// session gets the thread's chosen config values (model, effort, mode…) that its agent offers, in the agent's order
+/// (a model's effort levels can depend on the model). The session holds its place on the adapter until
+/// <see cref="SharedAdapter.ReleaseAsync"/>. <paramref name="mcpServers"/> gives a thread's session the MCP servers it joins.
+/// </summary>
+public sealed class SessionOpener(ThreadStore threads, Agents.IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
+    Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
+{
+    /// <summary>The longest title a first message gives a new session.</summary>
+    public const int TitleLength = 60;
+
+    internal async Task<OpenSession> OpenAsync(string threadId, string firstText, StageTimes stages, CancellationToken cancellationToken)
+    {
+        var thread = threads.Get(threadId) ?? throw new InvalidOperationException($"Thread {threadId} no longer exists.");
+        var folder = await launcher.CheckoutAsync(thread, stages, cancellationToken);
+        var adapter = adapters(thread.Agent);
+        var running = await adapter.GetAsync(stages, cancellationToken);
+        try
+        {
+            return await OpenOnAsync(adapter, running, thread, folder, firstText, stages, cancellationToken);
+        }
+        catch
+        {
+            await adapter.ReleaseAsync();
+            throw;
+        }
+    }
+
+    private async Task<OpenSession> OpenOnAsync(
+        SharedAdapter adapter, RunningAdapter running, ThreadInfo thread, string folder, string firstText, StageTimes stages,
+        CancellationToken cancellationToken)
+    {
+        var threadId = thread.ThreadId;
+        if (thread.AcpSessionId is { } previous && running.Init.CanResumeSessions)
+        {
+            try
+            {
+                running.Updates.Reopen(previous);
+                var resumed = await running.Link.Client.ResumeSessionAsync(previous, folder, cancellationToken, mcpServers?.Invoke(threadId));
+                stages.Mark("session resume");
+                var model = await ApplyChoicesAsync(running, threadId, previous, resumed.ConfigOptions, stages, cancellationToken);
+                return new OpenSession(adapter, running, previous, Resumed: true, thread.SessionCost, model);
+            }
+            catch (JsonRpcException error)
+            {
+                // The agent lost its transcript. A new session keeps the thread usable; the agent won't remember it.
+                Console.Error.WriteLine($"thread {threadId}: could not resume {previous} ({error.Message}); starting a new session");
+            }
+        }
+
+        var session = await running.Link.Client.NewSessionAsync(folder, cancellationToken, mcpServers?.Invoke(threadId));
+        threads.SetAcpSession(threadId, session.SessionId);
+        stages.Mark("session new");
+        if (thread.Title is null && Title(firstText) is { } title)
+            threads.SetTitle(threadId, title);
+        // A helper's title is its task, not the framed prompt it's sent.
+        if (running.Init.CanRenameSessions && (thread.Helper ? thread.Title : Title(firstText)) is { } agentTitle)
+        {
+            // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.
+            await running.Link.Client.RenameSessionAsync(session.SessionId, agentTitle, cancellationToken);
+            stages.Mark("session rename");
+        }
+
+        if (session.ConfigOptions.ValueKind == JsonValueKind.Array)
+            threads.SetAgentConfig(thread.Agent, session.ConfigOptions.GetRawText());
+        var chosen = await ApplyChoicesAsync(running, threadId, session.SessionId, session.ConfigOptions, stages, cancellationToken);
+        return new OpenSession(adapter, running, session.SessionId, Resumed: false, SavedCost: null, chosen);
+    }
+
+    /// <summary>Sets each chosen value the session doesn't have yet, saves the options as they end up, and returns their model's name.</summary>
+    private async Task<string?> ApplyChoicesAsync(
+        RunningAdapter running, string threadId, string sessionId, JsonElement options, StageTimes stages, CancellationToken cancellationToken)
+    {
+        if (options.ValueKind != JsonValueKind.Array)
+            return null;
+        var choices = threads.Config(threadId).Choices;
+        foreach (var (id, _, _) in ConfigOptions.Selects(options).ToList())
+        {
+            // Read again each time: setting one option can change another's values.
+            var (_, current, values) = ConfigOptions.Selects(options).FirstOrDefault(option => option.Id == id);
+            if (!choices.TryGetValue(id, out var value) || value == current || !(values?.Contains(value) ?? false))
+                continue;
+            try
+            {
+                options = (await running.Link.Client.SetConfigOptionAsync(sessionId, id, value, cancellationToken)).ConfigOptions;
+            }
+            catch (JsonRpcException error)
+            {
+                Console.Error.WriteLine($"thread {threadId}: the agent didn't take {id}={value} ({error.Message})");
+            }
+        }
+
+        if (choices.Count > 0)
+            stages.Mark("session config");
+        threads.SetConfigOptions(threadId, options.GetRawText());
+        return ConfigOptions.ModelName(options);
+    }
+
+    /// <summary>The message's first line, cut to <see cref="TitleLength"/> characters; null when it has no text.</summary>
+    public static string? Title(string text)
+    {
+        var line = string.Join(' ', text.Trim().Split('\n', 2)[0].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        if (line.Length == 0)
+            return null;
+        return line.Length <= TitleLength ? line : line[..(TitleLength - 1)].TrimEnd() + "…";
+    }
+}

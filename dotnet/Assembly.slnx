@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Assembly.Engine/Assembly.Engine.csproj" />
+  <Project Path="Assembly.Mac/Assembly.Mac.csproj" />
+  <Project Path="Assembly.Remote/Assembly.Remote.csproj" />
+  <Project Path="Assembly.Tests/Assembly.Tests.csproj" />
+</Solution>

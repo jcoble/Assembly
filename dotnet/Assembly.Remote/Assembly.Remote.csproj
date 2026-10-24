@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The remote host: runs on the machine with the agent (Workbox). `serve` is the engine plus its API, and
+       smoke, record and rows are the test benches steps 1 and 2 ran there. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Assembly.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Assembly.Engine\Assembly.Engine.csproj" />
+  </ItemGroup>
+
+</Project>
