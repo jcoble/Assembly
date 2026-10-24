@@ -32,8 +32,16 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 - On a lane branch, pinned tests may fail. They land on main only together with the code that makes them pass:
   `scripts/run-pinned.sh` runs them on every push to main and fails if any fails, is skipped (other than a MacFact
   off macOS) or no longer runs.
-- After that, never edit or delete a pinned test without Jesse's OK. If one looks wrong, stop and ask him.
-  `scripts/check-pinned.sh` fails on any change to a pinned file he hasn't approved, locally and on every push to main.
+- After that, a pinned test is changed or deleted only with an OK in `.pinned-approvals`. If one looks wrong, stop and
+  ask. `scripts/check-pinned.sh` fails on any change to a pinned file without an OK, locally and on every push to main.
+- Who may OK a change to a pinned test:
+  - Jesse may OK any change.
+  - The move thread (the Claude thread in Jesse's project that reviews the port) may OK only a change that doesn't
+    alter what a test checks (a rename, a moved file, a fixed setup or helper, never a loosened assertion), or one
+    that makes a test match the behavior list Jesse corrected, naming the list line.
+  - The lane that wants a change can never OK it.
+  - The move thread posts every OK it gives to Jesse, with the test before and after.
+  - A change to what a feature should do waits for Jesse.
 
 ## Commits
 
