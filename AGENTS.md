@@ -20,12 +20,14 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 - Chat's existing REST routes (`/threads`, `/runs`, `/outbox`, `/agents`, `/machines`) stay as they are.
 - `docs/backend-commands.md` lists the old UI's commands per feature and the old Rust handler behind each.
 
-## Porting a feature: spec first, then pinned tests
+## Porting a feature: behavior list first, then pinned tests
 
-- Each feature lane first drafts a short spec of what the feature should do, in plain user-level terms. It works
-  from the old UI and Jesse's recorded decisions (`docs/port-product-decisions.md`), posts the spec to Jesse, and
-  Jesse corrects it.
-- Tests pin that spec. The old code (mac-command-bar 2089290, listed in `docs/backend-commands.md`) is a reference
+- Each feature lane first drafts the feature's behavior list, `docs/behavior/<lane>.md`: what the feature should do,
+  in plain user-level terms, one line each with an id (`base#1`, `base#2`, ...). It works from the old UI and
+  Jesse's recorded decisions (`docs/port-product-decisions.md`), posts the list to Jesse, and Jesse corrects it.
+- The top of the list says either "Draft by Claude, not corrected by Jesse" or "Corrected by Jesse on <date>",
+  quoting or linking his correction. Only Jesse's correction changes it from a draft.
+- Tests pin that list. Each pinned test names the line it pins in a comment, for example `// Pins: base#2`. The old code (mac-command-bar 2089290, listed in `docs/backend-commands.md`) is a reference
   for details such as formats and edge cases. It is never the source of truth.
 - Pinned tests live in `dotnet/Assembly.Tests/Pinned/<Feature>/` and `app/test/pinned/<feature>/`. Commit them on
   their own, before the port.
