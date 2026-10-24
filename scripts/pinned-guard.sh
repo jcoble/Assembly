@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Claude Code hook (.claude/settings.json, before Edit/Write/MultiEdit/NotebookEdit): a new pinned test may be
-# written, but an existing one may not be changed. Jesse's OK goes in .pinned-approvals (scripts/check-pinned.sh).
+# written, but an existing one may not be changed. An OK goes in .pinned-approvals (scripts/check-pinned.sh).
 # It fails closed: without jq, or with input it can't read, every edit is refused.
 command -v jq >/dev/null || { echo "pinned-guard: jq isn't installed, so no edit can be checked; refusing" >&2; exit 2; }
 path=$(jq -er '.tool_input.file_path // .tool_input.notebook_path') \
@@ -8,7 +8,7 @@ path=$(jq -er '.tool_input.file_path // .tool_input.notebook_path') \
 case "$path" in
   */Assembly.Tests/Pinned/*|*/app/test/pinned/*)
     if [ -e "$path" ]; then
-      echo "$path is a pinned test: changing it needs Jesse's OK (AGENTS.md). Stop and ask him." >&2
+      echo "$path is a pinned test: changing it needs an OK from Jesse or the move thread (AGENTS.md, \"Who may OK\"). Stop and ask." >&2
       exit 2
     fi ;;
 esac
