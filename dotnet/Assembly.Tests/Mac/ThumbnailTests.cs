@@ -6,7 +6,7 @@ namespace Assembly.Tests.Mac;
 
 public sealed class ThumbnailTests
 {
-    [Fact]
+    [MacFact]
     public void An_image_with_alpha_becomes_a_png_at_most_360_px_on_its_long_edge()
     {
         var (bytes, mime) = Thumbnail.Make(Png(800, 400, alpha: true));
@@ -15,7 +15,7 @@ public sealed class ThumbnailTests
         Assert.Equal((360, 180), PngSize(bytes));
     }
 
-    [Fact]
+    [MacFact]
     public void An_opaque_image_becomes_a_jpeg()
     {
         var (bytes, mime) = Thumbnail.Make(Png(800, 400, alpha: false));
@@ -24,7 +24,7 @@ public sealed class ThumbnailTests
         Assert.Equal([0xFF, 0xD8, 0xFF], bytes[..3]);
     }
 
-    [Fact]
+    [MacFact]
     public void An_image_too_wide_is_refused()
     {
         var error = Assert.Throws<InvalidOperationException>(() => Thumbnail.Make(Png(12_001, 1, alpha: false)));

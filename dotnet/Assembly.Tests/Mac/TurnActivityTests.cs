@@ -4,7 +4,7 @@ namespace Assembly.Tests.Mac;
 
 public sealed class TurnActivityTests
 {
-    [Fact]
+    [MacFact]
     public void Begin_is_idempotent_and_end_releases_it()
     {
         var activity = new TurnActivity();
