@@ -1,0 +1,9 @@
+{
+  "_source": "No compaction event exists on the wire: @tanstack/ai-claude-code drops the SDK's compact_boundary (src/stream/sdk-types.ts:136, src/stream/translate.ts:687-688). This is the CUSTOM event ai-client already names for compaction (src/chat-client.ts:1064-1066), with its boundary fields from src/devtools.ts:69-77, filled from the SDK's compact_boundary message (system/compact_boundary, compact_metadata.trigger, pre_tokens, post_tokens).",
+  "chunk": {
+    "type": "CUSTOM",
+    "timestamp": 1,
+    "name": "compaction:ended",
+    "value": { "before": 152340, "after": 31200, "trigger": "auto" }
+  }
+}

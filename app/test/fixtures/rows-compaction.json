@@ -1,0 +1,6 @@
+{
+  "_source": "Written by hand against controller ruling R16: the relay's row for a CUSTOM `compaction` chunk, which Node emits for Claude's system/compact_boundary (payload from compact_metadata.trigger, pre_tokens and post_tokens).",
+  "rows": [
+    { "threadId": "t1", "seq": 12, "runId": "r2", "itemId": null, "kind": "compaction", "payload": { "trigger": "auto", "preTokens": 152340, "postTokens": 31200 }, "createdAt": 1761130100000 }
+  ]
+}

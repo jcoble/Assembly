@@ -11,7 +11,7 @@ namespace Assembly.Engine.Api;
 /// </summary>
 internal sealed class TokenGuard
 {
-    private static readonly string[] Origins = ["tauri://localhost", "http://tauri.localhost", "http://localhost:1420", "app://localhost"];
+    private static readonly string[] Origins = ["tauri://localhost", "http://tauri.localhost", "http://localhost:1430"];
 
     private readonly byte[] _token;
 
