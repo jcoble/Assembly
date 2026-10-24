@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(**/.pinned-approvals)",
+      "Edit(**/scripts/check-pinned.sh)",
+      "Edit(**/scripts/pinned-guard.sh)",
+      "Edit(**/.github/workflows/pinned.yml)",
+      "Edit(**/.claude/settings.json)",
+      "Bash(*.pinned-approvals*)",
+      "Bash(scripts/check-pinned.sh approve*)",
+      "Bash(rm *Pinned/*)", "Bash(rm *test/pinned/*)",
+      "Bash(mv *Pinned/*)", "Bash(mv *test/pinned/*)",
+      "Bash(cp *Pinned/*)", "Bash(cp *test/pinned/*)",
+      "Bash(sed -i*Pinned/*)", "Bash(sed -i*test/pinned/*)",
+      "Bash(git rm *Pinned/*)", "Bash(git rm *test/pinned/*)",
+      "Bash(git mv *Pinned/*)", "Bash(git mv *test/pinned/*)",
+      "Bash(git checkout *Pinned/*)", "Bash(git checkout *test/pinned/*)",
+      "Bash(git restore *Pinned/*)", "Bash(git restore *test/pinned/*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/pinned-guard.sh" }]
+      }
+    ]
+  }
+}

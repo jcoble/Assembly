@@ -1,0 +1,3 @@
+# Jesse's OKs for changing or deleting a pinned file (scripts/check-pinned.sh). One line per change:
+#   <blob id of the file's new content, or "deleted"> <path>
+# `scripts/check-pinned.sh approve <path>` prints the line for a file as it is in the working tree.
