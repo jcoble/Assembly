@@ -1,0 +1,10 @@
+node_modules/
+.svelte-kit/
+build/
+bin/
+obj/
+*.db
+*.db-*
+.DS_Store
+.vscode/
+.idea/
