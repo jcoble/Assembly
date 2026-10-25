@@ -24,6 +24,7 @@
 import { dropLink, type MemorySample } from './api';
 import { call } from './host/call';
 import { counters, delay } from './debug.svelte';
+import { lag, startLagMeter } from './lag.svelte';
 
 const DURATION_MS = 5 * 60_000;
 const LIGHT_DURATION_MS = 20 * 60_000;
@@ -472,5 +473,23 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
     samplerWaiting = false;
     stopSampler.abort();
     await row('end');
+  }
+}
+
+// ?counters=1: every 2 s, the open conversation's counters go to soak-results/counters-<time>.csv, for a run
+// driven by hand, until the signal ends it.
+export async function logCounters(open: () => SoakChat | undefined, openId: () => string | null, signal: AbortSignal) {
+  countListeners();
+  startLagMeter();
+  const file = `counters-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+  await call('soak.append', { name: file, line: 'time,thread,mounted_rows,dom_rows,tracked_rows,rendered_rows,loaded_rows,fetches,sockets,chats,timers,scroll_top,tauri_listeners,scroll_listeners,live_scroll_listeners,jank_50,jank_100,worst_5s,worst_run,key_worst,key_median' });
+  for (;;) {
+    const chat = open();
+    const fields = [new Date().toISOString(), openId() ?? '', counters.rows, chat?.domRows() ?? 0, chat?.trackedRows() ?? 0,
+      chat?.renderedRows() ?? 0, chat?.loadedRows() ?? 0, counters.fetches, counters.sockets, counters.chats, counters.timers,
+      Math.round(chat?.scroller()?.scrollTop ?? 0), counters.tauri, listenerCount(), liveListenerCount(),
+      lag.jank50, lag.jank100, lag.worst5s, lag.worstRun, lag.keyWorst, lag.keyMedian];
+    await call('soak.append', { name: file, line: fields.join(',') });
+    await delay(2000, signal);
   }
 }

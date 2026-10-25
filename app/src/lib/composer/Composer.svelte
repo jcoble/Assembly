@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { flushSync, onDestroy } from 'svelte';
   import { trackedListen } from '../debug.svelte';
   import { keyPressed } from '../lag.svelte';
   import { getConfig, setConfig, uploadAttachment, type ThreadConfig } from '../api';
@@ -237,8 +237,9 @@
     }
     const caret = input?.selectionStart ?? draft.length;
     const next = insertAt(draft, caret, pathsText(others));
-    draft = next.draft;
-    requestAnimationFrame(() => input?.setSelectionRange(next.caret, next.caret));
+    // The textarea takes the new draft now, so the caret lands in it.
+    flushSync(() => (draft = next.draft));
+    input?.setSelectionRange(next.caret, next.caret);
     input?.focus();
   }
   const IMAGE = /\.(png|jpe?g|gif|webp)$/i;

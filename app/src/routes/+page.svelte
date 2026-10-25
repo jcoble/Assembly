@@ -6,8 +6,8 @@
   import { call } from '../lib/host/call';
   import { TOKEN } from '../lib/host/backend';
   import { counters, measures } from '../lib/debug.svelte';
-  import { lag, startLagMeter } from '../lib/lag.svelte';
-  import { countListeners, listenerCount, liveListenerCount, runSoak, SEED_REPO, SOAK_REPO, type SoakChat } from '../lib/soak';
+  import { lag } from '../lib/lag.svelte';
+  import { logCounters, runSoak, SEED_REPO, SOAK_REPO, type SoakChat } from '../lib/soak';
 
   // Page-level work (thread list, new thread) is owned by this signal.
   const page = new AbortController();
@@ -130,26 +130,8 @@
   // soak-results/counters-<time>.csv, for a run driven by hand.
   if (query.get('counters') === '1') {
     let chat: SoakChat | undefined;
-    countListeners();
-    startLagMeter();
     onchat = (opened) => (chat = opened);
-    const file = `counters-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
-    void (async () => {
-      try {
-        await call('soak.append', { name: file, line: 'time,thread,mounted_rows,dom_rows,tracked_rows,rendered_rows,loaded_rows,fetches,sockets,chats,timers,scroll_top,tauri_listeners,scroll_listeners,live_scroll_listeners,jank_50,jank_100,worst_5s,worst_run,key_worst,key_median' });
-        for (;;) {
-          const open = openId !== null && chat ? chat : undefined;
-          const fields = [new Date().toISOString(), openId ?? '', counters.rows, open?.domRows() ?? 0, open?.trackedRows() ?? 0,
-            open?.renderedRows() ?? 0, open?.loadedRows() ?? 0, counters.fetches, counters.sockets, counters.chats, counters.timers,
-            Math.round(open?.scroller()?.scrollTop ?? 0), counters.tauri, listenerCount(), liveListenerCount(),
-            lag.jank50, lag.jank100, lag.worst5s, lag.worstRun, lag.keyWorst, lag.keyMedian];
-          await call('soak.append', { name: file, line: fields.join(',') });
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        }
-      } catch (e) {
-        error = `counters log stopped: ${e}`;
-      }
-    })();
+    logCounters(() => (openId !== null ? chat : undefined), () => openId, page.signal).catch((e) => (error = `counters log stopped: ${e}`));
   }
 
   let soakStarted = false;

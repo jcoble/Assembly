@@ -69,3 +69,27 @@ export function delay(ms: number, signal: AbortSignal): Promise<void> {
     signal.addEventListener('abort', onAbort, { once: true });
   });
 }
+
+// The next animation frame's time, counted and bound to an owner's signal like
+// delay: aborting cancels it and rejects.
+let frames = 0;
+export function frame(signal: AbortSignal): Promise<number> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    untrack(() => (counters.frames = ++frames));
+    const finish = () => {
+      counters.frames = --frames;
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      cancelAnimationFrame(id);
+      finish();
+      reject(signal.reason);
+    };
+    const id = requestAnimationFrame((at) => {
+      finish();
+      resolve(at);
+    });
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}

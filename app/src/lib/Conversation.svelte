@@ -4,7 +4,7 @@
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { call } from './host/call';
   import { answerAsk, fetchAttachment, getThread, listAgents, rowsPage, sendText, stopRun, stopTask, toolDetail, type Thread } from './api';
-  import { chatClosed, chatOpened, counters, delay, measures, rowDestroyed, rowMounted } from './debug.svelte';
+  import { chatClosed, chatOpened, counters, delay, frame, measures, rowDestroyed, rowMounted } from './debug.svelte';
   import { openLive } from './rows/client';
   import { foldBox, MARK, overlap, prependedTop, rowBox, type Box } from './rows/heights';
   import { Kept } from './rows/kept.svelte';
@@ -112,11 +112,6 @@
   onDestroy(() => {
     chatClosed();
     owner.abort();
-    if (frame) {
-      cancelAnimationFrame(frame);
-      counters.frames--;
-      frame = 0;
-    }
   });
 
   let notice = $state('');
@@ -131,7 +126,7 @@
       reveal = { key, shown: item?.kind === 'message' ? blocksChars(item.blocks) : 0 };
     }
     applyRow(view, row);
-    if ((row.kind === 'delta' || row.kind === 'message') && keyOf(row) === reveal?.key && !frame) {
+    if ((row.kind === 'delta' || row.kind === 'message') && keyOf(row) === reveal?.key && !framing) {
       lastFrame = performance.now();
       nextFrame();
     }
@@ -262,16 +257,15 @@
   // `reveal.shown` of its characters. The frame loop runs only while it is
   // behind, and stops for good on close.
   let reveal = $state<{ key: string; shown: number } | null>(null);
-  let frame = 0;
+  let framing = false;
   let lastFrame = 0;
   function nextFrame() {
-    if (frame || owner.signal.aborted) return;
-    counters.frames++;
-    frame = requestAnimationFrame(revealFrame);
+    if (framing || owner.signal.aborted) return;
+    framing = true;
+    frame(owner.signal).then(revealFrame, () => {});
   }
   function revealFrame(at: number) {
-    frame = 0;
-    counters.frames--;
+    framing = false;
     const r = reveal;
     const item = r && view.items.findLast((i) => i.key === r.key);
     if (!r || item?.kind !== 'message') return void (reveal = null);
@@ -462,7 +456,7 @@
       // estimates) clamps scrollTop; the window's WebKit fires no scroll event for that, and the
       // virtualizer would keep drawing rows for the old offset, past the end: a blank view.
       if (Math.abs(($virtualizer.scrollOffset ?? 0) - scroller.scrollTop) >= 1) scroller.dispatchEvent(new Event('scroll'));
-      requestAnimationFrame(coverView);
+      frame(owner.signal).then(coverView, () => {});
     });
   });
   // After layout: the drawn rows must cover the view, top to bottom. Where they leave a gap, the
