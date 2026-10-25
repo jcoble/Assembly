@@ -2,7 +2,7 @@
 
 Draft by Claude, not corrected by Jesse.
 
-base#1 A thread runs in the project's own folder or worktree, like Assembly, not in a copy made per thread.
+base#1 A project is the folder you choose or create; if it's a git repo, that's its main git folder. A thread runs in that folder or in one of its worktrees, not in a copy made per thread. Switching worktree, branch or checkout keeps it the same project, and deleting a worktree never removes the project.
 base#2 On launch the app connects to every saved machine by itself. If one is down, the app still opens, shows it offline and keeps trying.
 base#3 Machines can be added or removed while the app runs.
 base#4 Sessions on the left, chat in the middle, tabs on the right. The right drawer pushes things over instead of covering them, there's an optional bottom dock, and divider positions are kept.
