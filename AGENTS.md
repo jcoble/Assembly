@@ -9,6 +9,15 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 - One class per file. Keep classes small, with one job each.
 - Keep it simple: the smallest change that does the job. No abstraction, option or fallback the task didn't ask for.
 
+## Timers, ticks and :has() in the app
+
+- Plan rule 11: one shared page clock, no polling, no tick or frame waits in per-row components, and no CSS `:has()`.
+  A timer in a row runs once per row, so on the session rail it fires thousands of times.
+- `app/scripts/guards.sh` enforces this on every push to main, and its allowlist is `app/scripts/guards-allowed.txt`.
+  Both are locked like the pinned tests (see "Who may OK" below).
+- The allowlist names files only, never lines or line numbers.
+- If you think you need a new timer or tick, ask the move thread or Jesse. Never add yourself to the allowlist.
+
 ## Backend conventions
 
 - A feature's calls are `POST /<feature>/<method>` with the args as the JSON body. They answer `{result}`, or 400
