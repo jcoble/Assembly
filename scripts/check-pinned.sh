@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Pinned tests (dotnet/Assembly.Tests/Pinned/, app/test/pinned/) and the app's guard script and its allowlist
-# (app/scripts/guards.sh, app/scripts/guards-allowed.txt) may be added freely, but changing or deleting one needs
+# Locked files (scripts/locked-paths.txt: the pinned tests, the app's guard script, lint, the list itself) may be
+# added freely, but changing or deleting one needs
 # an OK (AGENTS.md says who may give one): a line in .pinned-approvals naming the file's new content and who approved,
 #   <blob id | deleted> <path> by:jesse
 #   <blob id | deleted> <path> by:move-thread <the behavior list line, or why what the test checks is unchanged>
@@ -10,7 +10,6 @@
 #   scripts/check-pinned.sh approve <path> jesse | move-thread <reason>   prints the OK line for the file as it is now
 set -euo pipefail
 cd "$(dirname "$0")/.."
-pinned=(dotnet/Assembly.Tests/Pinned app/test/pinned app/scripts/guards.sh app/scripts/guards-allowed.txt)
 
 if [ "${1:-}" = approve ]; then
   usage="usage: scripts/check-pinned.sh approve <path> jesse | move-thread <reason>"
@@ -26,6 +25,12 @@ fi
 
 base=${1:-origin/main} head=${2:-HEAD}
 approvals=$(git show "$head:.pinned-approvals" 2>/dev/null || true)
+# The locked paths are those listed in base's or head's scripts/locked-paths.txt, so dropping a line unlocks nothing.
+pinned=()
+while IFS= read -r glob; do pinned+=(":(glob)$glob"); done < <(
+  { git show "$base:scripts/locked-paths.txt" 2>/dev/null || true; git show "$head:scripts/locked-paths.txt" 2>/dev/null || true; } \
+    | grep -vE '^\s*(#|$)' | sort -u)
+[ ${#pinned[@]} -gt 0 ] || { echo "no scripts/locked-paths.txt in $base or $head" >&2; exit 1; }
 failed=0
 # Every OK line says who approved: by:jesse, or by:move-thread with its reason.
 while IFS= read -r line; do

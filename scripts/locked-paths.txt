@@ -1,0 +1,12 @@
+# Locked paths: adding a file here is free, but changing or deleting one needs an OK in .pinned-approvals
+# (scripts/check-pinned.sh, scripts/pinned-guard.sh; AGENTS.md "Who may OK"). Git glob patterns, one per line.
+# Pinned tests, .NET and app
+dotnet/Assembly.Tests/Pinned/**
+app/test/pinned/**
+# The app's guard script (no timers, ticks or :has() outside its allowlist) and its allowlist
+app/scripts/guards.sh
+app/scripts/guards-allowed.txt
+# Lint and format, run before every commit and on every push to main
+scripts/lint.sh
+# This list
+scripts/locked-paths.txt
