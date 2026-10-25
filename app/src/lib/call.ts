@@ -89,9 +89,9 @@ function saveNow(feature: string) {
     });
 }
 
-// The window closing or going to the background sends what's waiting now, with keepalive so it finishes after the
-// page has gone. A save still on the way then goes again with the newer values on top, since the page can't wait
-// for it. Not proven in the app's window yet (README in lib/preferences/).
+// The window closing sends what's waiting now, with keepalive so it finishes after the page has gone. A save still
+// on the way then goes again with the newer values on top, since the page can't wait for it. Not proven in the app's
+// window yet (README in lib/preferences/).
 function saveAll() {
   for (const feature of [...unsaved.keys()]) {
     const values = { ...sending.get(feature), ...unsaved.get(feature) };
@@ -100,6 +100,8 @@ function saveAll() {
   }
 }
 window.addEventListener('pagehide', saveAll);
+// Going to the background (minimize, hide, another Space) happens in normal use and the page lives on, so what's
+// waiting goes now, but in order, one save at a time like any other.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') saveAll();
+  if (document.visibilityState === 'hidden') for (const feature of [...unsaved.keys()]) saveNow(feature);
 });

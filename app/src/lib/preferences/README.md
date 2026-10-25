@@ -22,8 +22,9 @@ Features never call `fetch`, make an abort signal or start a timer to talk to th
   knows whether it worked. It keeps the fetch counter.
 - `save(feature, key, value)` saves one setting. Changes within 300 ms of each other go as one `set` call with the
   newest value of each key. A feature has one save on the way at a time, so an older save never lands after a newer
-  one; changes made meanwhile go when it's back. When the window closes or goes to the background, whatever is
-  waiting goes at once. Features save their settings through `setPreference()` (preferences) or `save()`, and never
+  one; changes made meanwhile go when it's back. When the window goes to the background, whatever is waiting goes
+  at once, still one save at a time. When it closes, everything waiting goes at once with keepalive, since the page
+  can't wait. Features save their settings through `setPreference()` (preferences) or `save()`, and never
   debounce on their own.
 
 Calls go over HTTP (`POST /<feature>/<method>`); pushes such as `/events` and `/live` go over WebSockets. Only

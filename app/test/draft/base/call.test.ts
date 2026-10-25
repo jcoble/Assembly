@@ -134,3 +134,22 @@ test('a save still waiting when the window goes to the background goes then', as
   document.dispatchEvent(new Event('visibilitychange'));
   assert.deepEqual(sent.map((s) => [s.body, s.keepalive]), [[{ values: { theme: 'dark' } }, true]]);
 });
+
+// Pins: base#7
+test('a save sent as the window goes to the background still lands before a change made after', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const answers: (() => void)[] = [];
+  const { save, sent, document } = await load(() => new Promise((resolve) => answers.push(() => resolve({ status: 200, json: { result: null } }))));
+  save('preferences', 'theme', 'dark');
+  document.visibilityState = 'hidden';
+  document.dispatchEvent(new Event('visibilitychange'));
+  document.visibilityState = 'visible';
+  save('preferences', 'theme', 'light');
+  t.mock.timers.tick(300);
+  await settle();
+  assert.equal(sent.length, 1);
+  answers[0]!();
+  await settle();
+  await settle();
+  assert.deepEqual(sent.map((s) => s.body), [{ values: { theme: 'dark' } }, { values: { theme: 'light' } }]);
+});
