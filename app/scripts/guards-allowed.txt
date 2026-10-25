@@ -1,6 +1,7 @@
-# Files that may use what app/scripts/guards.sh forbids elsewhere: timers and frame waits, sockets, fetch, window or
-# document listeners, Tauri. Files only, never folders or lines, and only files that still have a hit. Locked
-# (scripts/locked-paths.txt): adding one needs an OK in .pinned-approvals.
+# Files that may use what app/scripts/guards.sh forbids elsewhere: timers and frame waits, sockets, fetch, window
+# or document listeners. Tauri imports are allowed only in app/src/lib/host/, by the script itself. Files only,
+# never folders or lines, and only files that still have a hit. Locked (scripts/locked-paths.txt): adding one needs
+# an OK in .pinned-approvals.
 # The counted helpers and the lag meter
 app/src/lib/debug.svelte.ts
 app/src/lib/lag.svelte.ts
@@ -10,11 +11,5 @@ app/src/lib/rows/client.ts
 app/src/lib/Conversation.svelte
 # The soak and the ?counters=1 log (debug only)
 app/src/lib/soak.ts
-# The shell's native calls
+# The /page call's raw fetch, until its methods move to api.ts's call()
 app/src/lib/host/call.ts
-app/src/lib/host/clipboard.ts
-app/src/lib/host/fileUrl.ts
-app/src/lib/host/notify.ts
-app/src/lib/host/on.ts
-app/src/lib/host/openUrl.ts
-app/src/lib/host/pickFiles.ts

@@ -24,8 +24,10 @@ source=$(git ls-files 'app/src/*.ts' 'app/src/*.svelte' 'app/src/*.css')
 unlisted=$(for file in $source; do is_allowed "$file" || echo "$file"; done)
 rows=$(echo "$source" | grep -E '^app/src/lib/chat/' || true)
 markdown=$(echo "$source" | grep -vE '^app/src/lib/editor/preview/' || true)
+# The shell's native calls live in lib/host/, one file each; Tauri is imported nowhere else.
+outside_host=$(echo "$source" | grep -vE '^app/src/lib/host/' || true)
 
-fail "$unlisted" "@tauri-apps/|[^.[:alnum:]_]listen\(" "Tauri only in the allowlisted host files"
+fail "$outside_host" "@tauri-apps/|[^.[:alnum:]_]listen\(" "Tauri only in app/src/lib/host/"
 fail "$unlisted" "setInterval|setTimeout|requestAnimationFrame|(^|[^.[:alnum:]_])(delay|frame|debounce)\\(" "no timers or frame waits, raw or through the counted helpers, outside the allowlist"
 fail "$unlisted" "new WebSocket\(" "sockets only through TrackedWebSocket"
 fail "$unlisted" "(^|[^.[:alnum:]_])fetch\(" "fetches only in the allowlisted files (api.ts)"
