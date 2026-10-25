@@ -8,6 +8,9 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 - Organize code by feature: each feature has its own folder, in the backend and in the app.
 - One class per file. Keep classes small, with one job each.
 - Keep it simple: the smallest change that does the job. No abstraction, option or fallback the task didn't ask for.
+- TypeScript only. No .js, .mjs or .cjs files anywhere in the repo; a script that needs node is a .ts file run by node
+  directly (type stripping). If a tool truly needs a JS config file, ask Jesse. `scripts/lint.d/00-typescript-only.sh`
+  enforces it.
 
 ## Timers, ticks and :has() in the app
 
