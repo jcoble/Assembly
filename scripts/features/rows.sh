@@ -3,12 +3,8 @@
 # a message's deltas are deleted once the message is saved (RowStore.cs), but the prevSeq chain never breaks.
 set -euo pipefail
 api() { printf 'Authorization: Bearer %s\n' "$CHECK4_TOKEN" | curl -s --max-time 10 -H @- "$CHECK4_API$1"; }
-# live AFTER: the rows the socket sends from AFTER within 3 s, as one JSON array.
-live() {
-  { printf 'Authorization: Bearer %s\n' "$CHECK4_TOKEN" \
-      | curl -s --no-buffer --max-time 3 -H @- "${CHECK4_API/http/ws}/live?thread=$CHECK4_THREAD&after=$1" || true; } \
-    | jq -sc '[.[] | select(.type == "row") | .row | {seq, prevSeq}]'
-}
+# live AFTER: the rows the socket sends from AFTER within 3 s, as one JSON array (live-rows.ts).
+live() { node "$(dirname "$0")/live-rows.ts" "$1"; }
 
 # After the turn ends, so its message has replaced its deltas and the seqs skip.
 ended() { jq -e --arg r "$CHECK4_RUN" 'any(.rows[]; .runId == $r and .kind == "turn" and .payload.state != "started")' <<<"$page" >/dev/null; }
