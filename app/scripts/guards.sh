@@ -101,6 +101,8 @@ fi
 
 failed=0
 for file in $(git ls-files 'app/src/*.ts' 'app/src/*.svelte' 'app/src/*.css'); do
+  # A file git still lists but that's gone from the checkout (deleted, not yet staged) has nothing to check.
+  [ -f "$file" ] || continue
   found=$(hits "$file")
   [ -z "$found" ] || { echo "$found"; failed=1; }
 done
