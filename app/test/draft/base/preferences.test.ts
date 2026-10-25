@@ -2,48 +2,38 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { jsModule, libModule } from '../../runes.ts';
 
-type Call = { feature: string; method: string; body: Record<string, unknown> };
 type Preferences = {
   preferences: Record<string, unknown>;
-  loadPreferences: (signal: AbortSignal) => Promise<void>;
+  loadPreferences: () => Promise<void>;
   setPreference: (key: string, value: unknown) => void;
 };
 
-// The preferences module with a fake api.ts that records each call and answers `saved` to preferences/get.
+// A fresh preferences module on a fake call.ts that records saves and answers `saved` to preferences/get.
+let copies = 0;
 async function load(saved: Record<string, unknown> = {}) {
-  const calls: Call[] = [];
-  (globalThis as { preferenceCalls?: Call[] }).preferenceCalls = calls;
-  const api = jsModule(`
-    export async function call(feature, method, body = {}) {
-      globalThis.preferenceCalls.push({ feature, method, body });
-      return method === 'get' ? ${JSON.stringify(saved)} : null;
-    }`);
-  const module = (await import(libModule('preferences/preferences.svelte.ts', { '../debug.svelte': libModule('debug.svelte.ts'), '../api': api }))) as Preferences;
-  return { calls, ...module };
+  const saves: unknown[][] = [];
+  (globalThis as { preferenceSaves?: unknown[][] }).preferenceSaves = saves;
+  const fake = jsModule(`
+    export const call = async (feature, method) => (method === 'get' ? ${JSON.stringify(saved)} : undefined);
+    export const save = (...args) => globalThis.preferenceSaves.push(args);
+    // copy ${++copies}`);
+  const module = (await import(libModule('preferences/preferences.svelte.ts', { '../call': fake }))) as Preferences;
+  return { saves, ...module };
 }
 
-const settle = () => new Promise<void>((resolve) => setImmediate(resolve));
-
 // Pins: base#7
-test('changes save once, 300 ms after the last change, not on every keystroke', async (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
-  const { calls, preferences, setPreference } = await load();
+test('a change shows at once and goes to the shared save', async () => {
+  const { preferences, setPreference, saves } = await load();
   setPreference('theme', 'dark');
-  t.mock.timers.tick(200);
-  setPreference('theme', 'light');
-  t.mock.timers.tick(299);
-  await settle();
-  assert.equal(preferences.theme, 'light');
-  assert.deepEqual(calls, []);
-  t.mock.timers.tick(1);
-  await settle();
-  assert.deepEqual(calls, [{ feature: 'preferences', method: 'set', body: { values: { theme: 'light' } } }]);
+  assert.equal(preferences.theme, 'dark');
+  assert.deepEqual(saves, [['preferences', 'theme', 'dark']]);
 });
 
 // Pins: base#7
 test('saved values replace the defaults when the app loads', async () => {
-  const { preferences, loadPreferences } = await load({ theme: 'dark' });
+  const { preferences, loadPreferences } = await load({ theme: 'dark', gone: 1 });
   assert.equal(preferences.theme, 'system');
-  await loadPreferences(new AbortController().signal);
+  await loadPreferences();
   assert.equal(preferences.theme, 'dark');
+  assert.equal('gone' in preferences, false);
 });
