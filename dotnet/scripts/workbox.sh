@@ -12,7 +12,7 @@
 #   dotnet/scripts/workbox.sh kill-adapter      the lost-run check: SIGKILLs the unit's adapter, found as the
 #                                               backend's child process by pid, never by name
 #   dotnet/scripts/workbox.sh row-log <thread|latest> [--follow SECONDS]
-#                                               a thread's rows by seq and by page, checked (row-log.mjs)
+#                                               a thread's rows by seq and by page, checked (row-log.ts)
 # Pushes the branch to the box's bare repo ~/assembly.git (never GitHub, same as scripts/deploy.sh),
 # checks it out at ~/assembly/<branch>, installs the .NET 10 SDK under ~/.dotnet if it's missing, uses the
 # adapters the TanStack AI spike installed under ~/spike-dotnet/adapters (no download; Assembly gets its own copy
@@ -56,7 +56,7 @@ kill -KILL $children
 BOX
     exit ;;
   row-log)
-    ssh workbox-test "PATH=\$HOME/.local/bin:\$PATH node --input-type=module - ${*:2}" < dotnet/scripts/row-log.mjs
+    ssh workbox-test "PATH=\$HOME/.local/bin:\$PATH node --input-type=module-typescript - ${*:2}" < dotnet/scripts/row-log.ts
     exit ;;
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
 esac
