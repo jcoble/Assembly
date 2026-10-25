@@ -18,7 +18,10 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
   A timer in a row runs once per row, so on the session rail it fires thousands of times.
 - `app/scripts/guards.sh` enforces this on every push to main, and its allowlist is `app/scripts/guards-allowed.txt`.
   Both are locked like the pinned tests (see "Who may OK" below).
-- The allowlist names files only, never lines or line numbers.
+- The allowlist names files only, never lines or line numbers, and only files that still need it: the script fails
+  on a listed file that no longer does anything the list allows.
+- Per-row components are everything under `app/src/lib/chat/` and any file named `<Name>Row.svelte`. Name a component
+  drawn once per row that way, wherever it lives; the script checks it for tick and frame waits.
 - If you think you need a new timer or tick, ask the move thread or Jesse. Never add yourself to the allowlist.
 
 ## Backend conventions
