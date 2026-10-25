@@ -1,5 +1,5 @@
-# On every push to main: pinned tests unchanged without Jesse's OK, all of them run and pass, and every feature
-# commit has a four-way check.
+# On every push to main: pinned tests unchanged without an OK, all of them run and pass, every code commit has a
+# four-way check, and the app's guard script passes.
 name: pinned tests and four-way checks
 on:
   push:
@@ -46,3 +46,11 @@ jobs:
           before=${{ github.event.before }}
           if [ "$before" = 0000000000000000000000000000000000000000 ]; then before=$(git rev-list --max-parents=0 HEAD | tail -1); fi
           scripts/check-evidence.sh "$before" "${{ github.sha }}"
+  guards:
+    # The app's guard script (no timers, ticks or :has() outside its allowlist) passes on main, once it exists.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: App guards pass
+        run: |
+          if [ -f app/scripts/guards.sh ]; then bash app/scripts/guards.sh; else echo "no app/scripts/guards.sh yet"; fi
