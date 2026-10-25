@@ -6,6 +6,7 @@ using Microsoft.Extensions.Hosting;
 using Assembly.Engine.Agents;
 using Assembly.Engine.Api;
 using Assembly.Engine.Attachments;
+using Assembly.Engine.Features;
 using Assembly.Engine.Live;
 using Assembly.Engine.Machines;
 using Assembly.Engine.Rows;
@@ -76,6 +77,7 @@ public sealed class MacBackend : IAsyncDisposable
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), port, routes =>
         {
+            FeatureList.Add(routes, new FeatureContext(database));
             new DebugRoutes(hub).Map(routes);
             page.Map(routes);
         });

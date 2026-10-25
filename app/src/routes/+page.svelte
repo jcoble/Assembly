@@ -7,6 +7,8 @@
   import { TOKEN } from '../lib/host/backend';
   import { counters, measures } from '../lib/debug.svelte';
   import { lag } from '../lib/lag.svelte';
+  import { onFailure } from '../lib/call';
+  import { loadPreferences } from '../lib/preferences/preferences.svelte';
   import { logCounters, runSoak, SEED_REPO, SOAK_REPO, type SoakChat } from '../lib/soak';
 
   // Page-level work (thread list, new thread) is owned by this signal.
@@ -64,7 +66,11 @@
     }
   }
 
-  if (token) void refresh(token);
+  if (token) {
+    void refresh(token);
+    onFailure((message) => (error = message));
+    void loadPreferences();
+  }
 
   // Debug controls: the soak drives the same page calls.
   let memory = $state('');
