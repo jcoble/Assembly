@@ -40,7 +40,7 @@ test('Conversation runs its whole script before its template, reading nothing be
       ['rowsPage', 'sendText', 'stopRun', 'toolDetail', 'fetchAttachment', 'listAgents', 'answerAsk', 'stopTask', 'getThread'].map((n) => `export const ${n} = () => new Promise(() => {});`).join('\n'),
     ),
     './rows/client': dataUrl('export const openLive = () => {};'),
-    './host/call': dataUrl('export const call = () => new Promise(() => {});'),
+    './host/pageCall': dataUrl('export const pageCall = () => new Promise(() => {});'),
   };
   stubs['./debug.svelte'] = runes('debug.svelte.ts', stubs);
   stubs['./rows/kept.svelte'] = runes('rows/kept.svelte.ts', stubs);

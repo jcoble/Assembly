@@ -1,27 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
 import { test } from 'node:test';
-import { compileModule } from 'svelte/compiler';
-
-// Svelte's client runtime, as the webview loads it (node would pick the server build for 'svelte').
-const svelteUrl = new URL('../node_modules/svelte/src/index-client.js', import.meta.url).href;
-const clientUrl = new URL('../node_modules/svelte/src/internal/client/index.js', import.meta.url).href;
-const discloseUrl = new URL('../node_modules/svelte/src/internal/disclose-version.js', import.meta.url).href;
-
-// Compiles a runes module for the client and returns it as an importable data: URL.
-function runesModule(source: string, filename: string): string {
-  const { js } = compileModule(source, { generate: 'client', filename });
-  const code = js.code
-    .replaceAll("'svelte/internal/client'", `'${clientUrl}'`)
-    .replaceAll("'svelte/internal/disclose-version'", `'${discloseUrl}'`)
-    .replaceAll("from 'svelte'", `from '${svelteUrl}'`);
-  return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
-}
+import { clientUrl, discloseUrl, libModule, runesModule, svelteUrl } from './runes.ts';
 
 test('delay() started inside an effect does not make the effect rerun on the timer counter', async () => {
-  const debugSource = stripTypeScriptTypes(readFileSync(new URL('../src/lib/debug.svelte.ts', import.meta.url), 'utf8'));
-  const debugUrl = runesModule(debugSource, 'debug.svelte.js');
+  const debugUrl = libModule('debug.svelte.ts');
   // The conversation's live clock: once a run is active, an effect starts a
   // counted delay and aborts it on cleanup (Conversation.svelte, tick()).
   const harness = runesModule(
@@ -57,8 +39,7 @@ test('delay() started inside an effect does not make the effect rerun on the tim
 });
 
 test('a TrackedWebSocket opened inside an effect does not make the effect rerun on the socket counter', async () => {
-  const debugSource = stripTypeScriptTypes(readFileSync(new URL('../src/lib/debug.svelte.ts', import.meta.url), 'utf8'));
-  const debugUrl = runesModule(debugSource, 'debug.svelte.js');
+  const debugUrl = libModule('debug.svelte.ts');
   const harness = runesModule(
     `
     import { flushSync } from 'svelte';
@@ -92,8 +73,7 @@ test('a TrackedWebSocket opened inside an effect does not make the effect rerun 
 test('the chats counter holds at one open conversation across thread switches', async () => {
   const { Window } = await import('happy-dom');
   const { compile } = await import('svelte/compiler');
-  const debugSource = stripTypeScriptTypes(readFileSync(new URL('../src/lib/debug.svelte.ts', import.meta.url), 'utf8'));
-  const debugUrl = runesModule(debugSource, 'debug.svelte.js');
+  const debugUrl = libModule('debug.svelte.ts');
   const component = (source: string, filename: string) => {
     const { js } = compile(source, { generate: 'client', filename });
     const code = js.code
@@ -140,8 +120,7 @@ test('the chats counter holds at one open conversation across thread switches', 
 test('the timers counter holds at one pending delay across thread switches', async () => {
   const { Window } = await import('happy-dom');
   const { compile } = await import('svelte/compiler');
-  const debugSource = stripTypeScriptTypes(readFileSync(new URL('../src/lib/debug.svelte.ts', import.meta.url), 'utf8'));
-  const debugUrl = runesModule(debugSource, 'debug.svelte.js');
+  const debugUrl = libModule('debug.svelte.ts');
   const component = (source: string, filename: string) => {
     const { js } = compile(source, { generate: 'client', filename });
     const code = js.code

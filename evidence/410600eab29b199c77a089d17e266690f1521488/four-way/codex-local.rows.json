@@ -1,0 +1,170 @@
+[
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 1,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1792901992234,
+    "firstSeq": 1
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 2,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1792901992234,
+    "firstSeq": 2
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 6,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": "rs_08aecd2c1e66f918016add836b8b7481918cdbd8e37ac3953e:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Clarifying commentary and output protocol**\n\n**Reconciling commentary with user output constraints**",
+      "done": true
+    },
+    "createdAt": 1792901997373,
+    "firstSeq": 3
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 8,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": "msg_08aecd2c1e66f918016add836d5b14819188c62a999d58814e",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "Running "
+            },
+            {
+              "kind": "code",
+              "value": "hostname"
+            },
+            {
+              "kind": "text",
+              "value": " now."
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1792901997532,
+    "firstSeq": 8
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 10,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": "exec-5134c5ca-e204-4b60-89b9-643d98e31036",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1792901997534,
+    "firstSeq": 9
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 15,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": "context:c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "kind": "context",
+    "payload": {
+      "used": 26142,
+      "size": 258400
+    },
+    "createdAt": 1792901998766,
+    "firstSeq": 11
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 13,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": "rs_08aecd2c1e66f918016add836e4bbc8191b202dfb6dd8ff9ef:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Outputting hostname**",
+      "done": true
+    },
+    "createdAt": 1792901998712,
+    "firstSeq": 12
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 16,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": "msg_08aecd2c1e66f918016add836eb2908191984376157398c180",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "agent-workbox\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1792901998773,
+    "firstSeq": 16
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 17,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+      "status": "completed",
+      "startedAt": 1792901992234,
+      "durationMs": 6539,
+      "firstTokenMs": 5139,
+      "model": "5.6 Luna",
+      "inputTokens": 26330,
+      "outputTokens": 296,
+      "cacheHitPct": 49.3,
+      "toolCalls": 1,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1792901998773,
+    "firstSeq": 17
+  },
+  {
+    "threadId": "e54619ea-3a4c-4646-bd38-ba823d9218bc",
+    "seq": 18,
+    "runId": "c106e3b5-2a74-456f-9d60-09723c51f6e4",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1792901998773,
+    "firstSeq": 18
+  }
+]

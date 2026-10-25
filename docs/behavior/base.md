@@ -11,3 +11,4 @@ base#6 Assembly's look and theme switching, with the new chat restyled to match.
 base#7 Settings save a moment after a change, not on every keystroke.
 base#8 The thread list shows threads made while the window is open, without a restart.
 base#9 A thread on Workbox Test shows the same Mode and Model menus and agent name as one on the Mac.
+base#10 A stale load is stopped, in the page and the backend, when a newer one replaces it.

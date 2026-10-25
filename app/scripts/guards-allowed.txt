@@ -1,0 +1,17 @@
+# Files that may use what app/scripts/guards.sh forbids elsewhere: timers and frame waits, sockets, fetch, window
+# or document listeners. Tauri imports are allowed only in app/src/lib/host/, by the script itself. Files only,
+# never folders or lines, and only files that still have a hit. Locked (scripts/locked-paths.txt): adding one needs
+# an OK in .pinned-approvals.
+# The counted helpers and the lag meter
+app/src/lib/debug.svelte.ts
+app/src/lib/lag.svelte.ts
+app/src/lib/api.ts
+# One per open conversation: the live socket's reconnect, the streaming reveal, coverView and the turn clock
+app/src/lib/rows/client.ts
+app/src/lib/Conversation.svelte
+# The soak and the ?counters=1 log (debug only)
+app/src/lib/soak.ts
+# The one call and save every feature goes through: its fetch, the save's debounce and the flush on close
+app/src/lib/call.ts
+# The /page calls' raw fetch, until their methods move to lib/call.ts
+app/src/lib/host/pageCall.ts

@@ -1,6 +1,7 @@
 using Assembly.Engine.Agents;
 using Assembly.Engine.Api;
 using Assembly.Engine.Attachments;
+using Assembly.Engine.Features;
 using Assembly.Engine.Live;
 using Assembly.Engine.Machines;
 using Assembly.Engine.Rows;
@@ -39,7 +40,8 @@ public static class ServeRun
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), options.Port);
+        await using var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), options.Port,
+            routes => MachineFeatureList.Add(routes, new FeatureContext(options.Database)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");

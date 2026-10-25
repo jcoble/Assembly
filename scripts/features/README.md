@@ -31,6 +31,10 @@ else
 fi
 ```
 
+Scenarios run on the workbox and on Jesse's Mac, whose curl (Apple's) has no WebSocket support. Use curl for plain
+HTTP only; for a socket, write a small `.ts` helper next to the scenario and run it with node, which has `WebSocket`
+built in (`rows.sh` and `live-rows.ts`).
+
 Every check runs every scenario, so a lane that breaks a feature already landed finds out. Keep a scenario short,
 seconds rather than minutes, so a full run stays cheap. `scripts/check4.sh --feature <name>` runs only that one, for
 quick runs while working; its summary goes to `four-way-partial/` and isn't evidence.

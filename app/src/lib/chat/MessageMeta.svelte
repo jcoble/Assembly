@@ -8,17 +8,17 @@
   let { text, at, now, align = 'start' }: { text: string; at: number; now: number; align?: 'start' | 'end' } = $props();
 
   let copied = $state(false);
+  // "Copied" shows for its CSS animation's 1.5 s and goes when it ends: no timer per row.
   async function copy() {
     await copyText(text);
     copied = true;
-    setTimeout(() => (copied = false), 1500);
   }
 </script>
 
 <div class="message-meta" class:end={align === 'end'}>
   <button aria-label={copied ? 'Copied' : 'Copy message'} title={copied ? 'Copied' : 'Copy message'} onclick={() => void copy()}>
     {#if copied}
-      <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+      <svg class="copied" onanimationend={() => (copied = false)} viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
     {:else}
       <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M10.5 3.5v-.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h.5" fill="none" stroke="currentColor" stroke-width="1.3" /></svg>
     {/if}
@@ -60,5 +60,13 @@
   }
   .time {
     font-variant-numeric: tabular-nums;
+  }
+  .copied {
+    animation: copied 1.5s step-end;
+  }
+  @keyframes copied {
+    to {
+      opacity: 1;
+    }
   }
 </style>

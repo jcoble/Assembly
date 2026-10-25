@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { flushSync, onDestroy } from 'svelte';
   import { trackedListen } from '../debug.svelte';
   import { keyPressed } from '../lag.svelte';
   import { getConfig, setConfig, uploadAttachment, type ThreadConfig } from '../api';
-  import { call } from '../host/call';
+  import { pageCall } from '../host/pageCall';
   import { fileUrl } from '../host/fileUrl';
   import { on } from '../host/on';
   import { pickFiles } from '../host/pickFiles';
@@ -155,10 +155,10 @@
     try {
       const { thumbnail, size } = added.file
         ? {
-            thumbnail: await call<string>('attachment.thumbnail', { data: new Uint8Array(await added.file.arrayBuffer()).toBase64() }),
+            thumbnail: await pageCall<string>('attachment.thumbnail', { data: new Uint8Array(await added.file.arrayBuffer()).toBase64() }),
             size: added.file.size,
           }
-        : await call<{ thumbnail: string; size: number }>('attachment.thumbnail_path', { path: added.path });
+        : await pageCall<{ thumbnail: string; size: number }>('attachment.thumbnail_path', { path: added.path });
       const item = pending.find((p) => p.id === added.id);
       if (signal.aborted || !item) return;
       item.size = size;
@@ -198,7 +198,7 @@
     try {
       for (const item of pending) {
         const { path } = item.path
-          ? await call<{ path: string }>('attachment.upload_path', { threadId, path: item.path })
+          ? await pageCall<{ path: string }>('attachment.upload_path', { threadId, path: item.path })
           : await uploadAttachment(token, threadId, item.file!, signal);
         const thumb = await uploadAttachment(token, threadId, new File([item.thumb!], 'thumb', { type: item.thumb!.type }), signal);
         refs.push({ path, name: item.name, thumbnail: thumb.path });
@@ -237,8 +237,9 @@
     }
     const caret = input?.selectionStart ?? draft.length;
     const next = insertAt(draft, caret, pathsText(others));
-    draft = next.draft;
-    requestAnimationFrame(() => input?.setSelectionRange(next.caret, next.caret));
+    // The textarea takes the new draft now, so the caret lands in it.
+    flushSync(() => (draft = next.draft));
+    input?.setSelectionRange(next.caret, next.caret);
     input?.focus();
   }
   const IMAGE = /\.(png|jpe?g|gif|webp)$/i;

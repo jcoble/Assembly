@@ -18,17 +18,32 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
   A timer in a row runs once per row, so on the session rail it fires thousands of times.
 - `app/scripts/guards.sh` enforces this on every push to main, and its allowlist is `app/scripts/guards-allowed.txt`.
   Both are locked like the pinned tests (see "Who may OK" below).
-- The allowlist names files only, never lines or line numbers.
+- The allowlist names files only, never lines or line numbers, and only files that still need it: the script fails
+  on a listed file that no longer does anything the list allows.
+- Per-row components are everything under `app/src/lib/chat/` and any file named `<Name>Row.svelte`. Name a component
+  drawn once per row that way, wherever it lives; the script checks it for tick and frame waits.
 - If you think you need a new timer or tick, ask the move thread or Jesse. Never add yourself to the allowlist.
 
 ## Backend conventions
 
 - A feature's calls are `POST /<feature>/<method>` with the args as the JSON body. They answer `{result}`, or 400
-  `{error}` for a call that fails, and 404 for an unknown method. `dotnet/Assembly.Mac/Page/PageRoutes.cs` is the model.
+  `{error}` for a call that fails, and 404 for an unknown method. `dotnet/Assembly.Engine/Features/FeatureCalls.cs` does it for every feature.
 - Every route needs the bearer token (`TokenGuard`), and the API listens on 127.0.0.1 only.
-- Each feature lives in `dotnet/Assembly.Engine/<Feature>/`: a routes class plus small classes, one class per file.
+- Each feature lives in `dotnet/Assembly.Engine/<Feature>/` when every machine serves it (listed in
+  `Engine/Features/MachineFeatureList.cs`), or in `dotnet/Assembly.Mac/<Feature>/` when only the Mac's window needs it
+  (listed in `Assembly.Mac/Features/MacFeatureList.cs`): a routes class plus small classes, one class per file.
 - Anything that streams or changes goes to the page over the one WebSocket, as a named topic. Never make the page
   poll. The socket carries only chat's rows today; the first feature that needs a topic adds topics to it.
+- One helper on each side does the repeated plumbing, so it can't be forgotten: the page's `app/src/lib/call.ts`
+  (`call()` and `save()`) and the backend's `Assembly.Engine/Features/FeatureCalls.cs` (`Map(method, handler)`).
+  Features never call `fetch` or map a route themselves (`app/scripts/guards.sh`, `scripts/lint.d/40-routes.sh`).
+  Calls go over HTTP; pushes (`/events`, `/live`, terminals) over WebSockets. Only those two files know it.
+- Work nobody wants any more stops, in the page and here. `call()` makes each request's abort signal, and a newer
+  call with the same key aborts the older one. A handler passes its `cancellationToken` (`HttpContext.RequestAborted`)
+  to everything it awaits: the database, files, and child processes such as git, which are killed when it fires
+  (CA2016 is a build error). A call forwarded to another machine carries the cancel there too. Saves are the
+  exception: debounced, the newest replaces the rest, and once sent they finish.
+  `dotnet/Assembly.Mac/Preferences/README.md` explains it step by step.
 - Chat's existing REST routes (`/threads`, `/runs`, `/outbox`, `/agents`, `/machines`) stay as they are.
 - `docs/backend-commands.md` lists the old UI's commands per feature and the old Rust handler behind each.
 
