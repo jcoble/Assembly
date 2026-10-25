@@ -27,9 +27,11 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
 ## Backend conventions
 
 - A feature's calls are `POST /<feature>/<method>` with the args as the JSON body. They answer `{result}`, or 400
-  `{error}` for a call that fails, and 404 for an unknown method. `dotnet/Assembly.Mac/Page/PageRoutes.cs` is the model.
+  `{error}` for a call that fails, and 404 for an unknown method. `dotnet/Assembly.Engine/Features/FeatureCalls.cs` does it for every feature.
 - Every route needs the bearer token (`TokenGuard`), and the API listens on 127.0.0.1 only.
-- Each feature lives in `dotnet/Assembly.Engine/<Feature>/`: a routes class plus small classes, one class per file.
+- Each feature lives in `dotnet/Assembly.Engine/<Feature>/` when every machine serves it (listed in
+  `Engine/Features/MachineFeatureList.cs`), or in `dotnet/Assembly.Mac/<Feature>/` when only the Mac's window needs it
+  (listed in `Assembly.Mac/Features/MacFeatureList.cs`): a routes class plus small classes, one class per file.
 - Anything that streams or changes goes to the page over the one WebSocket, as a named topic. Never make the page
   poll. The socket carries only chat's rows today; the first feature that needs a topic adds topics to it.
 - One helper on each side does the repeated plumbing, so it can't be forgotten: the page's `app/src/lib/call.ts`
@@ -41,7 +43,7 @@ The UI is SvelteKit in `app/`; the backend is .NET in `dotnet/`.
   to everything it awaits: the database, files, and child processes such as git, which are killed when it fires
   (CA2016 is a build error). A call forwarded to another machine carries the cancel there too. Saves are the
   exception: debounced, the newest replaces the rest, and once sent they finish.
-  `dotnet/Assembly.Engine/Preferences/README.md` explains it step by step.
+  `dotnet/Assembly.Mac/Preferences/README.md` explains it step by step.
 - Chat's existing REST routes (`/threads`, `/runs`, `/outbox`, `/agents`, `/machines`) stay as they are.
 - `docs/backend-commands.md` lists the old UI's commands per feature and the old Rust handler behind each.
 

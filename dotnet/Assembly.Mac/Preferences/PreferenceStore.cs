@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
-namespace Assembly.Engine.Preferences;
+namespace Assembly.Mac.Preferences;
 
 /// <summary>
 /// The app's preferences, in the host's SQLite file. Saves are rare (the page batches them), so each call opens its

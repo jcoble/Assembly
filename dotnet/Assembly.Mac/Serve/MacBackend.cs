@@ -14,6 +14,7 @@ using Assembly.Engine.Sessions;
 using Assembly.Engine.Store;
 using Assembly.Engine.Threads;
 using Assembly.Mac.Debug;
+using Assembly.Mac.Features;
 using Assembly.Mac.Page;
 using Assembly.Mac.Remote;
 
@@ -77,7 +78,8 @@ public sealed class MacBackend : IAsyncDisposable
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), port, routes =>
         {
-            FeatureList.Add(routes, new FeatureContext(database));
+            MachineFeatureList.Add(routes, new FeatureContext(database));
+            MacFeatureList.Add(routes, new FeatureContext(database));
             new DebugRoutes(hub).Map(routes);
             page.Map(routes);
         });

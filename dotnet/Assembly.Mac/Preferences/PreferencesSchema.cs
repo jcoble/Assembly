@@ -1,4 +1,4 @@
-namespace Assembly.Engine.Preferences;
+namespace Assembly.Mac.Preferences;
 
 /// <summary>The preferences' table: one row per key, its value as JSON text.</summary>
 internal static class PreferencesSchema

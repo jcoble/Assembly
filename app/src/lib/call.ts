@@ -32,12 +32,16 @@ async function send<T>(feature: string, method: string, body: Record<string, unk
   }
 }
 
-// One of a feature's calls. It answers the result, or undefined when the call failed (told through onFailure) or
-// was aborted (quiet). With `key`, a newer call for the same key aborts the one still running, so a fast switch never
-// waits on a stale load; `signal` (its owner closing) aborts it too, and so does running past 30 s. An aborted
-// request closes, and the backend stops the work it started for it. counters.latest is how many keyed calls run.
+// What a call comes back with: its result, or why there's none. 'failed' was already told through onFailure;
+// 'aborted' (a newer call took its place, its owner closed) isn't an error and shows nothing.
+export type Outcome<T> = { ok: true; result: T } | { ok: false; why: 'failed' | 'aborted' };
+
+// One of a feature's calls. With `key`, a newer call for the same key aborts the one still running, so a fast
+// switch never waits on a stale load; `signal` (its owner closing) aborts it too, and so does running past 30 s. An
+// aborted request closes, and the backend stops the work it started for it. counters.latest is how many keyed calls
+// are running.
 const running = new Map<string, AbortController>();
-export async function call<T>(feature: string, method: string, body: Record<string, unknown> = {}, { key, signal }: { key?: string; signal?: AbortSignal } = {}): Promise<T | undefined> {
+export async function call<T>(feature: string, method: string, body: Record<string, unknown> = {}, { key, signal }: { key?: string; signal?: AbortSignal } = {}): Promise<Outcome<T>> {
   const mine = new AbortController();
   if (key) {
     running.get(key)?.abort();
@@ -45,20 +49,22 @@ export async function call<T>(feature: string, method: string, body: Record<stri
     untrack(() => (counters.latest = running.size));
   }
   try {
-    return await send<T>(feature, method, body, AbortSignal.any([mine.signal, AbortSignal.timeout(TIMEOUT_MS), ...(signal ? [signal] : [])]));
+    return { ok: true, result: await send<T>(feature, method, body, AbortSignal.any([mine.signal, AbortSignal.timeout(TIMEOUT_MS), ...(signal ? [signal] : [])])) };
   } catch (e) {
-    if (!mine.signal.aborted && !signal?.aborted) report(`${feature}/${method} failed: ${e instanceof Error ? e.message : e}`);
-    return undefined;
+    if (mine.signal.aborted || signal?.aborted) return { ok: false, why: 'aborted' };
+    report(`${feature}/${method} failed: ${e instanceof Error ? e.message : e}`);
+    return { ok: false, why: 'failed' };
   } finally {
     if (key && running.get(key) === mine) running.delete(key);
     counters.latest = running.size;
   }
 }
 
-// One setting of a feature, saved through the feature's `set` call: changes within 300 ms of each other go as one
-// call with the newest value per key, and whatever is still waiting goes when the window closes. A save is never
-// cancelled once sent; keepalive lets it finish while the window closes.
+// One setting of a feature, saved through the feature's `set` call. Changes within 300 ms of each other go as one call
+// with the newest value per key. A feature has one save on the way at a time, so an older save can never land after
+// a newer one: what changes meanwhile waits and goes when it's back. A save is never cancelled once sent.
 const unsaved = new Map<string, Record<string, unknown>>();
+const sending = new Map<string, Record<string, unknown>>();
 const saves = new Map<string, () => void>();
 const page = new AbortController();
 export function save(feature: string, key: string, value: unknown): void {
@@ -67,12 +73,33 @@ export function save(feature: string, key: string, value: unknown): void {
   const later = saves.get(feature) ?? saves.set(feature, debounce(() => saveNow(feature), SAVE_AFTER_MS, page.signal)).get(feature)!;
   later();
 }
+// True while a change to the key hasn't reached the backend, so a load doesn't put an older value back.
+export const unsavedKey = (feature: string, key: string): boolean => key in (unsaved.get(feature) ?? {}) || key in (sending.get(feature) ?? {});
+
 function saveNow(feature: string) {
   const values = unsaved.get(feature);
-  if (!values) return;
+  if (!values || sending.has(feature)) return;
   unsaved.delete(feature);
-  send(feature, 'set', { values }, AbortSignal.timeout(TIMEOUT_MS), true).catch((e) => report(`${feature} not saved: ${e instanceof Error ? e.message : e}`));
+  sending.set(feature, values);
+  send(feature, 'set', { values }, AbortSignal.timeout(TIMEOUT_MS), true)
+    .catch((e) => report(`${feature} not saved: ${e instanceof Error ? e.message : e}`))
+    .finally(() => {
+      sending.delete(feature);
+      saveNow(feature);
+    });
 }
-window.addEventListener('pagehide', () => {
-  for (const feature of [...unsaved.keys()]) saveNow(feature);
+
+// The window closing or going to the background sends what's waiting now, with keepalive so it finishes after the
+// page has gone. A save still on the way then goes again with the newer values on top, since the page can't wait
+// for it. Not proven in the app's window yet (README in lib/preferences/).
+function saveAll() {
+  for (const feature of [...unsaved.keys()]) {
+    const values = { ...sending.get(feature), ...unsaved.get(feature) };
+    unsaved.delete(feature);
+    send(feature, 'set', { values }, AbortSignal.timeout(TIMEOUT_MS), true).catch(() => {});
+  }
+}
+window.addEventListener('pagehide', saveAll);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') saveAll();
 });

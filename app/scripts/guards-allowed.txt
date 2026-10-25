@@ -13,5 +13,5 @@ app/src/lib/Conversation.svelte
 app/src/lib/soak.ts
 # The one call and save every feature goes through: its fetch, the save's debounce and the flush on close
 app/src/lib/call.ts
-# The /page call's raw fetch, until its methods move to api.ts's call()
-app/src/lib/host/call.ts
+# The /page calls' raw fetch, until their methods move to lib/call.ts
+app/src/lib/host/pageCall.ts

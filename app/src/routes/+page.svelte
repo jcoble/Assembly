@@ -3,7 +3,7 @@
   import Conversation from '../lib/Conversation.svelte';
   import { THREAD_OPEN } from '../lib/chat/tools/tool';
   import { createThread, dropLink, getThread, listAgents, listMachines, listThreads, type Agent, type MemorySample, type Thread } from '../lib/api';
-  import { call } from '../lib/host/call';
+  import { pageCall } from '../lib/host/pageCall';
   import { TOKEN } from '../lib/host/backend';
   import { counters, measures } from '../lib/debug.svelte';
   import { lag } from '../lib/lag.svelte';
@@ -84,7 +84,7 @@
   }
   async function sampleMemory() {
     try {
-      const m = await call<MemorySample>('memory.sample');
+      const m = await pageCall<MemorySample>('memory.sample');
       memory = `app ${Math.round((m.appRssKb ?? 0) / 1024)} MB · backend ${Math.round((m.backendRssKb ?? 0) / 1024)} MB · WebContent ${m.webContentPid} ${Math.round((m.webContentRssKb ?? 0) / 1024)} MB`;
     } catch (e) {
       error = String(e);

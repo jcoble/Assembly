@@ -2,7 +2,7 @@
   import { getContext, onDestroy, setContext, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
-  import { call } from './host/call';
+  import { pageCall } from './host/pageCall';
   import { answerAsk, fetchAttachment, getThread, listAgents, rowsPage, sendText, stopRun, stopTask, toolDetail, type Thread } from './api';
   import { chatClosed, chatOpened, counters, delay, frame, measures, rowDestroyed, rowMounted } from './debug.svelte';
   import { openLive } from './rows/client';
@@ -160,8 +160,8 @@
   // or the conversation closes (lib.rs activity.begin / activity.end).
   $effect(() => {
     if (!busy) return;
-    void call('activity.begin');
-    return () => void call('activity.end');
+    void pageCall('activity.begin');
+    return () => void pageCall('activity.end');
   });
   // The thread's title can change as a run starts (from its first message) and while it runs (the agent's own),
   // so the list reads it again when a run appears and when it ends.

@@ -2,7 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Routing;
 using Assembly.Engine.Features;
 
-namespace Assembly.Engine.Preferences;
+namespace Assembly.Mac.Preferences;
 
 /// <summary>
 /// The preferences' calls. <c>POST /preferences/get {}</c> answers every saved value as <c>{ key: value }</c>;

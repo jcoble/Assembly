@@ -15,8 +15,18 @@ dotnet/Assembly.Engine/Api/RunRoutes.cs
 dotnet/Assembly.Engine/Api/ThreadRoutes.cs
 dotnet/Assembly.Mac/Debug/DebugRoutes.cs
 dotnet/Assembly.Mac/Page/PageRoutes.cs'
-hits=$(git grep -nE '\.Map(Get|Post|Put|Delete|Patch|Methods|Fallback|Group)\(|\.Map\("/' -- 'dotnet/Assembly.Engine/*.cs' 'dotnet/Assembly.Mac/*.cs' 'dotnet/Assembly.Remote/*.cs' \
-  | while IFS= read -r hit; do grep -qxF -- "${hit%%:*}" <<<"$allowed" || echo "$hit"; done)
-[ -z "$hits" ] && { echo "routes: every feature route goes through FeatureCalls"; exit 0; }
-while IFS= read -r hit; do echo "routes: $hit maps a route by hand; add it with FeatureCalls.Map" >&2; done <<<"$hits"
-exit 1
+all=$(git grep -nE '\.Map(Get|Post|Put|Delete|Patch|Methods|Fallback|Group)\(|\.Map\("/' -- 'dotnet/Assembly.Engine/*.cs' 'dotnet/Assembly.Mac/*.cs' 'dotnet/Assembly.Remote/*.cs')
+failed=0
+while IFS= read -r hit; do
+  [ -n "$hit" ] && ! grep -qxF -- "${hit%%:*}" <<<"$allowed" || continue
+  echo "routes: $hit maps a route by hand; add it with FeatureCalls.Map" >&2
+  failed=1
+done <<<"$all"
+# The list only shrinks: a listed file that no longer maps a route must come off it.
+while IFS= read -r file; do
+  grep -q "^$file:" <<<"$all" && continue
+  echo "routes: $file is on this script's list but maps no route; take it off" >&2
+  failed=1
+done <<<"$allowed"
+[ "$failed" = 0 ] && echo "routes: every feature route goes through FeatureCalls"
+exit "$failed"
