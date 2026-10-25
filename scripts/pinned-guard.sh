@@ -6,9 +6,9 @@ command -v jq >/dev/null || { echo "pinned-guard: jq isn't installed, so no edit
 path=$(jq -er '.tool_input.file_path // .tool_input.notebook_path') \
   || { echo "pinned-guard: couldn't read the edit's file path; refusing" >&2; exit 2; }
 case "$path" in
-  */Assembly.Tests/Pinned/*|*/app/test/pinned/*)
+  */Assembly.Tests/Pinned/*|*/app/test/pinned/*|*/app/scripts/guards.sh|*/app/scripts/guards-allowed.txt)
     if [ -e "$path" ]; then
-      echo "$path is a pinned test: changing it needs an OK from Jesse or the move thread (AGENTS.md, \"Who may OK\"). Stop and ask." >&2
+      echo "$path is locked like a pinned test: changing it needs an OK from Jesse or the move thread (AGENTS.md, \"Who may OK\"). Stop and ask." >&2
       exit 2
     fi ;;
 esac

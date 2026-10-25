@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Pinned tests (dotnet/Assembly.Tests/Pinned/, app/test/pinned/) may be added freely, but changing or deleting one
+# Pinned tests (dotnet/Assembly.Tests/Pinned/, app/test/pinned/) and the app's guard script and its allowlist
+# (app/scripts/guards.sh, app/scripts/guards-allowed.txt) may be added freely, but changing or deleting one needs
 # an OK (AGENTS.md says who may give one): a line in .pinned-approvals naming the file's new content and who approved,
 #   <blob id | deleted> <path> by:jesse
 #   <blob id | deleted> <path> by:move-thread <the behavior list line, or why what the test checks is unchanged>
@@ -9,7 +10,7 @@
 #   scripts/check-pinned.sh approve <path> jesse | move-thread <reason>   prints the OK line for the file as it is now
 set -euo pipefail
 cd "$(dirname "$0")/.."
-pinned=(dotnet/Assembly.Tests/Pinned app/test/pinned)
+pinned=(dotnet/Assembly.Tests/Pinned app/test/pinned app/scripts/guards.sh app/scripts/guards-allowed.txt)
 
 if [ "${1:-}" = approve ]; then
   usage="usage: scripts/check-pinned.sh approve <path> jesse | move-thread <reason>"
