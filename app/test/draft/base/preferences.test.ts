@@ -8,14 +8,16 @@ type Preferences = {
   setPreference: (key: string, value: unknown) => void;
 };
 
-// A fresh preferences module on a fake call.ts that records saves and answers `saved` to preferences/get.
+// A fresh preferences module on a fake call.ts that records saves, answers `saved` to preferences/get, and counts
+// a saved key as unsaved until the test says so.
 let copies = 0;
 async function load(saved: Record<string, unknown> = {}) {
   const saves: unknown[][] = [];
   (globalThis as { preferenceSaves?: unknown[][] }).preferenceSaves = saves;
   const fake = jsModule(`
-    export const call = async (feature, method) => (method === 'get' ? ${JSON.stringify(saved)} : undefined);
+    export const call = async (feature, method) => ({ ok: true, result: ${JSON.stringify(saved)} });
     export const save = (...args) => globalThis.preferenceSaves.push(args);
+    export const unsavedKey = (feature, key) => globalThis.preferenceSaves.some(([, saved]) => saved === key);
     // copy ${++copies}`);
   const module = (await import(libModule('preferences/preferences.svelte.ts', { '../call': fake }))) as Preferences;
   return { saves, ...module };
@@ -36,4 +38,13 @@ test('saved values replace the defaults when the app loads', async () => {
   await loadPreferences();
   assert.equal(preferences.theme, 'dark');
   assert.equal('gone' in preferences, false);
+});
+
+// Pins: base#7
+test('a change made before the load answered keeps its new value', async () => {
+  const { preferences, loadPreferences, setPreference } = await load({ theme: 'dark' });
+  const loading = loadPreferences();
+  setPreference('theme', 'light');
+  await loading;
+  assert.equal(preferences.theme, 'light');
 });

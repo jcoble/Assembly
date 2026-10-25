@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Assembly.Engine.Features;
-using Assembly.Engine.Preferences;
+using Assembly.Mac.Preferences;
 
 namespace Assembly.Tests.Draft.Base;
 
