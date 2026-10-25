@@ -1,5 +1,5 @@
 # On every push to main: pinned tests unchanged without an OK, all of them run and pass, every code commit has a
-# four-way check, and the app's guard script passes.
+# four-way check, and the app's guard script and lint pass.
 name: pinned tests and four-way checks
 on:
   push:
@@ -54,3 +54,10 @@ jobs:
       - name: App guards pass
         run: |
           if [ -f app/scripts/guards.sh ]; then bash app/scripts/guards.sh; else echo "no app/scripts/guards.sh yet"; fi
+  lint:
+    # Lint, format, size and unused-code checks pass on main (scripts/lint.sh, which the base lane fills in).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint passes
+        run: bash scripts/lint.sh
