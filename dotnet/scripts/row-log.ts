@@ -1,7 +1,8 @@
 // The row-position log for the step 3 checks: a thread's rows, read from the backend on this machine
 // the two ways the webview reads them.
 //   node row-log.ts <threadId|latest> [--follow SECONDS] [--env FILE] [--port 9797]
-// 1. Every row in seq order, as a socket opened at 0 gets them, checked for gaps and duplicates.
+// 1. Every row in seq order, as a socket opened at 0 gets them, checked for duplicates and a broken prevSeq chain.
+//    Seqs may skip: a message's deltas are deleted once the message is saved (RowStore.cs).
 //    With --follow, the socket stays open and live rows are logged as they arrive, with their time.
 // 2. The thread as the app opens it: pages of 100 items, newest first, stitched oldest first, each item
 //    at its first seq (its place on screen). Checked against one load of up to 500 items.
@@ -14,7 +15,7 @@ type Payload = {
   text?: string; state?: string; name?: string; summary?: string; from?: number; blocks?: unknown[];
   done?: boolean; status?: string; durationMs?: number; toolCalls?: number; code?: string; message?: string;
 };
-type Row = { seq: number; kind: string; itemId?: string; firstSeq: number; payload: Payload };
+type Row = { seq: number; prevSeq?: number; kind: string; itemId?: string; firstSeq: number; payload: Payload };
 type Thread = { threadId: string; title?: string; repoUrl: string };
 type Page = { rows: Row[]; hasBefore: boolean; before: number };
 type Frame = { type: string; row: Row };
@@ -88,7 +89,8 @@ await new Promise<void>((resolve, reject) => {
     const frame = JSON.parse(event.data) as Frame;
     if (frame.type !== 'row') return;
     const row = frame.row;
-    if (row.seq !== last + 1) problems.push(`seq ${row.seq} came after ${last}`);
+    if (row.seq <= last) problems.push(`seq ${row.seq} came after ${last}`);
+    else if (row.prevSeq !== last) problems.push(`seq ${row.seq} says prevSeq ${row.prevSeq}, the last row was ${last}`);
     last = Math.max(last, row.seq);
     count++;
     const time = following ? `+${((Date.now() - started) / 1000).toFixed(1)}s`.padStart(8) : '';
@@ -96,7 +98,7 @@ await new Promise<void>((resolve, reject) => {
     if (!following) settle();
   };
 });
-console.log(`   ${count} rows, seqs 1..${last}: ${count === last && !problems.length ? 'no gaps, no duplicates' : 'PROBLEM'}`);
+console.log(`   ${count} rows, seqs up to ${last}: ${!problems.length ? 'no duplicates, prevSeq chain unbroken' : 'PROBLEM'}`);
 
 console.log('\n2. The thread as the app opens it (pages of 100 items, newest first)');
 const pages: Row[][] = [];
