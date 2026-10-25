@@ -29,6 +29,7 @@ case "$mode" in
     [ -n "$number" ] || { echo "all 9 lane numbers are taken on Workbox Test; remove a lane first" >&2; exit 1; }
     ssh workbox-test "mkdir -p ~/assembly-dotnet-$name && echo $number > ~/assembly-dotnet-$name/lane-number"
     git -C "$main" worktree add -q -b "lane/$name" "$dir" main
+    git -C "$dir" config core.hooksPath .githooks
     printf 'LANE_NAME=%s\nLANE_NUMBER=%s\n' "$name" "$number" > "$dir/.lane"
     (cd "$dir/app" && pnpm install --silent --prefer-offline)
     [ "$(uname)" = Darwin ] && (cd "$dir/shell" && pnpm install --silent --prefer-offline)
@@ -43,6 +44,7 @@ case "$mode" in
     git -C "$main" fetch -q origin "lane/$name"
     git -C "$main" worktree add -q -B "lane/$name" "$dir" FETCH_HEAD
     git -C "$dir" branch -q --set-upstream-to="origin/lane/$name"
+    git -C "$dir" config core.hooksPath .githooks
     printf 'LANE_NAME=%s\nLANE_NUMBER=%s\nLANE_ADOPTED=1\n' "$name" "$number" > "$dir/.lane"
     (cd "$dir/app" && pnpm install --silent --prefer-offline)
     [ "$(uname)" = Darwin ] && (cd "$dir/shell" && pnpm install --silent --prefer-offline)

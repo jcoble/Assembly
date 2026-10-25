@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Runs before every commit (git config core.hooksPath .githooks; scripts/lane.sh sets it for lanes): no locked file
+# changed without an OK, then the app's guards and lint when they exist. Any failure stops the commit.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+scripts/check-pinned.sh origin/main "$(git write-tree)"
+[ ! -f app/scripts/guards.sh ] || bash app/scripts/guards.sh
+[ ! -f scripts/lint.sh ] || bash scripts/lint.sh
