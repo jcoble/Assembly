@@ -202,6 +202,10 @@ small things.
   - The lane that wants a change can never OK it.
   - The move thread posts every OK it gives to Jesse, with the test before and after.
   - A change to what a feature should do waits for Jesse.
+- Files first, then code (Jesse, 2026-10-26). From B7 on, every feature port is two steps, each reviewed on its own.
+  Step 1 creates every file the feature has in the reference layout (plan section 4): each type with its name,
+  signatures and comment, and no logic, so the review looks at the layout alone. Step 2 brings the old code over,
+  piece by piece, into those files.
 
 ## Checking a feature
 

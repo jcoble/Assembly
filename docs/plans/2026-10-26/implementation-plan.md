@@ -1106,6 +1106,9 @@ because chat's row and thread stores and the preference store call SQLite direct
 
 ### B7. Preferences rebuilt on the base (the example every feature copies)
 
+The first port done files first, then code: B7a creates every file below with no logic, B7b brings the code over.
+Each is reviewed on its own.
+
 - **Files:**
   - One folder, `Application/Features/Preferences/`: `PreferencesFeature.cs` (its calls, topic and SQL, 5.2),
     `Preference.cs` (the record and its row reader), `PreferencesSchema.cs`, `PreferencesJson.cs`, and `README.md`
@@ -1219,7 +1222,9 @@ group:
 
 Each phase follows the base's pattern: one folder, `Application/Features/<Feature>/`, with its `<Feature>Feature.cs`,
 records, rules and SQL; its tests in `Assembly.Tests/Features/<Feature>/`; its store in `app/src/lib/<feature>/`; a check4 scenario, and the old route deleted in the same phase. Each starts by
-drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. Sol's step numbers are given so his
+drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. Then, as from B7 on (AGENTS.md,
+"Files first, then code"), each port is two reviewed steps: every file in its place with no logic, then the old
+code brought over piece by piece. Sol's step numbers are given so his
 catalogue stays the reference.
 
 ### C. Chat on the socket
