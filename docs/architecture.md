@@ -49,7 +49,8 @@ carries the rows. The only other HTTP is `/mcp`, which the agents use.
 - Tests: `dotnet/Assembly.Tests/Features/<Feature>/` and `app/test/`.
 - Page: `app/src/lib/<feature>/`.
 - A record or contract two features need moves to the core: a record to Domain, a contract to `Common/`.
-- No folder holds more than 30 files, and no source file more than 600 lines (`scripts/lint.d/20-file-size.sh`).
+- No folder holds more than 30 files (`ArchitectureTests`), and no source file more than 600 lines
+  (`scripts/lint.d/20-file-size.sh`).
 
 ## How changes land
 
