@@ -9,7 +9,7 @@ while IFS= read -r f; do
   [ "$n" -gt "$limit" ] || continue
   echo "file size: $f has $n lines, over $limit; split it" >&2
   failed=1
-done < <(git ls-files -- '*.cs' '*.ts' '*.svelte' '*.rs' \
+done < <(git -c core.quotePath=false ls-files -- '*.cs' '*.ts' '*.svelte' '*.rs' \
   ':!**/node_modules/**' ':!**/target/**' ':!**/bin/**' ':!**/obj/**' ':!**/.svelte-kit/**' ':!**/build/**')
 [ "$failed" = 0 ] && echo "file size: every source file is $limit lines or fewer"
 exit "$failed"

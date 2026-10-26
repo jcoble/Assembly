@@ -49,7 +49,7 @@ printf '%s\n' $(seq 599) >"$r/app/src/lib/B.svelte" && printf 'last' >>"$r/app/s
 seq 900 >"$r/app/node_modules/x/big.ts"
 seq 900 >"$r/app/src/lib/notes.md"
 expect 0 "file size: 600 lines, and 600 with no final newline, pass" "$r" 20-file-size.sh
-for f in dotnet/Assembly.Domain/A.cs app/src/lib/B.svelte app/src/lib/C.ts shell/src/main.rs; do
+for f in dotnet/Assembly.Domain/A.cs app/src/lib/B.svelte app/src/lib/C.ts shell/src/main.rs app/src/lib/résumé.ts; do
   seq 601 >"$r/$f"
   expect 1 "file size: 601 lines in $f fails" "$r" 20-file-size.sh
   seq 600 >"$r/$f"
