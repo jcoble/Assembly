@@ -270,6 +270,7 @@ small things.
 
 - A question for Jesse, or a blocker you can't get around, goes to the project thread right away, with enough context
   to answer without reading the chat. That task waits; keep working on everything else.
+- The Build Board and `board_update` don't exist here yet; the Build Board is rebuilt in plan phase P3.
 
 ## Plans and docs
 

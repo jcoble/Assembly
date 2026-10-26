@@ -233,7 +233,8 @@ way the only way. Each one names what enforces it.
       Dropped: the commit-msg `fix` hook, the `pnpm` and `cargo` commands, `assembly-native-ui`, and
       `evidence add --task TSK`. This repo's own "Checking a feature" section says how to prove a change.
     - **"Review guidelines":** kept unchanged.
-    - **"Reaching Jesse":** rewritten. The Build Board and `board_update` don't exist here, so a question or a
+    - **"Reaching Jesse":** rewritten. The Build Board and `board_update` don't exist here yet (the Build Board is
+      rebuilt in phase P3), so a question or a
       blocker goes to the project thread, with enough context to answer without reading the chat. The task waits,
       and other work goes on.
 17. **Dropped from mac-command-bar,** because they describe the Rust app or tools this repo doesn't have:
@@ -242,7 +243,7 @@ way the only way. Each one names what enforces it.
     - the `Architecture:` commit line and `main-architecture-explained.html`, which come back when that page is
       written for this repo;
     - the Notion task rules and `tsk-<id>` branch names;
-    - "The build board" section;
+    - "The build board" section: the old Rust board's reporting rules;
     - "The workbox" section's mac-command-bar worktree path. This repo's "Lanes" section already says where lanes
       live.
 
@@ -1475,7 +1476,19 @@ Each W phase:
 - **P1. Messages and machine routing** (Sol P25). It reads the old app's messaging as the reference, since Jesse says
   it worked. The polls in `RemoteOutbox.cs:44` and `MessageStatusTool.cs:30` become pushes.
 - **P2. Workflows** (Sol P27).
-- **P3. Build Board** (Sol P28).
+- **P3. Build Board** (Sol P28). Jesse's design (plan thread, 2026-10-26 19:10: reui.io agent-activity 1, 2 and 5,
+  "These are all pieces that i would like implemented, for different parts of the app"):
+  - One card per task, in one of three states:
+    - **Running** (agent-activity-2, Live Run Feed): a title, one live step line, and a footer with steps, files,
+      tools and duration.
+    - **Needs you** (agent-activity-1, Approval Run Console): a question answered on the card, or Approve/Deny.
+      These cards sort first.
+    - **Done or failed** (agent-activity-5, Run Outcome Report): done, failed and skipped counts, the files changed,
+      and retry for the failed items.
+  - At rest a card is at most 4 lines; a click opens the full feed.
+  - Built by hand in Svelte from the shadcn.io Svelte components, since ReUI is React only and Pro.
+  - The backend pushes each task's changes on one board topic, and durations come from backend timestamps. The
+    demos' `setTimeout` replay isn't ported.
 - **P4. Phone** (Sol P29). The phone speaks the same socket protocol, with paired credentials.
 - **P5. Notion Tasks** (Sol P30).
 - **P6. Usage and resources** (Sol P31).
