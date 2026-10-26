@@ -1,6 +1,6 @@
 # On every push and pull request: the backend builds with no warnings and its tests pass, the app checks, tests and
-# builds, the shell checks and tests, every scripts/*.test.sh passes, and (on a pull request) each of its own commits
-# passes scripts/check-commit-msg.sh.
+# builds, the shell checks and tests, every scripts/*.test.sh passes, the app's guards and lint pass, and (on a pull
+# request) each of its own commits passes scripts/check-commit-msg.sh.
 name: ci
 on:
   push:
@@ -61,6 +61,13 @@ jobs:
           failed=0
           for t in scripts/*.test.sh; do echo "== $t"; bash "$t" || failed=1; done
           exit $failed
+  lint:
+    # The app's guards and scripts/lint.sh. Both need only bash, git and grep, and read the checkout, not its history.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash app/scripts/guards.sh
+      - run: bash scripts/lint.sh
   commits:
     # A pull request's own commits; pushes to main aren't checked, since agent work reaches main through a pull request.
     if: github.event_name == 'pull_request'
