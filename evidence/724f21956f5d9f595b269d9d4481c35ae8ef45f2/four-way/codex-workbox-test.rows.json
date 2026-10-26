@@ -1,0 +1,142 @@
+[
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 1,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793056794788,
+    "firstSeq": 1
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 2,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793056794788,
+    "firstSeq": 2
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 6,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": "rs_036d395316648046016adfe01ea8388191be9a41096cedea98:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Preparing hostname command execution**",
+      "done": true
+    },
+    "createdAt": 1793056801829,
+    "firstSeq": 3
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 13,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": "context:c8148269-a016-4c60-8a3e-186b81415706",
+    "kind": "context",
+    "payload": {
+      "used": 15135,
+      "size": 258400
+    },
+    "createdAt": 1793056804498,
+    "firstSeq": 5
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 10,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": "exec-fe5fc281-5cc9-4453-b64c-07ec9d17d81c",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "/bin/bash -lc hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793056803894,
+    "firstSeq": 7
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 9,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": "guardian_assessment:c7c5ef37-8735-491c-8c55-e9e1b23c2a5f",
+    "kind": "tool",
+    "payload": {
+      "name": "Guardian Review",
+      "state": "completed",
+      "hasDetail": true,
+      "kind": "think"
+    },
+    "createdAt": 1793056803853,
+    "firstSeq": 8
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 14,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": "msg_036d395316648046016adfe0245e908191a007570a7a9d1ba9",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "workbox-test\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793056804507,
+    "firstSeq": 14
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 15,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+      "status": "completed",
+      "startedAt": 1793056794788,
+      "durationMs": 9719,
+      "firstTokenMs": 9602,
+      "model": "5.6 Luna",
+      "inputTokens": 5065,
+      "outputTokens": 298,
+      "cacheHitPct": 88.7,
+      "toolCalls": 2,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793056804507,
+    "firstSeq": 15
+  },
+  {
+    "threadId": "175b1955-4c4e-48bb-9d3b-01df655dbbac",
+    "seq": 16,
+    "runId": "c8148269-a016-4c60-8a3e-186b81415706",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793056804507,
+    "firstSeq": 16
+  }
+]
