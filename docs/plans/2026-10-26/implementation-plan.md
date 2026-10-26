@@ -69,6 +69,9 @@ Every other part of the plan is the same whichever he picks. Only `Assembly.Infr
 `IAppDatabase` / `IApplicationDbContext` interface in section 5.6 change, and step B3 in section 10 is written for
 both.
 
+**Recommendation (Claude's, not Jesse's decision): C.** His first goal is low memory, Microsoft says not to ship EF
+under AOT, and the atomic writer still gives him one shared write path that every feature goes through.
+
 ### D2. The lag meter, the counters sampler and the soak
 
 These three measure the page. Today they use timers (section 7): the lag meter needs a callback on each frame the
@@ -88,6 +91,18 @@ steps it drives. Zero timers in `app/src` means they can't stay where they are. 
   Frame-timing measurement stays a measure-mode tool, as in A.
 
 Whichever Jesse picks, the soak's waits (section 7, row 4) leave the page.
+
+A folder the guard doesn't scan is a place a model could put a timer, so under A, `app/measure/` gets three
+safeguards:
+
+- `app/measure/**` goes in `scripts/locked-paths.txt`, so adding or changing a file there needs an OK.
+- The guard fails if anything in `app/src` imports from `app/measure`.
+- The normal build must not include it. Only `shell/assembly.sh start --counters` injects it, and a check on the
+  normal build's output fails if a measure file is in it.
+
+**Recommendation (Claude's, not Jesse's decision): A and B together,** with those safeguards. The counters come from
+the clock topic and work in every run. Frame timing, which only the page can measure, stays a locked measure-mode
+tool.
 
 ### D3. Clean Architecture: the article or the EdiPlatform layout
 
@@ -111,6 +126,9 @@ The two don't match, and I need to know which to follow.
 hosts (the Mac's and the remote's). It borrows RentalCommand's idea of one write executor that every write goes
 through. If he'd rather have the Core / Data / Api / Engine names, only the project names in section 4 change.
 
+**Recommendation (Claude's, not Jesse's decision): the article,** since that's the link he gave, plus RentalCommand's
+single write executor.
+
 ### D4. Bytes over the socket
 
 One path means attachments go over the socket too. Today, `POST /threads/{id}/attachments` and
@@ -118,6 +136,8 @@ One path means attachments go over the socket too. Today, `POST /threads/{id}/at
 carry the bytes as base64, capped at 10 MB per image, the size the composer allows today. This adds about a third to
 the size of an upload, which is small for screenshots. The other way is a binary socket frame with a small header,
 which is more to write. The plan uses base64 unless Jesse wants binary frames.
+
+**Recommendation (Claude's, not Jesse's decision): base64.**
 
 ## 2. Where Jesse's comments went
 
@@ -176,19 +196,35 @@ way the only way. Each one names what enforces it.
     comment.
 15. **KISS, YAGNI, and one way only.** A change is done when the old way is deleted. From mac-command-bar, kept word
     for word.
-16. **mac-command-bar's sections that carry over unchanged:**
-    - "What we don't trade away", with its file paths updated.
-    - "Things that do real damage".
-    - "Providers behave the same", with the provider folder becoming `Assembly.Infrastructure/Acp/Providers/`.
-    - "Check every place the change reaches".
-    - "Testing", with check4 replacing the four-scenario script.
-    - "Review guidelines".
-    - "Reaching Jesse".
-17. **Dropped from mac-command-bar,** because they describe the Rust app:
+16. **mac-command-bar's sections that carry over, adapted to this repo.** Each was checked for references to the
+    Rust app or to tools this repo doesn't have:
+    - **"What we don't trade away":** kept. "Tauri command or websocket message" becomes "socket frame".
+      `scanSchedulers.ts` and the allow-list sentence become `app/scripts/guards.sh`, with no list. Tailwind `has-*`
+      joins the `:has()` rule once Tailwind is approved.
+    - **"Things that do real damage":** kept. The data folder paths become this repo's two (from "Safety"), and
+      `fourScenarios.ts start --seed` and `docs/operations/four-scenario-check.md` become `scripts/check4.sh` and its
+      README.
+    - **"Providers behave the same":** kept. The provider folder becomes `Assembly.Infrastructure/Acp/Providers/`.
+      Two lines go, because neither exists here: the pre-commit count of provider-name branches, and
+      `provider-updates.yml`.
+    - **"Check every place the change reaches":** kept. `remote/wire.rs` becomes the socket protocol
+      (`SocketFrames.cs`), and the `phone/` line waits for phase P4.
+    - **"Testing":** kept as rules: test first, no sleeps, no tests of layout or styling, check4 for every change.
+      Dropped: the commit-msg `fix` hook, the `pnpm` and `cargo` commands, `assembly-native-ui`, and
+      `evidence add --task TSK`. This repo's own "Checking a feature" section says how to prove a change.
+    - **"Review guidelines":** kept unchanged.
+    - **"Reaching Jesse":** rewritten. The Build Board and `board_update` don't exist here, so a question or a
+      blocker goes to the project thread, with enough context to answer without reading the chat. The task waits,
+      and other work goes on.
+17. **Dropped from mac-command-bar,** because they describe the Rust app or tools this repo doesn't have:
     - the Rust folder map;
     - the 600-line baseline file (the size rule waits for Jesse's 300-line decision);
     - the `Architecture:` commit line and `main-architecture-explained.html`, which come back when that page is
-      written for this repo.
+      written for this repo;
+    - the Notion task rules and `tsk-<id>` branch names;
+    - "The build board" section;
+    - "The workbox" section's mac-command-bar worktree path. This repo's "Lanes" section already says where lanes
+      live.
 
 ## 4. The solution layout
 
@@ -494,7 +530,9 @@ Every file in `app/src`, those included, fails on any of these:
 - `.then(`, `.catch(`, `.finally(`
 - a `:has(` in CSS
 - `observe(document.body`
-- a markdown parser import, except in `lib/editor/preview/`, as today
+- a markdown parser import, anywhere. Today's `lib/editor/preview/` carve-out goes, since there's no editor yet;
+  the editor phase (W2) asks for it if it needs one.
+- an import from `app/measure` (D2)
 
 These are checked in every file:
 
@@ -521,8 +559,14 @@ OK it (`AGENTS.md`, "Who may OK").
   - `new SqliteConnection(` (or `new ApplicationDbContext(`), except in `Assembly.Infrastructure/Persistence/`;
   - `AcceptWebSocketAsync(`, except in `SocketEndpoint.cs`;
   - `BeginTransaction(`, except in `AtomicWriter.cs`.
-- While the chat routes still exist (until phase C1 ends), `40-one-dispatcher.sh` lists them as a legacy list that
-  can only shrink, as `40-routes.sh` does today. The list is deleted when it's empty.
+- **`40-one-dispatcher.sh` lands only when it needs zero exceptions,** at the end of phase C1, in the commit that
+  deletes the last chat HTTP route. It has no legacy list, and no list that can only shrink.
+  - **Why then, and not inside the base:** moving the chat routes onto the socket before B11 would put all of
+    phase C1 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
+    to show.
+  - **Until then:** today's `40-routes.sh` and its shrinking list stay as they are on main, unchanged, and nothing is
+    added to them. The C1 commit deletes `40-routes.sh`. Because `scripts/lint.d/**` is locked from B12, that delete
+    needs an OK; adding the new file doesn't.
 - New checks, all run by `scripts/lint.sh`:
   - `50-dotnet-format.sh`: `dotnet format --verify-no-changes`.
   - `60-svelte-check.sh`: `svelte-check`, with zero errors.
@@ -727,9 +771,8 @@ group:
 
 ### B11. The lint checks
 
-- **Files:**
-  - `scripts/lint.d/40-one-dispatcher.sh`, replacing `40-routes.sh`;
-  - `50-dotnet-format.sh`, `60-svelte-check.sh`, `70-architecture.sh`.
+- **Files:** `scripts/lint.d/50-dotnet-format.sh`, `60-svelte-check.sh`, `70-architecture.sh`.
+  `40-one-dispatcher.sh` lands at the end of phase C1 instead (section 9.2).
 - **Test first:** each script gets a probe file it must fail on, run from a scratch copy, as for the guard.
 - **Proof:** `scripts/lint.sh` passes on the tree, and each probe fails.
 - **Size:** about 200 lines.
@@ -737,7 +780,7 @@ group:
 ### B12. Lock the configs, then open the PR
 
 - **Files:** `scripts/locked-paths.txt` adds `scripts/lint.d/**`, `dotnet/.editorconfig`,
-  `dotnet/Directory.Build.props` and `dotnet/Directory.Packages.props`. That file is itself locked, so this needs an
+  `dotnet/Directory.Build.props`, `dotnet/Directory.Packages.props`, and, under D2 A, `app/measure/**`. That file is itself locked, so this needs an
   OK line.
 - **Proof:** `scripts/check-pinned.sh` refuses a test edit to each newly locked file.
 - **Then:** open the PR from `lane/base`, drafted until every step's proof is in, and send it to Jesse to review and
@@ -761,7 +804,8 @@ catalogue stays the reference.
       topic;
     - the page's `threads/`, `rows/` and `composer/` stores.
   - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
-    `app/src/lib/rows/client.ts`.
+    `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions,
+    and deletes `40-routes.sh`, which needs an OK (section 9.2).
   - **Tests:**
     - base#8: a thread made while the page is subscribed arrives as an upsert;
     - base#9: the pending run is shown during the gap before the copied row arrives (the failing test is written
