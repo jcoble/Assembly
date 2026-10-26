@@ -252,9 +252,12 @@ Jesse's decision (D3): the core of the app follows the article's layers, everyth
 one folder each, there's no repository, and the SQL is plain.
 
 **Where a new feature's files go.** Its backend code goes in `dotnet/Assembly.Application/Features/<Feature>/`, its
-tests in `dotnet/Assembly.Tests/Features/<Feature>/`, and its page code in `app/src/lib/<feature>/`. Only plumbing
-that several features share goes in the layers. No folder holds more than 30 files (section 12), so a feature that
-grows gets subfolders, and no folder gets anywhere near 50.
+tests in `dotnet/Assembly.Tests/Features/<Feature>/`, and its page code in `app/src/lib/<feature>/`. When it needs an
+outside system (git, a terminal, files on disk), the contract stays in its feature folder and the implementation goes
+in `dotnet/Assembly.Infrastructure/<Feature>/`, with the same name. Only plumbing that several features share goes in
+the layers. No folder holds more than 30 files (section 12), so a feature that grows gets subfolders, and no folder
+gets anywhere near 50. The limit counts files, not subfolders: `lib/components/ui/` has one subfolder per shadcn
+component, and each of those is counted on its own.
 
 ```text
 dotnet/
@@ -480,7 +483,7 @@ never reach a log. Features don't add their own call logging.
 
 ### 5.6 Atomic writes and the audit
 
-`Application/Common/Persistence/IAtomicWriter.cs`:
+`Application/Common/Database/IAtomicWriter.cs`:
 
 ```csharp
 public interface IAtomicWriter
@@ -502,7 +505,7 @@ public interface IWriteScope : IAppDatabase
     void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type); // queued, sent after commit
 }
 
-// One result row, read by column position.
+// One result row, read by column position. So every query names its columns: never SELECT *.
 public interface IRow
 {
     bool IsNull(int column);
@@ -515,7 +518,9 @@ public interface IRow
 public readonly record struct SqlArg(string Name, object? Value); // a string, long, double, byte[] or null
 ```
 
-These live in `Application/Common/Database/`. Application never references `Microsoft.Data.Sqlite`: the
+These live in `Application/Common/Database/`. Since rows are read by position, a query always names its columns
+and never uses `SELECT *`; `scripts/lint.d/45-no-select-star.sh` (step B3) fails on `SELECT *` anywhere under
+`dotnet/`. Application never references `Microsoft.Data.Sqlite`: the
 Infrastructure classes turn a `SqlArg` into a `SqliteParameter` and wrap the data reader as an `IRow`. There's no
 Dapper and no other new package.
 
@@ -746,7 +751,9 @@ check to the window run (and to the B9 node test with happy-dom where it can) th
 no animation whose `iterations` is `Infinity`, at three moments: after launch, after a turn finishes, and after a
 turn is cancelled. The old Assembly's loops stayed on after work stopped, so the last two matter most. A loop left on
 at rest fails it, whichever file it's in. In measure mode (D2 A), the measure tools also count live `setTimeout` and
-`setInterval` timers at those three moments, which catches timers inside packages; the count must be zero.
+`setInterval` timers and pending `requestAnimationFrame` callbacks at those moments, which catches timers and frame
+loops inside packages (dockview-core's popout loop is a frame loop); each count must be zero. F1 adds a fourth
+moment: after a pane drag ends.
 
 **The build backstop.** After `vite build`, CI fails if the built CSS contains `:has(`. That also covers CSS from
 packages and from a later shadcn-svelte update, which the source scan can't see.
@@ -880,8 +887,12 @@ as section 3 says, and adds the shadcn-first rule (F2).
     matching the code they test. `Draft/`, `Pinned/` and `Fixtures/` stay where they are.
   - Changed: `Assembly.Mac/Program.cs` (from `Serve/MacBackend.cs` and `MacServe.cs`) and the remote's `ServeRun.cs`
     call the `Add*` methods, plus the scripts that name
-    `Assembly.Engine` (`dotnet/scripts/*.sh`, `shell/assembly.sh`, `scripts/check4.sh`), and `AGENTS.md`, which names
-    `Assembly.Engine/*` and `Assembly.Mac/*` paths.
+    `Assembly.Engine` (`dotnet/scripts/*.sh`, `shell/assembly.sh`, `scripts/check4.sh`), `AGENTS.md` and
+    `dotnet/README.md`, which name `Assembly.Engine/*` and `Assembly.Mac/*` paths.
+  - Changed: `scripts/check-evidence.sh`. Its list of code folders names `dotnet/Assembly.Engine`; that's replaced by
+    `dotnet/Assembly.Domain`, `dotnet/Assembly.Application` and `dotnet/Assembly.Infrastructure`, or backend commits
+    would skip the four-way check without a word. The script also fails when a `dotnet/Assembly.*` project folder is
+    neither in the list nor `Assembly.Tests`, so a project added later can't be skipped. It isn't locked.
 - **Failing test first:** `Assembly.Tests/Architecture/ArchitectureTests.cs`. It loads each assembly and checks its
   references, and reads the source tree for the rest (no new package):
   - `Assembly.Domain` references no `Assembly.*`;
@@ -892,7 +903,8 @@ as section 3 says, and adds the shadcn-first rule (F2).
     dodged;
   - no file under `app/src/lib/<feature>/` imports from another feature's folder (only the page core and its own
     files);
-  - no folder under `dotnet/` or `app/src/` (outside `bin/`, `obj/` and `node_modules/`) holds more than 30 files.
+  - no folder under `dotnet/` or `app/src/` (outside `bin/`, `obj/` and `node_modules/`) holds more than 30 files,
+    counting the files directly in it, not its subfolders.
     The number is one constant in the test, and there are no exceptions. Today's largest folder,
     `Assembly.Engine/Acp/Messages/`, has 29.
 
@@ -901,7 +913,10 @@ as section 3 says, and adds the shadcn-first rule (F2).
   - the test count is the same as before (201 passed and 4 skipped of 205, at `7805f12`), plus the new test;
   - check4 passes on all four cases;
   - `shell/assembly.sh build` publishes AOT;
-  - the move thread sees the app run in the window on the Mac.
+  - `check-evidence.sh` fails on a range holding a B2 commit with no evidence, and on a scratch
+    `dotnet/Assembly.Scratch/` folder (removed afterwards);
+  - the move thread sees the app run in the window on the Mac. This is owed, not done: builds on Jesse's Mac are
+    paused until he says so, and PR 2's text says so.
 - **Size:** mechanical (namespaces and `using` lines across about 150 files), plus about 150 lines of new project
   files and DI.
 
@@ -931,7 +946,8 @@ as section 3 says, and adds the shadcn-first rule (F2).
      prune is a separate transaction (a failure injected into the prune leaves the triggering write committed).
   9. A backlog over the cap clears over the following writes: with 12,000 expired rows, the first write's prune
      deletes 5,000, the second write's 5,000 and the third write's 2,000; a fourth write the same day doesn't prune.
-- **Also:** chat's row and thread writes move onto `IAtomicWriter` (5.6).
+- **Also:** chat's row and thread writes move onto `IAtomicWriter` (5.6), and `scripts/lint.d/45-no-select-star.sh`
+  fails on `SELECT *` under `dotnet/` (rows are read by column position).
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
   99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
 - **Proof:** the tests, run, with their counts, the measurement, and check4.
@@ -1082,11 +1098,14 @@ group:
 - **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, `fetch`
   in `socket.ts` itself, a `WebSocket` outside `socket.ts`, a Tailwind `has-data-[…]`, a bare `animate-spin`, an
   `infinite` in a rule without `[aria-busy="true"]`, a bare `shimmer`, `has-checked:`, `not-has-[...]`,
-  `<svelte:window` and `matchMedia(` outside host). Each fails against today's script. Probes that must pass:
-  `aria-busy:animate-spin`, `group-aria-busy:shimmer`, and `infinite` inside `[aria-busy='true']`.
+  `<svelte:window` and `matchMedia(` outside host, and `addPopoutGroup(`, since popout windows bring dockview-core's
+  endless frame loop). Each fails against today's script. Probes that must pass: `aria-busy:animate-spin`,
+  `group-aria-busy:shimmer`, and `infinite` inside `[aria-busy='true']`. One more probe: when the CSS in
+  `node_modules` that the looping names are read from is missing, `guards.sh` fails instead of passing with an empty
+  list.
 - **The at-rest check:** `document.getAnimations()` holds no animation with `iterations` of `Infinity` after launch,
   after a finished turn and after a cancelled turn (9.1). It runs in the window check on the Mac. In measure mode,
-  the live timer count is zero at the same three moments.
+  the live timer count and the pending frame callback count are zero at the same three moments.
 - **Proof:** `guards.sh` passes on the tree after B9, and fails on each probe.
 - **Size:** about 120 lines.
 
@@ -1173,6 +1192,8 @@ catalogue stays the reference.
   - **Saving:** the layout (`toJSON()`) is saved once at the end of a drag, per base#7: when a divider is let go
     (pointerup) or a pane is dropped. It's one atomic write, never one per frame of the drag.
   - **Tests:** only the rules, as logic: a saved layout loads back the same, and a drag sends one save at its end.
+  - **At rest:** the checks in 9.1 also run after a pane drag ends: no endless animation, and in measure mode no live
+    timer and no pending frame callback.
   - **Proof:** a feature check in the window, with screenshots of panes moved and dividers dragged to the next pane.
 - **F2. The look** (base#6): shadcn-svelte first. Everything is built from shadcn-svelte and AI Elements
   components, added from the registry (AGENTS.md says how), never hand-built look-alikes. Jesse set up Tailwind v4
