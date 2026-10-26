@@ -436,7 +436,21 @@ No transaction is ever held open across an agent call, a network call, or a wait
 
 The writer handles every write, not just calls. `RowStore`'s `Commit` and `Copy`, which save chat rows, run through
 `IAtomicWriter` too, and so do the `ThreadStore` writes, since only the writer hands out a write connection. Each row
-batch gets one audit row, not one per row.
+batch gets one audit row, not one per row. Every write is audited, rows included, with no carve-out.
+
+**Audit retention: 30 days, pruned by the writer, with no timer.** A busy month of chat adds millions of audit rows,
+so the writer keeps only the last 30 days. There are two prunes:
+
+- **At startup.** When the backend starts, the writer deletes audit rows older than 30 days, once.
+- **While it runs, on a write.** A remote host can run for weeks without a restart. So on every write, the writer
+  reads the time from `TimeProvider`, and if its last prune was more than a day ago, it deletes the expired audit rows
+  in that same transaction, before commit.
+
+This was chosen over a background timer, because it adds no timer and needs no thread of its own. A host that writes
+nothing has nothing to prune.
+
+Each prune deletes at most one day's worth of expired rows, using an index on `audit(at)`, so a write that runs the
+prune stays short.
 
 **Measured** in the same scratch program as 5.9: a 20-row batch with 400-byte payloads takes 131 to 138 µs at the
 median with its audit row, against 96 to 99 µs without. The 99th percentile is 2.7 to 3.4 ms with the audit row and
@@ -726,6 +740,10 @@ what isn't proven yet. Jesse merges each one, and the next group builds on main 
   3. A failing commit (an injected failure) leaves nothing and publishes nothing.
   4. Two writes at once run one after the other.
   5. A `RowStore` batch commit goes through the writer: its rows and one audit row commit together.
+  6. Startup prune, with `FakeTimeProvider`: a database with audit rows 31 days old and 29 days old keeps only the
+     29-day ones after the writer opens.
+  7. Long-running prune: with no restart, advancing fake time 31 days and then writing deletes the expired rows in
+     that write's transaction. A second write the same day doesn't prune again.
 - **Also:** `RowStore` and `ThreadStore` writes move onto `IAtomicWriter` (5.6).
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
   99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
@@ -1001,6 +1019,7 @@ Each P phase has the same shape as the W phases.
 ## 12. What this plan doesn't settle
 
 - **D1 to D4** (section 1).
+- **Audit retention is 30 days** (5.6). That's a number Jesse can change: it's one constant in `AtomicWriter.cs`.
 - **The 300-line file limit,** which waits for Jesse. If he picks 300, the 7 oversize files are split in phase C1.
 - **The packages for F2 and the checks** (prettier, knip), which wait for Jesse's OK.
 - **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to
