@@ -7,7 +7,7 @@ namespace Assembly.Remote.Smoke;
 public sealed record SmokeOptions(AgentCommand Agent, string LogPath, TimeSpan RunTimeout)
 {
     public const string Usage =
-        "usage: Assembly.Engine smoke [--cwd DIR] [--log FILE] [--timeout SECONDS] -- <adapter command...>";
+        "usage: Assembly.Remote smoke [--cwd DIR] [--log FILE] [--timeout SECONDS] -- <adapter command...>";
 
     public static SmokeOptions? Parse(IReadOnlyList<string> args)
     {

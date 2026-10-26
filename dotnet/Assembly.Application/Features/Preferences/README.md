@@ -2,11 +2,12 @@
 
 How a feature is laid out in the backend. Copy this shape.
 
-- One folder per feature, one class per file. A feature every machine serves (its own files, git, terminals) lives in
-  `Assembly.Engine/<Feature>/` and has a line in `Engine/Features/MachineFeatureList.cs`. A feature only the Mac's
-  window needs lives in `Assembly.Mac/<Feature>/` and has a line in `Assembly.Mac/Features/MacFeatureList.cs`.
-  Preferences is Mac-only, so Workbox Test has no preferences table. Every feature has to say which it is.
-- `<Feature>Routes.cs` has a static `Add(routes, context)` that makes the feature's `FeatureCalls` and adds each call
+- One folder per feature, one class per file: `Assembly.Application/Features/<Feature>/`, with its outside systems in
+  `Assembly.Infrastructure/<Feature>/`. A feature every machine serves (its own files, git, terminals) has a line in
+  `Assembly.Infrastructure/Http/MachineFeatureList.cs`; one only the Mac's window needs has a line in
+  `Assembly.Infrastructure/Http/MacFeatureList.cs`. Preferences is Mac-only, so Workbox Test has no preferences
+  table. Every feature has to say which it is.
+- `<Feature>Routes.cs` (in `Assembly.Infrastructure/Http/` until the routes move in B7) has a static `Add(routes, context)` that makes the feature's `FeatureCalls` and adds each call
   with `calls.Map("<method>", handler)`, plus one method per call. That's the only way to add a route
   (`scripts/lint.d/40-routes.sh` fails on a `MapPost` or `MapGet` anywhere else).
 - The feature's tables are in its own `<Feature>Schema.cs`, in the host's SQLite file (`FeatureContext.Database`).
@@ -21,7 +22,7 @@ Every feature call goes through one helper on each side, so the repeated work is
 
 - Page: `app/src/lib/call.ts`. `call(feature, method, body, { key, signal })` makes the request, and `save(feature,
   key, value)` saves a setting.
-- Backend: `Engine/Features/FeatureCalls.cs`. `Map(method, handler)` adds a call. It reads the body, answers
+- Backend: `Assembly.Infrastructure/Http/FeatureCalls.cs`. `Map(method, handler)` adds a call. It reads the body, answers
   `{result}`, 400 `{error}` for a `CallFailed` or a bad body, 404 for a method the feature doesn't have, and 500
   `{error}` for anything else, which it logs with the exception. It logs each call's name at Debug and hands the
   handler the request's cancellation token. Once the page has gone, it writes nothing.

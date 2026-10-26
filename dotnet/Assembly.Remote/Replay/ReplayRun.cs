@@ -16,7 +16,7 @@ namespace Assembly.Remote.Replay;
 /// </summary>
 public static class ReplayRun
 {
-    public const string Usage = "usage: Assembly.Engine rows <transcript.jsonl> [--db PATH]";
+    public const string Usage = "usage: Assembly.Remote rows <transcript.jsonl> [--db PATH]";
     private const string Thread = "replay";
 
     public static int Run(IReadOnlyList<string> args)

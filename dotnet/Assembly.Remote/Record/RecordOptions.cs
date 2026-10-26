@@ -3,7 +3,7 @@ namespace Assembly.Remote.Record;
 /// <summary><c>record --out DIR [--only a,b] -- &lt;adapter command…&gt;</c></summary>
 public sealed record RecordOptions(string OutDirectory, IReadOnlySet<string> Only, string FileName, IReadOnlyList<string> Arguments)
 {
-    public const string Usage = "usage: Assembly.Engine record --out DIR [--only name,name] -- <adapter command...>";
+    public const string Usage = "usage: Assembly.Remote record --out DIR [--only name,name] -- <adapter command...>";
 
     public static RecordOptions? Parse(IReadOnlyList<string> args)
     {
