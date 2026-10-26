@@ -2,7 +2,8 @@
 # Fails if a code commit in base..head has no passing four-way check (scripts/check4.sh): a summary at
 # evidence/<commit>/four-way/summary.json in head, with "pass": true, for that commit or a later one that contains it,
 # that ran every feature scenario present at its own commit (scripts/features/*.sh). A partial run doesn't count.
-# A code commit touches the backend's or the app's code: the code folders below, app/src/, shell/src/. Every
+# A code commit touches the backend's or the app's code: the code folders and files below, including the package
+# versions and manifests (dotnet/Directory.*.props, app/package.json and its lockfile, the shell's Cargo files). Every
 # dotnet/Assembly.* folder in head must be listed as code or not code, so a new project can't slip past the check.
 # Runs on every push to main (.github/workflows/pinned.yml) and locally (default origin/main..HEAD).
 set -euo pipefail
@@ -11,7 +12,9 @@ base=${1:-origin/main} head=${2:-HEAD}
 # Assembly.Engine was split into Domain, Application and Infrastructure in B2c; it stays so the commits before that
 # still count as code.
 code=(dotnet/Assembly.Domain dotnet/Assembly.Application dotnet/Assembly.Infrastructure dotnet/Assembly.Mac
-  dotnet/Assembly.Remote dotnet/Assembly.Engine app/src shell/src)
+  dotnet/Assembly.Remote dotnet/Assembly.Engine app/src shell/src
+  dotnet/Directory.Build.props dotnet/Directory.Packages.props app/package.json app/pnpm-lock.yaml
+  shell/Cargo.toml shell/Cargo.lock)
 not_code=(dotnet/Assembly.Tests)
 
 failed=0
