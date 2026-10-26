@@ -274,7 +274,8 @@ dotnet/
       Topics/                    ITopics
       Clock/                     IBackendClock
       Machines/                  IMachine, MachineSet
-      Agents/                    IAgentLauncher, IAgentLink
+      Agents/                    IAgentLauncher, IAgentLink, AgentDescriptor, SharedAdapter
+      Acp/                       the ACP protocol over streams: messages, V1, JSON-RPC, AcpClient
     Features/
       Chat/                      ChatFeature.cs, ChatSchema.cs, and Threads/ Rows/ Sessions/ Helpers/ Attachments/
       Preferences/               step B7
@@ -283,8 +284,9 @@ dotnet/
   Assembly.Infrastructure/       references Application
     Persistence/                 AppDatabase, AtomicWriter and the audit, the schema runner
     Socket/                      SocketEndpoint, SocketConnection, SocketDispatcher
-    Topics/  Clock/  Acp/  Agents/  Machines/  Remote/  Markdown/  Transcript/  Mcp/
-    Http/                        today's HTTP routes, until each moves onto the socket (gone by the end of C1)
+    Topics/  Clock/  Agents/  Machines/  Remote/  Transcript/  Mcp/
+    Http/                        today's HTTP routes, FeatureCalls and the feature lists, until B7, B8 and C1
+                                 delete them
     DependencyInjection.cs       AddInfrastructure(), AddMacInfrastructure()
   Assembly.Mac/                  Program.cs, and MacOptions.cs for its arguments
   Assembly.Remote/               Program.cs, and its Serve, Smoke, Record and Replay commands
@@ -300,11 +302,15 @@ no OK for them.
 
 | Place | Holds | Doesn't hold |
 | --- | --- | --- |
-| Domain | Only the records and rules that several features share: agent events, row kinds and payloads, `ThreadInfo` and its config records, and the markdown block model. Time comes in as an argument. | A record only one feature uses (that stays in the feature), I/O, JSON, SQL. |
-| Application `Common/` | The shared contracts every feature uses: the database and writer, calls, topics, the clock, machines and agent launching. | Implementations. |
+| Domain | Only the records and rules that several features share: agent events, row kinds and payloads, `ThreadInfo` and its config records, and the markdown block records (`Safe*`), which the row payloads hold. Time comes in as an argument. | A record only one feature uses (that stays in the feature), I/O, JSON, SQL, packages. |
+| Application `Common/` | The shared contracts every feature uses: the database and writer, calls, topics, the clock, machines and agent launching. Also the ACP protocol code, which only speaks JSON-RPC over the streams it's given: it starts no process and touches no files, and the chat sessions are built on its records. | Implementations that start processes, open SQLite or serve HTTP. |
 | Application `Features/<Feature>/` | Everything one feature is: its `<Feature>Feature.cs` (calls and topics), its records, its rules, its tables (`<Feature>Schema.cs`), and its plain SQL, written straight against `IAppDatabase` for reads and `IWriteScope` for writes. | A repository, a class per table, or another feature's types. |
-| Infrastructure | The implementations of `Common/` and the outside systems: the SQLite connection and the writer with its audit, the socket and dispatcher, topics, the clock, ACP and JSON-RPC, agent processes and git, local and remote machines (SSH tunnel, follower, outbox), the Markdig parse, the provider transcript readers, and `/mcp`. | Feature rules or feature SQL. |
+| Infrastructure | The implementations of `Common/` and the outside systems: the SQLite connection and the writer with its audit, the socket and dispatcher, topics, the clock, starting agent processes and git, local and remote machines (SSH tunnel, follower, outbox), the provider transcript readers, `/mcp`, and today's HTTP routes until they're deleted. | Feature rules or feature SQL. |
 | Hosts | `Program.cs`: parse arguments, call the `Add*` methods, map the socket endpoint and `/mcp`, run. | Anything else. |
+
+**Packages in Application.** Application may reference Markdig and DiffPlex, which are plain libraries with no I/O (chat's
+rows parse markdown and diffs). It never references `Microsoft.Data.Sqlite` or ASP.NET Core; `ArchitectureTests`
+checks both.
 
 **Features don't reach into each other.** A feature folder never uses a type from another feature's folder. When
 two features need the same thing, it moves to the core (a record to Domain, a contract to `Common/`).
@@ -342,29 +348,31 @@ doesn't change in that step.
 | `Assembly.Engine/Events/` | `Assembly.Domain/Events/` |
 | `Assembly.Engine/Rows/Payloads/`, `RowKind` | `Assembly.Domain/Rows/` |
 | `Assembly.Engine/Threads/ThreadInfo`, `ThreadConfig`, `HelperMessage` | `Assembly.Domain/Threads/` |
-| `Assembly.Engine/Markdown/Safe*` (the block model) | `Assembly.Domain/Markdown/` |
-| `Assembly.Engine/Markdown/BlockReader`, `InlineReader`, `MarkdownJsonContext` (the Markdig parse) | `Assembly.Infrastructure/Markdown/` |
+| `Assembly.Engine/Markdown/Safe*` block records | `Assembly.Domain/Markdown/` |
+| `Assembly.Engine/Markdown/SafeMarkdown`, `SafeLinks`, `BlockReader`, `InlineReader`, `MarkdownJsonContext` (the parse, with Markdig) | `Assembly.Application/Features/Chat/Rows/Markdown/` |
 | `Assembly.Engine/Threads/ThreadStore`, `ThreadPage` | `Assembly.Application/Features/Chat/Threads/` |
 | `Assembly.Engine/Rows/` (the rest: `RowConverter`, `RowBatch`, `OpenTurn`, `RunRecovery` and the like) | `Assembly.Application/Features/Chat/Rows/` |
 | `Assembly.Engine/Store/` (`RowStore`, `RowPage`, `RowWire`, `StoredRow`, `StoredToolCall`) | `Assembly.Application/Features/Chat/Rows/` |
 | `Assembly.Engine/Store/Schema` | `Assembly.Application/Features/Chat/ChatSchema.cs` |
 | `Assembly.Engine/Sessions/` (all but `SharedAdapter`) | `Assembly.Application/Features/Chat/Sessions/` |
-| `Assembly.Engine/Sessions/SharedAdapter` | `Assembly.Infrastructure/Agents/` |
+| `Assembly.Engine/Sessions/SharedAdapter` (it only uses `IAgentLauncher`) | `Assembly.Application/Common/Agents/` |
 | `Assembly.Engine/Helpers/` tools | `Assembly.Application/Features/Chat/Helpers/` |
 | `Assembly.Engine/Attachments/` | `Assembly.Application/Features/Chat/Attachments/` |
-| `Assembly.Engine/Acp/` | `Assembly.Infrastructure/Acp/` |
-| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink` | `Assembly.Application/Common/Agents/` |
-| `Assembly.Engine/Agents/` (the rest) | `Assembly.Infrastructure/Agents/` |
-| `Assembly.Engine/Live/` | `Assembly.Infrastructure/Topics/` (it becomes the `rows` topic, step C1) |
+| `Assembly.Engine/Acp/` (messages, `V1`, `JsonRpc`, `AcpClient`, `IPermissionPolicy`) | `Assembly.Application/Common/Acp/` |
+| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink`, `AgentDescriptor` | `Assembly.Application/Common/Agents/` |
+| `Assembly.Engine/Agents/` (the rest: `AdapterLauncher`, `AgentProcess`, `ProcessGroup`, `GitCheckout`, `AgentCommand`, `AgentConnection`) | `Assembly.Infrastructure/Agents/` |
+| `Assembly.Engine/Live/` (`LiveHub`; it uses chat's rows) | `Assembly.Application/Features/Chat/Rows/` until C1 turns it into the `rows` topic |
 | `Assembly.Engine/Machines/IMachine`, `MachineSet`, `MachineUnreachable` | `Assembly.Application/Common/Machines/` |
 | `Assembly.Engine/Machines/LocalMachine` | `Assembly.Infrastructure/Machines/` |
 | `Assembly.Engine/Transcript/` | `Assembly.Infrastructure/Transcript/` |
 | `Assembly.Engine/Api/McpRoutes` | `Assembly.Infrastructure/Mcp/` |
 | `Assembly.Engine/Api/` (the rest: HTTP routes, `LiveSocket`, `TokenGuard`) | `Assembly.Infrastructure/Http/`, kept only until each route moves onto the socket, then deleted (section 11) |
-| `Assembly.Engine/Features/` (`FeatureCalls`, feature lists) | Deleted in step B7; replaced by `Socket/` and `Application/DependencyInjection.cs` |
+| `Assembly.Engine/Features/` (`FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`) and `Assembly.Mac/Features/MacFeatureList` | `Assembly.Infrastructure/Http/`; deleted in step B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
 | `Assembly.Mac/Remote/` | `Assembly.Infrastructure/Remote/`, registered only by `AddMacInfrastructure()` |
-| `Assembly.Mac/Preferences/` | `Assembly.Application/Features/Preferences/` (step B7) |
-| `Assembly.Mac/Page/`, `Assembly.Mac/Debug/` | `Assembly.Application/Features/Diagnostics/` (step B8) |
+| `Assembly.Mac/Preferences/` (`PreferenceStore`, `PreferencesSchema`, `README.md`) | `Assembly.Application/Features/Preferences/` |
+| `Assembly.Mac/Preferences/PreferencesRoutes` | `Assembly.Infrastructure/Http/` until B7 deletes it |
+| `Assembly.Mac/Page/` (`ImageFile`, `MemorySample`, `Thumbnail`, `TurnActivity`) | `Assembly.Application/Features/Diagnostics/` (step B8 finishes it) |
+| `Assembly.Mac/Page/PageRoutes`, `Assembly.Mac/Debug/DebugRoutes` | `Assembly.Infrastructure/Http/` until B8 deletes them |
 | `Assembly.Mac/Serve/` | `Assembly.Mac/Program.cs` and `MacOptions.cs` |
 | `Assembly.Remote/Serve`, `Smoke`, `Record`, `Replay` | Stay in `Assembly.Remote/` (they're that host's commands) |
 
@@ -877,24 +885,25 @@ as section 3 says, and adds the shadcn-first rule (F2).
 
 ### B2. Move to the Clean Architecture layout (no behavior change)
 
-- **Files:**
-  - New: `dotnet/Assembly.Domain/Assembly.Domain.csproj`, `dotnet/Assembly.Application/Assembly.Application.csproj`
-    with `DependencyInjection.cs`, `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj` with
-    `DependencyInjection.cs`, `dotnet/Directory.Packages.props`.
-  - Moved: every file in the "Where today's folders go" table in section 4.
-  - Deleted: `dotnet/Assembly.Engine/`.
-  - Moved tests: today's test folders go to `Assembly.Tests/Features/<Feature>/`, `Core/` or `Infrastructure/`,
-    matching the code they test. `Draft/`, `Pinned/` and `Fixtures/` stay where they are.
-  - Changed: `Assembly.Mac/Program.cs` (from `Serve/MacBackend.cs` and `MacServe.cs`) and the remote's `ServeRun.cs`
-    call the `Add*` methods, plus the scripts that name
-    `Assembly.Engine` (`dotnet/scripts/*.sh`, `shell/assembly.sh`, `scripts/check4.sh`), `AGENTS.md` and
-    `dotnet/README.md`, which name `Assembly.Engine/*` and `Assembly.Mac/*` paths.
-  - Changed: `scripts/check-evidence.sh`. Its list of code folders names `dotnet/Assembly.Engine`; that's replaced by
-    `dotnet/Assembly.Domain`, `dotnet/Assembly.Application` and `dotnet/Assembly.Infrastructure`, or backend commits
-    would skip the four-way check without a word. The script also fails when a `dotnet/Assembly.*` project folder is
-    neither in the list nor `Assembly.Tests`, so a project added later can't be skipped. It isn't locked.
-- **Failing test first:** `Assembly.Tests/Architecture/ArchitectureTests.cs`. It loads each assembly and checks its
-  references, and reads the source tree for the rest (no new package):
+B2 is three commits, so each can be read on its own. Before the move, today's projects get the plain-SQL contracts,
+because chat's row and thread stores and the preference store call SQLite directly, and Application may not.
+
+- **B2a. Plain SQL, inside today's projects, before anything moves.**
+  - **Files:**
+    - New contracts: `IAppDatabase`, `IWriteScope`, `IRow`, `SqlArg` and `IAtomicWriter`, with the signatures in
+      5.6.
+    - `AppDatabase` (reads, on today's connection) and `AtomicWriter.cs`, the one file that begins a transaction
+      from here on. In B2 it does only one transaction per write: open, run the write, commit, or roll back. There's
+      no audit, queue or prune yet; B3 adds those to this same class. There's no second write path, and nothing in
+      B2a that B3 has to delete.
+    - `RowStore`, `ThreadStore` and `PreferenceStore` rewritten as plain SQL: reads through `IAppDatabase`, writes
+      through `IAtomicWriter.WriteAsync`. Their public methods stay the same, so their callers don't change.
+  - **Failing tests first,** for the contracts: a query maps rows by position, a write that throws leaves nothing,
+    and a write that succeeds is there after it commits.
+  - **Proof:** every existing test, the pinned ones included, passes unchanged. That's the proof behavior didn't
+    change.
+- **B2b. `ArchitectureTests`, failing.** `Assembly.Tests/Architecture/ArchitectureTests.cs`. It loads each assembly
+  and checks its references, and reads the source tree for the rest (no new package):
   - `Assembly.Domain` references no `Assembly.*`;
   - `Assembly.Application` references only `Assembly.Domain`, and not `Microsoft.Data.Sqlite` or ASP.NET Core;
   - `Assembly.Infrastructure` doesn't reference `Assembly.Mac` or `Assembly.Remote`;
@@ -904,31 +913,49 @@ as section 3 says, and adds the shadcn-first rule (F2).
   - no file under `app/src/lib/<feature>/` imports from another feature's folder (only the page core and its own
     files);
   - no folder under `dotnet/` or `app/src/` (outside `bin/`, `obj/` and `node_modules/`) holds more than 30 files,
-    counting the files directly in it, not its subfolders.
-    The number is one constant in the test, and there are no exceptions. Today's largest folder,
-    `Assembly.Engine/Acp/Messages/`, has 29.
+    counting the files directly in it, not its subfolders. The number is one constant in the test, and there are no
+    exceptions. Today's largest folder, `Assembly.Engine/Acp/Messages/`, has 29.
 
-  It fails today because the projects don't exist.
+  It fails because the projects don't exist yet.
+- **B2c. The move.** Git shows it as renames, with only namespace and `using` edits in them.
+  - **New:** `dotnet/Assembly.Domain/Assembly.Domain.csproj`, `dotnet/Assembly.Application/Assembly.Application.csproj`
+    with `DependencyInjection.cs`, `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj` with
+    `DependencyInjection.cs`, `dotnet/Directory.Packages.props`.
+  - **Moved:** every file in the "Where today's folders go" table in section 4. Today's tests go to
+    `Assembly.Tests/Features/<Feature>/`, `Core/` or `Infrastructure/`, matching the code they test; `Draft/`,
+    `Pinned/` and `Fixtures/` stay where they are.
+  - **Deleted:** `dotnet/Assembly.Engine/`.
+  - **Changed:** `Assembly.Mac/Program.cs` (from `Serve/MacBackend.cs` and `MacServe.cs`) and the remote's
+    `ServeRun.cs` call the `Add*` methods, plus the scripts that name `Assembly.Engine` (`dotnet/scripts/*.sh`,
+    `shell/assembly.sh`, `scripts/check4.sh`), `AGENTS.md` and `dotnet/README.md`, which name `Assembly.Engine/*` and
+    `Assembly.Mac/*` paths.
+  - **Changed:** `scripts/check-evidence.sh`. Its list of code folders names `dotnet/Assembly.Engine`; that's
+    replaced by `dotnet/Assembly.Domain`, `dotnet/Assembly.Application` and `dotnet/Assembly.Infrastructure`, or
+    backend commits would skip the four-way check without a word. The script also fails when a `dotnet/Assembly.*`
+    project folder is neither in the list nor `Assembly.Tests`, so a project added later can't be skipped. It isn't
+    locked.
+  - `ArchitectureTests` passes.
 - **Proof:**
-  - the test count is the same as before (201 passed and 4 skipped of 205, at `7805f12`), plus the new test;
-  - check4 passes on all four cases;
+  - every existing test passes after B2a and again after B2c (201 passed and 4 skipped of 205 at `7805f12`, plus the
+    new tests);
+  - check4 passes on all four cases, on B2c;
   - `shell/assembly.sh build` publishes AOT;
   - `check-evidence.sh` fails on a range holding a B2 commit with no evidence, and on a scratch
     `dotnet/Assembly.Scratch/` folder (removed afterwards);
   - the move thread sees the app run in the window on the Mac. This is owed, not done: builds on Jesse's Mac are
     paused until he says so, and PR 2's text says so.
-- **Size:** mechanical (namespaces and `using` lines across about 150 files), plus about 150 lines of new project
-  files and DI.
+- **Size:** B2a about 300 to 500 lines with its tests. B2b about 150 lines. B2c is mechanical (namespaces and
+  `using` lines across about 250 files) plus about 150 lines of project files and DI.
 
 ### B3. One write path: `IAtomicWriter` and the audit
 
 - **Files:**
-  - Application: `Common/Database/IAtomicWriter.cs`, `IWriteScope.cs`, `IAppDatabase.cs`, `IRow.cs`, `SqlArg.cs`.
-  - Infrastructure: `Persistence/AtomicWriter.cs`, `Persistence/AppDatabase.cs`, `Persistence/SqliteRow.cs`,
-    `Persistence/AuditSchema.cs`, `Persistence/SchemaRunner.cs`, and `DependencyInjection.cs`.
-  - Chat: `Features/Chat/Rows/` and `Features/Chat/Threads/`, where today's `RowStore` and `ThreadStore` become
-    chat's own SQL, reading through `IAppDatabase` and writing through `IAtomicWriter`. Neither stays a class that
-    wraps a table.
+  - Application: the contracts in `Common/Database/` exist from B2a; B3 doesn't change their shape.
+  - Infrastructure: `Persistence/AtomicWriter.cs`, which B2a made, gains the audit row, the per-connection write
+    queue and the prunes. New: `Persistence/AuditSchema.cs`, `Persistence/SchemaRunner.cs`.
+  - Chat: `Features/Chat/Rows/` and `Features/Chat/Threads/`. Their SQL already goes through the contracts (B2a); B3
+    splits today's `RowStore` and `ThreadStore` into chat's own named queries, so neither stays a class that wraps a
+    table.
 - **Failing tests first,** in `Assembly.Tests/Infrastructure/Persistence/AtomicWriterTests.cs`, on a real temporary
   SQLite file:
   1. A write whose second statement throws leaves neither row, and publishes nothing.
