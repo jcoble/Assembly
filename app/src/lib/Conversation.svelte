@@ -33,7 +33,7 @@
   import Plan from './chat/tools/Plan.svelte';
   import { ASK_ANSWER, TASK_STOP, TOOL_DETAIL } from './chat/tools/tool';
   import TurnFold from './chat/TurnFold.svelte';
-  import ThreadHeader from './thread/ThreadHeader.svelte';
+  import SessionHeader from './thread/SessionHeader.svelte';
   import TimelineItem from './thread/TimelineItem.svelte';
   import Composer from './composer/Composer.svelte';
   import { ATTACHMENT_FETCH } from './composer/attachments';
@@ -463,7 +463,7 @@
 </script>
 
 <section class="conversation">
-  <ThreadHeader {thread} {speaker} {onclose} />
+  <SessionHeader {thread} {speaker} {onclose} />
 
   <div class="timeline">
     <div class="scroll" bind:this={scroller} bind:clientWidth={scrollerWidth} onscroll={onScroll}>

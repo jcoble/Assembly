@@ -18,7 +18,7 @@
   import { errorNotice } from '../chat/notices';
 
   // One item's row in the timeline (Conversation.svelte draws the row around it). `blocks`: a streaming
-  // message's revealed blocks. `senders`: the label of each session a prompt came from, by its thread id.
+  // message's revealed blocks. `senders`: the label of each session a prompt came from, by its id.
   let {
     item,
     label,

@@ -17,7 +17,7 @@ here updates this file in the same commit. Every other commit says `Architecture
 
 The core follows Clean Architecture, with each layer pointing inward. `ArchitectureTests` checks the rules.
 
-- `Assembly.Domain/`: only the records several features share (agent events, rows, threads, markdown blocks). It
+- `Assembly.Domain/`: only the records several features share (agent events, rows, sessions, markdown blocks). It
   references nothing.
 - `Assembly.Application/`: references Domain only, with no SQLite, ASP.NET Core or process starting.
   - `Common/`: the contracts every feature uses (database, agents, machines) and the ACP protocol code.

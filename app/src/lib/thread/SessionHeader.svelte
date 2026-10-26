@@ -3,7 +3,7 @@
   import type { Thread } from '../api';
   import { THREAD_OPEN } from '../chat/tools/tool';
 
-  // The conversation's header: the repo, the agent, the thread's short id and a link to its parent thread.
+  // The session's header: the repo, the agent, the session's short id and a link to its parent session.
   let { thread, speaker, onclose }: { thread: Thread; speaker: string; onclose: () => void } = $props();
   const openThread = getContext<(threadId: string) => void>(THREAD_OPEN);
 </script>
