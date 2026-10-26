@@ -245,10 +245,12 @@ jobs:
               const issue = context.payload.issue;
               const action = context.payload.action;
               const key = `${repo}:issue:${issue.number}`;
+              const id = await findByKey(key);
               if (action === 'closed') {
-                const id = await findByKey(key);
                 if (id) await setStatus(id, 'Done');
-              } else if (!(await findByKey(key))) {
+              } else if (id) {
+                if (action === 'reopened') await setStatus(id, 'To Do');
+              } else {
                 const labels = (issue.labels || []).map((l) => l.name).filter(Boolean).join(', ');
                 const children = [para(`🐛 Issue #${issue.number}: ${issue.title}${issue.user ? ' · by ' + issue.user.login : ''}`)];
                 if (issue.body) { children.push(h3('Details')); children.push(...mdBlocks(issue.body)); }
