@@ -187,9 +187,12 @@ way the only way. Each one names what enforces it.
    from CSS (a finite animation), or from an event (`ResizeObserver`, a shell event). Enforced by
    `app/scripts/guards.sh`.
 2. **One transport.** The page talks to the backend only through `app/src/lib/socket.ts`, over one WebSocket.
-   Nothing else in `app/src` calls `fetch`, opens a `WebSocket`, or adds a `window` or `document` listener. Enforced
-   by the guard, which names that one file inside the script.
-3. **Tauri only in `app/src/lib/host/`.** Enforced by the guard, which names that folder inside the script.
+   Nothing else in `app/src` calls `fetch` or opens a `WebSocket`. Enforced by the guard, which names that one file
+   inside the script.
+3. **Tauri, and every window, document and media-query listener, only in `app/src/lib/host/`.** A listener in any
+   form (`addEventListener(`, `<svelte:window`, `<svelte:document`, `matchMedia(`, Svelte's `MediaQuery`) lives in
+   host, and features subscribe to what host exposes. Events on an element use Svelte's `on…` attributes. Enforced by
+   the guard, which names that folder inside the script.
 4. **`async`/`await` with an `AbortSignal`, never `.then`, `.catch` or `.finally`.** Enforced by the guard.
 5. **Every backend call has a cancellation token, and passes it to everything it awaits.** CA2016 is a build error
    (`dotnet/.editorconfig`). Closing the socket cancels every call still running on it.
@@ -608,22 +611,24 @@ socket, the change happens in that phase instead.
 as constants, with a comment saying they're the only ones:
 
 - `TRANSPORT=app/src/lib/socket.ts`, the only file that may open a `WebSocket`.
-- `HOST=app/src/lib/host/`, the only folder that may use Tauri.
+- `HOST=app/src/lib/host/`, the only folder that may use Tauri or listen on the window, the document or a media
+  query.
 
 Every file in `app/src`, those included, fails on any of these:
 
 - `setTimeout`, `setInterval`, `requestAnimationFrame`, `queueMicrotask`
 - Svelte's `tick(`, `AbortSignal.timeout`
 - `fetch(`
-- `window.`, `document.`, `globalThis.` or `self.` followed by `addEventListener(`
 - `.then(`, `.catch(`, `.finally(`
 - a `:has(` in CSS
 - `observe(document.body`
 - a markdown parser import, anywhere. Today's `lib/editor/preview/` carve-out goes, since there's no editor yet;
   the editor phase (W2) asks for it if it needs one.
 - an import from `app/measure` (D2)
-- Tailwind's `has-*` variants (`has-[...]`, `has-data-[...]`, `group-has-*`, `peer-has-*`), which compile to
-  `:has()`. Today's guard checks only the text `:has(`, so these slip past it. The registry's `Button`, added in
+- any Tailwind variant that starts with `has-` or contains `-has-`, all of which compile to `:has()`: `has-[...]`,
+  `has-data-[...]`, `has-checked:`, `has-disabled:`, `has-aria-[...]`, `not-has-...`, `*:has-[...]`, `group-has-*`,
+  `peer-has-*`. The script splits each class on `:` and fails a variant (any part but the last) that starts with
+  `has-` or contains `-has-`. Today's guard checks only the text `:has(`, so these slip past it. The registry's `Button`, added in
   91a01e6, already uses `has-data-[icon=inline-end]` and `has-data-[icon=inline-start]`, so B9 edits it (section
   9.1b).
 - a looping animation outside a busy state (the loop rule below)
@@ -634,22 +639,32 @@ no exception list, because the rule is about where a loop is written, not which 
 - In CSS (`.css` files and `<style>` blocks), `infinite` may appear only inside a rule whose selector includes
   `[aria-busy="true"]` (or `[aria-busy='true']`). The script tracks the selector of the rule it's in, the same way it
   reads `<style>` blocks for `:has(` today.
-- In markup, Tailwind's looping utilities (`animate-spin`, `animate-pulse`, `animate-ping`, `animate-bounce`, and any
-  `animate-[...]` with `infinite`) pass only with the `aria-busy:` variant in front, such as `aria-busy:animate-spin`.
-  A bare `animate-spin` fails.
+- In markup, looping utilities pass only with `aria-busy:` or `group-aria-busy:` in front, such as
+  `aria-busy:animate-spin`; a bare `animate-spin` fails. The looping names aren't typed into the script: it reads
+  them from the CSS that `app/src/app.css` imports, taking every `--animate-<name>` and `@utility <name>` whose
+  animation is `infinite`. Today that gives Tailwind's `animate-spin`, `animate-pulse`, `animate-ping` and
+  `animate-bounce`, and shadcn-svelte's `shimmer` (`shadcn-svelte/tailwind.css`, 2 s, `infinite`, used by Trace), so
+  a package update that adds a loop is caught too. Any `animate-[...]` with `infinite` fails the same way.
 - So any file may have a loop, but only one that's off unless the element says it's busy. Today's
   `chat/tools/Plan.svelte` spinner (`.glyph.spin { animation: … infinite }`, set while `running`) becomes
   `[aria-busy='true']`, with `aria-busy={running}`.
 
 What text can't check is whether `aria-busy` really follows real work. That's checked by a test instead: B10 adds a
-check to the window run (and to the B9 node test with happy-dom where it can) that, with the app at rest after
-launch, `document.getAnimations()` holds no animation whose `iterations` is `Infinity`. A loop left on at rest fails
-it, whichever file it's in.
+check to the window run (and to the B9 node test with happy-dom where it can) that `document.getAnimations()` holds
+no animation whose `iterations` is `Infinity`, at three moments: after launch, after a turn finishes, and after a
+turn is cancelled. The old Assembly's loops stayed on after work stopped, so the last two matter most. A loop left on
+at rest fails it, whichever file it's in. In measure mode (D2 A), the measure tools also count live `setTimeout` and
+`setInterval` timers at those three moments, which catches timers inside packages; the count must be zero.
+
+**The build backstop.** After `vite build`, CI fails if the built CSS contains `:has(`. That also covers CSS from
+packages and from a later shadcn-svelte update, which the source scan can't see.
 
 These are checked in every file:
 
 - A `WebSocket` outside `TRANSPORT`.
 - `@tauri-apps/` or `listen(` outside `HOST`.
+- Outside `HOST`: `addEventListener(` on anything, `<svelte:window`, `<svelte:document`, `matchMedia(`, and
+  `MediaQuery` from `svelte/reactivity`.
 
 Under D2 A, `app/measure/` is scanned with the same rules, except that timers and frame callbacks are allowed
 there. It's the one place the timer rule doesn't reach.
@@ -674,11 +689,16 @@ why. The ones known now:
 | Shimmer, pulsing skeletons, `animate-spin` loaders | loop at rest | `aria-busy:` in front, and the component takes a `busy` prop bound to real work (the loop rule). |
 | Tailwind `has-*` variants (the `Button` from 91a01e6) | compiles to `:has()` | A data attribute on the element itself, set from a prop (for example `data-icon-end`), styled directly. |
 | `document.cookie` or `localStorage` for state (the sidebar's open state) | state belongs in the backend | Saved through `save` (5.9), like every setting. |
-| A `window` or `document` listener in a component | one listener home | `<svelte:window>` or `<svelte:document>` in markup, which Svelte removes with the component; the guard's listener rule is about `addEventListener(`. |
+| A `window`, `document` or media-query listener in a component (including `<svelte:window>`, `<svelte:document>`, `IsMobile`'s `MediaQuery`) | listeners live in host | The component subscribes to what `lib/host/` exposes (a key, the window size, the system theme). |
+| `Collapsible` in a per-row chat component | `bits-ui` runs a tick after each toggle | Per-row chat components use a plain `{#if}`, not `Collapsible`. |
+| `mode-watcher` for light and dark | `localStorage` and its own media-query listener | Not used. The theme is a setting saved through `save`, and the system theme comes from Tauri's theme-changed event in `lib/host/` (F2). |
 
-Timers inside the packages themselves (`bits-ui` delays a tooltip opening, for example) are in `node_modules`, which
-the guard doesn't scan. They're tied to an interaction and end with it. The window's at-rest check (9.1) catches a
-package loop that doesn't end.
+`bits-ui` arrives with the first component that needs it. It's pinned to the exact version installed, like the
+CLI, and so is every package a component brings.
+
+Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'s tick after a toggle,
+`dockview-core`) are in `node_modules`, which the guard doesn't scan. Whether to accept them is Jesse's call
+(section 12). The at-rest checks (9.1) are the net: they catch a package loop or timer still running when nothing is.
 
 `guards.sh` and `guards-allowed.txt` are locked on main now (`scripts/locked-paths.txt`), since PR #1 merged.
 **Step B10 needs Jesse's OK lines** (section 9.3), because the lane that wants the change can't OK it (`AGENTS.md`,
@@ -760,7 +780,8 @@ as section 3 says, and adds the shadcn-first rule (F2).
   - Moved: every file in the "Where today's folders go" table in section 4.
   - Deleted: `dotnet/Assembly.Engine/`.
   - Changed: `MacBackend.cs` and `ServeRun.cs` call the `Add*` methods, plus the scripts that name
-    `Assembly.Engine` (`dotnet/scripts/*.sh`, `shell/assembly.sh`, `scripts/check4.sh`).
+    `Assembly.Engine` (`dotnet/scripts/*.sh`, `shell/assembly.sh`, `scripts/check4.sh`), and `AGENTS.md`, which names
+    `Assembly.Engine/*` and `Assembly.Mac/*` paths.
 - **Failing test first:** `Assembly.Tests/Architecture/ArchitectureTests.cs`. It loads each assembly and checks its
   references:
   - `Assembly.Domain` references no `Assembly.*`;
@@ -886,6 +907,7 @@ as section 3 says, and adds the shadcn-first rule (F2).
 - **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Engine/Features/FeatureCalls.cs`, `PreferencesRoutes.cs`,
   `PreferenceStore.cs`, the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
   no OK is needed. From here until the end of C1 there's no route check (section 9.2).
+- **Changed:** `AGENTS.md`, which names `call.ts`, `FeatureCalls.cs` and `40-routes.sh`.
 - **Failing tests first:**
   1. base#7: a theme change is written when it's made, and is there after the backend restarts.
   2. Two windows: a change in one reaches the other's subscription.
@@ -944,13 +966,16 @@ group:
 ### B10. The guard with no allowlist
 
 - **Files:** `app/scripts/guards.sh`, and deleting `app/scripts/guards-allowed.txt`. Both are locked, so this
-  **needs Jesse's OK line.**
+  **needs Jesse's OK line.** `AGENTS.md`, which names `guards-allowed.txt` and the per-row tick rule (no longer needed
+  once no file may tick); and the CI step for the build backstop (9.1).
 - **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, `fetch`
   in `socket.ts` itself, a `WebSocket` outside `socket.ts`, a Tailwind `has-data-[…]`, a bare `animate-spin`, an
-  `infinite` in a rule without `[aria-busy="true"]`). Each fails against today's script. Probes that must pass:
-  `aria-busy:animate-spin`, and `infinite` inside `[aria-busy='true']`.
-- **The at-rest check:** after launch, with nothing running, `document.getAnimations()` holds no animation with
-  `iterations` of `Infinity` (9.1). It runs in the window check on the Mac.
+  `infinite` in a rule without `[aria-busy="true"]`, a bare `shimmer`, `has-checked:`, `not-has-[...]`,
+  `<svelte:window` and `matchMedia(` outside host). Each fails against today's script. Probes that must pass:
+  `aria-busy:animate-spin`, `group-aria-busy:shimmer`, and `infinite` inside `[aria-busy='true']`.
+- **The at-rest check:** `document.getAnimations()` holds no animation with `iterations` of `Infinity` after launch,
+  after a finished turn and after a cancelled turn (9.1). It runs in the window check on the Mac. In measure mode,
+  the live timer count is zero at the same three moments.
 - **Proof:** `guards.sh` passes on the tree after B9, and fails on each probe.
 - **Size:** about 120 lines.
 
@@ -1042,7 +1067,11 @@ catalogue stays the reference.
   components, added from the registry (AGENTS.md says how), never hand-built look-alikes. Jesse set up Tailwind v4
   and shadcn-svelte in 91a01e6. The look is denser than the old app: smaller heights and spacing set once in the
   theme variables in `app/src/app.css` (for example a 28 px control height rather than shadcn's 36 px), not per
-  component. Theme switching (light and dark) is here too.
+  component. The AI Elements are patterns copied from the shadcn-svelte docs; the pieces they're built from (Trace,
+  Code Block, Message Scroller) are items in the default registry.
+  - **Theme:** light, dark, or follow the system. No `mode-watcher`, which keeps the choice in `localStorage` and adds
+    its own media-query listener. The choice is a setting saved through `save` (5.9), and the system theme comes from
+    Tauri's theme-changed event, listened to in `app/src/lib/host/`.
   - **Files:** `app/src/app.css`, and the components under `app/src/lib/components/`, each edited on add where the
     guard needs it (9.1b).
   - **Proof:** a feature check, light and dark.
@@ -1091,8 +1120,22 @@ Each P phase has the same shape as the W phases.
 - **Audit retention is 30 days** (5.6). That's a number Jesse can change: it and the 5,000-row cap per prune are constants in `AtomicWriter.cs`.
 - **The 300-line file limit,** which waits for Jesse. If he picks 300, the 7 oversize files are split in phase C1.
 - **`dockview-core` for F1**, pending Jesse's OK. Not added yet.
-- **The AI Elements registry**: which Svelte registry URL it is. To confirm with Jesse when the first chat
-  component is added (phase C).
+  - **Why not shadcn's Resizable (PaneForge):** it drags the dividers inside a fixed set of panes, but a pane can't be
+    moved somewhere else, which Jesse asked for.
+  - **What its source shows.** I read version 6.6.1, the one already on disk in a mac-command-bar checkout on
+    agent-workbox (`dist/dockview-core.noStyle.js`), with no downloads:
+    - It has 22 `setTimeout`, 17 `requestAnimationFrame` and 7 `queueMicrotask` calls.
+    - During a drag it listens for `pointermove`, `pointerup` and `pointercancel` on the document or the window, and
+      removes those listeners when the drag ends. At the end of a drag it runs a few zero-delay timers to clean up,
+      and a 300 ms fallback timer in case an animation's end event doesn't come.
+    - It moves a tab's underline every frame for 250 ms after a tab change, then stops.
+    - One frame loop never stops: it reads the window's screen position every frame, but only for panes popped out
+      into their own window. So the app doesn't use popout windows.
+    - Its stylesheet, `dockview.css`, has no `infinite`, but it has 10 `:has(`: 8 in its "spaced" themes and 2 on
+      the tab-group chip. So it isn't imported as is. The rules the app needs are written into `app/src/app.css`
+      without `:has()`, and the build backstop (9.1) proves none got in.
+- **Timers inside packages** (`bits-ui`'s tooltip delay, `Collapsible`'s tick after a toggle, `dockview-core`'s
+  drag timers): Jesse's call whether to accept them. The at-rest checks (9.1) are the net either way.
 - **The packages for the checks** (prettier, knip), which wait for Jesse's OK. Tailwind and shadcn-svelte are in
   (91a01e6).
 - **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to

@@ -1,7 +1,7 @@
 # Assembly — rules for agents
 
 Assembly is a desktop workbench for coding agents: chat sessions beside an editor, terminal, Git and a browser, on the
-user's own provider subscriptions. It runs Claude Code and Codex on this Mac and on remote machines. The UI is
+user's own provider subscriptions. It runs Claude Code and Codex (Antigravity is kept and comes later) on this Mac and on remote machines. The UI is
 SvelteKit in `app/`, inside a Tauri shell in `shell/`; the backend is .NET in `dotnet/`, and the same backend runs
 headless on remote machines.
 
@@ -18,11 +18,11 @@ way of the task, stop and tell him rather than quietly working around it.
 - Animations end. Short animations tied to an interaction (hover fades, menu pops, 150-250ms transform or opacity
   slides) are welcome. Loops at rest (pulsing dots, shimmer, spinning gradients) repaint every frame forever: a loop
   may run only while real work is running. In code that means a loop is written only under `[aria-busy="true"]` (or
-  Tailwind's `aria-busy:` variant), and the element sets `aria-busy` only while the work runs.
+  Tailwind's `aria-busy:` or `group-aria-busy:` variant), and the element sets `aria-busy` only while the work runs.
 - Every async call has an owner that stops it. async/await with an AbortSignal instead of `.then` chains; real
   backend work can be cancelled. `app/scripts/guards.sh` runs before every commit and on every push to main.
-- Remote is not second class. Desktop to a remote backend over SSH is everyday use. A feature that only works locally
-  is unfinished.
+- Remote is not second class. Desktop to a remote backend over SSH, and phone to desktop or remote over Tailscale
+  (not ported yet), are everyday use. A feature that only works locally is unfinished.
 - Open source. The code, the roadmap and the reasoning are public.
 - From Jesse: I want the simplest system that makes the right behaviour obvious. If code is more complicated than its
   problem, simplify it rather than build around it. Don't add structure to look thorough. Find the real constraint
@@ -38,12 +38,14 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
   comes from the backend, which pushes it (one shared backend clock), from CSS (an animation that ends), or from an
   event (`ResizeObserver`, a shell event). A timer in a row runs once per row, so on the session rail it fires
   thousands of times. If you think you need one, ask Jesse; there's no list to add yourself to.
-- No CSS `:has()`, and no Tailwind `has-*` variants, which compile to it. Use a class or data attribute on the element
+- No CSS `:has()`, and no Tailwind variant that starts with `has-` or contains `-has-`, which compile to it. Use a class or data attribute on the element
   that owns the state, a custom property inherited down, or a pseudo-class scoped to the element that has it.
 - One transport. The page talks to the backend over one WebSocket, through one file (`app/src/lib/socket.ts`, built
   in step B4 of `docs/plans/2026-10-26/implementation-plan.md`). Nothing else opens a socket or calls `fetch`. Until
   that lands, `app/src/lib/call.ts` is the one HTTP path and is being replaced; add no second way.
-- Tauri only in `app/src/lib/host/`.
+- Tauri only in `app/src/lib/host/`, and every window, document and media-query listener too, in any form
+  (`addEventListener(`, `<svelte:window>`, `<svelte:document>`, `matchMedia(`). Features subscribe to what host
+  exposes; events on an element use Svelte's `on…` attributes.
 - async/await only: no `.then`, `.catch` or `.finally`.
 - Every save is atomic. One save route makes one write, unless several writes run inside one transaction. A write
   commits before anything is told about it.
@@ -53,12 +55,14 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
   `pnpm exec shadcn-svelte add <name>` from `app/` (the pinned CLI in the lockfile, never `pnpm dlx ...@latest`),
   never a hand-built look-alike; say which component in the PR. A component from the registry meets the same rules
   as any other code: if it fails the guard on add (a timer, a `.then`, a loop at rest, a `has-*` variant), edit it to
-  meet the rules and say in the PR what you changed.
+  meet the rules and say in the PR what you changed. The packages a component brings (`bits-ui` and the rest) are
+  pinned to the exact version installed.
+- Heights and spacing are set once in the theme variables in `app/src/app.css`, never per component.
 
 ## Words we use
 
 - You: the agent reading this. Jesse or the owner: who you are working for.
-- User: a person using Assembly. Provider: Claude Code or Codex.
+- User: a person using Assembly. Provider: Claude Code and Codex today; Antigravity is kept and comes later.
 - Adapter: the provider's ACP process Assembly launches. It is disposable: once a turn and everything it started are
   idle, it is stopped; the next send relaunches it and resumes the same provider session. Never keep idle adapters
   alive for quicker switching, and never call a stopped session "live".
@@ -69,9 +73,11 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
 - Killing by name. Stop only processes whose PID you saved when you started them. `pkill -f`, `pgrep | kill` and
   anything else that matches a name or path can hit your own agent (its command line holds the worktree path) or
   another lane's servers.
-- Touching the owner's data. Never open the old Assembly data folders,
-  `~/Library/Application Support/dev.blackcolours.MacCommandBarWebviewPreview` and `~/.local/share/assembly`. Never
-  start a server against them or clean them up. Each lane has its own data folder (`scripts/lane-env.sh`).
+- Touching the owner's data. Jesse's data folders are in use: this app's own, `~/assembly-dotnet` (main's default in
+  `scripts/lane-env.sh`), and the old app's, `~/Library/Application Support/dev.blackcolours.MacCommandBarWebviewPreview`
+  and `~/.local/share/assembly`. Never open them, start a server against them, or clean them up. Each lane has its
+  own data folder (`scripts/lane-env.sh`). Test with real-looking seed data (long names, many projects, large chats),
+  not an empty database: an empty database is a bad test.
 - Connecting to the owner's machines. Remote tests use only the "Workbox Test" container (SSH alias `workbox-test`).
   Never connect a test app to "Agent Workbox", "SD" or any other saved machine: its sessions land in the owner's
   session list.
@@ -96,7 +102,8 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
 Changes here usually fail by being incomplete rather than wrong: the path you tried works and the one next to it
 doesn't. Before calling work done, name which of these you covered:
 
-- Every way in. The chat view, Settings and the command palette often reach the same feature. Cover them all, not
+- Every way in. The chat view, Settings, the command palette and the phone (not ported yet) often reach the same
+  feature. Cover them all, not
   only the one you found.
 - Every provider. See above. Chat changes are proved for Claude Code and Codex at minimum.
 - Local and remote. A remote session goes to a backend that may be a different build. Change both sides of the wire
