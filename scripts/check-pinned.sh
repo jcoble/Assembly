@@ -25,6 +25,8 @@ fi
 
 base=${1:-origin/main} head=${2:-HEAD}
 approvals=$(git show "$head:.pinned-approvals" 2>/dev/null || true)
+# How an OK line ends: who approved. scripts/pinned-guard.sh reads this line, so it is defined once.
+who='(by:jesse|by:move-thread [^ ].*)$'
 # The locked paths are those listed in base's or head's scripts/locked-paths.txt, so dropping a line unlocks nothing.
 pinned=()
 while IFS= read -r glob; do pinned+=(":(glob)$glob"); done < <(
@@ -34,7 +36,7 @@ while IFS= read -r glob; do pinned+=(":(glob)$glob"); done < <(
 failed=0
 # Every OK line says who approved: by:jesse, or by:move-thread with its reason.
 while IFS= read -r line; do
-  if ! grep -qE '^[^ ]+ [^ ]+ (by:jesse|by:move-thread [^ ].*)$' <<<"$line"; then
+  if ! grep -qE "^[^ ]+ [^ ]+ $who" <<<"$line"; then
     echo "OK line doesn't say who approved (by:jesse, or by:move-thread <reason>): $line" >&2
     failed=1
   fi
@@ -45,7 +47,7 @@ while IFS=$'\t' read -r status path; do
     D) id=deleted ;;
     *) id=$(git rev-parse "$head:$path") ;;
   esac
-  if ! grep -qE "^$id $(sed 's/[.[\*^$+?(){}|/]/\\&/g' <<<"$path") (by:jesse|by:move-thread [^ ].*)$" <<<"$approvals"; then
+  if ! grep -qE "^$id $(sed 's/[.[\*^$+?(){}|/]/\\&/g' <<<"$path") $who" <<<"$approvals"; then
     echo "pinned file changed without an OK: $path ($status)" >&2
     failed=1
   fi
