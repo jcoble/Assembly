@@ -7,8 +7,9 @@ w='[A-Za-z0-9_]'
 name="(['\"](codex|claude|antigravity)['\"]|($w+::)+(Codex|Claude|Antigravity))"
 branch="[!=]==?[[:space:]]*$name|$name[[:space:]]*[!=]==?|(^|[^A-Za-z0-9_])case[[:space:]]+$name[[:space:]]*:|$name[^=]*=>|(^|[^A-Za-z0-9_])matches![[:space:]]*\(.*$name"
 hits=$(git grep -nE "$branch" -- '*.cs' '*.ts' '*.svelte' '*.rs' \
-  ':!dotnet/Assembly.Application/Common/Acp/V1/' ':!dotnet/Assembly.Tests/' ':!app/test/' ':!*.test.ts' \
-  ':!**/node_modules/**' ':!**/target/**')
+  ':!dotnet/Assembly.Application/Common/Acp/V1/' ':!dotnet/Assembly.Tests/' ':!app/test/' ':!*.test.ts')
+rc=$?
+[ "$rc" -le 1 ] || { echo "provider branches: git grep failed ($rc); refusing" >&2; exit 2; }
 [ -z "$hits" ] && { echo "provider branches: none outside Acp/V1"; exit 0; }
 while IFS= read -r hit; do
   echo "provider branches: $hit branches on an agent's name; that belongs in dotnet/Assembly.Application/Common/Acp/V1/" >&2
