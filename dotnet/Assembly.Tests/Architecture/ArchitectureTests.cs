@@ -55,6 +55,22 @@ public sealed partial class ArchitectureTests
         Assert.Empty(PathConstructors(name));
     }
 
+    [Theory]
+    [InlineData("Assembly.Domain")]
+    [InlineData("Assembly.Application")]
+    public void The_core_makes_no_native_calls(string name)
+    {
+        // Native calls go in Infrastructure. A LibraryImport's generated stub is a DllImport, so this catches both.
+        using var stream = File.OpenRead(Load(name).Location);
+        using var pe = new PEReader(stream);
+        var metadata = pe.GetMetadataReader();
+        var native = metadata.MethodDefinitions.Select(metadata.GetMethodDefinition)
+            .Where(method => (method.Attributes & MethodAttributes.PinvokeImpl) != 0)
+            .Select(method => $"{metadata.GetString(metadata.GetTypeDefinition(method.GetDeclaringType()).Name)}.{metadata.GetString(method.Name)}")
+            .ToList();
+        Assert.Empty(native);
+    }
+
     [Fact]
     public void Infrastructure_references_no_host()
     {
