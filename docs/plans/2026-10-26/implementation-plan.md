@@ -168,7 +168,7 @@ the 4 MB limit, and doesn't block other traffic.
 | Shared plumbing for repeated work (atomic save, logging, auditing, socket send and receive) through middleware or DI, with features calling an interface | Sections 5.2 to 5.8: one implementation each, registered in DI, wrapped around every call by the dispatcher. |
 | Clean Architecture after codewithmukesh, DbContext rather than repositories | Sections 4 and 5.6, and decisions D1 and D3. |
 | Timers and ticks made the old app unusable; one allowlist entry grew to more than 50 | Sections 6 to 9: no timers in `app/src`, and no allowlist file. The guard has no list anyone can add to. |
-| No allowlist at all; the debounce is the only timer he'd allow, unless there's another way | Section 5.9: the other way. The page saves only when a change is finished (`change`, the end of a drag, `blur`), one atomic write each, so there's no debounce in the front end or the backend, and no exception. |
+| No allowlist at all; the debounce is the only timer he'd allow, unless there's another way | Section 5.9: the other way. A save costs about 17 µs, so the page saves each change as it happens (every keystroke, each toggle, the end of a drag), one atomic write each. There's no debounce in the front end or the backend, and no exception. |
 | Any timer comes from the backend, even one shared timer that pushes timings to the front | Section 5.8: one backend clock, a `PeriodicTimer` on `TimeProvider`. It pushes on the `clock` topic only while someone is subscribed. |
 | HTTP and WebSocket both is confusing; one path | Section 5.1: one WebSocket for everything the page does. The only other HTTP is `/mcp`, which agents use. |
 | Saves are atomic: one save per save call, or one transaction | Section 3, rule 6, and section 5.6. |
@@ -366,7 +366,8 @@ public interface ICallRegistry
 2. Read `args` with the handler's `JsonTypeInfo`. If that fails, answer `bad_args`.
 3. Start a logger scope (`feature/method`, the call id, the connection) and log the call at Debug.
 4. Make the token, linked from the connection's token, the call's `cancel` frame, and the 30-second limit.
-5. For `Write`, run the handler inside `IAtomicWriter.WriteAsync` (5.6). For `Read`, call it directly.
+5. For `Write` and `Save`, put the call on the connection's write queue, which runs one at a time in arrival order,
+   inside `IAtomicWriter.WriteAsync` (5.6, 5.9). For `Read`, call it directly, concurrently.
 6. Answer `result`. A `CallFailed` answers `failed` with its message. A cancellation answers `cancelled`, or
    `timeout`. Anything else is logged at Error and answers `failed` with "feature/method failed". This keeps
    today's 500 handling (`FeatureCalls.cs`).
@@ -470,51 +471,50 @@ grace, the SSH backoff, and the follower's backoff. They stay where they are, si
 time and isn't a page clock. Phase P1 replaces two polls with pushes: `RemoteOutbox.cs:44`, every second, and
 `MessageStatusTool.cs:30`, every 250 ms.
 
-### 5.9 Saves: on committing events only, with no debounce anywhere
+### 5.9 Saves: each change as it happens, with no debounce anywhere
 
 This answers Jesse's "find another way to do what the debounce does". There's no debounce in the front end or the
-backend. A debounce exists to turn many changes into one save. Saving only when the user has finished a change gets
-the same result with no timer.
+backend. A debounce exists to turn many changes into one save, to keep saves cheap. A save here is cheap enough
+(measured below) to send every change, so nothing ever sits unsaved in the page.
 
-**The page saves only on committing events:**
+**When the page saves:**
 
-- `change`: on a select, a checkbox, a range input when it's released, and a text field on blur or Enter;
-- `pointerup` at the end of a divider drag;
-- `blur`.
-
-It never saves on `input` or `pointermove`. While a divider is dragged, or a field is typed in, the page only updates
-its own `$state`.
+- A settings text field saves on every `input`, one call each. That's about 10 a second at typing speed.
+- A toggle or a select saves on `change`.
+- A divider saves on `pointerup` at the end of the drag. Quitting mid-drag isn't a real case.
 
 **Each save is one call and one atomic write.** `save(feature, key, value)` sends `call` with `feature/set`. The
 handler runs once inside `IAtomicWriter.WriteAsync` (5.6): one upsert, its audit row, commit, then a publish on the
 feature's topic, so other windows see it.
 
-- There's no batcher, no 300 ms timer, and no view that mixes in values still waiting to be written. A read returns
-  what's committed.
-- Saves on one socket arrive in the order sent and run one after another (the writer's one write lock), so an older
-  save can't land after a newer one.
-- The page sets its own `$state` before it sends. It ignores its own echo on the topic, but applies the echo from
-  another window.
+- There's no batcher, no timer, and no view that mixes in values still waiting to be written. A read returns what's
+  committed.
+- The page sets its own `$state` before it sends. The echo of a save back to the window that sent it is a no-op;
+  an echo from another window is applied.
 
-**Closing the window with an edit still in a focused field.** There are no `pagehide` or `visibilitychange`
-listeners, and base#7 says a change is never lost, so there's one way this edit gets saved:
+**What makes the last value win.** Frames arrive in order on one socket. The dispatcher then hands **one
+connection's writes to the writer in the order they arrived**: each connection has one write queue, and its `Write`
+and `Save` calls run one at a time from it. Reads still run concurrently. So two saves of the same key from one window
+can't reach the writer out of order, and the last one sent is the last one committed. Two windows saving the same key
+is decided by which commit lands last, and each window then shows that value from the topic. Sequence numbers per key
+weren't chosen, because the per-connection queue gives the same guarantee with no extra field in every save.
 
-1. The shell catches the window's close request, with Tauri's `CloseRequested` for the window and `ExitRequested`
-   when the app quits. It holds the close, and sends `closing` to the page.
-2. `app/src/lib/host/closing.ts`, the only listener for it, blurs the focused element. That fires the field's
-   `change`, which makes its `save`.
-3. The page awaits every save still unanswered on the socket, then calls the host's `closeWindow()`.
-4. The shell closes the window once the page answers. If the backend has gone (the socket is closed), the shell
-   closes right away, since there's nothing left to write to. The shell's wait for the page's answer is the only
-   time involved, and it lives in the Rust shell, not in the page.
+**Quitting.** The shell doesn't hold the close or the quit, and there's no `closing` event, no `pagehide` and no
+`visibilitychange`. The page sends each save in the same event handler that changed the value, so a change never
+exists only in the page. At close there's nothing to flush except frames already sent, and the backend, which keeps
+running after the window closes, handles those.
 
-A crash or a forced kill isn't a close, so it doesn't go through this. Only an edit that was never committed
-(still in a focused field) can be lost that way.
+**Audit volume.** Each save writes one audit row, so typing writes one per keystroke. A typical settings edit (a
+20-character value) is 20 audit rows. For settings saves the audit row records the time, the connection, the
+feature, the method and the key, **not the value**: about 60 bytes, so a 20-keystroke edit adds about 1.2 KB. That's
+fine for a settings table people change a few times a day, and it keeps values (which could be long text) out of the
+audit. No batching or timer is added for it.
 
 **Cost, measured.** A single-row settings upsert with its audit row, in one transaction, on agent-workbox, takes
 17 µs at the median and 81 µs at the 99th percentile; without the audit row it's 12 µs and 55 µs. That's 2,000 runs
 each, two runs, Native AOT, `Microsoft.Data.Sqlite`, on disk with WAL and `synchronous = NORMAL` (RowStore's
-settings), from a scratch program. Step B6 measures it again through the real `IAtomicWriter` and records the number.
+settings), from a scratch program. Ten saves a second while typing is under 1 ms of backend work a second. Step B6
+measures it again through the real `IAtomicWriter` and records the number.
 
 ### 5.10 The page side
 
@@ -553,8 +553,8 @@ These come from the inventory at `9e51121`, and each was checked by grep.
 | 7 | `lib/Conversation.svelte:459`: a frame callback, then `coverView` | After layout, checking the drawn rows cover the view, and fixing the virtualizer when they don't | **An event.** A `ResizeObserver` on the scroller's content runs after layout. `coverView` runs in its callback. |
 | 8 | `lib/Conversation.svelte:245`: `delay(1000)` in a loop | The running turn's elapsed time | **The backend clock.** `<Time>` subscribes to `clock` with key `second` while a turn runs, and shows `now - startedAt` (5.8). |
 | 9 | `lib/call.ts:52,84,99`: `AbortSignal.timeout(30 s)` | The call timeout | **The backend.** The dispatcher's 30-second limit answers `timeout` (5.1). `call.ts` is deleted in step B7. |
-| 10 | `lib/call.ts:73`: `debounce(saveNow, 300)` | The settings debounce | **Deleted, with no replacement timer.** The page saves only on committing events (`change`, `pointerup`, `blur`), as one atomic write each (5.9). |
-| 11 | `lib/call.ts:102,105`: `pagehide` and `visibilitychange` | Flushing saves on close | **Deleted.** The shell's `closing` event blurs the focused field, and the page awaits the save before the window closes (5.9). |
+| 10 | `lib/call.ts:73`: `debounce(saveNow, 300)` | The settings debounce | **Deleted, with no replacement timer.** Each change saves as it happens: `input` for a text field, `change` for a toggle or select, `pointerup` for a divider. One atomic write each (5.9). |
+| 11 | `lib/call.ts:102,105`: `pagehide` and `visibilitychange` | Flushing saves on close | **Deleted, with nothing in its place.** Every change was already sent when it was made, so there's nothing to flush at close (5.9). |
 | 12 | `lib/composer/Composer.svelte:81`: `queueMicrotask` | Focus and selection after a slash-command pick | **Deleted.** Use `flushSync`, then focus, as `Composer.svelte` already does after a draft change. |
 | 13 | `debug.svelte.ts:44,70,94` (signal and socket listeners), `TrackedWebSocket` | Counting sockets for the soak | `TrackedWebSocket` is folded into `socket.ts` (one socket, counted there). The rest is deleted with row 1. |
 
@@ -778,25 +778,27 @@ what isn't proven yet. Jesse merges each one, and the next group builds on main 
 - **Proof:** the tests, and check4.
 - **Size:** 300 to 400 lines with tests.
 
-### B6. Saves on committing events, and closing the window
+### B6. Saves as each change happens
 
 - **Files:**
   - Application: `Common/Calls/ICallRegistry.Save`.
-  - Infrastructure: the dispatcher runs `Save` handlers inside `IAtomicWriter`.
-  - Page: `socket.ts` gains `save`, and `app/src/lib/host/closing.ts` handles the shell's `closing` event.
-  - Shell: `shell/src/main.rs` holds the close request and sends `closing` (5.9).
+  - Infrastructure: the dispatcher runs `Save` handlers inside `IAtomicWriter`, from the connection's write queue
+    (5.9).
+  - Page: `socket.ts` gains `save`.
+  - No shell change.
 - **Failing tests first:**
-  1. One `save` makes one write, with one audit row, and one publish after commit.
-  2. Two saves sent in order land in order.
-  3. A failed save reports once, and leaves the committed value as it was.
+  1. One `save` makes one write, with one audit row (key, not value), and one publish after commit.
+  2. 50 rapid saves of one key, sent without waiting for answers, end on the last value.
+  3. A slow write doesn't hold up a read on the same connection.
+  4. A failed save reports once, and leaves the committed value as it was.
 
   On the page:
-  1. `save` sends one call per committing event, and none on `input`.
-  2. `closing` blurs the focused field, awaits the save it makes, then calls `closeWindow()`.
+  1. `save` sends one call per `input` on a text field.
+  2. The echo of its own save is a no-op; another window's echo is applied.
 - **Measure:** time a single-row settings upsert through the real `IAtomicWriter`, with its audit row, on
   agent-workbox. Record the median and 99th percentile, as 5.9 did for the scratch program (17 µs and 81 µs).
-- **Proof:** the tests, the measurement, and check4. The move thread types in a settings text field and closes the
-  window without leaving the field, in the window on the Mac, and the value is there after reopening.
+- **Proof:** the tests, the measurement, and check4. In the window on the Mac, the move thread types in a settings
+  field and quits right away, and the value is kept after reopening.
 - **Size:** 200 to 300 lines with tests.
 
 ### B7. Preferences rebuilt on the base (the example every feature copies)
@@ -811,7 +813,7 @@ what isn't proven yet. Jesse merges each one, and the next group builds on main 
   `PreferenceStore.cs`, the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
   no OK is needed. From here until the end of C1 there's no route check (section 9.2).
 - **Failing tests first:**
-  1. base#7: a theme change is written once, when it's made, and is there after the backend restarts.
+  1. base#7: a theme change is written when it's made, and is there after the backend restarts.
   2. Two windows: a change in one reaches the other's subscription.
   3. A subscription that starts after a save gets the saved value.
 
@@ -1004,5 +1006,5 @@ Each P phase has the same shape as the W phases.
 - **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to
   `docs/behavior/base.md` in phase C2, as a draft line. That file isn't in `scripts/locked-paths.txt`, so it needs no
   OK.
-- **Closing the window with an edit in a focused field** goes through the shell's `closing` event (5.9). That still
-  has to be shown working in the window on the Mac, for both closing the window and quitting the app (step B6).
+- **Typing and then quitting right away** keeps the value, because each keystroke was already sent (5.9). That still
+  has to be shown in the window on the Mac (step B6).
