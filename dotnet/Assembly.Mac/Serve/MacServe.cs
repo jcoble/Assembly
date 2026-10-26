@@ -1,7 +1,9 @@
-using Assembly.Engine.Agents;
-using Assembly.Engine.Api;
-using Assembly.Engine.Sessions;
-using Assembly.Mac.Remote;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Agents;
+using Assembly.Infrastructure.Http;
+using Assembly.Infrastructure.Mcp;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Infrastructure.Remote;
 
 namespace Assembly.Mac.Serve;
 

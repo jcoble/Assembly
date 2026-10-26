@@ -1,10 +1,12 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using Assembly.Engine.Persistence;
-using Assembly.Engine.Rows;
-using Assembly.Engine.Store;
-using Assembly.Engine.Transcript;
+using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Domain.Rows;
+using Assembly.Application.Features.Chat;
+using Assembly.Application.Common.Acp;
+using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Remote.Replay;
 

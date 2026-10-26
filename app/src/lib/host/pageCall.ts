@@ -2,7 +2,7 @@ import { BASE, TOKEN } from './backend';
 
 const notPorted = new Set<string>();
 
-// One of the backend's page calls (Assembly.Mac/Page/PageRoutes.cs): POST /page/<method> with the params as JSON.
+// One of the backend's page calls (Assembly.Infrastructure/Http/PageRoutes.cs): POST /page/<method> with the params as JSON.
 // A method the backend doesn't have logs one "not ported" line per name and answers undefined.
 export async function pageCall<T>(method: string, params?: Record<string, unknown>): Promise<T> {
   const res = await fetch(`${BASE}/page/${encodeURIComponent(method)}`, {

@@ -1,7 +1,9 @@
-using Assembly.Engine.Acp.Messages;
-using Assembly.Engine.Agents;
+using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Agents;
 using Assembly.Remote.Smoke;
-using Assembly.Engine.Transcript;
+using Assembly.Application.Common.Acp;
+using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Remote.Record;
 

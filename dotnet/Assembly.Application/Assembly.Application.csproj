@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The shared contracts (Common/) and one folder per feature (Features/). References Domain only: no SQLite,
+       no ASP.NET Core and no process starting (ArchitectureTests). -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Assembly.Infrastructure" />
+    <InternalsVisibleTo Include="Assembly.Mac" />
+    <InternalsVisibleTo Include="Assembly.Remote" />
+    <InternalsVisibleTo Include="Assembly.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Assembly.Domain\Assembly.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DiffPlex" />
+    <PackageReference Include="Markdig" />
+  </ItemGroup>
+
+</Project>

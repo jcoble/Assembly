@@ -3,7 +3,7 @@ import { counters, debounce } from './debug.svelte';
 import { BASE, TOKEN } from './host/backend';
 
 // Every feature call and save goes through this file, so the plumbing is done once and can't be forgotten
-// (lib/preferences/README.md). The backend's side is dotnet/Assembly.Engine/Features/FeatureCalls.cs. The transport
+// (lib/preferences/README.md). The backend's side is dotnet/Assembly.Infrastructure/Http/FeatureCalls.cs. The transport
 // is HTTP today; only this file knows that.
 
 const TIMEOUT_MS = 30_000;

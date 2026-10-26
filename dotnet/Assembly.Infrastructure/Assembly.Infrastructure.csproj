@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The implementations: SQLite and the writer, starting agents, machines, transcripts, /mcp and today's HTTP
+       routes until they're deleted. -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Assembly.Mac" />
+    <InternalsVisibleTo Include="Assembly.Remote" />
+    <InternalsVisibleTo Include="Assembly.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Kestrel and WebSockets. Part of the .NET runtime, so no package. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Assembly.Application\Assembly.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+</Project>

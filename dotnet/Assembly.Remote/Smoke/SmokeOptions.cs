@@ -1,4 +1,5 @@
-using Assembly.Engine.Agents;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Agents;
 
 namespace Assembly.Remote.Smoke;
 

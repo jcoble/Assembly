@@ -1,5 +1,7 @@
 <Solution>
-  <Project Path="Assembly.Engine/Assembly.Engine.csproj" />
+  <Project Path="Assembly.Domain/Assembly.Domain.csproj" />
+  <Project Path="Assembly.Application/Assembly.Application.csproj" />
+  <Project Path="Assembly.Infrastructure/Assembly.Infrastructure.csproj" />
   <Project Path="Assembly.Mac/Assembly.Mac.csproj" />
   <Project Path="Assembly.Remote/Assembly.Remote.csproj" />
   <Project Path="Assembly.Tests/Assembly.Tests.csproj" />

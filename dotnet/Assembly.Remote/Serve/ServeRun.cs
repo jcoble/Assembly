@@ -1,14 +1,18 @@
-using Assembly.Engine.Persistence;
-using Assembly.Engine.Agents;
-using Assembly.Engine.Api;
-using Assembly.Engine.Attachments;
-using Assembly.Engine.Features;
-using Assembly.Engine.Live;
-using Assembly.Engine.Machines;
-using Assembly.Engine.Rows;
-using Assembly.Engine.Sessions;
-using Assembly.Engine.Store;
-using Assembly.Engine.Threads;
+using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Agents;
+using Assembly.Infrastructure.Http;
+using Assembly.Infrastructure.Mcp;
+using Assembly.Application.Features.Chat.Attachments;
+using Assembly.Infrastructure.Chat.Attachments;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Machines;
+using Assembly.Domain.Rows;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat;
+using Assembly.Application.Features.Chat.Threads;
+using Assembly.Domain.Threads;
 
 namespace Assembly.Remote.Serve;
 

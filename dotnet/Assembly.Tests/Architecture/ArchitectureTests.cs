@@ -7,11 +7,15 @@ namespace Assembly.Tests.Architecture;
 
 /// <summary>
 /// The layout's rules (plan section 4): the core in layers, every other part one folder per feature. It reads the
-/// built assemblies for what they reference and the source tree for the rest. There are no exceptions.
+/// built assemblies for what they reference and the source tree for the rest. There are no exceptions. The page's
+/// rule (no feature folder imports another) joins in C1, when chat's page folders move under lib/chat/.
 /// </summary>
 public sealed partial class ArchitectureTests
 {
-    /// <summary>The most files one folder may hold, counting the files directly in it. Jesse's number.</summary>
+    /// <summary>
+    /// The most files one folder may hold, counting the files directly in it. 30 is the plan's number, and it's Jesse's to
+    /// change (plan section 12).
+    /// </summary>
     private const int MaxFilesPerFolder = 30;
 
     private static readonly string Root = FindRoot();
@@ -64,39 +68,23 @@ public sealed partial class ArchitectureTests
     }
 
     [Fact]
-    public void No_backend_feature_names_another()
+    public void No_feature_names_another()
     {
+        // A feature is a folder under Application/Features/. Its code there, and its outside systems in the
+        // Infrastructure folder of the same name, never name another feature's namespace in either project.
         var features = Path.Combine(Root, "dotnet", "Assembly.Application", "Features");
         Assert.True(Directory.Exists(features), $"{Relative(features)} doesn't exist yet");
-        var names = Directory.GetDirectories(features).Select(Path.GetFileName).ToList();
+        var names = Directory.GetDirectories(features).Select(folder => Path.GetFileName(folder)!).ToList();
         var crossings = (
             from feature in names
-            from file in SourceFiles(Path.Combine(features, feature!))
+            from folder in new[] { Path.Combine(features, feature), Path.Combine(Root, "dotnet", "Assembly.Infrastructure", feature) }
+            where Directory.Exists(folder)
+            from file in SourceFiles(folder)
             let text = File.ReadAllText(file)
             from other in names
-            where other != feature && Regex.IsMatch(text, $@"\bAssembly\.Application\.Features\.{other}\b")
+            where other != feature
+                  && Regex.IsMatch(text, $@"\bAssembly\.(Application\.Features|Infrastructure)\.{other}\b")
             select $"{Relative(file)} names {other}").ToList();
-        Assert.Empty(crossings);
-    }
-
-    [Fact]
-    public void No_page_feature_imports_another()
-    {
-        var lib = Path.Combine(Root, "app", "src", "lib");
-        string[] core = ["host", "components", "time"];
-        var features = Directory.GetDirectories(lib).Select(Path.GetFileName).Where(name => !core.Contains(name)).ToList();
-        var crossings = (
-            from feature in features
-            from file in Directory.EnumerateFiles(Path.Combine(lib, feature!), "*", SearchOption.AllDirectories)
-            where file.EndsWith(".ts", StringComparison.Ordinal) || file.EndsWith(".svelte", StringComparison.Ordinal)
-            from import in ImportPattern().Matches(File.ReadAllText(file)).Select(match => match.Groups[1].Value)
-            where import.StartsWith('.') || import.StartsWith("$lib/", StringComparison.Ordinal)
-            let target = import.StartsWith('.')
-                ? Path.GetFullPath(Path.Combine(Path.GetDirectoryName(file)!, import))
-                : Path.GetFullPath(Path.Combine(lib, import["$lib/".Length..]))
-            let reached = FeatureOf(lib, target)
-            where reached is not null && reached != feature && features.Contains(reached)
-            select $"{Relative(file)} imports {import}").ToList();
         Assert.Empty(crossings);
     }
 
@@ -140,15 +128,6 @@ public sealed partial class ArchitectureTests
     private static string? NamespaceOf(string file) =>
         NamespacePattern().Match(File.ReadAllText(file)) is { Success: true } match ? match.Groups[1].Value : null;
 
-    private static string? FeatureOf(string lib, string target)
-    {
-        var relative = Path.GetRelativePath(lib, target);
-        if (relative.StartsWith("..", StringComparison.Ordinal))
-            return null;
-        var parts = relative.Split(Path.DirectorySeparatorChar);
-        return parts.Length > 1 ? parts[0] : null;
-    }
-
     private static bool Skipped(string path) =>
         path.Split(Path.DirectorySeparatorChar).Any(part => part is "bin" or "obj" or "node_modules");
 
@@ -164,7 +143,4 @@ public sealed partial class ArchitectureTests
 
     [GeneratedRegex(@"^\s*namespace\s+([\w.]+)\s*;", RegexOptions.Multiline)]
     private static partial Regex NamespacePattern();
-
-    [GeneratedRegex(@"(?:from|import)\s*\(?\s*['""]([^'""]+)['""]")]
-    private static partial Regex ImportPattern();
 }

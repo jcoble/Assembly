@@ -1,5 +1,6 @@
-using Assembly.Engine.Events;
-using Assembly.Engine.Transcript;
+using Assembly.Domain.Events;
+using Assembly.Application.Common.Acp;
+using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Tests.Fixtures;
 

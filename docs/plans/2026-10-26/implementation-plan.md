@@ -334,8 +334,8 @@ feature uses it.
   core and its own files, never another feature's folder (`ArchitectureTests` checks this too).
 - The page's core is `lib/socket.ts`, `lib/host/`, `lib/components/` (from the registry), `lib/time/` and
   `lib/utils.ts`.
-- Chat's page folders today (`composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under `lib/chat/` in
-  step B2c. They import each other, so `ArchitectureTests` can't pass with them apart, and there are no exceptions. `call.ts` goes in B7, `api.ts` in C1, and `debug.svelte.ts`,
+- Chat's page folders today (`chat/`, `composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under
+  `lib/chat/` in step C1, when chat moves onto the socket. `call.ts` goes in B7, `api.ts` in C1, and `debug.svelte.ts`,
   `lag.svelte.ts` and `soak.ts` move to `app/measure/` in B9 (D2).
 
 ### Where today's folders go
@@ -357,23 +357,28 @@ doesn't change in that step.
 | `Assembly.Engine/Sessions/` (all but `SharedAdapter`) | `Assembly.Application/Features/Chat/Sessions/` |
 | `Assembly.Engine/Sessions/SharedAdapter` (it only uses `IAgentLauncher`) | `Assembly.Application/Common/Agents/` |
 | `Assembly.Engine/Helpers/` tools | `Assembly.Application/Features/Chat/Helpers/` |
-| `Assembly.Engine/Attachments/` | `Assembly.Application/Features/Chat/Attachments/` |
+| `Assembly.Engine/Attachments/ImageType` | `Assembly.Application/Features/Chat/Attachments/` |
+| `Assembly.Engine/Attachments/AttachmentStore` (it writes files) | `Assembly.Infrastructure/Chat/Attachments/` |
 | `Assembly.Engine/Acp/` (messages, `V1`, `JsonRpc`, `AcpClient`, `IPermissionPolicy`) | `Assembly.Application/Common/Acp/` |
-| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink`, `AgentDescriptor` | `Assembly.Application/Common/Agents/` |
-| `Assembly.Engine/Agents/` (the rest: `AdapterLauncher`, `AgentProcess`, `ProcessGroup`, `GitCheckout`, `AgentCommand`, `AgentConnection`) | `Assembly.Infrastructure/Agents/` |
+| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink`, `AgentDescriptor`, `AgentCommand` (a record `AgentDescriptor` makes) | `Assembly.Application/Common/Agents/` |
+| `Assembly.Engine/Agents/` (the rest: `AdapterLauncher`, `AgentProcess`, `ProcessGroup`, `GitCheckout`, `AgentConnection`) | `Assembly.Infrastructure/Agents/` |
 | `Assembly.Engine/Live/` (`LiveHub`; it uses chat's rows) | `Assembly.Application/Features/Chat/Rows/` until C1 turns it into the `rows` topic |
 | `Assembly.Engine/Machines/IMachine`, `MachineSet`, `MachineUnreachable` | `Assembly.Application/Common/Machines/` |
 | `Assembly.Engine/Machines/LocalMachine` | `Assembly.Infrastructure/Machines/` |
-| `Assembly.Engine/Transcript/` | `Assembly.Infrastructure/Transcript/` |
+| `Assembly.Engine/Transcript/TranscriptLog` (the ACP connection writes it, to a writer it's given) | `Assembly.Application/Common/Acp/` |
+| `Assembly.Engine/Transcript/TranscriptReplay` | `Assembly.Infrastructure/Transcript/` |
+| `Assembly.Engine/Database/` (the plain-SQL contracts, B2a) | `Assembly.Application/Common/Database/` |
+| `Assembly.Engine/Persistence/` (`AppDatabase`, `AtomicWriter`, B2a) | `Assembly.Infrastructure/Persistence/` |
 | `Assembly.Engine/Api/McpRoutes` | `Assembly.Infrastructure/Mcp/` |
 | `Assembly.Engine/Api/` (the rest: HTTP routes, `LiveSocket`, `TokenGuard`) | `Assembly.Infrastructure/Http/`, kept only until each route moves onto the socket, then deleted (section 11) |
 | `Assembly.Engine/Features/` (`FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`) and `Assembly.Mac/Features/MacFeatureList` | `Assembly.Infrastructure/Http/`; deleted in step B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
 | `Assembly.Mac/Remote/` | `Assembly.Infrastructure/Remote/`, registered only by `AddMacInfrastructure()` |
 | `Assembly.Mac/Preferences/` (`PreferenceStore`, `PreferencesSchema`, `README.md`) | `Assembly.Application/Features/Preferences/` |
 | `Assembly.Mac/Preferences/PreferencesRoutes` | `Assembly.Infrastructure/Http/` until B7 deletes it |
-| `Assembly.Mac/Page/` (`ImageFile`, `MemorySample`, `Thumbnail`, `TurnActivity`) | `Assembly.Application/Features/Diagnostics/` (step B8 finishes it) |
+| `Assembly.Mac/Page/TurnActivity` | `Assembly.Application/Features/Diagnostics/` (step B8 finishes it) |
+| `Assembly.Mac/Page/ImageFile`, `Thumbnail`, `MemorySample` (they read files, call ImageIO, and run `ps`) | `Assembly.Infrastructure/Diagnostics/` |
 | `Assembly.Mac/Page/PageRoutes`, `Assembly.Mac/Debug/DebugRoutes` | `Assembly.Infrastructure/Http/` until B8 deletes them |
-| `Assembly.Mac/Serve/` | `Assembly.Mac/Program.cs` and `MacOptions.cs` |
+| `Assembly.Mac/Serve/` | Stays until B7, which makes it `Assembly.Mac/Program.cs` and `MacOptions.cs` |
 | `Assembly.Remote/Serve`, `Smoke`, `Record`, `Replay` | Stay in `Assembly.Remote/` (they're that host's commands) |
 
 ## 5. The shared plumbing
@@ -942,8 +947,8 @@ because chat's row and thread stores and the preference store call SQLite direct
   - no file under `Application/Features/<A>/` names the namespace `Assembly.Application.Features.<B>` for another
     feature `B` (in a `using` or written out), and every file's namespace matches its folder, so the check can't be
     dodged;
-  - no file under `app/src/lib/<feature>/` imports from another feature's folder (only the page core and its own
-    files);
+  - (the page's rule, that no file under `app/src/lib/<feature>/` imports from another feature's folder, comes in C1;
+    see there);
   - no folder under `dotnet/` or `app/src/` (outside `bin/`, `obj/` and `node_modules/`) holds more than 30 files,
     counting the files directly in it, not its subfolders. The number is one constant in the test, and there are no
     exceptions. Today's largest folder, `Assembly.Engine/Acp/Messages/`, has 29.
@@ -952,20 +957,23 @@ because chat's row and thread stores and the preference store call SQLite direct
 - **B2c. The move.** Git shows it as renames, with only namespace and `using` edits in them. PR 2's text carries
   the proof, so Jesse can read B2a and skip the moved files: `git diff -M --stat` and `--summary` for the commit,
   showing every moved file as a rename, and a check that every changed line in those renames is a `namespace` or
-  `using` line, or an import path in the page files. New files (the project files, `DependencyInjection.cs`) are listed apart.
+  `using` line (or a type name written out with its namespace). New files (the project files) are listed apart.
+  - **Before it:** one commit with the code changes the move needs: the stores take `IAppDatabase`, which hands out
+    the file's `IAtomicWriter`, so nothing in Application names `AppDatabase`.
+  - **After it:** one commit that keeps the file system out of the core (`TranscriptLog` takes a writer, and
+    `AgentDescriptor` parses text; the hosts and Infrastructure open the files), with `ArchitectureTests` banning
+    the file-system types in Domain and Application.
   - **New:** `dotnet/Assembly.Domain/Assembly.Domain.csproj`, `dotnet/Assembly.Application/Assembly.Application.csproj`
-    with `DependencyInjection.cs`, `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj` with
-    `DependencyInjection.cs`, `dotnet/Directory.Packages.props`.
-  - **Moved:** every file in the "Where today's folders go" table in section 4, and the page's `composer/`, `rows/`,
-    `thread/` and `Conversation.svelte` under `app/src/lib/chat/` (section 4). In those, the changed lines are
-    import paths. Today's tests go to
+    and `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj`, and `dotnet/Directory.Packages.props`. The
+    `DependencyInjection.cs` files and the hosts' `Add*` calls come in B7, with the dispatcher that registers
+    features. Until then the hosts build their objects as today, so the move stays renames.
+  - **Moved:** every file in the "Where today's folders go" table in section 4. Today's tests go to
     `Assembly.Tests/Features/<Feature>/`, `Core/` or `Infrastructure/`, matching the code they test; `Draft/`,
     `Pinned/` and `Fixtures/` stay where they are.
   - **Deleted:** `dotnet/Assembly.Engine/`.
-  - **Changed:** `Assembly.Mac/Program.cs` (from `Serve/MacBackend.cs` and `MacServe.cs`) and the remote's
-    `ServeRun.cs` call the `Add*` methods, plus the scripts that name `Assembly.Engine` (`dotnet/scripts/*.sh`,
-    `shell/assembly.sh`, `scripts/check4.sh`), `AGENTS.md` and `dotnet/README.md`, which name `Assembly.Engine/*` and
-    `Assembly.Mac/*` paths. `AGENTS.md`'s provider line names one folder for provider quirks:
+  - **Changed:** the hosts' and tests' project files, `Assembly.slnx`, and the files that name `Assembly.Engine/*` and
+    `Assembly.Mac/*` paths: `scripts/lint.d/40-routes.sh`, `scripts/check4.sh`, `AGENTS.md`, `dotnet/README.md` and
+    a few comments. `scripts/locked-paths.txt` gains `dotnet/Assembly.Tests/Architecture/**`. `AGENTS.md`'s provider line names one folder for provider quirks:
     `Application/Common/Acp/V1/`. That's where the adapters' updates are read, and where today's provider
     differences already are (`ClaudeBackground`, `CodexThreadStatus`, `UpdateReader`). `Infrastructure/Agents/` only
     starts processes, so a quirk there would be about launching, not about what a provider sends.
@@ -1224,6 +1232,13 @@ catalogue stays the reference.
     - `Features/Chat/Sessions/SendFeature.cs` (send, stop, answer, stop task), and
       `Features/Chat/Config/ConfigFeature.cs` with a `config` topic;
     - the page's chat folders, moved under `app/src/lib/chat/` (section 4).
+  - **First, the page's layout rule, after B9 and B10.** B10 deletes the guard's allowlist and B9 removes the waits,
+    so chat's page folders can move without changing what the guard's per-row zone (`lib/chat/`) means. In this
+    order: `ArchitectureTests` gets back `No_page_feature_imports_another` (no file under `app/src/lib/<feature>/`
+    imports another feature's folder; written first, failing; the test file is locked by then, so the move thread
+    posts the OK line); then `composer/`, `rows/`, `thread/` and `Conversation.svelte` move under `app/src/lib/chat/`
+    as renames with import-path edits, and the test passes. B2b had it, and B2c took it out: today those folders
+    import each other.
   - **Named item: the page read on thread switch.** `PageBefore` takes about 200 ms for 50 items on a 40,000-row
     thread (197 to 205 ms median, 294 ms p99, measured on agent-workbox before B2a). That's very likely the "slow
     frames only on thread switch" from the Mac lag run. Run `EXPLAIN QUERY PLAN` on it, then add an index or change

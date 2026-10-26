@@ -2,5 +2,5 @@ root = false
 
 [*.cs]
 # Pass the CancellationToken on to every call that takes one, so a request the page aborts stops its work
-# (dotnet/Assembly.Engine/Preferences/README.md).
+# (dotnet/Assembly.Application/Features/Preferences/README.md).
 dotnet_diagnostic.CA2016.severity = error

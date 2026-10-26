@@ -43,7 +43,7 @@ the backend (base#10):
    running. Pass `signal` when something owns the load (a panel): its closing aborts it too.
 2. `call()` hands the signal to the request, so aborting it closes the request.
 3. The backend sees the request close and stops the work it started for it: database reads, files, child processes
-   like git (`dotnet/Assembly.Mac/Preferences/README.md` says how).
+   like git (`dotnet/Assembly.Application/Features/Preferences/README.md` says how).
 4. Saves are the exception: debounced, the newest replaces the rest, and once sent they finish.
 
 `loadPreferences()` shows 1 to 3; `setPreference()` shows 4. The tests are `app/test/draft/base/call.test.ts`. The plan
