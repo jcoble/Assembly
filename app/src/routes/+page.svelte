@@ -10,6 +10,7 @@
   import { onFailure } from '../lib/call';
   import { loadPreferences } from '../lib/preferences/preferences.svelte';
   import { logCounters, runSoak, SEED_REPO, SOAK_REPO, type SoakChat } from '../lib/soak';
+  import { Button } from '$lib/components/ui/button/index.js';
 
   // Page-level work (thread list, new thread) is owned by this signal.
   const page = new AbortController();
@@ -196,7 +197,10 @@
         <Conversation thread={open} {token} {onchat} onturn={() => void refresh(token!)} onclose={() => (openId = null)} />
       {/key}
     {:else}
-      <div class="empty">Pick a thread or start a new one.</div>
+      <div class="empty">
+        <p>Pick a thread or start a new one.</p>
+        <Button variant="outline">New thread</Button>
+      </div>
     {/if}
   </main>
 

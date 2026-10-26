@@ -1,5 +1,6 @@
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { existsSync, readFileSync } from 'node:fs';
 
@@ -9,7 +10,13 @@ const lane = existsSync('../.lane') ? Number(/LANE_NUMBER=(\d+)/.exec(readFileSy
 // Tauri has no Node server, so the app is a static SPA (tauri.app/start/frontend/sveltekit).
 // Port 1430 (main) to 1439 (lanes) is the dev URL, one of the backend's CORS origins.
 export default defineConfig({
-  plugins: [sveltekit({ adapter: adapter({ fallback: 'index.html' }) })],
+  plugins: [
+    tailwindcss(),
+    sveltekit({
+      adapter: adapter({ fallback: 'index.html' }),
+      alias: { $lib: 'src/lib' },
+    }),
+  ],
   clearScreen: false,
   // The page's backend port outside the shell, which hands it over otherwise (src/lib/host/backend.ts).
   define: { __ASSEMBLY_PORT__: 18797 + lane * 10 },
