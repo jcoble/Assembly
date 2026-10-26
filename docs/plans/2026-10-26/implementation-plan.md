@@ -131,19 +131,19 @@ folder per feature, with no repository and plain SQL. Section 4 has the layout.
 ### D4. Bytes over the socket
 
 One path means attachments go over the socket too. Today, `POST /threads/{id}/attachments` and
-`GET .../attachments/{name}` are the only binary HTTP calls. A 10 MB image, the size the composer allows today, is
-about 13.3 MB as base64. That doesn't fit the 4 MB frame limit in 5.1, so the image has to be split up, or the limit
+`GET .../attachments/{name}` are the only binary HTTP calls. A 20 MB image, the size the composer and the backend
+allow today (`attachments.ts:34`, `AttachmentStore.cs:12`), is about 26.7 MB as base64. That doesn't fit the 4 MB frame limit in 5.1, so the image has to be split up, or the limit
 changed. The options:
 
 - **A. Chunked calls.** `attachments/begin` returns an upload id, then `attachments/chunk` sends about 1 MB of image
   per call (about 1.33 MB as base64, well under 4 MB), appended to a staging file. `attachments/commit` checks the
-  size and type, and links the file in one atomic write. A 10 MB image is about 10 short calls.
+  size and type, and links the file in one atomic write. A 20 MB image is about 20 short calls.
   - Each call stays well under the 30 s limit, so this fits the "calls are short" rule in 5.1.
   - Progress comes for free, and cancelling is a `cancel` on the next chunk.
   - Other frames, such as rows and saves, still get through between chunks.
   - Reading an image back is the same thing in reverse: `attachments/read` with an offset, about 1 MB a call.
 - **B. Binary frames.** A new frame type: a small JSON header, then the raw bytes. There's no base64 cost, but it's a
-  second frame format for both sides to read and test, and a 10 MB frame still needs either chunking or a higher
+  second frame format for both sides to read and test, and a 20 MB frame still needs either chunking or a higher
   limit.
 - **C. A higher frame limit,** 16 MB. This is the simplest to write. But every big image ties up the socket while it
   goes, so rows and saves wait behind it, and the backend's memory per frame quadruples.
@@ -536,7 +536,7 @@ one shared read connection, a thread list would wait behind a 200 ms page read, 
 6. If the write fails, roll back and publish nothing.
 
 No transaction is ever held open across an agent call, a network call, or a wait for a socket. No file, network or
-process work happens inside `Write` either: it's done first, in the handler's async part, so a 10 MB attachment never
+process work happens inside `Write` either: it's done first, in the handler's async part, so a 20 MB attachment never
 holds the write lock.
 
 The writer handles every write, not just calls. Chat's row writes (today's `RowStore` `Commit` and `Copy`) run
@@ -1166,11 +1166,13 @@ catalogue stays the reference.
     Proof: check4 on that step's head, before and after.
   - **Tests:**
     - base#8: a thread made while the page is subscribed arrives as an upsert;
-    - base#9: the pending run is shown during the gap before the copied row arrives (the failing test is written
-      before the fix), and the menus come from a host started with an empty home;
+    - base#9: a thread on Workbox Test and one on the Mac show the same Mode menu, the same Model menu and the same
+      agent name, with the menus from a host started with an empty home;
+    - pending runs, apart from base#9: the pending run is shown during the gap before the copied row arrives (the
+      failing test is written before the fix);
     - the rows-topic catch-up and `prevSeq` tests that exist today, moved;
-    - attachments as chunked calls (D4): a 10 MB image arrives in about 10 calls and commits once; cancelling
-      midway leaves nothing linked.
+    - attachments as chunked calls (D4): a 20 MB image, the limit, arrives in about 20 calls and commits once; one
+      byte over the limit is refused; cancelling midway leaves nothing linked.
   - **Proof:** check4 with `rows.sh`, `threads.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
     the chat used in the window on the Mac.
 - **C2. One socket per remote machine** (Sol P11, P13).
