@@ -207,6 +207,19 @@ small things.
   signatures and comment, and no logic, so the review looks at the layout alone. Step 2 brings the old code over,
   piece by piece, into those files.
 
+## Reviews for every implementation step
+
+Jesse (2026-10-26): "When they get to implementing, I'd like to have a sub-agent look over what they are about to do,
+look at what's been done, the plan, everything and see if they see any spots in the plan, missing, needs changed,
+etc. Then have a code and spec review done, one Claude and one Sol 6.1."
+
+- Before writing anything, a Claude Code subagent reads the step, what's on main, the plan and this file, and reports
+  gaps or anything that needs changing.
+- After the step, two code and spec reviews of its diff: one by a Claude Code subagent, and one by Sol 6.1
+  (`codex exec -s read-only -m gpt-6.1-sol`).
+- Both reviews ask for the smallest fix and flag over-engineering ("Scope: KISS and YAGNI"; what counts as a finding
+  is in "Review guidelines"). Report each finding as fixed or dropped, with the reason.
+
 ## Checking a feature
 
 - Check every feature with both Claude Code and Codex, on the Mac and on Workbox Test: `scripts/check4.sh`, with this
