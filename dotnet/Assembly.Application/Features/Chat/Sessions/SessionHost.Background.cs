@@ -103,14 +103,14 @@ public sealed partial class SessionHost
                 {
                     try
                     {
-                        await session.Adapter.Link.Client.StopTaskAsync(session.SessionId, taskId, CancellationToken.None);
+                        await session.Adapter.Link.Client.StopTaskAsync(session.AcpSessionId, taskId, CancellationToken.None);
                     }
                     catch (JsonRpcException)
                     {
                         // Closing ends it anyway.
                     }
                 }
-                await session.Adapter.Link.Client.CloseSessionAsync(session.SessionId, CancellationToken.None);
+                await session.Adapter.Link.Client.CloseSessionAsync(session.AcpSessionId, CancellationToken.None);
                 stages?.Mark("session close");
                 if (sessionCost is { } total)
                     _threads.SetSessionCost(_threadId, total);
@@ -118,12 +118,12 @@ public sealed partial class SessionHost
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
         {
-            Console.Error.WriteLine($"thread {_threadId}: session {session.SessionId} didn't close: {error.Message}");
+            Console.Error.WriteLine($"thread {_threadId}: session {session.AcpSessionId} didn't close: {error.Message}");
         }
         finally
         {
-            session.Adapter.Link.Client.SetSessionPolicy(session.SessionId, null);
-            session.Adapter.Updates.Forget(session.SessionId);
+            session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, null);
+            session.Adapter.Updates.Forget(session.AcpSessionId);
             await pump;
             lock (_gate)
             {
@@ -214,9 +214,9 @@ public sealed partial class SessionHost
                 switch (agentEvent)
                 {
                     case SubagentChanged subagent:
-                        if (!_subagents.Has(subagent.SessionId))
+                        if (!_subagents.Has(subagent.AcpSessionId))
                             // What the child asks (a permission, a question) is a card in this thread.
-                            (_turn?.Session ?? _kept?.Session)?.Adapter.Link.Client.SetSessionPolicy(subagent.SessionId, this);
+                            (_turn?.Session ?? _kept?.Session)?.Adapter.Link.Client.SetSessionPolicy(subagent.AcpSessionId, this);
                         Apply(_subagents.Changed(_threads.Get(_threadId)!, subagent));
                         break;
                     case TitleChanged title when _threads.Get(_threadId) is { Helper: false }:

@@ -72,10 +72,10 @@ public sealed class RowConverter
                 break;
             case SubagentShown shown:
                 // A subagent's row stays with the run that started it, each time it's delegated to again.
-                var subagentRun = _subagentRuns.TryGetValue(shown.SessionId, out var subagentStartedIn)
+                var subagentRun = _subagentRuns.TryGetValue(shown.AcpSessionId, out var subagentStartedIn)
                     ? subagentStartedIn
-                    : _subagentRuns[shown.SessionId] = _turn?.RunId ?? _lastRunId;
-                batch.Rows.Add(new NewRow(subagentRun, $"subagent:{shown.SessionId}", RowKind.Subagent,
+                    : _subagentRuns[shown.AcpSessionId] = _turn?.RunId ?? _lastRunId;
+                batch.Rows.Add(new NewRow(subagentRun, $"subagent:{shown.AcpSessionId}", RowKind.Subagent,
                     JsonSerializer.SerializeToElement(shown.Subagent, RowJsonContext.Rows.SubagentPayload), shown.At));
                 break;
             case TurnSteered steered:

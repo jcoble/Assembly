@@ -129,7 +129,7 @@ export type Item =
   | (Base & { kind: 'error'; error: RunError })
   | (Base & { kind: 'ask'; askId: string; ask: AskPayload })
   | (Base & { kind: 'task'; taskId: string; task: TaskPayload })
-  | (Base & { kind: 'subagent'; sessionId: string; subagent: SubagentPayload })
+  | (Base & { kind: 'subagent'; acpSessionId: string; subagent: SubagentPayload })
   | (Base & { kind: 'note'; text: string })
   | (Base & { kind: 'stats'; stats: TurnStats })
   | (Base & { kind: 'compaction'; trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number })
@@ -247,7 +247,7 @@ export function applyRow(view: View, row: Row): void {
         item.subagent = row.payload;
         return;
       }
-      view.items.push({ key, runId, kind: 'subagent', sessionId: (row.itemId ?? '').replace(/^subagent:/, ''), subagent: row.payload });
+      view.items.push({ key, runId, kind: 'subagent', acpSessionId: (row.itemId ?? '').replace(/^subagent:/, ''), subagent: row.payload });
       return;
     default:
       // A kind this build does not know: shown by name, so nothing silently disappears.

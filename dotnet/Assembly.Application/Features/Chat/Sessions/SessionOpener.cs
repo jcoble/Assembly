@@ -7,7 +7,7 @@ using Assembly.Domain.Threads;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>A thread's session, open on the shared adapter. <c>SavedCost</c> is the total its agent reported at its last clean close.</summary>
-internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, string SessionId, bool Resumed, decimal? SavedCost, string? Model = null);
+internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, string AcpSessionId, bool Resumed, decimal? SavedCost, string? Model = null);
 
 /// <summary>
 /// Opens a thread's ACP session on its agent's shared adapter, in the thread's checkout: its earlier session,
@@ -83,7 +83,7 @@ public sealed class SessionOpener(ThreadStore threads, IAgentLauncher launcher, 
 
     /// <summary>Sets each chosen value the session doesn't have yet, saves the options as they end up, and returns their model's name.</summary>
     private async Task<string?> ApplyChoicesAsync(
-        RunningAdapter running, string threadId, string sessionId, JsonElement options, StageTimes stages, CancellationToken cancellationToken)
+        RunningAdapter running, string threadId, string acpSessionId, JsonElement options, StageTimes stages, CancellationToken cancellationToken)
     {
         if (options.ValueKind != JsonValueKind.Array)
             return null;
@@ -96,7 +96,7 @@ public sealed class SessionOpener(ThreadStore threads, IAgentLauncher launcher, 
                 continue;
             try
             {
-                options = (await running.Link.Client.SetConfigOptionAsync(sessionId, id, value, cancellationToken)).ConfigOptions;
+                options = (await running.Link.Client.SetConfigOptionAsync(acpSessionId, id, value, cancellationToken)).ConfigOptions;
             }
             catch (JsonRpcException error)
             {

@@ -155,13 +155,13 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
         await SendAsync(parent);
         var mac = await _macLauncher.NextAsync();
-        var parentToken = SessionToken(await mac.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await mac.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await mac.ReadAsync("session/prompt");
 
         var started = await ToolAsync(_mac!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box });
         var helperId = started.GetProperty("threadId").GetString()!;
         var box = await _boxLauncher.NextAsync();
-        var helperToken = SessionToken(await box.StartAsync(sessionId: "acp-helper"));
+        var helperToken = SessionToken(await box.StartAsync(acpSessionId: "acp-helper"));
         var helperPrompt = await box.ReadAsync("session/prompt");
         Assert.Contains("Count the lines.", helperPrompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
         Assert.Equal(parent, (await GetJsonAsync(_box, BoxToken, $"/threads/{helperId}")).GetProperty("parentThreadId").GetString());
@@ -205,12 +205,12 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
         await SendAsync(parent);
         var mac = await _macLauncher.NextAsync();
-        var parentToken = SessionToken(await mac.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await mac.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await mac.ReadAsync("session/prompt");
         var helperId = (await ToolAsync(_mac!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box }))
             .GetProperty("threadId").GetString()!;
         var box = await _boxLauncher.NextAsync();
-        await box.StartAsync(sessionId: "acp-helper");
+        await box.StartAsync(acpSessionId: "acp-helper");
         await box.ReplyAsync(await box.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
         await mac.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
         await Until(async () => (await GetJsonAsync(_mac!, MacToken, $"/threads/{parent}/rows")).GetProperty("rows").EnumerateArray()
@@ -234,12 +234,12 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
         await SendAsync(parent);
         var mac = await _macLauncher.NextAsync();
-        var parentToken = SessionToken(await mac.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await mac.StartAsync(acpSessionId: "acp-parent"));
         await mac.ReadAsync("session/prompt");
         var helperId = (await ToolAsync(_mac!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box }))
             .GetProperty("threadId").GetString()!;
         var box = await _boxLauncher.NextAsync();
-        await box.StartAsync(sessionId: "acp-helper");
+        await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
 
         // The row's Stop: refused until the helper's run has been copied here, then it reaches the box.

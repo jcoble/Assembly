@@ -136,7 +136,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         SteerResponse steered;
         try
         {
-            steered = await session.Adapter.Link.Client.SteerAsync(session.SessionId, text, cancellationToken);
+            steered = await session.Adapter.Link.Client.SteerAsync(session.AcpSessionId, text, cancellationToken);
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
         {
@@ -176,7 +176,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             return;
         try
         {
-            var set = await session.Adapter.Link.Client.SetConfigOptionAsync(session.SessionId, configId, value, cancellationToken);
+            var set = await session.Adapter.Link.Client.SetConfigOptionAsync(session.AcpSessionId, configId, value, cancellationToken);
             _threads.SetConfigOptions(_threadId, set.ConfigOptions.GetRawText());
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
@@ -301,7 +301,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             return false;
         try
         {
-            return (await session.Adapter.Link.Client.StopTaskAsync(session.SessionId, taskId, cancellationToken)).Stopped;
+            return (await session.Adapter.Link.Client.StopTaskAsync(session.AcpSessionId, taskId, cancellationToken)).Stopped;
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
         {
@@ -384,8 +384,8 @@ public sealed partial class SessionHost : IPermissionPolicy
                 await _session.WaitAsync(turn.Stopping.Token);
                 held = true;
                 session = await _opener.OpenAsync(_threadId, text, turn.Stages, turn.Stopping.Token);
-                updates = session.Adapter.Updates.For(session.SessionId);
-                session.Adapter.Link.Client.SetSessionPolicy(session.SessionId, this);
+                updates = session.Adapter.Updates.For(session.AcpSessionId);
+                session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, this);
                 lock (_gate)
                 {
                     turn.Session = session;
@@ -401,7 +401,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             }
             else
             {
-                var response = await session.Adapter.Link.Client.PromptAsync(session.SessionId, text, CancellationToken.None);
+                var response = await session.Adapter.Link.Client.PromptAsync(session.AcpSessionId, text, CancellationToken.None);
                 turn.Stages.Mark("answer");
                 end = at => UpdateReader.TurnEnd(response, at);
             }
@@ -496,7 +496,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     {
         try
         {
-            await session.Adapter.Link.Client.CancelAsync(session.SessionId, CancellationToken.None);
+            await session.Adapter.Link.Client.CancelAsync(session.AcpSessionId, CancellationToken.None);
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException)
         {

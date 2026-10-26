@@ -74,7 +74,7 @@
     {:else if item.kind === 'tool'}<Tool itemId={item.itemId} tool={item.tool} {kept} />
     {:else if item.kind === 'ask'}<Ask askId={item.askId} ask={item.ask} />
     {:else if item.kind === 'task'}<Task taskId={item.taskId} task={item.task} />
-    {:else if item.kind === 'subagent'}<Subagent sessionId={item.sessionId} subagent={item.subagent} />
+    {:else if item.kind === 'subagent'}<Subagent acpSessionId={item.acpSessionId} subagent={item.subagent} />
     {:else}<Fallback type={item.type} />{/if}
   </Message>
 {/if}

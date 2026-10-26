@@ -40,7 +40,7 @@ public sealed partial class SessionHostTests
         Assert.Equal("finished", end[4].Payload.GetProperty("state").GetString());
         Assert.Equal(selfRun, end[4].RunId);
         Assert.Null(_host.ActiveRunId);
-        Assert.Equal(FakeLink.SessionId, await agent.CloseAsync());
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
     }
 
     [Fact]
@@ -307,7 +307,7 @@ public sealed partial class SessionHostTests
         Assert.True(await stopping);
 
         await agent.UpdateAsync("""{"sessionUpdate":"subagent_update","sessionId":"child1","state":{"state":"idle","stopReason":"cancelled"}}""");
-        Assert.Equal(FakeLink.SessionId, await agent.CloseAsync());
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
         var child = _threads.Get(_store.RowsAfter(_thread.ThreadId, 0).Last(row => row.Kind == "subagent").Payload.GetProperty("threadId").GetString()!)!;
         Assert.Equal("cancelled", _store.RowsAfter(child.ThreadId, 0).Last(row => row.Kind == "turn").Payload.GetProperty("state").GetString());
     }

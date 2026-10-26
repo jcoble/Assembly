@@ -133,7 +133,7 @@ public sealed partial class SessionHostTests
         var second = await _launcher.NextAsync();
         var open = await second.StartAsync();
         Assert.Equal("session/resume", open.GetProperty("method").GetString());
-        Assert.Equal(FakeLink.SessionId, open.GetProperty("params").GetProperty("sessionId").GetString());
+        Assert.Equal(FakeLink.AcpSessionId, open.GetProperty("params").GetProperty("sessionId").GetString());
         await second.ReadAsync("session/prompt");
         Assert.True(agent.Disposed);
         Assert.Equal(2, _launcher.Launches);
@@ -182,15 +182,15 @@ public sealed partial class SessionHostTests
 
         _host.Send("one");
         var agent = await _launcher.NextAsync();
-        await agent.StartAsync(sessionId: "acp-1");
+        await agent.StartAsync(acpSessionId: "acp-1");
         var first = await agent.ReadAsync("session/prompt");
         otherHost.Send("two");
         await agent.OpenAsync("acp-2");
         var second = await agent.ReadAsync("session/prompt");
         Assert.Equal("acp-2", second.GetProperty("params").GetProperty("sessionId").GetString());
 
-        await agent.TextAsync("for one", sessionId: "acp-1");
-        await agent.TextAsync("for two", sessionId: "acp-2");
+        await agent.TextAsync("for one", acpSessionId: "acp-1");
+        await agent.TextAsync("for two", acpSessionId: "acp-2");
         await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
         await agent.ReplyAsync(first, """{"stopReason":"end_turn"}""");
 
@@ -209,7 +209,7 @@ public sealed partial class SessionHostTests
         using var otherLive = _hub.Subscribe(other.ThreadId, after: 0);
         _host.Send("one");
         var agent = await _launcher.NextAsync();
-        await agent.StartAsync(sessionId: "acp-1");
+        await agent.StartAsync(acpSessionId: "acp-1");
         await agent.ReadAsync("session/prompt");
         otherHost.Send("two");
         await agent.OpenAsync("acp-2");
@@ -231,7 +231,7 @@ public sealed partial class SessionHostTests
 
         Assert.Equal("session/new", open.GetProperty("method").GetString());
         await agent.ReadAsync("session/prompt");
-        Assert.Equal(FakeLink.SessionId, _threads.Get(_thread.ThreadId)!.AcpSessionId);
+        Assert.Equal(FakeLink.AcpSessionId, _threads.Get(_thread.ThreadId)!.AcpSessionId);
     }
 
     [Fact]
@@ -246,7 +246,7 @@ public sealed partial class SessionHostTests
         Assert.False(_host.Stop("some-other-run"));
         Assert.True(_host.Stop(runId));
         var cancel = await agent.ReadAsync("session/cancel");
-        Assert.Equal(FakeLink.SessionId, cancel.GetProperty("params").GetProperty("sessionId").GetString());
+        Assert.Equal(FakeLink.AcpSessionId, cancel.GetProperty("params").GetProperty("sessionId").GetString());
         await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
 
         var end = await Rows(2);

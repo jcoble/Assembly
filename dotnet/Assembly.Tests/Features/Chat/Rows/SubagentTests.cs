@@ -14,7 +14,7 @@ public sealed class SubagentTests
         Assert.Equal(("general-purpose", "Count lines in notes.txt", "running", true),
             (changes[0].Title, changes[0].Description, changes[0].State, changes[0].CanCancel));
         Assert.Equal(("idle", "end_turn", (string?)null), (changes[^1].State, changes[^1].StopReason, changes[^1].Title));
-        Assert.Single(changes.Select(change => change.SessionId).Distinct());
+        Assert.Single(changes.Select(change => change.AcpSessionId).Distinct());
 
         var task = events.OfType<ToolCallChanged>().First(call => call.Started);
         var prompt = Assert.Single(events.OfType<SessionMessage>());

@@ -66,7 +66,7 @@ public sealed class McpTests : IAsyncLifetime
         var parent = _threads.Create("claude", "https://github.com/o/r");
         _sessions.For(parent.ThreadId).Send("delegate it");
         var agent = await _launcher.NextAsync();
-        var parentToken = SessionToken(await agent.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await agent.ReadAsync("session/prompt");
 
         // Only a session's own token opens the server; the API's doesn't.
@@ -84,7 +84,7 @@ public sealed class McpTests : IAsyncLifetime
 
         // The helper is a session of its own, on its agent's adapter, with a token of its own.
         var helperAgent = await _launcher.NextAsync();
-        var helperToken = SessionToken(await helperAgent.StartAsync(sessionId: "acp-helper"));
+        var helperToken = SessionToken(await helperAgent.StartAsync(acpSessionId: "acp-helper"));
         Assert.NotEqual(parentToken, helperToken);
         var helperPrompt = await helperAgent.ReadAsync("session/prompt");
         Assert.Contains("Count the lines in notes.txt.", helperPrompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
@@ -117,7 +117,7 @@ public sealed class McpTests : IAsyncLifetime
         var parent = _threads.Create("claude", "https://github.com/o/r");
         _sessions.For(parent.ThreadId).Send("delegate twice");
         var agent = await _launcher.NextAsync();
-        var parentToken = SessionToken(await agent.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
         await agent.ReadAsync("session/prompt");
 
         var first = (await CallAsync(parentToken, "start_session", new { prompt = "one" })).GetProperty("threadId").GetString()!;

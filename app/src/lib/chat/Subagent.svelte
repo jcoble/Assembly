@@ -5,7 +5,7 @@
   // A subagent the agent runs as a session of its own: what it was asked, how it
   // stands, a Stop while it works if the agent can stop it, and its own thread to open.
   // Nested (indented) under the tool call that started it, when the agent said which.
-  let { sessionId, subagent }: { sessionId: string; subagent: SubagentPayload } = $props();
+  let { acpSessionId, subagent }: { acpSessionId: string; subagent: SubagentPayload } = $props();
 
   const stop = getContext<(taskId: string) => Promise<unknown>>(TASK_STOP);
   const openThread = getContext<(threadId: string) => void>(THREAD_OPEN);
@@ -20,7 +20,7 @@
     stopping = true;
     error = '';
     try {
-      await stop(sessionId);
+      await stop(acpSessionId);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       stopping = false;

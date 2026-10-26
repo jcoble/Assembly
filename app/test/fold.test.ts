@@ -45,7 +45,7 @@ test('the summary counts work by kind, distinct files, and failures', () => {
   assert.equal(workSummary([tool('a', 'read'), tool('b', 'search'), tool('c', 'execute', { state: 'failed' })]), 'Read a file, ran a command, searched once, 1 call failed');
   // A command stopped mid-run reads failed; it still ran.
   assert.equal(workSummary([tool('a', 'execute', { state: 'failed' })]), 'Ran a command, 1 call failed');
-  const subagent = { key: 'subagent:s1', runId: 'r1', kind: 'subagent', sessionId: 's1', subagent: { threadId: 'c1', title: 'Explore', state: 'idle', canStop: false } } as const;
+  const subagent = { key: 'subagent:s1', runId: 'r1', kind: 'subagent', acpSessionId: 's1', subagent: { threadId: 'c1', title: 'Explore', state: 'idle', canStop: false } } as const;
   assert.equal(workSummary([subagent]), 'Ran a subagent');
   assert.equal(workSummary([{ key: 't', runId: 'r1', kind: 'thinking', text: '', done: true }]), 'Thought');
   assert.equal(workSummary([tool('a', 'other'), tool('b', 'other')]), 'Used 2 tools');

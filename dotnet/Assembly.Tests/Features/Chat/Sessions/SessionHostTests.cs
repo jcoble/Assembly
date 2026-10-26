@@ -67,11 +67,11 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         Assert.Equal("finished", end[2].Payload.GetProperty("state").GetString());
         Assert.All(end, row => Assert.Equal(runId, row.RunId));
         Assert.Null(_host.ActiveRunId);
-        Assert.Equal(FakeLink.SessionId, _threads.Get(_thread.ThreadId)!.AcpSessionId);
+        Assert.Equal(FakeLink.AcpSessionId, _threads.Get(_thread.ThreadId)!.AcpSessionId);
         // The message row replaced its delta.
         Assert.Equal(["user", "turn", "message", "stats", "turn"], _store.RowsAfter(_thread.ThreadId, 0).Select(row => row.Kind));
         // Once the turn has ended, its session is closed on the adapter.
-        Assert.Equal(FakeLink.SessionId, await agent.CloseAsync());
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
     }
 
     [Fact]

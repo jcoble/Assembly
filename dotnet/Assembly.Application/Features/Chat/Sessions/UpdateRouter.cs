@@ -14,8 +14,8 @@ namespace Assembly.Application.Features.Chat.Sessions;
 internal sealed class UpdateRouter
 {
     private readonly ChannelReader<SessionNotification> _all;
-    private readonly Dictionary<string, Channel<SessionNotification>> _sessions = [];
-    private readonly HashSet<string> _closedSessions = [];
+    private readonly Dictionary<string, Channel<SessionNotification>> _acpSessions = [];
+    private readonly HashSet<string> _closedAcpSessions = [];
     // Each announced child session's root session: the queue its updates go to.
     private readonly Dictionary<string, string> _parents = [];
     private readonly Lock _gate = new();
@@ -28,10 +28,10 @@ internal sealed class UpdateRouter
     }
 
     /// <summary>The session's updates, in arrival order. Completes when the session is forgotten or the adapter ends.</summary>
-    public ChannelReader<SessionNotification> For(string sessionId)
+    public ChannelReader<SessionNotification> For(string acpSessionId)
     {
         lock (_gate)
-            return Queue(sessionId).Reader;
+            return Queue(acpSessionId).Reader;
     }
 
     public void Flush()
@@ -44,7 +44,7 @@ internal sealed class UpdateRouter
                 if (update.Kind == "subagent_update" && update.Update.TryGetProperty("sessionId", out var child)
                     && child.GetString() is { Length: > 0 } childId && childId != target)
                     _parents[childId] = target;
-                if (_closedSessions.Contains(target))
+                if (_closedAcpSessions.Contains(target))
                     Console.Error.WriteLine($"session {update.SessionId}: dropped a {update.Kind} that came after it was closed");
                 else
                     Queue(target).Writer.TryWrite(update);
@@ -53,30 +53,30 @@ internal sealed class UpdateRouter
     }
 
     /// <summary>A closed session is being reopened: its updates are wanted again.</summary>
-    public void Reopen(string sessionId)
+    public void Reopen(string acpSessionId)
     {
         Flush();
         lock (_gate)
-            _closedSessions.Remove(sessionId);
+            _closedAcpSessions.Remove(acpSessionId);
     }
 
     /// <summary>The session is closed: its queue completes, and goes.</summary>
-    public void Forget(string sessionId)
+    public void Forget(string acpSessionId)
     {
         lock (_gate)
         {
-            _closedSessions.Add(sessionId);
-            if (_sessions.Remove(sessionId, out var queue))
+            _closedAcpSessions.Add(acpSessionId);
+            if (_acpSessions.Remove(acpSessionId, out var queue))
                 queue.Writer.TryComplete();
         }
     }
 
     // Called with the lock held.
-    private Channel<SessionNotification> Queue(string sessionId)
+    private Channel<SessionNotification> Queue(string acpSessionId)
     {
-        if (!_sessions.TryGetValue(sessionId, out var queue))
+        if (!_acpSessions.TryGetValue(acpSessionId, out var queue))
         {
-            queue = _sessions[sessionId] = Channel.CreateUnbounded<SessionNotification>();
+            queue = _acpSessions[acpSessionId] = Channel.CreateUnbounded<SessionNotification>();
             if (_closed)
                 queue.Writer.TryComplete();
         }
@@ -99,7 +99,7 @@ internal sealed class UpdateRouter
         lock (_gate)
         {
             _closed = true;
-            foreach (var queue in _sessions.Values)
+            foreach (var queue in _acpSessions.Values)
                 queue.Writer.TryComplete();
         }
     }

@@ -6,5 +6,5 @@ namespace Assembly.Domain.Events;
 /// why in <c>StopReason</c> (<c>end_turn</c>, <c>cancelled</c>, <c>error</c>) and <c>Error</c>. Only the first update
 /// carries the title and description. <c>CanCancel</c> when the child stops on <c>session/cancel</c> with its id.
 /// </summary>
-public sealed record SubagentChanged(long At, string SessionId, string? Title, string? Description, string? State,
+public sealed record SubagentChanged(long At, string AcpSessionId, string? Title, string? Description, string? State,
     string? StopReason, string? Error, bool? CanCancel) : AgentEvent(At);

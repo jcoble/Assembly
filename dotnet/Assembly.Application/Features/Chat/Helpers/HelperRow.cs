@@ -21,6 +21,7 @@ public sealed class HelperRow(ThreadStore threads, SessionRegistry sessions, Liv
             return;
         var payload = new SubagentPayload(helper.ThreadId, helper.Title ?? "Helper", $"Helper session ({helper.Agent})", state, stopReason, error,
             CanStop: state != "idle", ToolCallId: null, Agent: helper.Agent, Helper: true);
+        // The ACP-id slot carries Assembly's session id here, not an ACP id.
         sessions.For(parent).Show(new SubagentShown(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), helper.ThreadId, payload));
     }
 

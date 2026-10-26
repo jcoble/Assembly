@@ -258,7 +258,7 @@ test('a subagent row stays one item, keyed by its child session, as its parent r
   assert.deepEqual(keys(view), ['subagent:subagent:s2']);
   const subagent = view.items[0]!;
   if (subagent.kind !== 'subagent') throw new Error('not a subagent');
-  assert.equal(subagent.sessionId, 's2');
+  assert.equal(subagent.acpSessionId, 's2');
   assert.equal(subagent.subagent.state, 'idle');
   assert.equal(subagent.subagent.toolCallId, 't1');
 });

@@ -30,7 +30,7 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
 
     private readonly Dictionary<string, Child> _children = [];
 
-    public bool Has(string sessionId) => _children.ContainsKey(sessionId);
+    public bool Has(string acpSessionId) => _children.ContainsKey(acpSessionId);
 
     /// <summary>Children still at work: they keep their parent's session open.</summary>
     public bool AnyRunning => _children.Values.Any(child => child.Shown.State != "idle");
@@ -41,11 +41,11 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
     /// <summary>The parent's word on a child: its row in the parent's thread, as it stands now.</summary>
     public SubagentShown Changed(ThreadInfo parent, SubagentChanged change)
     {
-        if (!_children.TryGetValue(change.SessionId, out var child))
+        if (!_children.TryGetValue(change.AcpSessionId, out var child))
         {
             var title = change.Title ?? change.Description ?? "Subagent";
-            var thread = threads.Child(parent, change.SessionId, title);
-            child = _children[change.SessionId] = new Child(thread, new SubagentPayload(thread.ThreadId, title, change.Description,
+            var thread = threads.Child(parent, change.AcpSessionId, title);
+            child = _children[change.AcpSessionId] = new Child(thread, new SubagentPayload(thread.ThreadId, title, change.Description,
                 "running", null, null, false, null));
         }
         return Update(child, change);
@@ -66,7 +66,7 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
         if (state == "idle")
             EndRun(child, change.At, change.Error is { } error ? new TurnFailed(change.At, error, "subagent_error")
                 : new TurnEnded(change.At, change.StopReason == "cancelled" ? "cancelled" : "end_turn", null));
-        return new SubagentShown(change.At, change.SessionId, child.Shown);
+        return new SubagentShown(change.At, change.AcpSessionId, child.Shown);
     }
 
     /// <summary>
