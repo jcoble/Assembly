@@ -49,8 +49,11 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
 - async/await only: no `.then`, `.catch` or `.finally`.
 - Every save is atomic. One save route makes one write, unless several writes run inside one transaction. A write
   commits before anything is told about it.
-- The backend follows Clean Architecture, as in https://codewithmukesh.com/blog/clean-architecture-dotnet/: layers
-  point inward, and features register their calls in one place. The layout is in section 4 of the plan.
+- The backend follows Clean Architecture, as in https://codewithmukesh.com/blog/clean-architecture-dotnet/: the
+  core is in layers (Domain, Application, Infrastructure, pointing inward), and everything else is one folder per
+  feature, `Assembly.Application/Features/<Feature>/`, which never uses another feature's folder. No repository:
+  each feature writes its own plain SQL, reading through `IAppDatabase` and writing through `IAtomicWriter`. No
+  folder holds more than 30 files. The layout is in section 4 of the plan.
 - Use a shadcn-svelte or AI Elements component when one exists, added from the registry with
   `pnpm exec shadcn-svelte add <name>` from `app/` (the pinned CLI in the lockfile, never `pnpm dlx ...@latest`),
   never a hand-built look-alike; say which component in the PR. A component from the registry meets the same rules

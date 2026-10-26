@@ -10,8 +10,8 @@ were run on agent-workbox in a scratch folder, from packages already in the loca
 
 How to read it:
 
-- **Section 1** has the four things only Jesse can decide. Each has the facts and the options. Nothing after section
-  1 is started until he has answered them, and the plan says where an answer changes a step.
+- **Section 1** has the four decisions. Jesse made all four on 2026-10-26 at 19:27Z; the facts and options are kept
+  for the record.
 - **Section 2** says where each of Jesse's comments in Sol's doc went.
 - **Sections 3 to 9** are the base: the rules, the solution layout, the shared plumbing, every timer in the page today
   and where it goes, the promise chains, and the guards and lint.
@@ -20,7 +20,7 @@ How to read it:
 - **Section 11** is the later phases. They're shorter, but each still has its files, tests and proof.
 - **Section 12** lists what this plan doesn't settle.
 
-## 1. Decisions for Jesse
+## 1. Decisions (all four made by Jesse, 2026-10-26 19:27Z)
 
 ### D1. Database access: EF Core `DbContext`, or plain `Microsoft.Data.Sqlite`
 
@@ -65,12 +65,9 @@ The options:
   entity: feature code writes its own SQL against one connection inside one transaction. It's the smallest and the
   lightest, but it's not the `DbContext` style Jesse prefers.
 
-Every other part of the plan is the same whichever he picks. Only `Assembly.Infrastructure/Persistence/` and the
-`IAppDatabase` / `IApplicationDbContext` interface in section 5.6 change, and step B3 in section 10 is written for
-both.
-
-**Recommendation (Claude's, not Jesse's decision): C.** His first goal is low memory, Microsoft says not to ship EF
-under AOT, and the atomic writer still gives him one shared write path that every feature goes through.
+**Decided by Jesse, 2026-10-26 19:27Z (card): C,** plain `Microsoft.Data.Sqlite` with Native AOT and the shared
+`IAtomicWriter`. In his words: "You don't need EF Core, i'd rather plain SQL instead anyways, I can read it better
+than ef core." The rest of the plan is written for C only.
 
 ### D2. The lag meter, the counters sampler and the soak
 
@@ -104,7 +101,7 @@ or grow a second app, so under A it gets these safeguards:
 - The normal build must not include it. Only `shell/assembly.sh start --counters` injects it, and a check on the
   normal build's output fails if a measure file is in it.
 
-**Recommendation (Claude's, not Jesse's decision): A and B together,** with those safeguards. The counters come from
+**Decided by Jesse, 2026-10-26 19:27Z (card): A and B together,** with those safeguards. The counters come from
 the clock topic and work in every run. Frame timing, which only the page can measure, stays a locked measure-mode
 tool.
 
@@ -126,12 +123,12 @@ The two don't match, and I need to know which to follow.
   - `RentalCommand.Data/DependencyInjection/AtomicPersistenceKernelExtensions.cs` registers it all.
 - The `image.png` his comment refers to isn't in commit `9e51121`, and I couldn't find it on agent-workbox.
 
-**This plan follows the article**, since that's the link Jesse gave: Domain, Application, Infrastructure, and two
-hosts (the Mac's and the remote's). It borrows RentalCommand's idea of one write executor that every write goes
-through. If he'd rather have the Core / Data / Api / Engine names, only the project names in section 4 change.
+**Decided by Jesse, 2026-10-26 19:27Z (card): the article's layout plus RentalCommand's write executor.** He added,
+the same minute: "You don't need EF Core, i'd rather plain SQL instead anyways, I can read it better than ef core... I was just pointing to the structure he had, with no repository pattern. Which every other Clean Architecture has. If you can just have the core of the app like that, then break up the rest by feature, that should be organized enough, then, that there aren't 50 files per directory, and other lanes have a plain straight way to follow."
 
-**Recommendation (Claude's, not Jesse's decision): the article,** since that's the link he gave, plus RentalCommand's
-single write executor.
+So the core of the app is in the article's layers (Domain, Application, Infrastructure, and the two hosts), with
+RentalCommand's idea of one write executor that every write goes through (`IAtomicWriter`). Everything else is one
+folder per feature, with no repository and plain SQL. Section 4 has the layout.
 
 ### D4. Bytes over the socket
 
@@ -153,7 +150,7 @@ changed. The options:
 - **C. A higher frame limit,** 16 MB. This is the simplest to write. But every big image ties up the socket while it
   goes, so rows and saves wait behind it, and the backend's memory per frame quadruples.
 
-**Recommendation (Claude's, not Jesse's decision): A, chunked calls.** It keeps one frame format and one path, keeps
+**Decided by Jesse, 2026-10-26 19:27Z (card): A, chunked calls** of about 1 MB, with one atomic commit. It keeps one frame format and one path, keeps
 the 4 MB limit, and doesn't block other traffic.
 
 ## 2. Where Jesse's comments went
@@ -203,9 +200,10 @@ way the only way. Each one names what enforces it.
 7. **Features register only through the dispatcher.** A feature adds its calls and topics in its
    `<Feature>Feature.cs`. No feature maps a route, reads a socket or opens a database connection itself. Enforced by
    `scripts/lint.d/40-one-dispatcher.sh`, which replaces `40-routes.sh`.
-8. **Layers point inward.** Domain references nothing, Application references only Domain, Infrastructure references
-   Application, and the hosts reference both. Enforced by the project references and by `ArchitectureTests`
-   (step B2).
+8. **Core in layers, everything else one folder per feature.** Domain references nothing, Application references
+   only Domain, Infrastructure references Application, and the hosts reference both. A feature lives in
+   `Application/Features/<Feature>/` and never uses another feature's folder. No repository, plain SQL, and no folder
+   over 30 files. Enforced by the project references and by `ArchitectureTests` (step B2).
 9. **One class per file, organized by feature inside each layer.** This is today's rule, kept.
 10. **Animations end.** Short motion tied to an interaction is fine (120–250 ms); a loop at rest isn't. From
     mac-command-bar. A loop runs only under `[aria-busy="true"]`, which the element sets only while real work runs.
@@ -250,8 +248,13 @@ way the only way. Each one names what enforces it.
 
 ## 4. The solution layout
 
-The projects sit directly under `dotnet/`, so scripts that use `dotnet/Assembly.*` keep working. Central package
-versions go in `dotnet/Directory.Packages.props`, as the article does.
+Jesse's decision (D3): the core of the app follows the article's layers, everything else is split by feature with
+one folder each, there's no repository, and the SQL is plain.
+
+**Where a new feature's files go.** Its backend code goes in `dotnet/Assembly.Application/Features/<Feature>/`, its
+tests in `dotnet/Assembly.Tests/Features/<Feature>/`, and its page code in `app/src/lib/<feature>/`. Only plumbing
+that several features share goes in the layers. No folder holds more than 30 files (section 12), so a feature that
+grows gets subfolders, and no folder gets anywhere near 50.
 
 ```text
 dotnet/
@@ -260,25 +263,71 @@ dotnet/
   Directory.Packages.props       new: one version per package
   .editorconfig                  today's, CA2016 an error
   Assembly.Domain/               references nothing
-  Assembly.Application/          references Domain
+    Events/  Rows/  Threads/  Markdown/
+  Assembly.Application/          references Domain only: no Microsoft.Data.Sqlite, no ASP.NET Core
+    Common/
+      Database/                  IAppDatabase, IWriteScope, IAtomicWriter, IRow, SqlArg
+      Calls/                     ICallRegistry, IFeature, CallContext, CallFailed
+      Topics/                    ITopics
+      Clock/                     IBackendClock
+      Machines/                  IMachine, MachineSet
+      Agents/                    IAgentLauncher, IAgentLink
+    Features/
+      Chat/                      ChatFeature.cs, ChatSchema.cs, and Threads/ Rows/ Sessions/ Helpers/ Attachments/
+      Preferences/               step B7
+      Diagnostics/               step B8
+    DependencyInjection.cs       AddApplication(), AddMachineFeatures(), AddMacFeatures()
   Assembly.Infrastructure/       references Application
-  Assembly.Mac/                  the Mac's host: references Application, Infrastructure
-  Assembly.Remote/               the remote host: references Application, Infrastructure
-  Assembly.Tests/                one test project, folders by layer (below)
+    Persistence/                 AppDatabase, AtomicWriter and the audit, the schema runner
+    Socket/                      SocketEndpoint, SocketConnection, SocketDispatcher
+    Topics/  Clock/  Acp/  Agents/  Machines/  Remote/  Markdown/  Transcript/  Mcp/
+    Http/                        today's HTTP routes, until each moves onto the socket (gone by the end of C1)
+    DependencyInjection.cs       AddInfrastructure(), AddMacInfrastructure()
+  Assembly.Mac/                  Program.cs, and MacOptions.cs for its arguments
+  Assembly.Remote/               Program.cs, and its Serve, Smoke, Record and Replay commands
+  Assembly.Tests/                Architecture/ Core/ Infrastructure/ Features/<Feature>/, plus today's Draft/,
+                                 Pinned/ and Fixtures/
 ```
 
 The tests stay in one project rather than one per layer. This keeps the locked paths
 (`dotnet/Assembly.Tests/Pinned/**` and the READMEs in `scripts/locked-paths.txt`) where they are, so the move needs
 no OK for them.
 
-### What goes in each layer
+### What goes where
 
-| Layer | Holds | Doesn't hold |
+| Place | Holds | Doesn't hold |
 | --- | --- | --- |
-| Domain | The records and rules that are true whatever runs them: `ThreadInfo`, row kinds and payloads, the markdown block model, events, `Preference`, and invariants (a `DomainException` for a broken one). | I/O, JSON, SQL, sockets, time (time comes in as an argument). |
-| Application | What a feature does: its calls and topics (`<Feature>Feature.cs`), the use cases behind them, and the interfaces it needs from outside (`IAppDatabase`/`IApplicationDbContext`, `IAtomicWriter`, `ITopics`, `IMachine`, `IAgentLauncher`, `IBackendClock`). Also the shared plumbing's contracts (`ICallRegistry`, `CallContext`, `CallFailed`). `DependencyInjection.cs` has `AddApplication()`, `AddMachineFeatures()` and `AddMacFeatures()`. | Any concrete SQL, socket, process or file code. |
-| Infrastructure | The implementations: SQLite (`Persistence/`), the socket endpoint and dispatcher (`Socket/`), the atomic writer and audit (`Persistence/`), topics (`Topics/`), the backend clock, ACP and JSON-RPC, agent processes and git, the attachment file store, and (registered only by the Mac host) the remote machine link, SSH tunnel and follower. `DependencyInjection.cs` has `AddInfrastructure()` and `AddMacInfrastructure()`. | Feature rules. |
+| Domain | Only the records and rules that several features share: agent events, row kinds and payloads, `ThreadInfo` and its config records, and the markdown block model. Time comes in as an argument. | A record only one feature uses (that stays in the feature), I/O, JSON, SQL. |
+| Application `Common/` | The shared contracts every feature uses: the database and writer, calls, topics, the clock, machines and agent launching. | Implementations. |
+| Application `Features/<Feature>/` | Everything one feature is: its `<Feature>Feature.cs` (calls and topics), its records, its rules, its tables (`<Feature>Schema.cs`), and its plain SQL, written straight against `IAppDatabase` for reads and `IWriteScope` for writes. | A repository, a class per table, or another feature's types. |
+| Infrastructure | The implementations of `Common/` and the outside systems: the SQLite connection and the writer with its audit, the socket and dispatcher, topics, the clock, ACP and JSON-RPC, agent processes and git, local and remote machines (SSH tunnel, follower, outbox), the Markdig parse, the provider transcript readers, and `/mcp`. | Feature rules or feature SQL. |
 | Hosts | `Program.cs`: parse arguments, call the `Add*` methods, map the socket endpoint and `/mcp`, run. | Anything else. |
+
+**Features don't reach into each other.** A feature folder never uses a type from another feature's folder. When
+two features need the same thing, it moves to the core (a record to Domain, a contract to `Common/`).
+`ArchitectureTests` checks it (step B2). Infrastructure may use Application's types, since it references
+Application: the machine links write chat's rows, for example.
+
+**Why chat is one feature.** Threads, rows, sessions, helpers and attachments call each other all the time today
+(the helper tools use `ThreadStore` and `SessionRegistry`; a send carries attachments). Split into five features,
+each would reach into the others. As one `Chat` feature with five subfolders, each under 30 files, they don't.
+
+**No repository under another name.** `RowStore`, `ThreadStore` and the preference reader and writer don't become
+classes that wrap a table. Each feature reads with its own SQL through `IAppDatabase` and writes through
+`IAtomicWriter`, in its own folder. The SQL is named for what it does (`CommitBatch`, `PageAfter`), and only its own
+feature uses it.
+
+### The page mirrors it
+
+`app/src/lib/` is already mostly one folder per feature. Under this layout:
+
+- A feature's page code is `app/src/lib/<feature>/`, with the same name as its backend feature. It imports only the
+  core and its own files, never another feature's folder (`ArchitectureTests` checks this too).
+- The page's core is `lib/socket.ts`, `lib/host/`, `lib/components/` (from the registry), `lib/time/` and
+  `lib/utils.ts`.
+- Chat's page folders today (`chat/`, `composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under
+  `lib/chat/` in step C1, when chat moves onto the socket. `call.ts` goes in B7, `api.ts` in C1, and `debug.svelte.ts`,
+  `lag.svelte.ts` and `soak.ts` move to `app/measure/` in B9 (D2).
 
 ### Where today's folders go
 
@@ -287,29 +336,34 @@ doesn't change in that step.
 
 | Today | Goes to |
 | --- | --- |
-| `Assembly.Engine/Rows/` payload records, `RowKind` | `Assembly.Domain/Rows/` |
-| `Assembly.Engine/Rows/RowConverter*` (ACP updates to rows) | `Assembly.Application/Rows/` |
-| `Assembly.Engine/Markdown/` | `Assembly.Domain/Markdown/` (block model) and `Assembly.Infrastructure/Markdown/` (the Markdig parse) |
 | `Assembly.Engine/Events/` | `Assembly.Domain/Events/` |
-| `Assembly.Engine/Threads/ThreadInfo`, config records | `Assembly.Domain/Threads/` |
-| `Assembly.Engine/Threads/ThreadStore` | `Assembly.Infrastructure/Persistence/Threads/` |
-| `Assembly.Engine/Store/` (`RowStore`, `Schema`) | `Assembly.Infrastructure/Persistence/Rows/` |
-| `Assembly.Engine/Sessions/` (`SessionHost`, `SessionRegistry`, `SessionOpener`, `Subagents`) | `Assembly.Application/Sessions/` |
+| `Assembly.Engine/Rows/Payloads/`, `RowKind` | `Assembly.Domain/Rows/` |
+| `Assembly.Engine/Threads/ThreadInfo`, `ThreadConfig`, `HelperMessage` | `Assembly.Domain/Threads/` |
+| `Assembly.Engine/Markdown/Safe*` (the block model) | `Assembly.Domain/Markdown/` |
+| `Assembly.Engine/Markdown/BlockReader`, `InlineReader`, `MarkdownJsonContext` (the Markdig parse) | `Assembly.Infrastructure/Markdown/` |
+| `Assembly.Engine/Threads/ThreadStore`, `ThreadPage` | `Assembly.Application/Features/Chat/Threads/` |
+| `Assembly.Engine/Rows/` (the rest: `RowConverter`, `RowBatch`, `OpenTurn`, `RunRecovery` and the like) | `Assembly.Application/Features/Chat/Rows/` |
+| `Assembly.Engine/Store/` (`RowStore`, `RowPage`, `RowWire`, `StoredRow`, `StoredToolCall`) | `Assembly.Application/Features/Chat/Rows/` |
+| `Assembly.Engine/Store/Schema` | `Assembly.Application/Features/Chat/ChatSchema.cs` |
+| `Assembly.Engine/Sessions/` (all but `SharedAdapter`) | `Assembly.Application/Features/Chat/Sessions/` |
 | `Assembly.Engine/Sessions/SharedAdapter` | `Assembly.Infrastructure/Agents/` |
+| `Assembly.Engine/Helpers/` tools | `Assembly.Application/Features/Chat/Helpers/` |
+| `Assembly.Engine/Attachments/` | `Assembly.Application/Features/Chat/Attachments/` |
 | `Assembly.Engine/Acp/` | `Assembly.Infrastructure/Acp/` |
-| `Assembly.Engine/Agents/` | `Assembly.Infrastructure/Agents/` |
-| `Assembly.Engine/Live/LiveHub` | `Assembly.Infrastructure/Topics/` (it becomes the `rows` topic, step C1) |
-| `Assembly.Engine/Machines/IMachine`, `MachineSet` | `Assembly.Application/Machines/` |
+| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink` | `Assembly.Application/Common/Agents/` |
+| `Assembly.Engine/Agents/` (the rest) | `Assembly.Infrastructure/Agents/` |
+| `Assembly.Engine/Live/` | `Assembly.Infrastructure/Topics/` (it becomes the `rows` topic, step C1) |
+| `Assembly.Engine/Machines/IMachine`, `MachineSet`, `MachineUnreachable` | `Assembly.Application/Common/Machines/` |
 | `Assembly.Engine/Machines/LocalMachine` | `Assembly.Infrastructure/Machines/` |
-| `Assembly.Engine/Helpers/` tools | `Assembly.Application/Helpers/` (the rules) and `Assembly.Infrastructure/Mcp/` (`/mcp` over HTTP) |
-| `Assembly.Engine/Attachments/` | `Assembly.Infrastructure/Attachments/` |
 | `Assembly.Engine/Transcript/` | `Assembly.Infrastructure/Transcript/` |
-| `Assembly.Engine/Api/` (HTTP routes, `LiveSocket`, `TokenGuard`) | `Assembly.Infrastructure/Http/`, kept only until each route moves onto the socket, then deleted (section 11) |
+| `Assembly.Engine/Api/McpRoutes` | `Assembly.Infrastructure/Mcp/` |
+| `Assembly.Engine/Api/` (the rest: HTTP routes, `LiveSocket`, `TokenGuard`) | `Assembly.Infrastructure/Http/`, kept only until each route moves onto the socket, then deleted (section 11) |
 | `Assembly.Engine/Features/` (`FeatureCalls`, feature lists) | Deleted in step B7; replaced by `Socket/` and `Application/DependencyInjection.cs` |
 | `Assembly.Mac/Remote/` | `Assembly.Infrastructure/Remote/`, registered only by `AddMacInfrastructure()` |
-| `Assembly.Mac/Preferences/` | `Assembly.Domain/Preferences/`, `Assembly.Application/Preferences/`, `Assembly.Infrastructure/Persistence/Preferences/` (step B7) |
-| `Assembly.Mac/Page/`, `Assembly.Mac/Debug/` | `Assembly.Application/Diagnostics/` and `Assembly.Infrastructure/Diagnostics/` (step B8) |
-| `Assembly.Remote/Smoke`, `Record`, `Replay` | Stay in `Assembly.Remote/` (they're tools of that host) |
+| `Assembly.Mac/Preferences/` | `Assembly.Application/Features/Preferences/` (step B7) |
+| `Assembly.Mac/Page/`, `Assembly.Mac/Debug/` | `Assembly.Application/Features/Diagnostics/` (step B8) |
+| `Assembly.Mac/Serve/` | `Assembly.Mac/Program.cs` and `MacOptions.cs` |
+| `Assembly.Remote/Serve`, `Smoke`, `Record`, `Replay` | Stay in `Assembly.Remote/` (they're that host's commands) |
 
 ## 5. The shared plumbing
 
@@ -376,18 +430,32 @@ public interface ICallRegistry
    `timeout`. Anything else is logged at Error and answers `failed` with "feature/method failed". This keeps
    today's 500 handling (`FeatureCalls.cs`).
 
-A feature's file is short. For example, `Application/Preferences/PreferencesFeature.cs`:
+A feature's file is short, and its SQL is in it. For example,
+`Application/Features/Preferences/PreferencesFeature.cs`:
 
 ```csharp
-internal sealed class PreferencesFeature(PreferenceReader reader) : IFeature
+internal sealed class PreferencesFeature(IAppDatabase db) : IFeature
 {
+    const string All = "SELECT key, value FROM preferences";
+    const string Upsert = "INSERT INTO preferences (key, value) VALUES ($key, $value) "
+        + "ON CONFLICT (key) DO UPDATE SET value = excluded.value";
+
     public void Register(ICallRegistry calls)
     {
-        calls.Topic("preferences", AppJson.Default.Preference, (_, call) => reader.AllAsync(call.Cancellation));
-        calls.Save("preferences", AppJson.Default.JsonElement, PreferenceWriter.WriteAsync);
+        calls.Tables(PreferencesSchema.Create);
+        calls.Topic("preferences", PreferencesJson.Default.ListPreference,
+            (_, call) => db.QueryAsync(All, Preference.Read, call.Cancellation));
+        calls.Save("preferences", PreferencesJson.Default.JsonElement, async (key, value, scope, call) =>
+        {
+            await scope.ExecuteAsync(Upsert, call.Cancellation, new("$key", key), new("$value", value.GetRawText()));
+            scope.Publish("preferences", key, new Preference(key, value), PreferencesJson.Default.Preference);
+        });
     }
 }
 ```
+
+`calls.Tables` hands the feature's `CREATE TABLE IF NOT EXISTS` statements to the schema runner, which runs every
+feature's at startup, through the writer, before the socket opens.
 
 `AddMacFeatures()` registers `PreferencesFeature`. `AddMachineFeatures()` registers what every machine serves.
 
@@ -419,13 +487,37 @@ public interface IAtomicWriter
 {
     Task<T> WriteAsync<T>(string what, CallContext call, Func<IWriteScope, Task<T>> write);
 }
-public interface IWriteScope
+
+// Reads. Plain SQL, mapped by a function the feature writes; no reflection, so it's safe under Native AOT.
+public interface IAppDatabase
 {
-    // D1 A or B: the context, already inside the transaction.
-    // D1 C: Execute(sql, parameters) and Query(...) on the one open connection.
-    void Publish(string topic, string? key, object change); // queued, sent after commit
+    Task<List<T>> QueryAsync<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
+    Task<T?> QueryFirstAsync<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
 }
+
+// Inside one write: reads see the transaction, and Execute runs on its one connection.
+public interface IWriteScope : IAppDatabase
+{
+    Task<int> ExecuteAsync(string sql, CancellationToken cancel, params SqlArg[] args);
+    void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type); // queued, sent after commit
+}
+
+// One result row, read by column position.
+public interface IRow
+{
+    bool IsNull(int column);
+    long Long(int column);
+    double Real(int column);
+    string Text(int column);
+    byte[] Blob(int column);
+}
+
+public readonly record struct SqlArg(string Name, object? Value); // a string, long, double, byte[] or null
 ```
+
+These live in `Application/Common/Database/`. Application never references `Microsoft.Data.Sqlite`: the
+Infrastructure classes turn a `SqlArg` into a `SqliteParameter` and wrap the data reader as an `IRow`. There's no
+Dapper and no other new package.
 
 `Infrastructure/Persistence/AtomicWriter.cs` handles every write the same way:
 
@@ -438,8 +530,9 @@ public interface IWriteScope
 
 No transaction is ever held open across an agent call, a network call, or a wait for a socket.
 
-The writer handles every write, not just calls. `RowStore`'s `Commit` and `Copy`, which save chat rows, run through
-`IAtomicWriter` too, and so do the `ThreadStore` writes, since only the writer hands out a write connection. Each row
+The writer handles every write, not just calls. Chat's row writes (today's `RowStore` `Commit` and `Copy`) run
+through `IAtomicWriter` too, and so do its thread writes (today's `ThreadStore`), since only the writer hands out a
+write connection. Each row
 batch gets one audit row, not one per row. Every write is audited, rows included, with no carve-out.
 
 **Audit retention: 30 days, pruned by the writer, with no timer.** A busy month of chat adds millions of audit rows,
@@ -464,8 +557,7 @@ instead of waiting a day per 5,000 rows.
 median with its audit row, against 96 to 99 µs without. The 99th percentile is 2.7 to 3.4 ms with the audit row and
 2.6 to 2.7 ms without; most of that is the WAL write. Step B3 measures it again through the real writer.
 
-Reads go through `IAppDatabase`, which has no write methods. Under D1 A or B, it's `IApplicationDbContext` with
-`AsNoTracking` queries.
+Reads go through `IAppDatabase`, which has no write methods.
 
 ### 5.7 Topics
 
@@ -708,13 +800,18 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
 
 - `00-typescript-only.sh` stays as it is.
 - `40-routes.sh` guards today's HTTP `Map()` pattern, which goes away. It's replaced by
-  `40-one-dispatcher.sh`, which fails on any of these under `dotnet/`, outside `Assembly.Tests`:
-  - `MapGet(`, `MapPost(`, `MapPut(`, `MapDelete(`, `.Map(` and `MapGroup(`, except in
-    `Assembly.Infrastructure/Socket/SocketEndpoint.cs` (the socket) and
-    `Assembly.Infrastructure/Mcp/McpEndpoint.cs` (`/mcp`), which are named in the script;
-  - `new SqliteConnection(` (or `new ApplicationDbContext(`), except in `Assembly.Infrastructure/Persistence/`;
-  - `AcceptWebSocketAsync(`, except in `SocketEndpoint.cs`;
-  - `BeginTransaction(`, except in `AtomicWriter.cs`.
+  `40-one-dispatcher.sh`. Like `guards.sh`, it names the only places that may do each special thing, once each, as
+  constants in the script, with a comment saying they're the only ones:
+  - `SOCKET=Assembly.Infrastructure/Socket/SocketEndpoint.cs`, the one file that maps the socket and accepts a
+    WebSocket;
+  - `MCP=Assembly.Infrastructure/Mcp/McpEndpoint.cs`, the one file that maps `/mcp`;
+  - `DATABASE=Assembly.Infrastructure/Persistence/`, the one folder that opens a `SqliteConnection`;
+  - `WRITER=Assembly.Infrastructure/Persistence/AtomicWriter.cs`, the one file that begins a transaction.
+
+  Everywhere else under `dotnet/`, outside `Assembly.Tests`, it fails on `MapGet(`, `MapPost(`, `MapPut(`,
+  `MapDelete(`, `.Map(`, `MapGroup(` and `AcceptWebSocketAsync(` (outside `SOCKET` and `MCP`),
+  `new SqliteConnection(` (outside `DATABASE`), and `BeginTransaction(` (outside `WRITER`). Those four are the only
+  names in the script; a fifth needs Jesse's OK.
 - **`40-routes.sh` is deleted in step B7,** together with `FeatureCalls.cs`. `scripts/lint.d` isn't locked on main,
   so that needs no OK.
 - **There's no route check between B7 and the end of C1.** That's a stated gap, not a list. Reviews cover it: a new
@@ -779,14 +876,25 @@ as section 3 says, and adds the shadcn-first rule (F2).
     `DependencyInjection.cs`, `dotnet/Directory.Packages.props`.
   - Moved: every file in the "Where today's folders go" table in section 4.
   - Deleted: `dotnet/Assembly.Engine/`.
-  - Changed: `MacBackend.cs` and `ServeRun.cs` call the `Add*` methods, plus the scripts that name
+  - Moved tests: today's test folders go to `Assembly.Tests/Features/<Feature>/`, `Core/` or `Infrastructure/`,
+    matching the code they test. `Draft/`, `Pinned/` and `Fixtures/` stay where they are.
+  - Changed: `Assembly.Mac/Program.cs` (from `Serve/MacBackend.cs` and `MacServe.cs`) and the remote's `ServeRun.cs`
+    call the `Add*` methods, plus the scripts that name
     `Assembly.Engine` (`dotnet/scripts/*.sh`, `shell/assembly.sh`, `scripts/check4.sh`), and `AGENTS.md`, which names
     `Assembly.Engine/*` and `Assembly.Mac/*` paths.
 - **Failing test first:** `Assembly.Tests/Architecture/ArchitectureTests.cs`. It loads each assembly and checks its
-  references:
+  references, and reads the source tree for the rest (no new package):
   - `Assembly.Domain` references no `Assembly.*`;
-  - `Assembly.Application` references only `Assembly.Domain`;
-  - `Assembly.Infrastructure` doesn't reference `Assembly.Mac` or `Assembly.Remote`.
+  - `Assembly.Application` references only `Assembly.Domain`, and not `Microsoft.Data.Sqlite` or ASP.NET Core;
+  - `Assembly.Infrastructure` doesn't reference `Assembly.Mac` or `Assembly.Remote`;
+  - no file under `Application/Features/<A>/` names the namespace `Assembly.Application.Features.<B>` for another
+    feature `B` (in a `using` or written out), and every file's namespace matches its folder, so the check can't be
+    dodged;
+  - no file under `app/src/lib/<feature>/` imports from another feature's folder (only the page core and its own
+    files);
+  - no folder under `dotnet/` or `app/src/` (outside `bin/`, `obj/` and `node_modules/`) holds more than 30 files.
+    The number is one constant in the test, and there are no exceptions. Today's largest folder,
+    `Assembly.Engine/Acp/Messages/`, has 29.
 
   It fails today because the projects don't exist.
 - **Proof:**
@@ -800,10 +908,12 @@ as section 3 says, and adds the shadcn-first rule (F2).
 ### B3. One write path: `IAtomicWriter` and the audit
 
 - **Files:**
-  - Application: `Common/Persistence/IAtomicWriter.cs`, `IWriteScope.cs`, and `IAppDatabase.cs` (D1 C) or
-    `IApplicationDbContext.cs` (D1 A or B).
-  - Infrastructure: `Persistence/AtomicWriter.cs`, `Persistence/AppDatabase.cs` (C) or `ApplicationDbContext.cs`
-    (A or B), `Persistence/Audit/AuditSchema.cs`, and `DependencyInjection.cs`.
+  - Application: `Common/Database/IAtomicWriter.cs`, `IWriteScope.cs`, `IAppDatabase.cs`, `IRow.cs`, `SqlArg.cs`.
+  - Infrastructure: `Persistence/AtomicWriter.cs`, `Persistence/AppDatabase.cs`, `Persistence/SqliteRow.cs`,
+    `Persistence/AuditSchema.cs`, `Persistence/SchemaRunner.cs`, and `DependencyInjection.cs`.
+  - Chat: `Features/Chat/Rows/` and `Features/Chat/Threads/`, where today's `RowStore` and `ThreadStore` become
+    chat's own SQL, reading through `IAppDatabase` and writing through `IAtomicWriter`. Neither stays a class that
+    wraps a table.
 - **Failing tests first,** in `Assembly.Tests/Infrastructure/Persistence/AtomicWriterTests.cs`, on a real temporary
   SQLite file:
   1. A write whose second statement throws leaves neither row, and publishes nothing.
@@ -811,7 +921,7 @@ as section 3 says, and adds the shadcn-first rule (F2).
      subscribes and checks the order).
   3. A failing commit (an injected failure) leaves nothing and publishes nothing.
   4. Two writes at once run one after the other.
-  5. A `RowStore` batch commit goes through the writer: its rows and one audit row commit together.
+  5. A chat row batch commit goes through the writer: its rows and one audit row commit together.
   6. Startup prune, with `FakeTimeProvider`: a database with audit rows 31 days old and 29 days old keeps only the
      29-day ones after the writer opens.
   7. Long-running prune: with no restart, advancing fake time 31 days and then writing deletes the expired rows. A
@@ -821,7 +931,7 @@ as section 3 says, and adds the shadcn-first rule (F2).
      prune is a separate transaction (a failure injected into the prune leaves the triggering write committed).
   9. A backlog over the cap clears over the following writes: with 12,000 expired rows, the first write's prune
      deletes 5,000, the second write's 5,000 and the third write's 2,000; a fourth write the same day doesn't prune.
-- **Also:** `RowStore` and `ThreadStore` writes move onto `IAtomicWriter` (5.6).
+- **Also:** chat's row and thread writes move onto `IAtomicWriter` (5.6).
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
   99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
 - **Proof:** the tests, run, with their counts, the measurement, and check4.
@@ -899,16 +1009,16 @@ as section 3 says, and adds the shadcn-first rule (F2).
 ### B7. Preferences rebuilt on the base (the example every feature copies)
 
 - **Files:**
-  - Domain: `Preferences/Preference.cs`.
-  - Application: `Preferences/PreferencesFeature.cs`, `PreferenceReader.cs`, `PreferenceWriter.cs`,
-    `PreferencesJson.cs`, `README.md` (moved from `Assembly.Mac/Preferences/README.md`, which isn't locked).
-  - Infrastructure: `Persistence/Preferences/PreferencesSchema.cs`.
+  - One folder, `Application/Features/Preferences/`: `PreferencesFeature.cs` (its calls, topic and SQL, 5.2),
+    `Preference.cs` (the record and its row reader), `PreferencesSchema.cs`, `PreferencesJson.cs`, and `README.md`
+    (moved from `Assembly.Mac/Preferences/README.md`, which isn't locked). Nothing for preferences in Domain or
+    Infrastructure.
   - Page: `app/src/lib/preferences/preferences.svelte.ts` (subscribe and save), and its `README.md`.
 - **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Engine/Features/FeatureCalls.cs`, `PreferencesRoutes.cs`,
-  `PreferenceStore.cs`, the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
+  `PreferenceStore.cs` (no reader or writer class replaces it), the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
   no OK is needed. From here until the end of C1 there's no route check (section 9.2).
 - **Changed:** `AGENTS.md`, which names `call.ts`, `FeatureCalls.cs` and `40-routes.sh`.
-- **Failing tests first:**
+- **Failing tests first,** in `Assembly.Tests/Features/Preferences/`:
   1. base#7: a theme change is written when it's made, and is there after the backend restarts.
   2. Two windows: a change in one reaches the other's subscription.
   3. A subscription that starts after a save gets the saved value.
@@ -923,8 +1033,9 @@ as section 3 says, and adds the shadcn-first rule (F2).
 
 ### B8. The Mac's page calls onto the socket
 
-- **Files:** Application `Diagnostics/DiagnosticsFeature.cs` (memory sample, App Nap begin and end, dropping the link
-  for the debug control), and Infrastructure `Diagnostics/*`.
+- **Files:** one folder, `Application/Features/Diagnostics/`: `DiagnosticsFeature.cs` (memory sample, App Nap begin
+  and end, dropping the link for the debug control) and its small classes. Infrastructure gets only what calls the
+  operating system, if anything does.
 - **Deleted:** `Assembly.Mac/Page/PageRoutes.cs`, `Assembly.Mac/Debug/DebugRoutes.cs`, and
   `app/src/lib/host/pageCall.ts`.
 - **Moved:** the thumbnail calls go to phase C1, with attachments.
@@ -1005,8 +1116,8 @@ group:
 
 ## 11. The later phases
 
-Each phase follows the base's pattern: a `<Feature>Feature.cs` in Application, its persistence in Infrastructure,
-its store in `app/src/lib/<feature>/`, a check4 scenario, and the old route deleted in the same phase. Each starts by
+Each phase follows the base's pattern: one folder, `Application/Features/<Feature>/`, with its `<Feature>Feature.cs`,
+records, rules and SQL; its tests in `Assembly.Tests/Features/<Feature>/`; its store in `app/src/lib/<feature>/`; a check4 scenario, and the old route deleted in the same phase. Each starts by
 drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. Sol's step numbers are given so his
 catalogue stays the reference.
 
@@ -1014,12 +1125,12 @@ catalogue stays the reference.
 
 - **C1. Threads, rows, sends and config** (Sol P03, P07, P12, P14).
   - **Files:**
-    - Application `Threads/ThreadsFeature.cs`, with its topic: one summary per thread (state, active run, pending
+    - `Features/Chat/Threads/ThreadsFeature.cs`, with its topic: one summary per thread (state, active run, pending
       ask, needs attention, background work, title, machine, online, project, last activity, unread);
-    - `Rows/RowsFeature.cs`, the `rows` topic with `after`;
-    - `Sessions/SendFeature.cs` (send, stop, answer, stop task), and `Config/ConfigFeature.cs` with a `config`
-      topic;
-    - the page's `threads/`, `rows/` and `composer/` stores.
+    - `Features/Chat/Rows/RowsFeature.cs`, the `rows` topic with `after`;
+    - `Features/Chat/Sessions/SendFeature.cs` (send, stop, answer, stop task), and
+      `Features/Chat/Config/ConfigFeature.cs` with a `config` topic;
+    - the page's chat folders, moved under `app/src/lib/chat/` (section 4).
   - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
     `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions
     (section 9.2). Adding a file to the locked `lint.d` needs no OK.
@@ -1047,7 +1158,7 @@ catalogue stays the reference.
   - **Files:** decided by what the investigation finds.
   - **Proof:** the process tree under Claude Code and Codex, before and after.
 - **C4. History, helpers, background work, native subagents** (Sol P08, P16, P26).
-  - **Files:** `Application/Sessions/*` and `Helpers/*`, on the base.
+  - **Files:** `Features/Chat/Sessions/*` and `Features/Chat/Helpers/*`, on the base.
   - **Tests:** Sol's P08 and P16 test groups.
   - **Proof:** check4, plus the helper scenario.
 
@@ -1091,7 +1202,8 @@ catalogue stays the reference.
 
 Each W phase:
 
-- **Files:** an Application feature, its Infrastructure (processes, files), and its page store.
+- **Files:** one `Application/Features/<Feature>/` folder, Infrastructure only for a new outside system (a process,
+  a new kind of connection), and its page folder.
 - **Tests:** Sol's named test group for that step.
 - **Proof:** check4, plus a feature check in the window.
 
@@ -1116,7 +1228,8 @@ Each P phase has the same shape as the W phases.
 
 ## 12. What this plan doesn't settle
 
-- **D1 to D4** (section 1).
+- **The 30-file limit per folder** (section 4, step B2). It's Jesse's number to change: one constant in
+  `ArchitectureTests`, with no exceptions.
 - **Audit retention is 30 days** (5.6). That's a number Jesse can change: it and the 5,000-row cap per prune are constants in `AtomicWriter.cs`.
 - **The 300-line file limit,** which waits for Jesse. If he picks 300, the 7 oversize files are split in phase C1.
 - **`dockview-core` for F1**, pending Jesse's OK. Not added yet.
