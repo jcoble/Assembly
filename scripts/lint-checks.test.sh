@@ -56,4 +56,19 @@ for f in dotnet/Assembly.Domain/A.cs app/src/lib/B.svelte app/src/lib/C.ts shell
 done
 rm -rf "$r"
 
+# scripts/lint.sh runs every lint.d check and fails if any one does.
+r=$(mktemp -d)
+git -C "$r" init -q
+mkdir -p "$r/scripts/lint.d"
+cp "$here/lint.sh" "$r/scripts/"
+printf 'exit 0\n' >"$r/scripts/lint.d/10-passes.sh"
+printf 'exit 1\n' >"$r/scripts/lint.d/20-fails.sh"
+printf 'exit 0\n' >"$r/scripts/lint.d/30-passes.sh"
+bash "$r/scripts/lint.sh" >/dev/null 2>&1 && got=0 || got=$?
+if [ "$got" = 1 ]; then echo "ok   lint.sh: one failing check fails it"; else echo "FAIL lint.sh: one failing check fails it: exit $got, wanted 1"; failed=1; fi
+rm "$r/scripts/lint.d/20-fails.sh"
+bash "$r/scripts/lint.sh" >/dev/null 2>&1 && got=0 || got=$?
+if [ "$got" = 0 ]; then echo "ok   lint.sh: every check passing passes it"; else echo "FAIL lint.sh: every check passing passes it: exit $got, wanted 0"; failed=1; fi
+rm -rf "$r"
+
 exit "$failed"
