@@ -1283,8 +1283,7 @@ catalogue stays the reference.
   - **Sources.** The old system is mac-command-bar at 2089290, `tauri-svelte-preview/src/lib/`, read from the checkout
     on agent-workbox:
     - the token files `styles/tokens.css`, `shell/styles/nextTokens.css` and `shell/styles/themeChrome.css`;
-    - in `shell/settings/themes/`: `themeRegistry.ts`, `themeService.ts`, `fontRegistry.ts`, `fontService.ts` and
-      `contrast.ts`.
+    - in `shell/settings/themes/`: `themeRegistry.ts`, `themeService.ts`, `fontRegistry.ts` and `fontService.ts`.
 
     The values come from Jesse's design system "Assembly" (https://claude.ai/artifact/8RxzC2U8koy3wAKjRZKkt5, made
     2026-10-23 from mockups D, E and F, https://claude.ai/artifact/EWzSRsmW7i33gEzL9cy3GG). Its `tokens.json` and
@@ -1348,13 +1347,15 @@ catalogue stays the reference.
 
     The rows marked "(none)" are my picks, since the design system has no menu ground, scrim or selection colour.
     Jesse can change them.
-  - **Type.** The design system's styles become Tailwind's `--text-*` names, with their line heights:
-    - `title` 15/20 semibold, `heading` 14/20 semibold, `body` 13/19, `small` 12/16, `meta` 11.5/16;
-    - `label` 11/16 semibold, in capitals with 0.06em tracking;
-    - `tree` 15/26, `code` 12/20, `code-inline` 12/17.
+  - **Type.** The registry components use Tailwind's size names (the `Button` has `text-sm` and `text-xs`), so those
+    names take the design system's sizes, with their line heights:
+    - `xs` is small, 12/16; `sm` is body, 13/19; `base` is heading, 14/20; `lg` is title, 15/20.
+    - `xl` and larger are also title, since nothing in the app is larger.
+    - Only five names are new: `meta` 11.5/16, `label` 11/16 (semibold, capitals, 0.06em tracking), `tree` 15/26,
+      `code` 12/20 and `code-inline` 12/17.
 
-    The old `--text-heading`, `--text-body` and `--text-quiet` become `heading`, `body` and `small`. Tailwind's
-    default sizes are cleared (`--text-*: initial`), so these are the only sizes.
+    The old `--text-quiet`, `--text-body` and `--text-heading` become `xs`, `sm` and `base`. Headings and the title
+    are semibold.
   - **Space.** The design system's steps (2 to 16, and 28 px) are Tailwind's 4 px unit: `0.5` to `4`, and `7`.
     Spacing maps by value, not by name. Tailwind's `--spacing` stays 4 px, and the design system's `space-N` names
     don't come in. Nor do the old `--space-1` to `--space-6`, because a class (`p-3.5`) is the one way to say 14 px.
@@ -1371,7 +1372,8 @@ catalogue stays the reference.
     in `app.css`, and a component only names it.
   - **Shape and depth:**
     - The radii are `--radius-xs` 4, `-sm` 5, `-md` 6 and `-lg` 8. They replace shadcn's computed `--radius`
-      (10 px) and its `xl` and larger.
+      (10 px). `xl` and larger are also 8, so a registry component's `rounded-xl` draws the design's largest corner
+      rather than a square one.
     - `rounded-full` is only for the Board button and a tab's close disc. The old `--radius-pill` doesn't come.
     - No shadows: `--shadow-*: initial` and the old `--shadow-*` names don't come, and registry components lose their
       shadow classes on add (9.1b). The old `--focus-ring` stays, for controls with no edge of their own.
@@ -1383,8 +1385,8 @@ catalogue stays the reference.
     - the five ThemeMirror entries, Amy, Ayu Light, Cobalt, Rose Pine Dawn and Tomorrow, which keep the Assembly
       shell and change only the editor's syntax colours.
 
-    The setting is one theme id from that list, never a light/dark toggle. The old `resolveThemeId` fallback for
-    `dark` and `light` isn't needed, since there's no old data. Each theme's editor part arrives with W2, and its
+    The setting is one theme id from that list, never a light/dark toggle. `resolveThemeId` keeps its fallback: an
+    id that isn't on the list, such as the `"dark"` base#7's pinned test saves, gives the default theme. Each theme's editor part arrives with W2, and its
     terminal palette with W4.
   - **One copy of the colours.** `app.css` holds Assembly's values, and nothing else repeats them.
     - Assembly and the five ThemeMirror entries carry no tokens, so applying them removes the values the last theme
@@ -1413,18 +1415,15 @@ catalogue stays the reference.
     - The key stays `theme`, so base#7's pinned test, which saves `"dark"` as a value and reads it back, still holds
       unchanged.
     - There's no "follow the system", so Tauri's theme-changed event isn't needed.
-  - **Contrast.** `contrast.ts` comes with its role checks, as a test over every theme:
-    - each text role holds 4.5:1 on the grounds its usage note names;
-    - borders, focus rings and icons hold 3:1.
-
-    It checks ratios between roles, not colour values, so it's not a test that asserts a colour.
+  - **Contrast:** `contrast.ts` doesn't come. Nothing imports it at 2089290, and a contrast test over the themes
+    would break `AGENTS.md`'s rule against tests on colour tokens or contrast.
   - **Rules that carry over:**
     - The drawer follows the tabs through explicit state (a value the shell sets), never CSS `:has()`.
     - No test asserts a CSS class, a colour or a pixel value.
     - The design system's component previews are design evidence, not code to paste. Markup is built from the
       registry components.
   - **Files:** `app/src/app.css`; `app/src/lib/theme/` (`themeRegistry.ts`, `themeService.ts`, `fontRegistry.ts`,
-    `fontService.ts`, `contrast.ts`); the host call for installed fonts in `app/src/lib/host/`; and the components
+    `fontService.ts`); the host call for installed fonts in `app/src/lib/host/`; and the components
     under `app/src/lib/components/`, each edited on add where the guard needs it (9.1b).
   - **Proof:** a feature check in the window: Assembly and one other theme, a font change, and the choice surviving
     a quit.
