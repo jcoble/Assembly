@@ -1010,6 +1010,12 @@ because chat's row and thread stores and the preference store call SQLite direct
   fails on `SELECT *` under `dotnet/` (rows are read by column position).
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
   99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
+- **The commit's slow tail.** Before B2a, a 20-row commit took about 0.4 ms at the median but about 20 ms at the 99th
+  percentile. B3 finds the cause (most likely WAL checkpoints, which SQLite runs inside the commit that crosses
+  1,000 pages) by timing commits with and without automatic checkpoints, and says what's done about it. A 20 ms
+  stall inside the one write lock also holds up a keystroke save waiting behind it, so the fix keeps checkpoints out
+  of the write lock (for example `wal_autocheckpoint` off on the write connection, with a checkpoint run after a
+  write releases the lock). Proof: the p99 before and after.
 - **Proof:** the tests, run, with their counts, the measurement, and check4.
 - **Size:** 250 to 350 lines with tests.
 
@@ -1210,6 +1216,10 @@ catalogue stays the reference.
     - `Features/Chat/Sessions/SendFeature.cs` (send, stop, answer, stop task), and
       `Features/Chat/Config/ConfigFeature.cs` with a `config` topic;
     - the page's chat folders, moved under `app/src/lib/chat/` (section 4).
+  - **Named item: the page read on thread switch.** `PageBefore` takes about 200 ms for 50 items on a 40,000-row
+    thread (197 to 205 ms median, 294 ms p99, measured on agent-workbox before B2a). That's very likely the "slow
+    frames only on thread switch" from the Mac lag run. Run `EXPLAIN QUERY PLAN` on it, then add an index or change
+    the query so a page loads in single-digit milliseconds, with before and after numbers.
   - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
     `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions
     (section 9.2). Adding a file to the locked `lint.d` needs no OK.
