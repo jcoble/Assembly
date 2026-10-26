@@ -193,7 +193,7 @@ way the only way. Each one names what enforces it.
 4. **`async`/`await` with an `AbortSignal`, never `.then`, `.catch` or `.finally`.** Enforced by the guard.
 5. **Every backend call has a cancellation token, and passes it to everything it awaits.** CA2016 is a build error
    (`dotnet/.editorconfig`). Closing the socket cancels every call still running on it.
-6. **Every save is atomic.** Every write runs inside `IAtomicWriter.WriteAsync`: one connection, one transaction, an
+6. **Every save is atomic.** Every write runs inside `IAtomicWriter.Write`: one connection, one transaction, an
    audit row, commit, and only then publish. That includes a call's write and the chat row writes (`RowStore`'s
    batches). Nothing can write any other way, because only the writer hands out a write connection. Enforced by the
    type: `IAppDatabase` is read-only.
@@ -420,9 +420,12 @@ public interface ICallRegistry
 {
     void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<TResult>> handler);
+    // The async part runs first, with the call's token, for anything outside the database (upload bytes, files,
+    // hashing, another machine). The function it returns is the database part, run once inside IAtomicWriter.Write.
     void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, IWriteScope, CallContext, Task<TResult>> handler);
-    void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Func<string, TValue, IWriteScope, CallContext, Task> write);
+        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler);
+    // A setting has no outside work, so a save is only the database part.
+    void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> write);
     void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<string?, CallContext, Task<IReadOnlyList<TItem>>> state);
 }
 ```
@@ -435,8 +438,9 @@ public interface ICallRegistry
 2. Read `args` with the handler's `JsonTypeInfo`. If that fails, answer `bad_args`.
 3. Start a logger scope (`feature/method`, the call id, the connection) and log the call at Debug.
 4. Make the token, linked from the connection's token, the call's `cancel` frame, and the 30-second limit.
-5. For `Write` and `Save`, put the call on the connection's write queue, which runs one at a time in arrival order,
-   inside `IAtomicWriter.WriteAsync` (5.6, 5.9). For `Read`, call it directly, concurrently.
+5. For `Write` and `Save`, put the call on the connection's write queue, which runs one at a time in arrival order:
+   a `Write`'s async part, then its database part inside `IAtomicWriter.Write`; a `Save` inside `IAtomicWriter.Write`
+   (5.6, 5.9). So each call makes exactly one write. For `Read`, call it directly, concurrently.
 6. Answer `result`. A `CallFailed` answers `failed` with its message. A cancellation answers `cancelled`, or
    `timeout`. Anything else is logged at Error and answers `failed` with "feature/method failed". This keeps
    today's 500 handling (`FeatureCalls.cs`).
@@ -455,10 +459,10 @@ internal sealed class PreferencesFeature(IAppDatabase db) : IFeature
     {
         calls.Tables(PreferencesSchema.Create);
         calls.Topic("preferences", PreferencesJson.Default.ListPreference,
-            (_, call) => db.QueryAsync(All, Preference.Read, call.Cancellation));
-        calls.Save("preferences", PreferencesJson.Default.JsonElement, async (key, value, scope, call) =>
+            (_, call) => Task.FromResult<IReadOnlyList<Preference>>(db.Query(All, Preference.Read, call.Cancellation)));
+        calls.Save("preferences", PreferencesJson.Default.JsonElement, (key, value, scope) =>
         {
-            await scope.ExecuteAsync(Upsert, call.Cancellation, new("$key", key), new("$value", value.GetRawText()));
+            scope.Execute(Upsert, new("$key", key), new("$value", value.GetRawText()));
             scope.Publish("preferences", key, new Preference(key, value), PreferencesJson.Default.Preference);
         });
     }
@@ -496,20 +500,23 @@ never reach a log. Features don't add their own call logging.
 ```csharp
 public interface IAtomicWriter
 {
-    Task<T> WriteAsync<T>(string what, CallContext call, Func<IWriteScope, Task<T>> write);
+    // Synchronous on purpose: the body can't await, so no transaction can be held open across an agent call, a
+    // network call or a wait. The compiler enforces it.
+    T Write<T>(string what, Func<IWriteScope, T> write);
 }
 
 // Reads. Plain SQL, mapped by a function the feature writes; no reflection, so it's safe under Native AOT.
+// The token cancels the read: it's wired to SqliteCommand.Cancel (sqlite3_interrupt) through token.Register.
 public interface IAppDatabase
 {
-    Task<List<T>> QueryAsync<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
-    Task<T?> QueryFirstAsync<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
+    List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
+    T? QueryFirst<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
 }
 
-// Inside one write: reads see the transaction, and Execute runs on its one connection.
+// Inside one write: its reads run on the write connection, so they see the write's own transaction.
 public interface IWriteScope : IAppDatabase
 {
-    Task<int> ExecuteAsync(string sql, CancellationToken cancel, params SqlArg[] args);
+    int Execute(string sql, params SqlArg[] args);
     void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type); // queued, sent after commit
 }
 
@@ -532,16 +539,24 @@ and never uses `SELECT *`; `scripts/lint.d/45-no-select-star.sh` (step B3) fails
 Infrastructure classes turn a `SqlArg` into a `SqliteParameter` and wrap the data reader as an `IRow`. There's no
 Dapper and no other new package.
 
+**Connections.** One `AppDatabase` per database file owns the one `AtomicWriter`, and every store and feature on
+that file uses that one. The writer keeps one long-lived write connection behind one lock, held for the whole write.
+A plain lock is right, because the body can't await. Reads outside a write never use the write connection: each read
+takes a pooled read connection of its own, so a slow read never holds up another. That was measured (step B2a): with
+one shared read connection, a thread list would wait behind a 200 ms page read, where today it takes about 90 µs.
+
 `Infrastructure/Persistence/AtomicWriter.cs` handles every write the same way:
 
 1. Take the database's one write lock.
-2. Open the one connection and begin a transaction.
+2. Begin a transaction on the one write connection.
 3. Run the feature's write.
-4. Insert one audit row: `audit(at, connection, feature, method, what)`.
+4. Insert one audit row: `audit(at, what)`, where a call's `what` is `feature/method`. B4 adds the connection id as one more column.
 5. Commit, then send the queued publishes.
 6. If the write fails, roll back and publish nothing.
 
-No transaction is ever held open across an agent call, a network call, or a wait for a socket.
+No transaction is ever held open across an agent call, a network call, or a wait for a socket. No file, network or
+process work happens inside `Write` either: it's done first, in the handler's async part, so a 10 MB attachment never
+holds the write lock.
 
 The writer handles every write, not just calls. Chat's row writes (today's `RowStore` `Commit` and `Copy`) run
 through `IAtomicWriter` too, and so do its thread writes (today's `ThreadStore`), since only the writer hands out a
@@ -611,7 +626,7 @@ backend. A debounce exists to turn many changes into one save, to keep saves che
 - A divider saves on `pointerup` at the end of the drag. Quitting mid-drag isn't a real case.
 
 **Each save is one call and one atomic write.** `save(feature, key, value)` sends `call` with `feature/set`. The
-handler runs once inside `IAtomicWriter.WriteAsync` (5.6): one upsert, its audit row, commit, then a publish on the
+handler runs once inside `IAtomicWriter.Write` (5.6): one upsert, its audit row, commit, then a publish on the
 feature's topic, so other windows see it.
 
 - There's no batcher, no timer, and no view that mixes in values still waiting to be written. A read returns what's
@@ -892,16 +907,21 @@ because chat's row and thread stores and the preference store call SQLite direct
   - **Files:**
     - New contracts: `IAppDatabase`, `IWriteScope`, `IRow`, `SqlArg` and `IAtomicWriter`, with the signatures in
       5.6.
-    - `AppDatabase` (reads, on today's connection) and `AtomicWriter.cs`, the one file that begins a transaction
-      from here on. In B2 it does only one transaction per write: open, run the write, commit, or roll back. There's
-      no audit, queue or prune yet; B3 adds those to this same class. There's no second write path, and nothing in
-      B2a that B3 has to delete.
+    - `AppDatabase`, one per database file: reads on pooled read connections, one per read, cancellable (5.6). It
+      owns `AtomicWriter.cs`, the one file that begins a transaction from here on: one long-lived write connection
+      behind one lock, held for the whole write, with one transaction per write (begin, run the body, commit, or roll
+      back). There's no audit, queue or prune yet; B3 adds those to this same class. There's no second write path,
+      and nothing in B2a that B3 has to delete.
     - `RowStore`, `ThreadStore` and `PreferenceStore` rewritten as plain SQL: reads through `IAppDatabase`, writes
-      through `IAtomicWriter.WriteAsync`. Their public methods stay the same, so their callers don't change.
-  - **Failing tests first,** for the contracts: a query maps rows by position, a write that throws leaves nothing,
-    and a write that succeeds is there after it commits.
-  - **Measured before and after the rewrite, on agent-workbox:** a 20-row batch commit through the real `RowStore`
-    (median and 99th percentile), and the Native AOT backend's idle memory. The numbers go in PR 2's text. If either
+      through `IAtomicWriter.Write`. Their public methods stay the same, so their callers don't change. They're opened
+      from the `AppDatabase` instead of a path, so a rows batch and a thread write share the one write lock: the hosts
+      open one `AppDatabase`, and the tests change only their setup line.
+  - **Failing tests first,** for the contracts: a query maps rows by position; a write that throws leaves nothing;
+    a write that succeeds is there after it commits; a rows batch and a thread write run at the same time and both
+    commit, with no `SQLITE_BUSY`; a long read that's cancelled returns early, cancelled.
+  - **Measured before and after the rewrite, on agent-workbox:** a 20-row batch commit through the real `RowStore`, a
+    50-row `RowsAfter` read, a 50-item `PageBefore` read, a 50-thread list read, and the thread list while a page
+    read runs on another thread (each median and 99th percentile), and the Native AOT backend's idle memory. The numbers go in PR 2's text. If either
     gets worse, that's a defect, fixed before B2b.
   - **Proof:** every existing test, the pinned ones included, passes unchanged. That's the proof behavior didn't
     change.
@@ -963,8 +983,9 @@ because chat's row and thread stores and the preference store call SQLite direct
 
 - **Files:**
   - Application: the contracts in `Common/Database/` exist from B2a; B3 doesn't change their shape.
-  - Infrastructure: `Persistence/AtomicWriter.cs`, which B2a made, gains the audit row, the per-connection write
-    queue and the prunes. New: `Persistence/AuditSchema.cs`, `Persistence/SchemaRunner.cs`.
+  - Infrastructure: `Persistence/AtomicWriter.cs`, which B2a made, gains the audit row and the prunes. The audit
+    row records `what` and the time; B4 adds the connection id as one more column. The per-connection write queue
+    comes with the socket in B4. New: `Persistence/AuditSchema.cs`, `Persistence/SchemaRunner.cs`.
   - Chat: `Features/Chat/Rows/` and `Features/Chat/Threads/`. Their SQL already goes through the contracts (B2a); B3
     splits today's `RowStore` and `ThreadStore` into chat's own named queries, so neither stays a class that wraps a
     table.
