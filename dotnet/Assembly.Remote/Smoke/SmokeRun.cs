@@ -1,7 +1,9 @@
 using System.Diagnostics;
-using Assembly.Engine.Acp.Messages;
-using Assembly.Engine.Agents;
-using Assembly.Engine.Transcript;
+using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Agents;
+using Assembly.Application.Common.Acp;
+using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Remote.Smoke;
 
@@ -34,7 +36,7 @@ public sealed class SmokeRun(SmokeOptions options) : IDisposable
         Console.WriteLine($"cwd:   {options.Agent.WorkingDirectory}");
         Console.WriteLine($"log:   {Path.GetFullPath(options.LogPath)}");
 
-        using var transcript = TranscriptLog.ToFile(options.LogPath);
+        using var transcript = TranscriptFile.Open(options.LogPath);
         var agent = AgentConnection.Start(options.Agent, _permissions, transcript);
         Console.WriteLine($"pid:   {agent.ProcessId}");
         var watcher = new UpdateWatcher(agent.Client.Updates);

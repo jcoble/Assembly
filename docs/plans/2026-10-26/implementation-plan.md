@@ -233,7 +233,8 @@ way the only way. Each one names what enforces it.
       Dropped: the commit-msg `fix` hook, the `pnpm` and `cargo` commands, `assembly-native-ui`, and
       `evidence add --task TSK`. This repo's own "Checking a feature" section says how to prove a change.
     - **"Review guidelines":** kept unchanged.
-    - **"Reaching Jesse":** rewritten. The Build Board and `board_update` don't exist here, so a question or a
+    - **"Reaching Jesse":** rewritten. The Build Board and `board_update` don't exist here yet (the Build Board is
+      rebuilt in phase P3), so a question or a
       blocker goes to the project thread, with enough context to answer without reading the chat. The task waits,
       and other work goes on.
 17. **Dropped from mac-command-bar,** because they describe the Rust app or tools this repo doesn't have:
@@ -242,7 +243,7 @@ way the only way. Each one names what enforces it.
     - the `Architecture:` commit line and `main-architecture-explained.html`, which come back when that page is
       written for this repo;
     - the Notion task rules and `tsk-<id>` branch names;
-    - "The build board" section;
+    - "The build board" section: the old Rust board's reporting rules;
     - "The workbox" section's mac-command-bar worktree path. This repo's "Lanes" section already says where lanes
       live.
 
@@ -357,23 +358,28 @@ doesn't change in that step.
 | `Assembly.Engine/Sessions/` (all but `SharedAdapter`) | `Assembly.Application/Features/Chat/Sessions/` |
 | `Assembly.Engine/Sessions/SharedAdapter` (it only uses `IAgentLauncher`) | `Assembly.Application/Common/Agents/` |
 | `Assembly.Engine/Helpers/` tools | `Assembly.Application/Features/Chat/Helpers/` |
-| `Assembly.Engine/Attachments/` | `Assembly.Application/Features/Chat/Attachments/` |
+| `Assembly.Engine/Attachments/ImageType` | `Assembly.Application/Features/Chat/Attachments/` |
+| `Assembly.Engine/Attachments/AttachmentStore` (it writes files) | `Assembly.Infrastructure/Chat/Attachments/` |
 | `Assembly.Engine/Acp/` (messages, `V1`, `JsonRpc`, `AcpClient`, `IPermissionPolicy`) | `Assembly.Application/Common/Acp/` |
-| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink`, `AgentDescriptor` | `Assembly.Application/Common/Agents/` |
-| `Assembly.Engine/Agents/` (the rest: `AdapterLauncher`, `AgentProcess`, `ProcessGroup`, `GitCheckout`, `AgentCommand`, `AgentConnection`) | `Assembly.Infrastructure/Agents/` |
+| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink`, `AgentDescriptor`, `AgentCommand` (a record `AgentDescriptor` makes) | `Assembly.Application/Common/Agents/` |
+| `Assembly.Engine/Agents/` (the rest: `AdapterLauncher`, `AgentProcess`, `ProcessGroup`, `GitCheckout`, `AgentConnection`) | `Assembly.Infrastructure/Agents/` |
 | `Assembly.Engine/Live/` (`LiveHub`; it uses chat's rows) | `Assembly.Application/Features/Chat/Rows/` until C1 turns it into the `rows` topic |
 | `Assembly.Engine/Machines/IMachine`, `MachineSet`, `MachineUnreachable` | `Assembly.Application/Common/Machines/` |
 | `Assembly.Engine/Machines/LocalMachine` | `Assembly.Infrastructure/Machines/` |
-| `Assembly.Engine/Transcript/` | `Assembly.Infrastructure/Transcript/` |
+| `Assembly.Engine/Transcript/TranscriptLog` (the ACP connection writes it, to a writer it's given) | `Assembly.Application/Common/Acp/` |
+| `Assembly.Engine/Transcript/TranscriptReplay` | `Assembly.Infrastructure/Transcript/` |
+| `Assembly.Engine/Database/` (the plain-SQL contracts, B2a) | `Assembly.Application/Common/Database/` |
+| `Assembly.Engine/Persistence/` (`AppDatabase`, `AtomicWriter`, B2a) | `Assembly.Infrastructure/Persistence/` |
 | `Assembly.Engine/Api/McpRoutes` | `Assembly.Infrastructure/Mcp/` |
 | `Assembly.Engine/Api/` (the rest: HTTP routes, `LiveSocket`, `TokenGuard`) | `Assembly.Infrastructure/Http/`, kept only until each route moves onto the socket, then deleted (section 11) |
 | `Assembly.Engine/Features/` (`FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`) and `Assembly.Mac/Features/MacFeatureList` | `Assembly.Infrastructure/Http/`; deleted in step B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
 | `Assembly.Mac/Remote/` | `Assembly.Infrastructure/Remote/`, registered only by `AddMacInfrastructure()` |
 | `Assembly.Mac/Preferences/` (`PreferenceStore`, `PreferencesSchema`, `README.md`) | `Assembly.Application/Features/Preferences/` |
 | `Assembly.Mac/Preferences/PreferencesRoutes` | `Assembly.Infrastructure/Http/` until B7 deletes it |
-| `Assembly.Mac/Page/` (`ImageFile`, `MemorySample`, `Thumbnail`, `TurnActivity`) | `Assembly.Application/Features/Diagnostics/` (step B8 finishes it) |
+| `Assembly.Mac/Page/TurnActivity` | `Assembly.Infrastructure/Diagnostics/`: it makes native calls (step B8 finishes it) |
+| `Assembly.Mac/Page/ImageFile`, `Thumbnail`, `MemorySample` (they read files, call ImageIO, and run `ps`) | `Assembly.Infrastructure/Diagnostics/` |
 | `Assembly.Mac/Page/PageRoutes`, `Assembly.Mac/Debug/DebugRoutes` | `Assembly.Infrastructure/Http/` until B8 deletes them |
-| `Assembly.Mac/Serve/` | `Assembly.Mac/Program.cs` and `MacOptions.cs` |
+| `Assembly.Mac/Serve/` | Stays until B7, which makes it `Assembly.Mac/Program.cs` and `MacOptions.cs` |
 | `Assembly.Remote/Serve`, `Smoke`, `Record`, `Replay` | Stay in `Assembly.Remote/` (they're that host's commands) |
 
 ## 5. The shared plumbing
@@ -813,7 +819,13 @@ why. The ones known now:
 | `document.cookie` or `localStorage` for state (the sidebar's open state) | state belongs in the backend | Saved through `save` (5.9), like every setting. |
 | A `window`, `document` or media-query listener in a component (including `<svelte:window>`, `<svelte:document>`, `IsMobile`'s `MediaQuery`) | listeners live in host | The component subscribes to what `lib/host/` exposes (a key, the window size, the system theme). |
 | `Collapsible` in a per-row chat component | `bits-ui` runs a tick after each toggle | Per-row chat components use a plain `{#if}`, not `Collapsible`. |
-| `mode-watcher` for light and dark | `localStorage` and its own media-query listener | Not used. The theme is a setting saved through `save`, and the system theme comes from Tauri's theme-changed event in `lib/host/` (F2). |
+| `mode-watcher` for light and dark | `localStorage` and its own media-query listener | Not used. The theme is one theme id from the registry, saved through `save` (F2). |
+| Height classes (`h-9` in the `Button`) | heights are set once in `app.css` | The class names a size from `app.css` (`size-icon-button`, `h-tab`), never a number (F2). |
+| Shadow classes (`shadow-xs`, `shadow-md`) | the design has no shadows | Removed on add. `--shadow-*` is cleared in `app.css`, so a missed one draws nothing. |
+
+Never run a shadcn.io install. Those items are built on `@ark-ui/svelte` and would overwrite the `bits-ui` parts in
+`components/ui/`, so their markup is copied onto `bits-ui` instead. The install command carries Jesse's personal
+token, so it never goes into the repo, a note or a log.
 
 `bits-ui` arrives with the first component that needs it. It's pinned to the exact version installed, like the
 CLI, and so is every package a component brings.
@@ -936,8 +948,8 @@ because chat's row and thread stores and the preference store call SQLite direct
   - no file under `Application/Features/<A>/` names the namespace `Assembly.Application.Features.<B>` for another
     feature `B` (in a `using` or written out), and every file's namespace matches its folder, so the check can't be
     dodged;
-  - no file under `app/src/lib/<feature>/` imports from another feature's folder (only the page core and its own
-    files);
+  - (the page's rule, that no file under `app/src/lib/<feature>/` imports from another feature's folder, comes in C1;
+    see there);
   - no folder under `dotnet/` or `app/src/` (outside `bin/`, `obj/` and `node_modules/`) holds more than 30 files,
     counting the files directly in it, not its subfolders. The number is one constant in the test, and there are no
     exceptions. Today's largest folder, `Assembly.Engine/Acp/Messages/`, has 29.
@@ -946,18 +958,23 @@ because chat's row and thread stores and the preference store call SQLite direct
 - **B2c. The move.** Git shows it as renames, with only namespace and `using` edits in them. PR 2's text carries
   the proof, so Jesse can read B2a and skip the moved files: `git diff -M --stat` and `--summary` for the commit,
   showing every moved file as a rename, and a check that every changed line in those renames is a `namespace` or
-  `using` line. New files (the project files, `DependencyInjection.cs`) are listed apart.
+  `using` line (or a type name written out with its namespace). New files (the project files) are listed apart.
+  - **Before it:** one commit with the code changes the move needs: the stores take `IAppDatabase`, which hands out
+    the file's `IAtomicWriter`, so nothing in Application names `AppDatabase`.
+  - **After it:** one commit that keeps the file system out of the core (`TranscriptLog` takes a writer, and
+    `AgentDescriptor` parses text; the hosts and Infrastructure open the files), with `ArchitectureTests` banning
+    the file-system types in Domain and Application.
   - **New:** `dotnet/Assembly.Domain/Assembly.Domain.csproj`, `dotnet/Assembly.Application/Assembly.Application.csproj`
-    with `DependencyInjection.cs`, `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj` with
-    `DependencyInjection.cs`, `dotnet/Directory.Packages.props`.
+    and `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj`, and `dotnet/Directory.Packages.props`. The
+    `DependencyInjection.cs` files and the hosts' `Add*` calls come in B7, with the dispatcher that registers
+    features. Until then the hosts build their objects as today, so the move stays renames.
   - **Moved:** every file in the "Where today's folders go" table in section 4. Today's tests go to
     `Assembly.Tests/Features/<Feature>/`, `Core/` or `Infrastructure/`, matching the code they test; `Draft/`,
     `Pinned/` and `Fixtures/` stay where they are.
   - **Deleted:** `dotnet/Assembly.Engine/`.
-  - **Changed:** `Assembly.Mac/Program.cs` (from `Serve/MacBackend.cs` and `MacServe.cs`) and the remote's
-    `ServeRun.cs` call the `Add*` methods, plus the scripts that name `Assembly.Engine` (`dotnet/scripts/*.sh`,
-    `shell/assembly.sh`, `scripts/check4.sh`), `AGENTS.md` and `dotnet/README.md`, which name `Assembly.Engine/*` and
-    `Assembly.Mac/*` paths. `AGENTS.md`'s provider line names one folder for provider quirks:
+  - **Changed:** the hosts' and tests' project files, `Assembly.slnx`, and the files that name `Assembly.Engine/*` and
+    `Assembly.Mac/*` paths: `scripts/lint.d/40-routes.sh`, `scripts/check4.sh`, `AGENTS.md`, `dotnet/README.md` and
+    a few comments. `scripts/locked-paths.txt` gains `dotnet/Assembly.Tests/Architecture/**`. `AGENTS.md`'s provider line names one folder for provider quirks:
     `Application/Common/Acp/V1/`. That's where the adapters' updates are read, and where today's provider
     differences already are (`ClaudeBackground`, `CodexThreadStatus`, `UpdateReader`). `Infrastructure/Agents/` only
     starts processes, so a quirk there would be about launching, not about what a provider sends.
@@ -1010,6 +1027,12 @@ because chat's row and thread stores and the preference store call SQLite direct
   fails on `SELECT *` under `dotnet/` (rows are read by column position).
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
   99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
+- **The commit's slow tail.** Before B2a, a 20-row commit took about 0.4 ms at the median but about 20 ms at the 99th
+  percentile. B3 finds the cause (most likely WAL checkpoints, which SQLite runs inside the commit that crosses
+  1,000 pages) by timing commits with and without automatic checkpoints, and says what's done about it. A 20 ms
+  stall inside the one write lock also holds up a keystroke save waiting behind it, so the fix keeps checkpoints out
+  of the write lock (for example `wal_autocheckpoint` off on the write connection, with a checkpoint run after a
+  write releases the lock). Proof: the p99 before and after.
 - **Proof:** the tests, run, with their counts, the measurement, and check4.
 - **Size:** 250 to 350 lines with tests.
 
@@ -1083,6 +1106,9 @@ because chat's row and thread stores and the preference store call SQLite direct
 - **Size:** 200 to 300 lines with tests.
 
 ### B7. Preferences rebuilt on the base (the example every feature copies)
+
+The first port done files first, then code: B7a creates every file below with no logic, B7b brings the code over.
+Each is reviewed on its own.
 
 - **Files:**
   - One folder, `Application/Features/Preferences/`: `PreferencesFeature.cs` (its calls, topic and SQL, 5.2),
@@ -1197,7 +1223,9 @@ group:
 
 Each phase follows the base's pattern: one folder, `Application/Features/<Feature>/`, with its `<Feature>Feature.cs`,
 records, rules and SQL; its tests in `Assembly.Tests/Features/<Feature>/`; its store in `app/src/lib/<feature>/`; a check4 scenario, and the old route deleted in the same phase. Each starts by
-drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. Sol's step numbers are given so his
+drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. Then, as from B7 on (AGENTS.md,
+"Files first, then code"), each port is two reviewed steps: every file in its place with no logic, then the old
+code brought over piece by piece. Sol's step numbers are given so his
 catalogue stays the reference.
 
 ### C. Chat on the socket
@@ -1210,6 +1238,20 @@ catalogue stays the reference.
     - `Features/Chat/Sessions/SendFeature.cs` (send, stop, answer, stop task), and
       `Features/Chat/Config/ConfigFeature.cs` with a `config` topic;
     - the page's chat folders, moved under `app/src/lib/chat/` (section 4).
+  - **First, the page's layout rule, after B9 and B10.** B10 deletes the guard's allowlist and B9 removes the waits,
+    so chat's page folders can move without changing what the guard's per-row zone (`lib/chat/`) means. In this
+    order: `ArchitectureTests` gets back `No_page_feature_imports_another` (no file under `app/src/lib/<feature>/`
+    imports another feature's folder; written first, failing; the test file is locked by then, so the move thread
+    posts the OK line); then `composer/`, `rows/`, `thread/` and `Conversation.svelte` move under `app/src/lib/chat/`
+    as renames with import-path edits, and the test passes. B2b had it, and B2c took it out: today those folders
+    import each other.
+  - **Named item: the page read on thread switch.** `PageBefore` takes about 200 ms for 50 items on a 40,000-row
+    thread (197 to 205 ms median, 294 ms p99, measured on agent-workbox before B2a). That's very likely the "slow
+    frames only on thread switch" from the Mac lag run. Run `EXPLAIN QUERY PLAN` on it, then add an index or change
+    the query so a page loads in single-digit milliseconds, with before and after numbers.
+  - **Reads take the call's token.** Since B2a every store read passes `CancellationToken.None`, because the
+    signatures didn't change, so no load in the backend can be cancelled yet. When the chat reads move onto the socket,
+    they take the call's token, starting with `PageBefore` alongside its index fix.
   - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
     `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions
     (section 9.2). Adding a file to the locked `lint.d` needs no OK.
@@ -1255,18 +1297,159 @@ catalogue stays the reference.
   - **At rest:** the checks in 9.1 also run after a pane drag ends: no endless animation, and in measure mode no live
     timer and no pending frame callback.
   - **Proof:** a feature check in the window, with screenshots of panes moved and dividers dragged to the next pane.
-- **F2. The look** (base#6): shadcn-svelte first. Everything is built from shadcn-svelte and AI Elements
-  components, added from the registry (AGENTS.md says how), never hand-built look-alikes. Jesse set up Tailwind v4
-  and shadcn-svelte in 91a01e6. The look is denser than the old app: smaller heights and spacing set once in the
-  theme variables in `app/src/app.css` (for example a 28 px control height rather than shadcn's 36 px), not per
-  component. The AI Elements are patterns copied from the shadcn-svelte docs; the pieces they're built from (Trace,
-  Code Block, Message Scroller) are items in the default registry.
-  - **Theme:** light, dark, or follow the system. No `mode-watcher`, which keeps the choice in `localStorage` and adds
-    its own media-query listener. The choice is a setting saved through `save` (5.9), and the system theme comes from
-    Tauri's theme-changed event, listened to in `app/src/lib/host/`.
-  - **Files:** `app/src/app.css`, and the components under `app/src/lib/components/`, each edited on add where the
-    guard needs it (9.1b).
-  - **Proof:** a feature check, light and dark.
+- **F2. The look** (base#6): mac-command-bar's theming system, ported, with the values from Jesse's design system.
+  - **Decided by Jesse, 2026-10-26:**
+    - 20:08Z: "No, i want the system fonts for sure. That's how any app presents fonts, you choose your own."
+    - 20:09Z: "Really, just mostly use the old system, because then it maps to everything in the system i'm thinking."
+    - 20:10Z: "There's a light theme. There's a number of them. Just not a specific light theme i guess. Not like a toggle
+      between only two."
+  - **Sources.** The old system is mac-command-bar at 2089290, `tauri-svelte-preview/src/lib/`, read from the checkout
+    on agent-workbox:
+    - the token files `styles/tokens.css`, `shell/styles/nextTokens.css` and `shell/styles/themeChrome.css`;
+    - in `shell/settings/themes/`: `themeRegistry.ts`, `themeService.ts`, `fontRegistry.ts` and `fontService.ts`.
+
+    The values come from Jesse's design system "Assembly" (https://claude.ai/artifact/8RxzC2U8koy3wAKjRZKkt5, made
+    2026-10-23 from mockups D, E and F, https://claude.ai/artifact/EWzSRsmW7i33gEzL9cy3GG). Its `tokens.json` and
+    `README.md` are copied verbatim into `docs/design/`. Sol's section 9 ("Design-system integration" in
+    `docs/# Assembly .md`) isn't the source. It's cited only where it agrees: one token set, and no web fonts.
+    Its space-name collision doesn't apply, because the old `tokens.css` isn't in this repo.
+  - **One token set.** The three old files become one set on `:root`. The old app needed `.next-shell` and
+    `:root.next-shell-document` because it had two pages; this app has one, so there's no double scoping. The set
+    has three kinds of names:
+    - Where Tailwind or shadcn already has a name with the same meaning, that's the one name. This covers
+      `--color-border`, `--color-primary`, `--font-sans` (the old `--font-ui`), `--font-mono`, `--radius-*` and
+      `--text-*`.
+    - Where only the old system has a name, the old name comes over as is, for example `--color-rail`,
+      `--color-text-2`, `--color-hover`, `--color-live` and `--menu-sheet-surface`.
+    - Where the two disagree, the old name gives way. The one case is accent. shadcn's `accent` is the hover fill
+      (menu items, ghost buttons); the old `--color-accent` was the brand colour. So `--color-accent` means shadcn's
+      hover fill, and the periwinkle is `--color-periwinkle`, beside `--color-aqua` and `--color-lavender`.
+
+    The old names go in one `@theme static` block in `app/src/app.css`, holding the Assembly theme's values. That
+    makes them Tailwind utilities (`bg-rail`, `text-text-2`), and it paints the first frame before any script runs,
+    so there's no flash. shadcn's names go in `@theme inline`, each one an old name: `--color-background:
+    var(--color-bg)`. shadcn's bare `--accent`, `--border` and the rest, its light `:root` block, `.dark` and
+    `@custom-variant dark` are removed. Each meaning has one name.
+  - **The design system's roles on the old names.** Grounds and text:
+
+    | Design system | Value | Old name it sets | shadcn names that read it |
+    | --- | --- | --- | --- |
+    | surface | `#18181b` | `--color-bg`, `--color-surface` (one ground: panels are flush) | `background`, `card` |
+    | rail | `#19191c` | `--color-rail` | `sidebar` |
+    | field | `#1f1f24` | `--color-elevated`, `--color-hover` | `muted`, `accent` (the hover fill) |
+    | raised | `#212125` | new `--color-raised`; `--composer-surface` reads it | |
+    | chip | `#232328` | new `--color-chip` | `secondary` |
+    | selected | `#26262b` | `--color-selected` | |
+    | selected-strong | `#2a2a30` | new `--color-selected-strong` | |
+    | line | `rgba(236,236,240,0.12)` | `--color-border`, `--color-field-border` | `border`, `input` |
+    | line-soft | `rgba(236,236,240,0.06)` | new `--color-line-soft` | |
+    | ink | `#e4e4ea` | `--color-text` | `foreground` |
+    | ink-body | `#d4d4dc` | new `--color-ink-body` | |
+    | ink-2 | `#c4c4cc` | new `--color-ink-2` | |
+    | ink-muted | `#9b9ba6` | `--color-text-2`, `--color-idle`, `--color-status-idle`, `--color-section-header-text` | `muted-foreground` |
+    | ink-faint | `#8e8e99` | `--color-text-3`, `--color-disabled-text` | |
+    | ink-tab | `rgba(228,228,234,0.7)` | `--color-tab-unfocused-text` | |
+    | ink-icon | `rgba(228,228,234,0.85)` | new `--color-ink-icon` | |
+
+    Accent, states and the rest:
+
+    | Design system | Value | Old name it sets | shadcn names that read it |
+    | --- | --- | --- | --- |
+    | primary, on-primary | `#d6d6da`, `#16161a` | new `--color-primary`, `--color-on-primary`; `--color-on-accent` takes on-primary's value | `primary`, `primary-foreground` |
+    | accent (periwinkle) | `#8b93ff` | `--color-periwinkle` (was `--color-accent`), `--color-focus-solid`, `--color-selected-border`, `--color-section-focus-ring` | `ring` |
+    | focus-line | `rgba(139,147,255,0.35)` | `--color-focus` | |
+    | aqua, lavender, code-bg | `#7ee3e0`, `#b79cff`, `rgba(183,156,255,0.1)` | new `--color-aqua`; lavender also sets `--color-merged`; new `--color-code-bg` | |
+    | mint | `#7fdcb0` | `--color-good` | |
+    | blue | `#7ec8ff` | `--color-live` | |
+    | amber, attention-bg, attention-line | `#e6c97e`, `rgba(230,201,126,0.12)`, `rgba(230,201,126,0.34)` | `--color-attention`, `--color-attention-bg`, new `--color-attention-line` | |
+    | red | `#ec8b86` | `--color-bad` | `destructive` |
+    | add-bg, del-bg, hunk-bg, hunk-ink | as in `tokens.json` | new `--color-add-bg`, `--color-del-bg`, `--color-hunk-bg`, `--color-hunk-ink` | |
+    | provider-orange, provider-blue | `#c98a6c`, `#7f9fd6` | `--agent-mark-claude`, `--agent-mark-codex` | |
+    | file-svelte | `#ff6a3d` | new `--color-file-svelte` | |
+    | (none) | | `--color-overlay` takes chip's value; `--color-tab-unfocused-surface` takes surface's. `--color-scrim` and `--color-text-selection` keep their old values. `--color-live-bg`, `--color-good-bg` and `--color-bad-bg` stay at their tone with 12% opacity, as in the old file. | `popover` reads `--color-overlay` |
+
+    The rows marked "(none)" are my picks, since the design system has no menu ground, scrim or selection colour.
+    Jesse can change them.
+  - **Type.** The registry components use Tailwind's size names (the `Button` has `text-sm` and `text-xs`), so those
+    names take the design system's sizes, with their line heights:
+    - `xs` is small, 12/16; `sm` is body, 13/19; `base` is heading, 14/20; `lg` is title, 15/20.
+    - `xl` and larger are also title, since nothing in the app is larger.
+    - Only five names are new: `meta` 11.5/16, `label` 11/16 (semibold, capitals, 0.06em tracking), `tree` 15/26,
+      `code` 12/20 and `code-inline` 12/17.
+
+    The old `--text-quiet`, `--text-body` and `--text-heading` become `xs`, `sm` and `base`. Headings and the title
+    are semibold.
+  - **Space.** The design system's steps (2 to 16, and 28 px) are Tailwind's 4 px unit: `0.5` to `4`, and `7`.
+    Spacing maps by value, not by name. Tailwind's `--spacing` stays 4 px, and the design system's `space-N` names
+    don't come in. Nor do the old `--space-1` to `--space-6`, because a class (`p-3.5`) is the one way to say 14 px.
+    The old insets (`--rail-content-inset`, `--menu-row-inset` and the rest) come over with their names.
+  - **Sizes.** They're named once in `@theme` (`--spacing-bar` 40, `--spacing-tab` 30, `--spacing-icon-button` 28,
+    `--spacing-tree-row` 26, `--spacing-rail` 300, `--spacing-drawer` 280, `--container-chat` 700). That gives the
+    classes `h-bar`, `h-tab`, `size-icon-button`, `w-rail` and `max-w-chat`. The old `--editor-tab-row-height` and
+    `--center-head-row-height` become `bar`.
+
+    The setting can't do the density alone. shadcn sets heights as classes inside each component (`h-9` in the
+    Button). Changing `--spacing` would scale every padding with them: 28 px buttons need a unit of about 3.1 px,
+    which turns `p-4` into 12.4 px. So a registry component's height class is edited on add to name a size
+    (`h-9` becomes `size-icon-button`). That's a row in 9.1b. It meets the rule in `AGENTS.md`: the value lives once
+    in `app.css`, and a component only names it.
+  - **Shape and depth:**
+    - The radii are `--radius-xs` 4, `-sm` 5, `-md` 6 and `-lg` 8. They replace shadcn's computed `--radius`
+      (10 px). `xl` and larger are also 8, so a registry component's `rounded-xl` draws the design's largest corner
+      rather than a square one.
+    - `rounded-full` is only for the Board button and a tab's close disc. The old `--radius-pill` doesn't come.
+    - No shadows: `--shadow-*: initial` and the old `--shadow-*` names don't come, and registry components lose their
+      shadow classes on add (9.1b). The old `--focus-ring` stays, for controls with no edge of their own.
+  - **Motion and icons:**
+    - Motion is 120 to 180 ms fades and slides that end, under `motion-safe:`.
+    - Icons are Lucide (`@lucide/svelte`): 16 px in the tab row and 14 px elsewhere, stroke 1.8. No emoji.
+  - **Themes.** `app/src/lib/theme/themeRegistry.ts` is plain data. It has the old list as it was, all ten entries:
+    - Assembly (the default), Houston, Dracula, Tokyo Night and Graphite;
+    - the five ThemeMirror entries, Amy, Ayu Light, Cobalt, Rose Pine Dawn and Tomorrow, which keep the Assembly
+      shell and change only the editor's syntax colours.
+
+    The setting is one theme id from that list, never a light/dark toggle. `resolveThemeId` keeps its fallback: an
+    id that isn't on the list, such as the `"dark"` base#7's pinned test saves, gives the default theme. Each theme's editor part arrives with W2, and its
+    terminal palette with W4.
+  - **One copy of the colours.** `app.css` holds Assembly's values, and nothing else repeats them.
+    - Assembly and the five ThemeMirror entries carry no tokens, so applying them removes the values the last theme
+      wrote.
+    - Houston, Dracula, Tokyo Night and Graphite carry their old values. Each new role is set to the theme's nearest
+      existing colour: `ink-body` and `ink-2` take `text`, `raised` and `chip` take `elevated`, `selected-strong`
+      takes `selected`, and `line-soft` takes `border`. The diff grounds take the good and bad tints. `aqua` and
+      `lavender` take the theme's own terminal cyan and magenta.
+    - The old `scripts/themeRegistry.test.ts` existed only to catch two copies drifting apart, so it doesn't come.
+  - **Applying a theme.** `themeService.ts` is ported to this app's rules:
+    - The theme id is a setting saved through `save` (5.9), with no `localStorage`.
+    - It writes the theme's variables on the document root only, since there's one set on `:root` and no shell
+      element to repaint.
+    - It has no listeners outside `lib/host/` and no timers.
+    - The editor and terminal appliers arrive with W2 and W4. `clearTheme` isn't needed, because there's no other page
+      to hand the document back to.
+  - **Fonts.** These are system faces, and the person picks their own:
+    - `fontRegistry.ts` has one preset for each, "System" (the system UI face, and the system monospace). The rest of
+      the choices are the families installed on the machine, which `mergeFontChoices` adds from a host call in
+      `lib/host/`.
+    - `fontService.ts` writes `--font-sans` and `--font-mono` on the document root, saved through `save`.
+    - The old `fonts.css` and its 13 bundled faces don't come. Inter goes too: the `@fontsource-variable/inter`
+      import in `app.css` and the package from 91a01e6.
+  - **Preferences:**
+    - The spike's `'system' | 'light' | 'dark'` setting is replaced by the theme id and the two font choices.
+    - The key stays `theme`, so base#7's pinned test, which saves `"dark"` as a value and reads it back, still holds
+      unchanged.
+    - There's no "follow the system", so Tauri's theme-changed event isn't needed.
+  - **Contrast:** `contrast.ts` doesn't come. Nothing imports it at 2089290, and a contrast test over the themes
+    would break `AGENTS.md`'s rule against tests on colour tokens or contrast.
+  - **Rules that carry over:**
+    - The drawer follows the tabs through explicit state (a value the shell sets), never CSS `:has()`.
+    - No test asserts a CSS class, a colour or a pixel value.
+    - The design system's component previews are design evidence, not code to paste. Markup is built from the
+      registry components.
+  - **Files:** `app/src/app.css`; `app/src/lib/theme/` (`themeRegistry.ts`, `themeService.ts`, `fontRegistry.ts`,
+    `fontService.ts`); the host call for installed fonts in `app/src/lib/host/`; and the components
+    under `app/src/lib/components/`, each edited on add where the guard needs it (9.1b).
+  - **Proof:** a feature check in the window: Assembly and one other theme, a font change, and the choice surviving
+    a quit.
 
 ### W. The workbench
 
@@ -1293,7 +1476,19 @@ Each W phase:
 - **P1. Messages and machine routing** (Sol P25). It reads the old app's messaging as the reference, since Jesse says
   it worked. The polls in `RemoteOutbox.cs:44` and `MessageStatusTool.cs:30` become pushes.
 - **P2. Workflows** (Sol P27).
-- **P3. Build Board** (Sol P28).
+- **P3. Build Board** (Sol P28). Jesse's design (plan thread, 2026-10-26 19:10: reui.io agent-activity 1, 2 and 5,
+  "These are all pieces that i would like implemented, for different parts of the app"):
+  - One card per task, in one of three states:
+    - **Running** (agent-activity-2, Live Run Feed): a title, one live step line, and a footer with steps, files,
+      tools and duration.
+    - **Needs you** (agent-activity-1, Approval Run Console): a question answered on the card, or Approve/Deny.
+      These cards sort first.
+    - **Done or failed** (agent-activity-5, Run Outcome Report): done, failed and skipped counts, the files changed,
+      and retry for the failed items.
+  - At rest a card is at most 4 lines; a click opens the full feed.
+  - Built by hand in Svelte from the shadcn.io Svelte components, since ReUI is React only and Pro.
+  - The backend pushes each task's changes on one board topic, and durations come from backend timestamps. The
+    demos' `setTimeout` replay isn't ported.
 - **P4. Phone** (Sol P29). The phone speaks the same socket protocol, with paired credentials.
 - **P5. Notion Tasks** (Sol P30).
 - **P6. Usage and resources** (Sol P31).
@@ -1330,6 +1525,10 @@ Each P phase has the same shape as the W phases.
       without `:has()`, and the build backstop (9.1) proves none got in.
 - **Timers inside packages** (`bits-ui`'s tooltip delay, `Collapsible`'s tick after a toggle, `dockview-core`'s
   drag timers): Jesse's call whether to accept them. The at-rest checks (9.1) are the net either way.
+- **Light-named themes** (F2). Ayu Light, Rose Pine Dawn and Tomorrow keep the Assembly shell and change only the
+  editor, as in the old app. Making them light the whole window is a possible follow-up, not part of F2.
+- **Note: my picks for colours the design system doesn't name** (F2): the menu ground takes chip's value, and the
+  scrim and the selection colour keep the old values. Jesse can change them.
 - **The packages for the checks** (prettier, knip), which wait for Jesse's OK. Tailwind and shadcn-svelte are in
   (91a01e6).
 - **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to

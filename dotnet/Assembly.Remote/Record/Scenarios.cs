@@ -1,4 +1,4 @@
-using Assembly.Engine.Acp.JsonRpc;
+using Assembly.Application.Common.Acp.JsonRpc;
 
 namespace Assembly.Remote.Record;
 

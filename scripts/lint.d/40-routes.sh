@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # One way to add a route (AGENTS.md, Backend conventions): a feature's calls go through
-# dotnet/Assembly.Engine/Features/FeatureCalls.cs. Fails, naming each line, if any other backend file maps a route.
+# dotnet/Assembly.Infrastructure/Http/FeatureCalls.cs. Fails, naming each line, if any other backend file maps a route.
 # The files below map chat's REST routes, the socket and the Mac's page and debug calls, which came before it.
 cd "$(dirname "$0")/../.."
-allowed='dotnet/Assembly.Engine/Features/FeatureCalls.cs
-dotnet/Assembly.Engine/Api/ApiServer.cs
-dotnet/Assembly.Engine/Api/AttachmentRoutes.cs
-dotnet/Assembly.Engine/Api/ConfigRoutes.cs
-dotnet/Assembly.Engine/Api/InfoRoutes.cs
-dotnet/Assembly.Engine/Api/McpRoutes.cs
-dotnet/Assembly.Engine/Api/OutboxRoutes.cs
-dotnet/Assembly.Engine/Api/RowRoutes.cs
-dotnet/Assembly.Engine/Api/RunRoutes.cs
-dotnet/Assembly.Engine/Api/ThreadRoutes.cs
-dotnet/Assembly.Mac/Debug/DebugRoutes.cs
-dotnet/Assembly.Mac/Page/PageRoutes.cs'
-all=$(git grep -nE '\.Map(Get|Post|Put|Delete|Patch|Methods|Fallback|Group)\(|\.Map\("/' -- 'dotnet/Assembly.Engine/*.cs' 'dotnet/Assembly.Mac/*.cs' 'dotnet/Assembly.Remote/*.cs')
+allowed='dotnet/Assembly.Infrastructure/Http/FeatureCalls.cs
+dotnet/Assembly.Infrastructure/Http/ApiServer.cs
+dotnet/Assembly.Infrastructure/Http/AttachmentRoutes.cs
+dotnet/Assembly.Infrastructure/Http/ConfigRoutes.cs
+dotnet/Assembly.Infrastructure/Http/InfoRoutes.cs
+dotnet/Assembly.Infrastructure/Mcp/McpRoutes.cs
+dotnet/Assembly.Infrastructure/Http/OutboxRoutes.cs
+dotnet/Assembly.Infrastructure/Http/RowRoutes.cs
+dotnet/Assembly.Infrastructure/Http/RunRoutes.cs
+dotnet/Assembly.Infrastructure/Http/ThreadRoutes.cs
+dotnet/Assembly.Infrastructure/Http/DebugRoutes.cs
+dotnet/Assembly.Infrastructure/Http/PageRoutes.cs'
+all=$(git grep -nE '\.Map(Get|Post|Put|Delete|Patch|Methods|Fallback|Group)\(|\.Map\("/' -- 'dotnet/Assembly.Domain/*.cs' 'dotnet/Assembly.Application/*.cs' 'dotnet/Assembly.Infrastructure/*.cs' 'dotnet/Assembly.Mac/*.cs' 'dotnet/Assembly.Remote/*.cs')
 failed=0
 while IFS= read -r hit; do
   [ -n "$hit" ] && ! grep -qxF -- "${hit%%:*}" <<<"$allowed" || continue

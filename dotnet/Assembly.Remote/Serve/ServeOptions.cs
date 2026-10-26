@@ -1,5 +1,6 @@
 using System.Globalization;
-using Assembly.Engine.Agents;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Agents;
 
 namespace Assembly.Remote.Serve;
 
@@ -11,7 +12,7 @@ namespace Assembly.Remote.Serve;
 public sealed record ServeOptions(int Port, string Home, string TokenFile, string AgentsFile)
 {
     public const string Usage =
-        "usage: Assembly.Engine serve [--port 9797] [--home ~/assembly-dotnet/serve] [--token-file ~/.config/assembly-dotnet/env] [--agents HOME/agents.json]";
+        "usage: Assembly.Remote serve [--port 9797] [--home ~/assembly-dotnet/serve] [--token-file ~/.config/assembly-dotnet/env] [--agents HOME/agents.json]";
 
     public string Database => Path.Combine(Home, "assembly.db");
 

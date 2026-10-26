@@ -1,9 +1,12 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
-using Assembly.Engine.Rows;
-using Assembly.Engine.Store;
-using Assembly.Engine.Transcript;
+using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Domain.Rows;
+using Assembly.Application.Features.Chat;
+using Assembly.Application.Common.Acp;
+using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Remote.Replay;
 
@@ -13,7 +16,7 @@ namespace Assembly.Remote.Replay;
 /// </summary>
 public static class ReplayRun
 {
-    public const string Usage = "usage: Assembly.Engine rows <transcript.jsonl> [--db PATH]";
+    public const string Usage = "usage: Assembly.Remote rows <transcript.jsonl> [--db PATH]";
     private const string Thread = "replay";
 
     public static int Run(IReadOnlyList<string> args)
@@ -25,7 +28,8 @@ public static class ReplayRun
         }
 
         var dbPath = args.Count == 3 ? args[2] : Path.Combine(Path.GetTempPath(), $"replay-{Guid.NewGuid():N}.db");
-        using var store = RowStore.Open(dbPath);
+        using var db = AppDatabase.Open(dbPath);
+        var store = RowStore.Open(db);
         var converter = new RowConverter();
         var pushed = new List<StoredRow>();
         var commitTimes = new List<double>();

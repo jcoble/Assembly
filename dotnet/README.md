@@ -59,29 +59,26 @@ dotnet/scripts/workbox.sh stop
 
 ## Layout
 
-Three projects. The engine is a library with no UI or Mac code; each host uses it, and neither host's code ships in the other.
+The core is in layers, and everything else is one folder per feature (plan section 4). `ArchitectureTests` checks the
+rules.
 
-- `Assembly.Engine/`: everything below except the commands.
-- `Assembly.Remote/`: the host on the machine that runs the agent (Workbox): `serve`, plus the step 1 and 2 test benches (`smoke`, `record`, `rows`).
-- `Assembly.Tests/`: the tests for both.
-
-Inside the engine:
-
-- `Acp/JsonRpc/`: JSON-RPC over newline-delimited JSON. One read loop and serialized writes.
-- `Acp/`: the typed ACP v1 client, method names and the permission policy seam.
-- `Acp/Messages/`: one record per ACP message we send or read, with source-generated JSON (AOT-safe).
-- `Agents/`: starting, owning and stopping the adapter process.
-- `Transcript/`: the JSONL log of every line, and its replay as events.
-- `Events/`: what happens in a session, in our own terms. Only `Acp/V1/` knows ACP's shapes.
-- `Rows/`: events to rows, one converter per session. `Rows/Payloads/` holds each row kind's JSON.
-- `Store/`: the rows in SQLite: commit, rows after a seq, pages, tool details.
-- `Live/`: the one door to the row store. Commits and socket subscriptions share its lock, so a socket sees each row once.
-- `Threads/`: the sessions list (title, repo, the agent's own session id), in the same SQLite file.
-- `Sessions/`: one host per thread: its agent, its converter, and the turn running now.
-- `Attachments/`: images the composer attaches, stored by path for the agent to read.
-- `Api/`: the routes, the token check and the live socket, on Kestrel.
-
-In the remote host: `Serve/` (the step 3 command), `Replay/` (step 2's), `Record/` and `Smoke/` (step 1's harness).
+- `Assembly.Domain/`: records several features share, and nothing else: agent events (`Events/`), row kinds and
+  payloads (`Rows/`), thread records (`Threads/`) and the markdown block records (`Markdown/`). It references nothing.
+- `Assembly.Application/`: references Domain only, with no SQLite, ASP.NET Core or process starting.
+  - `Common/`: shared contracts and the ACP code. `Database/` (the plain-SQL contracts), `Acp/` (JSON-RPC, the typed
+    ACP v1 client, one record per message, and `V1/`, the only place that knows ACP's shapes and provider quirks),
+    `Agents/` (launching contracts and the shared adapter) and `Machines/`.
+  - `Features/Chat/`: threads, rows (with the live hub and the markdown parse), sessions, helpers and attachments.
+  - `Features/Preferences/`. Diagnostics has no folder here until B8: its code makes native calls and reads files,
+    so it's all in Infrastructure's `Diagnostics/`.
+- `Assembly.Infrastructure/`: references Application. SQLite and the one writer (`Persistence/`), starting agent
+  processes and git (`Agents/`), the local and remote machines (`Machines/`, `Remote/`), the transcript replay, `/mcp`,
+  the files behind chat and diagnostics (`Chat/`, `Diagnostics/`), and today's HTTP routes (`Http/`) until the socket
+  replaces them.
+- `Assembly.Mac/`: the Mac's host. `Assembly.Remote/`: the host on the machine that runs the agent (Workbox):
+  `serve`, plus the step 1 and 2 test benches (`smoke`, `record`, `rows`).
+- `Assembly.Tests/`: one project. `Architecture/`, `Core/`, `Infrastructure/` and `Features/<Feature>/` follow the
+  code; `Draft/`, `Pinned/` and `Fixtures/` stay where they were.
 
 It targets .NET 10 (LTS) for now, because the cloud machine can only install .NET 10. Moving to .NET 11 is a one-line change to `Directory.Build.props`.
 

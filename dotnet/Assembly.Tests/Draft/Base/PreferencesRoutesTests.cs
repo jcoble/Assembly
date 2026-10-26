@@ -6,8 +6,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
-using Assembly.Engine.Features;
-using Assembly.Mac.Preferences;
+using Assembly.Infrastructure.Http;
+using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Features.Preferences;
 
 namespace Assembly.Tests.Draft.Base;
 
@@ -15,6 +16,7 @@ namespace Assembly.Tests.Draft.Base;
 public sealed class PreferencesRoutesTests : IAsyncLifetime
 {
     private readonly TempDatabase _db = new();
+    private AppDatabase? _database;
     private WebApplication _app = null!;
     private HttpClient _http = null!;
 
@@ -25,7 +27,9 @@ public sealed class PreferencesRoutesTests : IAsyncLifetime
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         var app = builder.Build();
-        PreferencesRoutes.Add(app, new FeatureContext(_db.Path));
+        _database?.Dispose();
+        _database = AppDatabase.Open(_db.Path);
+        PreferencesRoutes.Add(app, new FeatureContext(_database));
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         return (app, new HttpClient { BaseAddress = new Uri(address) });
@@ -80,6 +84,7 @@ public sealed class PreferencesRoutesTests : IAsyncLifetime
     {
         _http.Dispose();
         await _app.DisposeAsync();
+        _database?.Dispose();
         _db.Dispose();
     }
 }

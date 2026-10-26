@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The records and rules several features share. References nothing. -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Assembly.Application" />
+    <InternalsVisibleTo Include="Assembly.Infrastructure" />
+    <InternalsVisibleTo Include="Assembly.Mac" />
+    <InternalsVisibleTo Include="Assembly.Remote" />
+    <InternalsVisibleTo Include="Assembly.Tests" />
+  </ItemGroup>
+
+</Project>

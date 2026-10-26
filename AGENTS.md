@@ -60,7 +60,8 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
   as any other code: if it fails the guard on add (a timer, a `.then`, a loop at rest, a `has-*` variant), edit it to
   meet the rules and say in the PR what you changed. The packages a component brings (`bits-ui` and the rest) are
   pinned to the exact version installed.
-- Heights and spacing are set once in the theme variables in `app/src/app.css`, never per component.
+- Heights and spacing values are set once in the theme variables in `app/src/app.css`; components use those names,
+  never a raw size.
 
 ## Words we use
 
@@ -93,7 +94,8 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
 - Anything an ACP adapter or provider CLI supports must work the same for every provider that is installed and
   signed in. Don't ship a feature for one provider and leave the rest for later. When a provider really can't do
   something, decide that per provider and show it, rather than hiding it.
-- A provider-specific branch lives with the agent code (`dotnet/Assembly.Engine/Agents/`) and carries a comment citing
+- A provider-specific branch lives where the adapters' updates are read (`dotnet/Assembly.Application/Common/Acp/V1/`)
+  and carries a comment citing
   the evidence that the provider differs: an adapter source line, a recorded response, or a test.
 - Defaults never name a provider. A default model or agent, or anything that picks one, chooses among the providers
   this user has set up, and says so when none are.
@@ -136,19 +138,20 @@ doesn't. Before calling work done, name which of these you covered:
 ## Backend conventions
 
 - One helper on each side does the repeated plumbing, so it can't be forgotten: the page's `app/src/lib/call.ts`
-  (`call()` and `save()`) and the backend's `Assembly.Engine/Features/FeatureCalls.cs` (`Map(method, handler)`).
+  (`call()` and `save()`) and the backend's `Assembly.Infrastructure/Http/FeatureCalls.cs` (`Map(method, handler)`).
   Features never call `fetch` or map a route themselves (`app/scripts/guards.sh`, `scripts/lint.d/40-routes.sh`).
   Both are replaced by the socket and its dispatcher (plan steps B4 to B7); a feature still uses them until then.
 - Every route needs the bearer token (`TokenGuard`), and the API listens on 127.0.0.1 only.
-- Each feature lives in `dotnet/Assembly.Engine/<Feature>/` when every machine serves it (listed in
-  `Engine/Features/MachineFeatureList.cs`), or in `dotnet/Assembly.Mac/<Feature>/` when only the Mac's window needs it
-  (listed in `Assembly.Mac/Features/MacFeatureList.cs`): a routes class plus small classes, one class per file.
+- Each feature lives in `dotnet/Assembly.Application/Features/<Feature>/`, and its outside systems (files, processes,
+  native calls) in `dotnet/Assembly.Infrastructure/<Feature>/`: small classes, one class per file. Until step B7, its
+  routes class is in `Assembly.Infrastructure/Http/`, listed in `MachineFeatureList.cs` when every machine serves it or
+  `MacFeatureList.cs` when only the Mac's window needs it. `ArchitectureTests` checks the layers.
 - Anything that streams or changes goes to the page over the socket, as a named topic. Never make the page poll.
 - Work nobody wants any more stops, in the page and here. `call()` makes each request's abort signal, and a newer
   call with the same key aborts the older one. A handler passes its `cancellationToken` to everything it awaits: the
   database, files, and child processes such as git, which are killed when it fires (CA2016 is a build error). A call
   forwarded to another machine carries the cancel there too. Saves are the exception: once sent they finish.
-  `dotnet/Assembly.Mac/Preferences/README.md` explains it step by step.
+  `dotnet/Assembly.Application/Features/Preferences/README.md` explains it step by step.
 - `docs/backend-commands.md` lists the old UI's commands per feature and the old Rust handler behind each.
 
 ## Testing
@@ -199,6 +202,10 @@ small things.
   - The lane that wants a change can never OK it.
   - The move thread posts every OK it gives to Jesse, with the test before and after.
   - A change to what a feature should do waits for Jesse.
+- Files first, then code (Jesse, 2026-10-26). From B7 on, every feature port is two steps, each reviewed on its own.
+  Step 1 creates every file the feature has in the reference layout (plan section 4): each type with its name,
+  signatures and comment, and no logic, so the review looks at the layout alone. Step 2 brings the old code over,
+  piece by piece, into those files.
 
 ## Checking a feature
 
@@ -263,6 +270,7 @@ small things.
 
 - A question for Jesse, or a blocker you can't get around, goes to the project thread right away, with enough context
   to answer without reading the chat. That task waits; keep working on everything else.
+- The Build Board and `board_update` don't exist here yet; the Build Board is rebuilt in plan phase P3.
 
 ## Plans and docs
 

@@ -1,7 +1,9 @@
-using Assembly.Engine.Acp.Messages;
-using Assembly.Engine.Agents;
+using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Agents;
+using Assembly.Infrastructure.Agents;
 using Assembly.Remote.Smoke;
-using Assembly.Engine.Transcript;
+using Assembly.Application.Common.Acp;
+using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Remote.Record;
 
@@ -47,7 +49,7 @@ public sealed class RecordRun(RecordOptions options)
             await File.WriteAllTextAsync(Path.Combine(cwd, name), content);
 
         using var deadline = new CancellationTokenSource(ScenarioTimeout);
-        using var transcript = TranscriptLog.ToFile(path);
+        using var transcript = TranscriptFile.Open(path);
         var agent = AgentConnection.Start(new AgentCommand(options.FileName, options.Arguments, cwd), new AllowOncePolicy(), transcript);
         try
         {
