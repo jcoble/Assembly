@@ -5,7 +5,7 @@ the plan in `docs/# Assembly .md` (Sol's), which stays in the repo unchanged as 
 This plan is the part that list was missing: the base every feature is built on, spelled out file by file, so that
 each later feature has one obvious way to be written and nothing to invent.
 
-Nothing in this plan is built yet. No code and no locked file changed to write it. The measurements in section 1
+Nothing in this plan is built yet. No code and no locked file changed to write it. The measurements in sections 1, 5.6 and 5.9
 were run on agent-workbox in a scratch folder, from packages already in the local NuGet cache.
 
 How to read it:
@@ -78,7 +78,8 @@ These three measure the page. Today they use timers (section 7): the lag meter n
 page draws (`requestAnimationFrame`) to measure frame gaps and key-to-paint delay, and the soak waits between the
 steps it drives. Zero timers in `app/src` means they can't stay where they are. The options:
 
-- **A. Measure tools outside `app/src`.** Move them to `app/measure/` (TypeScript), which the guard doesn't scan. The
+- **A. Measure tools outside `app/src`.** Move them to `app/measure/` (TypeScript), which has its own guard rules
+  (below). The
   shell injects them into the page only when started in measure mode (`shell/assembly.sh start --counters`, which
   exists today). They can use frame callbacks, so they can measure everything they measure today: frame gaps,
   key-to-paint latency, and the counters. They never ship in a normal run. The soak becomes a script run from
@@ -92,9 +93,12 @@ steps it drives. Zero timers in `app/src` means they can't stay where they are. 
 
 Whichever Jesse picks, the soak's waits (section 7, row 4) leave the page.
 
-A folder the guard doesn't scan is a place a model could put a timer, so under A, `app/measure/` gets three
-safeguards:
+**`app/measure/` is the one place the timer rule doesn't reach.** That makes it a place a model could put a timer,
+or grow a second app, so under A it gets these safeguards:
 
+- The guard scans `app/measure/` too, and allows only timers and frame callbacks there. `fetch`, Tauri imports,
+  `WebSocket` outside `socket.ts`, and `.then`/`.catch`/`.finally` fail there as they do everywhere, so it can't
+  become a second app.
 - `app/measure/**` goes in `scripts/locked-paths.txt`, so adding or changing a file there needs an OK.
 - The guard fails if anything in `app/src` imports from `app/measure`.
 - The normal build must not include it. Only `shell/assembly.sh start --counters` injects it, and a check on the
@@ -132,12 +136,25 @@ single write executor.
 ### D4. Bytes over the socket
 
 One path means attachments go over the socket too. Today, `POST /threads/{id}/attachments` and
-`GET .../attachments/{name}` are the only binary HTTP calls. The plan sends them as calls whose arguments or result
-carry the bytes as base64, capped at 10 MB per image, the size the composer allows today. This adds about a third to
-the size of an upload, which is small for screenshots. The other way is a binary socket frame with a small header,
-which is more to write. The plan uses base64 unless Jesse wants binary frames.
+`GET .../attachments/{name}` are the only binary HTTP calls. A 10 MB image, the size the composer allows today, is
+about 13.3 MB as base64. That doesn't fit the 4 MB frame limit in 5.1, so the image has to be split up, or the limit
+changed. The options:
 
-**Recommendation (Claude's, not Jesse's decision): base64.**
+- **A. Chunked calls.** `attachments/begin` returns an upload id, then `attachments/chunk` sends about 1 MB of image
+  per call (about 1.33 MB as base64, well under 4 MB), appended to a staging file. `attachments/commit` checks the
+  size and type, and links the file in one atomic write. A 10 MB image is about 10 short calls.
+  - Each call stays well under the 30 s limit, so this fits the "calls are short" rule in 5.1.
+  - Progress comes for free, and cancelling is a `cancel` on the next chunk.
+  - Other frames, such as rows and saves, still get through between chunks.
+  - Reading an image back is the same thing in reverse: `attachments/read` with an offset, about 1 MB a call.
+- **B. Binary frames.** A new frame type: a small JSON header, then the raw bytes. There's no base64 cost, but it's a
+  second frame format for both sides to read and test, and a 10 MB frame still needs either chunking or a higher
+  limit.
+- **C. A higher frame limit,** 16 MB. This is the simplest to write. But every big image ties up the socket while it
+  goes, so rows and saves wait behind it, and the backend's memory per frame quadruples.
+
+**Recommendation (Claude's, not Jesse's decision): A, chunked calls.** It keeps one frame format and one path, keeps
+the 4 MB limit, and doesn't block other traffic.
 
 ## 2. Where Jesse's comments went
 
@@ -147,11 +164,11 @@ which is more to write. The plan uses base64 unless Jesse wants binary frames.
 | Find out why MCP servers weren't a problem in the old app before changing them | Section 11, phase C3, starts with that investigation, and changes nothing until it has an answer. |
 | One language server shared by every session, not one per session | Section 11, phase W5: one server per language per checkout, shared, and stopped when the last editor closes. |
 | Machine-to-machine messaging works in the old app; the timers came out of it | Section 11, phase P1 reads the old messaging code as the reference. Its polling (`RemoteOutbox.cs:44`, every second) becomes a push on the machine socket. |
-| A base implementation on the backend like the front end's, as a PR for review before merging | Section 10: the base is built as commits on one branch, with the preferences feature rebuilt as the example every feature copies. Jesse reviews the PR and merges it himself. |
+| A base implementation on the backend like the front end's, as a PR for review before merging | Section 10: the base is built as commits on one branch, with the preferences feature rebuilt as the example every feature copies. It goes out as five PRs, one per step group, each with a plain summary for Jesse, and he merges each himself. |
 | Shared plumbing for repeated work (atomic save, logging, auditing, socket send and receive) through middleware or DI, with features calling an interface | Sections 5.2 to 5.8: one implementation each, registered in DI, wrapped around every call by the dispatcher. |
 | Clean Architecture after codewithmukesh, DbContext rather than repositories | Sections 4 and 5.6, and decisions D1 and D3. |
 | Timers and ticks made the old app unusable; one allowlist entry grew to more than 50 | Sections 6 to 9: no timers in `app/src`, and no allowlist file. The guard has no list anyone can add to. |
-| No allowlist at all; the debounce is the only timer he'd allow, unless there's another way | Section 5.9: the debounce moves to the backend, so the page has no timers at all and needs no exception. |
+| No allowlist at all; the debounce is the only timer he'd allow, unless there's another way | Section 5.9: the other way. The page saves only when a change is finished (`change`, the end of a drag, `blur`), one atomic write each, so there's no debounce in the front end or the backend, and no exception. |
 | Any timer comes from the backend, even one shared timer that pushes timings to the front | Section 5.8: one backend clock, a `PeriodicTimer` on `TimeProvider`. It pushes on the `clock` topic only while someone is subscribed. |
 | HTTP and WebSocket both is confusing; one path | Section 5.1: one WebSocket for everything the page does. The only other HTTP is `/mcp`, which agents use. |
 | Saves are atomic: one save per save call, or one transaction | Section 3, rule 6, and section 5.6. |
@@ -176,9 +193,10 @@ way the only way. Each one names what enforces it.
 4. **`async`/`await` with an `AbortSignal`, never `.then`, `.catch` or `.finally`.** Enforced by the guard.
 5. **Every backend call has a cancellation token, and passes it to everything it awaits.** CA2016 is a build error
    (`dotnet/.editorconfig`). Closing the socket cancels every call still running on it.
-6. **Every save is atomic.** A call that writes runs inside `IAtomicWriter.WriteAsync`: one connection, one
-   transaction, an audit row, commit, and only then publish. A call can't write any other way, because only the
-   writer hands out a write connection. Enforced by the type: `IAppDatabase` is read-only.
+6. **Every save is atomic.** Every write runs inside `IAtomicWriter.WriteAsync`: one connection, one transaction, an
+   audit row, commit, and only then publish. That includes a call's write and the chat row writes (`RowStore`'s
+   batches). Nothing can write any other way, because only the writer hands out a write connection. Enforced by the
+   type: `IAppDatabase` is read-only.
 7. **Features register only through the dispatcher.** A feature adds its calls and topics in its
    `<Feature>Feature.cs`. No feature maps a route, reads a socket or opens a database connection itself. Enforced by
    `scripts/lint.d/40-one-dispatcher.sh`, which replaces `40-routes.sh`.
@@ -317,8 +335,12 @@ Each part has one implementation, registered in DI, and features reach it only t
 The limits are fixed, not settings:
 
 - 4 MB per frame, and 16 MB queued per connection. A slow page is closed and can reconnect from its last sequence.
-- 30 seconds per call (`CancelAfter` in the dispatcher). A call that runs over answers `timeout`. Saves aren't calls
-  the page waits on, so the limit doesn't apply to them.
+- 30 seconds per call (`CancelAfter` in the dispatcher). A call that runs over answers `timeout`. There's no
+  exception to the 30 s limit, ever, saves included.
+
+**Calls are short.** Long work, such as a clone, a big search or a git operation, is *started* by a call, which
+answers at once with a job id. The work then reports its progress and its result on a topic keyed by that id, and
+has its own cancel call. No handler is allowed to wait on long work inside a call.
 
 ### 5.2 The dispatcher: one path for every call
 
@@ -331,7 +353,7 @@ public interface ICallRegistry
         Func<TArgs, CallContext, Task<TResult>> handler);
     void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, IWriteScope, CallContext, Task<TResult>> handler);
-    void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Func<IReadOnlyDictionary<string, TValue>, IWriteScope, CallContext, Task> flush);
+    void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Func<string, TValue, IWriteScope, CallContext, Task> write);
     void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<string?, CallContext, Task<IReadOnlyList<TItem>>> state);
 }
 ```
@@ -357,7 +379,7 @@ internal sealed class PreferencesFeature(PreferenceReader reader) : IFeature
     public void Register(ICallRegistry calls)
     {
         calls.Topic("preferences", AppJson.Default.Preference, (_, call) => reader.AllAsync(call.Cancellation));
-        calls.Save("preferences", AppJson.Default.JsonElement, PreferenceWriter.FlushAsync);
+        calls.Save("preferences", AppJson.Default.JsonElement, PreferenceWriter.WriteAsync);
     }
 }
 ```
@@ -411,6 +433,14 @@ public interface IWriteScope
 
 No transaction is ever held open across an agent call, a network call, or a wait for a socket.
 
+The writer handles every write, not just calls. `RowStore`'s `Commit` and `Copy`, which save chat rows, run through
+`IAtomicWriter` too, and so do the `ThreadStore` writes, since only the writer hands out a write connection. Each row
+batch gets one audit row, not one per row.
+
+**Measured** in the same scratch program as 5.9: a 20-row batch with 400-byte payloads takes 131 to 138 µs at the
+median with its audit row, against 96 to 99 µs without. The 99th percentile is 2.7 to 3.4 ms with the audit row and
+2.6 to 2.7 ms without; most of that is the WAL write. Step B3 measures it again through the real writer.
+
 Reads go through `IAppDatabase`, which has no write methods. Under D1 A or B, it's `IApplicationDbContext` with
 `AsNoTracking` queries.
 
@@ -422,30 +452,69 @@ removes the subscription. The `rows` topic is today's `LiveHub` (phase C1).
 
 ### 5.8 The one backend clock
 
-`Infrastructure/Clock/BackendClock.cs` is one `PeriodicTimer` on the injected `TimeProvider`, ticking once a second.
-It runs only while something subscribes to the `clock` topic, and its `change` carries `{ now }`. The page's turn
-clock (section 7, row 8) and, under D2 B, the counters sampler read it. Tests use `FakeTimeProvider`, as the spike
-does now.
+`Infrastructure/Clock/BackendClock.cs` is one `PeriodicTimer` on the injected `TimeProvider`.
+
+- **Each subscription picks its granularity** with its key:
+  - `second`, for a running turn's elapsed time;
+  - `minute`, for relative times like "5m ago";
+  - and, under D2 B, `counters`, every 2 s.
+- **It sends only what's asked for.** A `minute` subscriber gets one `change` a minute, on the minute. The timer
+  ticks at the finest granularity any current subscription asks for, and stops when there are none. The `change`
+  carries `{ now }`.
+- **Only one component reads `now`:** `app/src/lib/time/Time.svelte`, which shows either an elapsed time or a
+  relative time. Every other place that shows a time uses `<Time>`, so the clock has one reader on the page.
+- **Tests** use `FakeTimeProvider`, as the spike does now.
 
 The backend's other waits are listed in the timer inventory: the `SessionHost` coalesce timer, the adapter idle
 grace, the SSH backoff, and the follower's backoff. They stay where they are, since they're backend work that needs
 time and isn't a page clock. Phase P1 replaces two polls with pushes: `RemoteOutbox.cs:44`, every second, and
 `MessageStatusTool.cs:30`, every 250 ms.
 
-### 5.9 Saves: the page sends each change, the backend batches
+### 5.9 Saves: on committing events only, with no debounce anywhere
 
-The page sends every change, with no debounce: `save(feature, key, value)` sends `call` with `feature/set`. The
-backend's `Infrastructure/Persistence/SaveBatcher.cs` keeps the newest value per key. 300 ms after the last change,
-on the backend clock, it runs the feature's `flush` inside `IAtomicWriter.WriteAsync`: one transaction for all the
-waiting keys, then a publish on the feature's topic, so other windows see the change.
+This answers Jesse's "find another way to do what the debounce does". There's no debounce in the front end or the
+backend. A debounce exists to turn many changes into one save. Saving only when the user has finished a change gets
+the same result with no timer.
 
-- A read always includes waiting values, so a load can never bring back an older value, and the page doesn't need
-  `unsavedKey`.
-- Each change reaches the backend as it happens, so closing the window loses nothing, and the `pagehide` and
-  `visibilitychange` listeners are deleted.
-- When the backend shuts down, it writes whatever is waiting before it exits.
-- base#7 ("Settings save a moment after a change, not on every keystroke") still holds: the database write happens
-  once, 300 ms after the last change.
+**The page saves only on committing events:**
+
+- `change`: on a select, a checkbox, a range input when it's released, and a text field on blur or Enter;
+- `pointerup` at the end of a divider drag;
+- `blur`.
+
+It never saves on `input` or `pointermove`. While a divider is dragged, or a field is typed in, the page only updates
+its own `$state`.
+
+**Each save is one call and one atomic write.** `save(feature, key, value)` sends `call` with `feature/set`. The
+handler runs once inside `IAtomicWriter.WriteAsync` (5.6): one upsert, its audit row, commit, then a publish on the
+feature's topic, so other windows see it.
+
+- There's no batcher, no 300 ms timer, and no view that mixes in values still waiting to be written. A read returns
+  what's committed.
+- Saves on one socket arrive in the order sent and run one after another (the writer's one write lock), so an older
+  save can't land after a newer one.
+- The page sets its own `$state` before it sends. It ignores its own echo on the topic, but applies the echo from
+  another window.
+
+**Closing the window with an edit still in a focused field.** There are no `pagehide` or `visibilitychange`
+listeners, and base#7 says a change is never lost, so there's one way this edit gets saved:
+
+1. The shell catches the window's close request, with Tauri's `CloseRequested` for the window and `ExitRequested`
+   when the app quits. It holds the close, and sends `closing` to the page.
+2. `app/src/lib/host/closing.ts`, the only listener for it, blurs the focused element. That fires the field's
+   `change`, which makes its `save`.
+3. The page awaits every save still unanswered on the socket, then calls the host's `closeWindow()`.
+4. The shell closes the window once the page answers. If the backend has gone (the socket is closed), the shell
+   closes right away, since there's nothing left to write to. The shell's wait for the page's answer is the only
+   time involved, and it lives in the Rust shell, not in the page.
+
+A crash or a forced kill isn't a close, so it doesn't go through this. Only an edit that was never committed
+(still in a focused field) can be lost that way.
+
+**Cost, measured.** A single-row settings upsert with its audit row, in one transaction, on agent-workbox, takes
+17 µs at the median and 81 µs at the 99th percentile; without the audit row it's 12 µs and 55 µs. That's 2,000 runs
+each, two runs, Native AOT, `Microsoft.Data.Sqlite`, on disk with WAL and `synchronous = NORMAL` (RowStore's
+settings), from a scratch program. Step B6 measures it again through the real `IAtomicWriter` and records the number.
 
 ### 5.10 The page side
 
@@ -459,6 +528,9 @@ waiting keys, then a publish on the feature's topic, so other windows see the ch
 - **`app/src/lib/host/backend.ts`**, the shell side. The shell (`shell/src/main.rs`) watches its backend child. When
   the backend starts or restarts, it sends a `backend-ready` event to the webview. Restarting is the user's action
   (a Reconnect button), never an automatic loop.
+- **A visible "Disconnected" state.** If the socket drops while the backend is still up, no `backend-ready` event
+  comes. So after the one reconnect fails, the page shows "Disconnected" with a Reconnect button. The button tries
+  the socket again, and asks the shell to restart the backend only if the shell reports it has exited.
 
 ## 6. What stays HTTP
 
@@ -479,16 +551,14 @@ These come from the inventory at `9e51121`, and each was checked by grep.
 | 5 | `lib/rows/client.ts:52`: `delay(1000)` | Reopening `/live` after it drops | **A shell event.** `socket.ts` reconnects once, then on `backend-ready` (5.10). `rows/client.ts` is deleted in phase C1. |
 | 6 | `lib/Conversation.svelte:265`: a frame loop (`rows/reveal.ts`) | Showing streamed text at a steady pace | **The backend.** `SessionHost` already releases text on its coalesce timer, so the page shows text as it arrives. The page's reveal loop and `rows/reveal.ts` are deleted. A fade on each new chunk, if wanted, is a finite CSS animation. |
 | 7 | `lib/Conversation.svelte:459`: a frame callback, then `coverView` | After layout, checking the drawn rows cover the view, and fixing the virtualizer when they don't | **An event.** A `ResizeObserver` on the scroller's content runs after layout. `coverView` runs in its callback. |
-| 8 | `lib/Conversation.svelte:245`: `delay(1000)` in a loop | The running turn's elapsed time | **The backend clock.** The page subscribes to `clock` while a turn runs, and shows `now - startedAt`. |
+| 8 | `lib/Conversation.svelte:245`: `delay(1000)` in a loop | The running turn's elapsed time | **The backend clock.** `<Time>` subscribes to `clock` with key `second` while a turn runs, and shows `now - startedAt` (5.8). |
 | 9 | `lib/call.ts:52,84,99`: `AbortSignal.timeout(30 s)` | The call timeout | **The backend.** The dispatcher's 30-second limit answers `timeout` (5.1). `call.ts` is deleted in step B7. |
-| 10 | `lib/call.ts:73`: `debounce(saveNow, 300)` | The settings debounce | **The backend.** `SaveBatcher` (5.9). |
-| 11 | `lib/call.ts:102,105`: `pagehide` and `visibilitychange` | Flushing saves on close | **Deleted.** Each change already reached the backend (5.9). |
+| 10 | `lib/call.ts:73`: `debounce(saveNow, 300)` | The settings debounce | **Deleted, with no replacement timer.** The page saves only on committing events (`change`, `pointerup`, `blur`), as one atomic write each (5.9). |
+| 11 | `lib/call.ts:102,105`: `pagehide` and `visibilitychange` | Flushing saves on close | **Deleted.** The shell's `closing` event blurs the focused field, and the page awaits the save before the window closes (5.9). |
 | 12 | `lib/composer/Composer.svelte:81`: `queueMicrotask` | Focus and selection after a slash-command pick | **Deleted.** Use `flushSync`, then focus, as `Composer.svelte` already does after a draft change. |
 | 13 | `debug.svelte.ts:44,70,94` (signal and socket listeners), `TrackedWebSocket` | Counting sockets for the soak | `TrackedWebSocket` is folded into `socket.ts` (one socket, counted there). The rest is deleted with row 1. |
 
-The single named exception: **none.** The debounce is handled by row 10, so nothing in the page needs one. If Jesse
-would rather keep a page-side debounce, it would be the only one, written inside `socket.ts`, and the guard would name
-that one line's function, not a file list.
+The single named exception: **none.** There's no debounce in the front end or the backend (row 10, and 5.9).
 
 ## 8. Every promise chain in `app/src` today
 
@@ -539,14 +609,18 @@ These are checked in every file:
 - A `WebSocket` outside `TRANSPORT`.
 - `@tauri-apps/` or `listen(` outside `HOST`.
 
+Under D2 A, `app/measure/` is scanned with the same rules, except that timers and frame callbacks are allowed
+there. It's the one place the timer rule doesn't reach.
+
 Its self-test lines, which are today's design, stay. A new probe is added for each new rule.
 
-Changing these rules means changing the script, which is locked. So adding a rule or a place takes an OK in
-`.pinned-approvals`, and nobody can add their own file to a list, because there's no list.
+`TRANSPORT` and `HOST` are the only two names in the guard script. A third needs Jesse's OK. Changing the rules
+means changing the script, which is locked, so adding a rule or a place takes an OK in `.pinned-approvals`. Nobody
+can add their own file to a list, because there's no list.
 
 `guards.sh` and `guards-allowed.txt` are locked on main now (`scripts/locked-paths.txt`), since PR #1 merged.
-**Step B10 needs Jesse's OK line** in `.pinned-approvals` for both files, because the lane that wants the change can't
-OK it (`AGENTS.md`, "Who may OK").
+**Step B10 needs Jesse's OK lines** (section 9.3), because the lane that wants the change can't OK it (`AGENTS.md`,
+"Who may OK").
 
 ### 9.2 `scripts/lint.d/`
 
@@ -559,14 +633,18 @@ OK it (`AGENTS.md`, "Who may OK").
   - `new SqliteConnection(` (or `new ApplicationDbContext(`), except in `Assembly.Infrastructure/Persistence/`;
   - `AcceptWebSocketAsync(`, except in `SocketEndpoint.cs`;
   - `BeginTransaction(`, except in `AtomicWriter.cs`.
-- **`40-one-dispatcher.sh` lands only when it needs zero exceptions,** at the end of phase C1, in the commit that
-  deletes the last chat HTTP route. It has no legacy list, and no list that can only shrink.
+- **`40-routes.sh` is deleted in step B7,** together with `FeatureCalls.cs`. `scripts/lint.d` isn't locked on main,
+  so that needs no OK.
+- **There's no route check between B7 and the end of C1.** That's a stated gap, not a list. Reviews cover it: a new
+  `Map` call in that window is a finding.
+- **`40-one-dispatcher.sh` lands at the end of phase C1 with zero exceptions,** in the commit that deletes the last
+  chat HTTP route. It has no legacy list, and no list that can only shrink.
   - **Why then, and not inside the base:** moving the chat routes onto the socket before B11 would put all of
     phase C1 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
     to show.
-  - **Until then:** today's `40-routes.sh` and its shrinking list stay as they are on main, unchanged, and nothing is
-    added to them. The C1 commit deletes `40-routes.sh`. Because `scripts/lint.d/**` is locked from B12, that delete
-    needs an OK; adding the new file doesn't.
+- **`scripts/lint.sh` on main is still the stub,** so no `lint.d` check runs anywhere today. Step B10a, before B11,
+  replaces it with the move thread's `lint.sh` that runs every `lint.d` script (blob `ac101c9`). `lint.sh` is locked,
+  so that needs an OK line by the move thread (section 9.3).
 - New checks, all run by `scripts/lint.sh`:
   - `50-dotnet-format.sh`: `dotnet format --verify-no-changes`.
   - `60-svelte-check.sh`: `svelte-check`, with zero errors.
@@ -577,6 +655,18 @@ OK it (`AGENTS.md`, "Who may OK").
   to `scripts/locked-paths.txt`. Before that, the move changes those files at every step, and locking them earlier
   would need an OK each time.
 
+### 9.3 The OK lines the base needs
+
+| Step | Change | OK by |
+| --- | --- | --- |
+| B10a | Replace `scripts/lint.sh` with the version that runs `lint.d` (blob `ac101c9`) | `by:move-thread` |
+| B10 | Change `app/scripts/guards.sh` | `by:jesse` (his 18:11 message on 26 October asks for it) |
+| B10 | Delete `app/scripts/guards-allowed.txt` | `by:jesse` |
+| B10 | Drop `guards-allowed.txt`'s line from `scripts/locked-paths.txt` | `by:jesse` |
+| B12 | Add the new locks to `scripts/locked-paths.txt` | `by:move-thread` |
+
+All of these wait until Jesse removes the three settings denies that block writing `.pinned-approvals`.
+
 ## 10. The base, commit by commit
 
 All of this happens on one branch, `lane/base`, with each step a commit. Each code commit:
@@ -585,7 +675,9 @@ All of this happens on one branch, `lane/base`, with each step a commit. Each co
 - runs the full `scripts/check4.sh` on the pushed commit, with the evidence committed alongside;
 - is reviewed by the move thread before the next step starts.
 
-The PR opens when B12 is done, and Jesse merges it.
+**One PR per step group:** B1; B2; B3 to B6; B7 and B8; B9 to B12. Each PR opens as a draft when its group is done,
+and is marked ready once its proof is in. It has a plain summary written for Jesse, saying what to read first and
+what isn't proven yet. Jesse merges each one, and the next group builds on main after he does.
 
 ### B1. Merge the AGENTS.md files
 
@@ -633,8 +725,12 @@ The PR opens when B12 is done, and Jesse merges it.
      subscribes and checks the order).
   3. A failing commit (an injected failure) leaves nothing and publishes nothing.
   4. Two writes at once run one after the other.
-- **Proof:** the tests, run, with their counts. check4 passes.
-- **Size:** 200 to 300 lines with tests.
+  5. A `RowStore` batch commit goes through the writer: its rows and one audit row commit together.
+- **Also:** `RowStore` and `ThreadStore` writes move onto `IAtomicWriter` (5.6).
+- **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
+  99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
+- **Proof:** the tests, run, with their counts, the measurement, and check4.
+- **Size:** 250 to 350 lines with tests.
 
 ### B4. The socket: endpoint, frames, dispatcher, cancellation
 
@@ -674,26 +770,33 @@ The PR opens when B12 is done, and Jesse merges it.
   1. Subscribing sends `state`, then each `change` published after it.
   2. Unsubscribing, or closing the socket, stops changes.
   3. The clock ticks only while subscribed (`FakeTimeProvider`).
-  4. Subscribing again after a reconnect gives the current state, not a replay.
+  4. A `minute` subscriber gets exactly one change per minute over three fake minutes, while a `second` subscriber
+     on the same clock gets 180.
+  5. Subscribing again after a reconnect gives the current state, not a replay.
 
   On the page, a `subscribe` test applies `state` and `change` to a `$state` map.
 - **Proof:** the tests, and check4.
 - **Size:** 300 to 400 lines with tests.
 
-### B6. Saves batched on the backend
+### B6. Saves on committing events, and closing the window
 
 - **Files:**
   - Application: `Common/Calls/ICallRegistry.Save`.
-  - Infrastructure: `Persistence/SaveBatcher.cs`.
-  - Page: `socket.ts` gains `save`.
+  - Infrastructure: the dispatcher runs `Save` handlers inside `IAtomicWriter`.
+  - Page: `socket.ts` gains `save`, and `app/src/lib/host/closing.ts` handles the shell's `closing` event.
+  - Shell: `shell/src/main.rs` holds the close request and sends `closing` (5.9).
 - **Failing tests first:**
-  1. Three changes in 300 ms make one write with the newest value of each key.
-  2. A read while a change is waiting returns the waiting value.
-  3. Shutting down writes what's waiting.
-  4. A failed write keeps the values waiting and reports once.
+  1. One `save` makes one write, with one audit row, and one publish after commit.
+  2. Two saves sent in order land in order.
+  3. A failed save reports once, and leaves the committed value as it was.
 
-  All of these use `FakeTimeProvider`. On the page: `save` sends each change, with no timer.
-- **Proof:** the tests, and check4.
+  On the page:
+  1. `save` sends one call per committing event, and none on `input`.
+  2. `closing` blurs the focused field, awaits the save it makes, then calls `closeWindow()`.
+- **Measure:** time a single-row settings upsert through the real `IAtomicWriter`, with its audit row, on
+  agent-workbox. Record the median and 99th percentile, as 5.9 did for the scratch program (17 µs and 81 µs).
+- **Proof:** the tests, the measurement, and check4. The move thread types in a settings text field and closes the
+  window without leaving the field, in the window on the Mac, and the value is there after reopening.
 - **Size:** 200 to 300 lines with tests.
 
 ### B7. Preferences rebuilt on the base (the example every feature copies)
@@ -701,16 +804,16 @@ The PR opens when B12 is done, and Jesse merges it.
 - **Files:**
   - Domain: `Preferences/Preference.cs`.
   - Application: `Preferences/PreferencesFeature.cs`, `PreferenceReader.cs`, `PreferenceWriter.cs`,
-    `PreferencesJson.cs`, `README.md` (moved from `Assembly.Mac/Preferences/README.md`, which is locked, so it needs
-    the move thread's OK for a moved file).
+    `PreferencesJson.cs`, `README.md` (moved from `Assembly.Mac/Preferences/README.md`, which isn't locked).
   - Infrastructure: `Persistence/Preferences/PreferencesSchema.cs`.
   - Page: `app/src/lib/preferences/preferences.svelte.ts` (subscribe and save), and its `README.md`.
 - **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Engine/Features/FeatureCalls.cs`, `PreferencesRoutes.cs`,
-  `PreferenceStore.cs`, and the `/preferences/*` HTTP route.
+  `PreferenceStore.cs`, the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
+  no OK is needed. From here until the end of C1 there's no route check (section 9.2).
 - **Failing tests first:**
-  1. base#7: a change is written once, 300 ms after the last one.
+  1. base#7: a theme change is written once, when it's made, and is there after the backend restarts.
   2. Two windows: a change in one reaches the other's subscription.
-  3. A load can't put back an older value, even if the subscription arrives while a change is waiting.
+  3. A subscription that starts after a save gets the saved value.
 
   The page tests change with it. `app/test/draft/base/call.test.ts` becomes `socket.test.ts`, and
   `preferences.test.ts` is rewritten for the subscription.
@@ -757,6 +860,8 @@ group:
 - check4 passes.
 - The move thread runs the lag meter on the Mac, in measure mode under D2 A, before and after, and posts both.
 - A long chat streams and scrolls without blank rows, in the window.
+- For `coverView` on `ResizeObserver` (row 7), the window check scrolls a long chat with folds opening, and watches
+  the console for "ResizeObserver loop" errors. There must be none.
 
 **Size:** 300 to 500 lines changed, mostly deleted.
 
@@ -769,6 +874,14 @@ group:
 - **Proof:** `guards.sh` passes on the tree after B9, and fails on each probe.
 - **Size:** about 120 lines.
 
+### B10a. Turn on `scripts/lint.sh`
+
+- **Files:** `scripts/lint.sh`, replaced with the move thread's version that runs every `scripts/lint.d` script
+  (blob `ac101c9`). It's locked, so this needs an OK line by the move thread (section 9.3).
+- **Test first:** a scratch `lint.d` probe script that always fails makes `lint.sh` fail. Today's stub passes it.
+- **Proof:** `lint.sh` runs `00-typescript-only.sh`, and fails on the probe.
+- **Size:** a few lines.
+
 ### B11. The lint checks
 
 - **Files:** `scripts/lint.d/50-dotnet-format.sh`, `60-svelte-check.sh`, `70-architecture.sh`.
@@ -780,11 +893,10 @@ group:
 ### B12. Lock the configs, then open the PR
 
 - **Files:** `scripts/locked-paths.txt` adds `scripts/lint.d/**`, `dotnet/.editorconfig`,
-  `dotnet/Directory.Build.props`, `dotnet/Directory.Packages.props`, and, under D2 A, `app/measure/**`. That file is itself locked, so this needs an
-  OK line.
+  `dotnet/Directory.Build.props`, `dotnet/Directory.Packages.props`, and, under D2 A, `app/measure/**`. That file
+  is itself locked, so this needs an OK line by the move thread (section 9.3).
 - **Proof:** `scripts/check-pinned.sh` refuses a test edit to each newly locked file.
-- **Then:** open the PR from `lane/base`, drafted until every step's proof is in, and send it to Jesse to review and
-  merge.
+- **Then:** the B9 to B12 PR is marked ready, as the last of the five PRs (section 10).
 
 ## 11. The later phases
 
@@ -804,14 +916,15 @@ catalogue stays the reference.
       topic;
     - the page's `threads/`, `rows/` and `composer/` stores.
   - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
-    `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions,
-    and deletes `40-routes.sh`, which needs an OK (section 9.2).
+    `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions
+    (section 9.2). Adding a file to the locked `lint.d` needs no OK.
   - **Tests:**
     - base#8: a thread made while the page is subscribed arrives as an upsert;
     - base#9: the pending run is shown during the gap before the copied row arrives (the failing test is written
       before the fix), and the menus come from a host started with an empty home;
     - the rows-topic catch-up and `prevSeq` tests that exist today, moved;
-    - attachments as base64 calls (D4).
+    - attachments as chunked calls (D4): a 10 MB image arrives in about 10 calls and commits once; cancelling
+      midway leaves nothing linked.
   - **Proof:** check4 with `rows.ts`, `threads.ts` and `config.ts`, and the chat used in the window on the Mac.
 - **C2. One socket per remote machine** (Sol P11, P13).
   - **Files:** `Infrastructure/Remote/RemoteMachine.cs` becomes a socket client of the remote's `/socket`, and
@@ -888,8 +1001,8 @@ Each P phase has the same shape as the W phases.
 - **D1 to D4** (section 1).
 - **The 300-line file limit,** which waits for Jesse. If he picks 300, the 7 oversize files are split in phase C1.
 - **The packages for F2 and the checks** (prettier, knip), which wait for Jesse's OK.
-- **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. Adding the
-  line changes `docs/behavior/base.md`, which is locked now, so it needs an OK.
-- **WKWebView's behavior when the app quits** isn't a risk any more under 5.9, because each change is already on the
-  backend. A quit while a batch is waiting is covered by the backend writing on shutdown, and that still needs to be
-  shown working in the window on the Mac.
+- **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to
+  `docs/behavior/base.md` in phase C2, as a draft line. That file isn't in `scripts/locked-paths.txt`, so it needs no
+  OK.
+- **Closing the window with an edit in a focused field** goes through the shell's `closing` event (5.9). That still
+  has to be shown working in the window on the Mac, for both closing the window and quitting the app (step B6).
