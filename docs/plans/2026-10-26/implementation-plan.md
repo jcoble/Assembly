@@ -308,9 +308,9 @@ no OK for them.
 | Infrastructure | The implementations of `Common/` and the outside systems: the SQLite connection and the writer with its audit, the socket and dispatcher, topics, the clock, starting agent processes and git, local and remote machines (SSH tunnel, follower, outbox), the provider transcript readers, `/mcp`, and today's HTTP routes until they're deleted. | Feature rules or feature SQL. |
 | Hosts | `Program.cs`: parse arguments, call the `Add*` methods, map the socket endpoint and `/mcp`, run. | Anything else. |
 
-**Packages in Application.** Application may reference Markdig and DiffPlex, which are plain libraries with no I/O (chat's
-rows parse markdown and diffs). It never references `Microsoft.Data.Sqlite` or ASP.NET Core; `ArchitectureTests`
-checks both.
+**What Application never uses.** Application and Domain never reference `Microsoft.Data.Sqlite`, ASP.NET Core or
+`System.Diagnostics.Process`; `ArchitectureTests` checks all three. Any other package is fine if it's a pure library
+with no I/O, such as Markdig and DiffPlex, which chat's rows use to parse markdown and diffs.
 
 **Features don't reach into each other.** A feature folder never uses a type from another feature's folder. When
 two features need the same thing, it moves to the core (a record to Domain, a contract to `Common/`).
@@ -900,12 +900,18 @@ because chat's row and thread stores and the preference store call SQLite direct
       through `IAtomicWriter.WriteAsync`. Their public methods stay the same, so their callers don't change.
   - **Failing tests first,** for the contracts: a query maps rows by position, a write that throws leaves nothing,
     and a write that succeeds is there after it commits.
+  - **Measured before and after the rewrite, on agent-workbox:** a 20-row batch commit through the real `RowStore`
+    (median and 99th percentile), and the Native AOT backend's idle memory. The numbers go in PR 2's text. If either
+    gets worse, that's a defect, fixed before B2b.
   - **Proof:** every existing test, the pinned ones included, passes unchanged. That's the proof behavior didn't
     change.
 - **B2b. `ArchitectureTests`, failing.** `Assembly.Tests/Architecture/ArchitectureTests.cs`. It loads each assembly
   and checks its references, and reads the source tree for the rest (no new package):
   - `Assembly.Domain` references no `Assembly.*`;
-  - `Assembly.Application` references only `Assembly.Domain`, and not `Microsoft.Data.Sqlite` or ASP.NET Core;
+  - `Assembly.Application` references only `Assembly.Domain`;
+  - neither `Assembly.Domain` nor `Assembly.Application` references `Microsoft.Data.Sqlite` or ASP.NET Core, or
+    names `System.Diagnostics.Process` (so starting a process stays in Infrastructure, now that `SharedAdapter` and
+    the ACP code are in Application);
   - `Assembly.Infrastructure` doesn't reference `Assembly.Mac` or `Assembly.Remote`;
   - no file under `Application/Features/<A>/` names the namespace `Assembly.Application.Features.<B>` for another
     feature `B` (in a `using` or written out), and every file's namespace matches its folder, so the check can't be
@@ -917,7 +923,10 @@ because chat's row and thread stores and the preference store call SQLite direct
     exceptions. Today's largest folder, `Assembly.Engine/Acp/Messages/`, has 29.
 
   It fails because the projects don't exist yet.
-- **B2c. The move.** Git shows it as renames, with only namespace and `using` edits in them.
+- **B2c. The move.** Git shows it as renames, with only namespace and `using` edits in them. PR 2's text carries
+  the proof, so Jesse can read B2a and skip the moved files: `git diff -M --stat` and `--summary` for the commit,
+  showing every moved file as a rename, and a check that every changed line in those renames is a `namespace` or
+  `using` line. New files (the project files, `DependencyInjection.cs`) are listed apart.
   - **New:** `dotnet/Assembly.Domain/Assembly.Domain.csproj`, `dotnet/Assembly.Application/Assembly.Application.csproj`
     with `DependencyInjection.cs`, `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj` with
     `DependencyInjection.cs`, `dotnet/Directory.Packages.props`.
@@ -928,7 +937,10 @@ because chat's row and thread stores and the preference store call SQLite direct
   - **Changed:** `Assembly.Mac/Program.cs` (from `Serve/MacBackend.cs` and `MacServe.cs`) and the remote's
     `ServeRun.cs` call the `Add*` methods, plus the scripts that name `Assembly.Engine` (`dotnet/scripts/*.sh`,
     `shell/assembly.sh`, `scripts/check4.sh`), `AGENTS.md` and `dotnet/README.md`, which name `Assembly.Engine/*` and
-    `Assembly.Mac/*` paths.
+    `Assembly.Mac/*` paths. `AGENTS.md`'s provider line names one folder for provider quirks:
+    `Application/Common/Acp/V1/`. That's where the adapters' updates are read, and where today's provider
+    differences already are (`ClaudeBackground`, `CodexThreadStatus`, `UpdateReader`). `Infrastructure/Agents/` only
+    starts processes, so a quirk there would be about launching, not about what a provider sends.
   - **Changed:** `scripts/check-evidence.sh`. Its list of code folders names `dotnet/Assembly.Engine`; that's
     replaced by `dotnet/Assembly.Domain`, `dotnet/Assembly.Application` and `dotnet/Assembly.Infrastructure`, or
     backend commits would skip the four-way check without a word. The script also fails when a `dotnet/Assembly.*`
