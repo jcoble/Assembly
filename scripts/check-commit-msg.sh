@@ -36,7 +36,7 @@ case "$branch" in
     ;;
 esac
 
-grep -qx 'docs/architecture.md' <<<"$changed" || grep -Eiq '^Architecture: unchanged' <<<"$message" \
+grep -qFx 'docs/architecture.md' <<<"$changed" || grep -Eiq '^Architecture: unchanged' <<<"$message" \
   || stop "update docs/architecture.md in this commit, or say Architecture: unchanged when it describes nothing this changes."
 
 if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then

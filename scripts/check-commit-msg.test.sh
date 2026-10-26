@@ -48,5 +48,6 @@ expect 0 "a subject that only starts with fixup isn't a fix" work $'fixup the do
 expect 1 "a message without Architecture: unchanged stops it" work $'Subject\n\nCommitted-by: Claude'
 expect 0 "Architecture: unchanged in any case passes" work $'Subject\n\narchitecture: Unchanged\nCommitted-by: Claude'
 expect 0 "a commit that changes docs/architecture.md needs no Architecture line" work $'Subject\n\nCommitted-by: Claude' docs/architecture.md
+expect 1 "a file only named like the guide doesn't count as it" work $'Subject\n\nCommitted-by: Claude' docs/architectureXmd
 
 exit "$failed"
