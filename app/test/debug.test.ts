@@ -82,7 +82,7 @@ test('the chats counter holds at one open conversation across session switches',
       .replaceAll("from 'svelte'", `from '${svelteUrl}'`);
     return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
   };
-  // A conversation counts itself as Conversation.svelte does; the page keys it by thread.
+  // A conversation counts itself as Conversation.svelte does; the page keys it by session.
   const chat = component(
     `<script>import { onDestroy } from 'svelte'; import { chatOpened, chatClosed } from '${debugUrl}'; let { id } = $props(); chatOpened(); onDestroy(chatClosed);</script><p>{id}</p>`,
     'Chat.svelte',

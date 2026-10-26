@@ -50,7 +50,7 @@ public sealed partial class SessionHostTests
         agent.Crash();
         var task = (await RowsUntil(row => row.Kind == "task"))[^1];
         Assert.Equal((runId, "stopped"), (task.RunId, task.Payload.GetProperty("state").GetString()));
-        // The thread takes sends again, on a new adapter.
+        // The session takes sends again, on a new adapter.
         Assert.NotNull(_host.Send("again"));
         await (await _launcher.NextAsync()).StartAsync();
     }
@@ -255,7 +255,7 @@ public sealed partial class SessionHostTests
         Assert.False(subagent[^1].Payload.GetProperty("canStop").GetBoolean());
         Assert.True(subagent[0].Payload.GetProperty("canStop").GetBoolean());
 
-        // Its thread is the parent's child, kept out of the list, with its prompt, its reply, and its end.
+        // Its session is the parent's child, kept out of the list, with its prompt, its reply, and its end.
         var child = _sessionStore.Get(subagent[0].Payload.GetProperty("sessionId").GetString()!)!;
         Assert.Equal((_session.SessionId, "child1", "general-purpose"), (child.ParentSessionId, child.AcpSessionId, child.Title));
         Assert.DoesNotContain(_sessionStore.List(null, 50).Sessions, session => session.SessionId == child.SessionId);

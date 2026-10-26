@@ -3,7 +3,7 @@
   import type { SubagentPayload } from '../rows/store';
   import { TASK_STOP, SESSION_OPEN } from './tools/tool';
   // A subagent the agent runs as a session of its own: what it was asked, how it
-  // stands, a Stop while it works if the agent can stop it, and its own thread to open.
+  // stands, a Stop while it works if the agent can stop it, and its own session to open.
   // Nested (indented) under the tool call that started it, when the agent said which.
   let { acpSessionId, subagent }: { acpSessionId: string; subagent: SubagentPayload } = $props();
 

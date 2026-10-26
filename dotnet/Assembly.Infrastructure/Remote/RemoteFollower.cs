@@ -10,9 +10,9 @@ using Assembly.Application.Features.Chat;
 namespace Assembly.Infrastructure.Remote;
 
 /// <summary>
-/// Copies a remote thread's rows into the Mac's store, in seq order, and publishes them on the Mac's hub. One socket
-/// per thread to the remote's <c>/live?after=</c>, opened from the Mac's last seq for the thread: the backlog is the
-/// catch-up, then live rows follow. It keeps following while the turn runs or a webview has the thread open, and
+/// Copies a remote session's rows into the Mac's store, in seq order, and publishes them on the Mac's hub. One socket
+/// per session to the remote's <c>/live?after=</c>, opened from the Mac's last seq for the session: the backlog is the
+/// catch-up, then live rows follow. It keeps following while the turn runs or a webview has the session open, and
 /// reconnects from the last seq when the link drops or a row doesn't follow the one before it.
 /// </summary>
 internal sealed class RemoteFollower(
@@ -26,7 +26,7 @@ internal sealed class RemoteFollower(
     private readonly ConcurrentDictionary<string, Task> _following = new();
     private readonly CancellationTokenSource _stopping = new();
 
-    /// <summary>Catches the thread up, and follows it for as long as it's needed. A thread already followed is left as it is.</summary>
+    /// <summary>Catches the session up, and follows it for as long as it's needed. A session already followed is left as it is.</summary>
     public void Watch(string sessionId)
     {
         if (!_stopping.IsCancellationRequested)
@@ -40,7 +40,7 @@ internal sealed class RemoteFollower(
         var backoff = TimeSpan.FromSeconds(1);
         try
         {
-            // At least once, so opening a thread catches up on turns that ran while nobody was watching.
+            // At least once, so opening a session catches up on turns that ran while nobody was watching.
             do
             {
                 try
@@ -110,7 +110,7 @@ internal sealed class RemoteFollower(
                 if (frame.RootElement.GetProperty("type").GetString() != "row")
                     continue; // a ping
                 var row = RowWire.Read(frame.RootElement.GetProperty("row"));
-                // A subagent's thread is known before its row is shown, so it can be opened.
+                // A subagent's session is known before its row is shown, so it can be opened.
                 if (row.Kind == RowKind.Subagent)
                     subagentCopied(sessionId, row);
                 if (!hub.PublishCopy(row))

@@ -8,7 +8,7 @@ using Assembly.Domain.Sessions;
 namespace Assembly.Application.Features.Chat.Helpers;
 
 /// <summary>
-/// A helper's row in its parent's thread: running while it works, idle once its turn ends, as stopped or failed when
+/// A helper's row in its parent's session: running while it works, idle once its turn ends, as stopped or failed when
 /// that turn was.
 /// </summary>
 public sealed class HelperRow(SessionStore sessionStore, SessionRegistry sessions, LiveHub hub)
@@ -24,7 +24,7 @@ public sealed class HelperRow(SessionStore sessionStore, SessionRegistry session
         sessions.For(parent).Show(new SubagentShown(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), helper.SessionId, payload));
     }
 
-    /// <summary>A turn ended in <paramref name="threadId"/>: if it's a helper, its row says so.</summary>
+    /// <summary>A turn ended in <paramref name="sessionId"/>: if it's a helper, its row says so.</summary>
     public void TurnEnded(string sessionId)
     {
         if (sessionStore.Get(sessionId) is not { Helper: true } helper)

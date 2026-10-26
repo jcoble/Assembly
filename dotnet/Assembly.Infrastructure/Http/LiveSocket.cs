@@ -9,7 +9,7 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// <c>WS /live?thread=T&amp;after=N</c>: the rows after N, then each row as it's committed, as <c>{type:"row", row}</c>.
+/// <c>WS /live?session=T&amp;after=N</c>: the rows after N, then each row as it's committed, as <c>{type:"row", row}</c>.
 /// A quiet socket gets <c>{type:"ping"}</c> every 30 s. A socket that falls behind is closed, and the webview
 /// reopens it from the last row it applied.
 /// </summary>

@@ -1,22 +1,22 @@
-// Heavy soak (?soak=1), 15 minutes. Thread A, the seeded thread with a long
-// history, stays open across turns. Every SWITCH_EVERY-th turn runs on thread B
+// Heavy soak (?soak=1), 15 minutes. Session A, the seeded session with a long
+// history, stays open across turns. Every SWITCH_EVERY-th turn runs on session B
 // instead: A closes (releasing everything), B opens for one turn and closes,
 // then A reopens. After every turn a scroll pass goes to the top through real
 // scroll events, so the conversation's own prefetch loads every older page,
 // then back to the bottom. The live sockets drop mid-stream on every 3rd turn.
-// Light (?soak=light&a=<thread>&b=<thread>): the same loop on two existing
-// threads, 20 minutes, with a short sleep/echo prompt about every 2 minutes,
+// Light (?soak=light&a=<session>&b=<session>): the same loop on two existing
+// sessions, 20 minutes, with a short sleep/echo prompt about every 2 minutes,
 // so model use stays small; the scroll passes still render A's whole history.
-// Scroll (?soak=scroll&a=<thread>&b=<thread>): A stays open with no turns;
+// Scroll (?soak=scroll&a=<session>&b=<session>): A stays open with no turns;
 // every 30 s, 20 times, a pass goes to the top at fast-wheel speed (a `top` row
 // once every older page is in) and back (a `bottom` row). Every 4th pass turns
 // back down halfway while a page is in flight, then carries on up; every 5th
 // switches to B while a page is in flight and comes back. Then one `idle` row
 // after 2 minutes.
-// Switch (?soak=switch&a=<thread>&b=<thread>): three cycles of a short turn on
+// Switch (?soak=switch&a=<session>&b=<session>): three cycles of a short turn on
 // A with switches during it: to B and back, then three quick switches, then the
 // turn settles and A closes. The listener columns are the point.
-// Seed (?soak=seed): turns on a new thread A only, with no drops or scrolling,
+// Seed (?soak=seed): turns on a new session A only, with no drops or scrolling,
 // until A renders more than SEED_CHARS characters or SEED_TURNS turns ran. Its
 // `turn` rows are the progress.
 // Every 10 s, and at each turn, close and switch, one CSV row goes to
@@ -44,8 +44,8 @@ const SEED_CHARS = 150_000;
 const SEED_TURNS = 60;
 const SCROLL_STEP_MS = 250;
 const SCROLL_LIMIT_MS = 2 * 60_000;
-// Thread A (seeded) works on SEED_REPO; each soak's thread B is new, on SOAK_REPO.
-// The soak takes the newest SEED_REPO thread as A.
+// Session A (seeded) works on SEED_REPO; each soak's session B is new, on SOAK_REPO.
+// The soak takes the newest SEED_REPO session as A.
 export const SEED_REPO = 'https://github.com/octocat/Spoon-Knife';
 export const SOAK_REPO = 'https://github.com/octocat/Hello-World';
 // Long, tool-heavy and markdown-rich, so every row kind appears.
@@ -105,7 +105,7 @@ export type SoakHooks = {
   sessionA: string;
   // Unused when seeding.
   sessionB: string | null;
-  // Opens the thread's conversation and resolves with its chat client.
+  // Opens the session's conversation and resolves with its chat client.
   open(sessionId: string): Promise<SoakChat>;
   // Closes the open conversation (its onDestroy closes the live socket).
   close(): void;

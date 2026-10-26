@@ -10,7 +10,7 @@ namespace Assembly.Infrastructure.Mcp;
 /// <summary>
 /// <c>POST /mcp</c>: the Assembly MCP server, over MCP's streamable HTTP with plain JSON answers and tools only. Each
 /// request carries a session's own token (<see cref="SessionTokens.ServersFor"/>), not the API's, and the tools act
-/// for that session's thread. A notification gets 202 and no body.
+/// for that session. A notification gets 202 and no body.
 /// </summary>
 internal sealed class McpRoutes(HelperSessions helpers)
 {

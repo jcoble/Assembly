@@ -24,7 +24,7 @@
   }: {
     token: string;
     sessionId: string;
-    // The machine the thread runs on; null for this Mac.
+    // The machine the session runs on; null for this Mac.
     machine: string | null;
     signal: AbortSignal;
     busy: boolean;

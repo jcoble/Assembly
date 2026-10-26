@@ -11,7 +11,7 @@ using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
-/// <summary>A page of rows (<c>GET /threads/:id/rows?before&amp;limit</c>) and an opened tool row's detail.</summary>
+/// <summary>A page of rows (<c>GET /sessions/:id/rows?before&amp;limit</c>) and an opened tool row's detail.</summary>
 internal sealed class RowRoutes(LiveHub hub, SessionStore sessionStore, MachineSet machines)
 {
     public void Map(IEndpointRouteBuilder routes)

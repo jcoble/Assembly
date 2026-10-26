@@ -9,7 +9,7 @@ using Assembly.Domain.Sessions;
 using Assembly.Application.Common.Machines;
 namespace Assembly.Infrastructure.Machines;
 
-/// <summary>Threads whose agent runs here: their sessions, rows and attachments are all on this machine.</summary>
+/// <summary>Sessions whose agent runs here: their ACP sessions, rows and attachments are all on this machine.</summary>
 public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, SessionRegistry sessions, AttachmentStore attachments) : IMachine
 {
     public string? Name => null;
@@ -29,7 +29,7 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.Stop(runId));
 
-    // A helper session's row in its parent's thread stops by the helper's thread id.
+    // A helper session's row in its parent's session stops by the helper's session id.
     public Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken) =>
         sessionStore.Get(taskId) is { Helper: true } helper && helper.ParentSessionId == session.SessionId
             ? Task.FromResult(sessions.ActiveRun(taskId) is { } run && sessions.Stop(run))

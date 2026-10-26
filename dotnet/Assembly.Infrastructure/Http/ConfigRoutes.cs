@@ -10,8 +10,8 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// A thread's session config, on whichever machine runs its agent: <c>GET /threads/:id/config</c> answers
-/// <c>{ options: [the agent's configOptions] | null, choices: { id: value }, commands: [its availableCommands] | null }</c>, and <c>POST /threads/:id/config
+/// A session's config, on whichever machine runs its agent: <c>GET /sessions/:id/config</c> answers
+/// <c>{ options: [the agent's configOptions] | null, choices: { id: value }, commands: [its availableCommands] | null }</c>, and <c>POST /sessions/:id/config
 /// { configId, value }</c> chooses a value, answering the same.
 /// </summary>
 internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machines)

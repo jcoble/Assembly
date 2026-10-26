@@ -5,7 +5,7 @@ using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
-/// Splits one adapter's <c>session/update</c> stream by session, since every thread's session shares the adapter.
+/// Splits one adapter's <c>session/update</c> stream by session, since every session's ACP session shares the adapter.
 /// Updates for a session nobody has asked for yet wait in its own queue. Updates for a session that was closed and
 /// not reopened are dropped, so they never reach its next turn. <see cref="Flush"/> moves what has arrived so far,
 /// so a turn's end can take every update the agent sent before its answer. A subagent's child session, once its

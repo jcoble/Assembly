@@ -141,7 +141,7 @@ public sealed class McpTests : IAsyncLifetime
         await agent.OpenAsync("acp-two");
         var delivered = await agent.ReadAsync("session/prompt");
         Assert.Contains("What did you find?", delivered.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        // Its row in the receiving thread says who sent it, so the page doesn't show it as the person's.
+        // Its row in the receiving session says who sent it, so the page doesn't show it as the person's.
         Assert.Equal(first, _store.RowsAfter(second, 0).Last(row => row.Kind == "user").Payload.GetProperty("from").GetString());
         Assert.True((await CallResultAsync(firstToken, "send_message", new { sessionId = second, text = "again" })).GetProperty("isError").GetBoolean());
         // The limit holds between any two sessions: the parent's prompt was its one message to the helper.

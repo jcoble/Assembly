@@ -3,7 +3,7 @@ using System.Diagnostics;
 using Assembly.Application.Common.Agents;
 namespace Assembly.Infrastructure.Agents;
 
-/// <summary>A thread's own clone of its repo, made on its first send. A clone that fails or is stopped leaves nothing behind.</summary>
+/// <summary>A session's own clone of its repo, made on its first send. A clone that fails or is stopped leaves nothing behind.</summary>
 public static class GitCheckout
 {
     public static async Task EnsureAsync(string repoUrl, string folder, CancellationToken cancellationToken)

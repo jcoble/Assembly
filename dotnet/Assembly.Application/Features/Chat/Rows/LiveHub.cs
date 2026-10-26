@@ -23,7 +23,7 @@ public sealed class LiveHub : IDisposable
         _queueLimit = queueLimit;
     }
 
-    /// <summary>Commits the batch, then queues its saved rows for the thread's sockets. Returns them as saved.</summary>
+    /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
     public IReadOnlyList<StoredRow> Publish(string sessionId, RowBatch batch)
     {
         if (batch.IsEmpty)
@@ -48,14 +48,14 @@ public sealed class LiveHub : IDisposable
         }
     }
 
-    /// <summary>Whether a webview has the thread's live socket open.</summary>
+    /// <summary>Whether a webview has the session's live socket open.</summary>
     public bool HasSubscribers(string sessionId)
     {
         lock (_gate)
             return _subscribers.TryGetValue(sessionId, out var subscribers) && subscribers.Count > 0;
     }
 
-    /// <summary>The rows after <paramref name="after"/>, and from then on every new row of the thread.</summary>
+    /// <summary>The rows after <paramref name="after"/>, and from then on every new row of the session.</summary>
     public LiveSubscription Subscribe(string sessionId, long after)
     {
         var queue = Channel.CreateBounded<StoredRow>(new BoundedChannelOptions(_queueLimit) { SingleReader = true, SingleWriter = true });

@@ -7,7 +7,7 @@ using Assembly.Domain.Rows;
 namespace Assembly.Application.Features.Chat.Rows;
 
 /// <summary>
-/// The rows, in SQLite. One writer. A batch's rows get the thread's next seqs and are committed in one
+/// The rows, in SQLite. One writer. A batch's rows get the session's next seqs and are committed in one
 /// transaction with their tool details, and the saved rows come back to be pushed as they are. A message's
 /// deltas are deleted in the transaction that saves its message row, so seqs can have gaps; next_seq never
 /// goes back, and each row sent out carries the seq before it.
@@ -52,7 +52,7 @@ public sealed class RowStore
 
     public int StoredFormatVersion => (int)_db.QueryFirst("PRAGMA user_version;", row => row.Long(0), CancellationToken.None);
 
-    /// <summary>Saves the batch for the thread and returns its rows as saved, in seq order.</summary>
+    /// <summary>Saves the batch for the session and returns its rows as saved, in seq order.</summary>
     public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch)
     {
         if (batch.IsEmpty)
@@ -83,14 +83,14 @@ public sealed class RowStore
     }
 
     /// <summary>
-    /// Saves a row another machine committed, under its seq, if its <c>PrevSeq</c> is this thread's last seq.
+    /// Saves a row another machine committed, under its seq, if its <c>PrevSeq</c> is this session's last seq.
     /// False for a row already here or one past rows this machine missed; the copier then asks again from
     /// <see cref="LastSeq"/>.
     /// </summary>
     public bool Copy(StoredRow row) =>
         _writer.Write("rows.copy", scope =>
         {
-            // A thread with no rows here yet starts at seq 1. A row that doesn't follow on writes nothing.
+            // A session with no rows here yet starts at seq 1. A row that doesn't follow on writes nothing.
             var next = Math.Max(NextSeq(scope, row.SessionId), 1);
             if (row.PrevSeq != next - 1 || row.Seq < next)
                 return false;
@@ -106,7 +106,7 @@ public sealed class RowStore
             return true;
         });
 
-    /// <summary>The thread's newest seq here, or 0 if it has no rows.</summary>
+    /// <summary>The session's newest seq here, or 0 if it has no rows.</summary>
     public long LastSeq(string sessionId) =>
         _db.QueryFirst("SELECT next_seq - 1 FROM threads WHERE thread_id = $thread;", row => row.Long(0), CancellationToken.None,
             new SqlArg("$thread", sessionId));
@@ -177,7 +177,7 @@ public sealed class RowStore
             """,
             reader => ReadRow(reader), new SqlArg("$kind", kind));
 
-    /// <summary>The run of the thread's newest turn row if that row says <c>started</c>, else null.</summary>
+    /// <summary>The run of the session's newest turn row if that row says <c>started</c>, else null.</summary>
     public string? OpenRun(string sessionId) =>
         Query(
             """
@@ -195,7 +195,7 @@ public sealed class RowStore
             """,
             row => row.Long(0), CancellationToken.None, new SqlArg("$thread", sessionId), new SqlArg("$run", runId)) == 1;
 
-    /// <summary>The thread a run belongs to, or null if no row has it.</summary>
+    /// <summary>The session a run belongs to, or null if no row has it.</summary>
     public string? SessionOfRun(string runId) =>
         Query("SELECT thread_id FROM rows WHERE run_id = $run LIMIT 1;", reader => reader.Text(0), new SqlArg("$run", runId)).FirstOrDefault();
 

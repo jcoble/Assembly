@@ -38,8 +38,8 @@ shapes the recording never produced (see its README).
 ## Step 3: the API and the live hub
 
 `Assembly.Remote serve -- <adapter command>` runs the backend the app talks to, on 127.0.0.1:9797. Every route the
-virtual-int webview uses is here: the thread list and creation, pages of rows, tool details, send, stop, attachments,
-and the `/live` socket. A send starts the thread's agent in its own clone of the repo (resuming the agent's session if it
+virtual-int webview uses is here: the session list and creation, pages of rows, tool details, send, stop, attachments,
+and the `/live` socket. A send starts the session's agent in its own clone of the repo (resuming the agent's session if it
 has one), and each ACP update goes through the reader, the converter and one commit before it's pushed. A turn the
 backend was killed in the middle of is closed on the next start.
 
@@ -63,12 +63,12 @@ The core is in layers, and everything else is one folder per feature (plan secti
 rules.
 
 - `Assembly.Domain/`: records several features share, and nothing else: agent events (`Events/`), row kinds and
-  payloads (`Rows/`), thread records (`Threads/`) and the markdown block records (`Markdown/`). It references nothing.
+  payloads (`Rows/`), session records (`Sessions/`) and the markdown block records (`Markdown/`). It references nothing.
 - `Assembly.Application/`: references Domain only, with no SQLite, ASP.NET Core or process starting.
   - `Common/`: shared contracts and the ACP code. `Database/` (the plain-SQL contracts), `Acp/` (JSON-RPC, the typed
     ACP v1 client, one record per message, and `V1/`, the only place that knows ACP's shapes and provider quirks),
     `Agents/` (launching contracts and the shared adapter) and `Machines/`.
-  - `Features/Chat/`: threads, rows (with the live hub and the markdown parse), sessions, helpers and attachments.
+  - `Features/Chat/`: sessions, rows (with the live hub and the markdown parse), helpers and attachments.
   - `Features/Preferences/`. Diagnostics has no folder here until B8: its code makes native calls and reads files,
     so it's all in Infrastructure's `Diagnostics/`.
 - `Assembly.Infrastructure/`: references Application. SQLite and the one writer (`Persistence/`), starting agent

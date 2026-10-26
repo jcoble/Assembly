@@ -74,7 +74,7 @@ internal sealed class PageRoutes(string token, string soakResults, Func<Uri> bac
                     writer.WriteNumber("size", original.Length);
                     writer.WriteEndObject();
                 };
-            // { threadId, path } -> { path } where the agent runs; the file goes from here, so it never crosses into
+            // { sessionId, path } -> { path } where the agent runs; the file goes from here, so it never crosses into
             // the page.
             case "attachment.upload_path":
                 var uploaded = await UploadAsync(String(parameters, "sessionId"), String(parameters, "path"));
@@ -93,7 +93,7 @@ internal sealed class PageRoutes(string token, string soakResults, Func<Uri> bac
 
     private static void Null(Utf8JsonWriter writer) => writer.WriteNull("result");
 
-    // POST /threads/:id/attachments on this backend, which sends it on to the thread's machine.
+    // POST /sessions/:id/attachments on this backend, which sends it on to the session's machine.
     private async Task<string> UploadAsync(string sessionId, string path)
     {
         if (sessionId.Length == 0 || !sessionId.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))

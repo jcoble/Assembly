@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace Assembly.Application.Common.Agents;
 
 /// <summary>
-/// An agent this machine can run: its id (stored on each thread), the name people see, and how to start its ACP
+/// An agent this machine can run: its id (stored on each session), the name people see, and how to start its ACP
 /// adapter, with the JetBrains AIR extensions to opt into at initialize. Everything else about it comes from what the
 /// adapter reports over ACP.
 /// </summary>

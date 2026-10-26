@@ -11,9 +11,9 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// <c>POST /threads/:id/send {text}</c> starts a turn, or steers the one running, <c>POST /runs/:id/stop</c> stops one,
-/// <c>POST /threads/:id/asks/:ask {answer}</c> answers a card the agent opened, and
-/// <c>POST /threads/:id/tasks/:task/stop</c> stops background work, on whichever machine runs the thread's agent. An
+/// <c>POST /sessions/:id/send {text}</c> starts a turn, or steers the one running, <c>POST /runs/:id/stop</c> stops one,
+/// <c>POST /sessions/:id/asks/:ask {answer}</c> answers a card the agent opened, and
+/// <c>POST /sessions/:id/tasks/:task/stop</c> stops background work, on whichever machine runs the session's agent. An
 /// ask that is no longer open, an answer that doesn't fit it, or a task that can't be stopped is a 409.
 /// </summary>
 internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineSet machines)

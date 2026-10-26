@@ -200,7 +200,7 @@ public sealed partial class SessionHost
         while (updates.TryRead(out var update))
         {
             _turn?.Stages.Mark("first update");
-            // A subagent's own traffic goes to its thread.
+            // A subagent's own traffic goes to its session.
             if (_subagents.Has(update.SessionId))
             {
                 if (_subagents.Apply(update, Now(), _converter.KnowsTool) is { } linked)
@@ -214,7 +214,7 @@ public sealed partial class SessionHost
                 {
                     case SubagentChanged subagent:
                         if (!_subagents.Has(subagent.AcpSessionId))
-                            // What the child asks (a permission, a question) is a card in this thread.
+                            // What the child asks (a permission, a question) is a card in this session.
                             (_turn?.Session ?? _kept?.Session)?.Adapter.Link.Client.SetSessionPolicy(subagent.AcpSessionId, this);
                         Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
                         break;

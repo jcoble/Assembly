@@ -18,8 +18,8 @@ public static class RunRecovery
     public const string Code = "backend_stopped";
 
     /// <summary>
-    /// Closes every turn the backend's last run left running, so no thread looks busy forever. Returns how many. Only
-    /// threads whose agent <paramref name="runsHere"/>: a remote thread's turn is the remote machine's to close, and
+    /// Closes every turn the backend's last run left running, so no session looks busy forever. Returns how many. Only
+    /// sessions whose agent <paramref name="runsHere"/>: a remote session's turn is the remote machine's to close, and
     /// its rows arrive by copy.
     /// </summary>
     public static int CloseUnfinished(RowStore store, LiveHub hub, long at, Func<string, bool> runsHere)
@@ -35,7 +35,7 @@ public static class RunRecovery
             Add(batch, task.RunId, task.ItemId, RowKind.Task, payload with { State = "stopped" }, RowJsonContext.Rows.TaskPayload, at);
             hub.Publish(task.SessionId, batch);
         }
-        // And so are subagents: each child's own thread had its run closed above.
+        // And so are subagents: each child's own session had its run closed above.
         foreach (var subagent in store.RunningItems(RowKind.Subagent).Where(subagent => runsHere(subagent.SessionId)))
         {
             var batch = new RowBatch();

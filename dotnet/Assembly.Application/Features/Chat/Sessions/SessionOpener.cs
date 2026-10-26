@@ -5,16 +5,16 @@ using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
-/// <summary>A thread's session, open on the shared adapter. <c>SavedCost</c> is the total its agent reported at its last clean close.</summary>
+/// <summary>A session's ACP session, open on the shared adapter. <c>SavedCost</c> is the total its agent reported at its last clean close.</summary>
 internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, string AcpSessionId, bool Resumed, decimal? SavedCost, string? Model = null);
 
 /// <summary>
-/// Opens a thread's ACP session on its agent's shared adapter, in the thread's checkout: its earlier session,
+/// Opens a session's ACP session on its agent's shared adapter, in the session's checkout: its earlier session,
 /// resumed, when the adapter can resume one; otherwise a new session, whose id is saved for next time. A new session
 /// is titled from its first message when the agent takes a title, so it doesn't spend a model call making one. Every
-/// session gets the thread's chosen config values (model, effort, mode…) that its agent offers, in the agent's order
+/// ACP session gets the session's chosen config values (model, effort, mode…) that its agent offers, in the agent's order
 /// (a model's effort levels can depend on the model). The session holds its place on the adapter until
-/// <see cref="SharedAdapter.ReleaseAsync"/>. <paramref name="mcpServers"/> gives a thread's session the MCP servers it joins.
+/// <see cref="SharedAdapter.ReleaseAsync"/>. <paramref name="mcpServers"/> gives a session's ACP session the MCP servers it joins.
 /// </summary>
 public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
     Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
@@ -56,7 +56,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             }
             catch (JsonRpcException error)
             {
-                // The agent lost its transcript. A new session keeps the thread usable; the agent won't remember it.
+                // The agent lost its transcript. A new ACP session keeps the session usable; the agent won't remember it.
                 Console.Error.WriteLine($"session {sessionId}: could not resume {previous} ({error.Message}); starting a new session");
             }
         }

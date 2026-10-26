@@ -6,7 +6,7 @@ namespace Assembly.Mac.Serve;
 
 /// <summary>
 /// <c>serve [--port N] [--home DIR] [--token-file FILE] [--agents FILE] [--remote SSH-HOST] [--remote-port N]
-/// [--remote-token-file PATH]</c>. The home folder holds the database, the threads' checkouts and their attachments;
+/// [--remote-token-file PATH]</c>. The home folder holds the database, the sessions' checkouts and their attachments;
 /// the agents file (<c>HOME/agents.json</c> unless given) lists the agents this Mac runs (<see cref="AgentDescriptor"/>).
 /// <c>--remote</c> adds a machine running <c>Assembly.Remote serve</c> on its <c>--remote-port</c>, reached over ssh,
 /// with its token in <c>--remote-token-file</c> (relative to its home folder).

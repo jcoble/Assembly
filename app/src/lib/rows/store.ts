@@ -61,7 +61,7 @@ export type AskField = {
 };
 // Background work: a backgrounded command or other task the agent runs past its turn.
 export type TaskPayload = { name: string; state: 'running' | 'completed' | 'failed' | 'stopped'; canStop: boolean; toolCallId?: string };
-// A subagent the agent runs as a child session, with a thread of its own (`threadId`), nested under the
+// A subagent the agent runs as a child session, with a session of its own (`sessionId`), nested under the
 // tool call that started it (`toolCallId`) when known.
 export type SubagentPayload = {
   sessionId: string;
@@ -75,14 +75,14 @@ export type SubagentPayload = {
 };
 export type PlanItem = { text: string; status: 'pending' | 'in_progress' | 'completed' };
 export type RunError = { message: string; code: string | null };
-// GET /threads/:id/tools/:itemId
+// GET /sessions/:id/tools/:itemId
 // `input` is the call's arguments as JSON text.
 export type ToolDetail = { summary: string; input: string | null; output: string | null; diff: string | null; path: string | null };
 
 type Payloads = {
   // `reason` says why a run the agent started itself started.
   turn: { state: TurnState; reason?: string };
-  // `from`: the thread of the session that sent it, when it's a message from another session.
+  // `from`: the session that sent it, when it's a message from another session.
   user: { text: string; from?: string };
   // `text` is only this delta's new raw text; the UI draws `blocks`.
   delta: { from: number; text: string; blocks: SafeMarkdownBlock[] };

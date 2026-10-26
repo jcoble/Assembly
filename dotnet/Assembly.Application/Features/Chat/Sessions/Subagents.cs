@@ -10,9 +10,9 @@ using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
-/// A session's subagents that the agent runs as child sessions (the subagents RFD). Each child has a thread of its
+/// A session's subagents that the agent runs as child sessions (the subagents RFD). Each child has a session of its
 /// own, with its own rows: each prompt its parent gives it starts a run there, and the parent saying it's idle ends
-/// that run. The parent's thread gets a row for each child, which <see cref="SessionHost"/> applies. Used under the
+/// that run. The parent's session gets a row for each child, which <see cref="SessionHost"/> applies. Used under the
 /// host's lock.
 /// </summary>
 internal sealed class Subagents(SessionStore sessionStore, LiveHub hub)
@@ -37,7 +37,7 @@ internal sealed class Subagents(SessionStore sessionStore, LiveHub hub)
     /// <summary>The child sessions that can be stopped now.</summary>
     public IEnumerable<string> Stoppable => _children.Where(pair => pair.Value.Shown.CanStop).Select(pair => pair.Key);
 
-    /// <summary>The parent's word on a child: its row in the parent's thread, as it stands now.</summary>
+    /// <summary>The parent's word on a child: its row in the parent's session, as it stands now.</summary>
     public SubagentShown Changed(SessionInfo parent, SubagentChanged change)
     {
         if (!_children.TryGetValue(change.AcpSessionId, out var child))
@@ -69,7 +69,7 @@ internal sealed class Subagents(SessionStore sessionStore, LiveHub hub)
     }
 
     /// <summary>
-    /// One of a child's own updates, into its thread. A prompt from the parent starts a run; when it names one of the
+    /// One of a child's own updates, into its session. A prompt from the parent starts a run; when it names one of the
     /// parent's tool calls (<paramref name="parentKnowsTool"/>), the parent's row is nested under it, and comes back.
     /// </summary>
     public SubagentShown? Apply(SessionNotification update, long at, Func<string, bool> parentKnowsTool)

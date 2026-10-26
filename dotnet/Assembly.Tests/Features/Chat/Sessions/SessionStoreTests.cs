@@ -93,7 +93,7 @@ public sealed class SessionStoreTests : IDisposable
     [Fact]
     public void An_older_database_gets_the_machine_and_session_cost_columns()
     {
-        // The box's database was made before a thread had a machine.
+        // The box's database was made before a session had a machine.
         using var olderDb = new TempDatabase();
         using (var db = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={olderDb.Path};Pooling=False"))
         {

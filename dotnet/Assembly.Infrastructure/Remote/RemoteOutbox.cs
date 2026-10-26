@@ -9,9 +9,9 @@ namespace Assembly.Infrastructure.Remote;
 
 /// <summary>
 /// Messages a remote's helper sessions send to their parents here, which the remote can't push: the Mac picks them up
-/// every second while a helper of a thread here has a run open there and once more after it ends, and every few
-/// seconds otherwise while the remote has helpers of threads here, so a helper that sends and ends between two looks
-/// isn't missed. It delivers each to its thread (a prompt, or steered into the running turn), and tells the remote
+/// every second while a helper of a session here has a run open there and once more after it ends, and every few
+/// seconds otherwise while the remote has helpers of sessions here, so a helper that sends and ends between two looks
+/// isn't missed. It delivers each to its session (a prompt, or steered into the running turn), and tells the remote
 /// the run; when that run ends it brings the answer back.
 /// Each message is recorded here before it's delivered, so it's delivered once, even across a restart.
 /// </summary>

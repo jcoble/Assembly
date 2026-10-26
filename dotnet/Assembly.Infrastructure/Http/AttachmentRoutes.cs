@@ -12,8 +12,8 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// <c>POST /threads/:id/attachments</c> takes one image's raw bytes, stores it where the thread's agent runs, and answers
-/// with its path there; <c>GET /threads/:id/attachments/:name</c> reads this machine's copy back for the preview.
+/// <c>POST /sessions/:id/attachments</c> takes one image's raw bytes, stores it where the session's agent runs, and answers
+/// with its path there; <c>GET /sessions/:id/attachments/:name</c> reads this machine's copy back for the preview.
 /// </summary>
 internal sealed class AttachmentRoutes(SessionStore sessionStore, MachineSet machines, AttachmentStore attachments)
 {

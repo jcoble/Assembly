@@ -11,8 +11,8 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// <c>GET /threads</c> (the sessions list), <c>GET /threads/:id</c>, and <c>POST /threads {agent, repoUrl, machine?}</c> (an agent from <c>GET /agents</c>),
-/// which creates the thread on the machine named, or on this one.
+/// <c>GET /sessions</c> (the sessions list), <c>GET /sessions/:id</c>, and <c>POST /sessions {agent, repoUrl, machine?}</c> (an agent from <c>GET /agents</c>),
+/// which creates the session on the machine named, or on this one.
 /// </summary>
 internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machines)
 {
@@ -73,7 +73,7 @@ internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machin
                 await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, $"this machine has no agent {agent}");
                 return;
             }
-            // A helper session's thread, started by a session on the machine that reaches this one.
+            // A helper session, started by a session on the machine that reaches this one.
             session = JsonReply.String(body, "parentSessionId") is { } parentId
                 ? await machine.CreateHelperAsync(new SessionInfo(parentId, agent, repoUrl, null, null, 0), agent,
                     JsonReply.String(body, "title") ?? "Helper", context.RequestAborted)

@@ -11,7 +11,7 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// What the routes work with. <c>Machines</c> runs each thread's turns; <c>Token</c> guards every route but the MCP
+/// What the routes work with. <c>Machines</c> runs each session's turns; <c>Token</c> guards every route but the MCP
 /// server's, which <c>Helpers</c> serves when given.
 /// </summary>
 public sealed record ApiServices(LiveHub Hub, SessionStore SessionStore, MachineSet Machines, AttachmentStore Attachments, string Token,

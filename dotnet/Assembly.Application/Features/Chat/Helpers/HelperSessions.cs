@@ -8,8 +8,8 @@ namespace Assembly.Application.Features.Chat.Helpers;
 /// <summary>
 /// The Assembly MCP server's side, on one machine, put together: every session joins it with a token of its own
 /// (<see cref="Tokens"/>), and its tools (<see cref="Tools"/>) let the agent start helper sessions of any agent here,
-/// message the sessions it may reach, and read their answers. A helper is a thread of its own under its parent, shown
-/// in the parent's thread as a subagent row (<see cref="Row"/>); a parent stays open while a helper of its is at work.
+/// message the sessions it may reach, and read their answers. A helper is a session of its own under its parent, shown
+/// in the parent's session as a subagent row (<see cref="Row"/>); a parent stays open while a helper of its is at work.
 /// Messages are kept here, on the sending machine.
 /// </summary>
 public sealed class HelperSessions

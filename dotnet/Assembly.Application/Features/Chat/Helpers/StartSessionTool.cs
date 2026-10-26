@@ -8,7 +8,7 @@ namespace Assembly.Application.Features.Chat.Helpers;
 
 /// <summary>
 /// <c>start_session</c>: starts a helper session of any agent, here or on a machine this one reaches, under the
-/// caller's thread, on its prompt.
+/// caller's session, on its prompt.
 /// </summary>
 public sealed class StartSessionTool(SessionStore sessionStore, SessionRegistry sessions, HelperDelivery delivery, HelperRow row, HelperLimits limits)
     : HelperTool

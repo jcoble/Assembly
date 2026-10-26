@@ -12,7 +12,7 @@
   import { logCounters, runSoak, SEED_REPO, SOAK_REPO, type SoakChat } from '../lib/soak';
   import { Button } from '$lib/components/ui/button/index.js';
 
-  // Page-level work (thread list, new thread) is owned by this signal.
+  // Page-level work (session list, new session) is owned by this signal.
   const page = new AbortController();
   // The shell starts the backend before the page loads and hands it the token.
   const token = TOKEN;
@@ -40,7 +40,7 @@
     );
   });
   let error = $state('');
-  // A subagent's thread isn't in the list: it's fetched when opened from its row.
+  // A subagent's session isn't in the list: it's fetched when opened from its row.
   let child = $state<Session | null>(null);
   const open = $derived(sessions.find((t) => t.sessionId === openId) ?? (child?.sessionId === openId ? child : undefined));
   function openSession(sessionId: string) {
@@ -93,7 +93,7 @@
   }
 
   // Soak mode (?soak=1, ?soak=seed), the loop in lib/soak.ts. Seeding makes a
-  // new thread A; the soak takes the newest SEED_REPO thread as A and makes a new B.
+  // new session A; the soak takes the newest SEED_REPO session as A and makes a new B.
   const query = new URLSearchParams(location.search);
   const soakMode = query.get('soak');
   let onchat = $state<(chat: SoakChat) => void>();
@@ -104,7 +104,7 @@
     const scroll = soakMode === 'scroll';
     try {
       await refresh(tokenNow);
-      // Light runs on the two existing threads it is given and makes none.
+      // Light runs on the two existing sessions it is given and makes none.
       const seeded = seed ? undefined : light || scroll || switching ? query.get('a') : sessions.find((t) => t.repoUrl === SEED_REPO)?.sessionId;
       if (scroll && (!seeded || !query.get('b'))) throw new Error('?soak=scroll needs a=<session>&b=<session>');
       if (light && (!seeded || !query.get('b'))) throw new Error('?soak=light needs a=<session>&b=<session>');
@@ -236,7 +236,7 @@
     --user-bg: #eef2f8;
     --code-bg: #f4f4f2;
   }
-  /* Only the thread list and the conversation scroll; the page never does,
+  /* Only the session list and the conversation scroll; the page never does,
      even when a wheel lands outside them on a short session. */
   :global(html),
   :global(body) {

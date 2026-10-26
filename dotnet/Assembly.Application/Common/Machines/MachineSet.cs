@@ -3,7 +3,7 @@ using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Common.Machines;
 
-/// <summary>This machine, and the remote machines whose threads it shows. A thread's <c>Machine</c> picks one.</summary>
+/// <summary>This machine, and the remote machines whose sessions it shows. A session's <c>Machine</c> picks one.</summary>
 public sealed class MachineSet(IMachine local, params IReadOnlyList<IMachine> remotes)
 {
     public IReadOnlyList<IMachine> Remotes => remotes;

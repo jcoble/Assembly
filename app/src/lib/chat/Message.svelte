@@ -14,7 +14,7 @@
     role: 'user' | 'assistant';
     label?: boolean;
     speaker?: string;
-    // A prompt from another session: its label, and opening its thread.
+    // A prompt from another session: its label, and opening its session.
     sender?: { label: string; open: () => void } | null;
     notice?: ErrorNotice | null;
     children?: Snippet;

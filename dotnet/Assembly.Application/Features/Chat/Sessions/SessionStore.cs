@@ -25,16 +25,16 @@ public sealed class SessionStore
 
     private const string Columns = "thread_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_thread_id, helper";
 
-    // A database made before threads had a machine gets the column; its threads all ran where it lives.
+    // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('thread_info') WHERE name = 'machine';";
 
     // And one made before sessions were closed after each turn gets the saved cost, empty.
     private const string HasSessionCost = "SELECT COUNT(*) FROM pragma_table_info('thread_info') WHERE name = 'session_cost';";
 
-    // And one made before subagents gets the parent link, empty: none of its threads is a child.
+    // And one made before subagents gets the parent link, empty: none of its sessions is a child.
     private const string HasParent = "SELECT COUNT(*) FROM pragma_table_info('thread_info') WHERE name = 'parent_thread_id';";
 
-    // And one made before helper sessions marks none of its threads a helper.
+    // And one made before helper sessions marks none of its sessions a helper.
     private const string HasHelper = "SELECT COUNT(*) FROM pragma_table_info('thread_info') WHERE name = 'helper';";
 
     // And one made before a message could fail gets the error, empty.
@@ -88,7 +88,7 @@ public sealed class SessionStore
         return session;
     }
 
-    /// <summary>Records a thread another machine created and runs, under that machine's id for it.</summary>
+    /// <summary>Records a session another machine created and runs, under that machine's id for it.</summary>
     public SessionInfo Add(string sessionId, string agent, string repoUrl, string machine, string? parentSessionId = null, bool helper = false)
     {
         var session = new SessionInfo(sessionId, agent, repoUrl, null, null, Now(), machine, ParentSessionId: parentSessionId, Helper: helper);
@@ -101,8 +101,8 @@ public sealed class SessionStore
     }
 
     /// <summary>
-    /// The thread of the parent's subagent with that child session id, made the first time it's asked for. A child
-    /// keeps its session for every delegation to it, so each one goes on in the same thread.
+    /// The session of the parent's subagent with that child session id, made the first time it's asked for. A child
+    /// keeps its session for every delegation to it, so each one goes on in the same session.
     /// </summary>
     public SessionInfo Child(SessionInfo parent, string childSessionId, string title) =>
         // The look-up and the insert are one write, so two asks for the same child can't both make one.
@@ -121,7 +121,7 @@ public sealed class SessionStore
             return child;
         });
 
-    /// <summary>A helper session's thread, which <paramref name="parent"/>'s agent started, on the parent's machine and repo.</summary>
+    /// <summary>A helper session, which <paramref name="parent"/>'s agent started, on the parent's machine and repo.</summary>
     public SessionInfo Helper(SessionInfo parent, string agent, string title)
     {
         var helper = new SessionInfo(Guid.NewGuid().ToString(), agent, parent.RepoUrl, title, null, Now(), parent.Machine,
@@ -134,13 +134,13 @@ public sealed class SessionStore
         return helper;
     }
 
-    /// <summary>The helper sessions <paramref name="parentThreadId"/>'s agent started, oldest first.</summary>
+    /// <summary>The helper sessions <paramref name="parentSessionId"/>'s agent started, oldest first.</summary>
     public IReadOnlyList<SessionInfo> Helpers(string parentSessionId) =>
         Query($"SELECT {Columns} FROM thread_info WHERE parent_thread_id = $parent AND helper = 1 ORDER BY created_at;",
             ("$parent", parentSessionId));
 
     /// <summary>
-    /// Records a message one thread's agent sent another's, before it's delivered; with <paramref name="messageId"/>,
+    /// Records a message one session's agent sent another's, before it's delivered; with <paramref name="messageId"/>,
     /// one sent from another machine, under its id there.
     /// </summary>
     public HelperMessage AddMessage(string from, string to, string text, string? messageId = null)
@@ -159,7 +159,7 @@ public sealed class SessionStore
     public void SetMessageFailed(string messageId, string error) =>
         Execute("UPDATE helper_messages SET error = $error WHERE message_id = $id;", ("$id", messageId), ("$error", error));
 
-    /// <summary>The answer from the other machine a message to one of its threads went to.</summary>
+    /// <summary>The answer from the other machine a message to one of its sessions went to.</summary>
     public void SetMessageAnswer(string messageId, string state, string reply, string? error) =>
         Execute("UPDATE helper_messages SET state = $state, reply = $reply, error = COALESCE($error, error) WHERE message_id = $id;",
             ("$id", messageId), ("$state", state), ("$reply", reply), ("$error", error));
@@ -167,7 +167,7 @@ public sealed class SessionStore
     public HelperMessage? Message(string messageId) =>
         Messages($"SELECT {MessageColumns} FROM helper_messages WHERE message_id = $id;", ("$id", messageId)).FirstOrDefault();
 
-    /// <summary>Messages waiting to go to threads that aren't on this machine, which their machine picks up, oldest first.</summary>
+    /// <summary>Messages waiting to go to sessions that aren't on this machine, which their machine picks up, oldest first.</summary>
     public IReadOnlyList<HelperMessage> Outbox() =>
         Messages($"""
             SELECT {MessageColumns} FROM helper_messages
@@ -175,7 +175,7 @@ public sealed class SessionStore
             ORDER BY created_at;
             """);
 
-    /// <summary>Messages from threads on <paramref name="machine"/>, delivered here, whose answer hasn't gone back yet.</summary>
+    /// <summary>Messages from sessions on <paramref name="machine"/>, delivered here, whose answer hasn't gone back yet.</summary>
     public IReadOnlyList<HelperMessage> UnansweredFrom(string machine) =>
         Messages($"""
             SELECT {MessageColumns} FROM helper_messages
@@ -202,7 +202,7 @@ public sealed class SessionStore
     public SessionInfo? Get(string sessionId) =>
         Query($"SELECT {Columns} FROM thread_info WHERE thread_id = $id;", ("$id", sessionId)).FirstOrDefault();
 
-    /// <summary>The <paramref name="limit"/> most recently used threads below <paramref name="before"/>; subagents' threads are opened from their parent.</summary>
+    /// <summary>The <paramref name="limit"/> most recently used sessions below <paramref name="before"/>; subagents' sessions are opened from their parent.</summary>
     public SessionPage List(long? before, int limit)
     {
         var sessions = Query(
@@ -223,7 +223,7 @@ public sealed class SessionStore
             ("$id", sessionId), ("$cost", total.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
     /// <summary>
-    /// The config options the thread's agent last reported for its session (raw JSON), the values chosen for it, and
+    /// The config options the session's agent last reported for its ACP session (raw JSON), the values chosen for it, and
     /// the slash commands its agent last sent; with no list of its own, the last one that agent sent here.
     /// </summary>
     public SessionConfig Config(string sessionId) =>
@@ -239,7 +239,7 @@ public sealed class SessionStore
                 row.IsNull(1) ? new Dictionary<string, string>() : SessionConfig.ReadChoices(row.Text(1)),
                 row.IsNull(2) ? null : row.Text(2)), CancellationToken.None, new SqlArg("$id", sessionId))!;
 
-    /// <summary>Saves the slash commands the thread's agent sent, as the thread's and as that agent's latest.</summary>
+    /// <summary>Saves the slash commands the session's agent sent, as the session's and as that agent's latest.</summary>
     public void SetCommands(string sessionId, string commands) =>
         Execute("""
             INSERT INTO thread_commands(thread_id, commands) VALUES ($id, $commands)
@@ -254,14 +254,14 @@ public sealed class SessionStore
             ON CONFLICT(thread_id) DO UPDATE SET options = $options;
             """, ("$id", sessionId), ("$options", options));
 
-    /// <summary>Chooses <paramref name="value"/> for the option: it's applied to every session the thread opens from now on.</summary>
+    /// <summary>Chooses <paramref name="value"/> for the option: it's applied to every ACP session the session opens from now on.</summary>
     public void SetConfigChoice(string sessionId, string configId, string value) =>
         Execute("""
             INSERT INTO thread_config(thread_id, choices) VALUES ($id, json_object($config, $value))
             ON CONFLICT(thread_id) DO UPDATE SET choices = json_set(choices, '$."' || $config || '"', $value);
             """, ("$id", sessionId), ("$config", configId.Replace("\"", "")), ("$value", value));
 
-    /// <summary>The config options of the agent's latest new session: what a thread that hasn't opened one yet starts with.</summary>
+    /// <summary>The config options of the agent's latest new session: what a session that hasn't opened one yet starts with.</summary>
     public string? AgentConfig(string agent) =>
         _db.QueryFirst("SELECT options FROM agent_config WHERE agent = $agent;", row => row.Text(0), CancellationToken.None,
             new SqlArg("$agent", agent));
@@ -272,7 +272,7 @@ public sealed class SessionStore
             ON CONFLICT(agent) DO UPDATE SET options = $options;
             """, ("$agent", agent), ("$options", options));
 
-    /// <summary>Marks the thread as just used, which puts it at the top of the list.</summary>
+    /// <summary>Marks the session as just used, which puts it at the top of the list.</summary>
     public void Touch(string sessionId) =>
         Execute("UPDATE thread_info SET updated_at = $now WHERE thread_id = $id;", ("$id", sessionId), ("$now", Now()));
 

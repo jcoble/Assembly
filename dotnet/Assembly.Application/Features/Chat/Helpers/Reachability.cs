@@ -15,7 +15,7 @@ public sealed class Reachability(SessionStore sessionStore, SessionRegistry sess
         var reachable = new List<(SessionInfo, string)>();
         if (caller.ParentSessionId is { } parentId)
         {
-            // A parent on the machine that started this helper isn't a thread here; messages to it wait to be picked up.
+            // A parent on the machine that started this helper isn't a session here; messages to it wait to be picked up.
             var parent = sessionStore.Get(parentId) ?? new SessionInfo(parentId, "", caller.RepoUrl, null, null, 0, Machine: "elsewhere");
             reachable.Add((parent, "parent"));
             reachable.AddRange(sessionStore.Helpers(parentId).Where(sibling => sibling.SessionId != caller.SessionId).Select(sibling => (sibling, "sibling")));

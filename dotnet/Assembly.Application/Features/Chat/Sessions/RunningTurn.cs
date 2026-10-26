@@ -2,7 +2,7 @@ using Assembly.Application.Common.Agents;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
-/// <summary>The turn a thread is running: its id, its stage times, how to stop it, and its session once it's open.</summary>
+/// <summary>The turn a session is running: its id, its stage times, how to stop it, and its session once it's open.</summary>
 internal sealed class RunningTurn(string runId, StageTimes stages)
 {
     public string RunId { get; } = runId;

@@ -81,7 +81,7 @@ test('a page in newest form, then live rows, folds to the same items as every ro
     'user:u1', 'message:m1', 'seq:9',
     'user:u2', 'thinking:th1', 'tool:tool1', 'tool:tool2', 'tool:tool3', 'tool:tool4', 'message:m2', 'seq:25', 'seq:27',
   ]);
-  // The whole thread read as one page folds the same way.
+  // The whole session read as one page folds the same way.
   assert.deepEqual(prependPage(emptyView(), newestForm(all), false).items, everyRow.items);
 });
 

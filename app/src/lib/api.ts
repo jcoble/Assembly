@@ -7,7 +7,7 @@ import type { SlashCommand } from './composer/slashMenu';
 // The Mac's .NET backend (dotnet/Assembly.Mac), which serves every route. One token.
 export { BASE, BASE_WS };
 
-// `parentThreadId` is set on a subagent's thread: the thread whose agent runs it.
+// `parentSessionId` is set on a subagent's session: the session whose agent runs it.
 export type Session = { sessionId: string; agent: string; repoUrl: string; title: string | null; machine: string | null; parentSessionId?: string | null; updatedAt: number };
 export type MemorySample = { appPid: number | null; appRssKb: number | null; webContentPid: number | null; webContentRssKb: number | null; backendPid: number; backendRssKb: number | null };
 
@@ -44,17 +44,17 @@ export const getSession = (token: string, sessionId: string, signal: AbortSignal
 export const listSessions = (token: string, signal: AbortSignal) =>
   api<{ sessions: Session[]; nextBefore: number | null }>(token, `${BASE}/sessions`, signal);
 
-// A new thread runs `agent`, one of listAgents(machine), on `machine`, one of listMachines(), or here when it's left out.
+// A new session runs `agent`, one of listAgents(machine), on `machine`, one of listMachines(), or here when it's left out.
 export const createSession = (token: string, repoUrl: string, signal: AbortSignal, { machine, agent = 'claude' }: { machine?: string; agent?: string } = {}) =>
   api<{ sessionId: string }>(token, `${BASE}/sessions`, signal, 'POST', { agent, repoUrl, ...(machine && { machine }) });
 
 export type Agent = { id: string; name: string };
 
-// The agents a new thread on `machine` (here when it's left out) can run.
+// The agents a new session on `machine` (here when it's left out) can run.
 export const listAgents = (token: string, signal: AbortSignal, machine?: string) =>
   api<{ agents: Agent[] }>(token, `${BASE}/agents${machine ? `?machine=${encodeURIComponent(machine)}` : ''}`, signal);
 
-// A thread's session config, as its agent reports it (ACP configOptions): one menu per select option.
+// A session's config, as its agent reports it (ACP configOptions): one menu per select option.
 export type ConfigOption = {
   id: string;
   name: string;
@@ -63,8 +63,8 @@ export type ConfigOption = {
   currentValue?: string;
   options?: { value: string; name: string; description?: string }[];
 };
-// `options` is null until the agent has opened a session; `choices` are kept per thread and applied to every session.
-// `commands` are the agent's slash commands, the thread's or else the agent's latest; null before it sent any.
+// `options` is null until the agent has opened a session; `choices` are kept per session and applied to every ACP session.
+// `commands` are the agent's slash commands, the session's or else the agent's latest; null before it sent any.
 export type SessionConfig = { options: ConfigOption[] | null; choices: Record<string, string>; commands?: SlashCommand[] | null };
 
 export const getConfig = (token: string, sessionId: string, signal: AbortSignal) =>
@@ -73,11 +73,11 @@ export const getConfig = (token: string, sessionId: string, signal: AbortSignal)
 export const setConfig = (token: string, sessionId: string, configId: string, value: string, signal: AbortSignal) =>
   api<SessionConfig>(token, `${BASE}${sessionPath(sessionId)}/config`, signal, 'POST', { configId, value });
 
-// The remote machines a new thread can run on, besides this one.
+// The remote machines a new session can run on, besides this one.
 export const listMachines = (token: string, signal: AbortSignal) =>
   api<{ machines: string[] }>(token, `${BASE}/machines`, signal);
 
-// Uploads one image to the thread's attachment dir on the box; returns its path there.
+// Uploads one image to the session's attachment dir on the box; returns its path there.
 export const uploadAttachment = (token: string, sessionId: string, file: File, signal: AbortSignal) =>
   api<{ path: string }>(token, `${BASE}${sessionPath(sessionId)}/attachments`, signal, 'POST', file);
 
@@ -86,7 +86,7 @@ export const fetchAttachment = (token: string, sessionId: string, name: string, 
   api<Blob>(token, `${BASE}${sessionPath(sessionId)}/attachments/${encodeURIComponent(name)}`, signal);
 
 // A page of rows ordered by first seq: the newest page when `before` is null.
-// `activeRunId` is the run going now, or null when the thread is idle.
+// `activeRunId` is the run going now, or null when the session is idle.
 export const rowsPage = (token: string, sessionId: string, before: number | null, limit: number, signal: AbortSignal) =>
   api<{ rows: Row[]; hasBefore: boolean; activeRunId: string | null }>(
     token,

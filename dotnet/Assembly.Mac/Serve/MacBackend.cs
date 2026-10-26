@@ -23,7 +23,7 @@ using Assembly.Infrastructure.Remote;
 namespace Assembly.Mac.Serve;
 
 /// <summary>
-/// The Mac's backend, running: the row store and threads list in <c>home/assembly.db</c>, the live hub, the local
+/// The Mac's backend, running: the row store and sessions list in <c>home/assembly.db</c>, the live hub, the local
 /// sessions and the API. Port 0 picks a free port (for tests).
 /// </summary>
 public sealed class MacBackend : IAsyncDisposable
@@ -50,7 +50,7 @@ public sealed class MacBackend : IAsyncDisposable
     /// <summary>Where the API listens, as <c>http://127.0.0.1:port</c>.</summary>
     public Uri Address { get; }
 
-    /// <summary>Starts it; with <paramref name="remote"/>, that machine's threads are shown too and new ones can run there.</summary>
+    /// <summary>Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there.</summary>
     public static async Task<MacBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
     {
         Directory.CreateDirectory(home);

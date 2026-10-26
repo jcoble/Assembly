@@ -193,7 +193,7 @@ public sealed class RowStoreTests : IDisposable
     [Fact]
     public void A_copied_row_keeps_its_seq_and_only_the_next_one_is_taken()
     {
-        // The Mac copies a remote thread's rows as the box numbered them, so "rows after N" means the same on both.
+        // The Mac copies a remote session's rows as the box numbered them, so "rows after N" means the same on both.
         var box = _store.Commit("a", Batch("x", "y", "z"));
         using var macDb = new TempDatabase();
         using var macDatabase = AppDatabase.Open(macDb.Path);

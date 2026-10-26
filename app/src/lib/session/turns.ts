@@ -57,7 +57,7 @@ const checkout = (branch: string | null, head: string) =>
   !branch || branch === 'HEAD' ? head.slice(0, 7) : `${branch}@${head.slice(0, 7)}`;
 
 // "Checkout changed" when this run started on a different branch or commit
-// than the previous run left the thread's checkout on.
+// than the previous run left the session's checkout on.
 export function checkoutLine(stats: TurnStats | undefined): string | null {
   if (!stats?.head || !stats.prevHead) return null;
   if (stats.head === stats.prevHead && stats.branch === stats.prevBranch) return null;

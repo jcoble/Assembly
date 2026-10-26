@@ -1,10 +1,10 @@
-// The row-position log for the step 3 checks: a thread's rows, read from the backend on this machine
+// The row-position log for the step 3 checks: a session's rows, read from the backend on this machine
 // the two ways the webview reads them.
-//   node row-log.ts <threadId|latest> [--follow SECONDS] [--env FILE] [--port 9797]
+//   node row-log.ts <sessionId|latest> [--follow SECONDS] [--env FILE] [--port 9797]
 // 1. Every row in seq order, as a socket opened at 0 gets them, checked for duplicates and a broken prevSeq chain.
 //    Seqs may skip: a message's deltas are deleted once the message is saved (RowStore.cs).
 //    With --follow, the socket stays open and live rows are logged as they arrive, with their time.
-// 2. The thread as the app opens it: pages of 100 items, newest first, stitched oldest first, each item
+// 2. The session as the app opens it: pages of 100 items, newest first, stitched oldest first, each item
 //    at its first seq (its place on screen). Checked against one load of up to 500 items.
 // The token is read from the env file and never printed. Exits 1 if a check fails.
 import { readFileSync } from 'node:fs';

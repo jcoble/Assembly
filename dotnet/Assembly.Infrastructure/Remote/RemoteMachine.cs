@@ -18,7 +18,7 @@ namespace Assembly.Infrastructure.Remote;
 /// A machine whose agent runs elsewhere, reached at <paramref name="address"/> with its own token: a Assembly.Remote
 /// serve on the same engine, which converts and stores its own rows. Creating, sending, stopping, tool details and
 /// attachments are its routes; its rows are copied into the Mac's store (<see cref="RemoteFollower"/>), which the
-/// webview reads like any other thread's.
+/// webview reads like any other session's.
 /// </summary>
 internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 {
@@ -44,7 +44,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public string? Name => _name;
 
-    // A subagent's thread, made on the remote by its parent's session, is known here from its parent's row.
+    // A subagent's session, made on the remote by its parent's session, is known here from its parent's row.
     private void AddSubagentSession(string parentSessionId, StoredRow row)
     {
         if (row.Payload.GetProperty("sessionId").GetString() is not { } childId || _sessionStore.Get(childId) is not null
@@ -82,7 +82,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         return _sessionStore.Get(sessionId)!;
     }
 
-    /// <summary>The messages the remote's sessions have waiting for threads here.</summary>
+    /// <summary>The messages the remote's sessions have waiting for sessions here.</summary>
     public async Task<IReadOnlyList<HelperMessage>> OutboxAsync(CancellationToken cancellationToken) =>
         (await JsonAsync(HttpMethod.Get, "/outbox", null, cancellationToken)).GetProperty("messages").EnumerateArray()
             .Select(message => new HelperMessage(Text(message, "messageId")!, Text(message, "from")!, Text(message, "to")!, Text(message, "text")!, null,
@@ -169,7 +169,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
 
-    /// <summary>Follows the remote threads whose copied rows show a turn still running, as after a Mac restart mid-turn.</summary>
+    /// <summary>Follows the remote sessions whose copied rows show a turn still running, as after a Mac restart mid-turn.</summary>
     public void WatchRunning(IEnumerable<string> sessionIds)
     {
         foreach (var sessionId in sessionIds)
@@ -187,7 +187,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _formatChecked = true;
     }
 
-    // A finished turn may have named the thread on the remote.
+    // A finished turn may have named the session on the remote.
     private async Task RefreshAsync(string sessionId)
     {
         _turnEnded(sessionId);

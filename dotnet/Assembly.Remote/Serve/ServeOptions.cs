@@ -6,7 +6,7 @@ namespace Assembly.Remote.Serve;
 
 /// <summary>
 /// <c>serve [--port N] [--home DIR] [--token-file FILE] [--agents FILE]</c>. The home folder holds the database, the
-/// threads' checkouts and their attachments; the agents file (<c>HOME/agents.json</c> unless given) lists the agents
+/// sessions' checkouts and their attachments; the agents file (<c>HOME/agents.json</c> unless given) lists the agents
 /// this machine runs (<see cref="AgentDescriptor"/>).
 /// </summary>
 public sealed record ServeOptions(int Port, string Home, string TokenFile, string AgentsFile)

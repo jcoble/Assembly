@@ -4,7 +4,7 @@ using Assembly.Application.Features.Chat;
 namespace Assembly.Application.Features.Chat.Rows;
 
 /// <summary>
-/// One socket's view of a thread: the rows it missed, then every row committed after them, in seq order.
+/// One socket's view of a session: the rows it missed, then every row committed after them, in seq order.
 /// <see cref="Rows"/> ends with an error if the socket falls too far behind; the webview then reopens from its watermark.
 /// </summary>
 public sealed class LiveSubscription : IDisposable

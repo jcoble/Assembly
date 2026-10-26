@@ -1,6 +1,6 @@
-// The rows the live socket sends for a scenario's thread from seq AFTER within 3 s, as one JSON array of
+// The rows the live socket sends for a scenario's session from seq AFTER within 3 s, as one JSON array of
 // { seq, prevSeq } on stdout. node scripts/features/live-rows.ts AFTER, with CHECK4_API, CHECK4_TOKEN and
-// CHECK4_THREAD set (scripts/features/README.md). The token goes in the socket's query, never in argv or output.
+// CHECK4_SESSION set (scripts/features/README.md). The token goes in the socket's query, never in argv or output.
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session } = process.env;
 const after = process.argv[2] ?? '0';
 const rows: { seq: number; prevSeq?: number }[] = [];

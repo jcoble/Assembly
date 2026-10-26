@@ -80,7 +80,7 @@ if [ -z "$blocked" ]; then
   fi
 fi
 
-# A tiny repo for each thread to check out, on each machine.
+# A tiny repo for each session to check out, on each machine.
 repo_local=$DATA/fixtures/notes-repo
 repo_box=$(ssh workbox-test 'echo $HOME')/$BOX_DATA/fixtures/notes-repo
 make_repo='[ -d "$1/.git" ] || { mkdir -p "$1" && cd "$1" && git init -q && echo "notes" > README && git add README && git -c user.name=check4 -c user.email=check4@example.invalid commit -qm notes; }'
@@ -116,7 +116,7 @@ for agent in claude codex; do
       if [ -z "$session" ]; then reason="the session wasn't created"
       elif [ -z "$run" ]; then reason="the turn didn't start"
       else
-        # Each feature scenario runs against this case's thread while its turn streams.
+        # Each feature scenario runs against this case's session while its turn streams.
         pids=()
         for f in ${features[@]+"${features[@]}"}; do
           CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_SESSION=$session CHECK4_RUN=$run CHECK4_AGENT=$agent \

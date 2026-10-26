@@ -4,7 +4,7 @@ using Assembly.Application.Features.Chat.Attachments;
 namespace Assembly.Infrastructure.Chat.Attachments;
 
 /// <summary>
-/// Images the composer attaches, one folder per thread, each under a fresh name. The prompt carries the file's
+/// Images the composer attaches, one folder per session, each under a fresh name. The prompt carries the file's
 /// path, and the agent reads the file itself. Only names this store made are served back.
 /// </summary>
 public sealed partial class AttachmentStore

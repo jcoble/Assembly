@@ -5,7 +5,7 @@ using System.Text.Json;
 namespace Assembly.Application.Features.Chat.Rows;
 
 /// <summary>
-/// A saved row as JSON on the wire: <c>{threadId, seq, runId, itemId, kind, payload, createdAt}</c>, plus <c>firstSeq</c> on
+/// A saved row as JSON on the wire: <c>{sessionId, seq, runId, itemId, kind, payload, createdAt}</c>, plus <c>firstSeq</c> on
 /// page rows and <c>prevSeq</c> on live and catch-up rows.
 /// </summary>
 public static class RowWire

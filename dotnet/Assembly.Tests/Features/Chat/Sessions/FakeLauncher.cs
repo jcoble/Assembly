@@ -6,7 +6,7 @@ using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Features.Chat.Sessions;
 
-/// <summary>Checks every thread out at <c>/work/thread</c>, and hands out a new <see cref="FakeLink"/> per launch, or runs <see cref="Launch"/> in its place.</summary>
+/// <summary>Checks every session out at <c>/work/session</c>, and hands out a new <see cref="FakeLink"/> per launch, or runs <see cref="Launch"/> in its place.</summary>
 internal sealed class FakeLauncher : IAgentLauncher
 {
     public const string Checkout = "/work/session";

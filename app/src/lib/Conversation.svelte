@@ -59,7 +59,7 @@
   // Everything this conversation starts is owned here and ends in onDestroy:
   // the live socket and every fetch and timer, through `owner.signal`.
   const owner = new AbortController();
-  // The page keys this component by thread, so thread and token are fixed for its life.
+  // The page keys this component by session, so session and token are fixed for its life.
   // svelte-ignore state_referenced_locally
   const { sessionId, agent, machine } = session;
   const view = $state(emptyView());
@@ -68,7 +68,7 @@
   setContext(TOOL_DETAIL, (itemId: string) => toolDetail(token, sessionId, itemId, owner.signal));
   setContext(ASK_ANSWER, (askId: string, answer: Record<string, unknown>) => answerAsk(token, sessionId, askId, answer, owner.signal));
   setContext(TASK_STOP, (taskId: string) => stopTask(token, sessionId, taskId, owner.signal));
-  // Replies and the header name the thread's agent, from its machine's list, or this Mac's when that one
+  // Replies and the header name the session's agent, from its machine's list, or this Mac's when that one
   // doesn't answer (both name the agents alike); its id until one does.
   let speaker = $state(agent);
   const nameIn = ({ agents }: { agents: { id: string; name: string }[] }) => agents.find((a) => a.id === agent)?.name;
@@ -80,7 +80,7 @@
       (name) => name && (speaker = name),
       () => {},
     );
-  // Prompts from other sessions, labelled with the session that sent them, by its thread id.
+  // Prompts from other sessions, labelled with the session that sent them, by its session id.
   let senders = $state<Record<string, string>>({});
   $effect(() => {
     for (const item of view.items) {
@@ -147,7 +147,7 @@
     void pageCall('activity.begin');
     return () => void pageCall('activity.end');
   });
-  // The thread's title can change as a run starts (from its first message) and while it runs (the agent's own),
+  // The session's title can change as a run starts (from its first message) and while it runs (the agent's own),
   // so the list reads it again when a run appears and when it ends.
   $effect(() => {
     void activeRun;
@@ -274,9 +274,9 @@
   // An older page loading (loadOlder below). Declared above `entries`, which
   // the `$effect.pre` below reads while the component is still starting.
   let loadingOlder = $state(false);
-  // The virtual rows (thread/entries.ts).
+  // The virtual rows (session/entries.ts).
   const endAt = (i: number) => endsReply(view.items, i);
-  // A finished turn folds its work under a heading above its reply (thread/fold.ts).
+  // A finished turn folds its work under a heading above its reply (session/fold.ts).
   const folds = $derived(turnFolds(view.items, view.stats, activeRun));
   // The folds the reader opened. A turn folds by itself when it finishes: running turns have no fold.
   const openFolds = new SvelteSet<string>();

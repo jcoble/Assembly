@@ -13,8 +13,8 @@ using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
-/// One thread: its converter and the turn running now. Each turn opens the thread's session on the shared adapter
-/// and closes it when the turn ends, so an idle thread holds no agent process. Every event takes one lock on its
+/// One session: its converter and the turn running now. Each turn opens the session's ACP session on the shared adapter
+/// and closes it when the turn ends, so an idle session holds no agent process. Every event takes one lock on its
 /// way through (read, convert, commit, push), so the converter sees events in the order they happened, and a
 /// turn's end comes after every update the agent sent before it answered the prompt. What the agent asks the user
 /// while its session is open (a permission, a question) becomes a card row, and waits for <see cref="Answer"/>.
@@ -46,10 +46,10 @@ public sealed partial class SessionHost : IPermissionPolicy
     private bool _shuttingDown;
     // The subagents the agent runs as child sessions. Guarded by _gate.
     private readonly Subagents _subagents;
-    // Whether a helper session this thread's agent started is at work; and who to tell when a turn here ends.
+    // Whether a helper session this session's agent started is at work; and who to tell when a turn here ends.
     private readonly Func<bool> _helpersWorking;
     private readonly Action<string>? _turnEnded;
-    // Who to tell when this thread's session closes.
+    // Who to tell when this session's ACP session closes.
     private readonly Action<string>? _sessionClosed;
 
     /// <summary>A self-started run with no word from the agent this long, no tool running and no task open, ends.</summary>
@@ -87,7 +87,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
     }
 
-    /// <summary>Whether the thread's session is open: a turn running, or the session kept for background work.</summary>
+    /// <summary>Whether the session's ACP session is open: a turn running, or the session kept for background work.</summary>
     public bool IsOpen
     {
         get
@@ -162,8 +162,8 @@ public sealed partial class SessionHost : IPermissionPolicy
     }
 
     /// <summary>
-    /// Chooses <paramref name="value"/> for the thread's config option <paramref name="configId"/>. Every session the
-    /// thread opens from now on gets it, and the session open now, if any, gets it at once.
+    /// Chooses <paramref name="value"/> for the session's config option <paramref name="configId"/>. Every ACP session the
+    /// session opens from now on gets it, and the session open now, if any, gets it at once.
     /// </summary>
     public async Task SetConfigAsync(string configId, string value, CancellationToken cancellationToken)
     {
@@ -450,7 +450,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             }
             finally
             {
-                // Even if saving the end failed, the thread takes sends again.
+                // Even if saving the end failed, the session takes sends again.
                 sessionCost = _converter.SessionCost;
                 _turn = null;
                 // Background work still going keeps the session, and with it the work, alive.
@@ -480,7 +480,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     }
 
     // Called with the lock held.
-    /// <summary>A helper session's row in this thread, as it stands now.</summary>
+    /// <summary>A helper session's row in this session, as it stands now.</summary>
     internal void Show(SubagentShown helper)
     {
         lock (_gate)
