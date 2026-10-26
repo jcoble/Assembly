@@ -60,7 +60,7 @@ public sealed class ThreadStore
     {
         db.Writer.Write("threads.schema", scope =>
         {
-            bool Missing(string sql) => scope.QueryFirst(sql, row => row.Long(0), CancellationToken.None) == 0;
+            bool Missing(string sql) => scope.QueryFirst(sql, row => row.Long(0)) == 0;
             scope.Execute(Schema);
             if (Missing(HasMachine))
                 scope.Execute("ALTER TABLE thread_info ADD COLUMN machine TEXT;");
@@ -109,7 +109,7 @@ public sealed class ThreadStore
         _writer.Write("threads.child", scope =>
         {
             if (scope.QueryFirst($"SELECT {Columns} FROM thread_info WHERE parent_thread_id = $parent AND acp_session_id = $session;",
-                    ReadThread, CancellationToken.None, new SqlArg("$parent", parent.ThreadId), new SqlArg("$session", childSessionId)) is { } known)
+                    ReadThread, new SqlArg("$parent", parent.ThreadId), new SqlArg("$session", childSessionId)) is { } known)
                 return known;
             var child = new ThreadInfo(Guid.NewGuid().ToString(), parent.Agent, parent.RepoUrl, title, childSessionId, Now(),
                 parent.Machine, ParentThreadId: parent.ThreadId);

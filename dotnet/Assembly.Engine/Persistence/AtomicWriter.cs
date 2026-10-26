@@ -41,10 +41,10 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
     {
         public int Execute(string sql, params SqlArg[] args) => Sql.Execute(db, sql, args);
 
-        public List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args) =>
-            Sql.Query(db, sql, map, cancel, args);
+        public List<T> Query<T>(string sql, Func<IRow, T> map, params SqlArg[] args) =>
+            Sql.Query(db, sql, map, CancellationToken.None, args);
 
-        public T? QueryFirst<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args) =>
-            Sql.Query(db, sql, map, cancel, args) is [var first, ..] ? first : default;
+        public T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args) =>
+            Query(sql, map, args) is [var first, ..] ? first : default;
     }
 }

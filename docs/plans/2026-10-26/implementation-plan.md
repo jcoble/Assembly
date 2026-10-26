@@ -814,7 +814,7 @@ why. The ones known now:
 | A `window`, `document` or media-query listener in a component (including `<svelte:window>`, `<svelte:document>`, `IsMobile`'s `MediaQuery`) | listeners live in host | The component subscribes to what `lib/host/` exposes (a key, the window size, the system theme). |
 | `Collapsible` in a per-row chat component | `bits-ui` runs a tick after each toggle | Per-row chat components use a plain `{#if}`, not `Collapsible`. |
 | `mode-watcher` for light and dark | `localStorage` and its own media-query listener | Not used. The theme is one theme id from the registry, saved through `save` (F2). |
-| Height classes (`h-9` in the `Button`) | heights are set once in `app.css` | The class names a size from `app.css` (`size-icon-button`, `h-tab`), never a number (F2; Jesse's call in section 12). |
+| Height classes (`h-9` in the `Button`) | heights are set once in `app.css` | The class names a size from `app.css` (`size-icon-button`, `h-tab`), never a number (F2). |
 | Shadow classes (`shadow-xs`, `shadow-md`) | the design has no shadows | Removed on add. `--shadow-*` is cleared in `app.css`, so a missed one draws nothing. |
 
 Never run a shadcn.io install. Those items are built on `@ark-ui/svelte` and would overwrite the `bits-ui` parts in
@@ -1367,9 +1367,8 @@ catalogue stays the reference.
     The setting can't do the density alone. shadcn sets heights as classes inside each component (`h-9` in the
     Button). Changing `--spacing` would scale every padding with them: 28 px buttons need a unit of about 3.1 px,
     which turns `p-4` into 12.4 px. So a registry component's height class is edited on add to name a size
-    (`h-9` becomes `size-icon-button`). That's a row in 9.1b, and a question for Jesse in section 12, because
-    `AGENTS.md` says heights are set once in `app.css`, never per component. I recommend the edit on add: the number
-    lives once in `app.css`, and a component only names it.
+    (`h-9` becomes `size-icon-button`). That's a row in 9.1b. It meets the rule in `AGENTS.md`: the value lives once
+    in `app.css`, and a component only names it.
   - **Shape and depth:**
     - The radii are `--radius-xs` 4, `-sm` 5, `-md` 6 and `-lg` 8. They replace shadcn's computed `--radius`
       (10 px) and its `xl` and larger.
@@ -1492,13 +1491,10 @@ Each P phase has the same shape as the W phases.
       without `:has()`, and the build backstop (9.1) proves none got in.
 - **Timers inside packages** (`bits-ui`'s tooltip delay, `Collapsible`'s tick after a toggle, `dockview-core`'s
   drag timers): Jesse's call whether to accept them. The at-rest checks (9.1) are the net either way.
-- **Heights in registry components** (F2). shadcn sets heights as classes inside each component. F2 edits them on
-  add to name a size set once in `app.css`, since changing Tailwind's `--spacing` would scale every padding too.
-  `AGENTS.md` says heights are set once in `app.css`, never per component. Jesse's call: is naming the size in the
-  component OK under that rule? I recommend yes.
 - **Light-named themes** (F2). Ayu Light, Rose Pine Dawn and Tomorrow keep the Assembly shell and change only the
   editor, as in the old app. Making them light the whole window is a possible follow-up, not part of F2.
-- **My picks for colours the design system doesn't name** (F2): the menu ground, the scrim and the selection colour.
+- **Note: my picks for colours the design system doesn't name** (F2): the menu ground takes chip's value, and the
+  scrim and the selection colour keep the old values. Jesse can change them.
 - **The packages for the checks** (prettier, knip), which wait for Jesse's OK. Tailwind and shadcn-svelte are in
   (91a01e6).
 - **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to

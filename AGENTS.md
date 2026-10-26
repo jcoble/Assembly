@@ -60,7 +60,8 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
   as any other code: if it fails the guard on add (a timer, a `.then`, a loop at rest, a `has-*` variant), edit it to
   meet the rules and say in the PR what you changed. The packages a component brings (`bits-ui` and the rest) are
   pinned to the exact version installed.
-- Heights and spacing are set once in the theme variables in `app/src/app.css`, never per component.
+- Heights and spacing values are set once in the theme variables in `app/src/app.css`; components use those names,
+  never a raw size.
 
 ## Words we use
 

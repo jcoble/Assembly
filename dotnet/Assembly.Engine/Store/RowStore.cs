@@ -36,7 +36,7 @@ public sealed class RowStore
             scope.Execute(Schema.Create);
             // Version 1 kept every delta: delete the finished messages' deltas it left, once. A newer version's
             // database is left as it is, version included.
-            if (scope.QueryFirst("PRAGMA user_version;", row => row.Long(0), CancellationToken.None) < FormatVersion)
+            if (scope.QueryFirst("PRAGMA user_version;", row => row.Long(0)) < FormatVersion)
             {
                 scope.Execute(
                     """
@@ -216,7 +216,7 @@ public sealed class RowStore
             new SqlArg("$thread", threadId), new SqlArg("$item", itemId)).FirstOrDefault();
 
     private static long NextSeq(IWriteScope scope, string threadId) =>
-        scope.QueryFirst("SELECT next_seq FROM threads WHERE thread_id = $thread;", row => row.Long(0), CancellationToken.None,
+        scope.QueryFirst("SELECT next_seq FROM threads WHERE thread_id = $thread;", row => row.Long(0),
             new SqlArg("$thread", threadId));
 
     /// <summary>A message row is the full form of its deltas, so they go once it's saved.</summary>

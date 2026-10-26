@@ -48,7 +48,7 @@ public sealed class AppDatabaseTests : IDisposable
         var inside = _db.Writer.Write("test.add", scope =>
         {
             scope.Execute("INSERT INTO notes(id, text) VALUES ($id, $text);", new SqlArg("$id", 7L), new SqlArg("$text", "b"));
-            return scope.QueryFirst("SELECT text FROM notes WHERE id = 7;", row => row.Text(0), CancellationToken.None);
+            return scope.QueryFirst("SELECT text FROM notes WHERE id = 7;", row => row.Text(0));
         });
 
         Assert.Equal("b", inside);
@@ -93,6 +93,27 @@ public sealed class AppDatabaseTests : IDisposable
             row => row.Long(0), cancel.Token));
 
         Assert.True(started.Elapsed < TimeSpan.FromSeconds(5), $"took {started.Elapsed}");
+    }
+
+    [Fact]
+    public async Task A_read_cancelled_outside_a_write_leaves_the_write_to_commit()
+    {
+        // Once a save is sent it finishes: a read inside a write takes no token, and cancelling a read outside it
+        // interrupts only that read's own connection.
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        var outside = Task.Run(() => _db.Query(
+            "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT COUNT(*) FROM n;",
+            row => row.Long(0), cancel.Token));
+        var write = Task.Run(() => _db.Writer.Write("test.add", scope =>
+        {
+            scope.Execute("INSERT INTO notes(id, text) VALUES (9, 'kept');");
+            return scope.QueryFirst("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000000) SELECT COUNT(*) FROM n;",
+                row => row.Long(0));
+        }));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => outside);
+        Assert.Equal(2_000_000, await write);
+        Assert.Equal("kept", _db.QueryFirst("SELECT text FROM notes WHERE id = 9;", row => row.Text(0), CancellationToken.None));
     }
 
     public void Dispose()
