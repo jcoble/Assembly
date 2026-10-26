@@ -3,7 +3,6 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
-using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Http;
 namespace Assembly.Infrastructure.Diagnostics;
 

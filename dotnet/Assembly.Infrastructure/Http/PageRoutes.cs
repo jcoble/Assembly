@@ -4,7 +4,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
-using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Diagnostics;
 namespace Assembly.Infrastructure.Http;
 

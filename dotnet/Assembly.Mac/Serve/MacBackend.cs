@@ -18,7 +18,6 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
 using Assembly.Application.Features.Chat.Threads;
 using Assembly.Domain.Threads;
-using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
 

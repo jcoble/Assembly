@@ -69,7 +69,8 @@ rules.
     ACP v1 client, one record per message, and `V1/`, the only place that knows ACP's shapes and provider quirks),
     `Agents/` (launching contracts and the shared adapter) and `Machines/`.
   - `Features/Chat/`: threads, rows (with the live hub and the markdown parse), sessions, helpers and attachments.
-  - `Features/Preferences/` and `Features/Diagnostics/`.
+  - `Features/Preferences/`. Diagnostics has no folder here until B8: its code makes native calls and reads files,
+    so it's all in Infrastructure's `Diagnostics/`.
 - `Assembly.Infrastructure/`: references Application. SQLite and the one writer (`Persistence/`), starting agent
   processes and git (`Agents/`), the local and remote machines (`Machines/`, `Remote/`), the transcript replay, `/mcp`,
   the files behind chat and diagnostics (`Chat/`, `Diagnostics/`), and today's HTTP routes (`Http/`) until the socket

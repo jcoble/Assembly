@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace Assembly.Application.Features.Diagnostics;
+namespace Assembly.Infrastructure.Diagnostics;
 
 /// <summary>
 /// <c>activity.begin</c> / <c>activity.end</c>: while a turn runs, an <c>NSProcessInfo</c> activity keeps App Nap from

@@ -1,4 +1,3 @@
-using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Http;
 
 namespace Assembly.Infrastructure.Diagnostics;

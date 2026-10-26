@@ -5,7 +5,6 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Mac.Serve;
-using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Http;
 using Assembly.Tests.Infrastructure.Http;

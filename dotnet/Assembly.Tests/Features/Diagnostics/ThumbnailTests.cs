@@ -1,6 +1,5 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
-using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Http;
 
