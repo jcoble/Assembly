@@ -334,8 +334,8 @@ feature uses it.
   core and its own files, never another feature's folder (`ArchitectureTests` checks this too).
 - The page's core is `lib/socket.ts`, `lib/host/`, `lib/components/` (from the registry), `lib/time/` and
   `lib/utils.ts`.
-- Chat's page folders today (`chat/`, `composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under
-  `lib/chat/` in step C1, when chat moves onto the socket. `call.ts` goes in B7, `api.ts` in C1, and `debug.svelte.ts`,
+- Chat's page folders today (`composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under `lib/chat/` in
+  step B2c. They import each other, so `ArchitectureTests` can't pass with them apart, and there are no exceptions. `call.ts` goes in B7, `api.ts` in C1, and `debug.svelte.ts`,
   `lag.svelte.ts` and `soak.ts` move to `app/measure/` in B9 (D2).
 
 ### Where today's folders go
@@ -952,11 +952,13 @@ because chat's row and thread stores and the preference store call SQLite direct
 - **B2c. The move.** Git shows it as renames, with only namespace and `using` edits in them. PR 2's text carries
   the proof, so Jesse can read B2a and skip the moved files: `git diff -M --stat` and `--summary` for the commit,
   showing every moved file as a rename, and a check that every changed line in those renames is a `namespace` or
-  `using` line. New files (the project files, `DependencyInjection.cs`) are listed apart.
+  `using` line, or an import path in the page files. New files (the project files, `DependencyInjection.cs`) are listed apart.
   - **New:** `dotnet/Assembly.Domain/Assembly.Domain.csproj`, `dotnet/Assembly.Application/Assembly.Application.csproj`
     with `DependencyInjection.cs`, `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj` with
     `DependencyInjection.cs`, `dotnet/Directory.Packages.props`.
-  - **Moved:** every file in the "Where today's folders go" table in section 4. Today's tests go to
+  - **Moved:** every file in the "Where today's folders go" table in section 4, and the page's `composer/`, `rows/`,
+    `thread/` and `Conversation.svelte` under `app/src/lib/chat/` (section 4). In those, the changed lines are
+    import paths. Today's tests go to
     `Assembly.Tests/Features/<Feature>/`, `Core/` or `Infrastructure/`, matching the code they test; `Draft/`,
     `Pinned/` and `Fixtures/` stay where they are.
   - **Deleted:** `dotnet/Assembly.Engine/`.
