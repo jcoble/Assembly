@@ -20,18 +20,26 @@ internal static class Schema
 
     /// <summary>
     /// Renames a database from before the rename, in the write that opens it, before its tables are created: the old
-    /// tables and columns get the session names, and the old updated_at index goes so the new one replaces it. A
-    /// database that has none of the old names is left as it is.
+    /// tables and columns get the session names, a saved subagent's child id moves from <c>threadId</c> to
+    /// <c>sessionId</c>, and the old updated_at index goes so the new one replaces it. A database that has none of the
+    /// old names is left as it is.
     /// </summary>
     public static void RenameOldNames(IWriteScope scope)
     {
         bool Has(string sql, params SqlArg[] args) => scope.QueryFirst(sql, row => row.Long(0), args) > 0;
+        var oldRows = Has("SELECT COUNT(*) FROM pragma_table_info('rows') WHERE name = 'thread_id';");
         foreach (var (old, renamed) in OldTables)
             if (Has("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = $name;", new SqlArg("$name", old)))
                 scope.Execute($"ALTER TABLE {old} RENAME TO {renamed};");
         foreach (var (table, old, renamed) in OldColumns)
             if (Has("SELECT COUNT(*) FROM pragma_table_info($table) WHERE name = $name;", new SqlArg("$table", table), new SqlArg("$name", old)))
                 scope.Execute($"ALTER TABLE {table} RENAME COLUMN {old} TO {renamed};");
+        if (oldRows)
+            scope.Execute(
+                """
+                UPDATE rows SET payload = json_remove(json_set(payload, '$.sessionId', json_extract(payload, '$.threadId')), '$.threadId')
+                WHERE kind = 'subagent' AND json_type(payload, '$.threadId') IS NOT NULL;
+                """);
         scope.Execute("DROP INDEX IF EXISTS thread_info_updated;");
     }
 

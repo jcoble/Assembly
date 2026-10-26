@@ -37,9 +37,10 @@ public sealed class OldNamesTests : IDisposable
             CREATE TABLE preferences(key TEXT PRIMARY KEY, value TEXT NOT NULL);
             PRAGMA user_version = 3;
 
-            INSERT INTO threads VALUES ('s1', 3);
+            INSERT INTO threads VALUES ('s1', 4);
             INSERT INTO rows VALUES ('s1', 1, 'run-1', 'u', 'message', '{"blocks":[]}', 1),
-              ('s1', 2, 'run-1', 't', 'tool', '{"summary":"ls"}', 2);
+              ('s1', 2, 'run-1', 't', 'tool', '{"summary":"ls"}', 2),
+              ('s1', 3, 'run-1', 'subagent:acp-2', 'subagent', '{"threadId":"s2","title":"Child","state":"idle","canStop":false}', 3);
             INSERT INTO tool_details VALUES ('s1', 't', 'ls -la', 'a.txt', NULL, NULL);
             INSERT INTO thread_info(thread_id, agent, repo_url, title, acp_session_id, created_at, updated_at, parent_thread_id)
               VALUES ('s1', 'claude', 'r', 'Old one', 'acp-1', 1, 2, NULL), ('s2', 'claude', 'r', 'Child', 'acp-2', 1, 3, 's1');
@@ -64,13 +65,15 @@ public sealed class OldNamesTests : IDisposable
         {
             Assert.Equal(["Old one"], sessions.List(before: null, limit: 10).Sessions.Select(session => session.Title));
             Assert.Equal("s1", sessions.Get("s2")!.ParentSessionId);
-            Assert.Equal([1L, 2L], rows.RowsAfter("s1", 0).Select(row => row.Seq));
+            Assert.Equal([1L, 2L, 3L], rows.RowsAfter("s1", 0).Select(row => row.Seq));
+            Assert.Equal("""{"title":"Child","state":"idle","canStop":false,"sessionId":"s2"}""",
+                rows.RowsAfter("s1", 2).Single().Payload.GetRawText());
             Assert.Equal(new StoredToolCall("ls", "ls -la", "a.txt", null, null), rows.ToolCall("s1", "t"));
             Assert.Equal("opus", sessions.Config("s1").Choices["model"]);
             Assert.Equal("""[{"name":"context"}]""", sessions.Config("s1").Commands);
             Assert.Equal(("s1", "s2"), (sessions.Message("m1")!.From, sessions.Message("m1")!.To));
             Assert.Equal(1, sessions.MessageCount("s1", "s2"));
-            Assert.Equal(2, rows.LastSeq("s1"));
+            Assert.Equal(3, rows.LastSeq("s1"));
         }
 
         // A second open changes nothing, and the preferences were never touched.
