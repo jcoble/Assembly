@@ -14,8 +14,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// </summary>
 public sealed class RowStore
 {
-    /// <summary>The row format. Two machines copy rows between them only when theirs match.</summary>
-    public const int FormatVersion = 3;
+    /// <summary>The row format. Two machines copy rows between them only when theirs match. 4: the session names.</summary>
+    public const int FormatVersion = 4;
 
     private const string Columns = "session_id, seq, run_id, item_id, kind, payload, created_at";
 

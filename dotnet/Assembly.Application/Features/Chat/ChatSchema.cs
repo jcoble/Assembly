@@ -27,9 +27,11 @@ internal static class Schema
     public static void RenameOldNames(IWriteScope scope)
     {
         bool Has(string sql, params SqlArg[] args) => scope.QueryFirst(sql, row => row.Long(0), args) > 0;
+        const string Table = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = $name;";
         var oldRows = Has("SELECT COUNT(*) FROM pragma_table_info('rows') WHERE name = 'thread_id';");
         foreach (var (old, renamed) in OldTables)
-            if (Has("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = $name;", new SqlArg("$name", old)))
+            // An older build that opened the renamed database made the old tables again, empty: they're left alone.
+            if (Has(Table, new SqlArg("$name", old)) && !Has(Table, new SqlArg("$name", renamed)))
                 scope.Execute($"ALTER TABLE {old} RENAME TO {renamed};");
         foreach (var (table, old, renamed) in OldColumns)
             if (Has("SELECT COUNT(*) FROM pragma_table_info($table) WHERE name = $name;", new SqlArg("$table", table), new SqlArg("$name", old)))

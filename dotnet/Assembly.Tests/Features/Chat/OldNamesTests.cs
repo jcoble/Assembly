@@ -74,12 +74,31 @@ public sealed class OldNamesTests : IDisposable
             Assert.Equal(("s1", "s2"), (sessions.Message("m1")!.From, sessions.Message("m1")!.To));
             Assert.Equal(1, sessions.MessageCount("s1", "s2"));
             Assert.Equal(3, rows.LastSeq("s1"));
+            // The rows' JSON changed with the names, so two machines on either side of the rename don't copy rows.
+            Assert.Equal(4, rows.StoredFormatVersion);
         }
 
         // A second open changes nothing, and the preferences were never touched.
         Assert.Equal(renamed, Schema());
         Assert.NotEqual(before, renamed);
         Assert.Equal(["theme=\"dark\""], Query("SELECT key || '=' || value FROM preferences;"));
+    }
+
+    [Fact]
+    public void Old_tables_an_older_build_made_again_after_the_rename_are_left_alone()
+    {
+        Open(out _, out _).Dispose();
+        Run("""
+            CREATE TABLE threads(thread_id TEXT PRIMARY KEY, next_seq INTEGER NOT NULL);
+            CREATE TABLE thread_info(thread_id TEXT PRIMARY KEY, agent TEXT NOT NULL, repo_url TEXT NOT NULL,
+              title TEXT, acp_session_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+            """);
+
+        using (Open(out var rows, out var sessions))
+        {
+            Assert.Equal("Old one", sessions.Get("s1")!.Title);
+            Assert.Equal(3, rows.LastSeq("s1"));
+        }
     }
 
     private AppDatabase Open(out RowStore rows, out SessionStore sessions)
