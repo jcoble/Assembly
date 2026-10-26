@@ -224,25 +224,31 @@ way the only way. Each one names what enforces it.
     - **"Things that do real damage":** kept. The data folder paths become this repo's two (from "Safety"), and
       `fourScenarios.ts start --seed` and `docs/operations/four-scenario-check.md` become `scripts/check4.sh` and its
       README.
-    - **"Providers behave the same":** kept. The provider folder becomes `Assembly.Infrastructure/Acp/Providers/`.
-      Two lines go, because neither exists here: the pre-commit count of provider-name branches, and
-      `provider-updates.yml`.
+    - **"Providers behave the same":** kept. The provider folder is `Assembly.Application/Common/Acp/V1/`, and
+      `scripts/lint.d/30-provider-branches.sh` fails on code outside it that branches on a provider's name (the old
+      pre-commit count, with no baseline). `provider-updates.yml` goes: it doesn't exist here.
     - **"Check every place the change reaches":** kept. `remote/wire.rs` becomes the socket protocol
       (`SocketFrames.cs`), and the `phone/` line waits for phase P4.
     - **"Testing":** kept as rules: test first, no sleeps, no tests of layout or styling, check4 for every change.
-      Dropped: the commit-msg `fix` hook, the `pnpm` and `cargo` commands, `assembly-native-ui`, and
-      `evidence add --task TSK`. This repo's own "Checking a feature" section says how to prove a change.
+      The commit-msg hook comes over (`.githooks/commit-msg`, `scripts/check-commit-msg.sh`): a `fix` commit changes
+      a test or says `No-test: <reason>`. The `pnpm` and `cargo` commands run in CI (`.github/workflows/ci.yml`).
+      Dropped: `assembly-native-ui` and `evidence add --task TSK`. This repo's own "Checking a feature" section says
+      how to prove a change.
     - **"Review guidelines":** kept unchanged.
     - **"Reaching Jesse":** rewritten. The Build Board and `board_update` don't exist here yet (the Build Board is
       rebuilt in phase P3), so a question or a
       blocker goes to the project thread, with enough context to answer without reading the chat. The task waits,
       and other work goes on.
+    - **Commits, CI and Notion:** the commit-message rules (`Committed-by:`, no co-author line, the `Task:` line on
+      a `tsk-<id>` branch, and `Architecture: unchanged` or a change to `docs/architecture.md`, this repo's
+      architecture guide) are checked by the hook and, for each pull request's own commits, by CI. No source file is
+      over 600 lines, with no baseline (`scripts/lint.d/20-file-size.sh`); Jesse's 300-line question is still open.
+      `notion-tasks.yml` and the `work-tasks` skill come over, reading the project's Notion page from the
+      repository variable `NOTION_PROJECT_ID`.
 17. **Dropped from mac-command-bar,** because they describe the Rust app or tools this repo doesn't have:
     - the Rust folder map;
-    - the 600-line baseline file (the size rule waits for Jesse's 300-line decision);
-    - the `Architecture:` commit line and `main-architecture-explained.html`, which come back when that page is
-      written for this repo;
-    - the Notion task rules and `tsk-<id>` branch names;
+    - the 600-line baseline file: the files over the limit were split instead;
+    - `main-architecture-explained.html`: `docs/architecture.md` is this repo's guide;
     - "The build board" section: the old Rust board's reporting rules;
     - "The workbox" section's mac-command-bar worktree path. This repo's "Lanes" section already says where lanes
       live.
