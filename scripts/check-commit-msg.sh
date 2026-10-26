@@ -10,13 +10,13 @@ set -euo pipefail
 if [ "${1:-}" = --commit ]; then
   commit=${2:?usage: check-commit-msg.sh --commit <id> <branch>} branch=${3:-}
   message=$(git log -1 --format=%B "$commit" | git stripspace --strip-comments)
-  changed=$(git diff-tree --root --no-commit-id --name-only -r --diff-filter=ACMR "$commit")
+  changed=$(git -c core.quotePath=false diff-tree --root --no-commit-id --name-only -r --diff-filter=ACMR "$commit")
 else
   # Git writes merge messages itself.
   ! git rev-parse -q --verify MERGE_HEAD >/dev/null || exit 0
   message=$(git stripspace --strip-comments <"${1:?usage: check-commit-msg.sh <message file>}")
   branch=$(git symbolic-ref --quiet --short HEAD || true)
-  changed=$(git diff --cached --name-only --diff-filter=ACMR)
+  changed=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
 fi
 
 stop() { echo "commit stopped: $*" >&2; exit 1; }
@@ -35,9 +35,9 @@ case "$branch" in
     ;;
 esac
 
-if head -n 1 <<<"$message" | grep -Eiq '^fix\b'; then
+if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
   grep -Eq '^(dotnet/Assembly\.Tests|app/test)/' <<<"$changed" \
-    || tail -n +2 <<<"$message" | grep -Eq '^No-test:[[:space:]]*[^[:space:]]' \
+    || grep -Eq '^No-test:[[:space:]]*[^[:space:]]' <<<"$(tail -n +2 <<<"$message")" \
     || stop "a fix commit changes a test (dotnet/Assembly.Tests/ or app/test/), or says why not with No-test: <reason>."
 fi
 exit 0

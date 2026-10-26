@@ -40,6 +40,8 @@ expect 1 "a fix with no test change stops it" work $'fix(chat): rows keep order\
 expect 0 "a fix that changes a .NET test passes" work $'fix(chat): rows keep order\n\nCommitted-by: Claude' dotnet/Assembly.Tests/X.cs
 expect 0 "a fix that changes an app test passes" work $'Fix rows\n\nCommitted-by: Claude' app/test/x.test.ts
 expect 0 "a fix with No-test passes" work $'fix: typo\n\nNo-test: a comment only\nCommitted-by: Claude' app/src/x.ts
+expect 0 "a fix that changes a test with an accented name passes" work $'fix: names\n\nCommitted-by: Claude' 'app/test/résumé.test.ts'
+expect 0 "a fix with No-test above a long body passes" work $'fix: x\n\nNo-test: r\n'"$(seq 20000)"$'\nCommitted-by: Claude' app/src/x.ts
 expect 0 "a subject that only starts with fixup isn't a fix" work $'fixup the docs\n\nCommitted-by: Claude' app/src/x.ts
 
 exit "$failed"
