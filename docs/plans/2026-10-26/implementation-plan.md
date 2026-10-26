@@ -205,7 +205,8 @@ way the only way. Each one names what enforces it.
    (step B2).
 9. **One class per file, organized by feature inside each layer.** This is today's rule, kept.
 10. **Animations end.** Short motion tied to an interaction is fine (120–250 ms); a loop at rest isn't. From
-    mac-command-bar.
+    mac-command-bar. A loop runs only under `[aria-busy="true"]`, which the element sets only while real work runs.
+    Enforced by the guard's loop rule (9.1) and the at-rest check in B10.
 11. **No CSS `:has()`.** Enforced by the guard.
 12. **TypeScript only.** No `.js`, `.mjs` or `.cjs` files. This is today's rule; `scripts/lint.d/00-typescript-only.sh`
     enforces it.
@@ -218,7 +219,7 @@ way the only way. Each one names what enforces it.
     Rust app or to tools this repo doesn't have:
     - **"What we don't trade away":** kept. "Tauri command or websocket message" becomes "socket frame".
       `scanSchedulers.ts` and the allow-list sentence become `app/scripts/guards.sh`, with no list. Tailwind `has-*`
-      joins the `:has()` rule once Tailwind is approved.
+      joins the `:has()` rule, now that Tailwind is in (91a01e6).
     - **"Things that do real damage":** kept. The data folder paths become this repo's two (from "Safety"), and
       `fourScenarios.ts start --seed` and `docs/operations/four-scenario-check.md` become `scripts/check4.sh` and its
       README.
@@ -621,6 +622,29 @@ Every file in `app/src`, those included, fails on any of these:
 - a markdown parser import, anywhere. Today's `lib/editor/preview/` carve-out goes, since there's no editor yet;
   the editor phase (W2) asks for it if it needs one.
 - an import from `app/measure` (D2)
+- Tailwind's `has-*` variants (`has-[...]`, `has-data-[...]`, `group-has-*`, `peer-has-*`), which compile to
+  `:has()`. Today's guard checks only the text `:has(`, so these slip past it. The registry's `Button`, added in
+  91a01e6, already uses `has-data-[icon=inline-end]` and `has-data-[icon=inline-start]`, so B9 edits it (section
+  9.1b).
+- a looping animation outside a busy state (the loop rule below)
+
+**The loop rule (Jesse's AGENTS line: a loop may run only while real work runs).** It can be checked by text, with
+no exception list, because the rule is about where a loop is written, not which file writes it:
+
+- In CSS (`.css` files and `<style>` blocks), `infinite` may appear only inside a rule whose selector includes
+  `[aria-busy="true"]` (or `[aria-busy='true']`). The script tracks the selector of the rule it's in, the same way it
+  reads `<style>` blocks for `:has(` today.
+- In markup, Tailwind's looping utilities (`animate-spin`, `animate-pulse`, `animate-ping`, `animate-bounce`, and any
+  `animate-[...]` with `infinite`) pass only with the `aria-busy:` variant in front, such as `aria-busy:animate-spin`.
+  A bare `animate-spin` fails.
+- So any file may have a loop, but only one that's off unless the element says it's busy. Today's
+  `chat/tools/Plan.svelte` spinner (`.glyph.spin { animation: … infinite }`, set while `running`) becomes
+  `[aria-busy='true']`, with `aria-busy={running}`.
+
+What text can't check is whether `aria-busy` really follows real work. That's checked by a test instead: B10 adds a
+check to the window run (and to the B9 node test with happy-dom where it can) that, with the app at rest after
+launch, `document.getAnimations()` holds no animation whose `iterations` is `Infinity`. A loop left on at rest fails
+it, whichever file it's in.
 
 These are checked in every file:
 
@@ -635,6 +659,26 @@ Its self-test lines, which are today's design, stay. A new probe is added for ea
 `TRANSPORT` and `HOST` are the only two names in the guard script. A third needs Jesse's OK. Changing the rules
 means changing the script, which is locked, so adding a rule or a place takes an OK in `.pinned-approvals`. Nobody
 can add their own file to a list, because there's no list.
+
+### 9.1b Components from the registry and the guard
+
+Components added from the shadcn-svelte or AI Elements registry land in `app/src/lib/components/` like any other
+code. The guard scans them with the same rules and no carve-out: no folder is exempt, the registry's included. Some
+will fail on add. Each is edited when it's added to meet the rules, and the PR that adds it says what was changed and
+why. The ones known now:
+
+| Component pattern | Why it fails | The edit on add |
+| --- | --- | --- |
+| A copy button that resets "copied" with `setTimeout` | timer | "Copied" stays until the pointer leaves or the next copy; no timer. |
+| Clipboard with `navigator.clipboard.writeText(…).then(…)` | `.then`, and the clipboard is a host call | `await` the host's clipboard call in `lib/host/` (the app already uses the Tauri clipboard plugin). |
+| Shimmer, pulsing skeletons, `animate-spin` loaders | loop at rest | `aria-busy:` in front, and the component takes a `busy` prop bound to real work (the loop rule). |
+| Tailwind `has-*` variants (the `Button` from 91a01e6) | compiles to `:has()` | A data attribute on the element itself, set from a prop (for example `data-icon-end`), styled directly. |
+| `document.cookie` or `localStorage` for state (the sidebar's open state) | state belongs in the backend | Saved through `save` (5.9), like every setting. |
+| A `window` or `document` listener in a component | one listener home | `<svelte:window>` or `<svelte:document>` in markup, which Svelte removes with the component; the guard's listener rule is about `addEventListener(`. |
+
+Timers inside the packages themselves (`bits-ui` delays a tooltip opening, for example) are in `node_modules`, which
+the guard doesn't scan. They're tied to an interaction and end with it. The window's at-rest check (9.1) catches a
+package loop that doesn't end.
 
 `guards.sh` and `guards-allowed.txt` are locked on main now (`scripts/locked-paths.txt`), since PR #1 merged.
 **Step B10 needs Jesse's OK lines** (section 9.3), because the lane that wants the change can't OK it (`AGENTS.md`,
@@ -698,6 +742,9 @@ and is marked ready once its proof is in. It has a plain summary written for Jes
 what isn't proven yet. Jesse merges each one, and the next group builds on main after he does.
 
 ### B1. Merge the AGENTS.md files
+
+Jesse pasted mac-command-bar's `AGENTS.md` at the top of this repo's in 91a241d. B1 adapts that paste to this repo
+as section 3 says, and adds the shadcn-first rule (F2).
 
 - **Files:** `AGENTS.md`.
 - **Test:** none (documentation).
@@ -899,7 +946,11 @@ group:
 - **Files:** `app/scripts/guards.sh`, and deleting `app/scripts/guards-allowed.txt`. Both are locked, so this
   **needs Jesse's OK line.**
 - **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, `fetch`
-  in `socket.ts` itself, a `WebSocket` outside `socket.ts`). Each fails against today's script.
+  in `socket.ts` itself, a `WebSocket` outside `socket.ts`, a Tailwind `has-data-[…]`, a bare `animate-spin`, an
+  `infinite` in a rule without `[aria-busy="true"]`). Each fails against today's script. Probes that must pass:
+  `aria-busy:animate-spin`, and `infinite` inside `[aria-busy='true']`.
+- **The at-rest check:** after launch, with nothing running, `document.getAnimations()` holds no animation with
+  `iterations` of `Infinity` (9.1). It runs in the window check on the Mac.
 - **Proof:** `guards.sh` passes on the tree after B9, and fails on each probe.
 - **Size:** about 120 lines.
 
@@ -977,14 +1028,23 @@ catalogue stays the reference.
 
 ### F. Frame and Look (the visible shell)
 
-- **F1. The frame** (Sol P17, P18): sessions, chat, the right drawer, the bottom dock, and divider positions (base#4,
-  base#5).
-  - **Files:** `app/src/lib/shell/*`, and divider and tab state through `save` (5.9).
-  - **Tests:** only the drawer and tab rules, as logic.
-  - **Proof:** a feature check in the window, with screenshots.
-- **F2. The look** (base#6): the design tokens and theme switching. This needs Jesse's OK on the packages
-  (tailwindcss, bits-ui, lucide and the rest).
-  - **Files:** `app/src/lib/styles/tokens.css`, and the components.
+- **F1. The frame** (Sol P17, P18): sessions, chat, the right drawer, the bottom dock (base#4, base#5). Jesse's
+  direction (2026-10-26): panes drag anywhere, and a divider drags as far as the next pane. The fixed grid is
+  replaced by a docking layout, most likely `dockview-core`, the framework-free build of dockview, with each pane's
+  body a Svelte component mounted into it. The package waits for Jesse's OK (section 12).
+  - **Files:** `app/src/lib/shell/` (the dock, one file mounting panes into it), with the layout saved through
+    `save` (5.9).
+  - **Saving:** the layout (`toJSON()`) is saved once at the end of a drag, per base#7: when a divider is let go
+    (pointerup) or a pane is dropped. It's one atomic write, never one per frame of the drag.
+  - **Tests:** only the rules, as logic: a saved layout loads back the same, and a drag sends one save at its end.
+  - **Proof:** a feature check in the window, with screenshots of panes moved and dividers dragged to the next pane.
+- **F2. The look** (base#6): shadcn-svelte first. Everything is built from shadcn-svelte and AI Elements
+  components, added from the registry (AGENTS.md says how), never hand-built look-alikes. Jesse set up Tailwind v4
+  and shadcn-svelte in 91a01e6. The look is denser than the old app: smaller heights and spacing set once in the
+  theme variables in `app/src/app.css` (for example a 28 px control height rather than shadcn's 36 px), not per
+  component. Theme switching (light and dark) is here too.
+  - **Files:** `app/src/app.css`, and the components under `app/src/lib/components/`, each edited on add where the
+    guard needs it (9.1b).
   - **Proof:** a feature check, light and dark.
 
 ### W. The workbench
@@ -1030,7 +1090,11 @@ Each P phase has the same shape as the W phases.
 - **D1 to D4** (section 1).
 - **Audit retention is 30 days** (5.6). That's a number Jesse can change: it and the 5,000-row cap per prune are constants in `AtomicWriter.cs`.
 - **The 300-line file limit,** which waits for Jesse. If he picks 300, the 7 oversize files are split in phase C1.
-- **The packages for F2 and the checks** (prettier, knip), which wait for Jesse's OK.
+- **`dockview-core` for F1**, pending Jesse's OK. Not added yet.
+- **The AI Elements registry**: which Svelte registry URL it is. To confirm with Jesse when the first chat
+  component is added (phase C).
+- **The packages for the checks** (prettier, knip), which wait for Jesse's OK. Tailwind and shadcn-svelte are in
+  (91a01e6).
 - **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to
   `docs/behavior/base.md` in phase C2, as a draft line. That file isn't in `scripts/locked-paths.txt`, so it needs no
   OK.
