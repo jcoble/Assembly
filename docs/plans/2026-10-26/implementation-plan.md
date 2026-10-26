@@ -813,7 +813,13 @@ why. The ones known now:
 | `document.cookie` or `localStorage` for state (the sidebar's open state) | state belongs in the backend | Saved through `save` (5.9), like every setting. |
 | A `window`, `document` or media-query listener in a component (including `<svelte:window>`, `<svelte:document>`, `IsMobile`'s `MediaQuery`) | listeners live in host | The component subscribes to what `lib/host/` exposes (a key, the window size, the system theme). |
 | `Collapsible` in a per-row chat component | `bits-ui` runs a tick after each toggle | Per-row chat components use a plain `{#if}`, not `Collapsible`. |
-| `mode-watcher` for light and dark | `localStorage` and its own media-query listener | Not used. The theme is a setting saved through `save`, and the system theme comes from Tauri's theme-changed event in `lib/host/` (F2). |
+| `mode-watcher` for light and dark | `localStorage` and its own media-query listener | Not used. The theme is one theme id from the registry, saved through `save` (F2). |
+| Height classes (`h-9` in the `Button`) | heights are set once in `app.css` | The class names a size from `app.css` (`size-icon-button`, `h-tab`), never a number (F2; Jesse's call in section 12). |
+| Shadow classes (`shadow-xs`, `shadow-md`) | the design has no shadows | Removed on add. `--shadow-*` is cleared in `app.css`, so a missed one draws nothing. |
+
+Never run a shadcn.io install. Those items are built on `@ark-ui/svelte` and would overwrite the `bits-ui` parts in
+`components/ui/`, so their markup is copied onto `bits-ui` instead. The install command carries Jesse's personal
+token, so it never goes into the repo, a note or a log.
 
 `bits-ui` arrives with the first component that needs it. It's pinned to the exact version installed, like the
 CLI, and so is every package a component brings.
@@ -1220,6 +1226,9 @@ catalogue stays the reference.
     thread (197 to 205 ms median, 294 ms p99, measured on agent-workbox before B2a). That's very likely the "slow
     frames only on thread switch" from the Mac lag run. Run `EXPLAIN QUERY PLAN` on it, then add an index or change
     the query so a page loads in single-digit milliseconds, with before and after numbers.
+  - **Reads take the call's token.** Since B2a every store read passes `CancellationToken.None`, because the
+    signatures didn't change, so no load in the backend can be cancelled yet. When the chat reads move onto the socket,
+    they take the call's token, starting with `PageBefore` alongside its index fix.
   - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
     `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions
     (section 9.2). Adding a file to the locked `lint.d` needs no OK.
@@ -1265,18 +1274,161 @@ catalogue stays the reference.
   - **At rest:** the checks in 9.1 also run after a pane drag ends: no endless animation, and in measure mode no live
     timer and no pending frame callback.
   - **Proof:** a feature check in the window, with screenshots of panes moved and dividers dragged to the next pane.
-- **F2. The look** (base#6): shadcn-svelte first. Everything is built from shadcn-svelte and AI Elements
-  components, added from the registry (AGENTS.md says how), never hand-built look-alikes. Jesse set up Tailwind v4
-  and shadcn-svelte in 91a01e6. The look is denser than the old app: smaller heights and spacing set once in the
-  theme variables in `app/src/app.css` (for example a 28 px control height rather than shadcn's 36 px), not per
-  component. The AI Elements are patterns copied from the shadcn-svelte docs; the pieces they're built from (Trace,
-  Code Block, Message Scroller) are items in the default registry.
-  - **Theme:** light, dark, or follow the system. No `mode-watcher`, which keeps the choice in `localStorage` and adds
-    its own media-query listener. The choice is a setting saved through `save` (5.9), and the system theme comes from
-    Tauri's theme-changed event, listened to in `app/src/lib/host/`.
-  - **Files:** `app/src/app.css`, and the components under `app/src/lib/components/`, each edited on add where the
-    guard needs it (9.1b).
-  - **Proof:** a feature check, light and dark.
+- **F2. The look** (base#6): mac-command-bar's theming system, ported, with the values from Jesse's design system.
+  - **Decided by Jesse, 2026-10-26:**
+    - 20:08Z: "No, i want the system fonts for sure. That's how any app presents fonts, you choose your own."
+    - 20:09Z: "Really, just mostly use the old system, because then it maps to everything in the system i'm thinking."
+    - 20:10Z: "There's a light theme. There's a number of them. Just not a specific light theme i guess. Not like a toggle
+      between only two."
+  - **Sources.** The old system is mac-command-bar at 2089290, `tauri-svelte-preview/src/lib/`, read from the checkout
+    on agent-workbox:
+    - the token files `styles/tokens.css`, `shell/styles/nextTokens.css` and `shell/styles/themeChrome.css`;
+    - in `shell/settings/themes/`: `themeRegistry.ts`, `themeService.ts`, `fontRegistry.ts`, `fontService.ts` and
+      `contrast.ts`.
+
+    The values come from Jesse's design system "Assembly" (https://claude.ai/artifact/8RxzC2U8koy3wAKjRZKkt5, made
+    2026-10-23 from mockups D, E and F, https://claude.ai/artifact/EWzSRsmW7i33gEzL9cy3GG). Its `tokens.json` and
+    `README.md` are copied verbatim into `docs/design/`. Sol's section 9 ("Design-system integration" in
+    `docs/# Assembly .md`) isn't the source. It's cited only where it agrees: one token set, and no web fonts.
+    Its space-name collision doesn't apply, because the old `tokens.css` isn't in this repo.
+  - **One token set.** The three old files become one set on `:root`. The old app needed `.next-shell` and
+    `:root.next-shell-document` because it had two pages; this app has one, so there's no double scoping. The set
+    has three kinds of names:
+    - Where Tailwind or shadcn already has a name with the same meaning, that's the one name. This covers
+      `--color-border`, `--color-primary`, `--font-sans` (the old `--font-ui`), `--font-mono`, `--radius-*` and
+      `--text-*`.
+    - Where only the old system has a name, the old name comes over as is, for example `--color-rail`,
+      `--color-text-2`, `--color-hover`, `--color-live` and `--menu-sheet-surface`.
+    - Where the two disagree, the old name gives way. The one case is accent. shadcn's `accent` is the hover fill
+      (menu items, ghost buttons); the old `--color-accent` was the brand colour. So `--color-accent` means shadcn's
+      hover fill, and the periwinkle is `--color-periwinkle`, beside `--color-aqua` and `--color-lavender`.
+
+    The old names go in one `@theme static` block in `app/src/app.css`, holding the Assembly theme's values. That
+    makes them Tailwind utilities (`bg-rail`, `text-text-2`), and it paints the first frame before any script runs,
+    so there's no flash. shadcn's names go in `@theme inline`, each one an old name: `--color-background:
+    var(--color-bg)`. shadcn's bare `--accent`, `--border` and the rest, its light `:root` block, `.dark` and
+    `@custom-variant dark` are removed. Each meaning has one name.
+  - **The design system's roles on the old names.** Grounds and text:
+
+    | Design system | Value | Old name it sets | shadcn names that read it |
+    | --- | --- | --- | --- |
+    | surface | `#18181b` | `--color-bg`, `--color-surface` (one ground: panels are flush) | `background`, `card` |
+    | rail | `#19191c` | `--color-rail` | `sidebar` |
+    | field | `#1f1f24` | `--color-elevated`, `--color-hover` | `muted`, `accent` (the hover fill) |
+    | raised | `#212125` | new `--color-raised`; `--composer-surface` reads it | |
+    | chip | `#232328` | new `--color-chip` | `secondary` |
+    | selected | `#26262b` | `--color-selected` | |
+    | selected-strong | `#2a2a30` | new `--color-selected-strong` | |
+    | line | `rgba(236,236,240,0.12)` | `--color-border`, `--color-field-border` | `border`, `input` |
+    | line-soft | `rgba(236,236,240,0.06)` | new `--color-line-soft` | |
+    | ink | `#e4e4ea` | `--color-text` | `foreground` |
+    | ink-body | `#d4d4dc` | new `--color-ink-body` | |
+    | ink-2 | `#c4c4cc` | new `--color-ink-2` | |
+    | ink-muted | `#9b9ba6` | `--color-text-2`, `--color-idle`, `--color-status-idle`, `--color-section-header-text` | `muted-foreground` |
+    | ink-faint | `#8e8e99` | `--color-text-3`, `--color-disabled-text` | |
+    | ink-tab | `rgba(228,228,234,0.7)` | `--color-tab-unfocused-text` | |
+    | ink-icon | `rgba(228,228,234,0.85)` | new `--color-ink-icon` | |
+
+    Accent, states and the rest:
+
+    | Design system | Value | Old name it sets | shadcn names that read it |
+    | --- | --- | --- | --- |
+    | primary, on-primary | `#d6d6da`, `#16161a` | new `--color-primary`, `--color-on-primary`; `--color-on-accent` takes on-primary's value | `primary`, `primary-foreground` |
+    | accent (periwinkle) | `#8b93ff` | `--color-periwinkle` (was `--color-accent`), `--color-focus-solid`, `--color-selected-border`, `--color-section-focus-ring` | `ring` |
+    | focus-line | `rgba(139,147,255,0.35)` | `--color-focus` | |
+    | aqua, lavender, code-bg | `#7ee3e0`, `#b79cff`, `rgba(183,156,255,0.1)` | new `--color-aqua`; lavender also sets `--color-merged`; new `--color-code-bg` | |
+    | mint | `#7fdcb0` | `--color-good` | |
+    | blue | `#7ec8ff` | `--color-live` | |
+    | amber, attention-bg, attention-line | `#e6c97e`, `rgba(230,201,126,0.12)`, `rgba(230,201,126,0.34)` | `--color-attention`, `--color-attention-bg`, new `--color-attention-line` | |
+    | red | `#ec8b86` | `--color-bad` | `destructive` |
+    | add-bg, del-bg, hunk-bg, hunk-ink | as in `tokens.json` | new `--color-add-bg`, `--color-del-bg`, `--color-hunk-bg`, `--color-hunk-ink` | |
+    | provider-orange, provider-blue | `#c98a6c`, `#7f9fd6` | `--agent-mark-claude`, `--agent-mark-codex` | |
+    | file-svelte | `#ff6a3d` | new `--color-file-svelte` | |
+    | (none) | | `--color-overlay` takes chip's value; `--color-tab-unfocused-surface` takes surface's. `--color-scrim` and `--color-text-selection` keep their old values. `--color-live-bg`, `--color-good-bg` and `--color-bad-bg` stay at their tone with 12% opacity, as in the old file. | `popover` reads `--color-overlay` |
+
+    The rows marked "(none)" are my picks, since the design system has no menu ground, scrim or selection colour.
+    Jesse can change them.
+  - **Type.** The design system's styles become Tailwind's `--text-*` names, with their line heights:
+    - `title` 15/20 semibold, `heading` 14/20 semibold, `body` 13/19, `small` 12/16, `meta` 11.5/16;
+    - `label` 11/16 semibold, in capitals with 0.06em tracking;
+    - `tree` 15/26, `code` 12/20, `code-inline` 12/17.
+
+    The old `--text-heading`, `--text-body` and `--text-quiet` become `heading`, `body` and `small`. Tailwind's
+    default sizes are cleared (`--text-*: initial`), so these are the only sizes.
+  - **Space.** The design system's steps (2 to 16, and 28 px) are Tailwind's 4 px unit: `0.5` to `4`, and `7`.
+    Spacing maps by value, not by name. Tailwind's `--spacing` stays 4 px, and the design system's `space-N` names
+    don't come in. Nor do the old `--space-1` to `--space-6`, because a class (`p-3.5`) is the one way to say 14 px.
+    The old insets (`--rail-content-inset`, `--menu-row-inset` and the rest) come over with their names.
+  - **Sizes.** They're named once in `@theme` (`--spacing-bar` 40, `--spacing-tab` 30, `--spacing-icon-button` 28,
+    `--spacing-tree-row` 26, `--spacing-rail` 300, `--spacing-drawer` 280, `--container-chat` 700). That gives the
+    classes `h-bar`, `h-tab`, `size-icon-button`, `w-rail` and `max-w-chat`. The old `--editor-tab-row-height` and
+    `--center-head-row-height` become `bar`.
+
+    The setting can't do the density alone. shadcn sets heights as classes inside each component (`h-9` in the
+    Button). Changing `--spacing` would scale every padding with them: 28 px buttons need a unit of about 3.1 px,
+    which turns `p-4` into 12.4 px. So a registry component's height class is edited on add to name a size
+    (`h-9` becomes `size-icon-button`). That's a row in 9.1b, and a question for Jesse in section 12, because
+    `AGENTS.md` says heights are set once in `app.css`, never per component. I recommend the edit on add: the number
+    lives once in `app.css`, and a component only names it.
+  - **Shape and depth:**
+    - The radii are `--radius-xs` 4, `-sm` 5, `-md` 6 and `-lg` 8. They replace shadcn's computed `--radius`
+      (10 px) and its `xl` and larger.
+    - `rounded-full` is only for the Board button and a tab's close disc. The old `--radius-pill` doesn't come.
+    - No shadows: `--shadow-*: initial` and the old `--shadow-*` names don't come, and registry components lose their
+      shadow classes on add (9.1b). The old `--focus-ring` stays, for controls with no edge of their own.
+  - **Motion and icons:**
+    - Motion is 120 to 180 ms fades and slides that end, under `motion-safe:`.
+    - Icons are Lucide (`@lucide/svelte`): 16 px in the tab row and 14 px elsewhere, stroke 1.8. No emoji.
+  - **Themes.** `app/src/lib/theme/themeRegistry.ts` is plain data. It has the old list as it was, all ten entries:
+    - Assembly (the default), Houston, Dracula, Tokyo Night and Graphite;
+    - the five ThemeMirror entries, Amy, Ayu Light, Cobalt, Rose Pine Dawn and Tomorrow, which keep the Assembly
+      shell and change only the editor's syntax colours.
+
+    The setting is one theme id from that list, never a light/dark toggle. The old `resolveThemeId` fallback for
+    `dark` and `light` isn't needed, since there's no old data. Each theme's editor part arrives with W2, and its
+    terminal palette with W4.
+  - **One copy of the colours.** `app.css` holds Assembly's values, and nothing else repeats them.
+    - Assembly and the five ThemeMirror entries carry no tokens, so applying them removes the values the last theme
+      wrote.
+    - Houston, Dracula, Tokyo Night and Graphite carry their old values. Each new role is set to the theme's nearest
+      existing colour: `ink-body` and `ink-2` take `text`, `raised` and `chip` take `elevated`, `selected-strong`
+      takes `selected`, and `line-soft` takes `border`. The diff grounds take the good and bad tints. `aqua` and
+      `lavender` take the theme's own terminal cyan and magenta.
+    - The old `scripts/themeRegistry.test.ts` existed only to catch two copies drifting apart, so it doesn't come.
+  - **Applying a theme.** `themeService.ts` is ported to this app's rules:
+    - The theme id is a setting saved through `save` (5.9), with no `localStorage`.
+    - It writes the theme's variables on the document root only, since there's one set on `:root` and no shell
+      element to repaint.
+    - It has no listeners outside `lib/host/` and no timers.
+    - The editor and terminal appliers arrive with W2 and W4. `clearTheme` isn't needed, because there's no other page
+      to hand the document back to.
+  - **Fonts.** These are system faces, and the person picks their own:
+    - `fontRegistry.ts` has one preset for each, "System" (the system UI face, and the system monospace). The rest of
+      the choices are the families installed on the machine, which `mergeFontChoices` adds from a host call in
+      `lib/host/`.
+    - `fontService.ts` writes `--font-sans` and `--font-mono` on the document root, saved through `save`.
+    - The old `fonts.css` and its 13 bundled faces don't come. Inter goes too: the `@fontsource-variable/inter`
+      import in `app.css` and the package from 91a01e6.
+  - **Preferences:**
+    - The spike's `'system' | 'light' | 'dark'` setting is replaced by the theme id and the two font choices.
+    - The key stays `theme`, so base#7's pinned test, which saves `"dark"` as a value and reads it back, still holds
+      unchanged.
+    - There's no "follow the system", so Tauri's theme-changed event isn't needed.
+  - **Contrast.** `contrast.ts` comes with its role checks, as a test over every theme:
+    - each text role holds 4.5:1 on the grounds its usage note names;
+    - borders, focus rings and icons hold 3:1.
+
+    It checks ratios between roles, not colour values, so it's not a test that asserts a colour.
+  - **Rules that carry over:**
+    - The drawer follows the tabs through explicit state (a value the shell sets), never CSS `:has()`.
+    - No test asserts a CSS class, a colour or a pixel value.
+    - The design system's component previews are design evidence, not code to paste. Markup is built from the
+      registry components.
+  - **Files:** `app/src/app.css`; `app/src/lib/theme/` (`themeRegistry.ts`, `themeService.ts`, `fontRegistry.ts`,
+    `fontService.ts`, `contrast.ts`); the host call for installed fonts in `app/src/lib/host/`; and the components
+    under `app/src/lib/components/`, each edited on add where the guard needs it (9.1b).
+  - **Proof:** a feature check in the window: Assembly and one other theme, a font change, and the choice surviving
+    a quit.
 
 ### W. The workbench
 
@@ -1340,6 +1492,13 @@ Each P phase has the same shape as the W phases.
       without `:has()`, and the build backstop (9.1) proves none got in.
 - **Timers inside packages** (`bits-ui`'s tooltip delay, `Collapsible`'s tick after a toggle, `dockview-core`'s
   drag timers): Jesse's call whether to accept them. The at-rest checks (9.1) are the net either way.
+- **Heights in registry components** (F2). shadcn sets heights as classes inside each component. F2 edits them on
+  add to name a size set once in `app.css`, since changing Tailwind's `--spacing` would scale every padding too.
+  `AGENTS.md` says heights are set once in `app.css`, never per component. Jesse's call: is naming the size in the
+  component OK under that rule? I recommend yes.
+- **Light-named themes** (F2). Ayu Light, Rose Pine Dawn and Tomorrow keep the Assembly shell and change only the
+  editor, as in the old app. Making them light the whole window is a possible follow-up, not part of F2.
+- **My picks for colours the design system doesn't name** (F2): the menu ground, the scrim and the selection colour.
 - **The packages for the checks** (prettier, knip), which wait for Jesse's OK. Tailwind and shadcn-svelte are in
   (91a01e6).
 - **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to
