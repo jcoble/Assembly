@@ -18,13 +18,6 @@ public sealed class TranscriptLog : IDisposable
 
     public TranscriptLog(TextWriter writer) => _writer = writer;
 
-    public static TranscriptLog ToFile(string path)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
-        var stream = new StreamWriter(path, append: false, new UTF8Encoding(false)) { AutoFlush = true };
-        return new TranscriptLog(stream);
-    }
-
     public static TranscriptLog Discard() => new(TextWriter.Null);
 
     public void Sent(string jsonLine) => Write("out", jsonLine.Contains("\"mcpServers\"", StringComparison.Ordinal) ? Redacted(jsonLine) : jsonLine, isJson: true);

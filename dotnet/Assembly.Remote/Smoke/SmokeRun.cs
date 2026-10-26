@@ -36,7 +36,7 @@ public sealed class SmokeRun(SmokeOptions options) : IDisposable
         Console.WriteLine($"cwd:   {options.Agent.WorkingDirectory}");
         Console.WriteLine($"log:   {Path.GetFullPath(options.LogPath)}");
 
-        using var transcript = TranscriptLog.ToFile(options.LogPath);
+        using var transcript = TranscriptFile.Open(options.LogPath);
         var agent = AgentConnection.Start(options.Agent, _permissions, transcript);
         Console.WriteLine($"pid:   {agent.ProcessId}");
         var watcher = new UpdateWatcher(agent.Client.Updates);

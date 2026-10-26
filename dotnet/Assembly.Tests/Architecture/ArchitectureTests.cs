@@ -44,6 +44,17 @@ public sealed partial class ArchitectureTests
         Assert.DoesNotContain(TypeReferences(name), type => type.StartsWith("System.Diagnostics.Process", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("Assembly.Domain")]
+    [InlineData("Assembly.Application")]
+    public void The_core_opens_no_files(string name)
+    {
+        // Files on disk are an outside system: Infrastructure and the hosts open them and hand the core a stream or text.
+        string[] banned = ["System.IO.File", "System.IO.Directory", "System.IO.FileStream", "System.IO.FileInfo", "System.IO.DirectoryInfo"];
+        Assert.DoesNotContain(TypeReferences(name), banned.Contains);
+        Assert.Empty(PathConstructors(name));
+    }
+
     [Fact]
     public void Infrastructure_references_no_host()
     {
@@ -114,6 +125,31 @@ public sealed partial class ArchitectureTests
         var metadata = pe.GetMetadataReader();
         return metadata.TypeReferences.Select(metadata.GetTypeReference)
             .Select(type => $"{metadata.GetString(type.Namespace)}.{metadata.GetString(type.Name)}").ToList();
+    }
+
+    /// <summary>Every <c>new StreamWriter(path, …)</c> or <c>new StreamReader(path, …)</c>: a constructor whose first parameter is a string.</summary>
+    private static List<string> PathConstructors(string name)
+    {
+        using var stream = File.OpenRead(Load(name).Location);
+        using var pe = new PEReader(stream);
+        var metadata = pe.GetMetadataReader();
+        var found = new List<string>();
+        foreach (var handle in metadata.MemberReferences)
+        {
+            var member = metadata.GetMemberReference(handle);
+            if (member.Parent.Kind != HandleKind.TypeReference || metadata.GetString(member.Name) != ".ctor")
+                continue;
+            var type = metadata.GetTypeReference((TypeReferenceHandle)member.Parent);
+            var typeName = $"{metadata.GetString(type.Namespace)}.{metadata.GetString(type.Name)}";
+            if (typeName is not ("System.IO.StreamWriter" or "System.IO.StreamReader"))
+                continue;
+            var signature = metadata.GetBlobReader(member.Signature);
+            signature.ReadSignatureHeader();
+            if (signature.ReadCompressedInteger() > 0 && signature.ReadSignatureTypeCode() == SignatureTypeCode.Void
+                && signature.ReadSignatureTypeCode() == SignatureTypeCode.String)
+                found.Add($"new {typeName}(string, …)");
+        }
+        return found;
     }
 
     private static IEnumerable<string> SourceFiles(string folder) =>

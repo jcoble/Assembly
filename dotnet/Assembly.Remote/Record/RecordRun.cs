@@ -49,7 +49,7 @@ public sealed class RecordRun(RecordOptions options)
             await File.WriteAllTextAsync(Path.Combine(cwd, name), content);
 
         using var deadline = new CancellationTokenSource(ScenarioTimeout);
-        using var transcript = TranscriptLog.ToFile(path);
+        using var transcript = TranscriptFile.Open(path);
         var agent = AgentConnection.Start(new AgentCommand(options.FileName, options.Arguments, cwd), new AllowOncePolicy(), transcript);
         try
         {

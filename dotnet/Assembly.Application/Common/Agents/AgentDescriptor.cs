@@ -11,10 +11,10 @@ namespace Assembly.Application.Common.Agents;
 public sealed record AgentDescriptor(
     string Id, string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env, IReadOnlyList<string>? Air = null)
 {
-    /// <summary>The machine's agents, from its agents file: <c>[{ "id", "name", "command", "args": [], "env": {}, "air": [] }]</c>.</summary>
-    public static IReadOnlyList<AgentDescriptor> Load(string path) =>
-        JsonSerializer.Deserialize(File.ReadAllText(path), AgentJsonContext.Default.ListAgentDescriptor)
-        ?? throw new InvalidOperationException($"{path} lists no agents");
+    /// <summary>The machine's agents, from its agents file's text: <c>[{ "id", "name", "command", "args": [], "env": {}, "air": [] }]</c>.</summary>
+    public static IReadOnlyList<AgentDescriptor> Parse(string json) =>
+        JsonSerializer.Deserialize(json, AgentJsonContext.Default.ListAgentDescriptor)
+        ?? throw new InvalidOperationException("The agents file lists no agents");
 
     public AgentCommand ToCommand(string workingDirectory) => new(Command, Args, workingDirectory, Env);
 }
