@@ -4,7 +4,7 @@
 #   scripts/check-commit-msg.sh --commit <id> <branch>  CI, on each of a pull request's own commits
 # A message has no Co-Authored-By line and ends with `Committed-by: <name>`. On a tsk-<n> branch it has
 # `Task: TSK-<n> https://app.notion.com/p/<page id>`. A fix commit (subject starting "fix") changes a test
-# (dotnet/Assembly.Tests/ or app/test/) or says why not with a `No-test: <reason>` line.
+# (dotnet/Assembly.Tests/, app/test/ or a scripts/*.test.sh) or says why not with a `No-test: <reason>` line.
 set -euo pipefail
 
 if [ "${1:-}" = --commit ]; then
@@ -36,8 +36,8 @@ case "$branch" in
 esac
 
 if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
-  grep -Eq '^(dotnet/Assembly\.Tests|app/test)/' <<<"$changed" \
+  grep -Eq '^(dotnet/Assembly\.Tests/|app/test/|scripts/[^/]+\.test\.sh$)' <<<"$changed" \
     || grep -Eq '^No-test:[[:space:]]*[^[:space:]]' <<<"$(tail -n +2 <<<"$message")" \
-    || stop "a fix commit changes a test (dotnet/Assembly.Tests/ or app/test/), or says why not with No-test: <reason>."
+    || stop "a fix commit changes a test (dotnet/Assembly.Tests/, app/test/ or scripts/*.test.sh), or says why not with No-test: <reason>."
 fi
 exit 0
