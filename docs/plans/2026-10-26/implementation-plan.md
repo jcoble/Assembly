@@ -5,7 +5,7 @@ the plan in `docs/# Assembly .md` (Sol's), which stays in the repo unchanged as 
 This plan is the part that list was missing: the base every feature is built on, spelled out file by file, so that
 each later feature has one obvious way to be written and nothing to invent.
 
-Nothing in this plan is built yet. No code and no locked file changed to write it. The measurements in sections 1, 5.6 and 5.9
+B1 and B2 are done (merged as `0ea4c59`); from B3 on, the plan describes what's left from there. The measurements in sections 1, 5.6 and 5.9
 were run on agent-workbox in a scratch folder, from packages already in the local NuGet cache.
 
 How to read it:
@@ -94,16 +94,15 @@ Whichever Jesse picks, the soak's waits (section 7, row 4) leave the page.
 or grow a second app, so under A it gets these safeguards:
 
 - The guard scans `app/measure/` too, and allows only timers and frame callbacks there. `fetch`, Tauri imports,
-  `WebSocket` outside `socket.ts`, and `.then`/`.catch`/`.finally` fail there as they do everywhere, so it can't
+  `WebSocket` outside `socket.ts` (from C1's last commit, 9.1), and `.then`/`.catch`/`.finally` fail there as they do
+  everywhere, so it can't
   become a second app.
-- `app/measure/**` goes in `scripts/locked-paths.txt`, so adding or changing a file there needs an OK.
 - The guard fails if anything in `app/src` imports from `app/measure`.
 - The normal build must not include it. Only `shell/assembly.sh start --counters` injects it, and a check on the
   normal build's output fails if a measure file is in it.
 
 **Decided by Jesse, 2026-10-26 19:27Z (card): A and B together,** with those safeguards. The counters come from
-the clock topic and work in every run. Frame timing, which only the page can measure, stays a locked measure-mode
-tool.
+the clock topic and work in every run. Frame timing, which only the page can measure, stays a measure-mode tool.
 
 ### D3. Clean Architecture: the article or the EdiPlatform layout
 
@@ -133,19 +132,19 @@ folder per feature, with no repository and plain SQL. Section 4 has the layout.
 ### D4. Bytes over the socket
 
 One path means attachments go over the socket too. Today, `POST /threads/{id}/attachments` and
-`GET .../attachments/{name}` are the only binary HTTP calls. A 10 MB image, the size the composer allows today, is
-about 13.3 MB as base64. That doesn't fit the 4 MB frame limit in 5.1, so the image has to be split up, or the limit
+`GET .../attachments/{name}` are the only binary HTTP calls. A 20 MB image, the size the composer and the backend
+allow today (`attachments.ts:34`, `AttachmentStore.cs:12`), is about 26.7 MB as base64. That doesn't fit the 4 MB frame limit in 5.1, so the image has to be split up, or the limit
 changed. The options:
 
 - **A. Chunked calls.** `attachments/begin` returns an upload id, then `attachments/chunk` sends about 1 MB of image
   per call (about 1.33 MB as base64, well under 4 MB), appended to a staging file. `attachments/commit` checks the
-  size and type, and links the file in one atomic write. A 10 MB image is about 10 short calls.
+  size and type, and links the file in one atomic write. A 20 MB image is about 20 short calls.
   - Each call stays well under the 30 s limit, so this fits the "calls are short" rule in 5.1.
   - Progress comes for free, and cancelling is a `cancel` on the next chunk.
   - Other frames, such as rows and saves, still get through between chunks.
   - Reading an image back is the same thing in reverse: `attachments/read` with an offset, about 1 MB a call.
 - **B. Binary frames.** A new frame type: a small JSON header, then the raw bytes. There's no base64 cost, but it's a
-  second frame format for both sides to read and test, and a 10 MB frame still needs either chunking or a higher
+  second frame format for both sides to read and test, and a 20 MB frame still needs either chunking or a higher
   limit.
 - **C. A higher frame limit,** 16 MB. This is the simplest to write. But every big image ties up the socket while it
   goes, so rows and saves wait behind it, and the backend's memory per frame quadruples.
@@ -192,7 +191,7 @@ way the only way. Each one names what enforces it.
    the guard, which names that folder inside the script.
 4. **`async`/`await` with an `AbortSignal`, never `.then`, `.catch` or `.finally`.** Enforced by the guard.
 5. **Every backend call has a cancellation token, and passes it to everything it awaits.** CA2016 is a build error
-   (`dotnet/.editorconfig`). Closing the socket cancels every call still running on it.
+   (`dotnet/.editorconfig`). Closing the socket cancels every read still running on it, never a queued write (5.9).
 6. **Every save is atomic.** Every write runs inside `IAtomicWriter.Write`: one connection, one transaction, an
    audit row, commit, and only then publish. That includes a call's write and the chat row writes (`RowStore`'s
    batches). Nothing can write any other way, because only the writer hands out a write connection. Enforced by the
@@ -253,7 +252,7 @@ Jesse's decision (D3): the core of the app follows the article's layers, everyth
 one folder each, there's no repository, and the SQL is plain.
 
 **Where a new feature's files go.** Its backend code goes in `dotnet/Assembly.Application/Features/<Feature>/`, its
-tests in `dotnet/Assembly.Tests/Features/<Feature>/`, and its page code in `app/src/lib/<feature>/`. When it needs an
+tests in `dotnet/Assembly.Tests/Features/<Feature>/` (in `Draft/` while its behavior list is a draft), and its page code in `app/src/lib/<feature>/`. When it needs an
 outside system (git, a terminal, files on disk), the contract stays in its feature folder and the implementation goes
 in `dotnet/Assembly.Infrastructure/<Feature>/`, with the same name. Only plumbing that several features share goes in
 the layers. No folder holds more than 30 files (section 12), so a feature that grows gets subfolders, and no folder
@@ -264,7 +263,7 @@ component, and each of those is counted on its own.
 dotnet/
   Assembly.slnx
   Directory.Build.props          net10.0, Nullable, ImplicitUsings, TreatWarningsAsErrors (today's)
-  Directory.Packages.props       new: one version per package
+  Directory.Packages.props       one version per package
   .editorconfig                  today's, CA2016 an error
   Assembly.Domain/               references nothing
     Events/  Rows/  Threads/  Markdown/
@@ -283,11 +282,11 @@ dotnet/
       Diagnostics/               step B8
     DependencyInjection.cs       AddApplication(), AddMachineFeatures(), AddMacFeatures()
   Assembly.Infrastructure/       references Application
-    Persistence/                 AppDatabase, AtomicWriter and the audit, the schema runner
+    Persistence/                 AppDatabase, AtomicWriter and the audit
     Socket/                      SocketEndpoint, SocketConnection, SocketDispatcher
     Topics/  Clock/  Agents/  Machines/  Remote/  Transcript/  Mcp/
-    Http/                        today's HTTP routes, FeatureCalls and the feature lists, until B7, B8 and C1
-                                 delete them
+    Http/                        today's HTTP routes, FeatureCalls and the feature lists, until B7, B8, C1 and
+                                 C2 delete them
     DependencyInjection.cs       AddInfrastructure(), AddMacInfrastructure()
   Assembly.Mac/                  Program.cs, and MacOptions.cs for its arguments
   Assembly.Remote/               Program.cs, and its Serve, Smoke, Record and Replay commands
@@ -303,7 +302,7 @@ no OK for them.
 
 | Place | Holds | Doesn't hold |
 | --- | --- | --- |
-| Domain | Only the records and rules that several features share: agent events, row kinds and payloads, `ThreadInfo` and its config records, and the markdown block records (`Safe*`), which the row payloads hold. Time comes in as an argument. | A record only one feature uses (that stays in the feature), I/O, JSON, SQL, packages. |
+| Domain | Only the records and rules that several features share: agent events, row kinds and payloads, `ThreadInfo` and its config records, and the markdown block records (`Safe*`), which the row payloads hold. Time comes in as an argument. | A record only one feature uses (that stays in the feature), I/O, JSON parsing or a serializer context (B3 moves today's to chat), SQL, packages. |
 | Application `Common/` | The shared contracts every feature uses: the database and writer, calls, topics, the clock, machines and agent launching. Also the ACP protocol code, which only speaks JSON-RPC over the streams it's given: it starts no process and touches no files, and the chat sessions are built on its records. | Implementations that start processes, open SQLite or serve HTTP. |
 | Application `Features/<Feature>/` | Everything one feature is: its `<Feature>Feature.cs` (calls and topics), its records, its rules, its tables (`<Feature>Schema.cs`), and its plain SQL, written straight against `IAppDatabase` for reads and `IWriteScope` for writes. | A repository, a class per table, or another feature's types. |
 | Infrastructure | The implementations of `Common/` and the outside systems: the SQLite connection and the writer with its audit, the socket and dispatcher, topics, the clock, starting agent processes and git, local and remote machines (SSH tunnel, follower, outbox), the provider transcript readers, `/mcp`, and today's HTTP routes until they're deleted. | Feature rules or feature SQL. |
@@ -322,10 +321,9 @@ Application: the machine links write chat's rows, for example.
 (the helper tools use `ThreadStore` and `SessionRegistry`; a send carries attachments). Split into five features,
 each would reach into the others. As one `Chat` feature with five subfolders, each under 30 files, they don't.
 
-**No repository under another name.** `RowStore`, `ThreadStore` and the preference reader and writer don't become
-classes that wrap a table. Each feature reads with its own SQL through `IAppDatabase` and writes through
-`IAtomicWriter`, in its own folder. The SQL is named for what it does (`CommitBatch`, `PageAfter`), and only its own
-feature uses it.
+**No repository under another name.** Each feature reads with its own SQL through `IAppDatabase` and writes through
+`IAtomicWriter`, in its own folder, and only its own feature uses it. `RowStore` and `ThreadStore` stay as they are:
+plain SQL in chat's folder, not a class per table.
 
 ### The page mirrors it
 
@@ -336,51 +334,25 @@ feature uses it.
 - The page's core is `lib/socket.ts`, `lib/host/`, `lib/components/` (from the registry), `lib/time/` and
   `lib/utils.ts`.
 - Chat's page folders today (`chat/`, `composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under
-  `lib/chat/` in step C1, when chat moves onto the socket. `call.ts` goes in B7, `api.ts` in C1, and `debug.svelte.ts`,
-  `lag.svelte.ts` and `soak.ts` move to `app/measure/` in B9 (D2).
+  `lib/chat/` in step C1, when chat moves onto the socket. `call.ts` goes in B7, `api.ts` in C1, and `lag.svelte.ts`,
+  `soak.ts` and only the helpers in `debug.svelte.ts` that count timers and frame callbacks move to `app/measure/`
+  in B9 (D2). The production counters (`counters`, and `measures`, which `Conversation.svelte` increments and the
+  debug strip shows) and the lifecycle functions stay in `debug.svelte.ts`.
 
 ### Where today's folders go
 
-Today's folders are listed in `dotnet/README.md`. Step B2 moves them as below, renaming only namespaces. Behavior
-doesn't change in that step.
+B2 moved them (PR #3, `0ea4c59`); `dotnet/README.md` lists the folders as they are now. What's still to move or
+delete:
 
 | Today | Goes to |
 | --- | --- |
-| `Assembly.Engine/Events/` | `Assembly.Domain/Events/` |
-| `Assembly.Engine/Rows/Payloads/`, `RowKind` | `Assembly.Domain/Rows/` |
-| `Assembly.Engine/Threads/ThreadInfo`, `ThreadConfig`, `HelperMessage` | `Assembly.Domain/Threads/` |
-| `Assembly.Engine/Markdown/Safe*` block records | `Assembly.Domain/Markdown/` |
-| `Assembly.Engine/Markdown/SafeMarkdown`, `SafeLinks`, `BlockReader`, `InlineReader`, `MarkdownJsonContext` (the parse, with Markdig) | `Assembly.Application/Features/Chat/Rows/Markdown/` |
-| `Assembly.Engine/Threads/ThreadStore`, `ThreadPage` | `Assembly.Application/Features/Chat/Threads/` |
-| `Assembly.Engine/Rows/` (the rest: `RowConverter`, `RowBatch`, `OpenTurn`, `RunRecovery` and the like) | `Assembly.Application/Features/Chat/Rows/` |
-| `Assembly.Engine/Store/` (`RowStore`, `RowPage`, `RowWire`, `StoredRow`, `StoredToolCall`) | `Assembly.Application/Features/Chat/Rows/` |
-| `Assembly.Engine/Store/Schema` | `Assembly.Application/Features/Chat/ChatSchema.cs` |
-| `Assembly.Engine/Sessions/` (all but `SharedAdapter`) | `Assembly.Application/Features/Chat/Sessions/` |
-| `Assembly.Engine/Sessions/SharedAdapter` (it only uses `IAgentLauncher`) | `Assembly.Application/Common/Agents/` |
-| `Assembly.Engine/Helpers/` tools | `Assembly.Application/Features/Chat/Helpers/` |
-| `Assembly.Engine/Attachments/ImageType` | `Assembly.Application/Features/Chat/Attachments/` |
-| `Assembly.Engine/Attachments/AttachmentStore` (it writes files) | `Assembly.Infrastructure/Chat/Attachments/` |
-| `Assembly.Engine/Acp/` (messages, `V1`, `JsonRpc`, `AcpClient`, `IPermissionPolicy`) | `Assembly.Application/Common/Acp/` |
-| `Assembly.Engine/Agents/IAgentLauncher`, `IAgentLink`, `AgentDescriptor`, `AgentCommand` (a record `AgentDescriptor` makes) | `Assembly.Application/Common/Agents/` |
-| `Assembly.Engine/Agents/` (the rest: `AdapterLauncher`, `AgentProcess`, `ProcessGroup`, `GitCheckout`, `AgentConnection`) | `Assembly.Infrastructure/Agents/` |
-| `Assembly.Engine/Live/` (`LiveHub`; it uses chat's rows) | `Assembly.Application/Features/Chat/Rows/` until C1 turns it into the `rows` topic |
-| `Assembly.Engine/Machines/IMachine`, `MachineSet`, `MachineUnreachable` | `Assembly.Application/Common/Machines/` |
-| `Assembly.Engine/Machines/LocalMachine` | `Assembly.Infrastructure/Machines/` |
-| `Assembly.Engine/Transcript/TranscriptLog` (the ACP connection writes it, to a writer it's given) | `Assembly.Application/Common/Acp/` |
-| `Assembly.Engine/Transcript/TranscriptReplay` | `Assembly.Infrastructure/Transcript/` |
-| `Assembly.Engine/Database/` (the plain-SQL contracts, B2a) | `Assembly.Application/Common/Database/` |
-| `Assembly.Engine/Persistence/` (`AppDatabase`, `AtomicWriter`, B2a) | `Assembly.Infrastructure/Persistence/` |
-| `Assembly.Engine/Api/McpRoutes` | `Assembly.Infrastructure/Mcp/` |
-| `Assembly.Engine/Api/` (the rest: HTTP routes, `LiveSocket`, `TokenGuard`) | `Assembly.Infrastructure/Http/`, kept only until each route moves onto the socket, then deleted (section 11) |
-| `Assembly.Engine/Features/` (`FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`) and `Assembly.Mac/Features/MacFeatureList` | `Assembly.Infrastructure/Http/`; deleted in step B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
-| `Assembly.Mac/Remote/` | `Assembly.Infrastructure/Remote/`, registered only by `AddMacInfrastructure()` |
-| `Assembly.Mac/Preferences/` (`PreferenceStore`, `PreferencesSchema`, `README.md`) | `Assembly.Application/Features/Preferences/` |
-| `Assembly.Mac/Preferences/PreferencesRoutes` | `Assembly.Infrastructure/Http/` until B7 deletes it |
-| `Assembly.Mac/Page/TurnActivity` | `Assembly.Infrastructure/Diagnostics/`: it makes native calls (step B8 finishes it) |
-| `Assembly.Mac/Page/ImageFile`, `Thumbnail`, `MemorySample` (they read files, call ImageIO, and run `ps`) | `Assembly.Infrastructure/Diagnostics/` |
-| `Assembly.Mac/Page/PageRoutes`, `Assembly.Mac/Debug/DebugRoutes` | `Assembly.Infrastructure/Http/` until B8 deletes them |
+| `Assembly.Domain/Rows/RowJsonContext` and `ThreadConfig`'s JSON parsing | `Assembly.Application/Features/Chat/`, in B3; Domain keeps the records |
+| `Assembly.Infrastructure/Http/FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`, `MacFeatureList` | Deleted in B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
+| `Assembly.Infrastructure/Http/PreferencesRoutes`, `Assembly.Application/Features/Preferences/PreferenceStore` | Deleted in B7 |
+| `Assembly.Infrastructure/Http/PageRoutes`, `DebugRoutes` | Deleted in B8 |
+| `Assembly.Infrastructure/Http/` (the chat routes, `LiveSocket`, `TokenGuard`) | Deleted as each route's last caller moves onto the socket: the page's in C1, the remote client's in C2 |
+| `Assembly.Application/Features/Chat/Rows/LiveHub` | The `rows` topic, in C1 |
 | `Assembly.Mac/Serve/` | Stays until B7, which makes it `Assembly.Mac/Program.cs` and `MacOptions.cs` |
-| `Assembly.Remote/Serve`, `Smoke`, `Record`, `Replay` | Stay in `Assembly.Remote/` (they're that host's commands) |
 
 ## 5. The shared plumbing
 
@@ -405,7 +377,7 @@ Each part has one implementation, registered in DI, and features reach it only t
 | page → backend | `unsub` | `id` | Stop that subscription. |
 | backend → page | `state` | `sub`, `items` | The full state, once, right after `sub`. |
 | backend → page | `change` | `sub`, `op` (`upsert`/`remove`), `item` or `id` | One change to one item. |
-| backend → page | `rows` | `sub`, `rows` | A batch of rows for the rows topic, in order, with `prevSeq` as today. |
+| backend → page | `rows` | `sub`, `row` | One row of the rows topic per frame, in order, with `prevSeq`, as today. The catch-up after `after` is read in pages, with the limit the page reads already use (`RowRoutes.cs:26`). |
 
 The limits are fixed, not settings:
 
@@ -443,7 +415,8 @@ public interface ICallRegistry
 1. Find the handler. If there isn't one, answer `not_found`.
 2. Read `args` with the handler's `JsonTypeInfo`. If that fails, answer `bad_args`.
 3. Start a logger scope (`feature/method`, the call id, the connection) and log the call at Debug.
-4. Make the token, linked from the connection's token, the call's `cancel` frame, and the 30-second limit.
+4. Make the token, linked from the call's `cancel` frame, the 30-second limit and, for a `Read` only, the
+   connection's token, so a socket closing never cancels a queued write (5.9).
 5. For `Write` and `Save`, put the call on the connection's write queue, which runs one at a time in arrival order:
    a `Write`'s async part, then its database part inside `IAtomicWriter.Write`; a `Save` inside `IAtomicWriter.Write`
    (5.6, 5.9). So each call makes exactly one write. For `Read`, call it directly, concurrently.
@@ -463,8 +436,7 @@ internal sealed class PreferencesFeature(IAppDatabase db) : IFeature
 
     public void Register(ICallRegistry calls)
     {
-        calls.Tables(PreferencesSchema.Create);
-        calls.Topic("preferences", PreferencesJson.Default.ListPreference,
+        calls.Topic("preferences", PreferencesJson.Default.Preference,
             (_, call) => Task.FromResult<IReadOnlyList<Preference>>(db.Query(All, Preference.Read, call.Cancellation)));
         calls.Save("preferences", PreferencesJson.Default.JsonElement, (key, value, scope) =>
         {
@@ -475,8 +447,8 @@ internal sealed class PreferencesFeature(IAppDatabase db) : IFeature
 }
 ```
 
-`calls.Tables` hands the feature's `CREATE TABLE IF NOT EXISTS` statements to the schema runner, which runs every
-feature's at startup, through the writer, before the socket opens.
+The feature makes its table as `PreferenceStore` does today (`PreferenceStore.cs:14`): `PreferencesSchema.Create`
+runs through `db.Writer` when the feature is built. `ICallRegistry` has no schema method, because B7 doesn't need one.
 
 `AddMacFeatures()` registers `PreferencesFeature`. `AddMachineFeatures()` registers what every machine serves.
 
@@ -485,7 +457,7 @@ feature's at startup, through the writer, before the socket opens.
 - The page's `call(feature, method, args, { key, signal })` sends `cancel` when its signal aborts. A newer call with
   the same `key` aborts the older one; this is base#10, kept.
 - The backend's token reaches the handler, and from there everything it awaits (rule 5).
-- Closing the socket cancels every call still running on it.
+- Closing the socket cancels every read still running on it. It never cancels a queued write (5.9).
 - A forwarded call to a remote machine sends `cancel` on the machine socket (phase C2).
 
 ### 5.4 Errors on the page
@@ -507,23 +479,29 @@ never reach a log. Features don't add their own call logging.
 public interface IAtomicWriter
 {
     // Synchronous on purpose: the body can't await, so no transaction can be held open across an agent call, a
-    // network call or a wait. The compiler enforces it.
+    // network call or a wait. The signature alone doesn't guarantee it: T can be a Task, so an async lambda
+    // compiles. The writer checks `if (result is Task)`, and throws and rolls back before the commit (B3).
     T Write<T>(string what, Func<IWriteScope, T> write);
 }
 
 // Reads. Plain SQL, mapped by a function the feature writes; no reflection, so it's safe under Native AOT.
-// The token cancels the read: it's wired to SqliteCommand.Cancel (sqlite3_interrupt) through token.Register.
+// The token cancels the read with raw sqlite3_interrupt through token.Register (Sql.cs), because
+// SqliteCommand.Cancel does nothing.
 public interface IAppDatabase
 {
+    IAtomicWriter Writer { get; } // the file's one writer
     List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
     T? QueryFirst<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
 }
 
-// Inside one write: its reads run on the write connection, so they see the write's own transaction.
-public interface IWriteScope : IAppDatabase
+// Inside one write: its reads run on the write connection, so they see the write's own transaction. They take no
+// token: a save that has been sent finishes. It doesn't extend IAppDatabase.
+public interface IWriteScope
 {
+    List<T> Query<T>(string sql, Func<IRow, T> map, params SqlArg[] args);
+    T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args);
     int Execute(string sql, params SqlArg[] args);
-    void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type); // queued, sent after commit
+    void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type); // B3: queued, sent after commit
 }
 
 // One result row, read by column position. So every query names its columns: never SELECT *.
@@ -561,7 +539,7 @@ one shared read connection, a thread list would wait behind a 200 ms page read, 
 6. If the write fails, roll back and publish nothing.
 
 No transaction is ever held open across an agent call, a network call, or a wait for a socket. No file, network or
-process work happens inside `Write` either: it's done first, in the handler's async part, so a 10 MB attachment never
+process work happens inside `Write` either: it's done first, in the handler's async part, so a 20 MB attachment never
 holds the write lock.
 
 The writer handles every write, not just calls. Chat's row writes (today's `RowStore` `Commit` and `Copy`) run
@@ -597,7 +575,12 @@ Reads go through `IAppDatabase`, which has no write methods.
 
 `Infrastructure/Topics/Topics.cs` keeps each connection's subscriptions. When a page subscribes, it gets
 `state(key)`, then each change the writer published for that topic and key. Unsubscribing, or closing the socket,
-removes the subscription. The `rows` topic is today's `LiveHub` (phase C1).
+removes the subscription. The `rows` topic is today's `LiveHub` (phase C1). `Topics` keeps `LiveHub`'s pattern
+(`LiveHub.cs:60-70`): the state is read and the subscription registered under one lock, which publishing takes too,
+so a write during the initial read is neither lost nor applied before the state. The writer commits under its own
+lock and publishes afterwards, so a snapshot taken between a commit and its publish already holds that write. For
+rows, the snapshot carries the last row seq it includes, and the subscriber drops a delivered change whose seq is at
+or below it. Topics without a seq (settings, config) send whole-value upserts, so getting one twice changes nothing.
 
 ### 5.8 The one backend clock
 
@@ -616,7 +599,7 @@ removes the subscription. The `rows` topic is today's `LiveHub` (phase C1).
 
 The backend's other waits are listed in the timer inventory: the `SessionHost` coalesce timer, the adapter idle
 grace, the SSH backoff, and the follower's backoff. They stay where they are, since they're backend work that needs
-time and isn't a page clock. Phase P1 replaces two polls with pushes: `RemoteOutbox.cs:44`, every second, and
+time and isn't a page clock, except that C2's machine retries run on the backend clock. Phase P1 replaces two polls with pushes: `RemoteOutbox.cs:44`, every second, and
 `MessageStatusTool.cs:30`, every 250 ms.
 
 ### 5.9 Saves: each change as it happens, with no debounce anywhere
@@ -637,8 +620,19 @@ feature's topic, so other windows see it.
 
 - There's no batcher, no timer, and no view that mixes in values still waiting to be written. A read returns what's
   committed.
-- The page sets its own `$state` before it sends. The echo of a save back to the window that sent it is a no-op;
-  an echo from another window is applied.
+- The page sets its own `$state` before it sends. Each window keeps a per-key count of its own saves still in
+  flight. The count goes down when the save's reply arrives, whether it's a success, an error or an abort, not when
+  the echo arrives (a save that fails, times out or is aborted sends no echo). While the count is above zero, the
+  window holds the newest echo it gets for that key, its own or another window's; when the count reaches zero, it
+  applies that held echo, so the committed value wins. After a failed save, the window shows the committed value
+  again: the held echo if there is one, or else one read of that key. On reconnect, every count resets to zero, and
+  the page reads the committed values as part of catch-up (the subscription's new snapshot), so a save lost with the
+  socket can't leave a count stuck. There are no commit sequence numbers.
+- On the saving connection, the backend sends a save's topic change before that save's reply, because the publish is
+  queued to the connection before `Write` returns. So when A2's reply brings the count to zero, A2's echo is already
+  the newest held one, and the field never shows an older value for a moment.
+- Since the count drops on the reply, the page doesn't need the connection id to recognize its own echoes. The id
+  stays in the audit, not in the page's frames.
 
 **What makes the last value win.** Frames arrive in order on one socket. The dispatcher then hands **one
 connection's writes to the writer in the order they arrived**: each connection has one write queue, and its `Write`
@@ -647,10 +641,12 @@ can't reach the writer out of order, and the last one sent is the last one commi
 is decided by which commit lands last, and each window then shows that value from the topic. Sequence numbers per key
 weren't chosen, because the per-connection queue gives the same guarantee with no extra field in every save.
 
-**Quitting.** The shell doesn't hold the close or the quit, and there's no `closing` event, no `pagehide` and no
-`visibilitychange`. The page sends each save in the same event handler that changed the value, so a change never
-exists only in the page. At close there's nothing to flush except frames already sent, and the backend, which keeps
-running after the window closes, handles those.
+**Quitting.** There's no acknowledgment protocol, no `closing` event, no `pagehide` and no `visibilitychange`. The
+page sends each save in the same event handler that changed the value, so a change never exists only in the page.
+A socket closing cancels its reads, never a queued write. On quit, the shell asks the backend to stop and waits for
+it to exit, with an upper limit on the wait, in Rust, not a page timer (today's `stop_backend` in
+`shell/src/main.rs`: SIGTERM, then up to 10 s). The backend drains each connection's write queue and commits before
+it exits.
 
 **Audit volume.** Each save writes one audit row, so typing writes one per keystroke. A typical settings edit (a
 20-character value) is 20 audit rows. For settings saves the audit row records the time, the connection, the
@@ -779,7 +775,8 @@ What text can't check is whether `aria-busy` really follows real work. That's ch
 check to the window run (and to the B9 node test with happy-dom where it can) that `document.getAnimations()` holds
 no animation whose `iterations` is `Infinity`, at three moments: after launch, after a turn finishes, and after a
 turn is cancelled. The old Assembly's loops stayed on after work stopped, so the last two matter most. A loop left on
-at rest fails it, whichever file it's in. In measure mode (D2 A), the measure tools also count live `setTimeout` and
+at rest fails it, whichever file it's in. The check runs with the counters on and the lag meter not started; the
+meter is its own switch, so it needs no stop function. In measure mode (D2 A), the measure tools also count live `setTimeout` and
 `setInterval` timers and pending `requestAnimationFrame` callbacks at those moments, which catches timers and frame
 loops inside packages (dockview-core's popout loop is a frame loop); each count must be zero. F1 adds a fourth
 moment: after a pane drag ends.
@@ -793,6 +790,9 @@ These are checked in every file:
 - `@tauri-apps/` or `listen(` outside `HOST`.
 - Outside `HOST`: `addEventListener(` on anything, `<svelte:window`, `<svelte:document`, `matchMedia(`, and
   `MediaQuery` from `svelte/reactivity`.
+
+The ban on `fetch(` and on a `WebSocket` outside `TRANSPORT` lands in the commit that converts the last caller, C1's
+last commit, not in B10. There are no exemptions and no allowed list in the meantime.
 
 Under D2 A, `app/measure/` is scanned with the same rules, except that timers and frame callbacks are allowed
 there. It's the one place the timer rule doesn't reach.
@@ -856,35 +856,31 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
   names in the script; a fifth needs Jesse's OK.
 - **`40-routes.sh` is deleted in step B7,** together with `FeatureCalls.cs`. `scripts/lint.d` isn't locked on main,
   so that needs no OK.
-- **There's no route check between B7 and the end of C1.** That's a stated gap, not a list. Reviews cover it: a new
+- **There's no route check between B7 and the end of C2.** That's a stated gap, not a list. Reviews cover it: a new
   `Map` call in that window is a finding.
-- **`40-one-dispatcher.sh` lands at the end of phase C1 with zero exceptions,** in the commit that deletes the last
-  chat HTTP route. It has no legacy list, and no list that can only shrink.
+- **`40-one-dispatcher.sh` lands at the end of phase C2 with zero exceptions,** in the commit that deletes the last
+  chat HTTP route (the remote client's, section 11). It has no legacy list, and no list that can only shrink.
   - **Why then, and not inside the base:** moving the chat routes onto the socket before B11 would put all of
-    phase C1 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
+    phases C1 and C2 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
     to show.
 - **`scripts/lint.sh` on main is still the stub,** so no `lint.d` check runs anywhere today. Step B10a, before B11,
-  replaces it with the move thread's `lint.sh` that runs every `lint.d` script (blob `ac101c9`). `lint.sh` is locked,
-  so that needs an OK line by the move thread (section 9.3).
+  replaces it with a `lint.sh` that runs every `lint.d` script. The lane writes it, and the move thread reads it and
+  posts its OK line, since `lint.sh` is locked (section 9.3).
 - New checks, all run by `scripts/lint.sh`:
   - `50-dotnet-format.sh`: `dotnet format --verify-no-changes`.
   - `60-svelte-check.sh`: `svelte-check`, with zero errors.
   - `70-architecture.sh`: runs `ArchitectureTests`.
   - Once Jesse decides the size limit, a size check.
-- **When the lint configs get locked:** after step B2 (the move) and B11 (the new checks) are on main, step B12 adds
-  `scripts/lint.d/**`, `dotnet/.editorconfig`, `dotnet/Directory.Build.props` and `dotnet/Directory.Packages.props`
-  to `scripts/locked-paths.txt`. Before that, the move changes those files at every step, and locking them earlier
-  would need an OK each time.
 
 ### 9.3 The OK lines the base needs
 
 | Step | Change | OK by |
 | --- | --- | --- |
-| B10a | Replace `scripts/lint.sh` with the version that runs `lint.d` (blob `ac101c9`) | `by:move-thread` |
+| B10a | Replace `scripts/lint.sh` with the version that runs `lint.d`, which the lane writes | `by:move-thread` |
 | B10 | Change `app/scripts/guards.sh` | `by:jesse` (his 18:11 message on 26 October asks for it) |
 | B10 | Delete `app/scripts/guards-allowed.txt` | `by:jesse` |
 | B10 | Drop `guards-allowed.txt`'s line from `scripts/locked-paths.txt` | `by:jesse` |
-| B12 | Add the new locks to `scripts/locked-paths.txt` | `by:move-thread` |
+| C1 | Change `app/scripts/guards.sh`: the `fetch(` and `WebSocket` ban (9.1) | `by:jesse` |
 
 All of these wait until Jesse removes the three settings denies that block writing `.pinned-approvals`.
 
@@ -896,121 +892,41 @@ All of this happens on one branch, `lane/base`, with each step a commit. Each co
 - runs the full `scripts/check4.sh` on the pushed commit, with the evidence committed alongside;
 - is reviewed by the move thread before the next step starts.
 
-**One PR per step group:** B1; B2; B3 to B6; B7 and B8; B9 to B12. Each PR opens as a draft when its group is done,
+**One PR per step group:** B1; B2; B3 to B6; B7 and B8; B9 to B11. Each PR opens as a draft when its group is done,
 and is marked ready once its proof is in. It has a plain summary written for Jesse, saying what to read first and
 what isn't proven yet. Jesse merges each one, and the next group builds on main after he does.
 
-### B1. Merge the AGENTS.md files
+### B1. Merge the AGENTS.md files: done
 
-Jesse pasted mac-command-bar's `AGENTS.md` at the top of this repo's in 91a241d. B1 adapts that paste to this repo
-as section 3 says, and adds the shadcn-first rule (F2).
+Done in af545b3, on main.
 
-- **Files:** `AGENTS.md`.
-- **Test:** none (documentation).
-- **Proof:** the move thread and Jesse read the diff.
-- **Size:** about 250 lines changed.
+### B2. Move to the Clean Architecture layout: done
 
-### B2. Move to the Clean Architecture layout (no behavior change)
+Done in PR #3, merged as `0ea4c59`: the plain-SQL contracts with `AppDatabase` and `AtomicWriter` (B2a),
+`ArchitectureTests` (B2b), and the move to Domain, Application and Infrastructure, with `Assembly.Engine/` deleted
+(B2c). What's left from it:
 
-B2 is three commits, so each can be read on its own. Before the move, today's projects get the plain-SQL contracts,
-because chat's row and thread stores and the preference store call SQLite directly, and Application may not.
-
-- **B2a. Plain SQL, inside today's projects, before anything moves.**
-  - **Files:**
-    - New contracts: `IAppDatabase`, `IWriteScope`, `IRow`, `SqlArg` and `IAtomicWriter`, with the signatures in
-      5.6.
-    - `AppDatabase`, one per database file: reads on pooled read connections, one per read, cancellable (5.6). It
-      owns `AtomicWriter.cs`, the one file that begins a transaction from here on: one long-lived write connection
-      behind one lock, held for the whole write, with one transaction per write (begin, run the body, commit, or roll
-      back). There's no audit, queue or prune yet; B3 adds those to this same class. There's no second write path,
-      and nothing in B2a that B3 has to delete.
-    - `RowStore`, `ThreadStore` and `PreferenceStore` rewritten as plain SQL: reads through `IAppDatabase`, writes
-      through `IAtomicWriter.Write`. Their public methods stay the same, so their callers don't change. They're opened
-      from the `AppDatabase` instead of a path, so a rows batch and a thread write share the one write lock: the hosts
-      open one `AppDatabase`, and the tests change only their setup line.
-  - **Failing tests first,** for the contracts: a query maps rows by position; a write that throws leaves nothing;
-    a write that succeeds is there after it commits; a rows batch and a thread write run at the same time and both
-    commit, with no `SQLITE_BUSY`; a long read that's cancelled returns early, cancelled.
-  - **Measured before and after the rewrite, on agent-workbox:** a 20-row batch commit through the real `RowStore`, a
-    50-row `RowsAfter` read, a 50-item `PageBefore` read, a 50-thread list read, and the thread list while a page
-    read runs on another thread (each median and 99th percentile), and the Native AOT backend's idle memory. The numbers go in PR 2's text. If either
-    gets worse, that's a defect, fixed before B2b.
-  - **Proof:** every existing test, the pinned ones included, passes unchanged. That's the proof behavior didn't
-    change.
-- **B2b. `ArchitectureTests`, failing.** `Assembly.Tests/Architecture/ArchitectureTests.cs`. It loads each assembly
-  and checks its references, and reads the source tree for the rest (no new package):
-  - `Assembly.Domain` references no `Assembly.*`;
-  - `Assembly.Application` references only `Assembly.Domain`;
-  - neither `Assembly.Domain` nor `Assembly.Application` references `Microsoft.Data.Sqlite` or ASP.NET Core, or
-    names `System.Diagnostics.Process` (so starting a process stays in Infrastructure, now that `SharedAdapter` and
-    the ACP code are in Application);
-  - `Assembly.Infrastructure` doesn't reference `Assembly.Mac` or `Assembly.Remote`;
-  - no file under `Application/Features/<A>/` names the namespace `Assembly.Application.Features.<B>` for another
-    feature `B` (in a `using` or written out), and every file's namespace matches its folder, so the check can't be
-    dodged;
-  - (the page's rule, that no file under `app/src/lib/<feature>/` imports from another feature's folder, comes in C1;
-    see there);
-  - no folder under `dotnet/` or `app/src/` (outside `bin/`, `obj/` and `node_modules/`) holds more than 30 files,
-    counting the files directly in it, not its subfolders. The number is one constant in the test, and there are no
-    exceptions. Today's largest folder, `Assembly.Engine/Acp/Messages/`, has 29.
-
-  It fails because the projects don't exist yet.
-- **B2c. The move.** Git shows it as renames, with only namespace and `using` edits in them. PR 2's text carries
-  the proof, so Jesse can read B2a and skip the moved files: `git diff -M --stat` and `--summary` for the commit,
-  showing every moved file as a rename, and a check that every changed line in those renames is a `namespace` or
-  `using` line (or a type name written out with its namespace). New files (the project files) are listed apart.
-  - **Before it:** one commit with the code changes the move needs: the stores take `IAppDatabase`, which hands out
-    the file's `IAtomicWriter`, so nothing in Application names `AppDatabase`.
-  - **After it:** one commit that keeps the file system out of the core (`TranscriptLog` takes a writer, and
-    `AgentDescriptor` parses text; the hosts and Infrastructure open the files), with `ArchitectureTests` banning
-    the file-system types in Domain and Application.
-  - **New:** `dotnet/Assembly.Domain/Assembly.Domain.csproj`, `dotnet/Assembly.Application/Assembly.Application.csproj`
-    and `dotnet/Assembly.Infrastructure/Assembly.Infrastructure.csproj`, and `dotnet/Directory.Packages.props`. The
-    `DependencyInjection.cs` files and the hosts' `Add*` calls come in B7, with the dispatcher that registers
-    features. Until then the hosts build their objects as today, so the move stays renames.
-  - **Moved:** every file in the "Where today's folders go" table in section 4. Today's tests go to
-    `Assembly.Tests/Features/<Feature>/`, `Core/` or `Infrastructure/`, matching the code they test; `Draft/`,
-    `Pinned/` and `Fixtures/` stay where they are.
-  - **Deleted:** `dotnet/Assembly.Engine/`.
-  - **Changed:** the hosts' and tests' project files, `Assembly.slnx`, and the files that name `Assembly.Engine/*` and
-    `Assembly.Mac/*` paths: `scripts/lint.d/40-routes.sh`, `scripts/check4.sh`, `AGENTS.md`, `dotnet/README.md` and
-    a few comments. `scripts/locked-paths.txt` gains `dotnet/Assembly.Tests/Architecture/**`. `AGENTS.md`'s provider line names one folder for provider quirks:
-    `Application/Common/Acp/V1/`. That's where the adapters' updates are read, and where today's provider
-    differences already are (`ClaudeBackground`, `CodexThreadStatus`, `UpdateReader`). `Infrastructure/Agents/` only
-    starts processes, so a quirk there would be about launching, not about what a provider sends.
-  - **Changed:** `scripts/check-evidence.sh`. Its list of code folders names `dotnet/Assembly.Engine`; that's
-    replaced by `dotnet/Assembly.Domain`, `dotnet/Assembly.Application` and `dotnet/Assembly.Infrastructure`, or
-    backend commits would skip the four-way check without a word. The script also fails when a `dotnet/Assembly.*`
-    project folder is neither in the list nor `Assembly.Tests`, so a project added later can't be skipped. It isn't
-    locked.
-  - `ArchitectureTests` passes.
-- **Proof:**
-  - every existing test passes after B2a and again after B2c (201 passed and 4 skipped of 205 at `7805f12`, plus the
-    new tests);
-  - check4 passes on all four cases, on B2c;
-  - `shell/assembly.sh build` publishes AOT;
-  - `check-evidence.sh` fails on a range holding a B2 commit with no evidence, and on a scratch
-    `dotnet/Assembly.Scratch/` folder (removed afterwards);
-  - the move thread sees the app run in the window on the Mac. This is owed, not done: builds on Jesse's Mac are
-    paused until he says so, and PR 2's text says so.
-- **Size:** B2a about 300 to 500 lines with its tests. B2b about 150 lines. B2c is mechanical (namespaces and
-  `using` lines across about 250 files) plus about 150 lines of project files and DI.
+- `scripts/check-evidence.sh` still lists `dotnet/Assembly.Engine` as code and not Domain, Application or
+  Infrastructure, so commits there skip the four-way check. The guard PR (`lane/base-guards`) fixes it.
 
 ### B3. One write path: `IAtomicWriter` and the audit
 
 - **Files:**
-  - Application: the contracts in `Common/Database/` exist from B2a; B3 doesn't change their shape.
-  - Infrastructure: `Persistence/AtomicWriter.cs`, which B2a made, gains the audit row and the prunes. The audit
-    row records `what` and the time; B4 adds the connection id as one more column. The per-connection write queue
-    comes with the socket in B4. New: `Persistence/AuditSchema.cs`, `Persistence/SchemaRunner.cs`.
-  - Chat: `Features/Chat/Rows/` and `Features/Chat/Threads/`. Their SQL already goes through the contracts (B2a); B3
-    splits today's `RowStore` and `ThreadStore` into chat's own named queries, so neither stays a class that wraps a
-    table.
+  - Application: the contracts in `Common/Database/` exist from B2a. B3 adds `Publish` to `IWriteScope` (5.6):
+    queued, sent after commit, with no subscribers yet. B5 wires it to Topics.
+  - Infrastructure: `Persistence/AtomicWriter.cs`, which B2a made, gains the audit row, the prunes, the publish
+    queue, and one `if (result is Task)` check that throws and rolls back before the commit (5.6). The audit row
+    records `what` and the time; B4 adds the connection id as one more column. The per-connection write queue comes
+    with the socket in B4. New: `Persistence/AuditSchema.cs`.
+  - Chat: `RowStore` and `ThreadStore` stay plain SQL in their feature. B3 only changes the writer and the publish
+    wiring.
+  - Domain: the JSON context (`Domain/Rows/RowJsonContext.cs`) and `ThreadConfig`'s parsing move to
+    `Application/Features/Chat/`. Domain keeps the records.
 - **Failing tests first,** in `Assembly.Tests/Infrastructure/Persistence/AtomicWriterTests.cs`, on a real temporary
   SQLite file:
   1. A write whose second statement throws leaves neither row, and publishes nothing.
-  2. A successful write leaves its rows, one audit row, and its publish, which is sent after commit (the test
-     subscribes and checks the order).
+  2. A successful write leaves its rows, one audit row, and its publish, which is queued and sent after commit (a
+     fake publish target checks the order).
   3. A failing commit (an injected failure) leaves nothing and publishes nothing.
   4. Two writes at once run one after the other.
   5. A chat row batch commit goes through the writer: its rows and one audit row commit together.
@@ -1018,11 +934,12 @@ because chat's row and thread stores and the preference store call SQLite direct
      29-day ones after the writer opens.
   7. Long-running prune: with no restart, advancing fake time 31 days and then writing deletes the expired rows. A
      second write the same day doesn't prune again.
-  8. The triggering write comes first: with the test subscribed to the write's topic and a hook on the prune's
+  8. The triggering write comes first: with the fake publish target from test 2 and a hook on the prune's
      transaction, the write's commit and its publish both happen before the prune's transaction begins, and the
      prune is a separate transaction (a failure injected into the prune leaves the triggering write committed).
   9. A backlog over the cap clears over the following writes: with 12,000 expired rows, the first write's prune
      deletes 5,000, the second write's 5,000 and the third write's 2,000; a fourth write the same day doesn't prune.
+  10. An async lambda passed to `Write` throws, and the write rolls back: nothing is committed.
 - **Also:** chat's row and thread writes move onto `IAtomicWriter` (5.6), and `scripts/lint.d/45-no-select-star.sh`
   fails on `SELECT *` under `dotnet/` (rows are read by column position).
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
@@ -1049,7 +966,7 @@ because chat's row and thread stores and the preference store call SQLite direct
   2. Bad args answer `bad_args`.
   3. A wrong token closes with 4401, and a wrong protocol with 4400.
   4. `cancel` fires the handler's token (base#10).
-  5. Closing the socket cancels running calls.
+  5. Closing the socket cancels running reads, and a write already queued still commits.
   6. Two calls at once each get their own answer.
   7. A handler that throws answers `failed` and logs at Error.
   8. A call over 30 s answers `timeout`, using `FakeTimeProvider` with no real waiting.
@@ -1060,15 +977,16 @@ because chat's row and thread stores and the preference store call SQLite direct
   2. The owner's signal sends `cancel`.
   3. A close fails pending calls as `aborted`.
   4. One reconnect, then waiting for `backend-ready`.
-- **Proof:** the tests. check4 passes, plus a new scenario, `scripts/features/socket.ts` (node, since curl has no
-  WebSocket on the Mac), which makes a call and a cancel on both machines.
+- **Proof:** the tests. check4 passes, plus a new scenario, `scripts/features/socket.sh`, a one-line `.sh` that runs
+  `socket.ts` (node, since curl has no WebSocket on the Mac), which makes a call and a cancel on both machines.
 - **Size:** 600 to 800 lines with tests.
 
 ### B5. Topics and the backend clock
 
 - **Files:**
   - Application: `Common/Topics/ITopics.cs`, `Common/Clock/IBackendClock.cs`.
-  - Infrastructure: `Topics/Topics.cs`, `Clock/BackendClock.cs`.
+  - Infrastructure: `Topics/Topics.cs`, which the writer's publish queue (B3) now sends to, and
+    `Clock/BackendClock.cs`.
   - Page: `socket.ts` gains `subscribe`.
 - **Failing tests first:**
   1. Subscribing sends `state`, then each `change` published after it.
@@ -1077,6 +995,8 @@ because chat's row and thread stores and the preference store call SQLite direct
   4. A `minute` subscriber gets exactly one change per minute over three fake minutes, while a `second` subscriber
      on the same clock gets 180.
   5. Subscribing again after a reconnect gives the current state, not a replay.
+  6. A row committed before the snapshot but published after it is in the state, and is dropped when delivered (its
+     seq is at or below the snapshot's); and a duplicated settings upsert leaves the same value (5.7).
 
   On the page, a `subscribe` test applies `state` and `change` to a `$state` map.
 - **Proof:** the tests, and check4.
@@ -1087,7 +1007,7 @@ because chat's row and thread stores and the preference store call SQLite direct
 - **Files:**
   - Application: `Common/Calls/ICallRegistry.Save`.
   - Infrastructure: the dispatcher runs `Save` handlers inside `IAtomicWriter`, from the connection's write queue
-    (5.9).
+    (5.9). On stop, the backend drains each connection's write queue and commits before it exits (5.9, "Quitting").
   - Page: `socket.ts` gains `save`.
   - No shell change.
 - **Failing tests first:**
@@ -1095,14 +1015,20 @@ because chat's row and thread stores and the preference store call SQLite direct
   2. 50 rapid saves of one key, sent without waiting for answers, end on the last value.
   3. A slow write doesn't hold up a read on the same connection.
   4. A failed save reports once, and leaves the committed value as it was.
+  5. Quitting: a save held on purpose in the write queue, then the backend asked to stop; the save commits before
+     the backend exits.
 
   On the page:
   1. `save` sends one call per `input` on a text field.
-  2. The echo of its own save is a no-op; another window's echo is applied.
+  2. Two windows, A and B, saving one key (5.9): commits A1, B1, A2 leave both windows on A2; commits A1, A2, B1
+     leave both on B1.
+  3. A failed save, then a successful save, then another window's update: the window ends on the other window's
+     value.
+  4. A1, B1, A2, with A2's reply arriving right after its echo: the window ends on A2 and never shows B1 after A2's
+     echo.
 - **Measure:** time a single-row settings upsert through the real `IAtomicWriter`, with its audit row, on
   agent-workbox. Record the median and 99th percentile, as 5.9 did for the scratch program (17 µs and 81 µs).
-- **Proof:** the tests, the measurement, and check4. In the window on the Mac, the move thread types in a settings
-  field and quits right away, and the value is kept after reopening.
+- **Proof:** the tests, the measurement, and check4. The window proof is in B7, once preferences use the new save.
 - **Size:** 200 to 300 lines with tests.
 
 ### B7. Preferences rebuilt on the base (the example every feature copies)
@@ -1112,15 +1038,14 @@ Each is reviewed on its own.
 
 - **Files:**
   - One folder, `Application/Features/Preferences/`: `PreferencesFeature.cs` (its calls, topic and SQL, 5.2),
-    `Preference.cs` (the record and its row reader), `PreferencesSchema.cs`, `PreferencesJson.cs`, and `README.md`
-    (moved from `Assembly.Mac/Preferences/README.md`, which isn't locked). Nothing for preferences in Domain or
-    Infrastructure.
+    `Preference.cs` (the record and its row reader), `PreferencesJson.cs`; `PreferencesSchema.cs` and `README.md`
+    are already there and stay. Nothing for preferences in Domain or Infrastructure.
   - Page: `app/src/lib/preferences/preferences.svelte.ts` (subscribe and save), and its `README.md`.
-- **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Engine/Features/FeatureCalls.cs`, `PreferencesRoutes.cs`,
+- **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Infrastructure/Http/FeatureCalls.cs`, `PreferencesRoutes.cs`,
   `PreferenceStore.cs` (no reader or writer class replaces it), the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
-  no OK is needed. From here until the end of C1 there's no route check (section 9.2).
+  no OK is needed. From here until the end of C2 there's no route check (section 9.2).
 - **Changed:** `AGENTS.md`, which names `call.ts`, `FeatureCalls.cs` and `40-routes.sh`.
-- **Failing tests first,** in `Assembly.Tests/Features/Preferences/`:
+- **Failing tests first,** in `Assembly.Tests/Draft/Base/`, since the base list is still a draft:
   1. base#7: a theme change is written when it's made, and is there after the backend restarts.
   2. Two windows: a change in one reaches the other's subscription.
   3. A subscription that starts after a save gets the saved value.
@@ -1128,19 +1053,25 @@ Each is reviewed on its own.
   The page tests change with it. `app/test/draft/base/call.test.ts` becomes `socket.test.ts`, and
   `preferences.test.ts` is rewritten for the subscription.
 - **Proof:**
-  - check4 passes, with `scripts/features/preferences.sh` rewritten as `preferences.ts` over the socket;
+  - check4 passes, with `scripts/features/preferences.sh` a one-line `.sh` that runs a new `preferences.ts` over the
+    socket;
   - the move thread sees, in the window on the Mac, a theme change that survives a quit, and a second window that
-    follows it.
+    follows it. It also types in a settings field and quits right away, and the value is kept after reopening
+    (base#7; moved here from B6).
 - **Size:** 300 to 450 lines, offset by about 400 deleted.
 
 ### B8. The Mac's page calls onto the socket
 
 - **Files:** one folder, `Application/Features/Diagnostics/`: `DiagnosticsFeature.cs` (memory sample, App Nap begin
-  and end, dropping the link for the debug control) and its small classes. Infrastructure gets only what calls the
+  and end, dropping the link for the debug control, the composer's thumbnail and path-upload calls, and
+  `soak.append`) and its small classes. Infrastructure gets only what calls the
   operating system, if anything does.
-- **Deleted:** `Assembly.Mac/Page/PageRoutes.cs`, `Assembly.Mac/Debug/DebugRoutes.cs`, and
+- **Deleted:** `Assembly.Infrastructure/Http/PageRoutes.cs`, `Assembly.Infrastructure/Http/DebugRoutes.cs`, and
   `app/src/lib/host/pageCall.ts`.
-- **Moved:** the thumbnail calls go to phase C1, with attachments.
+- **Moved:** every caller of `pageCall.ts` moves onto the socket in this step, with `pageCall.ts` and
+  `PageRoutes.cs`: the composer's thumbnail and path-upload calls (`Composer.svelte:158,161,201`), `soak.ts`'s
+  `soak.append` and `memory.sample`, `routes/+page.svelte:88` (`memory.sample`), and `Conversation.svelte:163-164`
+  (`activity.begin` and `activity.end`). Nothing is deleted while something still calls it.
 - **Failing tests first:** one per call, over the socket test helper from B4.
 - **Proof:** check4, and the App Nap and memory reading working in the window on the Mac.
 - **Size:** 150 to 250 lines.
@@ -1155,7 +1086,9 @@ group:
 3. `coverView` (row 7);
 4. the turn clock (row 8);
 5. the Composer microtask (row 12);
-6. lag, counters and soak, as Jesse decided in D2 (rows 2 to 4);
+6. lag, counters and soak, as Jesse decided in D2 (rows 2 to 4). From `debug.svelte.ts`, only the helpers that count
+   timers and frame callbacks move to `app/measure/`; `counters`, `measures` and the lifecycle functions stay (section
+   4);
 7. the promise chains.
 
 **Failing test first, for each:**
@@ -1181,8 +1114,8 @@ group:
 - **Files:** `app/scripts/guards.sh`, and deleting `app/scripts/guards-allowed.txt`. Both are locked, so this
   **needs Jesse's OK line.** `AGENTS.md`, which names `guards-allowed.txt` and the per-row tick rule (no longer needed
   once no file may tick); and the CI step for the build backstop (9.1).
-- **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, `fetch`
-  in `socket.ts` itself, a `WebSocket` outside `socket.ts`, a Tailwind `has-data-[…]`, a bare `animate-spin`, an
+- **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, a
+  Tailwind `has-data-[…]`, a bare `animate-spin`, an
   `infinite` in a rule without `[aria-busy="true"]`, a bare `shimmer`, `has-checked:`, `not-has-[...]`,
   `<svelte:window` and `matchMedia(` outside host, and `addPopoutGroup(`, since popout windows bring dockview-core's
   endless frame loop). Each fails against today's script. Probes that must pass: `aria-busy:animate-spin`,
@@ -1197,8 +1130,8 @@ group:
 
 ### B10a. Turn on `scripts/lint.sh`
 
-- **Files:** `scripts/lint.sh`, replaced with the move thread's version that runs every `scripts/lint.d` script
-  (blob `ac101c9`). It's locked, so this needs an OK line by the move thread (section 9.3).
+- **Files:** `scripts/lint.sh`, replaced with a version that runs every `scripts/lint.d` script, written by the lane.
+  It's locked, so the move thread reads it and posts its OK line (section 9.3).
 - **Test first:** a scratch `lint.d` probe script that always fails makes `lint.sh` fail. Today's stub passes it.
 - **Proof:** `lint.sh` runs `00-typescript-only.sh`, and fails on the probe.
 - **Size:** a few lines.
@@ -1206,23 +1139,15 @@ group:
 ### B11. The lint checks
 
 - **Files:** `scripts/lint.d/50-dotnet-format.sh`, `60-svelte-check.sh`, `70-architecture.sh`.
-  `40-one-dispatcher.sh` lands at the end of phase C1 instead (section 9.2).
+  `40-one-dispatcher.sh` lands at the end of phase C2 instead (section 9.2).
 - **Test first:** each script gets a probe file it must fail on, run from a scratch copy, as for the guard.
 - **Proof:** `scripts/lint.sh` passes on the tree, and each probe fails.
 - **Size:** about 200 lines.
 
-### B12. Lock the configs, then open the PR
-
-- **Files:** `scripts/locked-paths.txt` adds `scripts/lint.d/**`, `dotnet/.editorconfig`,
-  `dotnet/Directory.Build.props`, `dotnet/Directory.Packages.props`, and, under D2 A, `app/measure/**`. That file
-  is itself locked, so this needs an OK line by the move thread (section 9.3).
-- **Proof:** `scripts/check-pinned.sh` refuses a test edit to each newly locked file.
-- **Then:** the B9 to B12 PR is marked ready, as the last of the five PRs (section 10).
-
 ## 11. The later phases
 
 Each phase follows the base's pattern: one folder, `Application/Features/<Feature>/`, with its `<Feature>Feature.cs`,
-records, rules and SQL; its tests in `Assembly.Tests/Features/<Feature>/`; its store in `app/src/lib/<feature>/`; a check4 scenario, and the old route deleted in the same phase. Each starts by
+records, rules and SQL; its tests in `Assembly.Tests/Features/<Feature>/` (in `Draft/` while its behavior list is a draft); its store in `app/src/lib/<feature>/`; a check4 scenario, and the old route deleted in the same phase. Each starts by
 drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. Then, as from B7 on (AGENTS.md,
 "Files first, then code"), each port is two reviewed steps: every file in its place with no logic, then the old
 code brought over piece by piece. Sol's step numbers are given so his
@@ -1241,8 +1166,7 @@ catalogue stays the reference.
   - **First, the page's layout rule, after B9 and B10.** B10 deletes the guard's allowlist and B9 removes the waits,
     so chat's page folders can move without changing what the guard's per-row zone (`lib/chat/`) means. In this
     order: `ArchitectureTests` gets back `No_page_feature_imports_another` (no file under `app/src/lib/<feature>/`
-    imports another feature's folder; written first, failing; the test file is locked by then, so the move thread
-    posts the OK line); then `composer/`, `rows/`, `thread/` and `Conversation.svelte` move under `app/src/lib/chat/`
+    imports another feature's folder; written first, failing); then `composer/`, `rows/`, `thread/` and `Conversation.svelte` move under `app/src/lib/chat/`
     as renames with import-path edits, and the test passes. B2b had it, and B2c took it out: today those folders
     import each other.
   - **Named item: the page read on thread switch.** `PageBefore` takes about 200 ms for 50 items on a 40,000-row
@@ -1252,27 +1176,43 @@ catalogue stays the reference.
   - **Reads take the call's token.** Since B2a every store read passes `CancellationToken.None`, because the
     signatures didn't change, so no load in the backend can be cancelled yet. When the chat reads move onto the socket,
     they take the call's token, starting with `PageBefore` alongside its index fix.
-  - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
-    `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions
-    (section 9.2). Adding a file to the locked `lint.d` needs no OK.
+  - **Deleted:** `app/src/lib/api.ts`, `app/src/lib/rows/client.ts`, and each chat route whose last caller C1
+    converts. A route goes in the same step that converts its last caller. The remote client still calls the chat
+    routes (`RemoteMachine.cs:67`, `:103`), and `RemoteFollower` calls `/live`, so those routes and `LiveSocket.cs`
+    stay until C2, which converts them. Picked over converting `RemoteMachine` in C1, because C2 already rewrites
+    `RemoteMachine` and `RemoteFollower`, so doing it in C1 would pull all of C2 into C1.
+  - **The last commit** adds the guard's `fetch(` and `WebSocket` ban (9.1), with its self-test probes (`fetch` in
+    `socket.ts` itself, a `WebSocket` outside `socket.ts`). It needs Jesse's OK line (section 9.3).
+  - **check4's own calls** (`/version`, POST `/threads`, send, rows, `GET /threads/{id}`; `scripts/check4.sh:71-134`)
+    go over the socket in the step that removes those routes: the calls to the local backend in C1, and the two to
+    the Workbox Test host (`/version`, `GET /threads/{id}`) in C2.
+    Proof: check4 on that step's head, before and after.
   - **Tests:**
     - base#8: a thread made while the page is subscribed arrives as an upsert;
-    - base#9: the pending run is shown during the gap before the copied row arrives (the failing test is written
-      before the fix), and the menus come from a host started with an empty home;
+    - base#9: a thread on Workbox Test and one on the Mac show the same Mode menu, the same Model menu and the same
+      agent name, with the menus from a host started with an empty home;
+    - pending runs, apart from base#9: the pending run is shown during the gap before the copied row arrives (the
+      failing test is written before the fix);
     - the rows-topic catch-up and `prevSeq` tests that exist today, moved;
-    - attachments as chunked calls (D4): a 10 MB image arrives in about 10 calls and commits once; cancelling
-      midway leaves nothing linked.
-  - **Proof:** check4 with `rows.ts`, `threads.ts` and `config.ts`, and the chat used in the window on the Mac.
+    - attachments as chunked calls (D4): a 20 MB image, the limit, arrives in about 20 calls and commits once; one
+      byte over the limit is refused; cancelling midway leaves nothing linked.
+  - **Proof:** check4 with `rows.sh`, `threads.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
+    the chat used in the window on the Mac.
 - **C2. One socket per remote machine** (Sol P11, P13).
   - **Files:** `Infrastructure/Remote/RemoteMachine.cs` becomes a socket client of the remote's `/socket`, and
     `RemoteFollower.cs` becomes one subscription per thread on that socket. The remote's threads topic is relayed,
     which brings threads made on the remote into the list (base#11, Jesse's call). `RemoteOutbox.cs` polling becomes
     a subscription.
+  - **Deleted:** the chat HTTP routes the remote client called, and `LiveSocket.cs`. The last commit adds
+    `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions (section 9.2).
+  - **Kept, as parity with the old app (base#2, base#3):** starting from saved machines, opening while one is down,
+    and adding or removing machines while running. Retries run on the backend clock. Their tests stay in `Draft/`
+    until Jesse corrects the base list.
   - **Tests:**
     - a relayed upsert for an unknown remote thread shows in the list;
     - a disconnect marks the machine offline;
     - a reconnect catches up without duplicates.
-  - **Proof:** check4 on Workbox Test.
+  - **Proof:** check4 on Workbox Test, before and after on this step's head.
 - **C3. MCP servers** (Sol P09).
   - It starts by finding out why the old app didn't have the MCP problem (Jesse's comment), and changes nothing until
     that's answered.
@@ -1409,7 +1349,7 @@ catalogue stays the reference.
       shell and change only the editor's syntax colours.
 
     The setting is one theme id from that list, never a light/dark toggle. `resolveThemeId` keeps its fallback: an
-    id that isn't on the list, such as the `"dark"` base#7's pinned test saves, gives the default theme. Each theme's editor part arrives with W2, and its
+    id that isn't on the list, such as the `"dark"` base#7's draft test saves, gives the default theme. Each theme's editor part arrives with W2, and its
     terminal palette with W4.
   - **One copy of the colours.** `app.css` holds Assembly's values, and nothing else repeats them.
     - Assembly and the five ThemeMirror entries carry no tokens, so applying them removes the values the last theme
@@ -1435,7 +1375,7 @@ catalogue stays the reference.
       import in `app.css` and the package from 91a01e6.
   - **Preferences:**
     - The spike's `'system' | 'light' | 'dark'` setting is replaced by the theme id and the two font choices.
-    - The key stays `theme`, so base#7's pinned test, which saves `"dark"` as a value and reads it back, still holds
+    - The key stays `theme`, so base#7's draft test, which saves `"dark"` as a value and reads it back, still holds
       unchanged.
     - There's no "follow the system", so Tauri's theme-changed event isn't needed.
   - **Contrast:** `contrast.ts` doesn't come. Nothing imports it at 2089290, and a contrast test over the themes
@@ -1535,4 +1475,4 @@ Each P phase has the same shape as the W phases.
   `docs/behavior/base.md` in phase C2, as a draft line. That file isn't in `scripts/locked-paths.txt`, so it needs no
   OK.
 - **Typing and then quitting right away** keeps the value, because each keystroke was already sent (5.9). That still
-  has to be shown in the window on the Mac (step B6).
+  has to be shown in the window on the Mac (step B7).
