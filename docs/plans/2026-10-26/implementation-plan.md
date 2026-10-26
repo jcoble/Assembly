@@ -1019,15 +1019,18 @@ files in `app/src`, 10 in `app/test`, 103 in `dotnet`, 9 in `scripts` and 4 in `
 - files and folders: `Domain/Threads/`, `Features/Chat/Threads/` and its tests, `Infrastructure/Http/ThreadRoutes.cs`,
   and `app/src/lib/thread/`;
 - SQLite: the `threads`, `thread_info`, `thread_config` and `thread_commands` tables, every `thread_id` and
-  `parent_thread_id` column, and `helper_messages.from_thread` and `to_thread`. How existing databases keep their
-  sessions through the rename is Jesse's call, made before this step changes them;
+  `parent_thread_id` column, and `helper_messages.from_thread` and `to_thread`. Existing databases keep their
+  sessions (Jesse, 2026-10-26 23:12): when a store opens one, a single step renames its old tables, columns and the
+  `thread_info_updated` index, once, before the tables are created;
+- the checkouts folder: `<home>/threads` becomes `<home>/sessions`, moved once at start when only the old one exists
+  (both existing: both are left and the log says so). Saved agent sessions still resume after the move;
 - log lines (`thread {id}: ...` in `SessionHost`), the check4 variable `CHECK4_THREAD`, and the docs' text.
 
 Kept, because they aren't Assembly's chats: .NET's threading names (`System.Threading` and the rest), Rust's
 `std::thread`, Codex's own `threadStatus` field (`Acp/V1/CodexThreadStatus.cs` reads what Codex sends), the move
 thread (a Claude project thread that approves locked files), and the provider's own session id, which stays
-`acp_session_id` / `AcpSessionId` so it isn't confused with Assembly's session id. **Proof:** the same grep finds
-no Assembly chat named "thread".
+`acp_session_id` / `AcpSessionId` so it isn't confused with Assembly's session id. The one-time rename names the
+old tables, columns and folder it renames. **Proof:** the same grep finds no other Assembly chat named "thread".
 
 ### B3. One write path: `IAtomicWriter` and the audit
 
