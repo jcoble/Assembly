@@ -192,7 +192,7 @@ way the only way. Each one names what enforces it.
    the guard, which names that folder inside the script.
 4. **`async`/`await` with an `AbortSignal`, never `.then`, `.catch` or `.finally`.** Enforced by the guard.
 5. **Every backend call has a cancellation token, and passes it to everything it awaits.** CA2016 is a build error
-   (`dotnet/.editorconfig`). Closing the socket cancels every call still running on it.
+   (`dotnet/.editorconfig`). Closing the socket cancels every read still running on it, never a queued write (5.9).
 6. **Every save is atomic.** Every write runs inside `IAtomicWriter.Write`: one connection, one transaction, an
    audit row, commit, and only then publish. That includes a call's write and the chat row writes (`RowStore`'s
    batches). Nothing can write any other way, because only the writer hands out a write connection. Enforced by the
@@ -485,7 +485,7 @@ feature's at startup, through the writer, before the socket opens.
 - The page's `call(feature, method, args, { key, signal })` sends `cancel` when its signal aborts. A newer call with
   the same `key` aborts the older one; this is base#10, kept.
 - The backend's token reaches the handler, and from there everything it awaits (rule 5).
-- Closing the socket cancels every call still running on it.
+- Closing the socket cancels every read still running on it. It never cancels a queued write (5.9).
 - A forwarded call to a remote machine sends `cancel` on the machine socket (phase C2).
 
 ### 5.4 Errors on the page
@@ -647,10 +647,12 @@ can't reach the writer out of order, and the last one sent is the last one commi
 is decided by which commit lands last, and each window then shows that value from the topic. Sequence numbers per key
 weren't chosen, because the per-connection queue gives the same guarantee with no extra field in every save.
 
-**Quitting.** The shell doesn't hold the close or the quit, and there's no `closing` event, no `pagehide` and no
-`visibilitychange`. The page sends each save in the same event handler that changed the value, so a change never
-exists only in the page. At close there's nothing to flush except frames already sent, and the backend, which keeps
-running after the window closes, handles those.
+**Quitting.** There's no acknowledgment protocol, no `closing` event, no `pagehide` and no `visibilitychange`. The
+page sends each save in the same event handler that changed the value, so a change never exists only in the page.
+A socket closing cancels its reads, never a queued write. On quit, the shell asks the backend to stop and waits for
+it to exit, with an upper limit on the wait, in Rust, not a page timer (today's `stop_backend` in
+`shell/src/main.rs`: SIGTERM, then up to 10 s). The backend drains each connection's write queue and commits before
+it exits.
 
 **Audit volume.** Each save writes one audit row, so typing writes one per keystroke. A typical settings edit (a
 20-character value) is 20 audit rows. For settings saves the audit row records the time, the connection, the
@@ -794,6 +796,9 @@ These are checked in every file:
 - Outside `HOST`: `addEventListener(` on anything, `<svelte:window`, `<svelte:document`, `matchMedia(`, and
   `MediaQuery` from `svelte/reactivity`.
 
+The ban on `fetch(` and on a `WebSocket` outside `TRANSPORT` lands in the commit that converts the last caller, C1's
+last commit, not in B10. There are no exemptions and no allowed list in the meantime.
+
 Under D2 A, `app/measure/` is scanned with the same rules, except that timers and frame callbacks are allowed
 there. It's the one place the timer rule doesn't reach.
 
@@ -856,12 +861,12 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
   names in the script; a fifth needs Jesse's OK.
 - **`40-routes.sh` is deleted in step B7,** together with `FeatureCalls.cs`. `scripts/lint.d` isn't locked on main,
   so that needs no OK.
-- **There's no route check between B7 and the end of C1.** That's a stated gap, not a list. Reviews cover it: a new
+- **There's no route check between B7 and the end of C2.** That's a stated gap, not a list. Reviews cover it: a new
   `Map` call in that window is a finding.
-- **`40-one-dispatcher.sh` lands at the end of phase C1 with zero exceptions,** in the commit that deletes the last
-  chat HTTP route. It has no legacy list, and no list that can only shrink.
+- **`40-one-dispatcher.sh` lands at the end of phase C2 with zero exceptions,** in the commit that deletes the last
+  chat HTTP route (the remote client's, section 11). It has no legacy list, and no list that can only shrink.
   - **Why then, and not inside the base:** moving the chat routes onto the socket before B11 would put all of
-    phase C1 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
+    phases C1 and C2 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
     to show.
 - **`scripts/lint.sh` on main is still the stub,** so no `lint.d` check runs anywhere today. Step B10a, before B11,
   replaces it with the move thread's `lint.sh` that runs every `lint.d` script (blob `ac101c9`). `lint.sh` is locked,
@@ -884,6 +889,7 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
 | B10 | Change `app/scripts/guards.sh` | `by:jesse` (his 18:11 message on 26 October asks for it) |
 | B10 | Delete `app/scripts/guards-allowed.txt` | `by:jesse` |
 | B10 | Drop `guards-allowed.txt`'s line from `scripts/locked-paths.txt` | `by:jesse` |
+| C1 | Change `app/scripts/guards.sh`: the `fetch(` and `WebSocket` ban (9.1) | `by:jesse` |
 | B12 | Add the new locks to `scripts/locked-paths.txt` | `by:move-thread` |
 
 All of these wait until Jesse removes the three settings denies that block writing `.pinned-approvals`.
@@ -1049,7 +1055,7 @@ because chat's row and thread stores and the preference store call SQLite direct
   2. Bad args answer `bad_args`.
   3. A wrong token closes with 4401, and a wrong protocol with 4400.
   4. `cancel` fires the handler's token (base#10).
-  5. Closing the socket cancels running calls.
+  5. Closing the socket cancels running reads, and a write already queued still commits.
   6. Two calls at once each get their own answer.
   7. A handler that throws answers `failed` and logs at Error.
   8. A call over 30 s answers `timeout`, using `FakeTimeProvider` with no real waiting.
@@ -1087,7 +1093,7 @@ because chat's row and thread stores and the preference store call SQLite direct
 - **Files:**
   - Application: `Common/Calls/ICallRegistry.Save`.
   - Infrastructure: the dispatcher runs `Save` handlers inside `IAtomicWriter`, from the connection's write queue
-    (5.9).
+    (5.9). On stop, the backend drains each connection's write queue and commits before it exits (5.9, "Quitting").
   - Page: `socket.ts` gains `save`.
   - No shell change.
 - **Failing tests first:**
@@ -1095,6 +1101,8 @@ because chat's row and thread stores and the preference store call SQLite direct
   2. 50 rapid saves of one key, sent without waiting for answers, end on the last value.
   3. A slow write doesn't hold up a read on the same connection.
   4. A failed save reports once, and leaves the committed value as it was.
+  5. Quitting: a save held on purpose in the write queue, then the backend asked to stop; the save commits before
+     the backend exits.
 
   On the page:
   1. `save` sends one call per `input` on a text field.
@@ -1118,7 +1126,7 @@ Each is reviewed on its own.
   - Page: `app/src/lib/preferences/preferences.svelte.ts` (subscribe and save), and its `README.md`.
 - **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Engine/Features/FeatureCalls.cs`, `PreferencesRoutes.cs`,
   `PreferenceStore.cs` (no reader or writer class replaces it), the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
-  no OK is needed. From here until the end of C1 there's no route check (section 9.2).
+  no OK is needed. From here until the end of C2 there's no route check (section 9.2).
 - **Changed:** `AGENTS.md`, which names `call.ts`, `FeatureCalls.cs` and `40-routes.sh`.
 - **Failing tests first,** in `Assembly.Tests/Features/Preferences/`:
   1. base#7: a theme change is written when it's made, and is there after the backend restarts.
@@ -1140,7 +1148,9 @@ Each is reviewed on its own.
   operating system, if anything does.
 - **Deleted:** `Assembly.Mac/Page/PageRoutes.cs`, `Assembly.Mac/Debug/DebugRoutes.cs`, and
   `app/src/lib/host/pageCall.ts`.
-- **Moved:** the thumbnail calls go to phase C1, with attachments.
+- **Moved:** every caller of `pageCall.ts` moves onto the socket in this step, with `pageCall.ts` and
+  `PageRoutes.cs`: the composer's thumbnail and path-upload calls (`Composer.svelte:158,161,201`), and `soak.ts`'s
+  `soak.append` and `memory.sample`. Nothing is deleted while something still calls it.
 - **Failing tests first:** one per call, over the socket test helper from B4.
 - **Proof:** check4, and the App Nap and memory reading working in the window on the Mac.
 - **Size:** 150 to 250 lines.
@@ -1181,8 +1191,8 @@ group:
 - **Files:** `app/scripts/guards.sh`, and deleting `app/scripts/guards-allowed.txt`. Both are locked, so this
   **needs Jesse's OK line.** `AGENTS.md`, which names `guards-allowed.txt` and the per-row tick rule (no longer needed
   once no file may tick); and the CI step for the build backstop (9.1).
-- **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, `fetch`
-  in `socket.ts` itself, a `WebSocket` outside `socket.ts`, a Tailwind `has-data-[…]`, a bare `animate-spin`, an
+- **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, a
+  Tailwind `has-data-[…]`, a bare `animate-spin`, an
   `infinite` in a rule without `[aria-busy="true"]`, a bare `shimmer`, `has-checked:`, `not-has-[...]`,
   `<svelte:window` and `matchMedia(` outside host, and `addPopoutGroup(`, since popout windows bring dockview-core's
   endless frame loop). Each fails against today's script. Probes that must pass: `aria-busy:animate-spin`,
@@ -1206,7 +1216,7 @@ group:
 ### B11. The lint checks
 
 - **Files:** `scripts/lint.d/50-dotnet-format.sh`, `60-svelte-check.sh`, `70-architecture.sh`.
-  `40-one-dispatcher.sh` lands at the end of phase C1 instead (section 9.2).
+  `40-one-dispatcher.sh` lands at the end of phase C2 instead (section 9.2).
 - **Test first:** each script gets a probe file it must fail on, run from a scratch copy, as for the guard.
 - **Proof:** `scripts/lint.sh` passes on the tree, and each probe fails.
 - **Size:** about 200 lines.
@@ -1252,9 +1262,16 @@ catalogue stays the reference.
   - **Reads take the call's token.** Since B2a every store read passes `CancellationToken.None`, because the
     signatures didn't change, so no load in the backend can be cancelled yet. When the chat reads move onto the socket,
     they take the call's token, starting with `PageBefore` alongside its index fix.
-  - **Deleted:** `Infrastructure/Http/*` chat routes, `LiveSocket.cs`, `app/src/lib/api.ts`,
-    `app/src/lib/rows/client.ts`. The last commit adds `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions
-    (section 9.2). Adding a file to the locked `lint.d` needs no OK.
+  - **Deleted:** `app/src/lib/api.ts`, `app/src/lib/rows/client.ts`, and each chat route whose last caller C1
+    converts. A route goes in the same step that converts its last caller. The remote client still calls the chat
+    routes (`RemoteMachine.cs:67`, `:103`), and `RemoteFollower` calls `/live`, so those routes and `LiveSocket.cs`
+    stay until C2, which converts them. Picked over converting `RemoteMachine` in C1, because C2 already rewrites
+    `RemoteMachine` and `RemoteFollower`, so doing it in C1 would pull all of C2 into C1.
+  - **The last commit** adds the guard's `fetch(` and `WebSocket` ban (9.1), with its self-test probes (`fetch` in
+    `socket.ts` itself, a `WebSocket` outside `socket.ts`). It needs Jesse's OK line (section 9.3).
+  - **check4's own calls** (`/version`, POST `/threads`, send, rows, `GET /threads/{id}`; `scripts/check4.sh:71-134`)
+    go over the socket in the step that removes those routes: the local case's in C1, the Workbox Test case's in C2.
+    Proof: check4 on that step's head, before and after.
   - **Tests:**
     - base#8: a thread made while the page is subscribed arrives as an upsert;
     - base#9: the pending run is shown during the gap before the copied row arrives (the failing test is written
@@ -1268,6 +1285,8 @@ catalogue stays the reference.
     `RemoteFollower.cs` becomes one subscription per thread on that socket. The remote's threads topic is relayed,
     which brings threads made on the remote into the list (base#11, Jesse's call). `RemoteOutbox.cs` polling becomes
     a subscription.
+  - **Deleted:** the chat HTTP routes the remote client called, and `LiveSocket.cs`. The last commit adds
+    `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions (section 9.2).
   - **Tests:**
     - a relayed upsert for an unknown remote thread shows in the list;
     - a disconnect marks the machine offline;
