@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Rows;
 using Assembly.Engine.Store;
 using Assembly.Engine.Transcript;
@@ -25,7 +26,8 @@ public static class ReplayRun
         }
 
         var dbPath = args.Count == 3 ? args[2] : Path.Combine(Path.GetTempPath(), $"replay-{Guid.NewGuid():N}.db");
-        using var store = RowStore.Open(dbPath);
+        using var db = AppDatabase.Open(dbPath);
+        var store = RowStore.Open(db);
         var converter = new RowConverter();
         var pushed = new List<StoredRow>();
         var commitTimes = new List<double>();

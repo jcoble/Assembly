@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
 using Assembly.Engine.Agents;
 using Assembly.Engine.Live;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Store;
 using Assembly.Engine.Threads;
@@ -15,6 +16,7 @@ public sealed class SessionHostTests : IAsyncDisposable
     private readonly TempDatabase _db = new();
     // Frozen unless a test moves it, so no clock tick fires by surprise.
     private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
+    private readonly AppDatabase _database;
     private readonly RowStore _store;
     private readonly LiveHub _hub;
     private readonly ThreadStore _threads;
@@ -28,9 +30,10 @@ public sealed class SessionHostTests : IAsyncDisposable
 
     public SessionHostTests()
     {
-        _store = RowStore.Open(_db.Path);
+        _database = AppDatabase.Open(_db.Path);
+        _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _threads = ThreadStore.Open(_db.Path, _time);
+        _threads = ThreadStore.Open(_database, _time);
         _thread = _threads.Create("claude", "https://github.com/o/r");
         _adapter = new SharedAdapter(_launcher, "claude", _time);
         _opener = new SessionOpener(_threads, _launcher, _ => _adapter);
@@ -1060,8 +1063,7 @@ public sealed class SessionHostTests : IAsyncDisposable
         await turn;
         _live.Dispose();
         _hub.Dispose();
-        _threads.Dispose();
-        _store.Dispose();
+        _database.Dispose();
         _db.Dispose();
     }
 }

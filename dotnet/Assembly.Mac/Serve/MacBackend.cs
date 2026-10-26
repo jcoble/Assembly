@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Agents;
 using Assembly.Engine.Api;
 using Assembly.Engine.Attachments;
@@ -26,21 +27,19 @@ namespace Assembly.Mac.Serve;
 /// </summary>
 public sealed class MacBackend : IAsyncDisposable
 {
-    private readonly RowStore _store;
-    private readonly ThreadStore _threads;
+    private readonly AppDatabase _db;
     private readonly LiveHub _hub;
     private readonly SessionRegistry _sessions;
     private readonly RemoteMachine? _remote;
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
 
-    private MacBackend(RowStore store, ThreadStore threads, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
+    private MacBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
         WebApplication app)
     {
         _remote = remote;
         _outbox = outbox;
-        _store = store;
-        _threads = threads;
+        _db = db;
         _hub = hub;
         _sessions = sessions;
         _app = app;
@@ -55,8 +54,9 @@ public sealed class MacBackend : IAsyncDisposable
     {
         Directory.CreateDirectory(home);
         var database = Path.Combine(home, "assembly.db");
-        var store = RowStore.Open(database);
-        var threads = ThreadStore.Open(database, TimeProvider.System);
+        var db = AppDatabase.Open(database);
+        var store = RowStore.Open(db);
+        var threads = ThreadStore.Open(db, TimeProvider.System);
         var hub = new LiveHub(store);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             runsHere: thread => threads.Get(thread) is not { Machine: not null });
@@ -78,13 +78,13 @@ public sealed class MacBackend : IAsyncDisposable
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), port, routes =>
         {
-            MachineFeatureList.Add(routes, new FeatureContext(database));
-            MacFeatureList.Add(routes, new FeatureContext(database));
+            MachineFeatureList.Add(routes, new FeatureContext(db));
+            MacFeatureList.Add(routes, new FeatureContext(db));
             new DebugRoutes(hub).Map(routes);
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new MacBackend(store, threads, hub, sessions, remoteMachine, outbox, app);
+        var backend = new MacBackend(db, hub, sessions, remoteMachine, outbox, app);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -103,7 +103,6 @@ public sealed class MacBackend : IAsyncDisposable
         if (_remote is not null)
             await _remote.DisposeAsync();
         _hub.Dispose();
-        _threads.Dispose();
-        _store.Dispose();
+        _db.Dispose();
     }
 }

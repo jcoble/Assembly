@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Time.Testing;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Store;
 using Assembly.Engine.Threads;
 
@@ -8,9 +9,14 @@ public sealed class ThreadStoreTests : IDisposable
 {
     private readonly TempDatabase _db = new();
     private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
+    private readonly AppDatabase _database;
     private readonly ThreadStore _threads;
 
-    public ThreadStoreTests() => _threads = ThreadStore.Open(_db.Path, _time);
+    public ThreadStoreTests()
+    {
+        _database = AppDatabase.Open(_db.Path);
+        _threads = ThreadStore.Open(_database, _time);
+    }
 
     [Fact]
     public void A_new_thread_has_no_title_or_agent_session_yet()
@@ -64,9 +70,10 @@ public sealed class ThreadStoreTests : IDisposable
     [Fact]
     public void It_shares_a_database_file_with_the_rows()
     {
-        using var rows = RowStore.Open(_db.Path);
+        using var database = AppDatabase.Open(_db.Path);
+        var rows = RowStore.Open(database);
         var a = Create();
-        using var reopened = ThreadStore.Open(_db.Path, _time);
+        var reopened = ThreadStore.Open(database, _time);
 
         Assert.Equal(a, reopened.Get(a.ThreadId));
     }
@@ -98,7 +105,8 @@ public sealed class ThreadStoreTests : IDisposable
             command.ExecuteNonQuery();
         }
 
-        using var threads = ThreadStore.Open(olderDb.Path, _time);
+        using var threadsDatabase = AppDatabase.Open(olderDb.Path);
+        var threads = ThreadStore.Open(threadsDatabase, _time);
         Assert.Equal(new ThreadInfo("old", "claude", "r", "Old one", "acp-1", 2), threads.Get("old"));
         Assert.Equal("workbox-test", threads.Add("new", "claude", "r", "workbox-test").Machine);
         threads.SetSessionCost("old", 0.2238768m);
@@ -143,7 +151,7 @@ public sealed class ThreadStoreTests : IDisposable
 
         public void Dispose()
     {
-        _threads.Dispose();
+        _database.Dispose();
         _db.Dispose();
     }
 }

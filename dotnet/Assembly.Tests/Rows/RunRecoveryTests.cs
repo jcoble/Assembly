@@ -1,5 +1,6 @@
 using Assembly.Engine.Events;
 using Assembly.Engine.Live;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Rows;
 using Assembly.Engine.Rows.Payloads;
 using Assembly.Engine.Store;
@@ -13,9 +14,14 @@ public sealed class RunRecoveryTests : IDisposable
     private const long RestartedAt = 1_900_000_000_000;
 
     private readonly TempDatabase _db = new();
+    private readonly AppDatabase _database;
     private readonly RowStore _store;
 
-    public RunRecoveryTests() => _store = RowStore.Open(_db.Path);
+    public RunRecoveryTests()
+    {
+        _database = AppDatabase.Open(_db.Path);
+        _store = RowStore.Open(_database);
+    }
 
     [Theory]
     [InlineData("acp/tools.jsonl", "tool")]
@@ -150,7 +156,7 @@ public sealed class RunRecoveryTests : IDisposable
 
     public void Dispose()
     {
-        _store.Dispose();
+        _database.Dispose();
         _db.Dispose();
     }
 }

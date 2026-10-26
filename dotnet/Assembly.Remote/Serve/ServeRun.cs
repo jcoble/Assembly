@@ -1,3 +1,4 @@
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Agents;
 using Assembly.Engine.Api;
 using Assembly.Engine.Attachments;
@@ -27,8 +28,9 @@ public static class ServeRun
 
         Directory.CreateDirectory(options.Home);
         var token = TokenFile.ReadOrCreate(options.TokenFile);
-        using var store = RowStore.Open(options.Database);
-        using var threads = ThreadStore.Open(options.Database, TimeProvider.System);
+        using var db = AppDatabase.Open(options.Database);
+        var store = RowStore.Open(db);
+        var threads = ThreadStore.Open(db, TimeProvider.System);
         using var hub = new LiveHub(store);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         var launcher = new AdapterLauncher(AgentDescriptor.Load(options.AgentsFile), options.Checkouts, new UnclaimedPermissions());
@@ -41,7 +43,7 @@ public static class ServeRun
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), options.Port,
-            routes => MachineFeatureList.Add(routes, new FeatureContext(options.Database)));
+            routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");

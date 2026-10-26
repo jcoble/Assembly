@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Engine.Live;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Rows;
 using Assembly.Engine.Store;
 
@@ -10,9 +11,14 @@ public sealed class LiveHubTests : IDisposable
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
 
     private readonly TempDatabase _db = new();
+    private readonly AppDatabase _database;
     private readonly RowStore _store;
 
-    public LiveHubTests() => _store = RowStore.Open(_db.Path);
+    public LiveHubTests()
+    {
+        _database = AppDatabase.Open(_db.Path);
+        _store = RowStore.Open(_database);
+    }
 
     [Fact]
     public async Task A_subscriber_gets_the_rows_it_missed_then_each_new_row_once()
@@ -125,7 +131,8 @@ public sealed class LiveHubTests : IDisposable
     {
         // On the Mac, a remote thread's rows arrive as copies that keep the box's seqs.
         using var boxDb = new TempDatabase();
-        using var box = RowStore.Open(boxDb.Path);
+        using var boxDatabase = AppDatabase.Open(boxDb.Path);
+        var box = RowStore.Open(boxDatabase);
         var rows = box.Commit("a", Batch("one", "two"));
         using var hub = new LiveHub(_store);
         using var live = hub.Subscribe("a", after: 0);
@@ -167,7 +174,7 @@ public sealed class LiveHubTests : IDisposable
 
     public void Dispose()
     {
-        _store.Dispose();
+        _database.Dispose();
         _db.Dispose();
     }
 }

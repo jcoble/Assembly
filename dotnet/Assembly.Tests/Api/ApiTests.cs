@@ -11,6 +11,7 @@ using Assembly.Engine.Api;
 using Assembly.Engine.Attachments;
 using Assembly.Engine.Live;
 using Assembly.Engine.Machines;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Store;
 using Assembly.Tests.Sessions;
@@ -28,6 +29,7 @@ public sealed class ApiTests : IAsyncLifetime
     private readonly TempDatabase _db = new();
     private readonly string _work = Directory.CreateTempSubdirectory("assembly-api-").FullName;
     private readonly FakeLauncher _launcher = new();
+    private AppDatabase _database = null!;
     private RowStore _store = null!;
     private LiveHub _hub = null!;
     private ThreadStore _threads = null!;
@@ -38,9 +40,10 @@ public sealed class ApiTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _store = RowStore.Open(_db.Path);
+        _database = AppDatabase.Open(_db.Path);
+        _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _threads = ThreadStore.Open(_db.Path, TimeProvider.System);
+        _threads = ThreadStore.Open(_database, TimeProvider.System);
         _sessions = new SessionRegistry(_hub, _threads, _launcher, TimeProvider.System, TextWriter.Null);
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, _threads, _sessions, attachments));
@@ -371,8 +374,7 @@ public sealed class ApiTests : IAsyncLifetime
         await _app.DisposeAsync();
         await _sessions.DisposeAsync();
         _hub.Dispose();
-        _threads.Dispose();
-        _store.Dispose();
+        _database.Dispose();
         _db.Dispose();
         Directory.Delete(_work, recursive: true);
     }

@@ -1,12 +1,13 @@
-using Microsoft.Data.Sqlite;
+using Assembly.Engine.Database;
+using Assembly.Engine.Persistence;
 
 namespace Assembly.Engine.Threads;
 
 /// <summary>
-/// The sessions list, in the same SQLite file as the rows but on its own connection. Writes here are rare
-/// (create, title, send), so they share the file without slowing the row commits.
+/// The sessions list, in the same SQLite file as the rows. Writes here are rare (create, title, send) and go through
+/// the file's one writer, like the row commits.
 /// </summary>
-public sealed class ThreadStore : IDisposable
+public sealed class ThreadStore
 {
     private const string Schema = """
         CREATE TABLE IF NOT EXISTS thread_info(thread_id TEXT PRIMARY KEY, agent TEXT NOT NULL, repo_url TEXT NOT NULL,
@@ -44,36 +45,38 @@ public sealed class ThreadStore : IDisposable
 
     private const string MessageColumns = "message_id, from_thread, to_thread, text, run_id, created_at, error, state, reply";
 
-    private readonly SqliteConnection _db;
+    private readonly IAppDatabase _db;
+    private readonly IAtomicWriter _writer;
     private readonly TimeProvider _time;
-    private readonly Lock _gate = new();
 
-    private ThreadStore(SqliteConnection db, TimeProvider time)
+    private ThreadStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time)
     {
         _db = db;
+        _writer = writer;
         _time = time;
     }
 
-    public static ThreadStore Open(string path, TimeProvider time)
+    public static ThreadStore Open(AppDatabase db, TimeProvider time)
     {
-        var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
-        db.Open();
-        var store = new ThreadStore(db, time);
-        store.Execute("PRAGMA journal_mode = WAL;");
-        store.Execute(Schema);
-        if (store.Scalar(HasMachine) == 0)
-            store.Execute("ALTER TABLE thread_info ADD COLUMN machine TEXT;");
-        if (store.Scalar(HasSessionCost) == 0)
-            store.Execute("ALTER TABLE thread_info ADD COLUMN session_cost TEXT;");
-        if (store.Scalar(HasParent) == 0)
-            store.Execute("ALTER TABLE thread_info ADD COLUMN parent_thread_id TEXT;");
-        if (store.Scalar(HasHelper) == 0)
-            store.Execute("ALTER TABLE thread_info ADD COLUMN helper INTEGER NOT NULL DEFAULT 0;");
-        if (store.Scalar(HasMessageError) == 0)
-            store.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
-        if (store.Scalar(HasMessageAnswer) == 0)
-            store.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
-        return store;
+        db.Writer.Write("threads.schema", scope =>
+        {
+            bool Missing(string sql) => scope.QueryFirst(sql, row => row.Long(0), CancellationToken.None) == 0;
+            scope.Execute(Schema);
+            if (Missing(HasMachine))
+                scope.Execute("ALTER TABLE thread_info ADD COLUMN machine TEXT;");
+            if (Missing(HasSessionCost))
+                scope.Execute("ALTER TABLE thread_info ADD COLUMN session_cost TEXT;");
+            if (Missing(HasParent))
+                scope.Execute("ALTER TABLE thread_info ADD COLUMN parent_thread_id TEXT;");
+            if (Missing(HasHelper))
+                scope.Execute("ALTER TABLE thread_info ADD COLUMN helper INTEGER NOT NULL DEFAULT 0;");
+            if (Missing(HasMessageError))
+                scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
+            if (Missing(HasMessageAnswer))
+                scope.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
+            return 0;
+        });
+        return new ThreadStore(db, db.Writer, time);
     }
 
     public ThreadInfo Create(string agent, string repoUrl)
@@ -101,20 +104,22 @@ public sealed class ThreadStore : IDisposable
     /// The thread of the parent's subagent with that child session id, made the first time it's asked for. A child
     /// keeps its session for every delegation to it, so each one goes on in the same thread.
     /// </summary>
-    public ThreadInfo Child(ThreadInfo parent, string childSessionId, string title)
-    {
-        if (Query($"SELECT {Columns} FROM thread_info WHERE parent_thread_id = $parent AND acp_session_id = $session;",
-                ("$parent", parent.ThreadId), ("$session", childSessionId)).FirstOrDefault() is { } known)
-            return known;
-        var child = new ThreadInfo(Guid.NewGuid().ToString(), parent.Agent, parent.RepoUrl, title, childSessionId, Now(),
-            parent.Machine, ParentThreadId: parent.ThreadId);
-        Execute("""
-            INSERT INTO thread_info(thread_id, agent, repo_url, title, acp_session_id, created_at, updated_at, machine, parent_thread_id)
-            VALUES ($id, $agent, $repo, $title, $session, $now, $now, $machine, $parent);
-            """, ("$id", child.ThreadId), ("$agent", child.Agent), ("$repo", child.RepoUrl), ("$title", title),
-            ("$session", childSessionId), ("$now", child.UpdatedAt), ("$machine", child.Machine), ("$parent", parent.ThreadId));
-        return child;
-    }
+    public ThreadInfo Child(ThreadInfo parent, string childSessionId, string title) =>
+        // The look-up and the insert are one write, so two asks for the same child can't both make one.
+        _writer.Write("threads.child", scope =>
+        {
+            if (scope.QueryFirst($"SELECT {Columns} FROM thread_info WHERE parent_thread_id = $parent AND acp_session_id = $session;",
+                    ReadThread, CancellationToken.None, new SqlArg("$parent", parent.ThreadId), new SqlArg("$session", childSessionId)) is { } known)
+                return known;
+            var child = new ThreadInfo(Guid.NewGuid().ToString(), parent.Agent, parent.RepoUrl, title, childSessionId, Now(),
+                parent.Machine, ParentThreadId: parent.ThreadId);
+            scope.Execute("""
+                INSERT INTO thread_info(thread_id, agent, repo_url, title, acp_session_id, created_at, updated_at, machine, parent_thread_id)
+                VALUES ($id, $agent, $repo, $title, $session, $now, $now, $machine, $parent);
+                """, new SqlArg("$id", child.ThreadId), new SqlArg("$agent", child.Agent), new SqlArg("$repo", child.RepoUrl), new SqlArg("$title", title),
+                new SqlArg("$session", childSessionId), new SqlArg("$now", child.UpdatedAt), new SqlArg("$machine", child.Machine), new SqlArg("$parent", parent.ThreadId));
+            return child;
+        });
 
     /// <summary>A helper session's thread, which <paramref name="parent"/>'s agent started, on the parent's machine and repo.</summary>
     public ThreadInfo Helper(ThreadInfo parent, string agent, string title)
@@ -182,31 +187,17 @@ public sealed class ThreadStore : IDisposable
     public IReadOnlyList<ThreadInfo> HelpersOn(string machine) =>
         Query($"SELECT {Columns} FROM thread_info WHERE machine = $machine AND helper = 1;", ("$machine", machine));
 
-    private List<HelperMessage> Messages(string sql, params (string Name, object? Value)[] parameters)
-    {
-        lock (_gate)
+    private List<HelperMessage> Messages(string sql, params (string Name, object? Value)[] parameters) =>
+        _db.Query(sql, row =>
         {
-            using var command = Command(sql, parameters);
-            using var reader = command.ExecuteReader();
-            var messages = new List<HelperMessage>();
-            string? Text(int column) => reader.IsDBNull(column) ? null : reader.GetString(column);
-            while (reader.Read())
-                messages.Add(new HelperMessage(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
-                    Text(4), reader.GetInt64(5), Text(6), Text(7), Text(8)));
-            return messages;
-        }
-    }
+            string? Text(int column) => row.IsNull(column) ? null : row.Text(column);
+            return new HelperMessage(row.Text(0), row.Text(1), row.Text(2), row.Text(3), Text(4), row.Long(5), Text(6), Text(7), Text(8));
+        }, CancellationToken.None, Args(parameters));
 
     /// <summary>How many messages <paramref name="from"/> has sent <paramref name="to"/>.</summary>
-    public long MessageCount(string from, string to)
-    {
-        lock (_gate)
-        {
-            using var command = Command("SELECT COUNT(*) FROM helper_messages WHERE from_thread = $from AND to_thread = $to;",
-                [("$from", from), ("$to", to)]);
-            return (long)command.ExecuteScalar()!;
-        }
-    }
+    public long MessageCount(string from, string to) =>
+        _db.QueryFirst("SELECT COUNT(*) FROM helper_messages WHERE from_thread = $from AND to_thread = $to;", row => row.Long(0),
+            CancellationToken.None, new SqlArg("$from", from), new SqlArg("$to", to));
 
     public ThreadInfo? Get(string threadId) =>
         Query($"SELECT {Columns} FROM thread_info WHERE thread_id = $id;", ("$id", threadId)).FirstOrDefault();
@@ -235,26 +226,18 @@ public sealed class ThreadStore : IDisposable
     /// The config options the thread's agent last reported for its session (raw JSON), the values chosen for it, and
     /// the slash commands its agent last sent; with no list of its own, the last one that agent sent here.
     /// </summary>
-    public ThreadConfig Config(string threadId)
-    {
-        lock (_gate)
-        {
-            using var command = Command("""
-                SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands)
-                FROM (SELECT $id AS thread_id) t
-                LEFT JOIN thread_config c ON c.thread_id = t.thread_id
-                LEFT JOIN thread_commands tc ON tc.thread_id = t.thread_id
-                LEFT JOIN thread_info i ON i.thread_id = t.thread_id
-                LEFT JOIN agent_commands ac ON ac.agent = i.agent;
-                """, [("$id", threadId)]);
-            using var reader = command.ExecuteReader();
-            reader.Read();
-            return new ThreadConfig(
-                reader.IsDBNull(0) ? null : reader.GetString(0),
-                reader.IsDBNull(1) ? new Dictionary<string, string>() : ThreadConfig.ReadChoices(reader.GetString(1)),
-                reader.IsDBNull(2) ? null : reader.GetString(2));
-        }
-    }
+    public ThreadConfig Config(string threadId) =>
+        _db.QueryFirst("""
+            SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands)
+            FROM (SELECT $id AS thread_id) t
+            LEFT JOIN thread_config c ON c.thread_id = t.thread_id
+            LEFT JOIN thread_commands tc ON tc.thread_id = t.thread_id
+            LEFT JOIN thread_info i ON i.thread_id = t.thread_id
+            LEFT JOIN agent_commands ac ON ac.agent = i.agent;
+            """, row => new ThreadConfig(
+                row.IsNull(0) ? null : row.Text(0),
+                row.IsNull(1) ? new Dictionary<string, string>() : ThreadConfig.ReadChoices(row.Text(1)),
+                row.IsNull(2) ? null : row.Text(2)), CancellationToken.None, new SqlArg("$id", threadId))!;
 
     /// <summary>Saves the slash commands the thread's agent sent, as the thread's and as that agent's latest.</summary>
     public void SetCommands(string threadId, string commands) =>
@@ -279,14 +262,9 @@ public sealed class ThreadStore : IDisposable
             """, ("$id", threadId), ("$config", configId.Replace("\"", "")), ("$value", value));
 
     /// <summary>The config options of the agent's latest new session: what a thread that hasn't opened one yet starts with.</summary>
-    public string? AgentConfig(string agent)
-    {
-        lock (_gate)
-        {
-            using var command = Command("SELECT options FROM agent_config WHERE agent = $agent;", [("$agent", agent)]);
-            return command.ExecuteScalar() as string;
-        }
-    }
+    public string? AgentConfig(string agent) =>
+        _db.QueryFirst("SELECT options FROM agent_config WHERE agent = $agent;", row => row.Text(0), CancellationToken.None,
+            new SqlArg("$agent", agent));
 
     public void SetAgentConfig(string agent, string options) =>
         Execute("""
@@ -298,55 +276,20 @@ public sealed class ThreadStore : IDisposable
     public void Touch(string threadId) =>
         Execute("UPDATE thread_info SET updated_at = $now WHERE thread_id = $id;", ("$id", threadId), ("$now", Now()));
 
-    public void Dispose()
-    {
-        lock (_gate)
-            _db.Dispose();
-    }
-
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 
-    private void Execute(string sql, params (string Name, object? Value)[] parameters)
-    {
-        lock (_gate)
-        {
-            using var command = Command(sql, parameters);
-            command.ExecuteNonQuery();
-        }
-    }
+    private void Execute(string sql, params (string Name, object? Value)[] parameters) =>
+        _writer.Write("threads", scope => scope.Execute(sql, Args(parameters)));
 
-    private long Scalar(string sql)
-    {
-        lock (_gate)
-        {
-            using var command = Command(sql, []);
-            return (long)command.ExecuteScalar()!;
-        }
-    }
+    private List<ThreadInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>
+        _db.Query(sql, ReadThread, CancellationToken.None, Args(parameters));
 
-    private List<ThreadInfo> Query(string sql, params (string Name, object? Value)[] parameters)
-    {
-        lock (_gate)
-        {
-            using var command = Command(sql, parameters);
-            using var reader = command.ExecuteReader();
-            var threads = new List<ThreadInfo>();
-            while (reader.Read())
-                threads.Add(new ThreadInfo(reader.GetString(0), reader.GetString(1), reader.GetString(2),
-                    reader.IsDBNull(3) ? null : reader.GetString(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt64(5),
-                    reader.IsDBNull(6) ? null : reader.GetString(6),
-                    reader.IsDBNull(7) ? null : decimal.Parse(reader.GetString(7), System.Globalization.CultureInfo.InvariantCulture),
-                    reader.IsDBNull(8) ? null : reader.GetString(8), reader.GetInt64(9) == 1));
-            return threads;
-        }
-    }
+    private static ThreadInfo ReadThread(IRow row) =>
+        new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4), row.Long(5),
+            row.IsNull(6) ? null : row.Text(6),
+            row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
+            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1);
 
-    private SqliteCommand Command(string sql, (string Name, object? Value)[] parameters)
-    {
-        var command = _db.CreateCommand();
-        command.CommandText = sql;
-        foreach (var (name, value) in parameters)
-            command.Parameters.AddWithValue(name, value ?? DBNull.Value);
-        return command;
-    }
+    private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
+        Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));
 }

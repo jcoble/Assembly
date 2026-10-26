@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Assembly.Engine.Events;
+using Assembly.Engine.Persistence;
 using Assembly.Engine.Rows;
 using Assembly.Engine.Store;
 using Assembly.Tests.Fixtures;
@@ -10,9 +11,14 @@ namespace Assembly.Tests.Store;
 public sealed class RowStoreTests : IDisposable
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"rows-{Guid.NewGuid():N}.db");
+    private readonly AppDatabase _database;
     private readonly RowStore _store;
 
-    public RowStoreTests() => _store = RowStore.Open(_path);
+    public RowStoreTests()
+    {
+        _database = AppDatabase.Open(_path);
+        _store = RowStore.Open(_database);
+    }
 
     [Fact]
     public void Seqs_count_up_from_one_per_thread_with_no_gaps()
@@ -59,7 +65,8 @@ public sealed class RowStoreTests : IDisposable
     {
         SaveFinishedMessageWithDeltas(version: 1);
 
-        using var reopened = RowStore.Open(_path);
+        using var reopenedDatabase = AppDatabase.Open(_path);
+        var reopened = RowStore.Open(reopenedDatabase);
         Assert.Equal([(3L, RowKind.Message)], reopened.RowsAfter("a", 0).Select(row => (row.Seq, row.Kind)));
         Assert.Equal(RowStore.FormatVersion, reopened.StoredFormatVersion);
     }
@@ -69,7 +76,8 @@ public sealed class RowStoreTests : IDisposable
     {
         SaveFinishedMessageWithDeltas(version: RowStore.FormatVersion + 1);
 
-        using var reopened = RowStore.Open(_path);
+        using var reopenedDatabase = AppDatabase.Open(_path);
+        var reopened = RowStore.Open(reopenedDatabase);
         Assert.Equal([RowKind.Delta, RowKind.Delta, RowKind.Message], reopened.RowsAfter("a", 0).Select(row => row.Kind));
         Assert.Equal(RowStore.FormatVersion + 1, reopened.StoredFormatVersion);
     }
@@ -78,7 +86,7 @@ public sealed class RowStoreTests : IDisposable
     private void SaveFinishedMessageWithDeltas(int version)
     {
         _store.Commit("a", Rows(Delta("m", "a"), Delta("m", "b")));
-        _store.Dispose();
+        _database.Dispose();
         using var db = new SqliteConnection($"Data Source={_path};Pooling=False");
         db.Open();
         using var command = db.CreateCommand();
@@ -174,8 +182,9 @@ public sealed class RowStoreTests : IDisposable
     public void Rows_survive_closing_and_reopening_and_the_format_is_stamped()
     {
         _store.Commit("a", Batch("x"));
-        _store.Dispose();
-        using var reopened = RowStore.Open(_path);
+        _database.Dispose();
+        using var reopenedDatabase = AppDatabase.Open(_path);
+        var reopened = RowStore.Open(reopenedDatabase);
         Assert.Equal(RowStore.FormatVersion, reopened.StoredFormatVersion);
         Assert.Equal([2L], reopened.Commit("a", Batch("y")).Select(row => row.Seq));
     }
@@ -186,7 +195,8 @@ public sealed class RowStoreTests : IDisposable
         // The Mac copies a remote thread's rows as the box numbered them, so "rows after N" means the same on both.
         var box = _store.Commit("a", Batch("x", "y", "z"));
         using var macDb = new TempDatabase();
-        using var mac = RowStore.Open(macDb.Path);
+        using var macDatabase = AppDatabase.Open(macDb.Path);
+        var mac = RowStore.Open(macDatabase);
 
         Assert.True(mac.Copy(box[0]));
         Assert.False(mac.Copy(box[0]));
@@ -202,7 +212,8 @@ public sealed class RowStoreTests : IDisposable
     public void A_copy_takes_a_row_across_a_gap_and_a_copied_message_deletes_its_deltas()
     {
         using var macDb = new TempDatabase();
-        using var mac = RowStore.Open(macDb.Path);
+        using var macDatabase = AppDatabase.Open(macDb.Path);
+        var mac = RowStore.Open(macDatabase);
         // Live, the Mac got the deltas before the message finished.
         var x = _store.Commit("a", Batch("x"));
         var deltas = _store.Commit("a", Rows(Delta("m", "a"), Delta("m", "b")));
@@ -213,7 +224,8 @@ public sealed class RowStoreTests : IDisposable
 
         // A Mac that joins later gets the box's rows with the gap, and takes them as they are.
         using var lateDb = new TempDatabase();
-        using var late = RowStore.Open(lateDb.Path);
+        using var lateDatabase = AppDatabase.Open(lateDb.Path);
+        var late = RowStore.Open(lateDatabase);
         var caughtUp = _store.RowsAfter("a", 0);
         Assert.False(late.Copy(caughtUp[1]));
         Assert.All(caughtUp, row => Assert.True(late.Copy(row)));
@@ -228,7 +240,8 @@ public sealed class RowStoreTests : IDisposable
         batch.Rows.Add(Tool("t1", "completed", "ls"));
         var box = _store.Commit("a", batch);
         using var macDb = new TempDatabase();
-        using var mac = RowStore.Open(macDb.Path);
+        using var macDatabase = AppDatabase.Open(macDb.Path);
+        var mac = RowStore.Open(macDatabase);
         mac.Copy(box[0]);
 
         Assert.Null(mac.ToolCall("a", "t1"));
@@ -303,7 +316,7 @@ public sealed class RowStoreTests : IDisposable
 
     public void Dispose()
     {
-        _store.Dispose();
+        _database.Dispose();
         foreach (var file in new[] { _path, _path + "-wal", _path + "-shm" })
             File.Delete(file);
     }
