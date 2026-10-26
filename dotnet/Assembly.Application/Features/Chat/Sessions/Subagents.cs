@@ -4,8 +4,7 @@ using Assembly.Application.Common.Acp.V1;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Features.Chat.Sessions;
@@ -16,11 +15,11 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// that run. The parent's thread gets a row for each child, which <see cref="SessionHost"/> applies. Used under the
 /// host's lock.
 /// </summary>
-internal sealed class Subagents(ThreadStore threads, LiveHub hub)
+internal sealed class Subagents(SessionStore sessionStore, LiveHub hub)
 {
-    private sealed class Child(ThreadInfo thread, SubagentPayload shown)
+    private sealed class Child(SessionInfo session, SubagentPayload shown)
     {
-        public ThreadInfo Thread { get; } = thread;
+        public SessionInfo Session { get; } = session;
         public RowConverter Converter { get; } = new();
         public SubagentPayload Shown { get; set; } = shown;
         public string? RunId { get; set; }
@@ -39,13 +38,13 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
     public IEnumerable<string> Stoppable => _children.Where(pair => pair.Value.Shown.CanStop).Select(pair => pair.Key);
 
     /// <summary>The parent's word on a child: its row in the parent's thread, as it stands now.</summary>
-    public SubagentShown Changed(ThreadInfo parent, SubagentChanged change)
+    public SubagentShown Changed(SessionInfo parent, SubagentChanged change)
     {
         if (!_children.TryGetValue(change.AcpSessionId, out var child))
         {
             var title = change.Title ?? change.Description ?? "Subagent";
-            var thread = threads.Child(parent, change.AcpSessionId, title);
-            child = _children[change.AcpSessionId] = new Child(thread, new SubagentPayload(thread.ThreadId, title, change.Description,
+            var session = sessionStore.Child(parent, change.AcpSessionId, title);
+            child = _children[change.AcpSessionId] = new Child(session, new SubagentPayload(session.SessionId, title, change.Description,
                 "running", null, null, false, null));
         }
         return Update(child, change);
@@ -128,5 +127,5 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
         child.RunId = null;
     }
 
-    private void Publish(Child child, AgentEvent agentEvent) => hub.Publish(child.Thread.ThreadId, child.Converter.Apply(agentEvent));
+    private void Publish(Child child, AgentEvent agentEvent) => hub.Publish(child.Session.SessionId, child.Converter.Apply(agentEvent));
 }

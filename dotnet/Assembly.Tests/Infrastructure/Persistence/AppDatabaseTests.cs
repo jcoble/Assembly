@@ -5,8 +5,8 @@ using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Persistence;
 
@@ -58,10 +58,10 @@ public sealed class AppDatabaseTests : IDisposable
     }
 
     [Fact]
-    public async Task A_rows_batch_and_a_thread_write_at_the_same_time_both_commit()
+    public async Task A_rows_batch_and_a_session_write_at_the_same_time_both_commit()
     {
         var rows = RowStore.Open(_db);
-        var threads = ThreadStore.Open(_db, TimeProvider.System);
+        var sessionStore = SessionStore.Open(_db, TimeProvider.System);
         var payload = JsonSerializer.SerializeToElement(new { text = "x" });
         var batches = Task.Run(() =>
         {
@@ -75,13 +75,13 @@ public sealed class AppDatabaseTests : IDisposable
         var created = Task.Run(() =>
         {
             for (var i = 0; i < 200; i++)
-                threads.Create("claude", $"repo-{i}");
+                sessionStore.Create("claude", $"repo-{i}");
         });
 
         await Task.WhenAll(batches, created);
 
         Assert.Equal(200, rows.LastSeq("t"));
-        Assert.Equal(200, threads.List(null, 500).Threads.Count);
+        Assert.Equal(200, sessionStore.List(null, 500).Sessions.Count);
     }
 
     [Fact]

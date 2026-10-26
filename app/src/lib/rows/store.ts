@@ -1,7 +1,7 @@
 // The relay's rows (plan "Row contract") and their fold into what the
 // conversation shows. The conversation keeps one View in $state and feeds it
 // rows; nothing here parses text. Plain functions, so tests run them in node.
-import type { TurnStats } from '../thread/turns';
+import type { TurnStats } from '../session/turns';
 
 // Assembly's SafeInlinePart / SafeMarkdownBlock, as serde writes them
 // (src-tauri/src/agent_conversation/safe_markdown.rs:5-69 there). The relay
@@ -64,7 +64,7 @@ export type TaskPayload = { name: string; state: 'running' | 'completed' | 'fail
 // A subagent the agent runs as a child session, with a thread of its own (`threadId`), nested under the
 // tool call that started it (`toolCallId`) when known.
 export type SubagentPayload = {
-  threadId: string;
+  sessionId: string;
   title: string;
   description?: string;
   state: 'running' | 'requires_action' | 'idle';
@@ -102,7 +102,7 @@ type Payloads = {
 };
 export type Row = {
   [K in keyof Payloads]: {
-    threadId: string;
+    sessionId: string;
     seq: number;
     runId: string | null;
     itemId: string | null;

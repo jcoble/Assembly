@@ -27,15 +27,15 @@ internal sealed class RemoteFollower(
     private readonly CancellationTokenSource _stopping = new();
 
     /// <summary>Catches the thread up, and follows it for as long as it's needed. A thread already followed is left as it is.</summary>
-    public void Watch(string threadId)
+    public void Watch(string sessionId)
     {
         if (!_stopping.IsCancellationRequested)
-            _following.GetOrAdd(threadId, id => Task.Run(() => FollowAsync(id)));
+            _following.GetOrAdd(sessionId, id => Task.Run(() => FollowAsync(id)));
     }
 
-    private bool Needed(string threadId) => hub.OpenRun(threadId) is not null || hub.HasSubscribers(threadId);
+    private bool Needed(string sessionId) => hub.OpenRun(sessionId) is not null || hub.HasSubscribers(sessionId);
 
-    private async Task FollowAsync(string threadId)
+    private async Task FollowAsync(string sessionId)
     {
         var backoff = TimeSpan.FromSeconds(1);
         try
@@ -46,48 +46,48 @@ internal sealed class RemoteFollower(
                 try
                 {
                     await checkFormat(_stopping.Token);
-                    await FollowOnceAsync(threadId, _stopping.Token);
+                    await FollowOnceAsync(sessionId, _stopping.Token);
                     backoff = TimeSpan.FromSeconds(1);
                 }
                 catch (MachineUnreachable error)
                 {
-                    log.WriteLine($"remote thread {threadId}: {error.Message}");
+                    log.WriteLine($"remote session {sessionId}: {error.Message}");
                     return;
                 }
                 catch (Exception error) when (error is WebSocketException or HttpRequestException or IOException
                                               || (error is OperationCanceledException && !_stopping.IsCancellationRequested))
                 {
-                    log.WriteLine($"remote thread {threadId}: link lost ({error.GetType().Name}); again in {backoff.TotalSeconds:0} s");
+                    log.WriteLine($"remote session {sessionId}: link lost ({error.GetType().Name}); again in {backoff.TotalSeconds:0} s");
                     await Task.Delay(backoff, _stopping.Token);
                     backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
                 }
             }
-            while (!_stopping.IsCancellationRequested && Needed(threadId));
+            while (!_stopping.IsCancellationRequested && Needed(sessionId));
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
         {
         }
         finally
         {
-            _following.TryRemove(threadId, out _);
+            _following.TryRemove(sessionId, out _);
         }
 
         // Needed again between the last check and the removal: start over.
-        if (!_stopping.IsCancellationRequested && Needed(threadId))
-            Watch(threadId);
+        if (!_stopping.IsCancellationRequested && Needed(sessionId))
+            Watch(sessionId);
     }
 
     // One socket, until it's no longer needed, drops, or a row arrives out of order.
-    private async Task FollowOnceAsync(string threadId, CancellationToken stopping)
+    private async Task FollowOnceAsync(string sessionId, CancellationToken stopping)
     {
         using var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
-        var live = new UriBuilder(address) { Scheme = address.Scheme == "https" ? "wss" : "ws", Path = "/live", Query = $"thread={Uri.EscapeDataString(threadId)}&after={hub.LastSeq(threadId)}" };
+        var live = new UriBuilder(address) { Scheme = address.Scheme == "https" ? "wss" : "ws", Path = "/live", Query = $"session={Uri.EscapeDataString(sessionId)}&after={hub.LastSeq(sessionId)}" };
         await socket.ConnectAsync(live.Uri, stopping);
 
         using var done = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         var lastFrame = DateTime.UtcNow;
-        var settling = SettleAsync(threadId, () => lastFrame, done);
+        var settling = SettleAsync(sessionId, () => lastFrame, done);
         try
         {
             var buffer = new MemoryStream();
@@ -112,14 +112,14 @@ internal sealed class RemoteFollower(
                 var row = RowWire.Read(frame.RootElement.GetProperty("row"));
                 // A subagent's thread is known before its row is shown, so it can be opened.
                 if (row.Kind == RowKind.Subagent)
-                    subagentCopied(threadId, row);
+                    subagentCopied(sessionId, row);
                 if (!hub.PublishCopy(row))
                 {
-                    log.WriteLine($"remote thread {threadId}: seq {row.Seq} doesn't follow {hub.LastSeq(threadId)}; catching up again");
+                    log.WriteLine($"remote session {sessionId}: seq {row.Seq} doesn't follow {hub.LastSeq(sessionId)}; catching up again");
                     return;
                 }
                 if (row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started")
-                    await turnEnded(threadId);
+                    await turnEnded(sessionId);
             }
         }
         catch (OperationCanceledException) when (done.IsCancellationRequested && !stopping.IsCancellationRequested)
@@ -134,14 +134,14 @@ internal sealed class RemoteFollower(
     }
 
     // Ends the socket once it has been quiet for a while with nobody watching and no turn running.
-    private async Task SettleAsync(string threadId, Func<DateTime> lastFrame, CancellationTokenSource done)
+    private async Task SettleAsync(string sessionId, Func<DateTime> lastFrame, CancellationTokenSource done)
     {
         try
         {
             while (true)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(500), done.Token);
-                if (DateTime.UtcNow - lastFrame() >= Settled && !Needed(threadId))
+                if (DateTime.UtcNow - lastFrame() >= Settled && !Needed(sessionId))
                 {
                     await done.CancelAsync();
                     return;

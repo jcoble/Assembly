@@ -42,10 +42,10 @@ public sealed class RunRecoveryTests : IDisposable
         }
 
         var lost = converter.Apply(new AgentLost(last!.At));
-        var (thread, run) = Assert.Single(_store.UnfinishedRuns());
-        Assert.Equal("t", thread);
+        var (session, run) = Assert.Single(_store.UnfinishedRuns());
+        Assert.Equal("t", session);
 
-        var recovered = RunRecovery.Close(_store.RunRows(thread, run), RestartedAt);
+        var recovered = RunRecovery.Close(_store.RunRows(session, run), RestartedAt);
 
         // The same closing rows, except no stats (the turn's tallies died with the backend) and its own error.
         var expected = lost.Rows.Where(row => row.Kind != RowKind.Stats).ToList();
@@ -69,9 +69,9 @@ public sealed class RunRecoveryTests : IDisposable
                 break;
         }
 
-        var (thread, run) = Assert.Single(_store.UnfinishedRuns());
-        _store.Commit(thread, RunRecovery.Close(_store.RunRows(thread, run), RestartedAt));
-        var rows = _store.RunRows(thread, run);
+        var (session, run) = Assert.Single(_store.UnfinishedRuns());
+        _store.Commit(session, RunRecovery.Close(_store.RunRows(session, run), RestartedAt));
+        var rows = _store.RunRows(session, run);
         Assert.DoesNotContain(rows, row => row.Kind == RowKind.Delta);
         Assert.Contains(rows, row => row.Kind == RowKind.Message);
     }
@@ -85,9 +85,9 @@ public sealed class RunRecoveryTests : IDisposable
             _store.Commit("t", converter.Apply(agentEvent));
         var options = new[] { new AskOption("allow", "Allow", "allow_once") };
         _store.Commit("t", converter.Apply(new AskChanged(events[^1].At, "7", new AskPayload("permission", "open", "Run ls", null, null, options, null, null))));
-        var (thread, run) = Assert.Single(_store.UnfinishedRuns());
+        var (session, run) = Assert.Single(_store.UnfinishedRuns());
 
-        var recovered = RunRecovery.Close(_store.RunRows(thread, run), RestartedAt);
+        var recovered = RunRecovery.Close(_store.RunRows(session, run), RestartedAt);
 
         var card = Assert.Single(recovered.Rows, row => row.Kind == RowKind.Ask);
         Assert.Equal("ask:7", card.ItemId);
@@ -101,9 +101,9 @@ public sealed class RunRecoveryTests : IDisposable
         var converter = new RowConverter();
         foreach (var agentEvent in FixtureReplay.Events("acp/tools.jsonl").Take(5))
             _store.Commit("t", converter.Apply(agentEvent));
-        var (thread, run) = Assert.Single(_store.UnfinishedRuns());
+        var (session, run) = Assert.Single(_store.UnfinishedRuns());
 
-        _store.Commit(thread, RunRecovery.Close(_store.RunRows(thread, run), RestartedAt));
+        _store.Commit(session, RunRecovery.Close(_store.RunRows(session, run), RestartedAt));
         Assert.Empty(_store.UnfinishedRuns());
     }
 
@@ -118,20 +118,20 @@ public sealed class RunRecoveryTests : IDisposable
     }
 
     [Fact]
-    public void Only_runs_on_threads_that_run_here_are_closed()
+    public void Only_runs_on_sessions_that_run_here_are_closed()
     {
-        foreach (var thread in new[] { "here", "remote" })
+        foreach (var session in new[] { "here", "remote" })
         {
             var converter = new RowConverter();
             foreach (var agentEvent in FixtureReplay.Events("acp/tools.jsonl").Take(5))
-                _store.Commit(thread, converter.Apply(agentEvent));
+                _store.Commit(session, converter.Apply(agentEvent));
         }
         using var hub = new LiveHub(_store);
 
-        var closed = RunRecovery.CloseUnfinished(_store, hub, RestartedAt, runsHere: thread => thread == "here");
+        var closed = RunRecovery.CloseUnfinished(_store, hub, RestartedAt, runsHere: session => session == "here");
 
         Assert.Equal(1, closed);
-        Assert.Equal("remote", Assert.Single(_store.UnfinishedRuns()).ThreadId);
+        Assert.Equal("remote", Assert.Single(_store.UnfinishedRuns()).SessionId);
     }
 
     [Fact]

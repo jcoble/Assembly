@@ -1,17 +1,17 @@
 <script lang="ts">
   import { getContext } from 'svelte';
-  import type { Thread } from '../api';
-  import { THREAD_OPEN } from '../chat/tools/tool';
+  import type { Session } from '../api';
+  import { SESSION_OPEN } from '../chat/tools/tool';
 
   // The session's header: the repo, the agent, the session's short id and a link to its parent session.
-  let { thread, speaker, onclose }: { thread: Thread; speaker: string; onclose: () => void } = $props();
-  const openThread = getContext<(threadId: string) => void>(THREAD_OPEN);
+  let { session, speaker, onclose }: { session: Session; speaker: string; onclose: () => void } = $props();
+  const openSession = getContext<(sessionId: string) => void>(SESSION_OPEN);
 </script>
 
 <header>
   <div>
-    <div class="repo">{thread.repoUrl}</div>
-    <div class="meta">{speaker} · {thread.threadId.slice(0, 8)}{#if thread.parentThreadId}{' · '}<button class="link" onclick={() => openThread(thread.parentThreadId!)}>Parent thread</button>{/if}</div>
+    <div class="repo">{session.repoUrl}</div>
+    <div class="meta">{speaker} · {session.sessionId.slice(0, 8)}{#if session.parentSessionId}{' · '}<button class="link" onclick={() => openSession(session.parentSessionId!)}>Parent session</button>{/if}</div>
   </div>
   <button class="ghost" onclick={onclose}>Close</button>
 </header>

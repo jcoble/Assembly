@@ -17,7 +17,7 @@ namespace Assembly.Remote.Replay;
 public static class ReplayRun
 {
     public const string Usage = "usage: Assembly.Remote rows <transcript.jsonl> [--db PATH]";
-    private const string Thread = "replay";
+    private const string Session = "replay";
 
     public static int Run(IReadOnlyList<string> args)
     {
@@ -37,7 +37,7 @@ public static class ReplayRun
         {
             var batch = converter.Apply(agentEvent);
             var started = Stopwatch.GetTimestamp();
-            var saved = store.Commit(Thread, batch);
+            var saved = store.Commit(Session, batch);
             if (!batch.IsEmpty)
                 commitTimes.Add(Stopwatch.GetElapsedTime(started).TotalMicroseconds);
             foreach (var row in saved)
@@ -47,7 +47,7 @@ public static class ReplayRun
             }
         }
 
-        var page = store.PageBefore(Thread, long.MaxValue, 1000);
+        var page = store.PageBefore(Session, long.MaxValue, 1000);
         Console.WriteLine();
         Console.WriteLine($"page load ({page.Rows.Count} rows, newest form of each item):");
         foreach (var row in page.Rows)

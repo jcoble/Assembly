@@ -9,8 +9,8 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -24,37 +24,37 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 {
     private readonly string _name;
     private readonly LiveHub _hub;
-    private readonly ThreadStore _threads;
+    private readonly SessionStore _sessionStore;
     private readonly HttpClient _http;
     private readonly RemoteFollower _follower;
     private readonly Action<string> _turnEnded;
     private bool _formatChecked;
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
-    public RemoteMachine(string name, Uri address, string token, LiveHub hub, ThreadStore threads, TextWriter log, Action<string>? turnEnded = null)
+    public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, Action<string>? turnEnded = null)
     {
         _turnEnded = turnEnded ?? (_ => { });
         _name = name;
         _hub = hub;
-        _threads = threads;
+        _sessionStore = sessionStore;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, RefreshAsync, AddSubagentThread, log);
+        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, RefreshAsync, AddSubagentSession, log);
     }
 
     public string? Name => _name;
 
     // A subagent's thread, made on the remote by its parent's session, is known here from its parent's row.
-    private void AddSubagentThread(string parentThreadId, StoredRow row)
+    private void AddSubagentSession(string parentSessionId, StoredRow row)
     {
-        if (row.Payload.GetProperty("threadId").GetString() is not { } childId || _threads.Get(childId) is not null
-            || _threads.Get(parentThreadId) is not { } parent)
+        if (row.Payload.GetProperty("sessionId").GetString() is not { } childId || _sessionStore.Get(childId) is not null
+            || _sessionStore.Get(parentSessionId) is not { } parent)
             return;
         var agent = row.Payload.TryGetProperty("agent", out var named) && named.GetString() is { } helperAgent ? helperAgent : parent.Agent;
-        _threads.Add(childId, agent, parent.RepoUrl, _name, parentThreadId,
+        _sessionStore.Add(childId, agent, parent.RepoUrl, _name, parentSessionId,
             helper: row.Payload.TryGetProperty("helper", out var helper) && helper.ValueKind == JsonValueKind.True);
         if (row.Payload.GetProperty("title").GetString() is { } title)
-            _threads.SetTitle(childId, title);
+            _sessionStore.SetTitle(childId, title);
     }
 
     public async Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken)
@@ -64,22 +64,22 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         return listed.GetProperty("agents").EnumerateArray().Select(agent => (Text(agent, "id")!, Text(agent, "name")!)).ToList();
     }
 
-    public async Task<ThreadInfo> CreateThreadAsync(string agent, string repoUrl, CancellationToken cancellationToken)
+    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken)
     {
         await CheckFormatAsync(cancellationToken);
-        var created = await JsonAsync(HttpMethod.Post, "/threads", Body(("agent", agent), ("repoUrl", repoUrl)), cancellationToken);
-        return _threads.Add(created.GetProperty("threadId").GetString()!, agent, repoUrl, _name);
+        var created = await JsonAsync(HttpMethod.Post, "/sessions", Body(("agent", agent), ("repoUrl", repoUrl)), cancellationToken);
+        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name);
     }
 
-    public async Task<ThreadInfo> CreateHelperAsync(ThreadInfo parent, string agent, string title, CancellationToken cancellationToken)
+    public async Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken)
     {
         await CheckFormatAsync(cancellationToken);
-        var created = await JsonAsync(HttpMethod.Post, "/threads",
-            Body(("agent", agent), ("repoUrl", parent.RepoUrl), ("parentThreadId", parent.ThreadId), ("title", title)), cancellationToken);
-        var threadId = created.GetProperty("threadId").GetString()!;
-        _threads.Add(threadId, agent, parent.RepoUrl, _name, parent.ThreadId, helper: true);
-        _threads.SetTitle(threadId, title);
-        return _threads.Get(threadId)!;
+        var created = await JsonAsync(HttpMethod.Post, "/sessions",
+            Body(("agent", agent), ("repoUrl", parent.RepoUrl), ("parentSessionId", parent.SessionId), ("title", title)), cancellationToken);
+        var sessionId = created.GetProperty("sessionId").GetString()!;
+        _sessionStore.Add(sessionId, agent, parent.RepoUrl, _name, parent.SessionId, helper: true);
+        _sessionStore.SetTitle(sessionId, title);
+        return _sessionStore.Get(sessionId)!;
     }
 
     /// <summary>The messages the remote's sessions have waiting for threads here.</summary>
@@ -100,80 +100,80 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
                 ? Body(("state", answer.State), ("reply", answer.Reply), ("error", error))
                 : Body(("state", answer.State), ("reply", answer.Reply)), cancellationToken);
 
-    public async Task<string?> SendAsync(ThreadInfo thread, string text, CancellationToken cancellationToken)
+    public async Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken)
     {
-        using var response = await SendRequestAsync(HttpMethod.Post, $"/threads/{thread.ThreadId}/send", Body(("text", text)), cancellationToken);
+        using var response = await SendRequestAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/send", Body(("text", text)), cancellationToken);
         if (response.StatusCode == HttpStatusCode.Conflict)
             return null;
         var runId = (await ReadJsonAsync(response, cancellationToken)).GetProperty("runId").GetString();
-        _follower.Watch(thread.ThreadId);
+        _follower.Watch(session.SessionId);
         return runId;
     }
 
-    public async Task<bool> StopAsync(ThreadInfo thread, string runId, CancellationToken cancellationToken)
+    public async Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken)
     {
         using var response = await SendRequestAsync(HttpMethod.Post, $"/runs/{runId}/stop", null, cancellationToken);
         return response.StatusCode == HttpStatusCode.Accepted;
     }
 
     // From the copied rows, so it agrees with what the webview has.
-    public string? ActiveRun(ThreadInfo thread) => _hub.OpenRun(thread.ThreadId);
+    public string? ActiveRun(SessionInfo session) => _hub.OpenRun(session.SessionId);
 
-    public async Task<StoredToolCall?> ToolCallAsync(ThreadInfo thread, string itemId, CancellationToken cancellationToken)
+    public async Task<StoredToolCall?> ToolCallAsync(SessionInfo session, string itemId, CancellationToken cancellationToken)
     {
-        using var response = await SendRequestAsync(HttpMethod.Get, $"/threads/{thread.ThreadId}/tools/{Uri.EscapeDataString(itemId)}", null, cancellationToken);
+        using var response = await SendRequestAsync(HttpMethod.Get, $"/sessions/{session.SessionId}/tools/{Uri.EscapeDataString(itemId)}", null, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         var call = await ReadJsonAsync(response, cancellationToken);
         return new StoredToolCall(Text(call, "summary"), Text(call, "input"), Text(call, "output"), Text(call, "diff"), Text(call, "path"));
     }
 
-    public async Task<string> SaveAttachmentAsync(ThreadInfo thread, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    public async Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
         var content = new ReadOnlyMemoryContent(bytes);
         content.Headers.ContentType = new MediaTypeHeaderValue(type.ContentType);
-        var saved = await JsonAsync(HttpMethod.Post, $"/threads/{thread.ThreadId}/attachments", content, cancellationToken);
+        var saved = await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/attachments", content, cancellationToken);
         return saved.GetProperty("path").GetString()!;
     }
 
-    public async Task<ThreadConfig> ConfigAsync(ThreadInfo thread, CancellationToken cancellationToken) =>
-        ReadConfig(await JsonAsync(HttpMethod.Get, $"/threads/{thread.ThreadId}/config", null, cancellationToken));
+    public async Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
+        ReadConfig(await JsonAsync(HttpMethod.Get, $"/sessions/{session.SessionId}/config", null, cancellationToken));
 
-    public async Task<ThreadConfig> SetConfigAsync(ThreadInfo thread, string configId, string value, CancellationToken cancellationToken) =>
-        ReadConfig(await JsonAsync(HttpMethod.Post, $"/threads/{thread.ThreadId}/config", Body(("configId", configId), ("value", value)), cancellationToken));
+    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken) =>
+        ReadConfig(await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/config", Body(("configId", configId), ("value", value)), cancellationToken));
 
-    public async Task<bool> AnswerAsync(ThreadInfo thread, string askId, JsonElement answer, CancellationToken cancellationToken)
+    public async Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
     {
         using var content = new StringContent(answer.GetRawText(), Encoding.UTF8, "application/json");
-        using var response = await SendRequestAsync(HttpMethod.Post, $"/threads/{thread.ThreadId}/asks/{Uri.EscapeDataString(askId)}", content, cancellationToken);
+        using var response = await SendRequestAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/asks/{Uri.EscapeDataString(askId)}", content, cancellationToken);
         if (response.StatusCode == HttpStatusCode.Conflict)
             return false;
         await ReadJsonAsync(response, cancellationToken);
         return true;
     }
 
-    public async Task<bool> StopTaskAsync(ThreadInfo thread, string taskId, CancellationToken cancellationToken)
+    public async Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken)
     {
         using var response = await SendRequestAsync(HttpMethod.Post,
-            $"/threads/{thread.ThreadId}/tasks/{Uri.EscapeDataString(taskId)}/stop", content: null, cancellationToken);
+            $"/sessions/{session.SessionId}/tasks/{Uri.EscapeDataString(taskId)}/stop", content: null, cancellationToken);
         if (response.StatusCode == HttpStatusCode.Conflict)
             return false;
         await ReadJsonAsync(response, cancellationToken);
         return true;
     }
 
-    private static ThreadConfig ReadConfig(JsonElement config) =>
+    private static SessionConfig ReadConfig(JsonElement config) =>
         new(config.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Array ? options.GetRawText() : null,
-            ThreadConfig.ReadChoices(config.GetProperty("choices").GetRawText()),
+            SessionConfig.ReadChoices(config.GetProperty("choices").GetRawText()),
             config.TryGetProperty("commands", out var commands) && commands.ValueKind == JsonValueKind.Array ? commands.GetRawText() : null);
 
-    public void Watch(ThreadInfo thread) => _follower.Watch(thread.ThreadId);
+    public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
 
     /// <summary>Follows the remote threads whose copied rows show a turn still running, as after a Mac restart mid-turn.</summary>
-    public void WatchRunning(IEnumerable<string> threadIds)
+    public void WatchRunning(IEnumerable<string> sessionIds)
     {
-        foreach (var threadId in threadIds)
-            _follower.Watch(threadId);
+        foreach (var sessionId in sessionIds)
+            _follower.Watch(sessionId);
     }
 
     // The remote's rows are copied as they are, so it must write the format this Mac reads.
@@ -188,15 +188,15 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     }
 
     // A finished turn may have named the thread on the remote.
-    private async Task RefreshAsync(string threadId)
+    private async Task RefreshAsync(string sessionId)
     {
-        _turnEnded(threadId);
+        _turnEnded(sessionId);
         try
         {
-            var thread = await JsonAsync(HttpMethod.Get, $"/threads/{threadId}", null, CancellationToken.None);
-            if (Text(thread, "title") is { } title && _threads.Get(threadId) is { Helper: false })
-                _threads.SetTitle(threadId, title);
-            _threads.Touch(threadId);
+            var session = await JsonAsync(HttpMethod.Get, $"/sessions/{sessionId}", null, CancellationToken.None);
+            if (Text(session, "title") is { } title && _sessionStore.Get(sessionId) is { Helper: false })
+                _sessionStore.SetTitle(sessionId, title);
+            _sessionStore.Touch(sessionId);
         }
         catch (MachineUnreachable)
         {

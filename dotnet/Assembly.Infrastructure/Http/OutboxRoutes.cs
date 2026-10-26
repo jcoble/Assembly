@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
@@ -13,7 +13,7 @@ namespace Assembly.Infrastructure.Http;
 /// <c>{error}</c> says how delivering went, and <c>POST /outbox/:id/answer {state, reply, error?}</c> brings the
 /// answer back.
 /// </summary>
-internal sealed class OutboxRoutes(ThreadStore threads)
+internal sealed class OutboxRoutes(SessionStore sessionStore)
 {
     public void Map(IEndpointRouteBuilder routes)
     {
@@ -26,7 +26,7 @@ internal sealed class OutboxRoutes(ThreadStore threads)
     {
         json.WriteStartObject();
         json.WriteStartArray("messages");
-        foreach (var message in threads.Outbox())
+        foreach (var message in sessionStore.Outbox())
         {
             json.WriteStartObject();
             json.WriteString("messageId", message.MessageId);
@@ -43,27 +43,27 @@ internal sealed class OutboxRoutes(ThreadStore threads)
     private async Task DeliveredAsync(HttpContext context)
     {
         var id = RequestValues.Route(context, "id");
-        if (await JsonReply.ReadObjectAsync(context) is not { } body || threads.Message(id) is null)
+        if (await JsonReply.ReadObjectAsync(context) is not { } body || sessionStore.Message(id) is null)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown message");
             return;
         }
         if (JsonReply.String(body, "runId") is { } runId)
-            threads.SetMessageRun(id, runId);
+            sessionStore.SetMessageRun(id, runId);
         else
-            threads.SetMessageFailed(id, JsonReply.String(body, "error") ?? "It couldn't be delivered.");
+            sessionStore.SetMessageFailed(id, JsonReply.String(body, "error") ?? "It couldn't be delivered.");
         await Ok(context);
     }
 
     private async Task AnswerAsync(HttpContext context)
     {
         var id = RequestValues.Route(context, "id");
-        if (await JsonReply.ReadObjectAsync(context) is not { } body || JsonReply.String(body, "state") is not { } state || threads.Message(id) is null)
+        if (await JsonReply.ReadObjectAsync(context) is not { } body || JsonReply.String(body, "state") is not { } state || sessionStore.Message(id) is null)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "expected a known message and { state, reply, error? }");
             return;
         }
-        threads.SetMessageAnswer(id, state, JsonReply.String(body, "reply") ?? "", JsonReply.String(body, "error"));
+        sessionStore.SetMessageAnswer(id, state, JsonReply.String(body, "reply") ?? "", JsonReply.String(body, "error"));
         await Ok(context);
     }
 

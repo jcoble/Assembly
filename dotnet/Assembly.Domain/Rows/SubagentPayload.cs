@@ -6,5 +6,5 @@ namespace Assembly.Domain.Rows;
 /// <c>requires_action</c> or <c>idle</c>, with <c>StopReason</c> and <c>Error</c> once idle. <c>Agent</c> is the
 /// child's agent when it isn't the parent's (a helper session's); <c>Helper</c> says it is one.
 /// </summary>
-public sealed record SubagentPayload(string ThreadId, string Title, string? Description, string State, string? StopReason,
+public sealed record SubagentPayload(string SessionId, string Title, string? Description, string State, string? StopReason,
     string? Error, bool CanStop, string? ToolCallId, string? Agent = null, bool? Helper = null);

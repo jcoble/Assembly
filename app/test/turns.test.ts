@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkoutLine, formatWorkedFor, turnLine, type TurnStats } from '../src/lib/thread/turns.ts';
+import { checkoutLine, formatWorkedFor, turnLine, type TurnStats } from '../src/lib/session/turns.ts';
 
 const stats = (over: Partial<TurnStats>): TurnStats => ({
   runId: 'r1', status: 'completed', startedAt: 0, durationMs: 12_400, firstTokenMs: 900, model: 'claude-opus-4-8',

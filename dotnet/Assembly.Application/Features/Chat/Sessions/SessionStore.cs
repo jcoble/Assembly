@@ -1,13 +1,13 @@
 using Assembly.Application.Common.Database;
 
-using Assembly.Domain.Threads;
-namespace Assembly.Application.Features.Chat.Threads;
+using Assembly.Domain.Sessions;
+namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
 /// The sessions list, in the same SQLite file as the rows. Writes here are rare (create, title, send) and go through
 /// the file's one writer, like the row commits.
 /// </summary>
-public sealed class ThreadStore
+public sealed class SessionStore
 {
     private const string Schema = """
         CREATE TABLE IF NOT EXISTS thread_info(thread_id TEXT PRIMARY KEY, agent TEXT NOT NULL, repo_url TEXT NOT NULL,
@@ -49,14 +49,14 @@ public sealed class ThreadStore
     private readonly IAtomicWriter _writer;
     private readonly TimeProvider _time;
 
-    private ThreadStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time)
+    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time)
     {
         _db = db;
         _writer = writer;
         _time = time;
     }
 
-    public static ThreadStore Open(IAppDatabase db, TimeProvider time)
+    public static SessionStore Open(IAppDatabase db, TimeProvider time)
     {
         db.Writer.Write("threads.schema", scope =>
         {
@@ -76,68 +76,68 @@ public sealed class ThreadStore
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
             return 0;
         });
-        return new ThreadStore(db, db.Writer, time);
+        return new SessionStore(db, db.Writer, time);
     }
 
-    public ThreadInfo Create(string agent, string repoUrl)
+    public SessionInfo Create(string agent, string repoUrl)
     {
-        var thread = new ThreadInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now());
+        var session = new SessionInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now());
         Execute(
             "INSERT INTO thread_info(thread_id, agent, repo_url, created_at, updated_at) VALUES ($id, $agent, $repo, $now, $now);",
-            ("$id", thread.ThreadId), ("$agent", agent), ("$repo", repoUrl), ("$now", thread.UpdatedAt));
-        return thread;
+            ("$id", session.SessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt));
+        return session;
     }
 
     /// <summary>Records a thread another machine created and runs, under that machine's id for it.</summary>
-    public ThreadInfo Add(string threadId, string agent, string repoUrl, string machine, string? parentThreadId = null, bool helper = false)
+    public SessionInfo Add(string sessionId, string agent, string repoUrl, string machine, string? parentSessionId = null, bool helper = false)
     {
-        var thread = new ThreadInfo(threadId, agent, repoUrl, null, null, Now(), machine, ParentThreadId: parentThreadId, Helper: helper);
+        var session = new SessionInfo(sessionId, agent, repoUrl, null, null, Now(), machine, ParentSessionId: parentSessionId, Helper: helper);
         Execute("""
             INSERT INTO thread_info(thread_id, agent, repo_url, created_at, updated_at, machine, parent_thread_id, helper)
             VALUES ($id, $agent, $repo, $now, $now, $machine, $parent, $helper);
-            """, ("$id", threadId), ("$agent", agent), ("$repo", repoUrl), ("$now", thread.UpdatedAt), ("$machine", machine),
-            ("$parent", parentThreadId), ("$helper", helper ? 1 : 0));
-        return thread;
+            """, ("$id", sessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt), ("$machine", machine),
+            ("$parent", parentSessionId), ("$helper", helper ? 1 : 0));
+        return session;
     }
 
     /// <summary>
     /// The thread of the parent's subagent with that child session id, made the first time it's asked for. A child
     /// keeps its session for every delegation to it, so each one goes on in the same thread.
     /// </summary>
-    public ThreadInfo Child(ThreadInfo parent, string childSessionId, string title) =>
+    public SessionInfo Child(SessionInfo parent, string childSessionId, string title) =>
         // The look-up and the insert are one write, so two asks for the same child can't both make one.
         _writer.Write("threads.child", scope =>
         {
             if (scope.QueryFirst($"SELECT {Columns} FROM thread_info WHERE parent_thread_id = $parent AND acp_session_id = $session;",
-                    ReadThread, new SqlArg("$parent", parent.ThreadId), new SqlArg("$session", childSessionId)) is { } known)
+                    ReadSession, new SqlArg("$parent", parent.SessionId), new SqlArg("$session", childSessionId)) is { } known)
                 return known;
-            var child = new ThreadInfo(Guid.NewGuid().ToString(), parent.Agent, parent.RepoUrl, title, childSessionId, Now(),
-                parent.Machine, ParentThreadId: parent.ThreadId);
+            var child = new SessionInfo(Guid.NewGuid().ToString(), parent.Agent, parent.RepoUrl, title, childSessionId, Now(),
+                parent.Machine, ParentSessionId: parent.SessionId);
             scope.Execute("""
                 INSERT INTO thread_info(thread_id, agent, repo_url, title, acp_session_id, created_at, updated_at, machine, parent_thread_id)
                 VALUES ($id, $agent, $repo, $title, $session, $now, $now, $machine, $parent);
-                """, new SqlArg("$id", child.ThreadId), new SqlArg("$agent", child.Agent), new SqlArg("$repo", child.RepoUrl), new SqlArg("$title", title),
-                new SqlArg("$session", childSessionId), new SqlArg("$now", child.UpdatedAt), new SqlArg("$machine", child.Machine), new SqlArg("$parent", parent.ThreadId));
+                """, new SqlArg("$id", child.SessionId), new SqlArg("$agent", child.Agent), new SqlArg("$repo", child.RepoUrl), new SqlArg("$title", title),
+                new SqlArg("$session", childSessionId), new SqlArg("$now", child.UpdatedAt), new SqlArg("$machine", child.Machine), new SqlArg("$parent", parent.SessionId));
             return child;
         });
 
     /// <summary>A helper session's thread, which <paramref name="parent"/>'s agent started, on the parent's machine and repo.</summary>
-    public ThreadInfo Helper(ThreadInfo parent, string agent, string title)
+    public SessionInfo Helper(SessionInfo parent, string agent, string title)
     {
-        var helper = new ThreadInfo(Guid.NewGuid().ToString(), agent, parent.RepoUrl, title, null, Now(), parent.Machine,
-            ParentThreadId: parent.ThreadId, Helper: true);
+        var helper = new SessionInfo(Guid.NewGuid().ToString(), agent, parent.RepoUrl, title, null, Now(), parent.Machine,
+            ParentSessionId: parent.SessionId, Helper: true);
         Execute("""
             INSERT INTO thread_info(thread_id, agent, repo_url, title, created_at, updated_at, machine, parent_thread_id, helper)
             VALUES ($id, $agent, $repo, $title, $now, $now, $machine, $parent, 1);
-            """, ("$id", helper.ThreadId), ("$agent", agent), ("$repo", helper.RepoUrl), ("$title", title), ("$now", helper.UpdatedAt),
-            ("$machine", helper.Machine), ("$parent", parent.ThreadId));
+            """, ("$id", helper.SessionId), ("$agent", agent), ("$repo", helper.RepoUrl), ("$title", title), ("$now", helper.UpdatedAt),
+            ("$machine", helper.Machine), ("$parent", parent.SessionId));
         return helper;
     }
 
     /// <summary>The helper sessions <paramref name="parentThreadId"/>'s agent started, oldest first.</summary>
-    public IReadOnlyList<ThreadInfo> Helpers(string parentThreadId) =>
+    public IReadOnlyList<SessionInfo> Helpers(string parentSessionId) =>
         Query($"SELECT {Columns} FROM thread_info WHERE parent_thread_id = $parent AND helper = 1 ORDER BY created_at;",
-            ("$parent", parentThreadId));
+            ("$parent", parentSessionId));
 
     /// <summary>
     /// Records a message one thread's agent sent another's, before it's delivered; with <paramref name="messageId"/>,
@@ -184,7 +184,7 @@ public sealed class ThreadStore
             """, ("$machine", machine));
 
     /// <summary>The helper sessions on <paramref name="machine"/>.</summary>
-    public IReadOnlyList<ThreadInfo> HelpersOn(string machine) =>
+    public IReadOnlyList<SessionInfo> HelpersOn(string machine) =>
         Query($"SELECT {Columns} FROM thread_info WHERE machine = $machine AND helper = 1;", ("$machine", machine));
 
     private List<HelperMessage> Messages(string sql, params (string Name, object? Value)[] parameters) =>
@@ -199,34 +199,34 @@ public sealed class ThreadStore
         _db.QueryFirst("SELECT COUNT(*) FROM helper_messages WHERE from_thread = $from AND to_thread = $to;", row => row.Long(0),
             CancellationToken.None, new SqlArg("$from", from), new SqlArg("$to", to));
 
-    public ThreadInfo? Get(string threadId) =>
-        Query($"SELECT {Columns} FROM thread_info WHERE thread_id = $id;", ("$id", threadId)).FirstOrDefault();
+    public SessionInfo? Get(string sessionId) =>
+        Query($"SELECT {Columns} FROM thread_info WHERE thread_id = $id;", ("$id", sessionId)).FirstOrDefault();
 
     /// <summary>The <paramref name="limit"/> most recently used threads below <paramref name="before"/>; subagents' threads are opened from their parent.</summary>
-    public ThreadPage List(long? before, int limit)
+    public SessionPage List(long? before, int limit)
     {
-        var threads = Query(
+        var sessions = Query(
             $"SELECT {Columns} FROM thread_info WHERE updated_at < $before AND parent_thread_id IS NULL ORDER BY updated_at DESC LIMIT $limit;",
             ("$before", before ?? long.MaxValue), ("$limit", limit));
-        return new ThreadPage(threads, threads.Count == limit ? threads[^1].UpdatedAt : null);
+        return new SessionPage(sessions, sessions.Count == limit ? sessions[^1].UpdatedAt : null);
     }
 
-    public void SetTitle(string threadId, string title) =>
-        Execute("UPDATE thread_info SET title = $title WHERE thread_id = $id;", ("$id", threadId), ("$title", title));
+    public void SetTitle(string sessionId, string title) =>
+        Execute("UPDATE thread_info SET title = $title WHERE thread_id = $id;", ("$id", sessionId), ("$title", title));
 
-    public void SetAcpSession(string threadId, string acpSessionId) =>
-        Execute("UPDATE thread_info SET acp_session_id = $session WHERE thread_id = $id;", ("$id", threadId), ("$session", acpSessionId));
+    public void SetAcpSession(string sessionId, string acpSessionId) =>
+        Execute("UPDATE thread_info SET acp_session_id = $session WHERE thread_id = $id;", ("$id", sessionId), ("$session", acpSessionId));
 
     /// <summary>Saves the session's reported total, kept as text so the decimal comes back exactly.</summary>
-    public void SetSessionCost(string threadId, decimal total) =>
+    public void SetSessionCost(string sessionId, decimal total) =>
         Execute("UPDATE thread_info SET session_cost = $cost WHERE thread_id = $id;",
-            ("$id", threadId), ("$cost", total.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            ("$id", sessionId), ("$cost", total.ToString(System.Globalization.CultureInfo.InvariantCulture)));
 
     /// <summary>
     /// The config options the thread's agent last reported for its session (raw JSON), the values chosen for it, and
     /// the slash commands its agent last sent; with no list of its own, the last one that agent sent here.
     /// </summary>
-    public ThreadConfig Config(string threadId) =>
+    public SessionConfig Config(string sessionId) =>
         _db.QueryFirst("""
             SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands)
             FROM (SELECT $id AS thread_id) t
@@ -234,32 +234,32 @@ public sealed class ThreadStore
             LEFT JOIN thread_commands tc ON tc.thread_id = t.thread_id
             LEFT JOIN thread_info i ON i.thread_id = t.thread_id
             LEFT JOIN agent_commands ac ON ac.agent = i.agent;
-            """, row => new ThreadConfig(
+            """, row => new SessionConfig(
                 row.IsNull(0) ? null : row.Text(0),
-                row.IsNull(1) ? new Dictionary<string, string>() : ThreadConfig.ReadChoices(row.Text(1)),
-                row.IsNull(2) ? null : row.Text(2)), CancellationToken.None, new SqlArg("$id", threadId))!;
+                row.IsNull(1) ? new Dictionary<string, string>() : SessionConfig.ReadChoices(row.Text(1)),
+                row.IsNull(2) ? null : row.Text(2)), CancellationToken.None, new SqlArg("$id", sessionId))!;
 
     /// <summary>Saves the slash commands the thread's agent sent, as the thread's and as that agent's latest.</summary>
-    public void SetCommands(string threadId, string commands) =>
+    public void SetCommands(string sessionId, string commands) =>
         Execute("""
             INSERT INTO thread_commands(thread_id, commands) VALUES ($id, $commands)
             ON CONFLICT(thread_id) DO UPDATE SET commands = $commands;
             INSERT INTO agent_commands(agent, commands) SELECT agent, $commands FROM thread_info WHERE thread_id = $id
             ON CONFLICT(agent) DO UPDATE SET commands = $commands;
-            """, ("$id", threadId), ("$commands", commands));
+            """, ("$id", sessionId), ("$commands", commands));
 
-    public void SetConfigOptions(string threadId, string options) =>
+    public void SetConfigOptions(string sessionId, string options) =>
         Execute("""
             INSERT INTO thread_config(thread_id, options) VALUES ($id, $options)
             ON CONFLICT(thread_id) DO UPDATE SET options = $options;
-            """, ("$id", threadId), ("$options", options));
+            """, ("$id", sessionId), ("$options", options));
 
     /// <summary>Chooses <paramref name="value"/> for the option: it's applied to every session the thread opens from now on.</summary>
-    public void SetConfigChoice(string threadId, string configId, string value) =>
+    public void SetConfigChoice(string sessionId, string configId, string value) =>
         Execute("""
             INSERT INTO thread_config(thread_id, choices) VALUES ($id, json_object($config, $value))
             ON CONFLICT(thread_id) DO UPDATE SET choices = json_set(choices, '$."' || $config || '"', $value);
-            """, ("$id", threadId), ("$config", configId.Replace("\"", "")), ("$value", value));
+            """, ("$id", sessionId), ("$config", configId.Replace("\"", "")), ("$value", value));
 
     /// <summary>The config options of the agent's latest new session: what a thread that hasn't opened one yet starts with.</summary>
     public string? AgentConfig(string agent) =>
@@ -273,18 +273,18 @@ public sealed class ThreadStore
             """, ("$agent", agent), ("$options", options));
 
     /// <summary>Marks the thread as just used, which puts it at the top of the list.</summary>
-    public void Touch(string threadId) =>
-        Execute("UPDATE thread_info SET updated_at = $now WHERE thread_id = $id;", ("$id", threadId), ("$now", Now()));
+    public void Touch(string sessionId) =>
+        Execute("UPDATE thread_info SET updated_at = $now WHERE thread_id = $id;", ("$id", sessionId), ("$now", Now()));
 
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 
     private void Execute(string sql, params (string Name, object? Value)[] parameters) =>
         _writer.Write("threads", scope => scope.Execute(sql, Args(parameters)));
 
-    private List<ThreadInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>
-        _db.Query(sql, ReadThread, CancellationToken.None, Args(parameters));
+    private List<SessionInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>
+        _db.Query(sql, ReadSession, CancellationToken.None, Args(parameters));
 
-    private static ThreadInfo ReadThread(IRow row) =>
+    private static SessionInfo ReadSession(IRow row) =>
         new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4), row.Long(5),
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),

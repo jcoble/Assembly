@@ -16,8 +16,7 @@ using Assembly.Infrastructure.Machines;
 using Assembly.Domain.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
 
@@ -58,27 +57,27 @@ public sealed class MacBackend : IAsyncDisposable
         var database = Path.Combine(home, "assembly.db");
         var db = AppDatabase.Open(database);
         var store = RowStore.Open(db);
-        var threads = ThreadStore.Open(db, TimeProvider.System);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System);
         var hub = new LiveHub(store);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            runsHere: thread => threads.Get(thread) is not { Machine: not null });
+            runsHere: session => sessionStore.Get(session) is not { Machine: not null });
         if (closed > 0)
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
-        var sessions = new SessionRegistry(hub, threads, launcher, TimeProvider.System, log);
+        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
-        var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, threads, log,
+        var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log,
             sessions.Helpers.Row.TurnEnded);
         var machines = remoteMachine is null
-            ? new MachineSet(new LocalMachine(hub, threads, sessions, attachments))
-            : new MachineSet(new LocalMachine(hub, threads, sessions, attachments), remoteMachine);
+            ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
+            : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
         sessions.Helpers.Delivery.Machines = machines;
-        var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, threads, hub, machines.Named(null)!, log);
+        var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, sessionStore, hub, machines.Named(null)!, log);
         // Turns a remote was running when the Mac stopped: catch up on them rather than mark them lost.
-        remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.ThreadId).Where(id => threads.Get(id)?.Machine == remote!.Name));
+        remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId).Where(id => sessionStore.Get(id)?.Machine == remote!.Name));
 
         Uri? address = null;
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
-        var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), port, routes =>
+        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             MacFeatureList.Add(routes, new FeatureContext(db));

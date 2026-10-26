@@ -7,8 +7,7 @@ using Assembly.Application.Common.Acp.V1;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Features.Chat.Sessions;
@@ -27,7 +26,7 @@ public sealed partial class SessionHost
         await kept.Ticking.CancelAsync();
         await kept.Ticks;
         kept.Ticking.Dispose();
-        _log.WriteLine($"thread {_threadId}: kept session closed");
+        _log.WriteLine($"session {_sessionId}: kept session closed");
     }
 
     // Called with the lock held: a kept session with nothing left on it closes.
@@ -73,7 +72,7 @@ public sealed partial class SessionHost
             SelfStarted = true, Session = _kept!.Session, LastEventAt = at, Ended = ended, Done = ended.Task,
         };
         Apply(new RunStarted(at, _turn.RunId, "Continued after a background task finished"));
-        _log.WriteLine($"thread {_threadId} run {_turn.RunId}: started by the agent");
+        _log.WriteLine($"session {_sessionId} run {_turn.RunId}: started by the agent");
     }
 
     // Called with the lock held.
@@ -91,7 +90,7 @@ public sealed partial class SessionHost
     /// </summary>
     private async Task CloseAsync(OpenSession session, StageTimes? stages, decimal? sessionCost, bool lost, Task pump)
     {
-        _sessionClosed?.Invoke(_threadId);
+        _sessionClosed?.Invoke(_sessionId);
         try
         {
             if (!lost)
@@ -113,12 +112,12 @@ public sealed partial class SessionHost
                 await session.Adapter.Link.Client.CloseSessionAsync(session.AcpSessionId, CancellationToken.None);
                 stages?.Mark("session close");
                 if (sessionCost is { } total)
-                    _threads.SetSessionCost(_threadId, total);
+                    _sessionStore.SetSessionCost(_sessionId, total);
             }
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
         {
-            Console.Error.WriteLine($"thread {_threadId}: session {session.AcpSessionId} didn't close: {error.Message}");
+            Console.Error.WriteLine($"session {_sessionId}: session {session.AcpSessionId} didn't close: {error.Message}");
         }
         finally
         {
@@ -149,7 +148,7 @@ public sealed partial class SessionHost
         }
         catch (Exception error)
         {
-            Console.Error.WriteLine($"thread {_threadId}: updates stopped: {error.Message}");
+            Console.Error.WriteLine($"session {_sessionId}: updates stopped: {error.Message}");
         }
 
         lock (_gate)
@@ -190,7 +189,7 @@ public sealed partial class SessionHost
     {
         if (_turn is not { SelfStarted: true } turn || Now() - turn.LastEventAt < QuietMs || _converter.HasOpenTools || _tasks.Count > 0)
             return;
-        _log.WriteLine($"thread {_threadId} run {turn.RunId}: no word from the agent for {QuietMs / 1000} s, so the run ends");
+        _log.WriteLine($"session {_sessionId} run {turn.RunId}: no word from the agent for {QuietMs / 1000} s, so the run ends");
         EndSelfRun(new TurnEnded(Now(), "end_turn", null));
         CloseIfDone();
     }
@@ -217,16 +216,16 @@ public sealed partial class SessionHost
                         if (!_subagents.Has(subagent.AcpSessionId))
                             // What the child asks (a permission, a question) is a card in this thread.
                             (_turn?.Session ?? _kept?.Session)?.Adapter.Link.Client.SetSessionPolicy(subagent.AcpSessionId, this);
-                        Apply(_subagents.Changed(_threads.Get(_threadId)!, subagent));
+                        Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
                         break;
-                    case TitleChanged title when _threads.Get(_threadId) is { Helper: false }:
-                        _threads.SetTitle(_threadId, title.Title);
+                    case TitleChanged title when _sessionStore.Get(_sessionId) is { Helper: false }:
+                        _sessionStore.SetTitle(_sessionId, title.Title);
                         break;
                     case ConfigOptionsChanged changed:
-                        _threads.SetConfigOptions(_threadId, changed.Options.GetRawText());
+                        _sessionStore.SetConfigOptions(_sessionId, changed.Options.GetRawText());
                         break;
                     case CommandsChanged commands:
-                        _threads.SetCommands(_threadId, commands.Commands.GetRawText());
+                        _sessionStore.SetCommands(_sessionId, commands.Commands.GetRawText());
                         break;
                     case TaskChanged task:
                         Track(task);

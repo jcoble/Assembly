@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
@@ -8,8 +8,8 @@ namespace Assembly.Application.Features.Chat.Helpers;
 public static partial class MessageFrame
 {
     /// <summary>The prompt; <paramref name="waited"/>, when it's a minute or more, says how long it waited to be delivered.</summary>
-    public static string Of(string messageId, ThreadInfo from, string text, TimeSpan? waited = null) =>
-        $"Message {messageId} from another agent's session (thread {from.ThreadId}, \"{from.Title}\"), " +
+    public static string Of(string messageId, SessionInfo from, string text, TimeSpan? waited = null) =>
+        $"Message {messageId} from another agent's session (session {from.SessionId}, \"{from.Title}\"), " +
         "sent with the Assembly MCP server. Your answer goes back to it." +
         (waited is { TotalMinutes: >= 1 } wait ? $" It was sent {(int)wait.TotalMinutes} min ago and waited until now to be delivered." : "") +
         "\n\n" + text;
@@ -17,6 +17,6 @@ public static partial class MessageFrame
     /// <summary>The thread that sent the prompt, if it's a message from another session; null for a person's prompt.</summary>
     public static string? SenderOf(string prompt) => Sender().Match(prompt) is { Success: true } match ? match.Groups[1].Value : null;
 
-    [GeneratedRegex(@"^Message \S+ from another agent's session \(thread ([^,\s]+), ")]
+    [GeneratedRegex(@"^Message \S+ from another agent's session \(session ([^,\s]+), ")]
     private static partial Regex Sender();
 }

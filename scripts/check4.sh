@@ -103,35 +103,35 @@ cases=()
 for agent in claude codex; do
   for where in local box; do
     name=$agent-$([ $where = local ] && echo local || echo workbox-test)
-    case_started=$(now) thread="" run="" state="" reply="" sid="" tpath="" tsize=0 reason="" failed_feature=""
+    case_started=$(now) session="" run="" state="" reply="" sid="" tpath="" tsize=0 reason="" failed_feature=""
     feature_results=()
     if [ -n "$blocked" ]; then
       reason=$blocked
     else
       repo=$repo_local machine_json=""; host=$host_local
       [ $where = box ] && repo=$repo_box machine_json=',"machine":"workbox-test"' host=$host_box
-      thread=$(api local POST /threads "{\"agent\":\"$agent\",\"repoUrl\":\"$repo\"$machine_json}" | jq -r '.threadId // empty' 2>/dev/null || true)
+      session=$(api local POST /sessions "{\"agent\":\"$agent\",\"repoUrl\":\"$repo\"$machine_json}" | jq -r '.sessionId // empty' 2>/dev/null || true)
       prompt="Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
-      [ -n "$thread" ] && run=$(api local POST "/threads/$thread/send" "$(jq -cn --arg t "$prompt" '{text: $t}')" | jq -r '.runId // empty' 2>/dev/null || true)
-      if [ -z "$thread" ]; then reason="the thread wasn't created"
+      [ -n "$session" ] && run=$(api local POST "/sessions/$session/send" "$(jq -cn --arg t "$prompt" '{text: $t}')" | jq -r '.runId // empty' 2>/dev/null || true)
+      if [ -z "$session" ]; then reason="the session wasn't created"
       elif [ -z "$run" ]; then reason="the turn didn't start"
       else
         # Each feature scenario runs against this case's thread while its turn streams.
         pids=()
         for f in ${features[@]+"${features[@]}"}; do
-          CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_THREAD=$thread CHECK4_RUN=$run CHECK4_AGENT=$agent \
+          CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_SESSION=$session CHECK4_RUN=$run CHECK4_AGENT=$agent \
             CHECK4_MACHINE=${name#*-} CHECK4_REPO=$repo "scripts/features/$f.sh" > "$out/$name.$f.log" 2>&1 &
           pids+=($!)
         done
         for _ in $(seq 120); do
-          rows=$(api local GET "/threads/$thread/rows?limit=500" || true)
+          rows=$(api local GET "/sessions/$session/rows?limit=500" || true)
           state=$(jq -r --arg r "$run" '[.rows[] | select(.runId == $r and .kind == "turn" and .payload.state != "started")][-1].payload.state // empty' <<<"$rows" 2>/dev/null || true)
           [ -n "$state" ] && [ "$(jq -r '.activeRunId // empty' <<<"$rows")" = "" ] && break
           sleep 2
         done
         jq --arg r "$run" '[.rows[] | select(.runId == $r)]' <<<"$rows" > "$out/$name.rows.json"
         reply=$(jq -r '[.[] | select(.kind == "message") | .payload | .. | objects | .value? | strings] | join("\n")' "$out/$name.rows.json")
-        sid=$(api "$where" GET "/threads/$thread" | jq -r '.acpSessionId // empty' 2>/dev/null || true)
+        sid=$(api "$where" GET "/sessions/$session" | jq -r '.acpSessionId // empty' 2>/dev/null || true)
         [ -n "$sid" ] && IFS=$'\t' read -r tpath tsize < <(transcript "$agent" "$sid" "$where"; echo) || true
         feature_results=()
         i=0
@@ -151,12 +151,12 @@ for agent in claude codex; do
     fi
     pass=$([ -z "$reason" ] && echo true || echo false)
     echo "$name: $([ "$pass" = true ] && echo pass || echo "FAIL - $reason")"
-    cases+=("$(jq -cn --arg agent "$agent" --arg machine "${name#*-}" --arg thread "$thread" --arg run "$run" \
+    cases+=("$(jq -cn --arg agent "$agent" --arg machine "${name#*-}" --arg session "$session" --arg run "$run" \
       --arg started "$case_started" --arg finished "$(now)" --arg state "$state" --arg reply "$reply" \
-      --arg session "$sid" --arg path "$tpath" --argjson size "${tsize:-0}" --argjson pass "$pass" --arg reason "$reason" \
+      --arg acp "$sid" --arg path "$tpath" --argjson size "${tsize:-0}" --argjson pass "$pass" --arg reason "$reason" \
       --argjson scenarios "$(printf '%s\n' ${feature_results[@]+"${feature_results[@]}"} | jq -s .)" \
-      '{agent: $agent, machine: $machine, threadId: $thread, runId: $run, startedAt: $started, finishedAt: $finished,
-        state: $state, reply: $reply, acpSessionId: $session, transcript: {path: $path, bytes: $size},
+      '{agent: $agent, machine: $machine, sessionId: $session, runId: $run, startedAt: $started, finishedAt: $finished,
+        state: $state, reply: $reply, acpSessionId: $acp, transcript: {path: $path, bytes: $size},
         rows: "\($agent)-\($machine).rows.json", features: $scenarios, pass: $pass, reason: $reason}')")
   done
 done
@@ -169,7 +169,7 @@ printf '%s\n' "${cases[@]}" | jq -s --arg commit "$commit" --arg lane "${LANE_NA
     builtFrom: {local: $localBuilt, workboxTest: $boxBuilt}, features: $features, partial: $partial,
     pass: (length == 4 and all(.pass)), cases: ., windowScreenshots: "missing"}' > "$out/summary.json"
 jq -r '"# Four-way check of \(.commit)\n\nLane \(.lane), local machine \(.localMachine), \(.startedAt) to \(.finishedAt): \(if .pass then "all four passed" else "FAILED" end).\nFeature scenarios: \(if (.features | length) > 0 then .features | join(", ") else "none" end)\(if .partial then " (partial run, not evidence)" else "" end).\n",
-  (.cases[] | "- \(.agent) on \(.machine): \(if .pass then "pass" else "FAIL: \(.reason)" end) (thread \(.threadId), transcript \(.transcript.path) \(.transcript.bytes) bytes)"),
+  (.cases[] | "- \(.agent) on \(.machine): \(if .pass then "pass" else "FAIL: \(.reason)" end) (session \(.sessionId), transcript \(.transcript.path) \(.transcript.bytes) bytes)"),
   "\nWindow screenshots: missing"' "$out/summary.json" > "$out/summary.md"
 echo "summary: $out/summary.json"
 jq -e .pass "$out/summary.json" >/dev/null

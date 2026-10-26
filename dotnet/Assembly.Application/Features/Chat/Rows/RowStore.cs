@@ -2,7 +2,6 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
-using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -54,31 +53,31 @@ public sealed class RowStore
     public int StoredFormatVersion => (int)_db.QueryFirst("PRAGMA user_version;", row => row.Long(0), CancellationToken.None);
 
     /// <summary>Saves the batch for the thread and returns its rows as saved, in seq order.</summary>
-    public IReadOnlyList<StoredRow> Commit(string threadId, RowBatch batch)
+    public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch)
     {
         if (batch.IsEmpty)
             return [];
 
         return _writer.Write("rows.commit", scope =>
         {
-            scope.Execute("INSERT INTO threads(thread_id, next_seq) VALUES ($thread, 1) ON CONFLICT DO NOTHING;", new SqlArg("$thread", threadId));
-            var seq = NextSeq(scope, threadId);
+            scope.Execute("INSERT INTO threads(thread_id, next_seq) VALUES ($thread, 1) ON CONFLICT DO NOTHING;", new SqlArg("$thread", sessionId));
+            var seq = NextSeq(scope, sessionId);
 
             var saved = new List<StoredRow>(batch.Rows.Count);
             foreach (var row in batch.Rows)
             {
                 scope.Execute(
                     "INSERT INTO rows(thread_id, seq, run_id, item_id, kind, payload, created_at) VALUES ($thread, $seq, $run, $item, $kind, $payload, $at);",
-                    new SqlArg("$thread", threadId), new SqlArg("$seq", seq), new SqlArg("$run", row.RunId), new SqlArg("$item", row.ItemId), new SqlArg("$kind", row.Kind),
+                    new SqlArg("$thread", sessionId), new SqlArg("$seq", seq), new SqlArg("$run", row.RunId), new SqlArg("$item", row.ItemId), new SqlArg("$kind", row.Kind),
                     new SqlArg("$payload", row.Payload.GetRawText()), new SqlArg("$at", row.CreatedAt));
-                DeleteDeltasOfFinished(scope, threadId, row.ItemId, row.Kind);
-                saved.Add(new StoredRow(threadId, seq, row.RunId, row.ItemId, row.Kind, row.Payload, row.CreatedAt, PrevSeq: seq - 1));
+                DeleteDeltasOfFinished(scope, sessionId, row.ItemId, row.Kind);
+                saved.Add(new StoredRow(sessionId, seq, row.RunId, row.ItemId, row.Kind, row.Payload, row.CreatedAt, PrevSeq: seq - 1));
                 seq++;
             }
 
-            scope.Execute("UPDATE threads SET next_seq = $seq WHERE thread_id = $thread;", new SqlArg("$thread", threadId), new SqlArg("$seq", seq));
+            scope.Execute("UPDATE threads SET next_seq = $seq WHERE thread_id = $thread;", new SqlArg("$thread", sessionId), new SqlArg("$seq", seq));
             foreach (var detail in batch.Details)
-                UpsertToolDetail(scope, threadId, detail);
+                UpsertToolDetail(scope, sessionId, detail);
             return (IReadOnlyList<StoredRow>)saved;
         });
     }
@@ -92,35 +91,35 @@ public sealed class RowStore
         _writer.Write("rows.copy", scope =>
         {
             // A thread with no rows here yet starts at seq 1. A row that doesn't follow on writes nothing.
-            var next = Math.Max(NextSeq(scope, row.ThreadId), 1);
+            var next = Math.Max(NextSeq(scope, row.SessionId), 1);
             if (row.PrevSeq != next - 1 || row.Seq < next)
                 return false;
 
-            scope.Execute("INSERT INTO threads(thread_id, next_seq) VALUES ($thread, 1) ON CONFLICT DO NOTHING;", new SqlArg("$thread", row.ThreadId));
+            scope.Execute("INSERT INTO threads(thread_id, next_seq) VALUES ($thread, 1) ON CONFLICT DO NOTHING;", new SqlArg("$thread", row.SessionId));
 
             scope.Execute(
                 "INSERT INTO rows(thread_id, seq, run_id, item_id, kind, payload, created_at) VALUES ($thread, $seq, $run, $item, $kind, $payload, $at);",
-                new SqlArg("$thread", row.ThreadId), new SqlArg("$seq", row.Seq), new SqlArg("$run", row.RunId), new SqlArg("$item", row.ItemId), new SqlArg("$kind", row.Kind),
+                new SqlArg("$thread", row.SessionId), new SqlArg("$seq", row.Seq), new SqlArg("$run", row.RunId), new SqlArg("$item", row.ItemId), new SqlArg("$kind", row.Kind),
                 new SqlArg("$payload", row.Payload.GetRawText()), new SqlArg("$at", row.CreatedAt));
-            DeleteDeltasOfFinished(scope, row.ThreadId, row.ItemId, row.Kind);
-            scope.Execute("UPDATE threads SET next_seq = $seq WHERE thread_id = $thread;", new SqlArg("$thread", row.ThreadId), new SqlArg("$seq", row.Seq + 1));
+            DeleteDeltasOfFinished(scope, row.SessionId, row.ItemId, row.Kind);
+            scope.Execute("UPDATE threads SET next_seq = $seq WHERE thread_id = $thread;", new SqlArg("$thread", row.SessionId), new SqlArg("$seq", row.Seq + 1));
             return true;
         });
 
     /// <summary>The thread's newest seq here, or 0 if it has no rows.</summary>
-    public long LastSeq(string threadId) =>
+    public long LastSeq(string sessionId) =>
         _db.QueryFirst("SELECT next_seq - 1 FROM threads WHERE thread_id = $thread;", row => row.Long(0), CancellationToken.None,
-            new SqlArg("$thread", threadId));
+            new SqlArg("$thread", sessionId));
 
     /// <summary>Saves a tool call's detail fetched from the machine that ran it.</summary>
-    public void SaveToolDetail(string threadId, ToolDetail detail) =>
-        _writer.Write("rows.tool_detail", scope => UpsertToolDetail(scope, threadId, detail));
+    public void SaveToolDetail(string sessionId, ToolDetail detail) =>
+        _writer.Write("rows.tool_detail", scope => UpsertToolDetail(scope, sessionId, detail));
 
     /// <summary>
     /// Every row with seq above <paramref name="after"/>, in seq order. This is how a copy catches up. The first
     /// row's <c>PrevSeq</c> is <paramref name="after"/>, since nothing is kept between them.
     /// </summary>
-    public IReadOnlyList<StoredRow> RowsAfter(string threadId, long after)
+    public IReadOnlyList<StoredRow> RowsAfter(string sessionId, long after)
     {
         var prev = after;
         return Query($"SELECT {Columns} FROM rows WHERE thread_id = $thread AND seq > $after ORDER BY seq;", reader =>
@@ -128,14 +127,14 @@ public sealed class RowStore
             var row = ReadRow(reader) with { PrevSeq = prev };
             prev = row.Seq;
             return row;
-        }, new SqlArg("$thread", threadId), new SqlArg("$after", after));
+        }, new SqlArg("$thread", sessionId), new SqlArg("$after", after));
     }
 
     /// <summary>
     /// The newest <paramref name="limit"/> items that start below <paramref name="before"/>, each in its newest form.
     /// An item's rows never split across pages.
     /// </summary>
-    public RowPage PageBefore(string threadId, long before, int limit)
+    public RowPage PageBefore(string sessionId, long before, int limit)
     {
         var picked = 0L;
         var rows = Query(Schema.PageBefore, reader =>
@@ -144,7 +143,7 @@ public sealed class RowStore
             var row = ReadRow(reader) with { FirstSeq = reader.Long(7) };
             // A message still streaming comes back as one delta that draws all of its text.
             return reader.IsNull(8) ? row : row with { Payload = WholeDelta(reader.Text(8)) };
-        }, new SqlArg("$thread", threadId), new SqlArg("$before", before), new SqlArg("$limit", limit));
+        }, new SqlArg("$thread", sessionId), new SqlArg("$before", before), new SqlArg("$limit", limit));
 
         // One item more than asked for says there is more. It's the oldest, and all its rows go.
         var hasBefore = picked > limit;
@@ -154,7 +153,7 @@ public sealed class RowStore
     }
 
     /// <summary>Runs whose newest turn row is still <c>started</c>: the backend stopped while they ran.</summary>
-    public IReadOnlyList<(string ThreadId, string RunId)> UnfinishedRuns() =>
+    public IReadOnlyList<(string SessionId, string RunId)> UnfinishedRuns() =>
         Query(
             """
             SELECT r.thread_id, r.run_id FROM rows r
@@ -179,33 +178,33 @@ public sealed class RowStore
             reader => ReadRow(reader), new SqlArg("$kind", kind));
 
     /// <summary>The run of the thread's newest turn row if that row says <c>started</c>, else null.</summary>
-    public string? OpenRun(string threadId) =>
+    public string? OpenRun(string sessionId) =>
         Query(
             """
             SELECT run_id, json_extract(payload, '$.state') FROM rows WHERE thread_id = $thread AND kind = 'turn'
             ORDER BY seq DESC LIMIT 1;
             """,
-            reader => reader.Text(1) == "started" ? Text(reader, 0) : null, new SqlArg("$thread", threadId)).FirstOrDefault();
+            reader => reader.Text(1) == "started" ? Text(reader, 0) : null, new SqlArg("$thread", sessionId)).FirstOrDefault();
 
     /// <summary>Whether the run has a turn row that ends it.</summary>
-    public bool RunEnded(string threadId, string runId) =>
+    public bool RunEnded(string sessionId, string runId) =>
         _db.QueryFirst(
             """
             SELECT EXISTS (SELECT 1 FROM rows WHERE thread_id = $thread AND run_id = $run AND kind = 'turn'
                            AND json_extract(payload, '$.state') <> 'started');
             """,
-            row => row.Long(0), CancellationToken.None, new SqlArg("$thread", threadId), new SqlArg("$run", runId)) == 1;
+            row => row.Long(0), CancellationToken.None, new SqlArg("$thread", sessionId), new SqlArg("$run", runId)) == 1;
 
     /// <summary>The thread a run belongs to, or null if no row has it.</summary>
-    public string? ThreadOfRun(string runId) =>
+    public string? SessionOfRun(string runId) =>
         Query("SELECT thread_id FROM rows WHERE run_id = $run LIMIT 1;", reader => reader.Text(0), new SqlArg("$run", runId)).FirstOrDefault();
 
     /// <summary>Every row of one run, in seq order.</summary>
-    public IReadOnlyList<StoredRow> RunRows(string threadId, string runId) =>
+    public IReadOnlyList<StoredRow> RunRows(string sessionId, string runId) =>
         Query($"SELECT {Columns} FROM rows WHERE thread_id = $thread AND run_id = $run ORDER BY seq;",
-            reader => ReadRow(reader), new SqlArg("$thread", threadId), new SqlArg("$run", runId));
+            reader => ReadRow(reader), new SqlArg("$thread", sessionId), new SqlArg("$run", runId));
 
-    public StoredToolCall? ToolCall(string threadId, string itemId) =>
+    public StoredToolCall? ToolCall(string sessionId, string itemId) =>
         Query(
             """
             SELECT (SELECT json_extract(payload, '$.summary') FROM rows WHERE thread_id = $thread AND item_id = $item AND kind = 'tool'
@@ -213,20 +212,20 @@ public sealed class RowStore
             FROM tool_details WHERE thread_id = $thread AND item_id = $item;
             """,
             reader => new StoredToolCall(Text(reader, 0), Text(reader, 1), Text(reader, 2), Text(reader, 3), Text(reader, 4)),
-            new SqlArg("$thread", threadId), new SqlArg("$item", itemId)).FirstOrDefault();
+            new SqlArg("$thread", sessionId), new SqlArg("$item", itemId)).FirstOrDefault();
 
-    private static long NextSeq(IWriteScope scope, string threadId) =>
+    private static long NextSeq(IWriteScope scope, string sessionId) =>
         scope.QueryFirst("SELECT next_seq FROM threads WHERE thread_id = $thread;", row => row.Long(0),
-            new SqlArg("$thread", threadId));
+            new SqlArg("$thread", sessionId));
 
     /// <summary>A message row is the full form of its deltas, so they go once it's saved.</summary>
-    private static void DeleteDeltasOfFinished(IWriteScope scope, string threadId, string? itemId, string kind)
+    private static void DeleteDeltasOfFinished(IWriteScope scope, string sessionId, string? itemId, string kind)
     {
         if (kind == RowKind.Message)
-            scope.Execute("DELETE FROM rows WHERE thread_id = $thread AND item_id = $item AND kind = 'delta';", new SqlArg("$thread", threadId), new SqlArg("$item", itemId));
+            scope.Execute("DELETE FROM rows WHERE thread_id = $thread AND item_id = $item AND kind = 'delta';", new SqlArg("$thread", sessionId), new SqlArg("$item", itemId));
     }
 
-    private static int UpsertToolDetail(IWriteScope scope, string threadId, ToolDetail detail) =>
+    private static int UpsertToolDetail(IWriteScope scope, string sessionId, ToolDetail detail) =>
         scope.Execute(
             """
             INSERT INTO tool_details(thread_id, item_id, input, output, diff, path) VALUES ($thread, $item, $input, $output, $diff, $path)
@@ -234,7 +233,7 @@ public sealed class RowStore
               input = COALESCE(excluded.input, input), output = COALESCE(excluded.output, output),
               diff = COALESCE(excluded.diff, diff), path = COALESCE(excluded.path, path);
             """,
-            new SqlArg("$thread", threadId), new SqlArg("$item", detail.ItemId), new SqlArg("$input", detail.Input), new SqlArg("$output", detail.Output),
+            new SqlArg("$thread", sessionId), new SqlArg("$item", detail.ItemId), new SqlArg("$input", detail.Input), new SqlArg("$output", detail.Output),
             new SqlArg("$diff", detail.Diff), new SqlArg("$path", detail.Path));
 
     private static JsonElement WholeDelta(string text) =>

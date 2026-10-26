@@ -3,8 +3,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
@@ -14,16 +14,16 @@ namespace Assembly.Infrastructure.Http;
 /// <c>{ options: [the agent's configOptions] | null, choices: { id: value }, commands: [its availableCommands] | null }</c>, and <c>POST /threads/:id/config
 /// { configId, value }</c> chooses a value, answering the same.
 /// </summary>
-internal sealed class ConfigRoutes(ThreadStore threads, MachineSet machines)
+internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machines)
 {
     public void Map(IEndpointRouteBuilder routes)
     {
-        routes.MapGet("/threads/{id}/config", GetAsync);
-        routes.MapPost("/threads/{id}/config", SetAsync);
+        routes.MapGet("/sessions/{id}/config", GetAsync);
+        routes.MapPost("/sessions/{id}/config", SetAsync);
     }
 
     private Task GetAsync(HttpContext context) =>
-        AnswerAsync(context, thread => machines.For(thread).ConfigAsync(thread, context.RequestAborted));
+        AnswerAsync(context, session => machines.For(session).ConfigAsync(session, context.RequestAborted));
 
     private async Task SetAsync(HttpContext context)
     {
@@ -34,21 +34,21 @@ internal sealed class ConfigRoutes(ThreadStore threads, MachineSet machines)
             return;
         }
 
-        await AnswerAsync(context, thread => machines.For(thread).SetConfigAsync(thread, configId, value, context.RequestAborted));
+        await AnswerAsync(context, session => machines.For(session).SetConfigAsync(session, configId, value, context.RequestAborted));
     }
 
-    private async Task AnswerAsync(HttpContext context, Func<ThreadInfo, Task<ThreadConfig>> config)
+    private async Task AnswerAsync(HttpContext context, Func<SessionInfo, Task<SessionConfig>> config)
     {
-        if (threads.Get(RequestValues.Route(context, "id")) is not { } thread)
+        if (sessionStore.Get(RequestValues.Route(context, "id")) is not { } session)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown thread");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown session");
             return;
         }
 
-        ThreadConfig answer;
+        SessionConfig answer;
         try
         {
-            answer = await config(thread);
+            answer = await config(session);
         }
         catch (MachineUnreachable error)
         {

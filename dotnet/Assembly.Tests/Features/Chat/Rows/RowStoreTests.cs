@@ -22,7 +22,7 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
-    public void Seqs_count_up_from_one_per_thread_with_no_gaps()
+    public void Seqs_count_up_from_one_per_session_with_no_gaps()
     {
         Assert.Equal([1L, 2L], _store.Commit("a", Batch("x", "y")).Select(row => row.Seq));
         Assert.Equal([3L], _store.Commit("a", Batch("z")).Select(row => row.Seq));
@@ -251,18 +251,18 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
-    public void A_threads_open_run_and_a_runs_thread_come_from_the_turn_rows()
+    public void A_sessions_open_run_and_a_runs_session_come_from_the_turn_rows()
     {
         _store.Commit("a", Turn("run-1", "started"));
         Assert.Equal("run-1", _store.OpenRun("a"));
         Assert.False(_store.RunEnded("a", "run-1"));
-        Assert.Equal("a", _store.ThreadOfRun("run-1"));
+        Assert.Equal("a", _store.SessionOfRun("run-1"));
 
         _store.Commit("a", Turn("run-1", "finished"));
         Assert.Null(_store.OpenRun("a"));
         Assert.True(_store.RunEnded("a", "run-1"));
         Assert.Null(_store.OpenRun("b"));
-        Assert.Null(_store.ThreadOfRun("nope"));
+        Assert.Null(_store.SessionOfRun("nope"));
     }
 
     private void CommitFixture(string name) => CommitEvents(FixtureReplay.Events(name));
@@ -313,7 +313,7 @@ public sealed class RowStoreTests : IDisposable
     private static JsonElement Payload(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
     private static string Json(StoredRow row) =>
-        $"{row.ThreadId}|{row.Seq}|{row.RunId}|{row.ItemId}|{row.Kind}|{row.CreatedAt}|{row.FirstSeq}|{row.PrevSeq}|{row.Payload.GetRawText()}";
+        $"{row.SessionId}|{row.Seq}|{row.RunId}|{row.ItemId}|{row.Kind}|{row.CreatedAt}|{row.FirstSeq}|{row.PrevSeq}|{row.Payload.GetRawText()}";
 
     public void Dispose()
     {

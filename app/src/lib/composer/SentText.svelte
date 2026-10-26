@@ -3,7 +3,7 @@
   // the typed text, which is shown as typed. Text past MESSAGE_FOLD_LINES folds
   // to that many lines with a fade; the chevron shows the rest (kept.open).
   import { Kept } from '../rows/kept.svelte';
-  import { MESSAGE_FOLD_LINES } from '../thread/fold';
+  import { MESSAGE_FOLD_LINES } from '../session/fold';
   import { splitAttachments } from './attachments';
   import SentImage from './SentImage.svelte';
 

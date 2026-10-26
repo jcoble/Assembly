@@ -1,8 +1,7 @@
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
@@ -15,15 +14,15 @@ namespace Assembly.Application.Features.Chat.Helpers;
 /// </summary>
 public sealed class HelperSessions
 {
-    public HelperSessions(ThreadStore threads, SessionRegistry sessions, LiveHub hub, HelperLimits limits)
+    public HelperSessions(SessionStore sessionStore, SessionRegistry sessions, LiveHub hub, HelperLimits limits)
     {
-        Row = new HelperRow(threads, sessions, hub);
-        var reach = new Reachability(threads, sessions);
-        Tools = new HelperToolList(threads,
+        Row = new HelperRow(sessionStore, sessions, hub);
+        var reach = new Reachability(sessionStore, sessions);
+        Tools = new HelperToolList(sessionStore,
         [
-            new StartSessionTool(threads, sessions, Delivery, Row, limits),
-            new SendMessageTool(threads, sessions, Delivery, reach, Row, limits),
-            new MessageStatusTool(threads, sessions, hub),
+            new StartSessionTool(sessionStore, sessions, Delivery, Row, limits),
+            new SendMessageTool(sessionStore, sessions, Delivery, reach, Row, limits),
+            new MessageStatusTool(sessionStore, sessions, hub),
             new ListSessionsTool(sessions, reach),
         ]);
     }

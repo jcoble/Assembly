@@ -26,18 +26,18 @@ public static class ApiServer
         app.UseWebSockets();
         app.Use(new TokenGuard(services.Token).InvokeAsync);
         new InfoRoutes(services.Machines).Map(app);
-        new ThreadRoutes(services.Threads, services.Machines).Map(app);
-        new RowRoutes(services.Hub, services.Threads, services.Machines).Map(app);
-        new RunRoutes(services.Hub, services.Threads, services.Machines).Map(app);
-        new OutboxRoutes(services.Threads).Map(app);
-        new AttachmentRoutes(services.Threads, services.Machines, services.Attachments).Map(app);
-        new ConfigRoutes(services.Threads, services.Machines).Map(app);
+        new SessionRoutes(services.SessionStore, services.Machines).Map(app);
+        new RowRoutes(services.Hub, services.SessionStore, services.Machines).Map(app);
+        new RunRoutes(services.Hub, services.SessionStore, services.Machines).Map(app);
+        new OutboxRoutes(services.SessionStore).Map(app);
+        new AttachmentRoutes(services.SessionStore, services.Machines, services.Attachments).Map(app);
+        new ConfigRoutes(services.SessionStore, services.Machines).Map(app);
         if (services.Helpers is not null)
             new McpRoutes(services.Helpers).Map(app);
         app.Map("/live", context =>
         {
-            if (services.Threads.Get(context.Request.Query["thread"].ToString()) is { } thread)
-                services.Machines.Named(thread.Machine)?.Watch(thread);
+            if (services.SessionStore.Get(context.Request.Query["session"].ToString()) is { } session)
+                services.Machines.Named(session.Machine)?.Watch(session);
             return LiveSocket.HandleAsync(context, services.Hub);
         });
         more?.Invoke(app);

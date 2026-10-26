@@ -12,21 +12,21 @@ namespace Assembly.Application.Features.Chat.Helpers;
 public sealed class SessionTokens
 {
     private readonly ConcurrentDictionary<string, string> _tokens = new();
-    private readonly ConcurrentDictionary<string, string> _threadOfToken = new();
+    private readonly ConcurrentDictionary<string, string> _sessionOfToken = new();
 
     /// <summary>The MCP endpoint sessions join, once the API is listening; until then sessions join no server.</summary>
     public string? Url { get; set; }
 
     /// <summary>The MCP servers the thread's session joins: this machine's, with a new token for the thread.</summary>
-    public IReadOnlyList<JsonElement> ServersFor(string threadId)
+    public IReadOnlyList<JsonElement> ServersFor(string sessionId)
     {
         if (Url is not { } url)
             return [];
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        _threadOfToken[token] = threadId;
-        if (_tokens.TryGetValue(threadId, out var old))
-            _threadOfToken.TryRemove(old, out _);
-        _tokens[threadId] = token;
+        _sessionOfToken[token] = sessionId;
+        if (_tokens.TryGetValue(sessionId, out var old))
+            _sessionOfToken.TryRemove(old, out _);
+        _tokens[sessionId] = token;
         using var buffer = new MemoryStream();
         using (var json = new Utf8JsonWriter(buffer))
         {
@@ -46,12 +46,12 @@ public sealed class SessionTokens
     }
 
     /// <summary>The thread's session closed: its token stops working.</summary>
-    public void Revoke(string threadId)
+    public void Revoke(string sessionId)
     {
-        if (_tokens.TryRemove(threadId, out var token))
-            _threadOfToken.TryRemove(token, out _);
+        if (_tokens.TryRemove(sessionId, out var token))
+            _sessionOfToken.TryRemove(token, out _);
     }
 
     /// <summary>The thread whose session holds <paramref name="token"/>, or null.</summary>
-    public string? ThreadOf(string token) => _threadOfToken.GetValueOrDefault(token);
+    public string? SessionOf(string token) => _sessionOfToken.GetValueOrDefault(token);
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { formatWorkedFor } from '../thread/turns';
-  import type { Fold } from '../thread/fold';
+  import { formatWorkedFor } from '../session/turns';
+  import type { Fold } from '../session/fold';
   // A finished turn's work, folded to one line above its reply: how long it
   // took and what it did. `open` is the reader's click, kept per turn by the conversation.
   let { fold, open, ontoggle }: { fold: Fold; open: boolean; ontoggle: () => void } = $props();

@@ -1,8 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Agents;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -17,21 +16,21 @@ internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, s
 /// (a model's effort levels can depend on the model). The session holds its place on the adapter until
 /// <see cref="SharedAdapter.ReleaseAsync"/>. <paramref name="mcpServers"/> gives a thread's session the MCP servers it joins.
 /// </summary>
-public sealed class SessionOpener(ThreadStore threads, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
+public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
     Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
 {
     /// <summary>The longest title a first message gives a new session.</summary>
     public const int TitleLength = 60;
 
-    internal async Task<OpenSession> OpenAsync(string threadId, string firstText, StageTimes stages, CancellationToken cancellationToken)
+    internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken)
     {
-        var thread = threads.Get(threadId) ?? throw new InvalidOperationException($"Thread {threadId} no longer exists.");
-        var folder = await launcher.CheckoutAsync(thread, stages, cancellationToken);
-        var adapter = adapters(thread.Agent);
+        var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
+        var folder = await launcher.CheckoutAsync(session, stages, cancellationToken);
+        var adapter = adapters(session.Agent);
         var running = await adapter.GetAsync(stages, cancellationToken);
         try
         {
-            return await OpenOnAsync(adapter, running, thread, folder, firstText, stages, cancellationToken);
+            return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken);
         }
         catch
         {
@@ -41,53 +40,53 @@ public sealed class SessionOpener(ThreadStore threads, IAgentLauncher launcher, 
     }
 
     private async Task<OpenSession> OpenOnAsync(
-        SharedAdapter adapter, RunningAdapter running, ThreadInfo thread, string folder, string firstText, StageTimes stages,
+        SharedAdapter adapter, RunningAdapter running, SessionInfo session, string folder, string firstText, StageTimes stages,
         CancellationToken cancellationToken)
     {
-        var threadId = thread.ThreadId;
-        if (thread.AcpSessionId is { } previous && running.Init.CanResumeSessions)
+        var sessionId = session.SessionId;
+        if (session.AcpSessionId is { } previous && running.Init.CanResumeSessions)
         {
             try
             {
                 running.Updates.Reopen(previous);
-                var resumed = await running.Link.Client.ResumeSessionAsync(previous, folder, cancellationToken, mcpServers?.Invoke(threadId));
+                var resumed = await running.Link.Client.ResumeSessionAsync(previous, folder, cancellationToken, mcpServers?.Invoke(sessionId));
                 stages.Mark("session resume");
-                var model = await ApplyChoicesAsync(running, threadId, previous, resumed.ConfigOptions, stages, cancellationToken);
-                return new OpenSession(adapter, running, previous, Resumed: true, thread.SessionCost, model);
+                var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
+                return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
             }
             catch (JsonRpcException error)
             {
                 // The agent lost its transcript. A new session keeps the thread usable; the agent won't remember it.
-                Console.Error.WriteLine($"thread {threadId}: could not resume {previous} ({error.Message}); starting a new session");
+                Console.Error.WriteLine($"session {sessionId}: could not resume {previous} ({error.Message}); starting a new session");
             }
         }
 
-        var session = await running.Link.Client.NewSessionAsync(folder, cancellationToken, mcpServers?.Invoke(threadId));
-        threads.SetAcpSession(threadId, session.SessionId);
+        var acp = await running.Link.Client.NewSessionAsync(folder, cancellationToken, mcpServers?.Invoke(sessionId));
+        sessionStore.SetAcpSession(sessionId, acp.SessionId);
         stages.Mark("session new");
-        if (thread.Title is null && Title(firstText) is { } title)
-            threads.SetTitle(threadId, title);
+        if (session.Title is null && Title(firstText) is { } title)
+            sessionStore.SetTitle(sessionId, title);
         // A helper's title is its task, not the framed prompt it's sent.
-        if (running.Init.CanRenameSessions && (thread.Helper ? thread.Title : Title(firstText)) is { } agentTitle)
+        if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
         {
             // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.
-            await running.Link.Client.RenameSessionAsync(session.SessionId, agentTitle, cancellationToken);
+            await running.Link.Client.RenameSessionAsync(acp.SessionId, agentTitle, cancellationToken);
             stages.Mark("session rename");
         }
 
-        if (session.ConfigOptions.ValueKind == JsonValueKind.Array)
-            threads.SetAgentConfig(thread.Agent, session.ConfigOptions.GetRawText());
-        var chosen = await ApplyChoicesAsync(running, threadId, session.SessionId, session.ConfigOptions, stages, cancellationToken);
-        return new OpenSession(adapter, running, session.SessionId, Resumed: false, SavedCost: null, chosen);
+        if (acp.ConfigOptions.ValueKind == JsonValueKind.Array)
+            sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
+        var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);
+        return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen);
     }
 
     /// <summary>Sets each chosen value the session doesn't have yet, saves the options as they end up, and returns their model's name.</summary>
     private async Task<string?> ApplyChoicesAsync(
-        RunningAdapter running, string threadId, string acpSessionId, JsonElement options, StageTimes stages, CancellationToken cancellationToken)
+        RunningAdapter running, string sessionId, string acpSessionId, JsonElement options, StageTimes stages, CancellationToken cancellationToken)
     {
         if (options.ValueKind != JsonValueKind.Array)
             return null;
-        var choices = threads.Config(threadId).Choices;
+        var choices = sessionStore.Config(sessionId).Choices;
         foreach (var (id, _, _) in ConfigOptions.Selects(options).ToList())
         {
             // Read again each time: setting one option can change another's values.
@@ -100,13 +99,13 @@ public sealed class SessionOpener(ThreadStore threads, IAgentLauncher launcher, 
             }
             catch (JsonRpcException error)
             {
-                Console.Error.WriteLine($"thread {threadId}: the agent didn't take {id}={value} ({error.Message})");
+                Console.Error.WriteLine($"session {sessionId}: the agent didn't take {id}={value} ({error.Message})");
             }
         }
 
         if (choices.Count > 0)
             stages.Mark("session config");
-        threads.SetConfigOptions(threadId, options.GetRawText());
+        sessionStore.SetConfigOptions(sessionId, options.GetRawText());
         return ConfigOptions.ModelName(options);
     }
 

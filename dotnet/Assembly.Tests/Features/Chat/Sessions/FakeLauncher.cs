@@ -2,15 +2,14 @@ using System.Threading.Channels;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Features.Chat.Sessions;
 
 /// <summary>Checks every thread out at <c>/work/thread</c>, and hands out a new <see cref="FakeLink"/> per launch, or runs <see cref="Launch"/> in its place.</summary>
 internal sealed class FakeLauncher : IAgentLauncher
 {
-    public const string Checkout = "/work/thread";
+    public const string Checkout = "/work/session";
 
     private readonly Channel<FakeLink> _links = Channel.CreateUnbounded<FakeLink>();
     private int _launches;
@@ -28,7 +27,7 @@ internal sealed class FakeLauncher : IAgentLauncher
     /// <summary>The agent of each launch, in order.</summary>
     public List<string> Launched { get; } = [];
 
-    public Task<string> CheckoutAsync(ThreadInfo thread, StageTimes stages, CancellationToken cancellationToken) => Task.FromResult(Checkout);
+    public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) => Task.FromResult(Checkout);
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {

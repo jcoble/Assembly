@@ -9,7 +9,7 @@ live() { node "$(dirname "$0")/live-rows.ts" "$1"; }
 # After the turn ends, so its message has replaced its deltas and the seqs skip.
 ended() { jq -e --arg r "$CHECK4_RUN" 'any(.rows[]; .runId == $r and .kind == "turn" and .payload.state != "started")' <<<"$page" >/dev/null; }
 for _ in $(seq 90); do
-  page=$(api "/threads/$CHECK4_THREAD/rows?limit=500")
+  page=$(api "/sessions/$CHECK4_SESSION/rows?limit=500")
   ended && break
   sleep 1
 done

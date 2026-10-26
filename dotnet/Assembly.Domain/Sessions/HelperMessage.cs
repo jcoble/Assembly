@@ -1,4 +1,4 @@
-namespace Assembly.Domain.Threads;
+namespace Assembly.Domain.Sessions;
 
 /// <summary>
 /// A message one thread's agent sent another's through the Assembly MCP server, kept on the sending machine.

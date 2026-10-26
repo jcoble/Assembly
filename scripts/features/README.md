@@ -8,25 +8,25 @@ The lane writes the scenario against the API, from the feature's corrected spec.
 
 - `CHECK4_API`: the local backend, for example `http://127.0.0.1:18797`
 - `CHECK4_TOKEN`: its bearer token. Send it on curl's stdin as below; never print it or put it in argv
-- `CHECK4_THREAD`, `CHECK4_RUN`: the case's thread and the turn running in it
+- `CHECK4_SESSION`, `CHECK4_RUN`: the case's session and the turn running in it
 - `CHECK4_AGENT`: `claude` or `codex`; `CHECK4_MACHINE`: `local` or `workbox-test`
-- `CHECK4_REPO`: the thread's repo, on the machine it runs on
+- `CHECK4_REPO`: the session's repo, on the machine it runs on
 
 It prints one line per step, `ok <step>` or `fail <step>: <why>`, and exits 0 only if every step passed. The lines
 are saved as the case's steps in the summary.
 
-A tiny example, `scripts/features/threads.sh`, checking that the thread runs where it should:
+A tiny example, `scripts/features/sessions.sh`, checking that the session runs where it should:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 api() { printf 'Authorization: Bearer %s\n' "$CHECK4_TOKEN" | curl -s --max-time 10 -H @- "$CHECK4_API$1"; }
 
-machine=$(api "/threads/$CHECK4_THREAD" | jq -r '.machine // "local"')
+machine=$(api "/sessions/$CHECK4_SESSION" | jq -r '.machine // "local"')
 if [ "$machine" = "$CHECK4_MACHINE" ]; then
-  echo "ok the thread runs on $machine"
+  echo "ok the session runs on $machine"
 else
-  echo "fail the thread runs on $machine: expected $CHECK4_MACHINE"
+  echo "fail the session runs on $machine: expected $CHECK4_MACHINE"
   exit 1
 fi
 ```

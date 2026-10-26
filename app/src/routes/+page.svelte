@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onDestroy, setContext, untrack } from 'svelte';
   import Conversation from '../lib/Conversation.svelte';
-  import { THREAD_OPEN } from '../lib/chat/tools/tool';
-  import { createThread, dropLink, getThread, listAgents, listMachines, listThreads, type Agent, type MemorySample, type Thread } from '../lib/api';
+  import { SESSION_OPEN } from '../lib/chat/tools/tool';
+  import { createSession, dropLink, getSession, listAgents, listMachines, listSessions, type Agent, type MemorySample, type Session } from '../lib/api';
   import { pageCall } from '../lib/host/pageCall';
   import { TOKEN } from '../lib/host/backend';
   import { counters, measures } from '../lib/debug.svelte';
@@ -16,7 +16,7 @@
   const page = new AbortController();
   // The shell starts the backend before the page loads and hands it the token.
   const token = TOKEN;
-  let threads = $state<Thread[]>([]);
+  let sessions = $state<Session[]>([]);
   let openId = $state<string | null>(null);
   const backend = { state: token ? 'up' : 'down' };
   let repoUrl = $state('');
@@ -41,25 +41,25 @@
   });
   let error = $state('');
   // A subagent's thread isn't in the list: it's fetched when opened from its row.
-  let child = $state<Thread | null>(null);
-  const open = $derived(threads.find((t) => t.threadId === openId) ?? (child?.threadId === openId ? child : undefined));
-  function openThread(threadId: string) {
-    openId = threadId;
-    if (!token || threads.some((t) => t.threadId === threadId) || child?.threadId === threadId) return;
-    getThread(token, threadId, page.signal).then(
-      (thread) => (child = thread),
+  let child = $state<Session | null>(null);
+  const open = $derived(sessions.find((t) => t.sessionId === openId) ?? (child?.sessionId === openId ? child : undefined));
+  function openSession(sessionId: string) {
+    openId = sessionId;
+    if (!token || sessions.some((t) => t.sessionId === sessionId) || child?.sessionId === sessionId) return;
+    getSession(token, sessionId, page.signal).then(
+      (session) => (child = session),
       (e) => {
         if (!page.signal.aborted) error = String(e);
       },
     );
   }
-  setContext(THREAD_OPEN, openThread);
+  setContext(SESSION_OPEN, openSession);
 
   onDestroy(() => page.abort());
 
   async function refresh(tokenNow: string) {
     try {
-      threads = (await listThreads(tokenNow, page.signal)).threads;
+      sessions = (await listSessions(tokenNow, page.signal)).sessions;
       machines = (await listMachines(tokenNow, page.signal)).machines;
       error = '';
     } catch (e) {
@@ -105,12 +105,12 @@
     try {
       await refresh(tokenNow);
       // Light runs on the two existing threads it is given and makes none.
-      const seeded = seed ? undefined : light || scroll || switching ? query.get('a') : threads.find((t) => t.repoUrl === SEED_REPO)?.threadId;
-      if (scroll && (!seeded || !query.get('b'))) throw new Error('?soak=scroll needs a=<thread>&b=<thread>');
-      if (light && (!seeded || !query.get('b'))) throw new Error('?soak=light needs a=<thread>&b=<thread>');
-      if (!seed && !seeded) throw new Error(`no ${SEED_REPO} thread: run ?soak=seed first`);
-      const threadA = seeded ?? (await createThread(tokenNow, SEED_REPO, page.signal)).threadId;
-      const threadB = seed ? null : light || scroll || switching ? query.get('b') : (await createThread(tokenNow, SOAK_REPO, page.signal)).threadId;
+      const seeded = seed ? undefined : light || scroll || switching ? query.get('a') : sessions.find((t) => t.repoUrl === SEED_REPO)?.sessionId;
+      if (scroll && (!seeded || !query.get('b'))) throw new Error('?soak=scroll needs a=<session>&b=<session>');
+      if (light && (!seeded || !query.get('b'))) throw new Error('?soak=light needs a=<session>&b=<session>');
+      if (!seed && !seeded) throw new Error(`no ${SEED_REPO} session: run ?soak=seed first`);
+      const sessionA = seeded ?? (await createSession(tokenNow, SEED_REPO, page.signal)).sessionId;
+      const sessionB = seed ? null : light || scroll || switching ? query.get('b') : (await createSession(tokenNow, SOAK_REPO, page.signal)).sessionId;
       await refresh(tokenNow);
       await runSoak({
         token: tokenNow,
@@ -118,12 +118,12 @@
         light,
         switching,
         scroll,
-        threadA,
-        threadB,
-        open: (threadId) =>
+        sessionA,
+        sessionB,
+        open: (sessionId) =>
           new Promise((resolve) => {
             onchat = resolve;
-            openId = threadId;
+            openId = sessionId;
           }),
         close: () => (openId = null),
         signal: page.signal,
@@ -154,10 +154,10 @@
     event.preventDefault();
     if (!token || !repoUrl.trim() || !agent) return;
     try {
-      const { threadId } = await createThread(token, repoUrl.trim(), page.signal, { machine: machine || undefined, agent });
+      const { sessionId } = await createSession(token, repoUrl.trim(), page.signal, { machine: machine || undefined, agent });
       repoUrl = '';
       await refresh(token);
-      openId = threadId;
+      openId = sessionId;
     } catch (e) {
       if (!page.signal.aborted) error = String(e);
     }
@@ -177,14 +177,14 @@
         </select>
       {/if}
       <input bind:value={repoUrl} placeholder="https://github.com/owner/repo" />
-      <button type="submit" disabled={!token || !repoUrl.trim() || !agent}>New thread</button>
+      <button type="submit" disabled={!token || !repoUrl.trim() || !agent}>New session</button>
     </form>
     <ul>
-      {#each threads as thread (thread.threadId)}
+      {#each sessions as session (session.sessionId)}
         <li>
-          <button class="thread" class:active={thread.threadId === openId} onclick={() => (openId = thread.threadId)}>
-            <span class="title">{thread.title ?? thread.repoUrl.replace('https://github.com/', '')}</span>
-            <span class="when">{new Date(thread.updatedAt).toLocaleString()}{` · ${thread.agent}`}{thread.machine ? ` · ${thread.machine}` : ''}</span>
+          <button class="session" class:active={session.sessionId === openId} onclick={() => (openId = session.sessionId)}>
+            <span class="title">{session.title ?? session.repoUrl.replace('https://github.com/', '')}</span>
+            <span class="when">{new Date(session.updatedAt).toLocaleString()}{` · ${session.agent}`}{session.machine ? ` · ${session.machine}` : ''}</span>
           </button>
         </li>
       {/each}
@@ -193,13 +193,13 @@
 
   <main>
     {#if open && token}
-      {#key open.threadId}
-        <Conversation thread={open} {token} {onchat} onturn={() => void refresh(token!)} onclose={() => (openId = null)} />
+      {#key open.sessionId}
+        <Conversation session={open} {token} {onchat} onturn={() => void refresh(token!)} onclose={() => (openId = null)} />
       {/key}
     {:else}
       <div class="empty">
-        <p>Pick a thread or start a new one.</p>
-        <Button variant="outline">New thread</Button>
+        <p>Pick a session or start a new one.</p>
+        <Button variant="outline">New session</Button>
       </div>
     {/if}
   </main>
@@ -237,7 +237,7 @@
     --code-bg: #f4f4f2;
   }
   /* Only the thread list and the conversation scroll; the page never does,
-     even when a wheel lands outside them on a short thread. */
+     even when a wheel lands outside them on a short session. */
   :global(html),
   :global(body) {
     height: 100%;
@@ -298,7 +298,7 @@
     margin: 0;
     padding: 0;
   }
-  .thread {
+  .session {
     width: 100%;
     text-align: left;
     display: grid;
@@ -308,10 +308,10 @@
     border: 1px solid transparent;
     margin-bottom: 2px;
   }
-  .thread:hover {
+  .session:hover {
     background: var(--panel);
   }
-  .thread.active {
+  .session.active {
     background: var(--panel);
     border-color: var(--line);
   }

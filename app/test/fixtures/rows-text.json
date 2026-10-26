@@ -1,26 +1,26 @@
 {
   "_source": "Written by hand against the plan's Row contract (docs/superpowers/plans/2026-10-22-rust-row-layer.md), not recorded from the relay: a text turn whose message streams as delta rows (each one the blocks from index `from` on, plus `text`, only that delta's new raw text), then its final message row, the turn's end and its stats. Blocks follow safe_markdown.rs (tag `kind`); a complete code block carries `lines`.",
   "rows": [
-    { "threadId": "t1", "seq": 1, "runId": "r1", "itemId": "u1", "kind": "user", "payload": { "text": "Show me a table and some code" }, "createdAt": 1761130000000 },
-    { "threadId": "t1", "seq": 2, "runId": "r1", "itemId": null, "kind": "turn", "payload": { "state": "started" }, "createdAt": 1761130000100 },
-    { "threadId": "t1", "seq": 3, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 0, "text": "Here is", "blocks": [
+    { "sessionId": "t1", "seq": 1, "runId": "r1", "itemId": "u1", "kind": "user", "payload": { "text": "Show me a table and some code" }, "createdAt": 1761130000000 },
+    { "sessionId": "t1", "seq": 2, "runId": "r1", "itemId": null, "kind": "turn", "payload": { "state": "started" }, "createdAt": 1761130000100 },
+    { "sessionId": "t1", "seq": 3, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 0, "text": "Here is", "blocks": [
       { "kind": "paragraph", "parts": [{ "kind": "text", "value": "Here is" }] }
     ] }, "createdAt": 1761130000200 },
-    { "threadId": "t1", "seq": 4, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 0, "text": " a **table**:\n\n| file | lines |\n|---|---|\n", "blocks": [
+    { "sessionId": "t1", "seq": 4, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 0, "text": " a **table**:\n\n| file | lines |\n|---|---|\n", "blocks": [
       { "kind": "paragraph", "parts": [{ "kind": "text", "value": "Here is a " }, { "kind": "strong", "parts": [{ "kind": "text", "value": "table" }] }, { "kind": "text", "value": ":" }] },
       { "kind": "table", "headers": [[{ "kind": "text", "value": "file" }], [{ "kind": "text", "value": "lines" }]], "rows": [] }
     ] }, "createdAt": 1761130000300 },
-    { "threadId": "t1", "seq": 5, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 1, "text": "| `README` | 1 |\n\n```ts\nconst x", "blocks": [
+    { "sessionId": "t1", "seq": 5, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 1, "text": "| `README` | 1 |\n\n```ts\nconst x", "blocks": [
       { "kind": "table", "headers": [[{ "kind": "text", "value": "file" }], [{ "kind": "text", "value": "lines" }]], "rows": [[[{ "kind": "code", "value": "README" }], [{ "kind": "text", "value": "1" }]]] },
       { "kind": "code", "language": "ts", "value": "const x", "complete": false }
     ] }, "createdAt": 1761130000400 },
-    { "threadId": "t1", "seq": 6, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 2, "text": " = 1;\n// done\n```\n", "blocks": [
+    { "sessionId": "t1", "seq": 6, "runId": "r1", "itemId": "m1", "kind": "delta", "payload": { "from": 2, "text": " = 1;\n// done\n```\n", "blocks": [
       { "kind": "code", "language": "ts", "value": "const x = 1;\n// done", "complete": true, "lines": [
         [{ "value": "const", "className": "keyword" }, { "value": " x = ", "className": "plain" }, { "value": "1", "className": "number" }, { "value": ";", "className": "plain" }],
         [{ "value": "// done", "className": "comment" }]
       ] }
     ] }, "createdAt": 1761130000500 },
-    { "threadId": "t1", "seq": 7, "runId": "r1", "itemId": "m1", "kind": "message", "payload": { "blocks": [
+    { "sessionId": "t1", "seq": 7, "runId": "r1", "itemId": "m1", "kind": "message", "payload": { "blocks": [
       { "kind": "paragraph", "parts": [{ "kind": "text", "value": "Here is a " }, { "kind": "strong", "parts": [{ "kind": "text", "value": "table" }] }, { "kind": "text", "value": ":" }] },
       { "kind": "table", "headers": [[{ "kind": "text", "value": "file" }], [{ "kind": "text", "value": "lines" }]], "rows": [[[{ "kind": "code", "value": "README" }], [{ "kind": "text", "value": "1" }]]] },
       { "kind": "code", "language": "ts", "value": "const x = 1;\n// done", "complete": true, "lines": [
@@ -32,8 +32,8 @@
         { "task": true, "checked": false, "parts": [{ "kind": "link", "href": "https://example.com", "parts": [{ "kind": "text", "value": "docs" }] }], "blocks": [] }
       ] }
     ] }, "createdAt": 1761130000600 },
-    { "threadId": "t1", "seq": 8, "runId": "r1", "itemId": null, "kind": "turn", "payload": { "state": "finished" }, "createdAt": 1761130000700 },
-    { "threadId": "t1", "seq": 9, "runId": "r1", "itemId": null, "kind": "stats", "payload": {
+    { "sessionId": "t1", "seq": 8, "runId": "r1", "itemId": null, "kind": "turn", "payload": { "state": "finished" }, "createdAt": 1761130000700 },
+    { "sessionId": "t1", "seq": 9, "runId": "r1", "itemId": null, "kind": "stats", "payload": {
       "runId": "r1", "status": "completed", "startedAt": 1761130000100, "durationMs": 600, "firstTokenMs": 100, "model": "claude-opus-4-8",
       "inputTokens": 1200, "outputTokens": 80, "cacheHitPct": 50, "costUsd": 0.004, "toolCalls": 0,
       "branch": "master", "head": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d", "prevBranch": null, "prevHead": null

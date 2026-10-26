@@ -1,8 +1,7 @@
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Infrastructure.Agents;
@@ -12,11 +11,11 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
 {
     public IReadOnlyList<AgentDescriptor> Agents => agents;
 
-    public async Task<string> CheckoutAsync(ThreadInfo thread, StageTimes stages, CancellationToken cancellationToken)
+    public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
     {
         // A helper works in its parent's folder, as an agent's own subagents do.
-        var folder = Path.Combine(checkouts, thread is { Helper: true, ParentThreadId: { } parent } ? parent : thread.ThreadId);
-        await GitCheckout.EnsureAsync(thread.RepoUrl, folder, cancellationToken);
+        var folder = Path.Combine(checkouts, session is { Helper: true, ParentSessionId: { } parent } ? parent : session.SessionId);
+        await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
         stages.Mark("clone");
         return folder;
     }

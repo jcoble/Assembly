@@ -16,9 +16,9 @@ public sealed partial class AttachmentStore
     public AttachmentStore(string root) => _root = Path.GetFullPath(root);
 
     /// <summary>Saves the image and returns its absolute path.</summary>
-    public async Task<string> SaveAsync(string threadId, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    public async Task<string> SaveAsync(string sessionId, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-        var folder = Path.Combine(_root, threadId);
+        var folder = Path.Combine(_root, sessionId);
         Directory.CreateDirectory(folder);
         var path = Path.Combine(folder, $"{Guid.NewGuid()}.{type.Extension}");
         await File.WriteAllBytesAsync(path, bytes, cancellationToken);
@@ -29,7 +29,7 @@ public sealed partial class AttachmentStore
     public static ImageType? TypeOfName(string name) =>
         OurName().Match(name) is { Success: true } match ? ImageType.ForExtension(match.Groups[1].Value) : null;
 
-    public string PathOf(string threadId, string name) => Path.Combine(_root, threadId, name);
+    public string PathOf(string sessionId, string name) => Path.Combine(_root, sessionId, name);
 
     [GeneratedRegex("^[0-9a-f-]{36}\\.(png|jpg|gif|webp)$")]
     private static partial Regex OurName();

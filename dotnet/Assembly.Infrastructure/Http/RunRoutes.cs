@@ -4,8 +4,8 @@ using Microsoft.AspNetCore.Routing;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
@@ -16,21 +16,21 @@ namespace Assembly.Infrastructure.Http;
 /// <c>POST /threads/:id/tasks/:task/stop</c> stops background work, on whichever machine runs the thread's agent. An
 /// ask that is no longer open, an answer that doesn't fit it, or a task that can't be stopped is a 409.
 /// </summary>
-internal sealed class RunRoutes(LiveHub hub, ThreadStore threads, MachineSet machines)
+internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineSet machines)
 {
     public void Map(IEndpointRouteBuilder routes)
     {
-        routes.MapPost("/threads/{id}/send", SendAsync);
+        routes.MapPost("/sessions/{id}/send", SendAsync);
         routes.MapPost("/runs/{id}/stop", StopAsync);
-        routes.MapPost("/threads/{id}/asks/{ask}", AnswerAsync);
-        routes.MapPost("/threads/{id}/tasks/{task}/stop", StopTaskAsync);
+        routes.MapPost("/sessions/{id}/asks/{ask}", AnswerAsync);
+        routes.MapPost("/sessions/{id}/tasks/{task}/stop", StopTaskAsync);
     }
 
     private async Task StopTaskAsync(HttpContext context)
     {
-        if (threads.Get(RequestValues.Route(context, "id")) is not { } thread)
+        if (sessionStore.Get(RequestValues.Route(context, "id")) is not { } session)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown thread");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown session");
             return;
         }
 
@@ -38,9 +38,9 @@ internal sealed class RunRoutes(LiveHub hub, ThreadStore threads, MachineSet mac
         {
             // A helper on another machine stops there.
             var task = RequestValues.Route(context, "task");
-            var stopped = threads.Get(task) is { Helper: true, Machine: not null } helper && helper.ParentThreadId == thread.ThreadId
+            var stopped = sessionStore.Get(task) is { Helper: true, Machine: not null } helper && helper.ParentSessionId == session.SessionId
                 ? machines.For(helper).ActiveRun(helper) is { } run && await machines.For(helper).StopAsync(helper, run, context.RequestAborted)
-                : await machines.For(thread).StopTaskAsync(thread, task, context.RequestAborted);
+                : await machines.For(session).StopTaskAsync(session, task, context.RequestAborted);
             if (!stopped)
             {
                 await JsonReply.ErrorAsync(context, StatusCodes.Status409Conflict, "that task isn't running, or can't be stopped");
@@ -69,15 +69,15 @@ internal sealed class RunRoutes(LiveHub hub, ThreadStore threads, MachineSet mac
             return;
         }
 
-        if (threads.Get(RequestValues.Route(context, "id")) is not { } thread)
+        if (sessionStore.Get(RequestValues.Route(context, "id")) is not { } session)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown thread");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown session");
             return;
         }
 
         try
         {
-            if (!await machines.For(thread).AnswerAsync(thread, RequestValues.Route(context, "ask"), answer, context.RequestAborted))
+            if (!await machines.For(session).AnswerAsync(session, RequestValues.Route(context, "ask"), answer, context.RequestAborted))
             {
                 await JsonReply.ErrorAsync(context, StatusCodes.Status409Conflict, "that ask isn't open, or the answer doesn't fit it");
                 return;
@@ -105,23 +105,23 @@ internal sealed class RunRoutes(LiveHub hub, ThreadStore threads, MachineSet mac
             return;
         }
 
-        if (threads.Get(RequestValues.Route(context, "id")) is not { } thread)
+        if (sessionStore.Get(RequestValues.Route(context, "id")) is not { } session)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown thread");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown session");
             return;
         }
 
         // A helper whose parent is on the machine that reaches this one takes its prompts from there.
-        if (thread.ParentThreadId is { } parent && threads.Get(parent) is not null)
+        if (session.ParentSessionId is { } parent && sessionStore.Get(parent) is not null)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "a subagent's thread takes prompts from its parent only");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "a subagent's session takes prompts from its parent only");
             return;
         }
 
         string? runId;
         try
         {
-            runId = await machines.For(thread).SendAsync(thread, text, context.RequestAborted);
+            runId = await machines.For(session).SendAsync(session, text, context.RequestAborted);
         }
         catch (MachineUnreachable error)
         {
@@ -148,8 +148,8 @@ internal sealed class RunRoutes(LiveHub hub, ThreadStore threads, MachineSet mac
         var runId = RequestValues.Route(context, "id");
         try
         {
-            var stopped = hub.ThreadOfRun(runId) is { } threadId && threads.Get(threadId) is { } thread
-                && await machines.For(thread).StopAsync(thread, runId, context.RequestAborted);
+            var stopped = hub.SessionOfRun(runId) is { } sessionId && sessionStore.Get(sessionId) is { } session
+                && await machines.For(session).StopAsync(session, runId, context.RequestAborted);
             context.Response.StatusCode = stopped ? StatusCodes.Status202Accepted : StatusCodes.Status404NotFound;
         }
         catch (MachineUnreachable error)

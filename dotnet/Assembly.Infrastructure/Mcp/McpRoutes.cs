@@ -21,7 +21,7 @@ internal sealed class McpRoutes(HelperSessions helpers)
     private async Task HandleAsync(HttpContext context)
     {
         var header = context.Request.Headers.Authorization.ToString();
-        if (!header.StartsWith("Bearer ", StringComparison.Ordinal) || helpers.Tokens.ThreadOf(header["Bearer ".Length..]) is not { } threadId)
+        if (!header.StartsWith("Bearer ", StringComparison.Ordinal) || helpers.Tokens.SessionOf(header["Bearer ".Length..]) is not { } sessionId)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status401Unauthorized, "unauthorized");
             return;
@@ -65,7 +65,7 @@ internal sealed class McpRoutes(HelperSessions helpers)
                 return;
             case "tools/call" when parameters.ValueKind == JsonValueKind.Object && JsonReply.String(parameters, "name") is { } name:
                 var arguments = parameters.TryGetProperty("arguments", out var args) ? args : default;
-                var result = await helpers.Tools.CallAsync(threadId, name, arguments, context.RequestAborted);
+                var result = await helpers.Tools.CallAsync(sessionId, name, arguments, context.RequestAborted);
                 await ResultAsync(context, id, json =>
                 {
                     json.WriteStartArray("content");

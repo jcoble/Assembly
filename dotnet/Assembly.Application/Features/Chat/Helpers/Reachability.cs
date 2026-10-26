@@ -1,7 +1,6 @@
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
@@ -9,22 +8,22 @@ namespace Assembly.Application.Features.Chat.Helpers;
 /// Who a session may message: its parent, its helpers, its siblings (its parent's other helpers), and the other
 /// top-level sessions open on this machine now. A helper started from another machine reaches its parent there.
 /// </summary>
-public sealed class Reachability(ThreadStore threads, SessionRegistry sessions)
+public sealed class Reachability(SessionStore sessionStore, SessionRegistry sessions)
 {
-    public List<(ThreadInfo Thread, string Relation)> Of(ThreadInfo caller)
+    public List<(SessionInfo Session, string Relation)> Of(SessionInfo caller)
     {
-        var reachable = new List<(ThreadInfo, string)>();
-        if (caller.ParentThreadId is { } parentId)
+        var reachable = new List<(SessionInfo, string)>();
+        if (caller.ParentSessionId is { } parentId)
         {
             // A parent on the machine that started this helper isn't a thread here; messages to it wait to be picked up.
-            var parent = threads.Get(parentId) ?? new ThreadInfo(parentId, "", caller.RepoUrl, null, null, 0, Machine: "elsewhere");
+            var parent = sessionStore.Get(parentId) ?? new SessionInfo(parentId, "", caller.RepoUrl, null, null, 0, Machine: "elsewhere");
             reachable.Add((parent, "parent"));
-            reachable.AddRange(threads.Helpers(parentId).Where(sibling => sibling.ThreadId != caller.ThreadId).Select(sibling => (sibling, "sibling")));
+            reachable.AddRange(sessionStore.Helpers(parentId).Where(sibling => sibling.SessionId != caller.SessionId).Select(sibling => (sibling, "sibling")));
         }
-        reachable.AddRange(threads.Helpers(caller.ThreadId).Select(helper => (helper, "helper")));
-        foreach (var id in sessions.OpenThreads)
+        reachable.AddRange(sessionStore.Helpers(caller.SessionId).Select(helper => (helper, "helper")));
+        foreach (var id in sessions.OpenSessions)
         {
-            if (id != caller.ThreadId && reachable.All(entry => entry.Item1.ThreadId != id) && threads.Get(id) is { ParentThreadId: null } open)
+            if (id != caller.SessionId && reachable.All(entry => entry.Item1.SessionId != id) && sessionStore.Get(id) is { ParentSessionId: null } open)
                 reachable.Add((open, "session"));
         }
         return reachable;

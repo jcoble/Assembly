@@ -24,7 +24,7 @@
 <article class="message {role}">
   {#if label}
     <div class="role">
-      {#if sender}<button class="sender" title="Open its thread" onclick={sender.open}>{sender.label}</button>{:else}{role === 'user' ? 'You' : speaker}{/if}
+      {#if sender}<button class="sender" title="Open its session" onclick={sender.open}>{sender.label}</button>{:else}{role === 'user' ? 'You' : speaker}{/if}
     </div>
   {/if}
   {#if children}<div class="body">{@render children()}</div>{/if}

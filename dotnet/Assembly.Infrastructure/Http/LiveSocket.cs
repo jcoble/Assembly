@@ -20,15 +20,15 @@ internal static class LiveSocket
 
     public static async Task HandleAsync(HttpContext context, LiveHub hub)
     {
-        var threadId = context.Request.Query["thread"].ToString();
-        if (!context.WebSockets.IsWebSocketRequest || threadId.Length == 0 || RequestValues.QueryLong(context, "after") is not { } after)
+        var sessionId = context.Request.Query["session"].ToString();
+        if (!context.WebSockets.IsWebSocketRequest || sessionId.Length == 0 || RequestValues.QueryLong(context, "after") is not { } after)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "expected a WebSocket with ?thread and ?after");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "expected a WebSocket with ?session and ?after");
             return;
         }
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
-        using var live = hub.Subscribe(threadId, after);
+        using var live = hub.Subscribe(sessionId, after);
         using var closing = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         var receiving = ReceiveUntilClosedAsync(socket, closing);
         try

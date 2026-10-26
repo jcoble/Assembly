@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
@@ -12,7 +12,7 @@ public abstract class HelperTool
     public abstract (string Name, string Description, bool Required)[] Parameters { get; }
 
     /// <summary>Runs it for the agent of <paramref name="caller"/>.</summary>
-    public abstract Task<ToolResult> CallAsync(ThreadInfo caller, JsonElement arguments, CancellationToken cancellationToken);
+    public abstract Task<ToolResult> CallAsync(SessionInfo caller, JsonElement arguments, CancellationToken cancellationToken);
 
     protected static string? Argument(JsonElement arguments, string name) =>
         arguments.ValueKind == JsonValueKind.Object && arguments.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String

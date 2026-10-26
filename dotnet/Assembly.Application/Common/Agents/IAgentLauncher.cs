@@ -1,7 +1,5 @@
-using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Common.Agents;
 
@@ -9,7 +7,7 @@ namespace Assembly.Application.Common.Agents;
 public interface IAgentLauncher
 {
     /// <summary>Clones the thread's repo into its own folder if it isn't there yet, and returns the folder. Marks the clone.</summary>
-    Task<string> CheckoutAsync(ThreadInfo thread, StageTimes stages, CancellationToken cancellationToken);
+    Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken);
 
     /// <summary>The agents this machine can run.</summary>
     IReadOnlyList<AgentDescriptor> Agents { get; }

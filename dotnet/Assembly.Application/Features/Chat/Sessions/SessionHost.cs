@@ -7,8 +7,7 @@ using Assembly.Application.Common.Acp.V1;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Features.Chat.Sessions;
@@ -24,9 +23,9 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// </summary>
 public sealed partial class SessionHost : IPermissionPolicy
 {
-    private readonly string _threadId;
+    private readonly string _sessionId;
     private readonly LiveHub _hub;
-    private readonly ThreadStore _threads;
+    private readonly SessionStore _sessionStore;
     private readonly SessionOpener _opener;
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
@@ -64,19 +63,19 @@ public sealed partial class SessionHost : IPermissionPolicy
     private sealed record KeptSession(OpenSession Session, ChannelReader<SessionNotification> Updates, Task Pump,
         CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
 
-    public SessionHost(string threadId, LiveHub hub, ThreadStore threads, SessionOpener opener, TimeProvider time, TextWriter log,
+    public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
         Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
     {
         _sessionClosed = sessionClosed;
         _helpersWorking = helpersWorking ?? (() => false);
         _turnEnded = turnEnded;
-        _threadId = threadId;
+        _sessionId = sessionId;
         _hub = hub;
-        _threads = threads;
+        _sessionStore = sessionStore;
         _opener = opener;
         _time = time;
         _log = log;
-        _subagents = new Subagents(threads, hub);
+        _subagents = new Subagents(sessionStore, hub);
     }
 
     public string? ActiveRunId
@@ -113,7 +112,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             Apply(new TurnStarted(Now(), turn.RunId, text));
         }
 
-        _threads.Touch(_threadId);
+        _sessionStore.Touch(_sessionId);
         _lastTurn = turn.Done = Task.Run(() => RunAsync(turn, text, kept));
         return turn.RunId;
     }
@@ -151,7 +150,7 @@ public sealed partial class SessionHost : IPermissionPolicy
                     if (_turn == turn)
                         Apply(new TurnSteered(Now(), text));
                 }
-                _threads.Touch(_threadId);
+                _sessionStore.Touch(_sessionId);
                 return turn.RunId;
             case "promptRequired":
                 // The turn ended as the message went: it starts the next one, once this one's session is closed.
@@ -168,7 +167,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     /// </summary>
     public async Task SetConfigAsync(string configId, string value, CancellationToken cancellationToken)
     {
-        _threads.SetConfigChoice(_threadId, configId, value);
+        _sessionStore.SetConfigChoice(_sessionId, configId, value);
         OpenSession? session;
         lock (_gate)
             session = _turn?.Session ?? _kept?.Session;
@@ -177,12 +176,12 @@ public sealed partial class SessionHost : IPermissionPolicy
         try
         {
             var set = await session.Adapter.Link.Client.SetConfigOptionAsync(session.AcpSessionId, configId, value, cancellationToken);
-            _threads.SetConfigOptions(_threadId, set.ConfigOptions.GetRawText());
+            _sessionStore.SetConfigOptions(_sessionId, set.ConfigOptions.GetRawText());
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
         {
             // The session is ending or refused it; the choice is kept for the next one.
-            Console.Error.WriteLine($"thread {_threadId}: {configId}={value} wasn't set on the open session: {error.Message}");
+            Console.Error.WriteLine($"session {_sessionId}: {configId}={value} wasn't set on the open session: {error.Message}");
         }
     }
 
@@ -383,7 +382,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             {
                 await _session.WaitAsync(turn.Stopping.Token);
                 held = true;
-                session = await _opener.OpenAsync(_threadId, text, turn.Stages, turn.Stopping.Token);
+                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token);
                 updates = session.Adapter.Updates.For(session.AcpSessionId);
                 session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, this);
                 lock (_gate)
@@ -447,7 +446,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             }
             catch (Exception error)
             {
-                Console.Error.WriteLine($"thread {_threadId}: the turn's end wasn't saved: {error.Message}");
+                Console.Error.WriteLine($"session {_sessionId}: the turn's end wasn't saved: {error.Message}");
             }
             finally
             {
@@ -462,11 +461,11 @@ public sealed partial class SessionHost : IPermissionPolicy
             }
         }
 
-        _turnEnded?.Invoke(_threadId);
+        _turnEnded?.Invoke(_sessionId);
         if (keep)
         {
-            _log.WriteLine($"thread {_threadId} run {turn.RunId}: {turn.Stages}");
-            _log.WriteLine($"thread {_threadId}: session kept open for background work");
+            _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
+            _log.WriteLine($"session {_sessionId}: session kept open for background work");
             return;
         }
 
@@ -474,7 +473,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             await CloseAsync(session, turn.Stages, sessionCost, lost, pump);
         if (held)
             _session.Release();
-        _log.WriteLine($"thread {_threadId} run {turn.RunId}: {turn.Stages}");
+        _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
         await ticking.CancelAsync();
         await ticks;
         ticking.Dispose();
@@ -488,7 +487,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             Apply(helper);
     }
 
-    private void Apply(AgentEvent agentEvent) => _hub.Publish(_threadId, _converter.Apply(agentEvent));
+    private void Apply(AgentEvent agentEvent) => _hub.Publish(_sessionId, _converter.Apply(agentEvent));
 
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 

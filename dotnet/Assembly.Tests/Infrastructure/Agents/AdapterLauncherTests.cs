@@ -2,8 +2,7 @@ using System.Diagnostics;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Agents;
 
@@ -19,8 +18,8 @@ public sealed class AdapterLauncherTests : IDisposable
         Git(repo, "init", "--quiet");
         Git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "start");
         var launcher = new AdapterLauncher([], Path.Combine(_work, "checkouts"), new UnclaimedPermissions());
-        var parent = new ThreadInfo("parent", "claude", repo, null, null, 0);
-        var helper = parent with { ThreadId = "helper", Agent = "codex", ParentThreadId = "parent", Helper = true };
+        var parent = new SessionInfo("parent", "claude", repo, null, null, 0);
+        var helper = parent with { SessionId = "helper", Agent = "codex", ParentSessionId = "parent", Helper = true };
 
         var parentFolder = await launcher.CheckoutAsync(parent, new StageTimes(TimeProvider.System), CancellationToken.None);
         File.WriteAllText(Path.Combine(parentFolder, "notes.md"), "draft");

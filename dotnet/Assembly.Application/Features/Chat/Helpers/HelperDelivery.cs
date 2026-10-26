@@ -1,6 +1,6 @@
 using Assembly.Application.Common.Machines;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
@@ -18,6 +18,6 @@ public sealed class HelperDelivery
     public IEnumerable<string> Names => ["here", .. Set.Remotes.Select(machine => machine.Name!)];
 
     /// <summary>Starts a turn on the thread, or sends into the running one; null if it can't take the text.</summary>
-    public Task<string?> SendAsync(ThreadInfo thread, string text, CancellationToken cancellationToken) =>
-        Set.For(thread).SendAsync(thread, text, cancellationToken);
+    public Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken) =>
+        Set.For(session).SendAsync(session, text, cancellationToken);
 }

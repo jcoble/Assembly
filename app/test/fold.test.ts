@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { markdownOf, messageTime, toolTitle, turnFolds, workSummary } from '../src/lib/thread/fold.ts';
+import { markdownOf, messageTime, toolTitle, turnFolds, workSummary } from '../src/lib/session/fold.ts';
 import type { Item, ToolPayload } from '../src/lib/rows/store.ts';
-import type { TurnStats } from '../src/lib/thread/turns.ts';
+import type { TurnStats } from '../src/lib/session/turns.ts';
 
 const tool = (key: string, kind: string, extra: Partial<ToolPayload> = {}): Item => ({
   key, runId: 'r1', kind: 'tool', itemId: key, tool: { name: kind, state: 'completed', summary: '', hasDetail: false, kind, ...extra },
@@ -45,7 +45,7 @@ test('the summary counts work by kind, distinct files, and failures', () => {
   assert.equal(workSummary([tool('a', 'read'), tool('b', 'search'), tool('c', 'execute', { state: 'failed' })]), 'Read a file, ran a command, searched once, 1 call failed');
   // A command stopped mid-run reads failed; it still ran.
   assert.equal(workSummary([tool('a', 'execute', { state: 'failed' })]), 'Ran a command, 1 call failed');
-  const subagent = { key: 'subagent:s1', runId: 'r1', kind: 'subagent', acpSessionId: 's1', subagent: { threadId: 'c1', title: 'Explore', state: 'idle', canStop: false } } as const;
+  const subagent = { key: 'subagent:s1', runId: 'r1', kind: 'subagent', acpSessionId: 's1', subagent: { sessionId: 'c1', title: 'Explore', state: 'idle', canStop: false } } as const;
   assert.equal(workSummary([subagent]), 'Ran a subagent');
   assert.equal(workSummary([{ key: 't', runId: 'r1', kind: 'thinking', text: '', done: true }]), 'Thought');
   assert.equal(workSummary([tool('a', 'other'), tool('b', 'other')]), 'Used 2 tools');

@@ -1,4 +1,4 @@
-namespace Assembly.Domain.Threads;
+namespace Assembly.Domain.Sessions;
 
 /// <summary>
 /// A thread in the sessions list. <c>AcpSessionId</c> is the agent's own id for it, kept so a new adapter
@@ -9,5 +9,5 @@ namespace Assembly.Domain.Threads;
 /// agent started through the Assembly MCP server, rather than a subagent inside the parent's session. Times are Unix
 /// milliseconds.
 /// </summary>
-public sealed record ThreadInfo(string ThreadId, string Agent, string RepoUrl, string? Title, string? AcpSessionId, long UpdatedAt,
-    string? Machine = null, decimal? SessionCost = null, string? ParentThreadId = null, bool Helper = false);
+public sealed record SessionInfo(string SessionId, string Agent, string RepoUrl, string? Title, string? AcpSessionId, long UpdatedAt,
+    string? Machine = null, decimal? SessionCost = null, string? ParentSessionId = null, bool Helper = false);

@@ -67,7 +67,7 @@ public sealed class LiveHubTests : IDisposable
     }
 
     [Fact]
-    public void A_subscriber_sees_only_its_own_thread()
+    public void A_subscriber_sees_only_its_own_session()
     {
         using var hub = new LiveHub(_store);
         hub.Publish("b", Batch("other"));

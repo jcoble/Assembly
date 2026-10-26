@@ -23,7 +23,7 @@ public static class RowWire
 
     /// <summary>A row as another machine sent it.</summary>
     public static StoredRow Read(JsonElement json) =>
-        new(json.GetProperty("threadId").GetString()!, json.GetProperty("seq").GetInt64(), json.GetProperty("runId").GetString(),
+        new(json.GetProperty("sessionId").GetString()!, json.GetProperty("seq").GetInt64(), json.GetProperty("runId").GetString(),
             json.GetProperty("itemId").GetString(), json.GetProperty("kind").GetString()!, json.GetProperty("payload").Clone(),
             json.GetProperty("createdAt").GetInt64())
         {
@@ -34,7 +34,7 @@ public static class RowWire
     public static void Write(Utf8JsonWriter json, StoredRow row)
     {
         json.WriteStartObject();
-        json.WriteString("threadId", row.ThreadId);
+        json.WriteString("sessionId", row.SessionId);
         json.WriteNumber("seq", row.Seq);
         json.WriteString("runId", row.RunId);
         json.WriteString("itemId", row.ItemId);

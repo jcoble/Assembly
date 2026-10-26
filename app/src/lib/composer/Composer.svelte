@@ -2,7 +2,7 @@
   import { flushSync, onDestroy } from 'svelte';
   import { trackedListen } from '../debug.svelte';
   import { keyPressed } from '../lag.svelte';
-  import { getConfig, setConfig, uploadAttachment, type ThreadConfig } from '../api';
+  import { getConfig, setConfig, uploadAttachment, type SessionConfig } from '../api';
   import { pageCall } from '../host/pageCall';
   import { fileUrl } from '../host/fileUrl';
   import { on } from '../host/on';
@@ -14,7 +14,7 @@
 
   let {
     token,
-    threadId,
+    sessionId,
     machine,
     signal,
     busy,
@@ -23,7 +23,7 @@
     onstop,
   }: {
     token: string;
-    threadId: string;
+    sessionId: string;
     // The machine the thread runs on; null for this Mac.
     machine: string | null;
     signal: AbortSignal;
@@ -54,11 +54,11 @@
 
   // The agent's own menus (model, effort, mode…). Read again when a turn ends, since the agent
   // can change a value itself (leaving plan mode, say).
-  let config = $state<ThreadConfig>({ options: null, choices: {} });
+  let config = $state<SessionConfig>({ options: null, choices: {} });
   const menus = $derived((config.options ?? []).filter((o) => o.type === 'select' && o.options?.length));
   $effect(() => {
     if (busy) return;
-    getConfig(token, threadId, signal).then(
+    getConfig(token, sessionId, signal).then(
       (read) => (config = read),
       (e) => { if (!signal.aborted) error = `Could not read the session settings: ${String(e)}`; },
     );
@@ -103,7 +103,7 @@
 
   async function choose(configId: string, value: string) {
     try {
-      config = await setConfig(token, threadId, configId, value, signal);
+      config = await setConfig(token, sessionId, configId, value, signal);
     } catch (e) {
       if (!signal.aborted) error = `Could not change the setting: ${String(e)}`;
     }
@@ -198,9 +198,9 @@
     try {
       for (const item of pending) {
         const { path } = item.path
-          ? await pageCall<{ path: string }>('attachment.upload_path', { threadId, path: item.path })
-          : await uploadAttachment(token, threadId, item.file!, signal);
-        const thumb = await uploadAttachment(token, threadId, new File([item.thumb!], 'thumb', { type: item.thumb!.type }), signal);
+          ? await pageCall<{ path: string }>('attachment.upload_path', { sessionId, path: item.path })
+          : await uploadAttachment(token, sessionId, item.file!, signal);
+        const thumb = await uploadAttachment(token, sessionId, new File([item.thumb!], 'thumb', { type: item.thumb!.type }), signal);
         refs.push({ path, name: item.name, thumbnail: thumb.path });
       }
     } catch (e) {
@@ -232,7 +232,7 @@
     const others = paths.filter((path) => !IMAGE.test(path));
     if (!others.length) return;
     if (machine) {
-      note = `These files are on your Mac; this thread runs on ${machine}.`;
+      note = `These files are on your Mac; this session runs on ${machine}.`;
       return;
     }
     const caret = input?.selectionStart ?? draft.length;

@@ -1,14 +1,14 @@
 <script lang="ts">
   import { getContext } from 'svelte';
   import type { SubagentPayload } from '../rows/store';
-  import { TASK_STOP, THREAD_OPEN } from './tools/tool';
+  import { TASK_STOP, SESSION_OPEN } from './tools/tool';
   // A subagent the agent runs as a session of its own: what it was asked, how it
   // stands, a Stop while it works if the agent can stop it, and its own thread to open.
   // Nested (indented) under the tool call that started it, when the agent said which.
   let { acpSessionId, subagent }: { acpSessionId: string; subagent: SubagentPayload } = $props();
 
   const stop = getContext<(taskId: string) => Promise<unknown>>(TASK_STOP);
-  const openThread = getContext<(threadId: string) => void>(THREAD_OPEN);
+  const openSession = getContext<(sessionId: string) => void>(SESSION_OPEN);
   const label = { running: 'Running', requires_action: 'Waiting for you', idle: 'Finished' } as const;
   const shown = $derived(
     subagent.state === 'idle' && subagent.error ? 'Failed' : subagent.state === 'idle' && subagent.stopReason === 'cancelled' ? 'Stopped' : (label[subagent.state] ?? subagent.state),
@@ -31,7 +31,7 @@
 <div class="subagent" class:nested={!!subagent.toolCallId}>
   <div class="line">
     <span class="dot {subagent.state}" class:failed={!!subagent.error}></span>
-    <button class="name" title="Open the subagent's thread" onclick={() => openThread(subagent.threadId)}>{subagent.title || 'Subagent'}</button>
+    <button class="name" title="Open the subagent's session" onclick={() => openSession(subagent.sessionId)}>{subagent.title || 'Subagent'}</button>
     <span class="state">{shown}</span>
     {#if subagent.state !== 'idle' && subagent.canStop}
       <button class="stop" disabled={stopping} onclick={onstop}>{stopping ? 'Stopping' : 'Stop'}</button>

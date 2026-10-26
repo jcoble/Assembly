@@ -6,8 +6,7 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Features.Chat.Sessions;
 
@@ -100,7 +99,7 @@ public sealed partial class SessionHostTests
         await agent.TextAsync("b");
         // The title is a marker: once it's saved, "b" has been read and held.
         await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"marker"}""");
-        await Until(() => _threads.Get(_thread.ThreadId)!.Title == "marker");
+        await Until(() => _sessionStore.Get(_session.SessionId)!.Title == "marker");
         Assert.False(_live.Rows.TryRead(out _));
 
         _time.Advance(TimeSpan.FromMilliseconds(100));
@@ -148,7 +147,7 @@ public sealed partial class SessionHostTests
         await CostAsync(agent, 0.20m);
         Assert.Equal(0.20m, (await Stats()).GetProperty("costUsd").GetDecimal());
         await agent.CloseAsync();
-        await Until(() => _threads.Get(_thread.ThreadId)!.SessionCost == 0.20m);
+        await Until(() => _sessionStore.Get(_session.SessionId)!.SessionCost == 0.20m);
 
         // The same adapter: no new launch and no initialize, just the session reopened. The agent reports its
         // total on from where the closed session left it.
@@ -158,14 +157,14 @@ public sealed partial class SessionHostTests
         await CostAsync(agent, 0.32m);
         Assert.Equal(0.12m, (await Stats()).GetProperty("costUsd").GetDecimal());
         await agent.CloseAsync();
-        await Until(() => _threads.Get(_thread.ThreadId)!.SessionCost == 0.32m);
+        await Until(() => _sessionStore.Get(_session.SessionId)!.SessionCost == 0.32m);
         Assert.Equal(1, _launcher.Launches);
     }
 
     [Fact]
     public async Task A_resumed_turn_without_a_saved_total_has_no_cost()
     {
-        _threads.SetAcpSession(_thread.ThreadId, "earlier");
+        _sessionStore.SetAcpSession(_session.SessionId, "earlier");
         _host.Send("one");
         var agent = await _launcher.NextAsync();
         Assert.Equal("session/resume", (await agent.StartAsync()).GetProperty("method").GetString());
@@ -174,11 +173,11 @@ public sealed partial class SessionHostTests
     }
 
     [Fact]
-    public async Task Threads_share_one_adapter_initialized_once_and_each_gets_its_own_updates()
+    public async Task Sessions_share_one_adapter_initialized_once_and_each_gets_its_own_updates()
     {
-        var other = _threads.Create("claude", "https://github.com/o/r");
-        var otherHost = new SessionHost(other.ThreadId, _hub, _threads, _opener, _time, _log);
-        using var otherLive = _hub.Subscribe(other.ThreadId, after: 0);
+        var other = _sessionStore.Create("claude", "https://github.com/o/r");
+        var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log);
+        using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
 
         _host.Send("one");
         var agent = await _launcher.NextAsync();
@@ -204,9 +203,9 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task When_the_shared_adapter_dies_every_turn_on_it_ends_as_lost()
     {
-        var other = _threads.Create("claude", "https://github.com/o/r");
-        var otherHost = new SessionHost(other.ThreadId, _hub, _threads, _opener, _time, _log);
-        using var otherLive = _hub.Subscribe(other.ThreadId, after: 0);
+        var other = _sessionStore.Create("claude", "https://github.com/o/r");
+        var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log);
+        using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
         _host.Send("one");
         var agent = await _launcher.NextAsync();
         await agent.StartAsync(acpSessionId: "acp-1");
@@ -224,14 +223,14 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task An_agent_that_cannot_resume_gets_a_new_session()
     {
-        _threads.SetAcpSession(_thread.ThreadId, "old");
+        _sessionStore.SetAcpSession(_session.SessionId, "old");
         _host.Send("hi");
         var agent = await _launcher.NextAsync();
         var open = await agent.StartAsync(canResume: false);
 
         Assert.Equal("session/new", open.GetProperty("method").GetString());
         await agent.ReadAsync("session/prompt");
-        Assert.Equal(FakeLink.AcpSessionId, _threads.Get(_thread.ThreadId)!.AcpSessionId);
+        Assert.Equal(FakeLink.AcpSessionId, _sessionStore.Get(_session.SessionId)!.AcpSessionId);
     }
 
     [Fact]
@@ -308,11 +307,11 @@ public sealed partial class SessionHostTests
         await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"Say hello"}""");
 
-        await Until(() => _threads.Get(_thread.ThreadId)!.Title == "Say hello");
+        await Until(() => _sessionStore.Get(_session.SessionId)!.Title == "Say hello");
     }
 
     [Fact]
-    public async Task The_agents_slash_commands_are_saved_for_the_thread()
+    public async Task The_agents_slash_commands_are_saved_for_the_session()
     {
         _host.Send("hi");
         var agent = await _launcher.NextAsync();
@@ -320,6 +319,6 @@ public sealed partial class SessionHostTests
         await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"context","description":"Show context usage","input":null}]}""");
 
-        await Until(() => _threads.Config(_thread.ThreadId).Commands?.Contains("\"context\"") == true);
+        await Until(() => _sessionStore.Config(_session.SessionId).Commands?.Contains("\"context\"") == true);
     }
 }

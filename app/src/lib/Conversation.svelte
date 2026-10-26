@@ -3,7 +3,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { pageCall } from './host/pageCall';
-  import { answerAsk, fetchAttachment, getThread, listAgents, rowsPage, sendText, stopRun, stopTask, toolDetail, type Thread } from './api';
+  import { answerAsk, fetchAttachment, getSession, listAgents, rowsPage, sendText, stopRun, stopTask, toolDetail, type Session } from './api';
   import { chatClosed, chatOpened, counters, delay, frame, measures, rowDestroyed, rowMounted } from './debug.svelte';
   import { openLive } from './rows/client';
   import { foldBox, MARK, overlap, prependedTop, rowBox, type Box } from './rows/heights';
@@ -22,10 +22,10 @@
     type Row,
     type SafeMarkdownBlock,
   } from './rows/store';
-  import { shouldLoadOlder, viewUncovered } from './thread/scroll';
-  import { checkoutLine, turnLine } from './thread/turns';
-  import { markdownOf, turnFolds } from './thread/fold';
-  import { endAt as endsReply, inReply, LOADING, timelineEntries, type Entry } from './thread/entries';
+  import { shouldLoadOlder, viewUncovered } from './session/scroll';
+  import { checkoutLine, turnLine } from './session/turns';
+  import { markdownOf, turnFolds } from './session/fold';
+  import { endAt as endsReply, inReply, LOADING, timelineEntries, type Entry } from './session/entries';
   import { splitAttachments } from './composer/attachments';
   import type { SoakChat } from './soak';
   import Message from './chat/Message.svelte';
@@ -33,18 +33,18 @@
   import Plan from './chat/tools/Plan.svelte';
   import { ASK_ANSWER, TASK_STOP, TOOL_DETAIL } from './chat/tools/tool';
   import TurnFold from './chat/TurnFold.svelte';
-  import SessionHeader from './thread/SessionHeader.svelte';
-  import TimelineItem from './thread/TimelineItem.svelte';
+  import SessionHeader from './session/SessionHeader.svelte';
+  import TimelineItem from './session/TimelineItem.svelte';
   import Composer from './composer/Composer.svelte';
   import { ATTACHMENT_FETCH } from './composer/attachments';
 
   let {
-    thread,
+    session,
     token,
     onclose,
     onchat,
     onturn,
-  }: { thread: Thread; token: string; onclose: () => void; onchat?: (chat: SoakChat) => void; onturn?: () => void } = $props();
+  }: { session: Session; token: string; onclose: () => void; onchat?: (chat: SoakChat) => void; onturn?: () => void } = $props();
 
   // Rows per page, newest first on open; older pages load as the reader scrolls up.
   const PAGE_ROWS = 100;
@@ -61,13 +61,13 @@
   const owner = new AbortController();
   // The page keys this component by thread, so thread and token are fixed for its life.
   // svelte-ignore state_referenced_locally
-  const { threadId, agent, machine } = thread;
+  const { sessionId, agent, machine } = session;
   const view = $state(emptyView());
   chatOpened();
-  setContext(ATTACHMENT_FETCH, (name: string) => fetchAttachment(token, threadId, name, owner.signal));
-  setContext(TOOL_DETAIL, (itemId: string) => toolDetail(token, threadId, itemId, owner.signal));
-  setContext(ASK_ANSWER, (askId: string, answer: Record<string, unknown>) => answerAsk(token, threadId, askId, answer, owner.signal));
-  setContext(TASK_STOP, (taskId: string) => stopTask(token, threadId, taskId, owner.signal));
+  setContext(ATTACHMENT_FETCH, (name: string) => fetchAttachment(token, sessionId, name, owner.signal));
+  setContext(TOOL_DETAIL, (itemId: string) => toolDetail(token, sessionId, itemId, owner.signal));
+  setContext(ASK_ANSWER, (askId: string, answer: Record<string, unknown>) => answerAsk(token, sessionId, askId, answer, owner.signal));
+  setContext(TASK_STOP, (taskId: string) => stopTask(token, sessionId, taskId, owner.signal));
   // Replies and the header name the thread's agent, from its machine's list, or this Mac's when that one
   // doesn't answer (both name the agents alike); its id until one does.
   let speaker = $state(agent);
@@ -87,7 +87,7 @@
       if (item.kind !== 'user' || !item.from || item.from in untrack(() => senders)) continue;
       const from = item.from;
       senders[from] = 'Another session';
-      Promise.all([getThread(token, from, owner.signal), listAgents(token, owner.signal)]).then(
+      Promise.all([getSession(token, from, owner.signal), listAgents(token, owner.signal)]).then(
         ([sender, { agents }]) => (senders[from] = senderLabel(sender, agents)),
         () => {},
       );
@@ -122,12 +122,12 @@
   // The newest page, then the live socket from its newest row on.
   async function start() {
     try {
-      const page = await rowsPage(token, threadId, null, PAGE_ROWS, owner.signal);
+      const page = await rowsPage(token, sessionId, null, PAGE_ROWS, owner.signal);
       prependPage(view, page.rows, page.hasBefore);
       knownRun = page.activeRunId;
       loaded = true;
       // The page is ordered by first seq, so the watermark is its highest seq.
-      openLive({ token, threadId, after: Math.max(0, ...page.rows.map((r) => r.seq)), signal: owner.signal, onRow });
+      openLive({ token, sessionId, after: Math.max(0, ...page.rows.map((r) => r.seq)), signal: owner.signal, onRow });
     } catch (error) {
       if (!owner.signal.aborted) notice = String(error);
     }
@@ -158,7 +158,7 @@
   async function sendRun(text: string): Promise<string> {
     sending = true;
     try {
-      const { runId } = await sendText(token, threadId, text, owner.signal);
+      const { runId } = await sendText(token, sessionId, text, owner.signal);
       knownRun = runId;
       return runId;
     } finally {
@@ -440,7 +440,7 @@
   async function loadOlder() {
     loadingOlder = true;
     try {
-      const page = await rowsPage(token, threadId, view.oldest, PAGE_ROWS, owner.signal);
+      const page = await rowsPage(token, sessionId, view.oldest, PAGE_ROWS, owner.signal);
       prependPage(view, page.rows, page.hasBefore);
     } catch (error) {
       olderFailed = true;
@@ -463,7 +463,7 @@
 </script>
 
 <section class="conversation">
-  <SessionHeader {thread} {speaker} {onclose} />
+  <SessionHeader {session} {speaker} {onclose} />
 
   <div class="timeline">
     <div class="scroll" bind:this={scroller} bind:clientWidth={scrollerWidth} onscroll={onScroll}>
@@ -499,7 +499,7 @@
   <footer>
     {#if notice}<div class="error">{notice}</div>{/if}
     <Plan steps={view.plan?.items ?? null} running={activeRun !== null} />
-    {#if !thread.parentThreadId}<Composer {token} {threadId} machine={machine ?? null} signal={owner.signal} {busy} context={view.context} onsend={send} onstop={() => void stop()} />{/if}
+    {#if !session.parentSessionId}<Composer {token} {sessionId} machine={machine ?? null} signal={owner.signal} {busy} context={view.context} onsend={send} onstop={() => void stop()} />{/if}
   </footer>
 </section>
 

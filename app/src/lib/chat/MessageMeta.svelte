@@ -1,6 +1,6 @@
 <script lang="ts">
   import { copyText } from '../host/clipboard';
-  import { messageTime } from '../thread/fold';
+  import { messageTime } from '../session/fold';
   // Under a sent message or a reply: copy its text, and when it was written.
   // Hidden until the pointer is over its row or focus is inside it (the row's
   // own :hover and :focus-within, in Conversation.svelte). The fork button
