@@ -1002,6 +1002,33 @@ because chat's row and thread stores and the preference store call SQLite direct
 - **Size:** B2a about 300 to 500 lines with its tests. B2b about 150 lines. B2c is mechanical (namespaces and
   `using` lines across about 250 files) plus about 150 lines of project files and DI.
 
+### B2d. Rename thread to session (right after the checks PR, before B3)
+
+Jesse, 2026-10-26 22:55. Assembly's chats are sessions, the ACP word; after this step nothing about them is named
+"thread". Names only, no behaviour change. A grep on 2026-10-26 (lane/base-checks) found it in about 21
+files in `app/src`, 10 in `app/test`, 103 in `dotnet`, 9 in `scripts` and 4 in `docs`. All of these are renamed:
+- routes: `/threads`, `/threads/{id}` and everything under it (`rows`, `send`, `config`, `asks`, `attachments`,
+  `tasks/{task}/stop`, `tools/{item}`), and the calls to them in `scripts/check4.sh`, `scripts/features/rows.sh`,
+  `scripts/features/live-rows.ts` and their README;
+- types and members: `ThreadInfo`, `ThreadConfig`, `ThreadStore`, `ThreadPage`, `ThreadRoutes`, `ThreadId`,
+  `ParentThreadId`, `CreateThreadAsync`, `ThreadOfRun`, `ThreadOf`, `ReadThread`, `OpenThreads`,
+  `AddSubagentThread`, and the page's `Thread` type;
+- wire fields: `threadId`, `parentThreadId`, `threads`, `thread`;
+- the page's variables and functions: `thread`, `threadId`, `threads`, `openThread`, `threadPath`, `getThread`,
+  `createThread`, `listThreads`, the soak's `threadA` and `threadB`, and `THREAD_OPEN`;
+- files and folders: `Domain/Threads/`, `Features/Chat/Threads/` and its tests, `Infrastructure/Http/ThreadRoutes.cs`,
+  and `app/src/lib/thread/`;
+- SQLite: the `threads`, `thread_info`, `thread_config` and `thread_commands` tables, every `thread_id` and
+  `parent_thread_id` column, and `helper_messages.from_thread` and `to_thread`. How existing databases keep their
+  sessions through the rename is Jesse's call, made before this step changes them;
+- log lines (`thread {id}: ...` in `SessionHost`), the check4 variable `CHECK4_THREAD`, and the docs' text.
+
+Kept, because they aren't Assembly's chats: .NET's threading names (`System.Threading` and the rest), Rust's
+`std::thread`, Codex's own `threadStatus` field (`Acp/V1/CodexThreadStatus.cs` reads what Codex sends), the move
+thread (a Claude project thread that approves locked files), and the provider's own session id, which stays
+`acp_session_id` / `AcpSessionId` so it isn't confused with Assembly's session id. **Proof:** the same grep finds
+no Assembly chat named "thread".
+
 ### B3. One write path: `IAtomicWriter` and the audit
 
 - **Files:**
