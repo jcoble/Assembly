@@ -1,0 +1,170 @@
+[
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 1,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793043547212,
+    "firstSeq": 1
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 2,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793043547212,
+    "firstSeq": 2
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 6,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": "rs_07cdfdbf8768fb70016adfac60392c819183f5a23fc58273f2:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Planning hostname command execution**\n\n**Preparing to execute hostname command**",
+      "done": true
+    },
+    "createdAt": 1793043553773,
+    "firstSeq": 3
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 9,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": "msg_07cdfdbf8768fb70016adfac61be108191a593236e5c51a73f",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "I’m running "
+            },
+            {
+              "kind": "code",
+              "value": "hostname"
+            },
+            {
+              "kind": "text",
+              "value": " now."
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793043554081,
+    "firstSeq": 9
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 11,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": "exec-48b3e7c7-4c76-4dbd-b67a-ec6faac23411",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793043554082,
+    "firstSeq": 10
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 16,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": "context:6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "kind": "context",
+    "payload": {
+      "used": 26158,
+      "size": 258400
+    },
+    "createdAt": 1793043555907,
+    "firstSeq": 12
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 14,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": "rs_07cdfdbf8768fb70016adfac63652881918f2352280e9ec5e3:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Finalizing hostname output**",
+      "done": true
+    },
+    "createdAt": 1793043555885,
+    "firstSeq": 13
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 17,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": "msg_07cdfdbf8768fb70016adfac63c48c8191abf129248973b58c",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "agent-workbox\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793043555914,
+    "firstSeq": 17
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 18,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+      "status": "completed",
+      "startedAt": 1793043547212,
+      "durationMs": 8702,
+      "firstTokenMs": 6561,
+      "model": "5.6 Luna",
+      "inputTokens": 26359,
+      "outputTokens": 296,
+      "cacheHitPct": 49.3,
+      "toolCalls": 1,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793043555914,
+    "firstSeq": 18
+  },
+  {
+    "threadId": "e53b4fb1-a405-40bc-853f-184b0b06a18f",
+    "seq": 19,
+    "runId": "6bb25013-66e0-43d7-9b98-6eae0f7da38a",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793043555914,
+    "firstSeq": 19
+  }
+]
