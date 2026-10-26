@@ -335,8 +335,9 @@ plain SQL in chat's folder, not a class per table.
   `lib/utils.ts`.
 - Chat's page folders today (`chat/`, `composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under
   `lib/chat/` in step C1, when chat moves onto the socket. `call.ts` goes in B7, `api.ts` in C1, and `lag.svelte.ts`,
-  `soak.ts` and only the measuring and timer-counting helpers in `debug.svelte.ts` move to `app/measure/` in B9
-  (D2). The production counters and lifecycle functions in `debug.svelte.ts` stay.
+  `soak.ts` and only the helpers in `debug.svelte.ts` that count timers and frame callbacks move to `app/measure/`
+  in B9 (D2). The production counters (`counters`, and `measures`, which `Conversation.svelte` increments and the
+  debug strip shows) and the lifecycle functions stay in `debug.svelte.ts`.
 
 ### Where today's folders go
 
@@ -375,7 +376,7 @@ Each part has one implementation, registered in DI, and features reach it only t
 | page → backend | `sub` | `id`, `topic`, `key?`, `after?` | Subscribe. The backend sends the current state, then each change. `after` is a sequence number, for the rows topic. |
 | page → backend | `unsub` | `id` | Stop that subscription. |
 | backend → page | `state` | `sub`, `items` | The full state, once, right after `sub`. |
-| backend → page | `change` | `sub`, `op` (`upsert`/`remove`), `item` or `id`, `conn` | One change to one item. `conn` is the connection whose write made it (the id B4 adds for the audit). |
+| backend → page | `change` | `sub`, `op` (`upsert`/`remove`), `item` or `id` | One change to one item. |
 | backend → page | `rows` | `sub`, `row` | One row of the rows topic per frame, in order, with `prevSeq`, as today. The catch-up after `after` is read in pages, with the limit the page reads already use (`RowRoutes.cs:26`). |
 
 The limits are fixed, not settings:
@@ -576,7 +577,10 @@ Reads go through `IAppDatabase`, which has no write methods.
 `state(key)`, then each change the writer published for that topic and key. Unsubscribing, or closing the socket,
 removes the subscription. The `rows` topic is today's `LiveHub` (phase C1). `Topics` keeps `LiveHub`'s pattern
 (`LiveHub.cs:60-70`): the state is read and the subscription registered under one lock, which publishing takes too,
-so a write during the initial read is neither lost nor applied before the state.
+so a write during the initial read is neither lost nor applied before the state. The writer commits under its own
+lock and publishes afterwards, so a snapshot taken between a commit and its publish already holds that write. For
+rows, the snapshot carries the last row seq it includes, and the subscriber drops a delivered change whose seq is at
+or below it. Topics without a seq (settings, config) send whole-value upserts, so getting one twice changes nothing.
 
 ### 5.8 The one backend clock
 
@@ -617,9 +621,18 @@ feature's topic, so other windows see it.
 - There's no batcher, no timer, and no view that mixes in values still waiting to be written. A read returns what's
   committed.
 - The page sets its own `$state` before it sends. Each window keeps a per-key count of its own saves still in
-  flight. An echo of its own save (the change's `conn` is its own) lowers the count. Any echo, its own or another
-  window's, is applied only when the count is zero, and then the committed value wins. There are no commit sequence
-  numbers.
+  flight. The count goes down when the save's reply arrives, whether it's a success, an error or an abort, not when
+  the echo arrives (a save that fails, times out or is aborted sends no echo). While the count is above zero, the
+  window holds the newest echo it gets for that key, its own or another window's; when the count reaches zero, it
+  applies that held echo, so the committed value wins. After a failed save, the window shows the committed value
+  again: the held echo if there is one, or else one read of that key. On reconnect, every count resets to zero, and
+  the page reads the committed values as part of catch-up (the subscription's new snapshot), so a save lost with the
+  socket can't leave a count stuck. There are no commit sequence numbers.
+- On the saving connection, the backend sends a save's topic change before that save's reply, because the publish is
+  queued to the connection before `Write` returns. So when A2's reply brings the count to zero, A2's echo is already
+  the newest held one, and the field never shows an older value for a moment.
+- Since the count drops on the reply, the page doesn't need the connection id to recognize its own echoes. The id
+  stays in the audit, not in the page's frames.
 
 **What makes the last value win.** Frames arrive in order on one socket. The dispatcher then hands **one
 connection's writes to the writer in the order they arrived**: each connection has one write queue, and its `Write`
@@ -851,8 +864,8 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
     phases C1 and C2 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
     to show.
 - **`scripts/lint.sh` on main is still the stub,** so no `lint.d` check runs anywhere today. Step B10a, before B11,
-  replaces it with the move thread's `lint.sh` that runs every `lint.d` script (blob `ac101c9`). `lint.sh` is locked,
-  so that needs an OK line by the move thread (section 9.3).
+  replaces it with a `lint.sh` that runs every `lint.d` script. The lane writes it, and the move thread reads it and
+  posts its OK line, since `lint.sh` is locked (section 9.3).
 - New checks, all run by `scripts/lint.sh`:
   - `50-dotnet-format.sh`: `dotnet format --verify-no-changes`.
   - `60-svelte-check.sh`: `svelte-check`, with zero errors.
@@ -863,7 +876,7 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
 
 | Step | Change | OK by |
 | --- | --- | --- |
-| B10a | Replace `scripts/lint.sh` with the version that runs `lint.d` (blob `ac101c9`) | `by:move-thread` |
+| B10a | Replace `scripts/lint.sh` with the version that runs `lint.d`, which the lane writes | `by:move-thread` |
 | B10 | Change `app/scripts/guards.sh` | `by:jesse` (his 18:11 message on 26 October asks for it) |
 | B10 | Delete `app/scripts/guards-allowed.txt` | `by:jesse` |
 | B10 | Drop `guards-allowed.txt`'s line from `scripts/locked-paths.txt` | `by:jesse` |
@@ -895,7 +908,6 @@ Done in PR #3, merged as `0ea4c59`: the plain-SQL contracts with `AppDatabase` a
 
 - `scripts/check-evidence.sh` still lists `dotnet/Assembly.Engine` as code and not Domain, Application or
   Infrastructure, so commits there skip the four-way check. The guard PR (`lane/base-guards`) fixes it.
-- The move thread still owes the window check on the Mac, while builds on Jesse's Mac are paused.
 
 ### B3. One write path: `IAtomicWriter` and the audit
 
@@ -983,7 +995,8 @@ Done in PR #3, merged as `0ea4c59`: the plain-SQL contracts with `AppDatabase` a
   4. A `minute` subscriber gets exactly one change per minute over three fake minutes, while a `second` subscriber
      on the same clock gets 180.
   5. Subscribing again after a reconnect gives the current state, not a replay.
-  6. A write during the initial state read reaches the subscriber once, after the state (5.7).
+  6. A row committed before the snapshot but published after it is in the state, and is dropped when delivered (its
+     seq is at or below the snapshot's); and a duplicated settings upsert leaves the same value (5.7).
 
   On the page, a `subscribe` test applies `state` and `change` to a `$state` map.
 - **Proof:** the tests, and check4.
@@ -1009,6 +1022,10 @@ Done in PR #3, merged as `0ea4c59`: the plain-SQL contracts with `AppDatabase` a
   1. `save` sends one call per `input` on a text field.
   2. Two windows, A and B, saving one key (5.9): commits A1, B1, A2 leave both windows on A2; commits A1, A2, B1
      leave both on B1.
+  3. A failed save, then a successful save, then another window's update: the window ends on the other window's
+     value.
+  4. A1, B1, A2, with A2's reply arriving right after its echo: the window ends on A2 and never shows B1 after A2's
+     echo.
 - **Measure:** time a single-row settings upsert through the real `IAtomicWriter`, with its audit row, on
   agent-workbox. Record the median and 99th percentile, as 5.9 did for the scratch program (17 µs and 81 µs).
 - **Proof:** the tests, the measurement, and check4. The window proof is in B7, once preferences use the new save.
@@ -1069,7 +1086,9 @@ group:
 3. `coverView` (row 7);
 4. the turn clock (row 8);
 5. the Composer microtask (row 12);
-6. lag, counters and soak, as Jesse decided in D2 (rows 2 to 4);
+6. lag, counters and soak, as Jesse decided in D2 (rows 2 to 4). From `debug.svelte.ts`, only the helpers that count
+   timers and frame callbacks move to `app/measure/`; `counters`, `measures` and the lifecycle functions stay (section
+   4);
 7. the promise chains.
 
 **Failing test first, for each:**
@@ -1111,8 +1130,8 @@ group:
 
 ### B10a. Turn on `scripts/lint.sh`
 
-- **Files:** `scripts/lint.sh`, replaced with the move thread's version that runs every `scripts/lint.d` script
-  (blob `ac101c9`). It's locked, so this needs an OK line by the move thread (section 9.3).
+- **Files:** `scripts/lint.sh`, replaced with a version that runs every `scripts/lint.d` script, written by the lane.
+  It's locked, so the move thread reads it and posts its OK line (section 9.3).
 - **Test first:** a scratch `lint.d` probe script that always fails makes `lint.sh` fail. Today's stub passes it.
 - **Proof:** `lint.sh` runs `00-typescript-only.sh`, and fails on the probe.
 - **Size:** a few lines.
