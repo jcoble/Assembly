@@ -1,0 +1,89 @@
+# On every push and pull request: the backend builds with no warnings and its tests pass, the app checks, tests and
+# builds, the shell checks and tests, every scripts/*.test.sh passes, the app's guards and lint pass, and (on a pull
+# request) each of its own commits passes scripts/check-commit-msg.sh.
+name: ci
+on:
+  push:
+  pull_request:
+jobs:
+  dotnet:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet build -warnaserror
+      - run: dotnet test --no-build
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install -g pnpm@11.5.1 && pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm build
+  shell:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shell
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shell
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      # Tauri's build reads the page's folder and the bundled backend's at compile time; the app and dotnet jobs
+      # build the real ones.
+      - run: mkdir -p ../app/build backend
+      - run: cargo check --locked
+      - run: cargo test --locked
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every scripts/*.test.sh passes
+        run: |
+          failed=0
+          for t in scripts/*.test.sh; do echo "== $t"; bash "$t" || failed=1; done
+          exit $failed
+  lint:
+    # The app's guards and scripts/lint.sh. Both need only bash, git and grep, and read the checkout, not its history.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash app/scripts/guards.sh
+      - run: bash scripts/lint.sh
+  commits:
+    # A pull request's own commits; pushes to main aren't checked, since agent work reaches main through a pull request.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Each commit's message passes scripts/check-commit-msg.sh
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          failed=0
+          for c in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            scripts/check-commit-msg.sh --commit "$c" "$BRANCH" || { echo "in $(git log -1 --format='%h %s' "$c")"; failed=1; }
+          done
+          exit $failed

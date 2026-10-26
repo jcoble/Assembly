@@ -1,0 +1,261 @@
+name: Notion task sync
+
+# Mirrors GitHub work into the Notion Command Center "Tasks" DB.
+#
+# Each branch resolves to ONE tracking card, found in this order:
+#   1. a card already keyed to `repo:branch` (created on an earlier event), else
+#   2. a HAND-CAPTURED card referenced by `TSK-<n>` in the branch name / PR title / PR
+#      body / commit subjects — it gets ADOPTED (its `Key` is stamped to `repo:branch`)
+#      so the typed-by-hand task itself moves Doing→Done instead of spawning a duplicate, else
+#   3. a fresh GitHub-sourced card.
+#
+# Lifecycle:
+#   - push to a non-main branch  -> card ensured (Doing) + the pushed commits appended as a
+#                                   clickable history log (each `sha` links to the commit)
+#   - PR opened/reopened/ready   -> card ensured, Doing, PR description added
+#   - PR merged                  -> card Status = Done + a "Merged" marker linking the PR's
+#                                   full commits page; ALSO closes any other TSK-<n> the PR
+#                                   references (multi-task PRs)
+#   - issue opened/reopened      -> card created, To Do ; issue closed -> Done
+#
+# Idempotent via the "Key" rich_text prop (repo:branch / repo:issue:N). Task lookup by hand
+# id uses the "Task ID" unique_id prop (TSK-<n> -> number n). Needs the repo secret NOTION_TOKEN and the
+# repository variable NOTION_PROJECT_ID (the project's Notion page id); without either it skips.
+#
+# Concurrency is BRANCH-derived (not github.ref): a `push` and the matching
+# `pull_request.opened` otherwise land in different default groups (refs/heads/<branch> vs
+# refs/pull/<N>/merge) and race — both create a card for one branch. Serializing every event
+# for a branch through one group makes the resolve-then-create idempotent. Trade-off: if 3+
+# events for a branch pile up GitHub may drop a middle *pending* run, so one push's commit-log
+# append can be missed — the merge marker still links the complete commits page.
+
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+    types: [opened, reopened, ready_for_review, closed]
+  issues:
+    types: [opened, reopened, closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notion-sync-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # This is a tiny GitHub API synchronization job. Keep it on an ephemeral hosted
+    # runner so task tracking does not depend on dedicated build infrastructure.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PROJECT_ID: ${{ vars.NOTION_PROJECT_ID }}
+        with:
+          script: |
+            const TOKEN = process.env.NOTION_TOKEN;
+            if (!TOKEN) { core.warning('NOTION_TOKEN not set; skipping'); return; }
+            const DS = 'f62084c0-3d33-4560-8fce-de2834807ca3';        // Tasks data source
+            const PROJECT = process.env.NOTION_PROJECT_ID;            // this repo's project page
+            if (!PROJECT) { core.warning('NOTION_PROJECT_ID not set; skipping'); return; }
+            const V = '2026-03-11';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            async function notion(path, method, body) {
+              const res = await fetch('https://api.notion.com/v1' + path, {
+                method,
+                headers: {
+                  'Authorization': 'Bearer ' + TOKEN,
+                  'Notion-Version': V,
+                  'Content-Type': 'application/json',
+                },
+                body: body ? JSON.stringify(body) : undefined,
+              });
+              const json = await res.json().catch(() => ({}));
+              if (!res.ok) core.warning(`Notion ${method} ${path} -> ${res.status} ${JSON.stringify(json)}`);
+              return json;
+            }
+            const findByKey = async (key) => {
+              const r = await notion(`/data_sources/${DS}/query`, 'POST',
+                { filter: { property: 'Key', rich_text: { equals: key } }, page_size: 1 });
+              return (r.results && r.results[0]) ? r.results[0].id : null;
+            };
+            // Resolve a hand-captured card by its "Task ID" unique_id number (TSK-<n> -> n).
+            const findByTaskId = async (num) => {
+              const r = await notion(`/data_sources/${DS}/query`, 'POST',
+                { filter: { property: 'Task ID', unique_id: { equals: num } }, page_size: 1 });
+              return (r.results && r.results[0]) ? r.results[0].id : null;
+            };
+            // Unique TSK-<n> ids referenced anywhere in the given texts (branch, title, body, commits).
+            const tskRefs = (texts) => {
+              const out = [], seen = new Set();
+              for (const t of texts) {
+                for (const m of ((t || '').match(/\bTSK-(\d+)\b/gi) || [])) {
+                  const n = parseInt(m.replace(/[^0-9]/g, ''), 10);
+                  if (!seen.has(n)) { seen.add(n); out.push(n); }
+                }
+              }
+              return out;
+            };
+
+            // --- block helpers ---
+            const T = (s) => (s == null ? '' : String(s)).slice(0, 1900);
+            const para = (s) => ({ object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: T(s) } }] } });
+            const h3 = (s) => ({ object: 'block', type: 'heading_3', heading_3: { rich_text: [{ type: 'text', text: { content: T(s) } }] } });
+            const bullet = (s) => ({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: T(s) } }] } });
+            const bookmark = (url) => ({ object: 'block', type: 'bookmark', bookmark: { url } });
+            // A commit as a bulleted list item: a clickable `sha` code chip + the subject line.
+            const commitItem = (sha, subject, url) => ({
+              object: 'block', type: 'bulleted_list_item',
+              bulleted_list_item: { rich_text: [
+                { type: 'text', text: { content: sha, link: url ? { url } : undefined }, annotations: { code: true } },
+                { type: 'text', text: { content: '  ' + T(subject) } },
+              ] },
+            });
+            const mdBlocks = (str) => (str || '').split('\n').map((l) => {
+              if (/^#{1,3} /.test(l)) return h3(l.replace(/^#{1,3} /, ''));
+              if (/^[-*] /.test(l)) return bullet(l.slice(2));
+              if (l.trim() === '') return null;
+              return para(l);
+            }).filter(Boolean).slice(0, 40);
+
+            async function createTask({ key, title, status, children }) {
+              const res = await notion('/pages', 'POST', {
+                parent: { type: 'data_source_id', data_source_id: DS },
+                properties: {
+                  Name: { title: [{ text: { content: T(title).slice(0, 200) } }] },
+                  Status: { select: { name: status } },
+                  Source: { select: { name: 'GitHub' } },
+                  Project: { relation: [{ id: PROJECT }] },
+                  Key: { rich_text: [{ text: { content: key } }] },
+                },
+                children: (children || []).slice(0, 90),
+              });
+              core.info(`created task: ${key}`);
+              return res.id;
+            }
+            const setStatus = async (id, status) => {
+              await notion(`/pages/${id}`, 'PATCH', { properties: { Status: { select: { name: status } } } });
+              core.info(`status -> ${status} (${id})`);
+            };
+            const setKey = async (id, key) => {
+              await notion(`/pages/${id}`, 'PATCH', { properties: { Key: { rich_text: [{ text: { content: key } }] } } });
+            };
+            const appendChildren = async (id, children) => {
+              const kids = (children || []).filter(Boolean).slice(0, 90);
+              if (!id || !kids.length) return;
+              await notion(`/blocks/${id}/children`, 'PATCH', { children: kids });
+            };
+
+            // The single tracking card for a branch: (1) already keyed, (2) adopt a referenced
+            // TSK-<n> hand card (stamp its Key), or (3) create fresh. Status is set only on create.
+            async function resolveCard({ key, refs, title, children }) {
+              const keyed = await findByKey(key);
+              if (keyed) return { id: keyed, created: false, adopted: false };
+              for (const n of (refs || [])) {
+                const id = await findByTaskId(n);
+                if (id) { await setKey(id, key); core.info(`adopted TSK-${n} -> ${key}`); return { id, created: false, adopted: true }; }
+              }
+              const id = await createTask({ key, title, status: 'Doing', children });
+              return { id, created: true, adopted: false };
+            }
+
+            const ev = context.eventName;
+            if (ev === 'push') {
+              const branch = context.ref.replace('refs/heads/', '');
+              if (branch === 'main' || branch.startsWith('dependabot/')) return;
+              const key = `${repo}:${branch}`;
+              const commits = context.payload.commits || [];
+              const hc = context.payload.head_commit;
+              const sender = (context.payload.sender && context.payload.sender.login)
+                || (context.payload.pusher && context.payload.pusher.name) || '';
+              const title = (hc && hc.message) ? hc.message.split('\n')[0] : branch;
+              const refs = tskRefs([branch, ...commits.map((c) => c.message), hc && hc.message]);
+              const header = [
+                para(`🔀 Branch \`${branch}\` on ${owner}/${repo}${sender ? ' · pushed by ' + sender : ''}`),
+                bookmark(`https://github.com/${owner}/${repo}/tree/${branch}`),
+              ];
+              const { id, adopted } = await resolveCard({ key, refs, title, children: header });
+              // An adopted hand card had no branch link yet — give it one and move it to Doing.
+              if (id && adopted) { await setStatus(id, 'Doing'); await appendChildren(id, header); }
+              // Append THIS push's commits as a clickable history entry — accumulates across pushes.
+              if (id && commits.length) {
+                const blocks = [h3(`Pushed ${commits.length} commit${commits.length === 1 ? '' : 's'}`)];
+                for (const c of commits.slice(0, 20)) {
+                  blocks.push(commitItem(
+                    (c.id || '').slice(0, 7),
+                    (c.message || '').split('\n')[0],
+                    `https://github.com/${owner}/${repo}/commit/${c.id}`));
+                }
+                await appendChildren(id, blocks);
+              }
+            } else if (ev === 'pull_request') {
+              const pr = context.payload.pull_request;
+              const action = context.payload.action;
+              const key = `${repo}:${pr.head.ref}`;
+              const refs = tskRefs([pr.head.ref, pr.title, pr.body]);
+              if (action === 'closed' && pr.merged) {
+                const id = await findByKey(key);
+                if (id) {
+                  await setStatus(id, 'Done');
+                  const n = pr.commits || 0;
+                  await appendChildren(id, [
+                    h3(`✅ Merged PR #${pr.number}${n ? ` · ${n} commit${n === 1 ? '' : 's'}` : ''}`),
+                    bookmark(`${pr.html_url}/commits`),
+                  ]);
+                }
+                // Also close any OTHER hand-captured TSK-<n> the PR references (multi-task PRs).
+                for (const num of refs) {
+                  const tid = await findByTaskId(num);
+                  if (tid && tid !== id) {
+                    await setStatus(tid, 'Done');
+                    await appendChildren(tid, [
+                      para(`✅ Closed by merged PR #${pr.number} — ${owner}/${repo}`),
+                      bookmark(pr.html_url),
+                    ]);
+                  }
+                }
+                return;
+              }
+              if (['opened', 'reopened', 'ready_for_review'].includes(action)) {
+                const createChildren = [
+                  para(`🔀 PR #${pr.number}: ${pr.title}`),
+                  para(`\`${pr.head.ref}\` → \`${pr.base.ref}\`${pr.user ? ' · by ' + pr.user.login : ''}`),
+                ];
+                if (pr.body) { createChildren.push(h3('Description')); createChildren.push(...mdBlocks(pr.body)); }
+                createChildren.push(bookmark(pr.html_url));
+                const { id, created, adopted } = await resolveCard({ key, refs, title: pr.title, children: createChildren });
+                if (!id) return;
+                if (!created) await setStatus(id, 'Doing');
+                // For an adopted hand card, or a card the push handler created first, add the PR
+                // description once (a freshly-created card already has it in its children).
+                if (adopted || (!created && action === 'opened')) {
+                  const prDesc = [para(`🔀 PR #${pr.number}: ${pr.title}${pr.user ? ' · by ' + pr.user.login : ''}`)];
+                  if (pr.body) { prDesc.push(h3('PR description')); prDesc.push(...mdBlocks(pr.body)); }
+                  prDesc.push(bookmark(pr.html_url));
+                  await appendChildren(id, prDesc);
+                }
+              }
+            } else if (ev === 'issues') {
+              const issue = context.payload.issue;
+              const action = context.payload.action;
+              const key = `${repo}:issue:${issue.number}`;
+              const id = await findByKey(key);
+              if (action === 'closed') {
+                if (id) await setStatus(id, 'Done');
+              } else if (id) {
+                if (action === 'reopened') await setStatus(id, 'To Do');
+              } else {
+                const labels = (issue.labels || []).map((l) => l.name).filter(Boolean).join(', ');
+                const children = [para(`🐛 Issue #${issue.number}: ${issue.title}${issue.user ? ' · by ' + issue.user.login : ''}`)];
+                if (issue.body) { children.push(h3('Details')); children.push(...mdBlocks(issue.body)); }
+                if (labels) children.push(para(`Labels: ${labels}`));
+                children.push(bookmark(issue.html_url));
+                await createTask({ key, title: `#${issue.number} ${issue.title}`, status: 'To Do', children });
+              }
+            }

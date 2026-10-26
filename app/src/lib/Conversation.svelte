@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getContext, onDestroy, setContext, untrack } from 'svelte';
+  import { onDestroy, setContext, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { pageCall } from './host/pageCall';
@@ -24,25 +24,17 @@
   } from './rows/store';
   import { shouldLoadOlder, viewUncovered } from './thread/scroll';
   import { checkoutLine, turnLine } from './thread/turns';
-  import { markdownOf, turnFolds, type Fold } from './thread/fold';
+  import { markdownOf, turnFolds } from './thread/fold';
+  import { endAt as endsReply, inReply, LOADING, timelineEntries, type Entry } from './thread/entries';
   import { splitAttachments } from './composer/attachments';
   import type { SoakChat } from './soak';
   import Message from './chat/Message.svelte';
   import { senderLabel } from './chat/sender';
-  import Text from './chat/Text.svelte';
-  import SentText from './composer/SentText.svelte';
-  import Thinking from './chat/Thinking.svelte';
-  import Tool from './chat/Tool.svelte';
-  import Fallback from './chat/Fallback.svelte';
-  import Compaction from './chat/Compaction.svelte';
   import Plan from './chat/tools/Plan.svelte';
-  import { ASK_ANSWER, TASK_STOP, THREAD_OPEN, TOOL_DETAIL } from './chat/tools/tool';
-  import Ask from './chat/Ask.svelte';
-  import Task from './chat/Task.svelte';
-  import Subagent from './chat/Subagent.svelte';
+  import { ASK_ANSWER, TASK_STOP, TOOL_DETAIL } from './chat/tools/tool';
   import TurnFold from './chat/TurnFold.svelte';
-  import MessageMeta from './chat/MessageMeta.svelte';
-  import { errorNotice } from './chat/notices';
+  import SessionHeader from './thread/SessionHeader.svelte';
+  import TimelineItem from './thread/TimelineItem.svelte';
   import Composer from './composer/Composer.svelte';
   import { ATTACHMENT_FETCH } from './composer/attachments';
 
@@ -63,12 +55,6 @@
   // ?layout=transform places rows with translateY instead of top; ?contain=1 contains each row and the list.
   const shift = bisect.get('layout') === 'transform';
   const contain = bisect.get('contain') === '1';
-  const words = (x: unknown): string =>
-    typeof x !== 'object' || !x
-      ? ''
-      : Array.isArray(x)
-        ? x.map(words).join(' ')
-        : Object.entries(x).map(([k, v]) => (k === 'value' && typeof v === 'string' ? v : k === 'lines' ? '' : words(v))).join(' ');
 
   // Everything this conversation starts is owned here and ends in onDestroy:
   // the live socket and every fetch and timer, through `owner.signal`.
@@ -82,8 +68,6 @@
   setContext(TOOL_DETAIL, (itemId: string) => toolDetail(token, threadId, itemId, owner.signal));
   setContext(ASK_ANSWER, (askId: string, answer: Record<string, unknown>) => answerAsk(token, threadId, askId, answer, owner.signal));
   setContext(TASK_STOP, (taskId: string) => stopTask(token, threadId, taskId, owner.signal));
-  // A subagent's thread is opened from its row; it links back to its parent.
-  const openThread = getContext<(threadId: string) => void>(THREAD_OPEN);
   // Replies and the header name the thread's agent, from its machine's list, or this Mac's when that one
   // doesn't answer (both name the agents alike); its id until one does.
   let speaker = $state(agent);
@@ -249,10 +233,6 @@
     }
   }
 
-  // A reply's pieces sit under one agent-name label; the reply ends before the
-  // next prompt or turn line.
-  const inReply = (item: Item | undefined) => !!item && item.kind !== 'user' && item.kind !== 'stats';
-
   // The streaming message shows its text at a steady pace (rows/reveal.ts):
   // `reveal.shown` of its characters. The frame loop runs only while it is
   // behind, and stops for good on close.
@@ -294,40 +274,15 @@
   // An older page loading (loadOlder below). Declared above `entries`, which
   // the `$effect.pre` below reads while the component is still starting.
   let loadingOlder = $state(false);
-  // The virtual rows: the loading line, the items, the working line. A
-  // cancelled run's error row that draws nothing is left out, so the rows
-  // around it meet as they did in the flowing list.
-  const LOADING = 'line:loading';
-  const WORKING = 'line:working';
-  // `at`: the item's index, or -1 for a line. A fold's heading row has its turn's
-  // fold and the index of the first item it hides; `end` when, closed, it ends the reply.
-  type Entry = { key: string; at: number; fold?: Fold; end?: boolean };
-  const endAt = (i: number) => inReply(view.items[i]) && !inReply(view.items[i + 1]);
+  // The virtual rows (thread/entries.ts).
+  const endAt = (i: number) => endsReply(view.items, i);
   // A finished turn folds its work under a heading above its reply (thread/fold.ts).
   const folds = $derived(turnFolds(view.items, view.stats, activeRun));
-  const foldKey = (runId: string) => `fold:${runId}`;
   // The folds the reader opened. A turn folds by itself when it finishes: running turns have no fold.
   const openFolds = new SvelteSet<string>();
   // The first item under each heading, which leaves the reply's label to the heading.
   const headed = $derived(new Set([...folds.values()].map((f) => view.items.find((i) => f.work.has(i.key))?.key)));
-  const entries = $derived.by(() => {
-    const list: Entry[] = loadingOlder ? [{ key: LOADING, at: -1 }] : [];
-    const heads = new Map<string, Entry>();
-    view.items.forEach((item, at) => {
-      const fold = item.runId ? folds.get(item.runId) : undefined;
-      if (fold?.work.has(item.key)) {
-        let head = heads.get(fold.runId);
-        if (!head) list.push((head = { key: foldKey(fold.runId), at, fold })), heads.set(fold.runId, head);
-        if (!openFolds.has(head.key)) {
-          if (endAt(at)) head.end = true;
-          return;
-        }
-      }
-      if (item.kind !== 'error' || errorNotice(item.error) || endAt(at)) list.push({ key: item.key, at });
-    });
-    if (live) list.push({ key: WORKING, at: -1 });
-    return list;
-  });
+  const entries = $derived(timelineEntries(view.items, folds, openFolds, loadingOlder, !!live));
   // Each drawn row's entry, found by the row's key: the virtualizer's rows catch
   // up with `entries` only after the `$effect.pre` below, so a row's index can
   // be stale (past the end once the working line goes).
@@ -508,13 +463,7 @@
 </script>
 
 <section class="conversation">
-  <header>
-    <div>
-      <div class="repo">{thread.repoUrl}</div>
-      <div class="meta">{speaker} · {threadId.slice(0, 8)}{#if thread.parentThreadId}{' · '}<button class="link" onclick={() => openThread(thread.parentThreadId!)}>Parent thread</button>{/if}</div>
-    </div>
-    <button class="ghost" onclick={onclose}>Close</button>
-  </header>
+  <SessionHeader {thread} {speaker} {onclose} />
 
   <div class="timeline">
     <div class="scroll" bind:this={scroller} bind:clientWidth={scrollerWidth} onscroll={onScroll}>
@@ -539,33 +488,7 @@
             {@const k = keptOf(item.key)}
             {@const meta = metaOf(item)}
             <div class="row" data-index={row.index} style:top={shift ? '0px' : `${row.start}px`} style:transform={shift ? `translateY(${row.start}px)` : null} class:contain use:measure data-message-id={item.key} class:end={endAt(at)}>
-              {#if item.kind === 'user'}
-                {@const moved = item.runId ? checkoutLine(view.stats[item.runId]) : null}
-                {#if moved}<div class="mark checkout">{moved}</div>{/if}
-                <Message role="user" sender={item.from ? { label: senders[item.from] ?? 'Another session', open: () => openThread(item.from!) } : null}>{#if plain === 'prompts'}<p>{item.text}</p>{:else}<SentText text={item.text} images={plain !== 'images'} kept={k} />{/if}</Message>
-              {:else if item.kind === 'stats'}
-                <div class="mark turn">{turnLine(item.stats, null, now)}</div>
-              {:else if item.kind === 'note'}
-                <div class="mark turn">{item.text}</div>
-              {:else if item.kind === 'compaction'}
-                <Compaction value={{ before: item.preTokens, after: item.postTokens }} />
-              {:else if item.kind === 'error'}
-                {@const card = errorNotice(item.error)}
-                {#if card}<Message role="assistant" {label} {speaker} notice={card} />{/if}
-              {:else}
-                <Message role="assistant" {label} {speaker}>
-                  {#if item.kind === 'message' && plain === 'markdown'}<p>{words(shown(item) ?? item.blocks)}</p>
-                  {:else if item.kind === 'message'}<Text blocks={shown(item) ?? item.blocks} kept={k} />
-                  {:else if item.kind === 'thinking'}<Thinking text={item.text} kept={k} />
-                  {:else if item.kind === 'tool' && plain === 'tools'}<p>{item.tool.summary}</p>
-                  {:else if item.kind === 'tool'}<Tool itemId={item.itemId} tool={item.tool} kept={k} />
-                  {:else if item.kind === 'ask'}<Ask askId={item.askId} ask={item.ask} />
-                  {:else if item.kind === 'task'}<Task taskId={item.taskId} task={item.task} />
-                  {:else if item.kind === 'subagent'}<Subagent sessionId={item.sessionId} subagent={item.subagent} />
-                  {:else}<Fallback type={item.type} />{/if}
-                </Message>
-              {/if}
-              {#if meta}<MessageMeta text={meta.text} at={meta.at} {now} align={meta.align} />{/if}
+              <TimelineItem {item} {label} kept={k} {meta} {speaker} {senders} stats={view.stats} {now} {plain} blocks={shown(item)} />
             </div>
           {/if}
         {/each}
@@ -586,28 +509,6 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
-  }
-  header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 14px 28px;
-    border-bottom: 1px solid var(--line);
-  }
-  .repo {
-    font-weight: 600;
-  }
-  .meta {
-    color: var(--muted);
-    font-size: 12px;
-  }
-  .link {
-    font: inherit;
-    padding: 0;
-    border: 0;
-    background: none;
-    color: var(--accent);
-    cursor: pointer;
   }
   footer {
     max-width: 860px;
@@ -668,11 +569,6 @@
     font-size: 12px;
     margin: -10px 0 18px;
     font-variant-numeric: tabular-nums;
-  }
-  .checkout {
-    margin: 0 0 12px;
-    padding-top: 8px;
-    border-top: 1px dashed var(--line);
   }
   .error {
     color: var(--danger);

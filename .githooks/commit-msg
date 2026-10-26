@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Runs on every commit message (git config core.hooksPath .githooks; scripts/lane.sh sets it for lanes):
+# scripts/check-commit-msg.sh has the rules. CI checks each pull request's commits the same way.
+exec "$(git rev-parse --show-toplevel)/scripts/check-commit-msg.sh" "$1"

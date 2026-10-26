@@ -223,25 +223,31 @@ way the only way. Each one names what enforces it.
     - **"Things that do real damage":** kept. The data folder paths become this repo's two (from "Safety"), and
       `fourScenarios.ts start --seed` and `docs/operations/four-scenario-check.md` become `scripts/check4.sh` and its
       README.
-    - **"Providers behave the same":** kept. The provider folder becomes `Assembly.Infrastructure/Acp/Providers/`.
-      Two lines go, because neither exists here: the pre-commit count of provider-name branches, and
-      `provider-updates.yml`.
+    - **"Providers behave the same":** kept. The provider folder is `Assembly.Application/Common/Acp/V1/`, and
+      `scripts/lint.d/30-provider-branches.sh` fails on code outside it that branches on a provider's name (the old
+      pre-commit count, with no baseline). `provider-updates.yml` goes: it doesn't exist here.
     - **"Check every place the change reaches":** kept. `remote/wire.rs` becomes the socket protocol
       (`SocketFrames.cs`), and the `phone/` line waits for phase P4.
     - **"Testing":** kept as rules: test first, no sleeps, no tests of layout or styling, check4 for every change.
-      Dropped: the commit-msg `fix` hook, the `pnpm` and `cargo` commands, `assembly-native-ui`, and
-      `evidence add --task TSK`. This repo's own "Checking a feature" section says how to prove a change.
+      The commit-msg hook comes over (`.githooks/commit-msg`, `scripts/check-commit-msg.sh`): a `fix` commit changes
+      a test or says `No-test: <reason>`. The `pnpm` and `cargo` commands run in CI (`.github/workflows/ci.yml`).
+      Dropped: `assembly-native-ui` and `evidence add --task TSK`. This repo's own "Checking a feature" section says
+      how to prove a change.
     - **"Review guidelines":** kept unchanged.
     - **"Reaching Jesse":** rewritten. The Build Board and `board_update` don't exist here yet (the Build Board is
       rebuilt in phase P3), so a question or a
       blocker goes to the project thread, with enough context to answer without reading the chat. The task waits,
       and other work goes on.
+    - **Commits, CI and Notion:** the commit-message rules (`Committed-by:`, no co-author line, the `Task:` line on
+      a `tsk-<id>` branch, and `Architecture: unchanged` or a change to `docs/architecture.md`, this repo's
+      architecture guide) are checked by the hook and, for each pull request's own commits, by CI. No source file is
+      over 600 lines, with no baseline (`scripts/lint.d/20-file-size.sh`); Jesse's 300-line question is still open.
+      `notion-tasks.yml` and the `work-tasks` skill come over, reading the project's Notion page from the
+      repository variable `NOTION_PROJECT_ID`.
 17. **Dropped from mac-command-bar,** because they describe the Rust app or tools this repo doesn't have:
     - the Rust folder map;
-    - the 600-line baseline file (the size rule waits for Jesse's 300-line decision);
-    - the `Architecture:` commit line and `main-architecture-explained.html`, which come back when that page is
-      written for this repo;
-    - the Notion task rules and `tsk-<id>` branch names;
+    - the 600-line baseline file: the files over the limit were split instead;
+    - `main-architecture-explained.html`: `docs/architecture.md` is this repo's guide;
     - "The build board" section: the old Rust board's reporting rules;
     - "The workbox" section's mac-command-bar worktree path. This repo's "Lanes" section already says where lanes
       live.
@@ -908,6 +914,33 @@ Done in PR #3, merged as `0ea4c59`: the plain-SQL contracts with `AppDatabase` a
 
 - `scripts/check-evidence.sh` still lists `dotnet/Assembly.Engine` as code and not Domain, Application or
   Infrastructure, so commits there skip the four-way check. The guard PR (`lane/base-guards`) fixes it.
+
+### B2d. Rename thread to session (right after the checks PR, before B3)
+
+Jesse, 2026-10-26 22:55. Assembly's chats are sessions, the ACP word; after this step nothing about them is named
+"thread". Names only, no behaviour change. A grep on 2026-10-26 (lane/base-checks) found it in about 21
+files in `app/src`, 10 in `app/test`, 103 in `dotnet`, 9 in `scripts` and 4 in `docs`. All of these are renamed:
+- routes: `/threads`, `/threads/{id}` and everything under it (`rows`, `send`, `config`, `asks`, `attachments`,
+  `tasks/{task}/stop`, `tools/{item}`), and the calls to them in `scripts/check4.sh`, `scripts/features/rows.sh`,
+  `scripts/features/live-rows.ts` and their README;
+- types and members: `ThreadInfo`, `ThreadConfig`, `ThreadStore`, `ThreadPage`, `ThreadRoutes`, `ThreadId`,
+  `ParentThreadId`, `CreateThreadAsync`, `ThreadOfRun`, `ThreadOf`, `ReadThread`, `OpenThreads`,
+  `AddSubagentThread`, and the page's `Thread` type;
+- wire fields: `threadId`, `parentThreadId`, `threads`, `thread`;
+- the page's variables and functions: `thread`, `threadId`, `threads`, `openThread`, `threadPath`, `getThread`,
+  `createThread`, `listThreads`, the soak's `threadA` and `threadB`, and `THREAD_OPEN`;
+- files and folders: `Domain/Threads/`, `Features/Chat/Threads/` and its tests, `Infrastructure/Http/ThreadRoutes.cs`,
+  and `app/src/lib/thread/`;
+- SQLite: the `threads`, `thread_info`, `thread_config` and `thread_commands` tables, every `thread_id` and
+  `parent_thread_id` column, and `helper_messages.from_thread` and `to_thread`. How existing databases keep their
+  sessions through the rename is Jesse's call, made before this step changes them;
+- log lines (`thread {id}: ...` in `SessionHost`), the check4 variable `CHECK4_THREAD`, and the docs' text.
+
+Kept, because they aren't Assembly's chats: .NET's threading names (`System.Threading` and the rest), Rust's
+`std::thread`, Codex's own `threadStatus` field (`Acp/V1/CodexThreadStatus.cs` reads what Codex sends), the move
+thread (a Claude project thread that approves locked files), and the provider's own session id, which stays
+`acp_session_id` / `AcpSessionId` so it isn't confused with Assembly's session id. **Proof:** the same grep finds
+no Assembly chat named "thread".
 
 ### B3. One write path: `IAtomicWriter` and the audit
 
