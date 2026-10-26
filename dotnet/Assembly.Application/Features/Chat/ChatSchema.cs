@@ -23,7 +23,7 @@ internal static class Schema
     /// tables and columns get the session names, and the old updated_at index goes so the new one replaces it. A
     /// database that has none of the old names is left as it is.
     /// </summary>
-    public static void RenameThreads(IWriteScope scope)
+    public static void RenameOldNames(IWriteScope scope)
     {
         bool Has(string sql, params SqlArg[] args) => scope.QueryFirst(sql, row => row.Long(0), args) > 0;
         foreach (var (old, renamed) in OldTables)

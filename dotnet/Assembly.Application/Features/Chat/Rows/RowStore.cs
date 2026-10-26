@@ -32,7 +32,7 @@ public sealed class RowStore
     {
         db.Writer.Write("rows.schema", scope =>
         {
-            Schema.RenameThreads(scope);
+            Schema.RenameOldNames(scope);
             scope.Execute(Schema.Create);
             // Version 1 kept every delta: delete the finished messages' deltas it left, once. A newer version's
             // database is left as it is, version included.

@@ -30,7 +30,7 @@ public sealed class AdapterLauncherTests : IDisposable
     }
 
     [Fact]
-    public void The_old_threads_folder_becomes_the_sessions_folder_once()
+    public void The_old_checkouts_folder_moves_to_sessions_once()
     {
         File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(_work, "threads", "s1")).FullName, "a.txt"), "kept");
         var log = new StringWriter();

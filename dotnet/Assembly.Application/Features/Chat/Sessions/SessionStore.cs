@@ -61,7 +61,7 @@ public sealed class SessionStore
         db.Writer.Write("sessions.schema", scope =>
         {
             bool Missing(string sql) => scope.QueryFirst(sql, row => row.Long(0)) == 0;
-            Chat.Schema.RenameThreads(scope);
+            Chat.Schema.RenameOldNames(scope);
             scope.Execute(Schema);
             if (Missing(HasMachine))
                 scope.Execute("ALTER TABLE session_info ADD COLUMN machine TEXT;");
