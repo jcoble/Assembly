@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Assembly.Engine.Database;
 using Assembly.Engine.Markdown;
-using Assembly.Engine.Persistence;
 using Assembly.Engine.Rows;
 using Assembly.Engine.Rows.Payloads;
 
@@ -29,7 +28,7 @@ public sealed class RowStore
         _writer = writer;
     }
 
-    public static RowStore Open(AppDatabase db)
+    public static RowStore Open(IAppDatabase db)
     {
         db.Writer.Write("rows.schema", scope =>
         {

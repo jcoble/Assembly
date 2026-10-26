@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Engine.Acp.JsonRpc;
+using Assembly.Engine.Agents;
 using Assembly.Engine.Threads;
 
 namespace Assembly.Engine.Sessions;
@@ -15,7 +16,7 @@ internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, s
 /// (a model's effort levels can depend on the model). The session holds its place on the adapter until
 /// <see cref="SharedAdapter.ReleaseAsync"/>. <paramref name="mcpServers"/> gives a thread's session the MCP servers it joins.
 /// </summary>
-public sealed class SessionOpener(ThreadStore threads, Agents.IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
+public sealed class SessionOpener(ThreadStore threads, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
     Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
 {
     /// <summary>The longest title a first message gives a new session.</summary>

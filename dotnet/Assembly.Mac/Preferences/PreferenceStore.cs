@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Assembly.Engine.Persistence;
 using Assembly.Engine.Database;
 
 namespace Assembly.Mac.Preferences;
@@ -7,9 +6,9 @@ namespace Assembly.Mac.Preferences;
 /// <summary>The app's preferences, in the host's SQLite file: reads through the database, saves through its one writer.</summary>
 internal sealed class PreferenceStore
 {
-    private readonly AppDatabase _db;
+    private readonly IAppDatabase _db;
 
-    public PreferenceStore(AppDatabase db)
+    public PreferenceStore(IAppDatabase db)
     {
         _db = db;
         _db.Writer.Write("preferences.schema", scope => scope.Execute(PreferencesSchema.Create));

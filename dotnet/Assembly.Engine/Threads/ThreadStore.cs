@@ -1,5 +1,4 @@
 using Assembly.Engine.Database;
-using Assembly.Engine.Persistence;
 
 namespace Assembly.Engine.Threads;
 
@@ -56,7 +55,7 @@ public sealed class ThreadStore
         _time = time;
     }
 
-    public static ThreadStore Open(AppDatabase db, TimeProvider time)
+    public static ThreadStore Open(IAppDatabase db, TimeProvider time)
     {
         db.Writer.Write("threads.schema", scope =>
         {

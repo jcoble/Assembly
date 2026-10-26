@@ -10,16 +10,17 @@ namespace Assembly.Engine.Persistence;
 /// </summary>
 public sealed class AppDatabase : IAppDatabase, IDisposable
 {
+    private readonly AtomicWriter _writer;
     private readonly string _reads;
 
     private AppDatabase(string path)
     {
         // The writer opens first: it makes the file and turns WAL on, which read-only connections can't.
-        Writer = new AtomicWriter(path);
+        _writer = new AtomicWriter(path);
         _reads = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = true }.ToString();
     }
 
-    public AtomicWriter Writer { get; }
+    public IAtomicWriter Writer => _writer;
 
     public static AppDatabase Open(string path) => new(path);
 
@@ -35,7 +36,7 @@ public sealed class AppDatabase : IAppDatabase, IDisposable
 
     public void Dispose()
     {
-        Writer.Dispose();
+        _writer.Dispose();
         using var db = new SqliteConnection(_reads);
         SqliteConnection.ClearPool(db);
     }

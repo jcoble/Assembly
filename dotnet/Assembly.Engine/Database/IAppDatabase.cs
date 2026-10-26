@@ -6,6 +6,9 @@ namespace Assembly.Engine.Database;
 /// </summary>
 public interface IAppDatabase
 {
+    /// <summary>The file's one writer: every write to it goes through this.</summary>
+    IAtomicWriter Writer { get; }
+
     List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
 
     /// <summary>The first row mapped, or default when there's none.</summary>
