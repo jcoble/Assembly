@@ -92,8 +92,8 @@ public sealed class RowStoreTests : IDisposable
         db.Open();
         using var command = db.CreateCommand();
         command.CommandText = $$"""
-            INSERT INTO rows(thread_id, seq, run_id, item_id, kind, payload, created_at) VALUES ('a', 3, 'run-1', 'm', 'message', '{"blocks":[]}', 1);
-            UPDATE threads SET next_seq = 4 WHERE thread_id = 'a';
+            INSERT INTO rows(session_id, seq, run_id, item_id, kind, payload, created_at) VALUES ('a', 3, 'run-1', 'm', 'message', '{"blocks":[]}', 1);
+            UPDATE sessions SET next_seq = 4 WHERE session_id = 'a';
             PRAGMA user_version = {{version}};
             """;
         command.ExecuteNonQuery();

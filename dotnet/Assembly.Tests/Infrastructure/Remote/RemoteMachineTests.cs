@@ -284,7 +284,7 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         using var db = new SqliteConnection($"Data Source={database};Pooling=False");
         db.Open();
         using var command = db.CreateCommand();
-        command.CommandText = "INSERT INTO helper_messages(message_id, from_thread, to_thread, text, created_at) VALUES ($id, $from, $to, $text, $at);";
+        command.CommandText = "INSERT INTO helper_messages(message_id, from_session, to_session, text, created_at) VALUES ($id, $from, $to, $text, $at);";
         command.Parameters.AddWithValue("$id", messageId);
         command.Parameters.AddWithValue("$from", from);
         command.Parameters.AddWithValue("$to", to);
