@@ -94,7 +94,8 @@ Whichever Jesse picks, the soak's waits (section 7, row 4) leave the page.
 or grow a second app, so under A it gets these safeguards:
 
 - The guard scans `app/measure/` too, and allows only timers and frame callbacks there. `fetch`, Tauri imports,
-  `WebSocket` outside `socket.ts`, and `.then`/`.catch`/`.finally` fail there as they do everywhere, so it can't
+  `WebSocket` outside `socket.ts` (from C1's last commit, 9.1), and `.then`/`.catch`/`.finally` fail there as they do
+  everywhere, so it can't
   become a second app.
 - The guard fails if anything in `app/src` imports from `app/measure`.
 - The normal build must not include it. Only `shell/assembly.sh start --counters` injects it, and a check on the
@@ -251,7 +252,7 @@ Jesse's decision (D3): the core of the app follows the article's layers, everyth
 one folder each, there's no repository, and the SQL is plain.
 
 **Where a new feature's files go.** Its backend code goes in `dotnet/Assembly.Application/Features/<Feature>/`, its
-tests in `dotnet/Assembly.Tests/Features/<Feature>/`, and its page code in `app/src/lib/<feature>/`. When it needs an
+tests in `dotnet/Assembly.Tests/Features/<Feature>/` (in `Draft/` while its behavior list is a draft), and its page code in `app/src/lib/<feature>/`. When it needs an
 outside system (git, a terminal, files on disk), the contract stays in its feature folder and the implementation goes
 in `dotnet/Assembly.Infrastructure/<Feature>/`, with the same name. Only plumbing that several features share goes in
 the layers. No folder holds more than 30 files (section 12), so a feature that grows gets subfolders, and no folder
@@ -281,7 +282,7 @@ dotnet/
       Diagnostics/               step B8
     DependencyInjection.cs       AddApplication(), AddMachineFeatures(), AddMacFeatures()
   Assembly.Infrastructure/       references Application
-    Persistence/                 AppDatabase, AtomicWriter and the audit, the schema runner
+    Persistence/                 AppDatabase, AtomicWriter and the audit
     Socket/                      SocketEndpoint, SocketConnection, SocketDispatcher
     Topics/  Clock/  Agents/  Machines/  Remote/  Transcript/  Mcp/
     Http/                        today's HTTP routes, FeatureCalls and the feature lists, until B7, B8, C1 and
@@ -413,7 +414,8 @@ public interface ICallRegistry
 1. Find the handler. If there isn't one, answer `not_found`.
 2. Read `args` with the handler's `JsonTypeInfo`. If that fails, answer `bad_args`.
 3. Start a logger scope (`feature/method`, the call id, the connection) and log the call at Debug.
-4. Make the token, linked from the connection's token, the call's `cancel` frame, and the 30-second limit.
+4. Make the token, linked from the call's `cancel` frame, the 30-second limit and, for a `Read` only, the
+   connection's token, so a socket closing never cancels a queued write (5.9).
 5. For `Write` and `Save`, put the call on the connection's write queue, which runs one at a time in arrival order:
    a `Write`'s async part, then its database part inside `IAtomicWriter.Write`; a `Save` inside `IAtomicWriter.Write`
    (5.6, 5.9). So each call makes exactly one write. For `Read`, call it directly, concurrently.
@@ -433,7 +435,7 @@ internal sealed class PreferencesFeature(IAppDatabase db) : IFeature
 
     public void Register(ICallRegistry calls)
     {
-        calls.Topic("preferences", PreferencesJson.Default.ListPreference,
+        calls.Topic("preferences", PreferencesJson.Default.Preference,
             (_, call) => Task.FromResult<IReadOnlyList<Preference>>(db.Query(All, Preference.Read, call.Cancellation)));
         calls.Save("preferences", PreferencesJson.Default.JsonElement, (key, value, scope) =>
         {
@@ -920,7 +922,7 @@ Done in PR #3, merged as `0ea4c59`: the plain-SQL contracts with `AppDatabase` a
      29-day ones after the writer opens.
   7. Long-running prune: with no restart, advancing fake time 31 days and then writing deletes the expired rows. A
      second write the same day doesn't prune again.
-  8. The triggering write comes first: with the test subscribed to the write's topic and a hook on the prune's
+  8. The triggering write comes first: with the fake publish target from test 2 and a hook on the prune's
      transaction, the write's commit and its publish both happen before the prune's transaction begins, and the
      prune is a separate transaction (a failure injected into the prune leaves the triggering write committed).
   9. A backlog over the cap clears over the following writes: with 12,000 expired rows, the first write's prune
@@ -1019,11 +1021,10 @@ Each is reviewed on its own.
 
 - **Files:**
   - One folder, `Application/Features/Preferences/`: `PreferencesFeature.cs` (its calls, topic and SQL, 5.2),
-    `Preference.cs` (the record and its row reader), `PreferencesSchema.cs`, `PreferencesJson.cs`, and `README.md`
-    (moved from `Assembly.Mac/Preferences/README.md`, which isn't locked). Nothing for preferences in Domain or
-    Infrastructure.
+    `Preference.cs` (the record and its row reader), `PreferencesJson.cs`; `PreferencesSchema.cs` and `README.md`
+    are already there and stay. Nothing for preferences in Domain or Infrastructure.
   - Page: `app/src/lib/preferences/preferences.svelte.ts` (subscribe and save), and its `README.md`.
-- **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Engine/Features/FeatureCalls.cs`, `PreferencesRoutes.cs`,
+- **Deleted:** `app/src/lib/call.ts`, `dotnet/Assembly.Infrastructure/Http/FeatureCalls.cs`, `PreferencesRoutes.cs`,
   `PreferenceStore.cs` (no reader or writer class replaces it), the `/preferences/*` HTTP route, and `scripts/lint.d/40-routes.sh`, which isn't locked, so
   no OK is needed. From here until the end of C2 there's no route check (section 9.2).
 - **Changed:** `AGENTS.md`, which names `call.ts`, `FeatureCalls.cs` and `40-routes.sh`.
@@ -1045,13 +1046,15 @@ Each is reviewed on its own.
 ### B8. The Mac's page calls onto the socket
 
 - **Files:** one folder, `Application/Features/Diagnostics/`: `DiagnosticsFeature.cs` (memory sample, App Nap begin
-  and end, dropping the link for the debug control) and its small classes. Infrastructure gets only what calls the
+  and end, dropping the link for the debug control, the composer's thumbnail and path-upload calls, and
+  `soak.append`) and its small classes. Infrastructure gets only what calls the
   operating system, if anything does.
-- **Deleted:** `Assembly.Mac/Page/PageRoutes.cs`, `Assembly.Mac/Debug/DebugRoutes.cs`, and
+- **Deleted:** `Assembly.Infrastructure/Http/PageRoutes.cs`, `Assembly.Infrastructure/Http/DebugRoutes.cs`, and
   `app/src/lib/host/pageCall.ts`.
 - **Moved:** every caller of `pageCall.ts` moves onto the socket in this step, with `pageCall.ts` and
-  `PageRoutes.cs`: the composer's thumbnail and path-upload calls (`Composer.svelte:158,161,201`), and `soak.ts`'s
-  `soak.append` and `memory.sample`. Nothing is deleted while something still calls it.
+  `PageRoutes.cs`: the composer's thumbnail and path-upload calls (`Composer.svelte:158,161,201`), `soak.ts`'s
+  `soak.append` and `memory.sample`, `routes/+page.svelte:88` (`memory.sample`), and `Conversation.svelte:163-164`
+  (`activity.begin` and `activity.end`). Nothing is deleted while something still calls it.
 - **Failing tests first:** one per call, over the socket test helper from B4.
 - **Proof:** check4, and the App Nap and memory reading working in the window on the Mac.
 - **Size:** 150 to 250 lines.
@@ -1125,7 +1128,7 @@ group:
 ## 11. The later phases
 
 Each phase follows the base's pattern: one folder, `Application/Features/<Feature>/`, with its `<Feature>Feature.cs`,
-records, rules and SQL; its tests in `Assembly.Tests/Features/<Feature>/`; its store in `app/src/lib/<feature>/`; a check4 scenario, and the old route deleted in the same phase. Each starts by
+records, rules and SQL; its tests in `Assembly.Tests/Features/<Feature>/` (in `Draft/` while its behavior list is a draft); its store in `app/src/lib/<feature>/`; a check4 scenario, and the old route deleted in the same phase. Each starts by
 drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. Then, as from B7 on (AGENTS.md,
 "Files first, then code"), each port is two reviewed steps: every file in its place with no logic, then the old
 code brought over piece by piece. Sol's step numbers are given so his
@@ -1162,7 +1165,8 @@ catalogue stays the reference.
   - **The last commit** adds the guard's `fetch(` and `WebSocket` ban (9.1), with its self-test probes (`fetch` in
     `socket.ts` itself, a `WebSocket` outside `socket.ts`). It needs Jesse's OK line (section 9.3).
   - **check4's own calls** (`/version`, POST `/threads`, send, rows, `GET /threads/{id}`; `scripts/check4.sh:71-134`)
-    go over the socket in the step that removes those routes: the local case's in C1, the Workbox Test case's in C2.
+    go over the socket in the step that removes those routes: the calls to the local backend in C1, and the two to
+    the Workbox Test host (`/version`, `GET /threads/{id}`) in C2.
     Proof: check4 on that step's head, before and after.
   - **Tests:**
     - base#8: a thread made while the page is subscribed arrives as an upsert;
@@ -1189,7 +1193,7 @@ catalogue stays the reference.
     - a relayed upsert for an unknown remote thread shows in the list;
     - a disconnect marks the machine offline;
     - a reconnect catches up without duplicates.
-  - **Proof:** check4 on Workbox Test.
+  - **Proof:** check4 on Workbox Test, before and after on this step's head.
 - **C3. MCP servers** (Sol P09).
   - It starts by finding out why the old app didn't have the MCP problem (Jesse's comment), and changes nothing until
     that's answered.
