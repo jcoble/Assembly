@@ -36,6 +36,7 @@ public static class ServeRun
         var sessionStore = SessionStore.Open(db, TimeProvider.System);
         using var hub = new LiveHub(store);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
+        AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
         await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out);
         var attachments = new AttachmentStore(options.Attachments);

@@ -11,6 +11,25 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
 {
     public IReadOnlyList<AgentDescriptor> Agents => agents;
 
+    /// <summary>
+    /// Checkouts were in <c>home/threads</c> until sessions were renamed: moves that folder to <paramref name="checkouts"/>
+    /// when only the old one exists. When both do, both are left as they are and the log says so.
+    /// </summary>
+    public static void MoveOldCheckouts(string home, string checkouts, TextWriter log)
+    {
+        var old = Path.Combine(home, "threads");
+        if (!Directory.Exists(old))
+            return;
+        if (Directory.Exists(checkouts))
+        {
+            log.WriteLine($"checkouts: both {old} and {checkouts} exist; left both as they are");
+            return;
+        }
+
+        Directory.Move(old, checkouts);
+        log.WriteLine($"checkouts: moved {old} to {checkouts}");
+    }
+
     public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
     {
         // A helper works in its parent's folder, as an agent's own subagents do.

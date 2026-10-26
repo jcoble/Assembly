@@ -16,7 +16,7 @@ public sealed record ServeOptions(int Port, string Home, string TokenFile, strin
 
     public string Database => Path.Combine(Home, "assembly.db");
 
-    public string Checkouts => Path.Combine(Home, "threads");
+    public string Checkouts => Path.Combine(Home, "sessions");
 
     public string Attachments => Path.Combine(Home, "attachments");
 

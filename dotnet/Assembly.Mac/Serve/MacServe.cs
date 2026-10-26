@@ -19,6 +19,7 @@ public static class MacServe
         }
 
         var token = TokenFile.ReadOrCreate(options.TokenFile);
+        AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
         var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, options.RemotePort, options.RemoteTokenFile, Console.Out) : (null, null);
         await using var stopTunnel = tunnel;

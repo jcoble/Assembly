@@ -17,7 +17,7 @@ public sealed record MacOptions(int Port, string Home, string TokenFile, string 
     public const string Usage =
         "usage: Assembly.Mac serve [--port 18797] [--home ~/assembly-dotnet/mac] [--token-file ~/.config/assembly-dotnet/env] [--agents HOME/agents.json] [--remote workbox-test] [--remote-port 9797] [--remote-token-file .config/assembly-dotnet/env]";
 
-    public string Checkouts => Path.Combine(Home, "threads");
+    public string Checkouts => Path.Combine(Home, "sessions");
 
     public static MacOptions? Parse(IReadOnlyList<string> args)
     {

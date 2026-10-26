@@ -29,6 +29,34 @@ public sealed class AdapterLauncherTests : IDisposable
         Assert.True(File.Exists(Path.Combine(helperFolder, "notes.md")));
     }
 
+    [Fact]
+    public void The_old_threads_folder_becomes_the_sessions_folder_once()
+    {
+        File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(_work, "threads", "s1")).FullName, "a.txt"), "kept");
+        var log = new StringWriter();
+
+        AdapterLauncher.MoveOldCheckouts(_work, Path.Combine(_work, "sessions"), log);
+        AdapterLauncher.MoveOldCheckouts(_work, Path.Combine(_work, "sessions"), log);
+
+        Assert.Equal("kept", File.ReadAllText(Path.Combine(_work, "sessions", "s1", "a.txt")));
+        Assert.False(Directory.Exists(Path.Combine(_work, "threads")));
+        Assert.Single(log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    [Fact]
+    public void When_both_folders_exist_both_are_left_as_they_are()
+    {
+        Directory.CreateDirectory(Path.Combine(_work, "threads", "old"));
+        Directory.CreateDirectory(Path.Combine(_work, "sessions", "new"));
+        var log = new StringWriter();
+
+        AdapterLauncher.MoveOldCheckouts(_work, Path.Combine(_work, "sessions"), log);
+
+        Assert.True(Directory.Exists(Path.Combine(_work, "threads", "old")));
+        Assert.False(Directory.Exists(Path.Combine(_work, "sessions", "old")));
+        Assert.Contains("both", log.ToString());
+    }
+
     private static void Git(string folder, params string[] arguments)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = folder, UseShellExecute = false };
