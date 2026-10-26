@@ -39,6 +39,8 @@ expect 1 "a Task line for another task stops it" tsk-42-thing $'Subject\n\nTask:
 expect 1 "a fix with no test change stops it" work $'fix(chat): rows keep order\n\nCommitted-by: Claude' app/src/x.ts
 expect 0 "a fix that changes a .NET test passes" work $'fix(chat): rows keep order\n\nCommitted-by: Claude' dotnet/Assembly.Tests/X.cs
 expect 0 "a fix that changes an app test passes" work $'Fix rows\n\nCommitted-by: Claude' app/test/x.test.ts
+expect 0 "a fix that changes only a script test passes" work $'fix: guard\n\nCommitted-by: Claude' scripts/x.test.sh
+expect 1 "a fix that changes only a script that isn't a test stops it" work $'fix: guard\n\nCommitted-by: Claude' scripts/x.sh
 expect 0 "a fix with No-test passes" work $'fix: typo\n\nNo-test: a comment only\nCommitted-by: Claude' app/src/x.ts
 expect 0 "a fix that changes a test with an accented name passes" work $'fix: names\n\nCommitted-by: Claude' 'app/test/résumé.test.ts'
 expect 0 "a fix with No-test above a long body passes" work $'fix: x\n\nNo-test: r\n'"$(seq 20000)"$'\nCommitted-by: Claude' app/src/x.ts
