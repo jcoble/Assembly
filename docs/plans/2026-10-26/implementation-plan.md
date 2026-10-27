@@ -156,11 +156,15 @@ the 4 MB limit, and doesn't block other traffic.
 {session, mime, size}` checks the type and the 20 MB limit and answers `{upload}`; `chunk {upload, offset, data}`
 appends at most 1 MB at the upload's offset; `commit {upload}` checks the size and the magic bytes and saves the image
 on the session's machine through today's `SaveAttachmentAsync`, answering `{path}`; `read {session, name, offset}`
-answers up to 1 MB with the size and type. The three writes are keyed on the upload's session. Staging files live under
-the backend's home (`uploads/`, cleared at startup), bounded by the declared size, and an upload belongs to the socket
-that began it. A failed chunk or commit drops the upload with its file, and so does a socket's close, once every write
-it queued has run (the `Closed` hook). A chunk cancelled while still queued never runs, so the next chunk fails on its
-offset and drops the upload; the window starts a new one. `POST` and `GET .../attachments` stay until the cut.
+answers up to 1 MB with the size and type; `drop {upload}` lets go of an upload the window gave up on with no call in
+flight, and answers ok for one it doesn't know or already dropped. The four writes are keyed on the upload's session,
+so a drop runs after the chunks sent before it. Staging files live in `<home>/staging/attachments`, bounded by the
+declared size; a start deletes only the files there named by a Guid, as begin names them, never the folder or anything
+else in it. An upload belongs to the socket that began it, and a socket has at most 8 open, so a ninth `begin` fails
+until one commits or drops. A failed chunk or commit drops the upload with its file, and so does a socket's close, once
+every write it queued has run (the `Closed` hook). A chunk or commit cancelled or out of time never runs its handler, but
+drops its upload in its own turn, after the writes ahead of it, through the `cancelled` callback a write can name.
+`POST` and `GET .../attachments` stay until the cut.
 
 ## 2. Where Jesse's comments went
 

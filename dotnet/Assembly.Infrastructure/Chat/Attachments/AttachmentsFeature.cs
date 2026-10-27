@@ -13,8 +13,9 @@ namespace Assembly.Infrastructure.Chat.Attachments;
 /// <c>attachments/chunk</c> appends up to <see cref="ChunkBytes"/> at its offset to the upload's staging file, and
 /// <c>attachments/commit</c> checks the bytes and saves them where the session's agent runs, answering the path there.
 /// <c>attachments/read</c> reads this machine's copy back for the preview, a piece at a time. Staging files live under the
-/// backend's home, one per upload, never past the size begin declared; a failed chunk or commit, or the socket closing
-/// once its writes have run, drops the upload and its file.
+/// backend's home, one per upload, never past the size begin declared, and a socket has at most <see cref="MaxOpen"/>
+/// open. <c>attachments/drop</c>, a failed or cancelled chunk or commit, or the socket closing once its writes have run,
+/// drops the upload and its file.
 /// </summary>
 internal sealed class AttachmentsFeature : IFeature
 {
@@ -22,6 +23,9 @@ internal sealed class AttachmentsFeature : IFeature
 
     /// <summary>The most bytes a chunk carries, or a read answers.</summary>
     public const int ChunkBytes = 1024 * 1024;
+
+    /// <summary>The most uploads one socket has open at once.</summary>
+    public const int MaxOpen = 8;
 
     private readonly SessionStore _sessions;
     private readonly MachineSet _machines;
@@ -37,12 +41,14 @@ internal sealed class AttachmentsFeature : IFeature
         _machines = machines;
         _store = store;
         _staging = staging;
-        // What a backend that stopped mid-upload left.
+        // What a backend that stopped mid-upload left: only files begin names, so a home pointed at a real folder loses
+        // nothing else.
         if (Directory.Exists(staging))
-            Directory.Delete(staging, recursive: true);
+            foreach (var file in Directory.GetFiles(staging).Where(file => Guid.TryParse(System.IO.Path.GetFileName(file), out _)))
+                File.Delete(file);
     }
 
-    // begin, chunk and commit are writes keyed on the upload's session, so they run in order, apart from a machine that
+    // begin, chunk, commit and drop are writes keyed on the upload's session, so they run in order, apart from a machine that
     // hangs elsewhere, and a closing socket doesn't cancel one it queued.
     public void Register(ICallRegistry calls)
     {
@@ -55,9 +61,21 @@ internal sealed class AttachmentsFeature : IFeature
             Directory.CreateDirectory(_staging);
             var id = Guid.NewGuid().ToString();
             var path = Path.Combine(_staging, id);
-            File.Create(path).Dispose();
             lock (_gate)
+            {
+                if (_uploads.Values.Count(upload => upload.Connection == call.Connection) >= MaxOpen)
+                    throw new CallFailed($"at most {MaxOpen} uploads are open at once; commit or drop one");
                 _uploads[id] = new Upload(call.Connection, session, type, args.Size, path);
+            }
+            try
+            {
+                File.Create(path).Dispose();
+            }
+            catch
+            {
+                DropIfOpen(id, call.Connection);
+                throw;
+            }
             return Task.FromResult<Func<IWriteScope, Begun>>(_ => new Begun(id));
         }, args => SendFeature.OrderOf(args.Session));
         calls.Write(Feature, "chunk", AttachmentsJson.Default.ChunkArgs, AttachmentsJson.Default.Received, async (args, call) =>
@@ -82,7 +100,7 @@ internal sealed class AttachmentsFeature : IFeature
             }
             var written = upload.Written;
             return _ => new Received(written);
-        }, args => OrderOf(args.Upload));
+        }, args => OrderOf(args.Upload), (args, call) => DropIfOpen(args.Upload, call.Connection));
         calls.Write(Feature, "commit", AttachmentsJson.Default.CommitArgs, AttachmentsJson.Default.Saved, async (args, call) =>
         {
             var upload = Find(args.Upload, call.Connection);
@@ -100,6 +118,12 @@ internal sealed class AttachmentsFeature : IFeature
             {
                 Drop(upload);
             }
+        }, args => OrderOf(args.Upload), (args, call) => DropIfOpen(args.Upload, call.Connection));
+        // For an upload the window gave up on with no call in flight. An unknown or dropped upload is fine.
+        calls.Write(Feature, "drop", AttachmentsJson.Default.DropArgs, AttachmentsJson.Default.Dropped, (args, call) =>
+        {
+            DropIfOpen(args.Upload, call.Connection);
+            return Task.FromResult<Func<IWriteScope, Dropped>>(_ => new Dropped(true));
         }, args => OrderOf(args.Upload));
         calls.Read(Feature, "read", AttachmentsJson.Default.ReadArgs, AttachmentsJson.Default.Piece, async (args, call) =>
         {
@@ -131,6 +155,15 @@ internal sealed class AttachmentsFeature : IFeature
     {
         lock (_gate)
             return _uploads.TryGetValue(id, out var upload) && upload.Connection == connection ? upload : throw new CallFailed("unknown upload");
+    }
+
+    private void DropIfOpen(string id, string connection)
+    {
+        Upload? upload;
+        lock (_gate)
+            upload = _uploads.GetValueOrDefault(id);
+        if (upload?.Connection == connection)
+            Drop(upload);
     }
 
     // An unknown upload's call has no key: it fails at once on the socket's queue.
@@ -174,6 +207,10 @@ internal sealed class AttachmentsFeature : IFeature
 
     internal sealed record Saved(string Path);
 
+    internal sealed record DropArgs([property: JsonRequired] string Upload);
+
+    internal sealed record Dropped(bool Ok);
+
     internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, long Offset = 0);
 
     internal sealed record Piece(byte[] Data, long Size, string Mime);
@@ -186,6 +223,8 @@ internal sealed class AttachmentsFeature : IFeature
 [JsonSerializable(typeof(AttachmentsFeature.Received))]
 [JsonSerializable(typeof(AttachmentsFeature.CommitArgs))]
 [JsonSerializable(typeof(AttachmentsFeature.Saved))]
+[JsonSerializable(typeof(AttachmentsFeature.DropArgs))]
+[JsonSerializable(typeof(AttachmentsFeature.Dropped))]
 [JsonSerializable(typeof(AttachmentsFeature.ReadArgs))]
 [JsonSerializable(typeof(AttachmentsFeature.Piece))]
 internal sealed partial class AttachmentsJson : JsonSerializerContext;

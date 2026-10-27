@@ -190,6 +190,9 @@ public sealed partial class ChatSocketTests
         await _here.Reached.Task.WaitAsync(Wait);
         await ChunkAsync(socket, 3, upload, 0, new byte[5]);
         await CallAsync(socket, 4, "attachments", "drop", $$"""{"upload":"{{upload}}"}""");
+        // Frames are read in order, so once this save answers, the chunk and the drop are queued.
+        await CallAsync(socket, 5, "preferences", "set", Save);
+        Assert.Equal([5], (await ReadAnswersAsync(socket, 1)).Keys);
 
         _here.Release();
         var answers = await ReadAnswersAsync(socket, 3);

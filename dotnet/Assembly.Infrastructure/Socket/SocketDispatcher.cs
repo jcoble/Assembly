@@ -37,17 +37,26 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             async (value, call) => JsonSerializer.SerializeToElement(await handler((TArgs)value, call), result)));
 
     public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null)
+        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
+        Action<TArgs, CallContext>? cancelled = null)
     {
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
         {
-            // A write cancelled or out of time while it waited in the queue never runs, and one whose outside part ran
-            // over commits nothing.
-            call.Cancellation.ThrowIfCancellationRequested();
-            var database = await handler((TArgs)value, call);
-            call.Cancellation.ThrowIfCancellationRequested();
-            return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
+            try
+            {
+                // A write cancelled or out of time while it waited in the queue never runs, and one whose outside part
+                // ran over commits nothing.
+                call.Cancellation.ThrowIfCancellationRequested();
+                var database = await handler((TArgs)value, call);
+                call.Cancellation.ThrowIfCancellationRequested();
+                return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
+            }
+            catch (OperationCanceledException) when (call.Cancellation.IsCancellationRequested && cancelled is not null)
+            {
+                cancelled((TArgs)value, call);
+                throw;
+            }
         }, order is null ? null : value => order((TArgs)value)));
     }
 
