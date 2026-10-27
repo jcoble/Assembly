@@ -39,4 +39,7 @@ internal sealed class FakeAgent
         SendAsync($"{{\"jsonrpc\":\"2.0\",\"id\":{request.GetProperty("id").GetRawText()},\"error\":{{\"code\":{code},\"message\":{JsonSerializer.Serialize(message)}}}}}");
 
     public void CloseOutput() => _toClient.Writer.Complete();
+
+    /// <summary>The client's writes to the agent fail from now on, as a write to a pipe that broke oddly would.</summary>
+    public void BreakInput() => _toAgent.Writer.Complete();
 }

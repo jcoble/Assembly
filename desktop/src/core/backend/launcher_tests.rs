@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::{BackendConfig, Launcher};
 
@@ -173,16 +173,21 @@ fn a_backend_with_no_ready_line_in_time_is_stopped() {
 }
 
 #[test]
-fn a_backend_that_ignores_sigterm_is_killed_after_the_grace_period() {
-    // `exec` keeps the ignored SIGTERM, and leaves no other process holding the backend's stdout.
-    let script =
-        "trap '' TERM\necho 'listening on http://127.0.0.1:18877/'\nexec tail -f /dev/null";
+fn a_backend_that_ignores_sigterm_is_killed_after_the_grace_period_with_its_strays() {
+    // A stray holding the backend's stdout, as its ssh tunnel does; `exec` keeps the ignored SIGTERM.
+    let script = "sleep 1000 &\ntrap '' TERM\necho 'listening on http://127.0.0.1:18877/'\nexec tail -f /dev/null";
     let mut config = fake("stubborn", script);
     config.stop_grace = Duration::from_millis(200);
     let (mut launcher, ready) = launch(config);
     ready.recv().unwrap();
     let pid = *launcher.pid.lock().unwrap();
+    let started = Instant::now();
     launcher.stop();
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
     // SAFETY: signal 0 only asks whether the process exists.
     assert_eq!(
         unsafe { libc::kill(pid as i32, 0) },
@@ -191,6 +196,47 @@ fn a_backend_that_ignores_sigterm_is_killed_after_the_grace_period() {
     );
     let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
     assert!(log.contains("didn't stop within 200ms of SIGTERM"), "{log}");
+}
+
+#[test]
+fn a_backend_killed_from_outside_is_started_again_though_a_stray_holds_its_output() {
+    let script =
+        format!("sleep 1000 &\necho 'listening on http://127.0.0.1:18877/'\n{WAIT_FOR_TERM}");
+    let (mut launcher, ready) = launch(fake("stray", &script));
+    ready.recv().unwrap();
+    let pid = *launcher.pid.lock().unwrap();
+    // SAFETY: kill only sends a signal to our child.
+    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+    assert_eq!(
+        ready.recv_timeout(Duration::from_secs(10)),
+        Ok(TOKEN.to_string())
+    );
+    let started = Instant::now();
+    launcher.stop();
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(read(&launcher.config, "runs"), "2\n");
+}
+
+#[test]
+fn a_fresh_home_gets_an_empty_agents_file_and_a_written_one_is_kept() {
+    let (mut launcher, _ready) = launch(fake("fresh", "exit 3"));
+    launcher.thread.take().unwrap().join().unwrap();
+    let agents = launcher.config.home.join("agents.json");
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), "[]\n");
+    let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
+    assert!(log.contains("agents-file.sh"), "{log}");
+
+    std::fs::write(&agents, "[{\"id\":\"claude\"}]").unwrap();
+    launcher.restart_if_stopped();
+    launcher.thread.take().unwrap().join().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&agents).unwrap(),
+        "[{\"id\":\"claude\"}]"
+    );
 }
 
 // Pins: g0-shape#3

@@ -52,4 +52,45 @@ public sealed partial class SocketTests
 
         Assert.True(await hooked.Task.WaitAsync(Wait));
     }
+
+    // A read still running when its socket closes is cancelled, and the socket's end waits for it: the closed hook
+    // runs only once the call has finished.
+    [Fact]
+    public async Task A_closed_socket_waits_for_its_running_calls_before_it_ends()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var hooked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finished = 0;
+        _calls.Read("notes", "wait", TestJson.Default.Note, TestJson.Default.Note, async (note, call) =>
+        {
+            started.SetResult();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, call.Cancellation);
+            }
+            catch (OperationCanceledException)
+            {
+                cancelled.SetResult();
+                await finish.Task;
+                Volatile.Write(ref finished, 1);
+                throw;
+            }
+            return note;
+        });
+        _calls.Closed(_ => hooked.TrySetResult(Volatile.Read(ref finished) == 1));
+        var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "wait", "{}");
+        await started.Task.WaitAsync(Wait);
+        socket.Abort();
+        socket.Dispose();
+        await cancelled.Task.WaitAsync(Wait);
+        // Long enough for the hook to come, if the socket's end didn't wait for the call.
+        await Task.WhenAny(hooked.Task, Task.Delay(200));
+        finish.SetResult();
+
+        Assert.True(await hooked.Task.WaitAsync(Wait));
+    }
 }

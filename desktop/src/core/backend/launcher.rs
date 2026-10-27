@@ -14,17 +14,25 @@
 //!   log says why.
 //! - On quit it sends the child SIGTERM and waits until the thread has reaped it; the backend finishes its queued
 //!   writes and bounds that wait itself (8 s, ApiServer.ShutdownTimeout). One still running after `stop_grace` (10 s)
-//!   gets SIGKILL, and the log says so. The wait is in the quit handler's body, not a quit future, which GPUI cuts off
-//!   after 200 ms.
+//!   gets SIGKILL, and the log says so. The wait is in the quit handler's body, not a quit future, which GPUI cuts
+//!   off after 200 ms.
+//! - The child leads its own process group. When it exits, by itself or killed, the rest of the group is killed, so a
+//!   stray that holds its stdout (its ssh tunnel) can't keep the thread waiting for end of file. Adapters lead groups
+//!   of their own, so they aren't hit. In its own group the backend doesn't get the terminal's Ctrl-C; it goes when
+//!   its stdin closes.
 //!
 //! - The child's stdin is a pipe held until it exits, so it sees end of file if the window dies without quitting.
 //! - Dropping the launcher stops the child the same way, so nothing outlives the window.
+//!
+//! A home with no `agents.json` gets an empty one, so a window launched straight on a fresh home still starts its
+//! backend (with no agents).
 //!
 //! It never attaches to a backend it didn't start: a backend that can't take its port or its home folder exits
 //! before it's ready, and backend.log says why. The token is never printed or logged.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
@@ -151,10 +159,10 @@ impl Launcher {
     /// other child starts after.
     fn stop(&mut self) {
         self.quitting.store(true, Ordering::SeqCst);
-        self.signal(libc::SIGTERM);
+        self.terminate();
         if let Some(done) = self.thread_done.take()
             && done.recv_timeout(self.config.stop_grace) == Err(RecvTimeoutError::Timeout)
-            && self.signal(libc::SIGKILL)
+            && self.kill()
         {
             let log = OpenOptions::new()
                 .append(true)
@@ -172,11 +180,18 @@ impl Launcher {
         }
     }
 
-    /// Sends the running child `signal`; false when none runs.
-    fn signal(&self, signal: i32) -> bool {
+    /// Sends the running child SIGTERM.
+    fn terminate(&self) {
         let pid = self.pid.lock().unwrap();
-        // SAFETY: kill only sends a signal, and the pid is our unreaped child's (see `Launcher::pid`).
-        *pid != 0 && unsafe { libc::kill(*pid as i32, signal) } == 0
+        if *pid != 0 {
+            terminate(*pid);
+        }
+    }
+
+    /// Kills the running child's process group; false when none runs.
+    fn kill(&self) -> bool {
+        let pid = self.pid.lock().unwrap();
+        *pid != 0 && kill_group(*pid)
     }
 }
 
@@ -199,6 +214,21 @@ fn run(
         eprintln!("the backend's log {} can't be opened", log_path.display());
         return;
     };
+    // The backend won't start without its agents file. shell/assembly.sh writes the real one (agents-file.sh, which
+    // needs node and pnpm); a window launched on a fresh home gets an empty list, so its backend starts with no agents.
+    let agents = config.home.join("agents.json");
+    if !agents.exists() {
+        match std::fs::write(&agents, "[]\n") {
+            Ok(()) => {
+                _ = writeln!(
+                    log,
+                    "{} was missing, so the backend starts with no agents; dotnet/scripts/agents-file.sh writes the real one",
+                    agents.display()
+                )
+            }
+            Err(error) => _ = writeln!(log, "{}: {error}", agents.display()),
+        }
+    }
     let mut quick_exits = 0;
     while !quitting.load(Ordering::SeqCst) {
         let ready_at = run_child(config, &mut log, ready, pid, quitting);
@@ -265,6 +295,7 @@ fn run_child(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(stderr)
+        .process_group(0)
         .spawn()
     {
         Ok(child) => child,
@@ -296,6 +327,11 @@ fn run_child(
                 terminate(child_id);
             }
             late
+        });
+        // Kills what's left of the group once the child exits, so the output below reaches its end.
+        scope.spawn(move || {
+            wait_for_exit(child_id);
+            kill_group(child_id);
         });
         if let Some(stdout) = child.stdout.take() {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -331,6 +367,12 @@ fn run_child(
 fn terminate(pid: u32) {
     // SAFETY: kill only sends a signal, and the pid is our unreaped child's (see `Launcher::pid`).
     unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+}
+
+/// Kills the process group the child leads; true when the group was there.
+fn kill_group(pid: u32) -> bool {
+    // SAFETY: kill only sends a signal; the group's leader is our unreaped child, so its id is still ours.
+    unsafe { libc::kill(-(pid as i32), libc::SIGKILL) == 0 }
 }
 
 /// Blocks until the child exits, without reaping it, so its pid stays ours until `Child::wait`.

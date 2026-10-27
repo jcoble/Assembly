@@ -99,6 +99,9 @@ internal sealed class FakeLink : IAgentLink
 
     public Task ReplyErrorAsync(JsonElement request, int code, string message) => _agent.ReplyErrorAsync(request, code, message);
 
+    /// <summary>The client's writes to the agent fail from now on with an error that isn't an IOException.</summary>
+    public void BreakInput() => _agent.BreakInput();
+
     /// <summary>The process dies: its output closes and it exits.</summary>
     public void Crash()
     {
