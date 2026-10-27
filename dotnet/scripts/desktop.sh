@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# Runs the desktop backend (dotnet/Assembly.Desktop) on 127.0.0.1:18797, from this checkout.
-#   dotnet/scripts/desktop.sh serve          publishes Assembly.Desktop to ~/assembly-dotnet/mac/bin/<commit>, installs the
-#                                        adapters under ~/assembly-dotnet/adapters (agents-file.sh) and makes the
-#                                        ~/assembly-dotnet/fixtures/notes-repo test repo if they're missing, then
-#                                        starts the backend in the background; its log is ~/assembly-dotnet/mac/backend.log
-#   dotnet/scripts/desktop.sh stop           stops it, by the pid in ~/assembly-dotnet/mac/backend.pid
+# Runs the desktop backend (dotnet/Assembly.Desktop) on 127.0.0.1:DESKTOP_PORT, from this checkout. The port and folders
+# are this checkout's (scripts/lane-env.sh): main's are 18797, ~/assembly-dotnet and ~/.config/assembly-dotnet/env; a
+# lane's carry its name and number. A checkout that isn't on main and has no .lane stops before it writes anything.
+#   dotnet/scripts/desktop.sh serve          publishes Assembly.Desktop to DATA/mac/bin/<commit>, installs the adapters
+#                                        under ~/assembly-dotnet/adapters (agents-file.sh), writes DATA/mac/agents.json,
+#                                        makes the DATA/fixtures/notes-repo test repo if it's missing, then starts the
+#                                        backend in the background; its log is DATA/mac/backend.log
+#   dotnet/scripts/desktop.sh stop           stops it, by the pid in DATA/mac/backend.pid
 #   AOT=1 dotnet/scripts/desktop.sh serve    the same, from a Native AOT build
 #   dotnet/scripts/desktop.sh kill-adapter   the lost-run check: SIGKILLs the backend's adapter, found as its child
 #                                        process by pid, never by name
-# The adapters run with this computer's own Claude and Codex logins. The token is in ~/.config/assembly-dotnet/env, made on first start.
+# Every lane shares main's adapters install in ~/assembly-dotnet/adapters: a copy per lane would download them again.
+# The adapters run with this computer's own Claude and Codex logins. The token is in TOKEN_FILE, made on first start.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+. scripts/lane-env.sh
 mode=${1:?usage: dotnet/scripts/desktop.sh serve|stop|kill-adapter}
-home=~/assembly-dotnet/mac
+home=$DATA/mac
 pidfile=$home/backend.pid
 running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 
@@ -45,7 +49,7 @@ mkdir -p "$home"
 dotnet/scripts/agents-file.sh ~/assembly-dotnet/adapters "$home/agents.json"
 
 # The checks' test repo: three lines the agent can read and edit.
-notes=~/assembly-dotnet/fixtures/notes-repo
+notes=$DATA/fixtures/notes-repo
 if [ ! -d "$notes/.git" ]; then
   mkdir -p "$notes"
   printf 'alpha\nbeta\ngamma\n' > "$notes/notes.txt"
@@ -65,8 +69,8 @@ else
   dotnet publish -v q --nologo -c Release -o "$bin" dotnet/Assembly.Desktop
 fi
 mkdir -p "$home"
-nohup "$bin/Assembly.Desktop" serve --port 18797 --home "$home" >> "$home/backend.log" 2>&1 &
+nohup "$bin/Assembly.Desktop" serve --port "$DESKTOP_PORT" --home "$home" --token-file "$TOKEN_FILE" >> "$home/backend.log" 2>&1 &
 echo $! > "$pidfile"
-for _ in $(seq 50); do nc -z 127.0.0.1 18797 >/dev/null 2>&1 && break; sleep 0.2; done
-nc -z 127.0.0.1 18797 >/dev/null 2>&1 || { echo "the backend didn't open 18797; see $home/backend.log" >&2; tail -5 "$home/backend.log" >&2; exit 1; }
-echo "the backend (pid $(cat "$pidfile")) runs $commit on 127.0.0.1:18797; log: $home/backend.log"
+for _ in $(seq 50); do nc -z 127.0.0.1 "$DESKTOP_PORT" >/dev/null 2>&1 && break; sleep 0.2; done
+nc -z 127.0.0.1 "$DESKTOP_PORT" >/dev/null 2>&1 || { echo "the backend didn't open $DESKTOP_PORT; see $home/backend.log" >&2; tail -5 "$home/backend.log" >&2; exit 1; }
+echo "the backend (pid $(cat "$pidfile")) runs $commit on 127.0.0.1:$DESKTOP_PORT; log: $home/backend.log"

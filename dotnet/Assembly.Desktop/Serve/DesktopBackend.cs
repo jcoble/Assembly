@@ -38,11 +38,13 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly RemoteMachine? _remote;
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
+    private readonly FileStream _homeLock;
     private readonly DiagnosticsHost _diagnostics;
 
-    private DesktopBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
+    private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
         WebApplication app, DiagnosticsHost diagnostics)
     {
+        _homeLock = homeLock;
         _remote = remote;
         _outbox = outbox;
         _db = db;
@@ -63,6 +65,23 @@ public sealed class DesktopBackend : IAsyncDisposable
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
     {
         Directory.CreateDirectory(home);
+        // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
+        // the start fails, so the home isn't left locked.
+        var homeLock = HomeLock.Take(home);
+        try
+        {
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote);
+        }
+        catch
+        {
+            homeLock.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
+        RemoteConfig? remote)
+    {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
@@ -123,7 +142,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app, diagnostics);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, remoteMachine, outbox, app, diagnostics);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -143,5 +162,6 @@ public sealed class DesktopBackend : IAsyncDisposable
             await _remote.DisposeAsync();
         _hub.Dispose();
         _db.Dispose();
+        _homeLock.Dispose();
     }
 }
