@@ -62,8 +62,9 @@ BOX
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
 esac
 commit=$(git rev-parse --verify "$branch^{commit}")
-# Main's host runs only what's on main: a clean checkout of origin/main as it is now.
-if [ "$mode" = serve ] && [ -z "$LANE_NAME" ]; then
+# Main's host runs only what's on main: a clean checkout of origin/main as it is now. Main's host is anything that
+# resolves to its unit, port or data, whatever the branch or .lane.
+if [ "$mode" = serve ] && { [ "$BOX_UNIT" = assembly-dotnet ] || [ "$BOX_PORT" = 9797 ] || [ "$BOX_DATA" = assembly-dotnet ]; }; then
   git fetch -q origin main
   main=$(git rev-parse origin/main)
   if [ "$commit" != "$main" ] || [ "$(git rev-parse HEAD)" != "$main" ] || [ -n "$(git status --porcelain)" ]; then
