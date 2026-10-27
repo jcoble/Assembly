@@ -7,6 +7,7 @@
 //!   work panel that Frame draws behind them (the design system's "a ground and one panel").
 //! - the sessions column carries the utility strip at its foot, as the approved look has it
 //!   (the design system's look-final/README.md:66); there's no bottom bar.
+//! - the side docks' tabs are the old app's (side_tabs.rs); the chat's title and the bottom dock's tabs are the kit's.
 //!
 //! Every other piece of the skin passes through, the drag edge and its save on release included.
 
@@ -16,16 +17,20 @@ use std::sync::Arc;
 use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{
-    BasePanelView, DockAreaRenderer, DockContext, DockPlacement, DockSkin, DropIndicator, NodeId,
-    PanelState, TabGroupContext, TabGroupRenderer,
+    BasePanelView, DockArea, DockAreaRenderer, DockContext, DockPlacement, DockSkin, DropIndicator,
+    NodeId, PanelState, TabGroupContext, TabGroupRenderer,
 };
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
+
+use super::side_tabs;
 
 pub struct MotionSkin {
     pub inner: Rc<DockSkin>,
     /// Drawn at the foot of the sessions column.
     pub foot: AnyView,
+    /// The area this skin draws, to tell which dock a tab group is in.
+    pub area: WeakEntity<DockArea>,
 }
 
 impl DockAreaRenderer for MotionSkin {
@@ -94,13 +99,13 @@ impl DockAreaRenderer for MotionSkin {
     }
 
     fn tab_group_renderer(&self) -> Rc<dyn TabGroupRenderer> {
-        Rc::new(Unfilled(self.inner.tab_group_renderer()))
+        Rc::new(Unfilled(self.inner.tab_group_renderer(), self.area.clone()))
     }
 }
 
 /// The kit's tab groups with their fill taken out (TabGroupSkin::frame paints `background`), so the ground behind
-/// shows. Everything else passes through.
-struct Unfilled(Rc<dyn TabGroupRenderer>);
+/// shows, and the side docks' own tabs. Everything else passes through.
+struct Unfilled(Rc<dyn TabGroupRenderer>, WeakEntity<DockArea>);
 
 impl TabGroupRenderer for Unfilled {
     fn frame(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Stateful<Div> {
@@ -122,7 +127,11 @@ impl TabGroupRenderer for Unfilled {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        self.0.render_tab_bar(group, window, cx)
+        match side(&self.1, group.node(), cx) {
+            Some(DockPlacement::Left) => side_tabs::chips(group, window, cx),
+            Some(DockPlacement::Right) => side_tabs::pills(group, window, cx),
+            _ => self.0.render_tab_bar(group, window, cx),
+        }
     }
 
     fn render_active_panel(
@@ -180,4 +189,17 @@ fn entering(
             move |content, t| content.left(px(dx * (1. - t))).opacity(t),
         )
         .into_any_element()
+}
+
+/// Which side dock holds the group, if one does. The area isn't being drawn while a group draws its tabs (the group is
+/// its own view), so it can be read; the kit's own tab bar reads it the same way.
+fn side(area: &WeakEntity<DockArea>, node: NodeId, cx: &App) -> Option<DockPlacement> {
+    let area = area.upgrade()?;
+    let area = area.read(cx);
+    [DockPlacement::Left, DockPlacement::Right]
+        .into_iter()
+        .find(|dock| {
+            area.layout(*dock)
+                .is_some_and(|tree| tree.find_node(node).is_some())
+        })
 }

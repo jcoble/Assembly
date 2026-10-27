@@ -56,6 +56,7 @@ impl Frame {
             let skin = MotionSkin {
                 inner: DockSkin::new(cx),
                 foot: utility_strip.into(),
+                area: cx.weak_entity(),
             };
             DockArea::new("assembly-shell", Some(LAYOUT_VERSION), window, cx)
                 .with_renderer(Rc::new(skin))

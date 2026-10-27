@@ -18,7 +18,13 @@ gpui_kit::assets::icon_assets!(
         Paperclip,
         X,
         Image,
-        CircleAlert
+        CircleAlert,
+        GitBranch,
+        ListChecks,
+        GitFork,
+        CirclePlay,
+        Gauge,
+        RotateCcwClock
     ]
 );
 
