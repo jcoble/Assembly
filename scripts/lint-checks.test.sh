@@ -107,6 +107,12 @@ echo '// touched' >>"$r/dotnet/Assembly.Application/ArchitectureProbe.cs"
 LINT_STAGED_ONLY=1 expect 1 "architecture: the hook runs on a .cs change" "$r" 70-architecture.sh
 rm -rf "$r"
 
+# A filter that matches no test is a failure, not a pass with nothing run.
+r=$(dotnet_repo_with 70-architecture.sh)
+sed -i 's/^namespace Assembly.Tests.Architecture;/namespace Assembly.Tests.Moved;/' "$r/dotnet/Assembly.Tests/Architecture/ArchitectureTests.cs"
+expect 1 "architecture: no architecture test found fails" "$r" 70-architecture.sh
+rm -rf "$r"
+
 # scripts/lint.sh runs every lint.d check and fails if any one does.
 r=$(mktemp -d)
 git -C "$r" init -q
