@@ -29,10 +29,12 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
 ## What every theme sets
 
 - `font.size` 13 (body), `mono_font.size` 12 (the design system's `code`, 12/20), `radius` 8 (`radius-sm`),
-  `radius.lg` 12 (`radius-md`), `shadow` false. The fonts stay unset, which is the system face and system monospace.
-  The radii are the same in every theme, since shape is the app's, not a theme's.
-- The kit has only two radii. The design system's `radius-xs` 6 (tab chips, tree rows, tags), `radius-lg` 16 (the
-  work panel, dialogs), `radius-xl` 20 (the composer, the user's bubble) and `radius-full` (pills) are set by the
+  `radius.lg` 16 (`radius-lg`, which the kit uses for dialogs and notifications), `shadow` false. The fonts stay
+  unset, which is the system face and system monospace. The radii are the same in every theme, since shape is the
+  app's, not a theme's.
+- The kit has only two radii. The design system's `radius-xs` 6 (tab chips, tree rows, tags), `radius-md` 12 (cards,
+  glass menus; the kit's command palette takes a radius of its own), the work panel's `radius-lg`, `radius-xl` 20
+  (the composer, the user's bubble) and `radius-full` (pills) are set by the
   components that draw those (g0-shape and the view lanes).
 - `tab_bar.background` is clear in every theme: the frame's work panel is rounded and GPUI can't clip children to
   rounded corners, so a filled tab strip would square them off (g0-shape).
