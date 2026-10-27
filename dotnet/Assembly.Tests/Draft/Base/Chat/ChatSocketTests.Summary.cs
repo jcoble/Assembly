@@ -78,6 +78,24 @@ public sealed partial class ChatSocketTests
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
     }
 
+    [Fact]
+    public async Task A_read_past_the_last_row_leaves_the_next_turns_end_unread()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        Row(session, RowKind.Turn, null, """{"state":"started"}""");
+        Row(session, RowKind.Turn, null, """{"state":"finished"}""");
+        using var socket = await OpenAsync();
+        await SubscribeSessionsAsync(socket);
+
+        // A mark far past the last row reads only what's there: the turn that ends after it is still unread.
+        await CallAsync(socket, 2, "sessions", "read", $$"""{"session":"{{session}}","seq":{{_hub.LastSeq(session) + 100}}}""");
+        Assert.False(Flag(Assert.Single(await ChangesAsync(socket, 2)), "unread"));
+        Row(session, RowKind.Turn, null, """{"state":"started"}""");
+        Row(session, RowKind.Turn, null, """{"state":"finished"}""");
+
+        Assert.True(Flag((await ChangesAsync(socket))[^1], "unread"));
+    }
+
     // The state comes from the summaries in memory: with the rows table gone, any query of it would throw.
     [Fact]
     public async Task The_sessions_state_reads_summaries_without_a_row_query()
