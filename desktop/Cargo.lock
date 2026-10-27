@@ -282,6 +282,7 @@ dependencies = [
  "gpui-fps",
  "gpui-kit",
  "gpui-pre",
+ "libc",
  "serde",
  "serde_json",
  "tungstenite",

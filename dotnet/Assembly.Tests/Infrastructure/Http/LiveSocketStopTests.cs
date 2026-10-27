@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Assembly.Infrastructure.Http;
+using Assembly.Application.Common;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Chat.Attachments;
@@ -39,7 +40,8 @@ public sealed class LiveSocketStopTests : IAsyncLifetime
     public async Task A_live_socket_that_subscribes_after_stopping_began_ends_at_once()
     {
         var sessionStore = SessionStore.Open(_database, TimeProvider.System);
-        _sessions = new SessionRegistry(_hub, sessionStore, new FakeLauncher(), TimeProvider.System, TextWriter.Null);
+        _sessions = new SessionRegistry(_hub, sessionStore, new FakeLauncher(), TimeProvider.System, TextWriter.Null,
+            new BackgroundWork(TimeProvider.System, TextWriter.Null));
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, sessionStore, _sessions, attachments));
         // Closed by the hub's close at stopping; the held socket goes on to subscribe only after that.
