@@ -17,6 +17,7 @@ using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Draft.Base.Chat;
+using Assembly.Tests.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.Base;
@@ -187,8 +188,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
             await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s"}""");
             Assert.Equal("""{"t":"state","sub":1,"seq":2,"items":[]}""", await ReadAsync(socket));
             _endpoint.DropAll();
-            var closed = await socket.ReceiveAsync(new ArraySegment<byte>(new byte[1024]), CancellationToken.None).WaitAsync(Wait);
-            Assert.Equal(WebSocketMessageType.Close, closed.MessageType);
+            await SocketTests.AssertEndsAsync(socket);
         }
 
         Commit("s", 2);

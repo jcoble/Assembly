@@ -13,6 +13,8 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
 {
     private readonly byte[] _token = Encoding.UTF8.GetBytes(token);
     private readonly CancellationTokenSource _stopping = new();
+    // Swapped by each drop, never disposed: a socket accepted mid-swap may still read the old one's token.
+    private CancellationTokenSource _drop = new();
 
     public async Task HandleAsync(HttpContext context)
     {
@@ -23,7 +25,7 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
         }
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
-        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, _stopping.Token);
+        using var stopping = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, _stopping.Token, Volatile.Read(ref _drop).Token);
         await new SocketConnection(socket, calls, time).RunAsync(_token, machine, stopping.Token);
     }
 
@@ -31,5 +33,5 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
     public void CloseAll() => _stopping.Cancel();
 
     /// <summary>Closes every open socket for the debug control's drop; sockets opened after it work.</summary>
-    public void DropAll() => throw new NotImplementedException();
+    public void DropAll() => Interlocked.Exchange(ref _drop, new()).Cancel();
 }

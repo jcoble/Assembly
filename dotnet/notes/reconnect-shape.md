@@ -1,5 +1,7 @@
 # Reconnect, backend-ready and the App Nap hold: the backend's half (shape, before code)
 
+Updated after the pre-implementation check (2026-10-27): its changes are folded in below.
+
 The GPUI switch plan's backend work after rows moved onto `/socket`: "reconnect plus a backend-ready signal", and its
 B8 note that the App Nap hold "moves into the backend, held while any turn runs, with no window calls". The window's
 half (reopening once, waiting for the launcher's restart, "Disconnected" with its Reconnect button) is G0's
@@ -13,18 +15,24 @@ cancels its reads, its queued writes still commit, and a new socket that subscri
 seq gets only what came after (no duplicates). What's missing is a way to make the backend drop the socket, so the
 reconnect can be tested end to end and from the soak.
 
-- `diagnostics/drop` closes every `/socket` connection too, not only the `/live` row subscriptions. The caller's
-  socket is among them, so its answer may not arrive; the window treats the close as any other drop.
-- `SocketEndpoint` gets `DropAll()`: it cancels the token every open socket is linked to and puts a fresh one in its
-  place, so sockets opened after the drop work. `CloseAll()` (the host stopping) stays as it is.
+- `diagnostics/drop` ends every `/socket` connection too, not only the `/live` row subscriptions. The caller's
+  socket is among them, so its answer doesn't arrive; the window treats the end as any other drop.
+- `SocketEndpoint` gets `DropAll()`: it cancels a drop token every open socket is linked to (beside the stopping one,
+  which stays as it is, so a drop during shutdown can't undo it) and puts a fresh one in its place, so sockets opened
+  after the drop work. The old source isn't disposed: a socket accepted mid-swap may still read its token.
+- The cancelled receive aborts the socket, so the client sees a reset, not a close frame, as with a lost connection.
+  The tests accept either.
 - `DiagnosticsFeature` takes one `Action drop` as today; `DesktopBackend` passes one that runs both
-  `hub.CloseSubscriptions` and the endpoint's `DropAll`. `ApiServer.Build` hands the endpoint out for that.
+  `hub.CloseSubscriptions` and the endpoint's `DropAll`, which `ApiServer.Build` hands out as `out Action dropSockets`
+  (the endpoint is internal).
 
 Failing tests first (`Assembly.Tests/Infrastructure/Socket/SocketTests.Drop.cs`):
 
-- `Drop_closes_every_open_socket`: two hello'd sockets; `DropAll()`; both see a close.
+- `Drop_ends_every_open_socket`: two hello'd sockets; `DropAll()`; both end.
 - `A_socket_opened_after_a_drop_works`: drop, then a new socket gets its welcome and a call answers.
-- `A_write_queued_before_a_drop_still_commits`: a save in flight when the socket drops still lands.
+- A write queued before a drop still commits: already covered by
+  `Closing_the_socket_cancels_running_reads_and_queued_writes_still_commit`, since a drop goes through the same close.
+- `DesktopBackendTests.The_desktops_drop_ends_every_open_socket` (it replaces the test that expected drop's answer).
 
 And one end-to-end test on the rows topic (`Draft/Base/RowsSocketTests.cs`):
 
@@ -40,8 +48,13 @@ and the MCP url is set. The token stays in the token file and is never printed. 
 user's Reconnect button when the child has exited); the backend needs nothing new for it, since a fresh start already
 closes the turns the last run left open (`RunRecovery`).
 
-No backend code changes here unless the pre-check finds the line can come early. One test pins it: the line is the
-last thing `DesktopServe` writes before waiting, after `StartAsync` returns (read from a captured writer).
+No backend code changes: the line is printed after `StartAsync` returns, which is after Kestrel listens, `/socket` is
+mapped and the MCP url is set, so it is never early. A comment at the line says so. No test: `MainAsync` waits for
+Ctrl+C and shares `Console.Out` with other writers, so a test would pin more than the contract.
+
+For g0-host: the line never comes when the remote tunnel fails, its token read hangs, or the port is in use, so the
+launcher keeps watching for the child's exit, with its own limit on the wait. It must keep reading stdout after the
+line (or send it to a file), or the backend blocks on a full pipe.
 
 ## 3. The App Nap hold, in the backend
 
@@ -53,15 +66,20 @@ each other's hold.
   this backend, so it must not be napped either). The open-run fact already has one owner: `SessionSummaries` from
   PR #24 (`SessionSummary.RunId`), updated under the hub's lock on every saved turn row. The hold reads it: after each
   summary change, held = any session has a `RunId`. No second tracker of open runs.
-- `TurnActivity` stays the macOS call, still idempotent; something small in `Features/Diagnostics` turns "any run
-  open" into `Begin`/`End` on each change (only when it flips). On Linux it does nothing, as today.
-- Deleted together: the socket's `activity.begin` and `activity.end`, `IDiagnosticsHost.BeginActivity`/`EndActivity`,
-  `PageRoutes`' two cases, and `Conversation.svelte`'s two `pageCall`s.
+- `TurnActivity` stays the macOS call, still idempotent, and returns early unless `OperatingSystem.IsMacOS()`: once
+  rows drive it, it runs inside `LiveHub.Push` on every machine.
+- `SessionSummaries` gets `AnyRunOpen`. `IDiagnosticsHost` gets `HoldActivity(bool)` in place of
+  `BeginActivity`/`EndActivity`. `DesktopBackend` wires it: the hub's `summaryChanged` also calls
+  `HoldActivity(summaries.AnyRunOpen)`, and it is called once after recovery, since loading the summaries tells
+  nobody (a remote run left open at startup holds it). No new class.
+- Deleted together: the socket's `activity.begin` and `activity.end` with their test and fake, `PageRoutes`' two
+  cases and its `_activity` field, and `Conversation.svelte`'s two `pageCall`s. Safe while the Tauri page runs, since
+  the backend holds it on its own.
+- A remote run whose end row never arrives (the remote is unreachable) keeps the hold. Accepted.
 - This part waits for PR #24 to merge (it needs `SessionSummaries`); parts 1 and 2 don't.
 
 Failing tests first: a turn's start row holds it and its end row releases it; two sessions' turns, the first ending
-keeps it held; a remote session's copied start row holds it; a backend started with an unfinished remote run holds it;
-the socket no longer answers `activity.begin`.
+keeps it held; a remote session's copied start row holds it; a backend started with an unfinished remote run holds it.
 
 ## Size
 

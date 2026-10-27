@@ -51,7 +51,7 @@ public sealed class McpTests : IAsyncLifetime
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));
         _sessions.Helpers.Delivery.Machines = machines;
-        _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token, _sessions.Helpers), port: 0);
+        _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token, _sessions.Helpers), port: 0, out _);
         await _app.StartAsync();
         _base = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _sessions.Helpers.Tokens.Url = new Uri(_base, "/mcp").ToString();

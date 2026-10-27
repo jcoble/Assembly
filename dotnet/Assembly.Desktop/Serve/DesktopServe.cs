@@ -23,6 +23,8 @@ public static class DesktopServe
         var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, options.RemotePort, options.RemoteTokenFile, Console.Out) : (null, null);
         await using var stopTunnel = tunnel;
         await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out, remote);
+        // The window's launcher waits for this line's "listening on " prefix: it comes once /socket takes a hello and
+        // the MCP url is set. A failed tunnel or a port in use exits before it, so the launcher also watches the exit.
         Console.WriteLine($"listening on {backend.Address}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");
