@@ -22,33 +22,115 @@ pub enum AttachmentState {
 
 impl Attachment {
     /// Why a file can't attach: "not a supported image" or "larger than 20 MB"; `None` when it can.
-    pub fn rejection(_mime: &str, _size: u64) -> Option<&'static str> {
-        todo!()
+    pub fn rejection(mime: &str, size: u64) -> Option<&'static str> {
+        if !IMAGE_TYPES.contains(&mime) {
+            return Some("not a supported image");
+        }
+        (size > MAX_BYTES).then_some("larger than 20 MB")
     }
 
     /// The draft with one reference line per saved attachment after it.
-    pub fn with_lines(_text: &str, _attachments: &[Attachment]) -> String {
-        todo!()
+    pub fn with_lines(text: &str, attachments: &[Attachment]) -> String {
+        let lines: Vec<String> = attachments
+            .iter()
+            .filter_map(|attachment| match &attachment.state {
+                AttachmentState::Saved { path } => {
+                    let name = attachment
+                        .name
+                        .split(['\r', '\n'])
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>();
+                    Some(format!("{PREFIX}{path} ({})", name.join(" ")))
+                }
+                _ => None,
+            })
+            .collect();
+        [text.to_string(), lines.join("\n")]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     /// "512 B", "2.0 KB", "3.5 MB", for the chip.
-    pub fn size_text(_size: u64) -> String {
-        todo!()
+    pub fn size_text(size: u64) -> String {
+        const KB: f64 = 1024.0;
+        match size as f64 {
+            bytes if bytes < KB => format!("{size} B"),
+            bytes if bytes < KB * KB => format!("{:.1} KB", bytes / KB),
+            bytes => format!("{:.1} MB", bytes / (KB * KB)),
+        }
     }
 
     /// Dropped files and folders as draft text: their paths, separated by spaces, a path with a space in quotes.
-    pub fn paths_text(_paths: &[String]) -> String {
-        todo!()
+    pub fn paths_text(paths: &[String]) -> String {
+        let quoted = |path: &String| {
+            if path.contains(char::is_whitespace) {
+                format!("\"{path}\"")
+            } else {
+                path.clone()
+            }
+        };
+        paths.iter().map(quoted).collect::<Vec<_>>().join(" ")
     }
 
     /// `text` put in `draft` at the byte `caret`, with a space either side unless the draft has one there; the new
     /// draft and caret.
-    pub fn insert_at(_draft: &str, _caret: usize, _text: &str) -> (String, usize) {
-        todo!()
+    pub fn insert_at(draft: &str, caret: usize, text: &str) -> (String, usize) {
+        let (before, after) = draft.split_at(caret);
+        let space_before = before.chars().last().is_some_and(|c| !c.is_whitespace());
+        let space_after = after.chars().next().is_some_and(|c| !c.is_whitespace());
+        let inserted = format!(
+            "{}{text}{}",
+            if space_before { " " } else { "" },
+            if space_after { " " } else { "" }
+        );
+        (format!("{before}{inserted}{after}"), caret + inserted.len())
     }
 
     /// A sent message's text and the attachments its trailing lines name, as (path, name, thumbnail).
-    pub fn split_lines(_text: &str) -> (String, Vec<(String, String, Option<String>)>) {
-        todo!()
+    pub fn split_lines(text: &str) -> (String, Vec<(String, String, Option<String>)>) {
+        if !text.contains(PREFIX) {
+            return (text.to_string(), Vec::new());
+        }
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut attachments = Vec::new();
+        let mut end = lines.len();
+        while end > 0
+            && let Some(attachment) = reference(lines[end - 1])
+        {
+            attachments.insert(0, attachment);
+            end -= 1;
+        }
+        if attachments.is_empty() {
+            return (text.to_string(), attachments);
+        }
+        (lines[..end].join("\n").trim_end().to_string(), attachments)
     }
+}
+
+const PREFIX: &str = "Attached image: ";
+/// The backend checks the same; checking here turns a file away when it's attached.
+const IMAGE_TYPES: [&str; 4] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const MAX_BYTES: u64 = 20 * 1024 * 1024;
+
+/// One "Attached image: /path (name)" line, with " thumbnail: /path" after it when the old app wrote one.
+fn reference(line: &str) -> Option<(String, String, Option<String>)> {
+    let (path, rest) = line.strip_prefix(PREFIX)?.split_once(' ')?;
+    let rest = rest.strip_prefix('(')?;
+    let absolute = |path: &str| path.starts_with('/') && !path.contains(char::is_whitespace);
+    if !absolute(path) {
+        return None;
+    }
+    if let Some(name) = rest.strip_suffix(')') {
+        return Some((path.to_string(), name.to_string(), None));
+    }
+    let (name, thumbnail) = rest.rsplit_once(") thumbnail: ")?;
+    absolute(thumbnail).then(|| {
+        (
+            path.to_string(),
+            name.to_string(),
+            Some(thumbnail.to_string()),
+        )
+    })
 }
