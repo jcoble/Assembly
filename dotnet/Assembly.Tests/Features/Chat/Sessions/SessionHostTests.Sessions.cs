@@ -333,25 +333,51 @@ public sealed partial class SessionHostTests
         await Until(() => _work.Running == 0);
     }
 
-    // Inside the idle grace, disposing the adapter ends its idle wait and waits for it.
+    // Inside the idle grace, disposing the adapter ends its idle wait and waits for it. The idle wait's end is held on
+    // a context the test releases, so the dispose returns only if it awaits the wait.
     [Fact]
     public async Task Disposing_the_adapter_inside_its_idle_grace_waits_for_the_idle_wait()
     {
-        _host.Send("one");
+        var getting = _adapter.GetAsync(new StageTimes(_time), CancellationToken.None);
         var agent = await _launcher.NextAsync();
-        await agent.StartAsync();
-        var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await agent.CloseAsync();
-        await Until(() => _host.ActiveRunId is null);
-        await Until(() => _log.ToString().Contains("session close"));
-        _time.Advance(SharedAdapter.IdleGrace - TimeSpan.FromSeconds(1));
+        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        var running = await getting.WaitAsync(Wait);
+        var held = new HeldContext();
+        var outer = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(held);
+        var releasing = _adapter.ReleaseAsync(running);
+        SynchronizationContext.SetSynchronizationContext(outer);
+        Assert.True(releasing.IsCompleted);
 
-        await _adapter.DisposeAsync();
-        var idle = typeof(SharedAdapter).GetField("_idleTask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        Assert.NotNull(idle);
-        Assert.True(((Task)idle.GetValue(_adapter)!).IsCompleted);
+        var disposing = _adapter.DisposeAsync().AsTask();
+        Assert.False(agent.Disposed);
+        held.Release();
+        await disposing.WaitAsync(Wait);
         Assert.True(agent.Disposed);
+    }
+
+    // Holds what is posted to it until Release runs it.
+    private sealed class HeldContext : SynchronizationContext
+    {
+        private readonly List<(SendOrPostCallback Callback, object? State)> _posted = [];
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            lock (_posted)
+                _posted.Add((d, state));
+        }
+
+        public void Release()
+        {
+            (SendOrPostCallback Callback, object? State)[] posted;
+            lock (_posted)
+            {
+                posted = [.. _posted];
+                _posted.Clear();
+            }
+            foreach (var (callback, state) in posted)
+                callback(state);
+        }
     }
 
     [Fact]
