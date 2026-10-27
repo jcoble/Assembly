@@ -3,8 +3,28 @@
 
 use std::sync::Arc;
 
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::*;
 
-pub fn open_lightbox(_image: Arc<Image>, _name: SharedString, _window: &mut Window, _cx: &mut App) {
-    todo!()
+pub fn open_lightbox(image: Arc<Image>, name: SharedString, window: &mut Window, cx: &mut App) {
+    let room = window.viewport_size() - size(px(48.), px(48.));
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .close_button(false)
+            .centered()
+            .max_w(room.width)
+            .child(
+                div()
+                    .id(name.clone())
+                    .flex()
+                    .justify_center()
+                    .on_click(|_, window, cx| window.close_dialog(cx))
+                    .child(
+                        img(image.clone())
+                            .max_w(room.width)
+                            .max_h(room.height)
+                            .object_fit(ObjectFit::Contain),
+                    ),
+            )
+    });
 }

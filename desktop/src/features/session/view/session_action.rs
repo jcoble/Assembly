@@ -7,10 +7,13 @@ use gpui_kit::*;
 use serde_json::Value;
 
 pub enum SessionAction {
-    /// Open or close a tool call; opening reads its detail (`rows/tool`).
-    ToggleTool { item_id: String },
-    /// Open or close a fold, thinking or a long prompt, by item key or run id.
+    /// Open or close a finished turn's fold, by its run id.
+    ToggleFold { run_id: String },
+    /// Open or close a tool call, thinking or a long prompt, by item key; opening a tool call reads its detail
+    /// (`rows/tool`).
     Toggle { key: String },
+    /// Show an open tool call's whole diff, by item key.
+    ShowAllDiff { key: String },
     /// `send/answer`: the option's `{ optionId }` or the form's `{ action, content }`.
     Answer { ask_id: String, answer: Value },
     /// `send/stopTask`: a task, or a subagent by its session id.

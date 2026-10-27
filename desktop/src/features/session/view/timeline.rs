@@ -1,11 +1,11 @@
 //! `Timeline` owns the virtual list (the kit's MessageScroller, which lays out only the rows on screen and keeps the
-//! reading place when a page goes on top), the entries it draws, each item's `Kept`, and the folds the reader opened.
+//! reading place when a page goes on top) and the entries it draws.
 //! Where it scrolls is `Follow`'s decision. Each session's reading place is kept in memory, written when the session is
 //! left, never on a draw; G0 doesn't keep it across
 //! relaunches. Replaces the virtualizer half of
 //! Conversation.svelte and session/scroll.ts.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
@@ -13,7 +13,6 @@ use gpui_kit::*;
 
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::follow::{Follow, FollowEvent, FollowStep};
-use crate::features::session::model::kept::Kept;
 
 pub type RenderRow = Rc<dyn Fn(&Entry, &mut Window, &mut App) -> AnyElement>;
 
@@ -27,10 +26,6 @@ pub struct Timeline {
     session: Option<String>,
     /// The entries on the list, each with its key.
     entries: Rc<Vec<(String, Entry)>>,
-    /// Each item's kept state, by item key.
-    kept: HashMap<String, Kept>,
-    /// The folds the reader opened, by run id.
-    open_folds: HashSet<String>,
     follow: Follow,
     /// Each session's reading place, by session id: the key of the top row on screen when it was left.
     places: HashMap<String, String>,
@@ -70,8 +65,6 @@ impl Timeline {
             render_row,
             session: None,
             entries: Rc::default(),
-            kept: HashMap::new(),
-            open_folds: HashSet::new(),
             follow: Follow::default(),
             places: HashMap::new(),
             restore: None,
@@ -104,8 +97,6 @@ impl Timeline {
             .and_then(|session| self.places.get(session))
             .cloned();
         self.session = session;
-        self.kept.clear();
-        self.open_folds.clear();
         self.follow = Follow::default();
         let count = entries.len();
         self.entries = Rc::new(entries);
@@ -182,15 +173,13 @@ impl Timeline {
             .update(cx, |scroller, cx| scroller.scroll_to_item(row, cx));
     }
 
-    pub fn open_folds(&self) -> &HashSet<String> {
-        &self.open_folds
-    }
-
-    pub fn toggle_fold(&mut self, run_id: &str, cx: &mut Context<Self>) {
-        if !self.open_folds.remove(run_id) {
-            self.open_folds.insert(run_id.to_string());
-        }
-        cx.notify();
+    /// The entries on the list, for tests.
+    #[cfg(test)]
+    pub fn entries(&self) -> Vec<Entry> {
+        self.entries
+            .iter()
+            .map(|(_, entry)| entry.clone())
+            .collect()
     }
 }
 

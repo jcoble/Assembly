@@ -9,11 +9,12 @@ use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, regi
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use serde_json::{Value, json};
 
-use super::session_action::SessionAction;
+use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::features::session::client::session_client::{
     CallError, RowUpdate, RowsSink, SessionClient,
@@ -25,6 +26,7 @@ use crate::features::session::model::entries::Entry;
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
+use crate::features::session::model::kept::Kept;
 use crate::features::session::model::session_view::SessionView;
 use crate::features::session::rows::row::Row;
 use crate::features::session::rows::row_page::RowPage;
@@ -36,6 +38,12 @@ pub struct SessionPane {
     view: SessionView,
     /// The run sent from here, or the page's active run on open, until its turn row arrives.
     known_run: Option<String>,
+    /// Each finished run's fold, by run id, as of the last refresh.
+    folds: HashMap<String, Fold>,
+    /// The folds the reader opened, by run id.
+    open_folds: HashSet<String>,
+    /// What each item keeps while off screen, by item key.
+    kept: HashMap<String, Kept>,
     timeline: Entity<Timeline>,
     composer: Entity<Composer>,
     /// The streaming reply's reveal, stepped once a frame while it's behind; `None` at rest.
@@ -68,12 +76,18 @@ impl SessionPane {
 
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pane = cx.weak_entity();
+        let on_action: OnAction = {
+            let pane = pane.clone();
+            Rc::new(move |action, window, cx| {
+                pane.update(cx, |pane, cx| pane.on_action(action, window, cx))
+                    .ok();
+            })
+        };
         let render_row: RenderRow = Rc::new(move |entry, _, cx| {
-            let label = pane
-                .upgrade()
-                .map(|pane| entry.key(&pane.read(cx).view.items))
-                .unwrap_or_default();
-            div().child(label).into_any_element()
+            pane.upgrade().map_or_else(
+                || div().into_any_element(),
+                |pane| pane.read(cx).row(entry, &on_action, cx),
+            )
         });
         let timeline = cx.new(|cx| Timeline::new(render_row, cx));
         let composer = cx.new(|cx| Composer::new(client.clone(), window, cx));
@@ -101,6 +115,9 @@ impl SessionPane {
             session: None,
             view: SessionView::default(),
             known_run: None,
+            folds: HashMap::new(),
+            open_folds: HashSet::new(),
+            kept: HashMap::new(),
             timeline,
             composer,
             reveal: None,
@@ -126,6 +143,8 @@ impl SessionPane {
         self._tasks.clear();
         self.view = SessionView::default();
         self.held = Some(Vec::new());
+        self.open_folds.clear();
+        self.kept.clear();
         (
             self.known_run,
             self.loading,
@@ -184,6 +203,9 @@ impl SessionPane {
         let change = self.view.apply(row);
         // The entries take the new item first, so the timeline can find it to scroll to.
         self.refresh(change, cx);
+        if let Change::Updated(at) = change {
+            self.read_detail_if_stale(at, cx);
+        }
         if change == Change::Appended
             && let Some(item) = self.view.items.last()
             && matches!(item.kind, ItemKind::User { .. })
@@ -261,14 +283,9 @@ impl SessionPane {
             _ => None,
         };
         let (items, loading) = (&self.view.items, self.loading);
+        let entries = Entry::all(items, &folds, &self.open_folds, loading, active.is_some());
+        self.folds = folds;
         self.timeline.update(cx, |timeline, cx| {
-            let entries = Entry::all(
-                items,
-                &folds,
-                timeline.open_folds(),
-                loading,
-                active.is_some(),
-            );
             let keyed = entries
                 .into_iter()
                 .map(|entry| (entry.key(items), entry))
@@ -285,11 +302,17 @@ impl SessionPane {
         todo!()
     }
 
-    /// A row's button or link: the call it makes, or the intent it opens (lane g0-host).
-    fn on_action(&mut self, _action: SessionAction, _window: &mut Window, _cx: &mut Context<Self>) {
-        todo!()
+    /// The timeline's entries, for tests.
+    #[cfg(test)]
+    pub fn entries(&self, cx: &App) -> Vec<Entry> {
+        self.timeline.read(cx).entries()
     }
 }
+
+#[path = "pane_actions.rs"]
+mod actions;
+#[path = "pane_rows.rs"]
+mod rows;
 
 /// Rows a page holds, as the web view asks for.
 const PAGE_ROWS: usize = 100;
@@ -336,6 +359,9 @@ impl Render for SessionPane {
     }
 }
 
+#[cfg(test)]
+#[path = "session_pane_action_tests.rs"]
+mod action_tests;
 #[cfg(test)]
 #[path = "session_pane_tests.rs"]
 mod tests;

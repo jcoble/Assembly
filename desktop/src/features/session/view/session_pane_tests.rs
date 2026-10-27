@@ -13,7 +13,9 @@ use crate::features::session::composer::composer_view::ComposerEvent;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::row::Row;
 
-fn open(cx: &mut TestAppContext) -> (Entity<SessionPane>, FakeClient, &mut VisualTestContext) {
+pub(super) fn open(
+    cx: &mut TestAppContext,
+) -> (Entity<SessionPane>, FakeClient, &mut VisualTestContext) {
     cx.update(gpui_kit::init);
     let client = FakeClient::default();
     let fake = client.clone();
@@ -22,30 +24,30 @@ fn open(cx: &mut TestAppContext) -> (Entity<SessionPane>, FakeClient, &mut Visua
     (pane, client, cx)
 }
 
-fn row(seq: i64, kind: &str, item: Option<&str>, payload: Value) -> Value {
+pub(super) fn row(seq: i64, kind: &str, item: Option<&str>, payload: Value) -> Value {
     json!({ "sessionId": "s1", "seq": seq, "runId": "r1", "itemId": item, "kind": kind, "payload": payload, "createdAt": seq })
 }
 
-fn user(seq: i64, text: &str) -> Value {
+pub(super) fn user(seq: i64, text: &str) -> Value {
     row(seq, "user", None, json!({ "text": text }))
 }
 
-fn page(rows: Vec<Value>, has_before: bool, active: Option<&str>) -> Value {
+pub(super) fn page(rows: Vec<Value>, has_before: bool, active: Option<&str>) -> Value {
     json!({ "rows": rows, "hasBefore": has_before, "activeRunId": active })
 }
 
-fn live(client: &FakeClient, row: Value, cx: &mut VisualTestContext) {
+pub(super) fn live(client: &FakeClient, row: Value, cx: &mut VisualTestContext) {
     let row: Row = serde_json::from_value(row).unwrap();
     cx.update(|_, cx| client.push(RowUpdate::Row(Box::new(row)), cx));
     cx.run_until_parked();
 }
 
-fn jump(client: &FakeClient, seq: i64, cx: &mut VisualTestContext) {
+pub(super) fn jump(client: &FakeClient, seq: i64, cx: &mut VisualTestContext) {
     cx.update(|_, cx| client.push(RowUpdate::Jump { seq }, cx));
     cx.run_until_parked();
 }
 
-fn show(pane: &Entity<SessionPane>, session: &str, cx: &mut VisualTestContext) {
+pub(super) fn show(pane: &Entity<SessionPane>, session: &str, cx: &mut VisualTestContext) {
     pane.update_in(cx, |pane, window, cx| pane.open(session.into(), window, cx));
     cx.run_until_parked();
 }
