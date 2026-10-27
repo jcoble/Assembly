@@ -18,6 +18,9 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
 
     public string? Name => name;
     public bool Down { get; set; }
+
+    /// <summary>Turns down a send, stop or answer, as a machine does when the turn or ask can't take it.</summary>
+    public bool Refuses { get; set; }
     public List<string> Asked { get; } = [];
     public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public StoredToolCall? Tool { get; set; }
@@ -39,13 +42,13 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         Remote("helper", () => store.Helper(parent, agent, title), cancellationToken);
 
     public Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken) =>
-        Remote<string?>($"send {session.SessionId} {text}", () => "run-1", cancellationToken);
+        Remote<string?>($"send {session.SessionId} {text}", () => Refuses ? null : "run-1", cancellationToken);
 
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
-        Remote($"stop {runId}", () => true, cancellationToken);
+        Remote($"stop {runId}", () => !Refuses, cancellationToken);
 
     public Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken) =>
-        Remote($"stop task {taskId}", () => true, cancellationToken);
+        Remote($"stop task {taskId}", () => !Refuses, cancellationToken);
 
     public string? ActiveRun(SessionInfo session) => null;
 
@@ -62,7 +65,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         Remote($"set config {configId} {value}", () => Config, cancellationToken);
 
     public Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken) =>
-        Remote($"answer {askId} {answer.GetRawText()}", () => true, cancellationToken);
+        Remote($"answer {askId} {answer.GetRawText()}", () => !Refuses, cancellationToken);
 
     public void Watch(SessionInfo session) => Asked.Add($"watch {session.SessionId}");
 
