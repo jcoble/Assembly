@@ -1,0 +1,4 @@
+ok the socket from 0 sent 18 rows
+ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)
+ok the socket reaches the newest row (19)
+ok the socket from 9 starts at 10 with prevSeq 9
