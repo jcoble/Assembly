@@ -67,6 +67,12 @@ internal static class PtyNative
     public static extern int close(int fd);
 
     [DllImport("libc", SetLastError = true)]
+    public static extern int getsid(int pid);
+
+    [DllImport("libc", SetLastError = true)]
+    public static extern int kill(int pid, int signal);
+
+    [DllImport("libc", SetLastError = true)]
     private static extern int posix_openpt(int flags);
 
     [DllImport("libc", SetLastError = true)]

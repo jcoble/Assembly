@@ -70,7 +70,9 @@ internal sealed class UnixPty : IPty
                     throw PtyNative.Failed("writing to the terminal");
                 left = left[(int)Math.Max(wrote, 0)..];
             }
-        }), cancellationToken);
+        }), cancellationToken).WaitAsync(cancellationToken);
+        // A cancelled write's thread stays in write() until the program reads or the terminal closes; the call
+        // still answers now.
     }
 
     public void Resize(int cols, int rows)
@@ -87,10 +89,15 @@ internal sealed class UnixPty : IPty
                 return ValueTask.CompletedTask;
             _disposed = true;
         }
-        // The shell's group, and the groups of the jobs it started: an interactive shell gives each job its own. Not
-        // once it has ended and nothing holds the terminal: its pid may belong to someone else's group by now.
+        // The shell's group and what it started, then every process left in its session: an interactive shell gives
+        // each job a group of its own, and a job the shell left when it exited has moved under init. Not once it has
+        // ended and nothing holds the terminal: its pid may belong to someone else's group or session by now.
         if (!(_ended && _process.HasExited))
+        {
             ProcessGroup.Kill(Pid);
+            foreach (var pid in InSession(Pid))
+                _ = PtyNative.kill(pid, 9);
+        }
         CloseSlave();
         _output.Writer.TryComplete();
         _process.Dispose();
@@ -114,6 +121,18 @@ internal sealed class UnixPty : IPty
                 _ = PtyNative.close(_slave);
             _slave = -1;
         }
+    }
+
+    private static List<int> InSession(int session)
+    {
+        var start = new ProcessStartInfo("/bin/ps", ["-A", "-o", "pid="]) { RedirectStandardOutput = true, UseShellExecute = false };
+        using var ps = Process.Start(start)!;
+        var found = new List<int>();
+        while (ps.StandardOutput.ReadLine() is { } line)
+            if (int.TryParse(line, System.Globalization.CultureInfo.InvariantCulture, out var pid) && PtyNative.getsid(pid) == session)
+                found.Add(pid);
+        ps.WaitForExit();
+        return found;
     }
 
     // Runs with a reference on the master, so its number can't be closed and handed to another file meanwhile;

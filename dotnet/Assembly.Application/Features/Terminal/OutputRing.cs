@@ -9,7 +9,10 @@ internal sealed class OutputRing
     public const int Cap = 16 * 1024 * 1024;
     public const int TrimTo = 12 * 1024 * 1024;
 
-    /// <summary>The most a window coming back is shown (terminal#5).</summary>
+    /// <summary>
+    /// The most a window coming back is shown (terminal#5): it reads from no earlier than this before the end the
+    /// topic's state gave it. Reads themselves don't apply it, since the end moves while a replay is read page by page.
+    /// </summary>
     public const int Replay = 4 * 1024 * 1024;
 
     /// <summary>The most one read answers, as attachments' reads do (plan D4).</summary>
@@ -47,12 +50,11 @@ internal sealed class OutputRing
     }
 
     /// <summary>
-    /// The bytes from <paramref name="offset"/>, raised to the oldest kept and to the last <see cref="Replay"/> bytes,
-    /// at most <see cref="ReadLimit"/> of them.
+    /// The bytes from <paramref name="offset"/>, raised to the oldest kept, at most <see cref="ReadLimit"/> of them.
     /// </summary>
     public OutputPiece Read(long offset)
     {
-        var from = Math.Clamp(offset, Math.Max(Start, End - Replay), End);
+        var from = Math.Clamp(offset, Start, End);
         var length = (int)Math.Min(ReadLimit, End - from);
         return new OutputPiece(from, End, _buffer.AsSpan((int)(from - Start), length).ToArray());
     }

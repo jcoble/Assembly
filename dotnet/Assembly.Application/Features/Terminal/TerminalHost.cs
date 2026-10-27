@@ -17,6 +17,7 @@ internal sealed class TerminalHost : IAsyncDisposable
     private readonly TimeProvider _time;
     private readonly Lock _lock = new();
     private readonly Dictionary<string, RunningTerminal> _terminals = [];
+    private bool _stopped;
 
     public TerminalHost(IPtyStarter pty, ITopics topics, TimeProvider time)
     {
@@ -62,6 +63,12 @@ internal sealed class TerminalHost : IAsyncDisposable
         var info = new TerminalInfo($"term-{Guid.NewGuid():N}", cwd, shell, command, cols, rows, pty.Pid, owner, _time.GetUtcNow(), null);
         lock (_lock)
         {
+            // A start that was already running when the host stopped: nobody would close what it opened.
+            if (_stopped)
+            {
+                _ = pty.DisposeAsync().AsTask();
+                throw new CallFailed("the backend is stopping");
+            }
             if (!reusable || RunningShell(owner) is not { } raced)
             {
                 _terminals[info.Id] = new RunningTerminal(info, pty, _topics);
@@ -108,6 +115,7 @@ internal sealed class TerminalHost : IAsyncDisposable
         List<RunningTerminal> all;
         lock (_lock)
         {
+            _stopped = true;
             all = [.. _terminals.Values];
             _terminals.Clear();
         }

@@ -73,7 +73,8 @@ The topic, `terminal`, keyed by terminal id, a rows topic (`ICallRegistry.Rows`)
   `{"seq": <end offset>, "prevSeq": <start offset>, "data": <bytes>}`. Offsets count bytes since the terminal
   started. The sub's `after` is the last offset the window has; the state catches up from it in one row when it's in
   the ring and at most 1 MB behind, otherwise it answers the current end and the window reads the replay with
-  `terminal/read`, 1 MB a call, starting no earlier than the last 4 MB (terminal#5). The state never holds more than
+  `terminal/read`, 1 MB a call, from its `after` but no earlier than 4 MB before that end (terminal#5). Reads
+  themselves only raise an offset to the oldest kept byte, so output arriving between pages never skips any. The state never holds more than
   1 MB, since it runs under the Topics lock.
 
 The exit is the last row, `{"seq": <end + 1>, "prevSeq": <end>, "exit": <code>}`, published only after the PTY has
@@ -156,6 +157,11 @@ them up). Closing the terminal kills that job's group too.
   the master is a SafeFileHandle, so a write or resize never reaches a reused number; the PTY starts outside the
   host's lock; a window that has the exit gets nothing again; only a session's shell is reused, never a command it
   runs (`TerminalInfo.Command`).
+- Sol 6.1: closing also kills every process left in the terminal's session (`getsid`), so a job an interactive shell
+  left when it exited dies too; replay pages no longer reapply the moving 4 MB floor; a start that was running when
+  the host stopped disposes what it opened and fails; a cancelled or timed-out write answers at once (its thread
+  stays in `write()` until the program reads or the terminal closes). Its stale-resize and repeated-exit findings
+  were the same as Claude's, already fixed.
 
 ## Later steps
 
