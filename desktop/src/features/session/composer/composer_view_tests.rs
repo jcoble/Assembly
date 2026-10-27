@@ -5,10 +5,11 @@ use std::rc::Rc;
 
 use gpui::TestAppContext;
 use gpui_kit::{Entity, Subscription, VisualTestContext};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::{Composer, ComposerEvent};
 use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::client::session_client::CallError;
 
 /// What the composer told the pane, and the subscription that hears it.
 type Events = (Rc<RefCell<Vec<String>>>, Subscription);
@@ -55,13 +56,15 @@ fn a_send_goes_out_for_the_session_clears_the_draft_and_says_its_run(cx: &mut Te
     });
     client.queue_answer(Ok(json!({ "runId": "r7" })));
     type_and_send(&composer, " hello \n", cx);
+    let calls = client.calls();
+    assert_eq!(calls.len(), 1);
+    let (call, args) = &calls[0];
+    assert_eq!(call, "send/send");
     assert_eq!(
-        client.calls(),
-        [(
-            "send/send".to_string(),
-            json!({ "session": "s1", "text": "hello" })
-        )]
+        (&args["session"], &args["text"]),
+        (&json!("s1"), &json!("hello"))
     );
+    assert!(args["clientId"].as_str().is_some_and(|id| !id.is_empty()));
     assert_eq!(draft(&composer, cx), "");
     assert_eq!(*events.borrow(), ["sending hello", "sent s1 r7"]);
 }
@@ -155,5 +158,32 @@ fn stop_stops_the_running_turn_and_does_nothing_while_idle(cx: &mut TestAppConte
     assert_eq!(
         client.calls(),
         [("send/stop".to_string(), json!({ "runId": "r7" }))]
+    );
+}
+
+// Pins: g0-session#22
+#[gpui::test]
+fn a_retried_send_reuses_its_client_id_and_a_new_one_gets_its_own(cx: &mut TestAppContext) {
+    let (composer, client, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx)
+    });
+    client.queue_answer(Err(CallError::Timeout("no answer".into())));
+    type_and_send(&composer, "hello", cx);
+    assert_eq!(draft(&composer, cx), "hello", "the failed send comes back");
+    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
+    cx.run_until_parked();
+    client.queue_answer(Ok(json!({ "runId": "r2" })));
+    type_and_send(&composer, "hello", cx);
+    let ids: Vec<Value> = client
+        .calls()
+        .into_iter()
+        .map(|(_, args)| args["clientId"].clone())
+        .collect();
+    assert_eq!(ids[0], ids[1], "the retry names the same message");
+    assert_ne!(
+        ids[1], ids[2],
+        "a later send of the same words is a new message"
     );
 }
