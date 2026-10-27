@@ -261,8 +261,9 @@ fn a_backend_that_stops_reading_ends_the_connection_and_the_client_still_stops()
         };
         client.events.send(call).unwrap();
     }
-    // The writes fill the socket's buffers, and the one that can't finish fails after 5 s.
-    let ended = client.state_within(Duration::from_secs(15));
+    // The writes fill the socket's buffers, and the one that can't finish fails once it has gone 5 s with no
+    // progress. The kernel may take a little more first (10 s here, longer on CI), so the wait allows several bounds.
+    let ended = client.state_within(Duration::from_secs(60));
     assert_eq!(ended, Some(ConnectionState::Connecting));
 }
 

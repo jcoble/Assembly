@@ -25,7 +25,7 @@ use super::open_failure::OpenFailure;
 use super::out_frame::OutFrame;
 
 pub(super) const PROTOCOL: u32 = 1;
-/// How long opening may take, connected to welcomed, on the same machine, and how long any one write may take.
+/// How long opening may take, connected to welcomed, on the same machine, and how long a write may go with no progress.
 const OPENING: Duration = Duration::from_secs(5);
 
 pub(super) struct Connection {
