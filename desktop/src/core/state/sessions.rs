@@ -31,6 +31,8 @@ pub struct Sessions {
     /// Owns the `sessions` subscription; dropping it unsubscribes.
     _feed: Task<()>,
     loading_older: Option<Task<()>>,
+    /// Why the last older page failed, until a page loads or a retry starts.
+    older_error: Option<String>,
 }
 
 impl EventEmitter<SessionChange> for Sessions {}
@@ -72,11 +74,17 @@ impl Sessions {
             seeded: false,
             _feed: feed,
             loading_older: None,
+            older_error: None,
         }
     }
 
     pub fn items(&self) -> &[SessionItem] {
         &self.items
+    }
+
+    /// Why the last older page failed, until a page loads or a retry starts.
+    pub fn older_error(&self) -> Option<&str> {
+        self.older_error.as_deref()
     }
 
     /// Loads the next older page, once at a time; nothing when there are no more.
@@ -87,6 +95,7 @@ impl Sessions {
         if self.loading_older.is_some() {
             return;
         }
+        self.older_error = None;
         let args = json!({"before": before, "beforeId": before_id, "limit": PAGE});
         let page = SocketClient::global(cx)
             .read(cx)
@@ -95,15 +104,31 @@ impl Sessions {
             let outcome = page.await;
             let _ = this.update(cx, |sessions, cx| {
                 sessions.loading_older = None;
-                if let Outcome::Ok(page) = outcome {
-                    sessions.older = page.next_before.zip(page.next_before_id);
-                    for change in add_page(&mut sessions.items, page.sessions) {
-                        cx.emit(change);
-                    }
-                    cx.notify();
+                for change in sessions.finish_older(outcome) {
+                    cx.emit(change);
                 }
+                cx.notify();
             });
         }));
+        cx.notify();
+    }
+
+    /// Takes an older page's outcome: a page moves the cursor and is added, a failure keeps its message, and an
+    /// aborted call changes nothing.
+    fn finish_older(&mut self, outcome: Outcome<SessionPage>) -> Vec<SessionChange> {
+        match outcome {
+            Outcome::Ok(page) => {
+                self.older_error = None;
+                self.older = page.next_before.zip(page.next_before_id);
+                add_page(&mut self.items, page.sessions)
+            }
+            Outcome::Failed(failure) => {
+                self.older_error =
+                    Some(format!("Couldn't load older sessions: {}", failure.message));
+                Vec::new()
+            }
+            Outcome::Aborted => Vec::new(),
+        }
     }
 
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
@@ -190,9 +215,13 @@ fn upsert(items: &mut Vec<SessionItem>, item: SessionItem) -> SessionChange {
 
 #[cfg(test)]
 mod tests {
+    use gpui_kit::Task;
     use serde_json::json;
 
-    use super::{SessionChange, SessionItem, add_page, add_state, upsert};
+    use super::{SessionChange, SessionItem, SessionPage, Sessions, add_page, add_state, upsert};
+    use crate::core::socket::call_failure::CallFailure;
+    use crate::core::socket::error_code::ErrorCode;
+    use crate::core::socket::outcome::Outcome;
 
     fn session(id: &str, updated_at: i64) -> SessionItem {
         serde_json::from_value(json!({"sessionId": id, "agent": "claude", "repoUrl": "/r", "title": null,
@@ -202,6 +231,67 @@ mod tests {
 
     fn ids(items: &[SessionItem]) -> Vec<&str> {
         items.iter().map(|item| item.session_id.as_str()).collect()
+    }
+
+    fn held(items: Vec<SessionItem>, older: (i64, &str)) -> Sessions {
+        Sessions {
+            items,
+            older: Some((older.0, older.1.to_owned())),
+            seeded: true,
+            _feed: Task::ready(()),
+            loading_older: None,
+            older_error: None,
+        }
+    }
+
+    fn failed(message: &str) -> Outcome<SessionPage> {
+        Outcome::Failed(CallFailure {
+            code: ErrorCode::Failed,
+            message: message.to_owned(),
+        })
+    }
+
+    fn page(sessions: Vec<SessionItem>, next: Option<(i64, &str)>) -> Outcome<SessionPage> {
+        Outcome::Ok(SessionPage {
+            sessions,
+            next_before: next.map(|next| next.0),
+            next_before_id: next.map(|next| next.1.to_owned()),
+        })
+    }
+
+    #[test]
+    fn a_failed_older_page_keeps_its_message_and_changes_nothing_else() {
+        let mut sessions = held(vec![session("a", 10)], (10, "a"));
+        let changes = sessions.finish_older(failed("the database is locked"));
+        assert!(changes.is_empty());
+        assert!(
+            sessions
+                .older_error()
+                .is_some_and(|error| error.contains("the database is locked"))
+        );
+        assert_eq!(ids(&sessions.items), ["a"]);
+        assert_eq!(sessions.older, Some((10, "a".to_owned())));
+    }
+
+    #[test]
+    fn a_later_older_page_clears_the_error_and_adds_the_page() {
+        let mut sessions = held(vec![session("a", 10)], (10, "a"));
+        sessions.finish_older(failed("the database is locked"));
+        let changes = sessions.finish_older(page(vec![session("b", 5)], Some((5, "b"))));
+        assert_eq!(changes, [SessionChange::Added("b".into())]);
+        assert_eq!(sessions.older_error(), None);
+        assert_eq!(ids(&sessions.items), ["a", "b"]);
+        assert_eq!(sessions.older, Some((5, "b".to_owned())));
+    }
+
+    #[test]
+    fn an_aborted_older_page_changes_nothing() {
+        let mut sessions = held(vec![session("a", 10)], (10, "a"));
+        let changes = sessions.finish_older(Outcome::Aborted);
+        assert!(changes.is_empty());
+        assert_eq!(sessions.older_error(), None);
+        assert_eq!(ids(&sessions.items), ["a"]);
+        assert_eq!(sessions.older, Some((10, "a".to_owned())));
     }
 
     // Pins: g0-socket#11

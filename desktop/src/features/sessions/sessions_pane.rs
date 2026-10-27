@@ -130,6 +130,10 @@ impl Render for SessionsPane {
             .sessions
             .as_ref()
             .map_or(0, |sessions| sessions.read(cx).items().len());
+        let older_error = self
+            .sessions
+            .as_ref()
+            .and_then(|sessions| sessions.read(cx).older_error().map(String::from));
         let header = h_flex()
             .px_3()
             .py_2()
@@ -158,9 +162,16 @@ impl Render for SessionsPane {
                 let Some(sessions) = pane.sessions.clone() else {
                     return Vec::new();
                 };
-                if range.end + LOAD_OLDER_WITHIN >= sessions.read(cx).items().len() {
+                // After a failure, only Retry asks again.
+                let failed = sessions.read(cx).older_error().is_some();
+                if !failed && range.end + LOAD_OLDER_WITHIN >= sessions.read(cx).items().len() {
+                    // Checked again when it runs: a page that failed since this was queued waits for Retry.
                     cx.on_next_frame(window, move |_, _, cx| {
-                        sessions.update(cx, |sessions, cx| sessions.load_older(cx))
+                        sessions.update(cx, |sessions, cx| {
+                            if sessions.older_error().is_none() {
+                                sessions.load_older(cx);
+                            }
+                        })
                     });
                 }
                 let selected = SelectedSession::global(cx)
@@ -195,6 +206,28 @@ impl Render for SessionsPane {
                         .text_sm()
                         .text_color(muted)
                         .child(empty_line(state.as_ref())),
+                )
+            })
+            .when_some(older_error, |pane, error| {
+                pane.child(
+                    h_flex()
+                        .px_3()
+                        .py_1()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(error)
+                        .child(
+                            Button::new("retry-older")
+                                .ghost()
+                                .compact()
+                                .label("Retry")
+                                .on_click(cx.listener(|pane, _, _, cx| {
+                                    if let Some(sessions) = pane.sessions.clone() {
+                                        sessions.update(cx, |sessions, cx| sessions.load_older(cx));
+                                    }
+                                })),
+                        ),
                 )
             })
     }
