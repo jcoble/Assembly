@@ -1308,6 +1308,10 @@ Each is reviewed on its own.
 
 ### B9. The page with no timers and no promise chains
 
+**Status (2026-10-27):** the backend clock is done (`Clock/BackendClock.cs`, `second` only, wired into the desktop,
+with its tests); the page half (the reconnect group, `backend-ready`, "Disconnected", and the clock's use on the page)
+waits for the GPUI switch plan.
+
 This step makes every row of section 7 and section 8 that isn't moved to a later phase true. It's one commit per row
 group:
 
