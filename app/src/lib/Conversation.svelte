@@ -2,7 +2,6 @@
   import { onDestroy, setContext, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
-  import { pageCall } from './host/pageCall';
   import { answerAsk, fetchAttachment, getSession, listAgents, rowsPage, sendText, stopRun, stopTask, toolDetail, type Session } from './api';
   import { chatClosed, chatOpened, counters, delay, frame, measures, rowDestroyed, rowMounted } from './debug.svelte';
   import { openLive } from './rows/client';
@@ -140,13 +139,6 @@
   let knownRun = $state<string | null>(null);
   const activeRun = $derived(runNow(view, knownRun));
   const busy = $derived(sending || activeRun !== null);
-  // App Nap stays off from send until the run finishes, fails or is cancelled,
-  // or the conversation closes (lib.rs activity.begin / activity.end).
-  $effect(() => {
-    if (!busy) return;
-    void pageCall('activity.begin');
-    return () => void pageCall('activity.end');
-  });
   // The session's title can change as a run starts (from its first message) and while it runs (the agent's own),
   // so the list reads it again when a run appears and when it ends.
   $effect(() => {

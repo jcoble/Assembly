@@ -9,14 +9,14 @@ cd "$(git rev-parse --show-toplevel)"
 # A name that isn't part of a longer one: no identifier character before it (b) or after it (e).
 b='(^|[^[:alnum:]_])'
 e='([^[:alnum:]_]|$)'
-# Waits on time, timers and frame waits: only desktop/src/core/clock/ may. It holds exactly two things: the subscriber
-# to the backend's `clock` topic, and the one named debounce (none yet; the first save that needs one adds it there).
-# Nothing in it ticks on its own.
-timers="${b}Timer${e}|(\.|::)timer[[:space:]]*\(|${b}(request_animation_frame|on_next_frame|recv_timeout|park_timeout|with_timeout|block_with_timeout)${e}"
 # Sockets and HTTP: only the socket client, desktop/src/core/socket/, may.
 sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_client|HttpClient)${e}|${b}hyper::"
-# Sleeping, anywhere.
-sleeps="${b}sleep${e}"
+# Detaching a task or subscription: whatever starts one holds it, so dropping the holder stops it.
+detaches="(\.|::)detach[a-z_]*[[:space:]]*\("
+# Starting an OS thread: only the socket client, desktop/src/core/socket/, and the backend launcher,
+# desktop/src/core/backend/, may. A scoped thread (thread::scope) always joins, so it's fine anywhere.
+# A grouped import split over lines (a line ending in "thread::{") counts too, since grep reads one line at a time.
+threads="${b}thread::(spawn|Builder)${e}|${b}thread::\{([^}]*[^[:alnum:]_])?(spawn|Builder)${e}|${b}thread::\{[[:space:]]*$"
 # A file that draws (implements Render or RenderOnce, or has a render function), and file reads in one.
 draws="${b}impl([^[:alnum:]_]|[^[:alnum:]_].*[^[:alnum:]_])(Render|RenderOnce)[[:space:]]+for${e}|${b}fn[[:space:]]+render${e}"
 files="${b}fs${e}|${b}File::"
@@ -30,9 +30,10 @@ match() {
 hits() {
   local path=$1 file=${2:-$1}
   {
-    [[ $path == desktop/src/core/clock/* ]] || match "$file" "$timers" "timers and frame waits only in core/clock/"
     [[ $path == desktop/src/core/socket/* ]] || match "$file" "$sockets" "sockets and HTTP only in core/socket/"
-    match "$file" "$sleeps" "no sleeping"
+    match "$file" "$detaches" "no detached tasks or subscriptions; hold them"
+    [[ $path == desktop/src/core/socket/* || $path == desktop/src/core/backend/* ]] \
+      || match "$file" "$threads" "threads only in core/socket/ and core/backend/"
     [ -z "$(match "$file" "$draws" .)" ] || match "$file" "$files" "no file reads in a file that draws"
   } | sed "s|^|$path:|"
 }
@@ -49,19 +50,6 @@ while IFS='|' read -r expect path code; do
     selftest=1
   fi
 done <<'PROBE'
-catch|desktop/src/features/x/a.rs|cx.background_executor().timer(Duration::from_secs(1)).await;
-catch|desktop/src/features/x/a.rs|use gpui::Timer;
-catch|desktop/src/features/x/a.rs|BackgroundExecutor::timer(&executor, d).await;
-catch|desktop/src/features/x/a.rs|Timer::after(Duration::from_millis(5)).await;
-catch|desktop/src/features/x/a.rs|window.on_next_frame(move |_, _| {});
-catch|desktop/src/features/x/a.rs|window.request_animation_frame();
-catch|desktop/src/core/socket/a.rs|let msg = rx.recv_timeout(Duration::from_secs(1));
-catch|desktop/src/features/x/a.rs|let r = fut.with_timeout(Duration::from_secs(1), cx.background_executor()).await;
-catch|desktop/src/features/x/a.rs|cx.background_executor().block_with_timeout(d, fut);
-pass|desktop/src/core/clock/a.rs|Timer::after(Duration::from_millis(5)).await;
-pass|desktop/src/features/x/a.rs|struct TimerView;
-pass|desktop/src/features/x/a.rs|let timer_label = clock.read(cx).label();
-pass|desktop/src/features/x/a.rs|// Timer::after is only for the clock.
 catch|desktop/src/features/x/a.rs|use tungstenite::connect;
 catch|desktop/src/core/x/a.rs|let stream = std::net::TcpStream::connect(addr)?;
 catch|desktop/src/features/x/a.rs|let body = ureq::get(url).call()?;
@@ -70,11 +58,24 @@ catch|desktop/src/features/x/a.rs|use hyper::Client;
 pass|desktop/src/core/socket/a.rs|let (socket, _) = tungstenite::client(request, stream)?;
 pass|desktop/src/core/socket/a.rs|let stream = std::net::TcpStream::connect(addr)?;
 pass|desktop/src/features/x/a.rs|let link = hyperlink(text);
-catch|desktop/src/core/clock/a.rs|std::thread::sleep(Duration::from_secs(1));
-catch|desktop/src/core/socket/a.rs|use std::thread::sleep;
-catch|desktop/src/features/x/a.rs|sleep(RECONNECT_AFTER);
-catch|desktop/src/features/x/a.rs|use std::thread::{Builder, sleep as wait};
-pass|desktop/src/features/x/a.rs|host.prevent_sleep(true);
+catch|desktop/src/features/x/a.rs|cx.spawn(async move |_, _| {}).detach();
+catch|desktop/src/features/x/a.rs|        .detach();
+catch|desktop/src/features/x/a.rs|cx.observe(&model, |_, _, _| {}).detach();
+catch|desktop/src/features/x/a.rs|Task::detach(task);
+catch|desktop/src/features/x/a.rs|task.detach_and_log_err(cx);
+pass|desktop/src/features/x/a.rs|self.load = Some(cx.spawn(async move |_, _| {}));
+pass|desktop/src/features/x/a.rs|let detached = true;
+catch|desktop/src/features/x/a.rs|std::thread::spawn(move || {});
+catch|desktop/src/core/x/a.rs|let t = thread::Builder::new().name("x".into()).spawn(f)?;
+catch|desktop/src/features/x/a.rs|use std::thread::{self, spawn as go};
+catch|desktop/src/features/x/a.rs|use std::thread::{spawn};
+catch|desktop/src/features/x/a.rs|use std::thread::{
+pass|desktop/src/features/x/a.rs|use nonthread::{spawn};
+pass|desktop/src/core/socket/a.rs|std::thread::spawn(move || {});
+pass|desktop/src/core/backend/a.rs|let t = thread::Builder::new().name("x".into()).spawn(f)?;
+pass|desktop/src/features/x/a.rs|let task = cx.background_executor().spawn(async {});
+pass|desktop/src/features/x/a.rs|let t = nonthread::spawn(f);
+pass|desktop/src/features/x/a.rs|std::thread::scope(|s| {});
 catch|desktop/src/features/x/a.rs|impl Render for A {} fn f() { std::fs::read("x"); }
 catch|desktop/src/features/x/a.rs|impl<T> gpui::RenderOnce for A<T> {} fn f() { let f = File::open("x"); }
 catch|desktop/src/features/x/a.rs|fn render(&mut self) { let s = fs::read_to_string("x"); }

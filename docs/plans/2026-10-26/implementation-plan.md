@@ -180,7 +180,7 @@ opened.
 | Shared plumbing for repeated work (atomic save, logging, auditing, socket send and receive) through middleware or DI, with features calling an interface | Sections 5.2 to 5.8: one implementation each, registered in DI, wrapped around every call by the dispatcher. |
 | Clean Architecture after codewithmukesh, DbContext rather than repositories | Sections 4 and 5.6, and decisions D1 and D3. |
 | Timers and ticks made the old app unusable; one allowlist entry grew to more than 50 | Sections 6 to 9: no timers in `app/src`, and no allowlist file. The guard has no list anyone can add to. |
-| No allowlist at all; the debounce is the only timer he'd allow, unless there's another way | Section 5.9: the other way. A save costs about 17 µs, so the page saves each change as it happens (every keystroke, each toggle, the end of a drag), one atomic write each. There's no debounce in the front end or the backend, and no exception. |
+| No allowlist at all; the debounce is the only timer he'd allow, unless there's another way | **Superseded for `desktop/` on 2026-10-27:** the GPUI window may use its own timers for animations, frame waits and a debounce, each a Task held by its view; anything that ticks on a schedule still uses the backend clock. Jesse: "The no -timer rule, take out, we aren't using a frontend like those other JS ones now." (12:33Z), then "Having one backend clock is prob goood practice anyways i'm thinking. You still wouldn't want threads open that never got closed of properly" (12:50Z). It still holds for `app/`. Section 5.9: the other way. A save costs about 17 µs, so the page saves each change as it happens (every keystroke, each toggle, the end of a drag), one atomic write each. There's no debounce in the front end or the backend, and no exception. |
 | Any timer comes from the backend, even one shared timer that pushes timings to the front | Section 5.8: one backend clock, a `PeriodicTimer` on `TimeProvider`. It pushes on the `clock` topic only while someone is subscribed. |
 | HTTP and WebSocket both is confusing; one path | Section 5.1: one WebSocket for everything the page does. The only other HTTP is `/mcp`, which agents use. |
 | Saves are atomic: one save per save call, or one transaction | Section 3, rule 6, and section 5.6. |
@@ -657,6 +657,8 @@ time and isn't a page clock, except that C2's machine retries run on the backend
 `MessageStatusTool.cs:30`, every 250 ms.
 
 ### 5.9 Saves: each change as it happens, with no debounce anywhere
+
+> **Superseded for `desktop/` on 2026-10-27, as to timers only:** the GPUI window may debounce with a Task held by its view (Jesse: "The no -timer rule, take out, we aren't using a frontend like those other JS ones now." (12:33Z), then "Having one backend clock is prob goood practice anyways i'm thinking. You still wouldn't want threads open that never got closed of properly" (12:50Z)). The rest of this section, and all of it for `app/`, stands.
 
 This answers Jesse's "find another way to do what the debounce does". There's no debounce in the front end or the
 backend. A debounce exists to turn many changes into one save, to keep saves cheap. A save here is cheap enough
