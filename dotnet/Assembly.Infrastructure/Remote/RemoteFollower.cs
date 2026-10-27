@@ -106,8 +106,15 @@ internal sealed class RemoteFollower(
                 try
                 {
                     await checkFormat(_stopping.Token);
-                    await FollowOnceAsync(sessionId, _stopping.Token);
-                    backoff = TimeSpan.FromSeconds(1);
+                    if (await FollowOnceAsync(sessionId, _stopping.Token))
+                        backoff = TimeSpan.FromSeconds(1);
+                    else
+                    {
+                        // Closed or out of step before catching up: waits like a lost link, so a box that keeps doing it
+                        // isn't asked again at once, forever.
+                        await Task.Delay(backoff, _stopping.Token);
+                        backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
+                    }
                 }
                 catch (Exception error) when (error is MachineUnreachable or CallFailed)
                 {
@@ -149,7 +156,8 @@ internal sealed class RemoteFollower(
     }
 
     // One socket, until it's no longer needed, drops, or a row arrives out of order.
-    private async Task FollowOnceAsync(string sessionId, CancellationToken stopping)
+    // True once it caught up and settled; false when the link closed or a row was out of step first.
+    private async Task<bool> FollowOnceAsync(string sessionId, CancellationToken stopping)
     {
         using var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
@@ -174,7 +182,7 @@ internal sealed class RemoteFollower(
                 {
                     received = await socket.ReceiveAsync(chunk, done.Token);
                     if (received.MessageType == WebSocketMessageType.Close)
-                        return;
+                        return false;
                     buffer.Write(chunk, 0, received.Count);
                 }
                 while (!received.EndOfMessage);
@@ -190,7 +198,7 @@ internal sealed class RemoteFollower(
                 if (!hub.PublishCopy(row))
                 {
                     log.WriteLine($"remote session {sessionId}: seq {row.Seq} doesn't follow {hub.LastSeq(sessionId)}; catching up again");
-                    return;
+                    return false;
                 }
                 if (row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started")
                 {
@@ -205,6 +213,7 @@ internal sealed class RemoteFollower(
             // a restart found shown running; a give-up, a dropped link, a stop or a seq mismatch leaves it running.
             if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
                 await turnEnded(sessionId);
+            return true;
         }
         finally
         {
