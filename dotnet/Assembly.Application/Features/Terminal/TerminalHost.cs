@@ -32,9 +32,10 @@ internal sealed class TerminalHost : IAsyncDisposable
     public TerminalInfo Start(StartArgs args)
     {
         var owner = Blank(args.Owner);
+        var command = Blank(args.Command);
         var shell = Blank(args.Shell) ?? Blank(Environment.GetEnvironmentVariable("SHELL")) ?? "/bin/sh";
         // A login shell, so the terminal has the user's whole PATH, as Terminal.app and the old app gave it.
-        string[] arguments = Blank(args.Command) is { } command ? ["-l", "-c", command] : ["-l"];
+        string[] arguments = command is not null ? ["-l", "-c", command] : ["-l"];
         var cols = Math.Clamp(args.Cols ?? DefaultCols, 20, 300);
         var rows = Math.Clamp(args.Rows ?? DefaultRows, 4, 100);
         var environment = new Dictionary<string, string?>
@@ -51,14 +52,23 @@ internal sealed class TerminalHost : IAsyncDisposable
         if (owner is not null)
             environment["ASSEMBLY_SESSION_ID"] = owner;
         var cwd = args.Cwd.Trim();
+        // Only a session's shell is handed back; a command it runs (a Run, a sign-in) is a terminal of its own.
+        var reusable = owner is not null && command is null;
+        if (reusable && RunningShell(owner) is { } running)
+            return running;
+        // Started outside the lock: a subscriber's state takes it under the Topics lock, so a slow start (a folder on
+        // a sleeping drive) would hold up every publish.
+        var pty = _pty.Start(new PtyRequest(shell, arguments, cwd, environment, cols, rows));
+        var info = new TerminalInfo($"term-{Guid.NewGuid():N}", cwd, shell, command, cols, rows, pty.Pid, owner, _time.GetUtcNow(), null);
         lock (_lock)
         {
-            if (owner is not null && _terminals.Values.Select(terminal => terminal.Info).FirstOrDefault(info => info.Owner == owner && info.ExitCode is null) is { } running)
-                return running;
-            var pty = _pty.Start(new PtyRequest(shell, arguments, cwd, environment, cols, rows));
-            var info = new TerminalInfo($"term-{Guid.NewGuid():N}", cwd, shell, cols, rows, pty.Pid, owner, _time.GetUtcNow(), null);
-            _terminals[info.Id] = new RunningTerminal(info, pty, _topics);
-            return info;
+            if (!reusable || RunningShell(owner) is not { } raced)
+            {
+                _terminals[info.Id] = new RunningTerminal(info, pty, _topics);
+                return info;
+            }
+            _ = pty.DisposeAsync().AsTask();
+            return raced;
         }
     }
 
@@ -109,6 +119,12 @@ internal sealed class TerminalHost : IAsyncDisposable
     {
         lock (_lock)
             return _terminals.TryGetValue(terminal, out var running) ? running : throw new CallFailed($"there's no terminal {terminal}");
+    }
+
+    private TerminalInfo? RunningShell(string? owner)
+    {
+        lock (_lock)
+            return _terminals.Values.Select(terminal => terminal.Info).FirstOrDefault(info => info.Owner == owner && info.Command is null && info.ExitCode is null);
     }
 
     private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

@@ -42,14 +42,33 @@ internal sealed class RunningTerminal : IAsyncDisposable
     {
         if (Info.ExitCode is not null || _stop.IsCancellationRequested)
             throw new CallFailed("the terminal has ended");
-        await _pty.WriteAsync(bytes, cancellationToken);
+        try
+        {
+            await _pty.WriteAsync(bytes, cancellationToken);
+        }
+        catch (ObjectDisposedException)
+        {
+            throw new CallFailed("the terminal has ended");
+        }
     }
 
+    /// <summary>Does nothing once the program has ended: there's no terminal left to size.</summary>
     public void Resize(int cols, int rows)
     {
         lock (_lock)
+        {
+            if (_info.ExitCode is not null)
+                return;
             _info = _info with { Cols = cols, Rows = rows };
-        _pty.Resize(cols, rows);
+        }
+        try
+        {
+            _pty.Resize(cols, rows);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Ended meanwhile.
+        }
     }
 
     public OutputPiece Read(long offset)
@@ -68,6 +87,9 @@ internal sealed class RunningTerminal : IAsyncDisposable
         lock (_lock)
         {
             var end = _ring.End;
+            // A window that already has the exit gets nothing again.
+            if (_info.ExitCode is not null && after == end + 1)
+                return (end + 1, []);
             var from = after is { } offset && offset >= _ring.Start && offset <= end && end - offset <= OutputRing.ReadLimit ? offset : end;
             List<string> rows = [];
             if (from < end)

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
+using Microsoft.Win32.SafeHandles;
 using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Agents;
 
@@ -10,24 +11,26 @@ namespace Assembly.Infrastructure.Terminal;
 /// The master side of a started PTY, and the process on it, which leads its own session and group. A thread of its own
 /// reads the master, since a read blocks for the terminal's whole life, and hands each read over through a small
 /// channel, so a reader that falls behind holds the program up rather than the backend's memory. That thread owns
-/// the master and closes it when it's done: closing it under a blocked read could hand its number to another file.
+/// the master's last reference: the handle counts each write and resize too, so its number is only closed, and free
+/// for another file, once nothing is using it.
 /// </summary>
 internal sealed class UnixPty : IPty
 {
     private const int ReadSize = 16 * 1024;
 
-    private readonly int _master;
+    private readonly SafeFileHandle _master;
     private readonly Process _process;
     private readonly Channel<byte[]> _output = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(4) { SingleReader = true, SingleWriter = true });
     private readonly Lock _lock = new();
     private int _slave;
     private bool _disposed;
+    private volatile bool _ended;
     private byte[] _left = [];
     private int _leftAt;
 
     public UnixPty(int master, int slave, Process process)
     {
-        _master = master;
+        _master = new SafeFileHandle(master, ownsHandle: true);
         _slave = slave;
         _process = process;
         Pid = process.Id;
@@ -57,23 +60,23 @@ internal sealed class UnixPty : IPty
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         // A write blocks while the program isn't reading and the terminal's input is full, so it runs off the caller.
-        await Task.Run(() =>
+        await Task.Run(() => Using(fd =>
         {
             var left = bytes.Span;
             while (left.Length > 0)
             {
-                var wrote = PtyNative.write(_master, ref MemoryMarshal.GetReference(left), left.Length);
+                var wrote = PtyNative.write(fd, ref MemoryMarshal.GetReference(left), left.Length);
                 if (wrote < 0 && Marshal.GetLastPInvokeError() != PtyNative.EIntr)
                     throw PtyNative.Failed("writing to the terminal");
                 left = left[(int)Math.Max(wrote, 0)..];
             }
-        }, cancellationToken);
+        }), cancellationToken);
     }
 
     public void Resize(int cols, int rows)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        PtyNative.SetSize(_master, cols, rows);
+        Using(fd => PtyNative.SetSize(fd, cols, rows));
     }
 
     public ValueTask DisposeAsync()
@@ -84,8 +87,10 @@ internal sealed class UnixPty : IPty
                 return ValueTask.CompletedTask;
             _disposed = true;
         }
-        // The shell's group, and the groups of the jobs it started: an interactive shell gives each job its own.
-        ProcessGroup.Kill(Pid);
+        // The shell's group, and the groups of the jobs it started: an interactive shell gives each job its own. Not
+        // once it has ended and nothing holds the terminal: its pid may belong to someone else's group by now.
+        if (!(_ended && _process.HasExited))
+            ProcessGroup.Kill(Pid);
         CloseSlave();
         _output.Writer.TryComplete();
         _process.Dispose();
@@ -111,14 +116,34 @@ internal sealed class UnixPty : IPty
         }
     }
 
+    // Runs with a reference on the master, so its number can't be closed and handed to another file meanwhile;
+    // throws ObjectDisposedException once the master has closed.
+    private void Using(Action<int> action)
+    {
+        var added = false;
+        try
+        {
+            _master.DangerousAddRef(ref added);
+            action((int)_master.DangerousGetHandle());
+        }
+        finally
+        {
+            if (added)
+                _master.DangerousRelease();
+        }
+    }
+
     private void ReadMaster()
     {
         var buffer = new byte[ReadSize];
+        var added = false;
+        _master.DangerousAddRef(ref added);
+        var fd = (int)_master.DangerousGetHandle();
         try
         {
             while (true)
             {
-                var read = PtyNative.read(_master, ref buffer[0], buffer.Length);
+                var read = PtyNative.read(fd, ref buffer[0], buffer.Length);
                 if (read < 0 && Marshal.GetLastPInvokeError() == PtyNative.EIntr)
                     continue;
                 // Linux answers EIO, not 0, once the last slave has closed: either way the output has ended.
@@ -132,8 +157,10 @@ internal sealed class UnixPty : IPty
         }
         finally
         {
+            _ended = true;
             _output.Writer.TryComplete();
-            _ = PtyNative.close(_master);
+            _master.DangerousRelease();
+            _master.Dispose();
         }
     }
 }

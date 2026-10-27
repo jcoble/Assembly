@@ -27,7 +27,7 @@ Assembly.Application/Features/Terminal/
 Assembly.Infrastructure/Terminal/
   UnixPtyStarter.cs      posix_openpt, then the child through /usr/bin/perl (see below)
   UnixPty.cs             the master side: a FileStream over the master fd, TIOCSWINSZ, the process group kill
-  PtyNative.cs           the libc imports (LibraryImport, so it works under Native AOT)
+  PtyNative.cs           the libc imports (DllImport with blittable arguments, as ProcessGroup.cs, so it works under Native AOT)
 ```
 
 ## The PTY boundary (P22's dependency proof)
@@ -51,7 +51,8 @@ One approach, no new package and no native helper to ship:
 
 Forking from managed code isn't safe, and `posix_spawn` can't set a controlling terminal on macOS, which is why the
 child step is perl. The proof is `Draft/Terminal/UnixPtyTests.cs` passing on Linux (agent-workbox, Workbox Test) and
-macOS, and in the Native AOT build of `Assembly.Remote`.
+macOS (arm64, which runs the padded `ioctl`), and in the desktop's Native AOT build, made on the Mac by
+`shell/assembly.sh`. Workbox Test runs a normal build. Linux passes; the Mac and AOT runs are still to do.
 
 ## The wire
 
@@ -123,10 +124,17 @@ program only as fast as the backend publishes, not as fast as the window reads. 
 flood test; if it closes the socket, rows carry only offsets and the window pulls bytes with `terminal/read`.
 `notes/terminal-later-backend.md` (outside the repo) maps the options.
 
+## Known limit: a job left running
+
+The exit row waits until nothing holds the terminal. Under bash, `sleep 1000 &` then `exit` leaves the job holding
+it, since bash doesn't hang up its jobs, so the window shows the shell as running until the job ends (zsh hangs
+them up). Closing the terminal kills that job's group too.
+
 ## Open questions for Jesse
 
 - `ASSEMBLY_SESSION_ID` as the owner variable's name.
 - `/bin/sh` as the last fallback shell (the old app used `/bin/zsh`).
+- Whether the exit should go out when the shell ends, even while a job it left holds the terminal.
 - `-l` for every shell (no list of shell names), so an unusual shell that refuses it won't start.
 
 ## What the pre-implementation check changed
@@ -141,3 +149,15 @@ flood test; if it closes the socket, rows carry only offsets and the window pull
    slave until exit, `ProcessGroup.Kill`, the group test runs an interactive shell, DllImport (no
    `AllowUnsafeBlocks`), `ptsname` copied under a lock, Apple arm64 `ioctl`.
 7. Floods: recorded above as the next step, not fixed yet.
+
+## What the code reviews changed
+
+- Claude: no group kill once the program has ended and nothing holds the terminal (its pid may be someone else's);
+  the master is a SafeFileHandle, so a write or resize never reaches a reused number; the PTY starts outside the
+  host's lock; a window that has the exit gets nothing again; only a session's shell is reused, never a command it
+  runs (`TerminalInfo.Command`).
+
+## Later steps
+
+`terminal-later-window.md` (the Ghostty client, the old terminal UI, Run, sign-in) and `terminal-later-backend.md`
+(remote through C2, floods, interop, the Mac check list), next to this file, map what comes after this step.
