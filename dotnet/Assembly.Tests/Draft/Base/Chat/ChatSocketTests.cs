@@ -50,6 +50,8 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new SessionsFeature(_sessions, machines).Register(calls);
         new SendFeature(_sessions, machines, _hub).Register(calls);
         new RowsFeature(_hub, rows, _sessions, machines).Register(calls);
+        new ConfigFeature(_sessions, machines).Register(calls);
+        new MachinesFeature(machines).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));

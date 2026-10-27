@@ -1,0 +1,103 @@
+using Assembly.Domain.Sessions;
+
+namespace Assembly.Tests.Draft.Base.Chat;
+
+public sealed partial class ChatSocketTests
+{
+    [Fact]
+    public async Task Config_get_and_set_answer_the_sessions_config_from_its_machine()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Config = new SessionConfig("""[{"id":"model"}]""", new Dictionary<string, string> { ["model"] = "big" }, """[{"name":"init"}]""");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "config", "get", $$"""{"session":"{{session.SessionId}}"}""");
+        Assert.Equal(
+            """{"t":"result","id":1,"result":{"options":[{"id":"model"}],"choices":{"model":"big"},"commands":[{"name":"init"}]}}""",
+            await ReadAsync(socket));
+
+        _box.Config = new SessionConfig(null, new Dictionary<string, string> { ["model"] = "small" });
+        await CallAsync(socket, 2, "config", "set", $$"""{"session":"{{session.SessionId}}","configId":"model","value":"small"}""");
+        Assert.Equal("""{"t":"result","id":2,"result":{"options":null,"choices":{"model":"small"},"commands":null}}""", await ReadAsync(socket));
+        Assert.Equal(["config", "set config model small"], _box.Asked);
+
+        await CallAsync(socket, 3, "config", "get", """{"session":"nope"}""");
+        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task A_cancel_aborts_config_get_on_the_machine()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Hold();
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "config", "get", $$"""{"session":"{{session.SessionId}}"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
+        await SendAsync(socket, """{"t":"cancel","id":1}""");
+
+        await _box.Cancelled.Task.WaitAsync(Wait);
+        Assert.Contains("\"code\":\"cancelled\"", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task Closing_the_socket_aborts_config_get_on_the_machine()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Hold();
+        var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "config", "get", $$"""{"session":"{{session.SessionId}}"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
+        socket.Abort();
+        socket.Dispose();
+
+        await _box.Cancelled.Task.WaitAsync(Wait);
+    }
+
+    [Fact]
+    public async Task Machines_list_names_the_remote_machines_and_agents_answers_a_machines_agents()
+    {
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "machines", "list", "{}");
+        Assert.Equal("""{"t":"result","id":1,"result":{"machines":["box"]}}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
+        Assert.Equal("""{"t":"result","id":2,"result":{"agents":[{"id":"claude","name":"Claude"}]}}""", await ReadAsync(socket));
+        Assert.Equal(["agents"], _box.Asked);
+        await CallAsync(socket, 3, "machines", "agents", "{}");
+        Assert.Contains("\"agents\":[", await ReadAsync(socket));
+        Assert.Equal(["agents"], _here.Asked);
+
+        await CallAsync(socket, 4, "machines", "agents", """{"machine":"nope"}""");
+        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task A_cancel_aborts_machines_agents_on_the_machine()
+    {
+        _box.Hold();
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
+        await SendAsync(socket, """{"t":"cancel","id":1}""");
+
+        await _box.Cancelled.Task.WaitAsync(Wait);
+        Assert.Contains("\"code\":\"cancelled\"", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task Closing_the_socket_aborts_machines_agents_on_the_machine()
+    {
+        _box.Hold();
+        var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
+        socket.Abort();
+        socket.Dispose();
+
+        await _box.Cancelled.Task.WaitAsync(Wait);
+    }
+}

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Assembly.Application.Features.Chat.Sessions;
@@ -14,4 +15,11 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(SendFeature.AnswerArgs))]
 [JsonSerializable(typeof(SendFeature.StopTaskArgs))]
 [JsonSerializable(typeof(SendFeature.Done))]
+[JsonSerializable(typeof(ConfigFeature.GetArgs))]
+[JsonSerializable(typeof(ConfigFeature.SetArgs))]
+[JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(MachinesFeature.ListArgs))]
+[JsonSerializable(typeof(MachinesFeature.MachineList))]
+[JsonSerializable(typeof(MachinesFeature.AgentsArgs))]
+[JsonSerializable(typeof(MachinesFeature.AgentList))]
 internal sealed partial class SessionsJson : JsonSerializerContext;
