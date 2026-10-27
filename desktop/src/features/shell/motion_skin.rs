@@ -39,7 +39,11 @@ impl DockAreaRenderer for MotionSkin {
     }
 
     fn render_dock(&self, dock: &DockContext, content: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
-        let content = if dock.is_open() { entering(dock.placement(), content, window, cx) } else { content };
+        // A closed bottom dock still shows its tab bar, so only the side docks slide in: a closed side dock draws nothing.
+        let content = match dock.placement() {
+            DockPlacement::Left | DockPlacement::Right if dock.is_open() => entering(dock.placement(), content, window, cx),
+            _ => content,
+        };
         self.0.render_dock(dock, content, window, cx)
     }
 
@@ -57,16 +61,15 @@ impl DockAreaRenderer for MotionSkin {
     }
 }
 
-/// An open dock's content, fading in and sliding in from the dock's outer edge. A closed dock draws no content, so its
-/// animation state goes and the next opening plays it again.
+/// An open side dock's content, fading in and sliding in from its outer edge. A closed side dock draws no content, so
+/// its animation state goes and the next opening plays it again.
 fn entering(placement: DockPlacement, content: AnyElement, window: &Window, cx: &App) -> AnyElement {
     let motion = cx.theme().motion_tokens();
     let travel = f32::from(motion.distance_medium.to_pixels(window.rem_size()));
     let easing = motion.easing_enter.clone();
-    let (id, dx, dy) = match placement {
-        DockPlacement::Left => ("sessions-enter", -travel, 0.),
-        DockPlacement::Right => ("drawer-enter", travel, 0.),
-        _ => ("bottom-dock-enter", 0., travel),
+    let (id, dx) = match placement {
+        DockPlacement::Left => ("sessions-enter", -travel),
+        _ => ("drawer-enter", travel),
     };
     div()
         .relative()
@@ -75,7 +78,7 @@ fn entering(placement: DockPlacement, content: AnyElement, window: &Window, cx: 
         .with_animation(
             id,
             Animation::new(motion.duration_normal).with_easing(move |t| easing.sample(t).clamp(0., 1.)),
-            move |content, t| content.left(px(dx * (1. - t))).top(px(dy * (1. - t))).opacity(t),
+            move |content, t| content.left(px(dx * (1. - t))).opacity(t),
         )
         .into_any_element()
 }
