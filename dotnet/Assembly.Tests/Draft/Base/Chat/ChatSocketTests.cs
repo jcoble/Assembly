@@ -80,6 +80,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        await StopRealAsync();
         await _app.StopAsync();
         await _app.DisposeAsync();
         _hub.Dispose();

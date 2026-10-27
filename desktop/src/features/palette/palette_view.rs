@@ -5,12 +5,17 @@
 
 use std::cell::Cell;
 
-use gpui_kit::component::WindowExt;
 use gpui_kit::component::command::{Command, CommandState};
+use gpui_kit::component::{ActiveTheme as _, WindowExt};
 use gpui_kit::*;
 
 use super::TogglePalette;
 use crate::core::commands::command_registry::CommandRegistry;
+
+/// The palette's corners, the design system's `radius-md` for floating menus.
+const EDGE_RADIUS: Pixels = px(12.);
+/// The search box's corners inside it: a card inside a card takes the next radius down (`radius-sm`).
+const INNER_RADIUS: Pixels = px(8.);
 
 pub struct PaletteView {
     /// The query and the highlighted command, kept across renders.
@@ -65,6 +70,10 @@ impl PaletteView {
             // Escape and a click outside close the dialog without asking the palette.
             dialog
                 .close_button(false)
+                // An edge that reads against the dimmed window: the theme's text colour at 20%, about #3a3a3a on
+                // Assembly.
+                .rounded(EDGE_RADIUS)
+                .border_color(cx.theme().foreground.alpha(0.2))
                 .child(view.clone())
                 .on_close(|_, _, cx| Self::closing(cx))
         });
@@ -83,6 +92,7 @@ impl PaletteView {
 impl Render for PaletteView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         Command::new(&self.state)
+            .rounded(INNER_RADIUS)
             .placeholder("Type a command")
             .items(CommandRegistry::items(cx))
             .on_confirm(|_, window, cx| Self::close(window, cx))

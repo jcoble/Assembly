@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::update::Update;
 
-use super::default_layout::CHAT;
+use super::default_layout::{CHAT, LAYOUT_VERSION};
 use super::layout_store::{LAYOUT_KEY, WriteLayout, read_saved_layout, saved_layout};
 
 use super::frame::Frame;
@@ -133,7 +133,7 @@ fn an_old_or_unreadable_layout_opens_the_default(cx: &mut TestAppContext) {
     let (fresh, _, cx) = open(None, cx);
     let default = dump(&fresh, cx);
     let mut old = default.clone();
-    old["version"] = json!(0);
+    old["version"] = json!(LAYOUT_VERSION - 1);
 
     for saved in [json!("{"), old] {
         let (frame, _, cx) = open(Some(saved), &mut cx.cx);
@@ -226,7 +226,7 @@ fn the_window_opens_in_the_old_layout(cx: &mut TestAppContext) {
         (&left["size"], &left["open"]),
         (&json!(326.0), &json!(true))
     );
-    assert_eq!(pane_names(&left["panel"]), ["Sessions"]);
+    assert_eq!(pane_names(&left["panel"]), ["Sessions", "Files", "Search"]);
     assert_eq!(
         (&right["size"], &right["open"]),
         (&json!(320.0), &json!(false))
@@ -234,7 +234,6 @@ fn the_window_opens_in_the_old_layout(cx: &mut TestAppContext) {
     assert_eq!(
         pane_names(&right["panel"]),
         [
-            "Files",
             "Source control",
             "Agents",
             "Tasks",
@@ -384,6 +383,21 @@ fn the_usage_popover_is_built_only_once_it_opens(cx: &mut TestAppContext) {
         body.bottom() <= button.top(),
         "the popover opens above the strip"
     );
+}
+
+// Pins: g0-shape#9
+#[gpui::test]
+fn folding_the_sessions_column_hides_the_strip(cx: &mut TestAppContext) {
+    let (frame, _, cx) = open(None, cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("usage-button").is_some());
+    cx.update(|window, cx| {
+        frame.read(cx).dock().clone().update(cx, |dock, cx| {
+            dock.toggle_dock(DockPlacement::Left, window, cx);
+        })
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("usage-button").is_none());
 }
 
 // Pins: g0-shape#3

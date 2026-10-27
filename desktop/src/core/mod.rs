@@ -23,4 +23,7 @@ pub mod socket;
 )]
 pub mod state;
 pub mod theme;
+// Unused until the session rail, the lists and the questions grow their rows in place.
+#[expect(dead_code, reason = "nothing in the window grows a row in place yet")]
+pub mod ui;
 pub mod window_root;

@@ -198,6 +198,11 @@ public sealed class RowStore
             """,
             reader => reader.Text(1) == "started" ? Text(reader, 0) : null, new SqlArg("$session", sessionId)).FirstOrDefault();
 
+    /// <summary>The run and text of the session's newest user row sent with <paramref name="clientId"/>, or null.</summary>
+    public (string? RunId, string Text)? UserRowOfClient(string sessionId, string clientId) =>
+        Query(Schema.UserRowOfClient, reader => ((string? RunId, string Text)?)(Text(reader, 0), reader.Text(1)),
+            new SqlArg("$session", sessionId), new SqlArg("$client", clientId)).FirstOrDefault();
+
     /// <summary>Whether the run has a turn row that ends it.</summary>
     public bool RunEnded(string sessionId, string runId) =>
         _db.QueryFirst(

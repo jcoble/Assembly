@@ -58,7 +58,7 @@ public sealed class StartSessionTool(SessionStore sessionStore, SessionRegistry 
         string? runId;
         try
         {
-            runId = await machine.SendAsync(helper, text, cancellationToken);
+            runId = await machine.SendAsync(helper, text, null, cancellationToken);
         }
         catch (Exception error) when (error is MachineUnreachable or CallFailed)
         {

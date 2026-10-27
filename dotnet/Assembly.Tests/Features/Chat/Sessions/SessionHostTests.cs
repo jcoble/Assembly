@@ -114,7 +114,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.TextAsync("Looking");
         await Kinds(1);
 
-        var steering = _host.SteerAsync("also this", CancellationToken.None);
+        var steering = _host.SteerAsync("also this", null, CancellationToken.None);
         var steer = await agent.ReadAsync("_session/steering");
         Assert.Equal("also this", steer.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
         Assert.Equal("promptRequired", steer.GetProperty("params").GetProperty("_meta").GetProperty("steering").GetProperty("idleBehavior").GetString());
@@ -137,7 +137,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
 
-        var steering = _host.SteerAsync("two", CancellationToken.None);
+        var steering = _host.SteerAsync("two", null, CancellationToken.None);
         var steer = await agent.ReadAsync("_session/steering");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.ReplyAsync(steer, """{"outcome":"promptRequired","reason":"noRunningTurn"}""");

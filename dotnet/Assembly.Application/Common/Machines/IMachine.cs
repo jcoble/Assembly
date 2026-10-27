@@ -28,9 +28,9 @@ public interface IMachine
 
     /// <summary>
     /// Starts a turn, or sends the text into the one running, and returns the run id; null if the running turn
-    /// can't take it.
+    /// can't take it. A resend with the same <paramref name="clientId"/> answers the first send's run id.
     /// </summary>
-    Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken);
+    Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken);
 
     /// <summary>Stops the run. False if the session isn't running it.</summary>
     Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken);

@@ -19,5 +19,5 @@ public sealed class HelperDelivery
 
     /// <summary>Starts a turn on the session, or sends into the running one; null if it can't take the text.</summary>
     public Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken) =>
-        Set.For(session).SendAsync(session, text, cancellationToken);
+        Set.For(session).SendAsync(session, text, null, cancellationToken);
 }

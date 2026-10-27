@@ -39,7 +39,7 @@ public static class ApiServer
         new InfoRoutes(services.Machines).Map(app);
         new SessionRoutes(services.SessionStore, services.Machines).Map(app);
         new RowRoutes(services.Hub, services.SessionStore, services.Machines).Map(app);
-        new RunRoutes(services.Hub, services.SessionStore, services.Machines).Map(app);
+        new RunRoutes(services.Hub, services.SessionStore, services.Machines, TimeProvider.System).Map(app);
         new OutboxRoutes(services.SessionStore).Map(app);
         new AttachmentRoutes(services.SessionStore, services.Machines, services.Attachments).Map(app);
         new ConfigRoutes(services.SessionStore, services.Machines).Map(app);

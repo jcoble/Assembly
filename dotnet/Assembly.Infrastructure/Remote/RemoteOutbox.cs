@@ -104,7 +104,7 @@ internal sealed class RemoteOutbox : IAsyncDisposable
         {
             var sender = _sessionStore.Get(from) ?? new SessionInfo(from, "", target.RepoUrl, null, null, 0);
             runId = await _local.SendAsync(target, MessageFrame.Of(messageId, sender, text,
-                DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeMilliseconds(message.CreatedAt)), cancellationToken);
+                DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeMilliseconds(message.CreatedAt)), null, cancellationToken);
             error = runId is null ? "That session is busy and can't take a message now; try again when it's done." : null;
         }
         else

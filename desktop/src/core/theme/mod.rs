@@ -4,6 +4,7 @@
 
 pub mod apply;
 pub mod fade;
+pub mod grow;
 #[cfg(test)]
 mod redraw_tests;
 pub mod theme_id;

@@ -62,7 +62,7 @@ public sealed partial class SessionHostTests
         await agent.TextAsync("It finished.", "m2");
         await RowsUntil(row => row.Kind == "delta");
 
-        var steering = _host.SteerAsync("next", CancellationToken.None);
+        var steering = _host.SteerAsync("next", null, CancellationToken.None);
         var steer = await agent.ReadAsync("_session/steering");
         await agent.ReplyAsync(steer, """{"outcome":"promptRequired","reason":"noRunningTurn"}""");
         await agent.UpdateAsync(TaskNotification);

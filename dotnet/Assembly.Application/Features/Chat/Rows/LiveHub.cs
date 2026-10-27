@@ -132,6 +132,12 @@ public sealed class LiveHub : IDisposable
             return _store.LastTurnEnd(sessionId);
     }
 
+    public (string? RunId, string Text)? UserRowOfClient(string sessionId, string clientId)
+    {
+        lock (_gate)
+            return _store.UserRowOfClient(sessionId, clientId);
+    }
+
     public bool RunEnded(string sessionId, string runId)
     {
         lock (_gate)
