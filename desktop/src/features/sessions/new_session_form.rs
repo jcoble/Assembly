@@ -4,7 +4,7 @@
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Textarea, TextareaState};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde::Deserialize;
@@ -22,8 +22,12 @@ pub struct NewSessionForm {
     /// The chosen machine's agents, as (id, name).
     agents: Vec<(String, String)>,
     folder: Entity<TextareaState>,
-    /// Why the last load or create failed.
+    /// Why the last load or create failed, or what's missing.
     error: SharedString,
+    /// An agents load or a create is on its way: the agents load again when the machines change while neither is,
+    /// and Start session waits for the create.
+    loading: bool,
+    starting: bool,
     _load: Option<Task<()>>,
     _create: Option<Task<()>>,
     _machines: Option<Subscription>,
@@ -71,14 +75,23 @@ impl NewSessionForm {
                 .auto_grow(1, 2)
                 .placeholder("Folder or https://github.com/owner/repo")
         });
-        let machines =
-            Machines::try_global(cx).map(|machines| cx.observe(&machines, |_, _, cx| cx.notify()));
+        // An agents load the connection dropped is made again once the machines list changes (after a reconnect).
+        let machines = Machines::try_global(cx).map(|machines| {
+            cx.observe(&machines, |form: &mut Self, _, cx| {
+                if form.agents.is_empty() && !form.loading {
+                    form.load_agents(cx);
+                }
+                cx.notify();
+            })
+        });
         let mut form = NewSessionForm {
             machine: None,
             agent: None,
             agents: Vec::new(),
             folder,
             error: SharedString::default(),
+            loading: false,
+            starting: false,
             _load: None,
             _create: None,
             _machines: machines,
@@ -90,7 +103,9 @@ impl NewSessionForm {
     fn pick_machine(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
         if self.machine != machine {
             (self.machine, self.agent, self.agents) = (machine, None, Vec::new());
+            self.error = SharedString::default();
             self.load_agents(cx);
+            cx.notify();
         }
     }
 
@@ -105,9 +120,11 @@ impl NewSessionForm {
             socket
                 .read(cx)
                 .call::<AgentList>("machines", "agents", args, Some("machines/agents"));
+        self.loading = true;
         self._load = Some(cx.spawn(async move |form, cx| {
             let outcome = call.await;
             form.update(cx, |form, cx| {
+                form.loading = false;
                 match outcome {
                     Outcome::Ok(list) => {
                         form.agents = list
@@ -121,7 +138,10 @@ impl NewSessionForm {
                     Outcome::Failed(failure) => {
                         form.error = format!("Couldn't list the agents: {}", failure.message).into()
                     }
-                    Outcome::Aborted => {}
+                    Outcome::Aborted => {
+                        form.error =
+                            "The connection dropped; the agents load again once it's back.".into()
+                    }
                 }
                 cx.notify();
             })
@@ -130,9 +150,14 @@ impl NewSessionForm {
     }
 
     fn create(&mut self, cx: &mut Context<Self>) {
+        if self.starting {
+            return;
+        }
         let folder = self.folder.read(cx).value().to_string();
         let Some(args) = create_args(self.agent.as_deref(), &folder, self.machine.as_deref())
         else {
+            self.error = "Pick an agent and type a folder.".into();
+            cx.notify();
             return;
         };
         let Some(socket) = SocketClient::try_global(cx) else {
@@ -141,20 +166,28 @@ impl NewSessionForm {
         let call = socket
             .read(cx)
             .call::<Made>("sessions", "create", args, None);
+        (self.starting, self.error) = (true, SharedString::default());
+        cx.notify();
         self._create = Some(cx.spawn(async move |form, cx| {
             let outcome = call.await;
-            form.update(cx, |form, cx| match outcome {
-                Outcome::Ok(made) => {
-                    SelectedSession::global(cx).update(cx, |selected, cx| {
-                        selected.select(Some(made.session_id), cx)
-                    });
-                    cx.emit(Created);
+            form.update(cx, |form, cx| {
+                form.starting = false;
+                match outcome {
+                    Outcome::Ok(made) => {
+                        SelectedSession::global(cx).update(cx, |selected, cx| {
+                            selected.select(Some(made.session_id), cx)
+                        });
+                        cx.emit(Created);
+                    }
+                    Outcome::Failed(failure) => {
+                        form.error =
+                            format!("Couldn't start the session: {}", failure.message).into();
+                    }
+                    Outcome::Aborted => {
+                        form.error = "The connection dropped; the session may have started.".into()
+                    }
                 }
-                Outcome::Failed(failure) => {
-                    form.error = format!("Couldn't start the session: {}", failure.message).into();
-                    cx.notify();
-                }
-                Outcome::Aborted => {}
+                cx.notify();
             })
             .ok();
         }));
@@ -230,7 +263,12 @@ impl Render for NewSessionForm {
                 Button::new("new:create")
                     .primary()
                     .compact()
-                    .label("Start session")
+                    .label(if self.starting {
+                        "Starting…"
+                    } else {
+                        "Start session"
+                    })
+                    .disabled(self.starting)
                     .on_click(cx.listener(|form, _, _, cx| form.create(cx))),
             )
     }

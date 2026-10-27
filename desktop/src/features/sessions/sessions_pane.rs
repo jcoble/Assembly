@@ -20,8 +20,8 @@ pub struct SessionsPane {
     focus: FocusHandle,
     /// `None` before the backend's first ready line.
     sessions: Option<Entity<Sessions>>,
-    /// The new-session form, while it's open.
-    creating: Option<Entity<NewSessionForm>>,
+    /// The new-session form while it's open, with the subscription that closes it once it's made a session.
+    creating: Option<(Entity<NewSessionForm>, Subscription)>,
     list: UniformListScrollHandle,
     _heard: Vec<Subscription>,
 }
@@ -55,12 +55,11 @@ impl SessionsPane {
     fn toggle_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.creating.take().is_none() {
             let form = cx.new(|cx| NewSessionForm::new(window, cx));
-            self._heard
-                .push(cx.subscribe(&form, |pane, _, Created, cx| {
-                    pane.creating = None;
-                    cx.notify();
-                }));
-            self.creating = Some(form);
+            let made = cx.subscribe(&form, |pane, _, Created, cx| {
+                pane.creating = None;
+                cx.notify();
+            });
+            self.creating = Some((form, made));
         }
         cx.notify();
     }
@@ -153,7 +152,7 @@ impl Render for SessionsPane {
             .track_focus(&self.focus)
             .size_full()
             .child(header)
-            .children(self.creating.clone())
+            .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match (&self.sessions, count) {
                 (None, _) => pane.child(
                     div()
