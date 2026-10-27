@@ -35,8 +35,13 @@ struct Running {
 }
 
 impl RealBackend {
-    /// Starts a backend, or `None` when it isn't built and `ASSEMBLY_REAL_BACKEND` isn't set.
+    /// Starts a backend with no agents, or `None` when it isn't built and `ASSEMBLY_REAL_BACKEND` isn't set.
     pub fn start() -> Option<Self> {
+        Self::start_with_agents(|_| "[]".into())
+    }
+
+    /// As `start`, with the agents file `agents` gives; it gets the backend's folder for any files they need.
+    pub fn start_with_agents(agents: impl FnOnce(&Path) -> String) -> Option<Self> {
         let binary = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../dotnet/Assembly.Desktop/bin/Debug/net10.0/Assembly.Desktop");
         if !binary.exists() {
@@ -49,8 +54,9 @@ impl RealBackend {
             return None;
         }
         let folder = folder();
+        let listed = agents(&folder);
         let agents = folder.join("agents.json");
-        fs::write(&agents, "[]").expect("write the agents file");
+        fs::write(&agents, listed).expect("write the agents file");
         let mut command = Command::new(&binary);
         command
             .arg("serve")

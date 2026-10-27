@@ -13,8 +13,9 @@ false.
 
 | Id | File | Kit name | Comes from |
 | --- | --- | --- | --- |
-| assembly | assembly.json | Assembly | The design system Assembly (Jesse, 2026-10-23), via the GPUI spike's file |
+| assembly | assembly.json | Assembly | The design system Assembly, the approved look (Jesse, 2026-10-27 19:46Z; version 1793120046-6eb7) |
 | assembly-glass | assembly-glass.json | Assembly Glass | New: Assembly with a blurred window behind translucent grounds (macOS only) |
+| assembly-light | assembly-light.json | Assembly Light | New: the design system's structure on white, a full light theme |
 | houston | houston.json | Houston | mac-command-bar themeRegistry.ts HOUSTON |
 | dracula | dracula.json | Dracula | themeRegistry.ts DRACULA |
 | tokyo-night | tokyo-night.json | Tokyo Night | themeRegistry.ts TOKYO_NIGHT |
@@ -27,10 +28,16 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
 
 ## What every theme sets
 
-- `font.size` 13 (body), `mono_font.size` 12 (the design system's `code`, 12/20), `radius` 6, `radius.lg` 8,
-  `shadow` false. The fonts stay unset, which is the system face and system monospace.
-- The kit has only two radii. The design system's 4 px (filters, fields) and 5 px (list and tree rows) are set by the
-  components that draw those.
+- `font.size` 13 (body), `mono_font.size` 12 (the design system's `code`, 12/20), `radius` 8 (`radius-sm`),
+  `radius.lg` 16 (`radius-lg`, which the kit uses for dialogs and notifications), `shadow` false. The fonts stay
+  unset, which is the system face and system monospace. The radii are the same in every theme, since shape is the
+  app's, not a theme's.
+- The kit has only two radii. The design system's `radius-xs` 6 (tab chips, tree rows, tags), `radius-md` 12 (cards,
+  glass menus; the kit's command palette takes a radius of its own), the work panel's `radius-lg`, `radius-xl` 20
+  (the composer, the user's bubble) and `radius-full` (pills) are set by the
+  components that draw those (g0-shape and the view lanes).
+- `tab_bar.background` is clear in every theme: the frame's work panel is rounded and GPUI can't clip children to
+  rounded corners, so a filled tab strip would square them off (g0-shape).
 - Motion: theme files can't set it. The kit's `cx.theme().motion` (gpui-component theme/motion.rs) is the one place
   animation timing lives, and every lane's animations read it instead of writing their own durations (Jesse,
   2026-10-27: "small animations wherever we can"): `duration_fast` (120 ms) for hover fills and fades,
@@ -48,11 +55,13 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
 
 ## Kit key from design-system role
 
-These are the keys in assembly.json, matched to the design system's tokens by value.
+These are the keys in assembly.json, matched to the design system's tokens by value. The approved look kept the role
+names and changed their values (the design system Assembly, version 1793120046-6eb7), so assembly.json, assembly-glass.json and assembly-light.json
+are this table with the new values, apart from the exceptions listed under it.
 
 | Design-system role | Kit keys |
 | --- | --- |
-| surface | `background`, `accordion.background`, `list.background`, `list.even.background`, `list.head.background`, `table.background`, `tab_bar.background`, `title_bar.background`, highlight `editor.background` |
+| surface | `background`, `accordion.background`, `list.background`, `list.even.background`, `list.head.background`, `table.background`, highlight `editor.background` (and, before the approved look, `tab_bar.background` and `title_bar.background`) |
 | rail | `sidebar.background`, `status_bar.background` |
 | field | `accent.background`, `list.hover.background`, `tab_bar.segmented.background`, `skeleton.background`, `description_list.label.background`, highlight `editor.active_line.background` |
 | raised | `group_box.background`, `popover.background` |
@@ -80,6 +89,26 @@ These are the keys in assembly.json, matched to the design system's tokens by va
 | (no role; the spike's picks) | `drop_target.background`, `scrollbar.*`, `selection.background`, `overlay`, `tab.background` |
 | aqua, lavender, mint, amber | `chart.2`, `chart.3`, `chart.4`, `chart.5` |
 | the same role as the key without `.light` | `base.*.light` |
+
+Exceptions in the approved look (Assembly, Assembly Glass, Assembly Light):
+
+- `title_bar.background` takes `rail`: the title row sits on the rail with the sessions column.
+- `tab_bar.background` is clear, as in every theme (see "What every theme sets").
+- `link`, `link.active` and highlight `link_text` take `aqua` ("aqua marks links and references").
+- `primary.hover.background` takes `ink-body`: `primary` is `ink` now, so `ink` as hover would show no change.
+- `list.active.background` and `list.active.border` are white at 0x1a (black at 0x1a in Light), the alpha that lands
+  on `selected` over `surface`, because the kit caps that key at 20% opacity (schema.rs:1025-1049).
+- `popover.background` is opaque: #222222, what `glass` (rgba(40,40,40,.74)) looks like over `surface`, and #ffffff in
+  Light. The design system puts menus and popovers on glass behind a 20 px blur, but GPUI 0.3.10 can blur only the
+  whole window, not what's behind one element, so translucent menus would show the text under them. The kit draws the
+  popover's ring from `foreground` at 10% (styled.rs:190-193), so `glass-edge` has no key.
+- `overlay` is black at 0x99 in the dark two (0x33 in Light). The kit draws a dialog, such as the Cmd-K palette, on
+  `background` with a `border` ring and a 10% black shadow (dialog.rs:779-782, 343-357), and none of that shows on
+  near-black grey. A deeper dim is the one theme value that makes the ring read without changing `line` everywhere.
+- The status-pill, diff, `code-bg`, `ink-icon` and provider tokens have no kit key. They stay in the design system
+  until a view needs them per theme.
+- Houston, Dracula, Tokyo Night, Graphite, Rosé Pine Dawn and Ayu Light keep their own colours; only the radii and the
+  clear tab strip changed in them. Amy and Cobalt take the new Assembly shell, as before.
 
 ## The four old themes (Houston, Dracula, Tokyo Night, Graphite)
 
@@ -161,23 +190,34 @@ the old values table), and the editor's active line and line numbers come from t
 editor.line and editor.lineNumber.normal). Upstream's own contrast stays as it is: Ayu Light's syntax colours read at
 about 2:1, and both themes' warning fill takes light text at about 2:1.
 
+## Assembly Light
+
+The design system's structure on white, with the same role names: `surface` #ffffff (the work panel), `rail` #f4f4f4,
+`raised` #f7f7f7, `field` #f0f0f0, `chip` #ebebeb, `selected` #e6e6e6, `selected-strong` #dedede, `line` and
+`line-soft` black at 0x1a and 0x0f; `ink` #0d0d0d down to `ink-faint` #666666; `primary` #0d0d0d with `on-primary`
+#ffffff; the accents and states darkened to read on white (`accent` #4f57d6, `aqua` #0b7471, `lavender` #6d45c4,
+`mint` #14774a, `blue` #1769a8, `amber` #865f00, `red` #bb3a32). Every ink and accent reads at 4.5:1 or better on
+`surface`, `rail` and `raised`. On `selected` the faint ink and the accents are 4.4 to 4.6, and on `selected-strong`
+about 4.1 to 4.3. The syntax colours follow the same roles. Jesse tunes it from here.
+
 ## Glass (assembly-glass.json)
 
-The window background is blurred (`WindowBackgroundAppearance::Blurred`) on macOS. What shows the blur:
+The approved look is solid; Glass stays as an optional theme (Jesse asked for "somewhat glass", 11:48Z). It is
+Assembly's values with the window background blurred (`WindowBackgroundAppearance::Blurred`) on macOS and the two
+grounds translucent at 0x78 (0.47): `background` (`surface`, the work panel) and `sidebar.background`,
+`title_bar.background` and `status_bar.background` (`rail`).
 
 - Each dock split frame paints `tab_bar.background` (dock.rs:66) under its tab groups, and each tab group paints
   `background` (tab_panel.rs:713); tab strips paint `tab_bar.background` too (tab_panel.rs:495 and 688). The window
-  root paints nothing of its own: gpui-base's Root doesn't, and gpui-component's Root, if a window uses it, paints
-  `background` once more (root.rs:723). So `background` and `tab_bar.background` are the translucent ones. The
-  sessions column, chat, drawer and dock all share that one ground; `sidebar`, `status_bar` and `title_bar` do
-  nothing for the dock.
-- Translucent layers stack, so `tab_bar.background` is clear: then a pane's ground is the one `background` fill
-  (0.47 now), not 0.47 over 0.55. Jesse judges the values on the Mac (spike thread, look direction in
-  notes/gpui-g0/look-direction.md).
+  root paints nothing of its own (gpui-base's Root doesn't; gpui-component's Root, if a window uses it, paints
+  `background`, root.rs:723). `tab_bar.background` is clear in every theme, so a pane's ground is the one
+  `background` fill.
+- The rail keys show only once the frame paints the rail from `sidebar.background` (g0-shape's restyle).
 - The rule for other lanes: a view whose text has to stay readable paints its own opaque ground. The chat column
-  (g0-session) and code views paint `list.background` (surface) or highlight `editor.background`, which stay opaque here.
-  `popover.background` stays opaque too.
-- The kit caps `list.active.background` at 20% and `selection.background` at 30% opacity (schema.rs:1026-1056), in every theme.
+  (g0-session) and code views paint `list.background` (surface) or highlight `editor.background`, which stay opaque
+  here, and so does `popover.background`.
+- The kit caps `list.active.background` at 20% and `selection.background` at 30% opacity (schema.rs:1026-1056), in
+  every theme.
 
 ## Left for other lanes
 

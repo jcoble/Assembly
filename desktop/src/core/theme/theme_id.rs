@@ -6,6 +6,7 @@
 pub enum ThemeId {
     Assembly,
     AssemblyGlass,
+    AssemblyLight,
     Houston,
     Dracula,
     TokyoNight,
@@ -28,9 +29,10 @@ impl ThemeId {
     pub const DEFAULT: ThemeId = ThemeId::Assembly;
 
     /// Every theme, in the order a chooser lists them.
-    pub const ALL: [ThemeId; 10] = [
+    pub const ALL: [ThemeId; 11] = [
         ThemeId::Assembly,
         ThemeId::AssemblyGlass,
+        ThemeId::AssemblyLight,
         ThemeId::Houston,
         ThemeId::Dracula,
         ThemeId::TokyoNight,
@@ -54,6 +56,7 @@ impl ThemeId {
         match self {
             ThemeId::Assembly => "assembly",
             ThemeId::AssemblyGlass => "assembly-glass",
+            ThemeId::AssemblyLight => "assembly-light",
             ThemeId::Houston => "houston",
             ThemeId::Dracula => "dracula",
             ThemeId::TokyoNight => "tokyo-night",
@@ -70,6 +73,7 @@ impl ThemeId {
         match self {
             ThemeId::Assembly => "Assembly",
             ThemeId::AssemblyGlass => "Assembly Glass",
+            ThemeId::AssemblyLight => "Assembly Light",
             ThemeId::Houston => "Houston",
             ThemeId::Dracula => "Dracula",
             ThemeId::TokyoNight => "Tokyo Night",
@@ -142,7 +146,10 @@ mod tests {
             // A file marked default is skipped when the kit reloads the folder (registry.rs:274-287).
             assert!(!theme.is_default, "{} says is_default", path.display());
             // The mode follows the theme: the light ones are the full light themes.
-            let light = matches!(id, ThemeId::RosePineDawn | ThemeId::AyuLight);
+            let light = matches!(
+                id,
+                ThemeId::AssemblyLight | ThemeId::RosePineDawn | ThemeId::AyuLight
+            );
             let mode = if light {
                 ThemeMode::Light
             } else {
