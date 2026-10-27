@@ -151,3 +151,14 @@ The behavior list is docs/behavior/g0-socket.md.
   correctly; a queue of calls waiting to connect isn't worth it.
 - For the move thread with the .NET CI change: a missed event hangs a test rather than failing it, so the desktop
   job wants a `timeout-minutes`.
+
+## Second review: waits, refusals, close codes (Claude and Sol 6.1, 2026-10-27)
+
+- Close codes, as ruled: 4401 and 4400, at the hello or later, go `Refused` with no retry until Reconnect. 1009
+  and every other drop get the one reopen at once, then the waits.
+- Fixed: the wait while `Disconnected` runs to a fixed time, so calls failing at once in the meantime can't put
+  the next try off.
+- Fixed: a backend that welcomes and then drops each time got the reopen at once forever. The reopen at once is
+  now used once until the connection's first frame or ping, and the waits start over only then too.
+- Fixed: a frame that doesn't read (`Broken`) waits like a failed open, so it retries at most every 5 s.
+- Fixed: every wait in the tests has a 5 s deadline that fails with a message.

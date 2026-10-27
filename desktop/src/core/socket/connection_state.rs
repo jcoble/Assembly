@@ -1,5 +1,5 @@
 //! `ConnectionState` is whether the window has the backend: g0-host shows "Disconnected" with its Reconnect button
-//! from it.
+//! from `Disconnected` and from `Refused`, which says why.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -7,7 +7,7 @@ pub enum ConnectionState {
     Connecting,
     /// Welcomed by the backend, which names its machine.
     Connected { machine: String },
-    /// The socket dropped and the try to reopen it at once failed: it tries again after a short wait, or on
+    /// The socket can't be opened, or keeps dropping: it tries again after a short wait, or on
     /// `SocketClient::reconnect`.
     Disconnected,
     /// The backend refused the hello: 4401, the token isn't its token, or 4400, this client speaks another protocol.

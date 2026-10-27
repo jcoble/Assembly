@@ -101,6 +101,14 @@ fn read_frames(mut socket: WebSocket<ReadOnly>, events: Sender<Event>) {
                 }
             },
             Ok(Message::Ping(payload)) => Event::Ping(payload.to_vec()),
+            Ok(Message::Close(Some(frame))) if matches!(u16::from(frame.code), 4400 | 4401) => {
+                eprintln!(
+                    "socket: the backend closed it ({}): {}",
+                    frame.code, frame.reason
+                );
+                let _ = events.send(Event::Refused(frame.code.into()));
+                return;
+            }
             Ok(Message::Close(_)) | Err(_) => break,
             Ok(_) => continue,
         };

@@ -1,15 +1,11 @@
 //! The client thread's rules against `FakeBackend`: hello, calls and their answers, cancel and latest-wins,
 //! subscriptions, and a dropped socket's one reopen. Pins the draft list in docs/behavior/g0-socket.md.
 
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::sync::mpsc;
+use std::time::Duration;
 
-use futures_channel::mpsc::unbounded;
 use futures_executor::block_on;
 use serde_json::{Value, json};
 
-use super::client_thread::ClientThread;
 use super::connection_state::ConnectionState;
 use super::endpoint::Endpoint;
 use super::error_code::ErrorCode;
@@ -37,36 +33,22 @@ fn hello_carries_the_token_and_the_welcome_names_the_machine() {
 #[test]
 fn a_refused_hello_is_shown_and_not_retried_until_reconnect() {
     let backend = backend();
-    let (events, receiver) = mpsc::channel();
-    let (states_tx, mut states) = unbounded();
     let wrong = Endpoint {
         port: backend.port,
         token: "wrong".into(),
     };
-    ClientThread::spawn(
-        wrong,
-        receiver,
-        events.clone(),
-        states_tx,
-        Arc::new(AtomicU64::new(0)),
-    );
-    assert_eq!(
-        block_on(states.recv()).ok(),
-        Some(ConnectionState::Connecting)
-    );
-    assert_eq!(
-        block_on(states.recv()).ok(),
-        Some(ConnectionState::Refused { code: 4401 })
-    );
-    // Only Reconnect (the launcher, with the token file read again) tries again.
-    events
+    let mut client = Client::start_with(wrong);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), ConnectionState::Refused { code: 4401 });
+    // Nothing tries again on its own, past the first wait of a dropped connection's retries.
+    assert_eq!(client.state_within(Duration::from_secs(1)), None);
+    // Only Reconnect (the launcher, with the token file read again) does.
+    client
+        .events
         .send(Event::Reconnect(endpoint(backend.port)))
         .unwrap();
-    assert_eq!(
-        block_on(states.recv()).ok(),
-        Some(ConnectionState::Connecting)
-    );
-    assert_eq!(block_on(states.recv()).ok(), Some(connected()));
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
 }
 
 // Pins: g0-socket#2, g0-socket#6
@@ -177,7 +159,7 @@ fn a_drop_aborts_waiting_calls_reopens_once_and_subscribes_again() {
 
 // Pins: g0-socket#8
 #[test]
-fn a_failed_reopen_is_disconnected_until_reconnect_and_calls_fail_at_once() {
+fn a_failed_reopen_is_disconnected_and_calls_fail_at_once() {
     let mut hellos = 0;
     let backend = FakeBackend::start(move |frame| {
         if frame["t"] == "hello" {
@@ -196,12 +178,25 @@ fn a_failed_reopen_is_disconnected_until_reconnect_and_calls_fail_at_once() {
     assert_eq!(client.state(), ConnectionState::Disconnected);
     let (_, failed) = client.call("echo", None);
     assert!(matches!(outcome(failed), Outcome::Failed(f) if f.code == ErrorCode::Failed));
-    client
-        .events
-        .send(Event::Reconnect(endpoint(backend.port)))
-        .unwrap();
+}
+
+// A backend that welcomes and then drops each time gets one reopen at once, then the waits: no loop with no wait.
+// Pins: g0-socket#7, g0-socket#8
+#[test]
+fn a_backend_that_drops_after_each_welcome_is_reopened_once_then_waited_on() {
+    let backend = FakeBackend::start(|frame| {
+        let mut replies = hello(frame).unwrap_or_default();
+        replies.push(Reply::Drop);
+        replies
+    });
+    let mut client = Client::start(backend.port);
     assert_eq!(client.state(), ConnectionState::Connecting);
     assert_eq!(client.state(), connected());
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    assert_eq!(client.state(), ConnectionState::Disconnected);
+    // The first wait is 0.5 s.
+    assert_eq!(client.state_within(Duration::from_millis(300)), None);
 }
 
 // Pins: g0-socket#4
@@ -247,5 +242,58 @@ fn a_disconnected_client_tries_again_on_its_own_after_a_short_wait() {
     assert_eq!(client.state(), ConnectionState::Connecting);
     assert_eq!(client.state(), ConnectionState::Disconnected);
     assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+}
+
+// A 4400 after the welcome (a frame the backend doesn't take) won't change on a reopen: Refused, no retry.
+#[test]
+fn a_4400_after_the_welcome_is_refused_with_no_reopen() {
+    let backend =
+        FakeBackend::start(|frame| hello(frame).unwrap_or_else(|| vec![Reply::Close(4400)]));
+    let mut client = Client::start(backend.port);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    let (_, waiting) = client.call("echo", None);
+    assert!(matches!(outcome(waiting), Outcome::Aborted));
+    assert_eq!(client.state(), ConnectionState::Refused { code: 4400 });
+}
+
+// Calls while Disconnected fail at once and don't put the next try off.
+#[test]
+fn calls_while_disconnected_do_not_postpone_the_next_try() {
+    let mut hellos = 0;
+    let backend = FakeBackend::start(move |frame| {
+        if frame["t"] == "hello" {
+            hellos += 1;
+            if hellos == 1 {
+                return vec![Reply::Drop];
+            }
+        }
+        hello(frame).unwrap_or_default()
+    });
+    let mut client = Client::start(backend.port);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), ConnectionState::Disconnected);
+    let events = client.events.clone();
+    std::thread::spawn(move || {
+        for _ in 0..30 {
+            let (answer, _) = futures_channel::oneshot::channel();
+            let call = Event::Call {
+                id: 0,
+                feature: "t".into(),
+                method: "m".into(),
+                args: json!({}),
+                key: None,
+                answer,
+            };
+            if events.send(call).is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    // The first wait is 0.5 s; the calls go on for 3 s.
+    let soon = client.state_within(Duration::from_secs(2));
+    assert_eq!(soon, Some(ConnectionState::Connecting));
     assert_eq!(client.state(), connected());
 }

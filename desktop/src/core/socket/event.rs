@@ -46,5 +46,7 @@ pub(super) enum Event {
     /// The reader got a frame this client can't read and ended. Reopening at once would get the same frame again, so
     /// the client goes `Disconnected` and tries again only after the wait.
     Broken,
+    /// The backend closed it with 4400 or 4401, which a reopen with the same can't change: `Refused`, no retry.
+    Refused(u16),
     Reconnect(Endpoint),
 }

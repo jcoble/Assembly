@@ -1,9 +1,12 @@
 //! `TestClient` drives a `ClientThread` through its events, for the tests against `FakeBackend`, and the fake
-//! backend's usual answers. Every wait is on the event that marks it done; nothing sleeps or polls.
+//! backend's usual answers. Every wait is on the event that marks it done, with a deadline so a missed event fails
+//! the test instead of hanging it; nothing polls.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
+use std::time::Duration;
 
 use futures_channel::mpsc::{UnboundedReceiver, unbounded};
 use futures_channel::oneshot;
@@ -19,24 +22,34 @@ use super::outcome::Outcome;
 use super::row_update::RowUpdate;
 use super::update::Update;
 
+/// How long a test waits for an event it expects.
+pub(super) const DEADLINE: Duration = Duration::from_secs(5);
+
 pub(super) struct TestClient {
     pub events: Sender<Event>,
-    pub states: UnboundedReceiver<ConnectionState>,
+    states: Receiver<ConnectionState>,
     ids: Arc<AtomicU64>,
 }
 
 impl TestClient {
     pub fn start(port: u16) -> Self {
+        Self::start_with(endpoint(port))
+    }
+
+    pub fn start_with(endpoint: Endpoint) -> Self {
         let (events, receiver) = mpsc::channel();
-        let (states_tx, states) = unbounded();
+        let (states_tx, mut changes) = unbounded();
         let ids = Arc::new(AtomicU64::new(0));
-        ClientThread::spawn(
-            endpoint(port),
-            receiver,
-            events.clone(),
-            states_tx,
-            ids.clone(),
-        );
+        ClientThread::spawn(endpoint, receiver, events.clone(), states_tx, ids.clone());
+        // The state channel is async; a thread hands each state on to one the test can wait on with a deadline.
+        let (forward, states) = mpsc::channel();
+        thread::spawn(move || {
+            while let Ok(state) = block_on(changes.recv()) {
+                if forward.send(state).is_err() {
+                    return;
+                }
+            }
+        });
         Self {
             events,
             states,
@@ -49,7 +62,14 @@ impl TestClient {
     }
 
     pub fn state(&mut self) -> ConnectionState {
-        block_on(self.states.recv()).expect("a state")
+        self.states
+            .recv_timeout(DEADLINE)
+            .expect("a state change within the deadline")
+    }
+
+    /// The next state change within `wait`, if any.
+    pub fn state_within(&mut self, wait: Duration) -> Option<ConnectionState> {
+        self.states.recv_timeout(wait).ok()
     }
 
     pub fn call(
@@ -116,7 +136,14 @@ pub(super) fn connected() -> ConnectionState {
 }
 
 pub(super) fn outcome(receiver: oneshot::Receiver<Outcome<Value>>) -> Outcome<Value> {
-    block_on(receiver).expect("an outcome")
+    let (forward, outcome) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = forward.send(block_on(receiver));
+    });
+    let answered = outcome
+        .recv_timeout(DEADLINE)
+        .expect("an outcome within the deadline");
+    answered.expect("an outcome")
 }
 
 pub(super) fn row(seq: i64, prev: i64) -> Value {

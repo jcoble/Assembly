@@ -8,13 +8,15 @@
 //! - When the socket closes: every waiting call settles `Aborted`, it tries to reopen once at once, and on success
 //!   sends every subscription again (rows with `after` = their last seq). On failure it's `Disconnected`, and tries
 //!   again after a short wait that doubles up to 5 s, or at once on `Reconnect` (the backend's ready line).
+//! - A connection that closes before its first frame doesn't get the reopen at once again: it waits like a failed
+//!   open, so a backend that welcomes and drops can't make it loop.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::UnboundedSender;
 use futures_channel::oneshot;
@@ -37,7 +39,7 @@ mod frames;
 
 const ROWS: &str = "rows";
 /// While `Disconnected` it tries again after a wait that doubles from the first to the longest; a `Reconnect` (the
-/// backend's ready line) tries at once. Each successful open starts the waits over.
+/// backend's ready line) tries at once. A connection's first frame starts the waits over.
 const FIRST_WAIT: Duration = Duration::from_millis(500);
 const LONGEST_WAIT: Duration = Duration::from_secs(5);
 
@@ -48,8 +50,11 @@ pub(super) struct ClientThread {
     sender: Sender<Event>,
     connection: Option<Connection>,
     state: ConnectionState,
-    /// The wait before the next try while `Disconnected`.
+    /// The wait before the next try while `Disconnected`, and when that try is due; events don't put it off.
     wait: Duration,
+    next_try: Instant,
+    /// The reopen at once was used, and no frame has come since.
+    reopened: bool,
     /// Read on the foreground, which updates the `SocketClient` entity.
     states: UnboundedSender<ConnectionState>,
     /// The window's call and subscription ids; a re-subscribe after a gap takes a fresh one.
@@ -90,6 +95,8 @@ impl ClientThread {
             connection: None,
             state: ConnectionState::Disconnected,
             wait: FIRST_WAIT,
+            next_try: Instant::now(),
+            reopened: false,
             states,
             ids,
             calls: HashMap::new(),
@@ -107,7 +114,10 @@ impl ClientThread {
         self.open();
         loop {
             let event = if self.state == ConnectionState::Disconnected {
-                match self.events.recv_timeout(self.wait) {
+                match self
+                    .events
+                    .recv_timeout(self.next_try.saturating_duration_since(Instant::now()))
+                {
                     Ok(event) => event,
                     Err(RecvTimeoutError::Timeout) => {
                         self.wait = (self.wait * 2).min(LONGEST_WAIT);
@@ -213,16 +223,24 @@ impl ClientThread {
                     self.send(&OutFrame::Unsub { id: wire });
                 }
             }
-            Event::Frame(frame) => self.frame(frame),
+            Event::Frame(frame) => {
+                self.heard();
+                self.frame(frame);
+            }
             Event::Ping(payload) => {
+                self.heard();
                 if let Some(connection) = &mut self.connection {
                     let _ = connection.pong(payload);
                 }
             }
             Event::Closed => self.closed(),
+            Event::Refused(code) => {
+                self.close();
+                self.set_state(ConnectionState::Refused { code });
+            }
             Event::Broken => {
                 self.close();
-                self.set_state(ConnectionState::Disconnected);
+                self.disconnected();
             }
             Event::Reconnect(endpoint) => {
                 if self.connection.is_none() {
@@ -241,9 +259,26 @@ impl ClientThread {
     }
 
     /// The socket closed: waiting calls settle `Aborted`, one try to reopen, then subscribe again or `Disconnected`.
+    /// A second close with no frame between waits instead.
     fn closed(&mut self) {
         self.close();
-        self.open();
+        if self.reopened {
+            self.disconnected();
+        } else {
+            self.reopened = true;
+            self.open();
+        }
+    }
+
+    /// The connection works: the next close may reopen at once, and the waits start over.
+    fn heard(&mut self) {
+        self.reopened = false;
+        self.wait = FIRST_WAIT;
+    }
+
+    fn disconnected(&mut self) {
+        self.next_try = Instant::now() + self.wait;
+        self.set_state(ConnectionState::Disconnected);
     }
 
     fn close(&mut self) {
@@ -259,7 +294,6 @@ impl ClientThread {
         match Connection::open(&self.endpoint, self.sender.clone()) {
             Ok(connection) => {
                 let machine = connection.machine.clone();
-                self.wait = FIRST_WAIT;
                 self.connection = Some(connection);
                 let topics: Vec<u64> = self.topics.keys().copied().collect();
                 topics.into_iter().for_each(|id| self.send_topic(id));
@@ -273,7 +307,7 @@ impl ClientThread {
             }
             Err(OpenFailure::Failed(error)) => {
                 eprintln!("socket: couldn't open: {error}");
-                self.set_state(ConnectionState::Disconnected);
+                self.disconnected();
             }
         }
     }

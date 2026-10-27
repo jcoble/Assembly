@@ -112,8 +112,9 @@ impl SocketClient {
         TopicSubscription::new(id, self.events.clone(), receiver)
     }
 
-    /// A session's rows after `after` (all of them with `None`), in order, none missed and none twice: a gap in
-    /// `prevSeq` subscribes again from the last seq, and so does a reconnect. A jump comes as `RowUpdate::Jump`.
+    /// A session's rows after `after`, in order, none missed and none twice: a gap in `prevSeq` subscribes again from
+    /// the last seq, and so does a reconnect. With no `after`, or one too far behind, it starts with a
+    /// `RowUpdate::Jump` to the last seq, and history comes from `rows/page`.
     pub fn subscribe_rows(
         &self,
         session_id: &str,
@@ -131,7 +132,7 @@ impl SocketClient {
         TopicSubscription::new(id, self.events.clone(), receiver)
     }
 
-    /// Tries the socket again, at `endpoint`, when it's `Disconnected`; nothing otherwise. The launcher calls it, on
+    /// Tries the socket again, at `endpoint`, when it's `Disconnected` or `Refused`; nothing otherwise. The launcher calls it, on
     /// the main thread, for each ready line (`listening on ...`) after the first, which starts the client: after
     /// restarting a backend that exited (whose token may be new), and when the Reconnect button finds the backend
     /// still running.

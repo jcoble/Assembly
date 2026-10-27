@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use serde_json::{Value, json};
+
+use super::test_client::DEADLINE;
 use tungstenite::protocol::CloseFrame;
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::{Bytes, Message, WebSocket};
@@ -44,9 +46,11 @@ impl FakeBackend {
         Self { port, seen }
     }
 
-    /// The next frame the client sent; panics if the client is gone.
+    /// The next frame the client sent; panics if none comes within the deadline.
     pub fn next(&self) -> Value {
-        self.seen.recv().expect("the client sent a frame")
+        self.seen
+            .recv_timeout(DEADLINE)
+            .expect("a frame from the client within the deadline")
     }
 }
 
