@@ -151,8 +151,12 @@ impl Timeline {
             }
         });
         // The first page's rows are where the place can come back; one older than them opens at the end, and an older
-        // page that holds it later doesn't jump there.
-        let restore = self.restore.take_if(|_| !self.entries.is_empty());
+        // page that holds it later doesn't jump there. A Working line alone isn't the page.
+        let paged = self
+            .entries
+            .iter()
+            .any(|(_, entry)| matches!(entry, Entry::Item(_)));
+        let restore = self.restore.take_if(|_| paged);
         if let Some(at) =
             restore.and_then(|key| self.entries.iter().position(|(entry, _)| *entry == key))
         {

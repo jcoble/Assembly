@@ -329,6 +329,33 @@ fn each_session_keeps_its_reading_place_when_you_switch_away_and_back(cx: &mut T
 
 // Pins: g0-session#8
 #[gpui::test]
+fn a_working_line_before_the_first_page_keeps_the_reading_place(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(users(1..=30), false, None)));
+    jump(&client, 30, cx);
+    let timeline = cx.update(|_, cx| pane.read(cx).timeline.clone());
+    cx.update(|_, cx| timeline.update(cx, |timeline, cx| timeline.scroll_to_row(5, cx)));
+    show(&pane, "s2", cx);
+    show(&pane, "s1", cx);
+    // A send from s1 answers its run before s1's rows come back.
+    let composer = cx.update(|_, cx| pane.read(cx).composer.clone());
+    cx.update(|_, cx| {
+        composer.update(cx, |_, cx| {
+            cx.emit(ComposerEvent::Sent {
+                session: "s1".into(),
+                run_id: "r9".into(),
+            })
+        })
+    });
+    cx.run_until_parked();
+    client.queue_answer(Ok(page(users(1..=30), false, None)));
+    jump(&client, 30, cx);
+    assert_eq!(top(&pane, cx), 5);
+}
+
+// Pins: g0-session#8
+#[gpui::test]
 fn a_reading_place_older_than_the_newest_page_opens_at_the_end_and_never_jumps_later(
     cx: &mut TestAppContext,
 ) {
