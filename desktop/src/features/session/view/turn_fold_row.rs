@@ -6,7 +6,7 @@ use gpui_kit::*;
 
 use std::time::Instant;
 
-use super::chevron::{chevron, turn};
+use super::grow::{chevron, turn};
 use super::session_action::{OnAction, SessionAction};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::turn_line::worked_for;
@@ -36,7 +36,7 @@ pub fn heading(fold: &Fold) -> String {
 impl RenderOnce for TurnFoldRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let run_id = self.fold.run_id.clone();
-        let chevron = chevron(turn(self.open, self.toggled_at, window, cx));
+        let chevron = chevron(turn(self.open, self.toggled_at, window, cx).0);
         let on_action = self.on_action.clone();
         h_flex()
             .id(SharedString::from(format!("fold:{run_id}")))

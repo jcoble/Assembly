@@ -8,14 +8,14 @@ use base64::engine::general_purpose::STANDARD;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use super::{FADE_FOR, SessionPane};
+use super::SessionPane;
 use crate::core::intents::open_session::OpenSession;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::tool::ToolDetail;
 use crate::features::session::view::ask_card::AskForm;
-use crate::features::session::view::chevron::{ease, toggled};
+use crate::features::session::view::grow::{GROW, toggled};
 use crate::features::session::view::lightbox::open_lightbox;
 use crate::features::session::view::session_action::SessionAction;
 
@@ -32,36 +32,26 @@ impl SessionPane {
         };
         match action {
             SessionAction::ToggleFold { run_id } => {
-                let (now, duration) = (Instant::now(), ease(cx));
-                let opening = !self.open_folds.remove(&run_id);
-                let kept = self.kept.entry(format!("fold:{run_id}")).or_default();
-                kept.toggled_at = Some(toggled(opening, kept.toggled_at, now, duration));
-                if opening {
-                    // The work it shows fades in, as a new row does.
-                    if let Some(fold) = self.folds.get(&run_id) {
-                        self.fresh
-                            .retain(|_, at| now.duration_since(*at) < FADE_FOR);
-                        self.fresh
-                            .extend(fold.work.iter().map(|key| (key.clone(), now)));
-                    }
-                    self.open_folds.insert(run_id);
-                }
-                self.refresh(Change::Nothing, cx);
-            }
-            SessionAction::Toggle { key } => {
-                let duration = ease(cx);
+                // A fold's work stays on the list while it shuts, and goes when it's done (ease_frame).
+                let key = format!("fold:{run_id}");
                 let kept = self.kept.entry(key.clone()).or_default();
                 kept.open = !kept.open;
-                kept.toggled_at = Some(toggled(
-                    kept.open,
-                    kept.toggled_at,
-                    Instant::now(),
-                    duration,
-                ));
+                kept.toggled_at = Some(toggled(kept.open, kept.toggled_at, Instant::now(), GROW));
+                if kept.open {
+                    self.open_folds.insert(run_id);
+                    self.refresh(Change::Nothing, cx);
+                }
+                self.start_growing(key, window, cx);
+            }
+            SessionAction::Toggle { key } => {
+                let kept = self.kept.entry(key.clone()).or_default();
+                kept.open = !kept.open;
+                kept.toggled_at = Some(toggled(kept.open, kept.toggled_at, Instant::now(), GROW));
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {
                     self.refresh(Change::Updated(at), cx);
                     self.read_detail_if_stale(at, cx);
                 }
+                self.start_growing(key, window, cx);
             }
             SessionAction::RetryPage => {
                 if let Some(before) = self.retry_first {
@@ -195,6 +185,54 @@ impl SessionPane {
                 .ok();
             }),
         );
+    }
+
+    /// Starts `key`'s ease (an item's key, or `fold:<run>`), unless the frames are already running.
+    fn start_growing(&mut self, key: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.growing.insert(key);
+        if !self.grow_asked {
+            self.grow_frame(window, cx);
+        }
+    }
+
+    /// One frame of the rows growing: the list measures each again, so the rows below slide with it. An ease that's
+    /// done is dropped, and a fold that has shut takes its work off the list.
+    pub(super) fn grow_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.grow_asked = false;
+        let (now, still) = (Instant::now(), cx.reduce_motion());
+        let growing: Vec<String> = self.growing.iter().cloned().collect();
+        let mut shut = false;
+        for key in growing {
+            let kept = self.kept.get(&key);
+            let moving = !still
+                && kept
+                    .and_then(|kept| kept.toggled_at)
+                    .is_some_and(|at| now.duration_since(at) < GROW);
+            let rows = match key
+                .strip_prefix("fold:")
+                .and_then(|run| self.folds.get(run))
+            {
+                Some(fold) => fold.work.iter().cloned().collect(),
+                None => vec![key.clone()],
+            };
+            self.timeline.update(cx, |timeline, cx| {
+                rows.iter().for_each(|row| timeline.redraw_row(row, cx))
+            });
+            if !moving {
+                let open = kept.is_some_and(|kept| kept.open);
+                if let (Some(run), false) = (key.strip_prefix("fold:"), open) {
+                    shut |= self.open_folds.remove(run);
+                }
+                self.growing.remove(&key);
+            }
+        }
+        if shut {
+            self.refresh(Change::Nothing, cx);
+        }
+        if !self.growing.is_empty() {
+            self.grow_asked = true;
+            cx.on_next_frame(window, |pane, window, cx| pane.grow_frame(window, cx));
+        }
     }
 
     /// Draws an ask's card again.

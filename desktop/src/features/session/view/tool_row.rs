@@ -7,7 +7,7 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::chevron::{chevron, turn};
+use super::grow::{chevron, faded, grow, turn};
 use super::session_action::{OnAction, SessionAction};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::kept::Kept;
@@ -65,8 +65,10 @@ impl RenderOnce for ToolRow {
             ToolState::Failed => "✗",
         };
         let open = self.kept.open && self.tool.has_detail;
-        let turned = turn(open, self.kept.toggled_at, window, cx);
-        let turn = self.tool.has_detail.then(|| chevron(turned));
+        let toggled_at = self.kept.toggled_at;
+        let turned = turn(open, toggled_at, window, cx);
+        let faded = faded(open, toggled_at, cx);
+        let turn = self.tool.has_detail.then(|| chevron(turned.0));
         let theme = cx.theme();
         let (key, on_action) = (self.key.clone(), self.on_action.clone());
         let line = h_flex()
@@ -104,8 +106,12 @@ impl RenderOnce for ToolRow {
             .kept
             .detail
             .as_ref()
-            .filter(|_| open)
-            .map(|(_, detail)| self.detail(detail, cx).opacity(turned));
+            .filter(|_| open || turned.1)
+            .map(|(_, detail)| self.detail(detail, cx));
+        let detail = detail.map(|detail| {
+            let id = format!("{}:grow", self.key).into();
+            grow(id, turned, faded, detail, window, cx)
+        });
         v_flex().w_full().gap_1().child(line).children(detail)
     }
 }

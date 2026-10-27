@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use gpui::TestAppContext;
 
-use super::{progress, toggled, turn};
+use super::{faded, progress, toggled, turn};
 
 const EASE: Duration = Duration::from_millis(200);
 
@@ -59,7 +59,8 @@ fn reduce_motion_puts_a_toggle_at_its_end(cx: &mut TestAppContext) {
     let just = Some(Instant::now());
     window.update(|window, cx| {
         cx.set_reduce_motion(true);
-        assert_eq!(turn(true, just, window, cx), 1.0);
-        assert_eq!(turn(false, just, window, cx), 0.0);
+        assert_eq!(turn(true, just, window, cx), (1.0, false));
+        assert_eq!(faded(true, just, cx), 1.0);
+        assert_eq!(turn(false, just, window, cx), (0.0, false));
     });
 }

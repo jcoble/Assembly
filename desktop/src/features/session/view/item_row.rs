@@ -7,7 +7,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::ask_card::{AskCard, AskForm};
-use super::chevron::{chevron, turn};
+use super::grow::{chevron, faded, grow, turn};
 use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
 use super::sent_message::SentMessage;
@@ -87,7 +87,9 @@ impl RenderOnce for ItemRow {
                 let on_action = self.on_action.clone();
                 let toggle_key = key.clone();
                 let open = self.kept.open;
-                let turned = turn(open, self.kept.toggled_at, window, cx);
+                let toggled_at = self.kept.toggled_at;
+                let turned = turn(open, toggled_at, window, cx);
+                let faded = faded(open, toggled_at, cx);
                 v_flex()
                     .gap_1()
                     .text_sm()
@@ -101,11 +103,19 @@ impl RenderOnce for ItemRow {
                                 let key = toggle_key.clone();
                                 on_action(SessionAction::Toggle { key }, window, cx)
                             })
-                            .child(chevron(turned))
+                            .child(chevron(turned.0))
                             .child(if done { "Thought" } else { "Thinking" }),
                     )
-                    .when(open, |column| {
-                        column.child(div().italic().opacity(turned).child(text))
+                    .when(open || turned.1, |column| {
+                        let body = div().italic().child(text);
+                        column.child(grow(
+                            format!("{key}:grow").into(),
+                            turned,
+                            faded,
+                            body,
+                            window,
+                            cx,
+                        ))
                     })
                     .into_any_element()
             }

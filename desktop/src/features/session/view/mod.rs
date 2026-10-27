@@ -3,7 +3,7 @@
 //! `SessionAction` to the pane, and only the pane and the timeline own state.
 
 pub mod ask_card;
-pub mod chevron;
+pub mod grow;
 pub mod header;
 pub mod item_row;
 pub mod lightbox;

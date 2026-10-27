@@ -1,5 +1,7 @@
 //! The session pane's rows: each entry of the timeline drawn from the view, the folds and what each item keeps.
 
+use std::time::Instant;
+
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
@@ -14,6 +16,19 @@ use crate::features::session::view::session_action::OnAction;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
+    /// For an item in an open fold's work: its key, whether the fold is opening (or shutting), and when it was toggled.
+    pub(super) fn open_fold_of(&self, entry: &Entry) -> Option<(String, bool, Option<Instant>)> {
+        let Entry::Item(at) = entry else { return None };
+        let key = &self.view.items.get(*at)?.key;
+        let run = self.open_folds.iter().find(|run| {
+            self.folds
+                .get(*run)
+                .is_some_and(|fold| fold.work.contains(key))
+        })?;
+        let kept = self.kept.get(&format!("fold:{run}"))?;
+        Some((key.clone(), kept.open, kept.toggled_at))
+    }
+
     pub(super) fn row(&self, entry: &Entry, on_action: &OnAction, cx: &App) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let now = self
@@ -51,7 +66,11 @@ impl SessionPane {
                     .py_1()
                     .child(TurnFoldRow {
                         fold: fold.clone(),
-                        open: self.open_folds.contains(run_id),
+                        // Where it's going: a fold shutting is still on the list until it's done.
+                        open: self
+                            .kept
+                            .get(&format!("fold:{run_id}"))
+                            .is_some_and(|kept| kept.open),
                         toggled_at: self
                             .kept
                             .get(&format!("fold:{run_id}"))

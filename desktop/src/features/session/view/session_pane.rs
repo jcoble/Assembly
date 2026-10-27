@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::ask_card::AskForm;
-use super::chevron::ease;
+use super::grow::{GROW, faded, grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
@@ -76,6 +76,9 @@ pub struct SessionPane {
     live_since: Option<(String, i64)>,
     /// Tool calls whose detail is being read, by item key, with the state it's read for.
     reading: HashMap<String, ToolState>,
+    /// What's growing open or shut (an item's key, or `fold:<run>`), and whether its next frame is asked for.
+    growing: HashSet<String>,
+    grow_asked: bool,
     /// The clock's ticks, only while a turn runs.
     _clock: Option<Subscription>,
     /// Live rows that came before the first page, applied once it lands: a delta needs the blocks the page has.
@@ -151,12 +154,22 @@ impl SessionPane {
                 return div().into_any_element();
             };
             pane.update(cx, |pane, cx| pane.make_form(entry, window, cx));
-            let (row, fresh) = {
+            let (row, fresh, fold) = {
                 let pane = pane.read(cx);
-                (pane.row(entry, &pane.on_action, cx), pane.fresh_key(entry))
+                let row = pane.row(entry, &pane.on_action, cx);
+                (row, pane.fresh_key(entry), pane.open_fold_of(entry))
             };
-            match fresh {
+            let row = match fresh {
                 Some(key) => fade_in(key, row, window, cx),
+                None => row,
+            };
+            // A fold's work grows in place as the fold opens and shuts.
+            match fold {
+                Some((key, open, toggled_at)) => {
+                    let grown = turn(open, toggled_at, window, cx);
+                    let faded = faded(open, toggled_at, cx);
+                    grow(format!("{key}:grow").into(), grown, faded, row, window, cx)
+                }
                 None => row,
             }
         });
@@ -204,6 +217,8 @@ impl SessionPane {
             now: None,
             live_since: None,
             reading: HashMap::new(),
+            growing: HashSet::new(),
+            grow_asked: false,
             _clock: None,
             held: None,
             loading: false,
@@ -236,6 +251,7 @@ impl SessionPane {
         self.fresh.clear();
         self.forms.clear();
         self.reading.clear();
+        self.growing.clear();
         self.reveal = None;
         self.plan_open = false;
         (
@@ -496,9 +512,8 @@ const FADE_FOR: Duration = Duration::from_millis(400);
 
 /// A row fading in, on the theme's timing; plain with Reduce Motion on.
 fn fade_in(key: String, row: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
-    let duration = ease(cx);
     let shown = Presence::new(SharedString::from(format!("{key}:fade")), true)
-        .transition(Transition::new(duration))
+        .transition(Transition::new(GROW))
         .sample(window, cx);
     div().opacity(shown.progress).child(row).into_any_element()
 }

@@ -5,11 +5,14 @@ use gpui::TestAppContext;
 use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
+use std::time::Instant;
+
 use super::SessionPane;
 use super::tests::{jump, live, open, page, row, show, user};
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::rows::tool::ToolState;
+use crate::features::session::view::grow::GROW;
 use crate::features::session::view::session_action::SessionAction;
 
 fn tool(seq: i64, state: &str) -> Value {
@@ -167,17 +170,19 @@ fn a_finished_turns_fold_opens_and_closes_by_its_run(cx: &mut TestAppContext) {
         cx,
     );
     assert!(tool_shown(&entries(&pane, cx), &pane, cx));
-    // Opened, its chevron turns and the work it shows fades in, as a new row does (g0-session#34).
-    cx.update(|_, cx| {
-        let pane = pane.read(cx);
-        assert!(pane.kept["fold:r1"].toggled_at.is_some());
-        let fading = pane
-            .entries(cx)
-            .iter()
-            .filter_map(|entry| pane.fresh_key(entry))
-            .collect::<Vec<_>>();
-        assert_eq!(fading, ["tool:t1"]);
-    });
+    // Opened, its work grows in place: an item in an open fold, opening, toggled just now (g0-session#34).
+    let growing = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| {
+            let pane = pane.read(cx);
+            let entries = pane.entries(cx);
+            let fold = entries.iter().find_map(|entry| pane.open_fold_of(entry));
+            (
+                fold.map(|(key, open, _)| (key, open)),
+                pane.growing.contains("fold:r1"),
+            )
+        })
+    };
+    assert_eq!(growing(cx), (Some(("tool:t1".into(), true)), true));
     act(
         &pane,
         SessionAction::ToggleFold {
@@ -185,7 +190,14 @@ fn a_finished_turns_fold_opens_and_closes_by_its_run(cx: &mut TestAppContext) {
         },
         cx,
     );
+    // Shutting, its work stays on the list and grows shut, and goes once the ease is done.
+    assert_eq!(growing(cx), (Some(("tool:t1".into(), false)), true));
+    pane.update_in(cx, |pane, window, cx| {
+        pane.kept.get_mut("fold:r1").unwrap().toggled_at = Some(Instant::now() - GROW);
+        pane.grow_frame(window, cx);
+    });
     assert!(!tool_shown(&entries(&pane, cx), &pane, cx));
+    assert_eq!(growing(cx), (None, false));
 }
 
 // Pins: g0-session#16
