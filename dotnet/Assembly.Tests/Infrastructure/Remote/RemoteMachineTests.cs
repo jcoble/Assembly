@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Remote;
 using Assembly.Desktop.Serve;
 using Assembly.Tests.Infrastructure.Http;
@@ -257,16 +258,126 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         });
     }
 
+    [Fact]
+    public async Task A_route_that_gets_a_non_2xx_from_the_remote_answers_502_not_500()
+    {
+        await using var remote = await StubAsync(app => app.MapGet("/agents", () => Results.Text("boom", statusCode: 500)));
+        await using var desktop = await DesktopOnAsync(remote, Directory.CreateTempSubdirectory("assembly-desktop-").FullName);
+
+        using var http = Client(desktop, DesktopToken);
+        var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
+
+        Assert.Equal(HttpStatusCode.BadGateway, created.StatusCode);
+        Assert.Contains("answered 500", await created.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task The_helper_tools_answer_a_500_from_the_remote_as_a_tool_error_and_the_outbox_logs_it()
+    {
+        var creates = 0;
+        await using var remote = await StubAsync(app =>
+        {
+            // The first create fails; the next makes s1, whose sends fail.
+            app.MapPost("/sessions", () => Interlocked.Increment(ref creates) == 1
+                ? Results.Text("boom", statusCode: 500)
+                : Results.Text("""{"sessionId":"s1"}""", "application/json"));
+            app.MapPost("/sessions/s1/send", () => Results.Text("boom", statusCode: 500));
+            app.MapGet("/outbox", () => Results.Text("outbox down", statusCode: 500));
+        });
+        var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
+        await using var desktop = await DesktopOnAsync(remote, home);
+        using var http = Client(desktop, DesktopToken);
+        var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
+        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
+        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync($"/sessions/{parent}/send", Json("""{"text":"hi"}"""))).StatusCode);
+        var agent = await _desktopLauncher.NextAsync();
+        var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
+        await agent.ReadAsync("session/prompt");
+        var start = new { prompt = "Count the lines.", agent = "codex", machine = Box };
+
+        Assert.Contains("answered 500", await ToolErrorAsync(desktop, parentToken, "start_session", start));
+        Assert.Contains("answered 500", await ToolErrorAsync(desktop, parentToken, "start_session", start));
+        Assert.Contains("answered 500", MessageError(Path.Combine(home, "assembly.db"), "s1"));
+        Assert.Contains("answered 500", await ToolErrorAsync(desktop, parentToken, "send_message", new { sessionId = "s1", text = "Which file?" }));
+
+        // s1 is a helper on the remote, so the outbox looks there, and logs the 500 instead of dying.
+        await Until(() => _log.ToString().Contains($"{Box} outbox: {Box} answered 500: outbox down"), TimeSpan.FromSeconds(20));
+    }
+
+    [Fact]
+    public async Task A_remote_that_answers_500_to_version_does_not_fault_the_follower()
+    {
+        var versionStatus = 200;
+        await using var remote = await StubAsync(app =>
+        {
+            app.MapGet("/agents", () => Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json"));
+            app.MapPost("/sessions", () => Results.Text("""{"sessionId":"s1"}""", "application/json"));
+        }, () => versionStatus);
+        var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
+        await using (var first = await DesktopOnAsync(remote, home))
+        {
+            using var http = Client(first, DesktopToken);
+            var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
+            Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+        }
+
+        // A new desktop checks the format again, when opening s1 starts following it.
+        versionStatus = 500;
+        await using var desktop = await DesktopOnAsync(remote, home);
+        await GetJsonAsync(desktop, DesktopToken, "/sessions/s1/rows");
+
+        await Until(() => _log.ToString().Contains($"remote session s1: {Box} answered 500"));
+    }
+
+    // A stand-in for the remote: /version answers this computer's format, or the status given, beside the routes the test maps.
+    private static async Task<WebApplication> StubAsync(Action<WebApplication> map, Func<int>? versionStatus = null)
+    {
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
+        var app = builder.Build();
+        app.MapGet("/version", () => (versionStatus?.Invoke() ?? 200) is var status && status != 200
+            ? Results.Text("version down", statusCode: status)
+            : Results.Text($$"""{"formatVersion":{{RowStore.FormatVersion}}}""", "application/json"));
+        map(app);
+        await app.StartAsync();
+        return app;
+    }
+
+    private Task<DesktopBackend> DesktopOnAsync(WebApplication remote, string home) =>
+        DesktopBackend.StartAsync(home, DesktopToken, 0, _desktopLauncher, _log, new RemoteConfig(Box, new Uri(remote.Urls.Single()), BoxToken));
+
+    private static async Task<string> ToolErrorAsync(DesktopBackend backend, string sessionToken, string tool, object arguments)
+    {
+        var answer = await ToolResultAsync(backend, sessionToken, tool, arguments);
+        Assert.True(answer.GetProperty("isError").GetBoolean(), answer.GetRawText());
+        return answer.GetProperty("content")[0].GetProperty("text").GetString()!;
+    }
+
+    private static string? MessageError(string database, string to)
+    {
+        using var db = new SqliteConnection($"Data Source={database};Pooling=False");
+        db.Open();
+        using var command = db.CreateCommand();
+        command.CommandText = "SELECT error FROM helper_messages WHERE to_session = $to;";
+        command.Parameters.AddWithValue("$to", to);
+        return command.ExecuteScalar() as string;
+    }
+
     private static string SessionToken(JsonElement open) =>
         open.GetProperty("params").GetProperty("mcpServers")[0].GetProperty("headers")[0].GetProperty("value").GetString()!["Bearer ".Length..];
 
     private static async Task<JsonElement> ToolAsync(DesktopBackend backend, string sessionToken, string tool, object arguments)
     {
-        using var http = Client(backend, sessionToken);
-        var call = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 1, method = "tools/call", @params = new { name = tool, arguments } });
-        var answer = JsonDocument.Parse(await (await http.PostAsync("/mcp", Json(call))).Content.ReadAsStringAsync()).RootElement.GetProperty("result");
+        var answer = await ToolResultAsync(backend, sessionToken, tool, arguments);
         Assert.False(answer.GetProperty("isError").GetBoolean(), answer.GetRawText());
         return JsonDocument.Parse(answer.GetProperty("content")[0].GetProperty("text").GetString()!).RootElement.Clone();
+    }
+
+    private static async Task<JsonElement> ToolResultAsync(DesktopBackend backend, string sessionToken, string tool, object arguments)
+    {
+        using var http = Client(backend, sessionToken);
+        var call = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 1, method = "tools/call", @params = new { name = tool, arguments } });
+        return JsonDocument.Parse(await (await http.PostAsync("/mcp", Json(call))).Content.ReadAsStringAsync()).RootElement.GetProperty("result").Clone();
     }
 
     private static string? DeliveredRun(string database, string messageId)
@@ -303,11 +414,11 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         command.ExecuteNonQuery();
     }
 
-    private static Task Until(Func<bool> condition) => Until(() => Task.FromResult(condition()));
+    private static Task Until(Func<bool> condition, TimeSpan? limit = null) => Until(() => Task.FromResult(condition()), limit);
 
-    private static async Task Until(Func<Task<bool>> condition)
+    private static async Task Until(Func<Task<bool>> condition, TimeSpan? limit = null)
     {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var deadline = new CancellationTokenSource(limit ?? TimeSpan.FromSeconds(10));
         while (!await condition())
             await Task.Delay(50, deadline.Token);
     }

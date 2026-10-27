@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
@@ -47,7 +48,7 @@ public sealed class StartSessionTool(SessionStore sessionStore, SessionRegistry 
         {
             helper = await machine.CreateHelperAsync(caller, agent, SessionOpener.Title(prompt) ?? "Helper", cancellationToken);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or CallFailed)
         {
             return ToolResult.Error(error.Message);
         }
@@ -59,7 +60,7 @@ public sealed class StartSessionTool(SessionStore sessionStore, SessionRegistry 
         {
             runId = await machine.SendAsync(helper, text, cancellationToken);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or CallFailed)
         {
             sessionStore.SetMessageFailed(message.MessageId, error.Message);
             return ToolResult.Error(error.Message);

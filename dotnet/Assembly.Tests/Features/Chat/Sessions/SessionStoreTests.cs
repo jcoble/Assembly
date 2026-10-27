@@ -161,6 +161,63 @@ public sealed class SessionStoreTests : IDisposable
         Assert.DoesNotContain(_sessionStore.List(null, 50).Sessions, session => session.ParentSessionId is not null);
     }
 
+    // A database from before read_seq: its sessions start read up to their last row, so nothing is unread after the
+    // upgrade, and one with no rows starts at 0.
+    [Fact]
+    public void An_older_database_gets_read_seq_at_each_sessions_last_row()
+    {
+        var (withRows, without) = OlderDatabase();
+
+        var store = SessionStore.Open(_database, _time);
+
+        Assert.Equal((3L, 0L), (store.Get(withRows)!.ReadSeq, store.Get(without)!.ReadSeq));
+    }
+
+    [Fact]
+    public void A_second_open_leaves_read_seq_as_it_is()
+    {
+        var (withRows, _) = OlderDatabase();
+        SessionStore.Open(_database, _time);
+        RowStore.Open(_database).Commit(withRows, Rows(1));
+
+        var store = SessionStore.Open(_database, _time);
+
+        Assert.Equal(3L, store.Get(withRows)!.ReadSeq);
+    }
+
+    // The column and its values are one write: a backfill that fails leaves no column, so the next start does both.
+    [Fact]
+    public void A_backfill_that_fails_leaves_the_database_as_it_was()
+    {
+        OlderDatabase();
+        _database.Writer.Write("test.trigger", scope => scope.Execute(
+            "CREATE TRIGGER no_update BEFORE UPDATE ON session_info BEGIN SELECT RAISE(ABORT, 'no'); END;"));
+
+        Assert.ThrowsAny<Exception>(() => SessionStore.Open(_database, _time));
+
+        Assert.Equal(0L, _database.QueryFirst("SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'read_seq';",
+            row => row.Long(0), CancellationToken.None));
+    }
+
+    // Today's schema without read_seq: one session with three rows, one with none.
+    private (string WithRows, string Without) OlderDatabase()
+    {
+        var rows = RowStore.Open(_database);
+        var withRows = _sessionStore.Create("claude", "repo").SessionId;
+        var without = _sessionStore.Create("claude", "repo").SessionId;
+        rows.Commit(withRows, Rows(3));
+        _database.Writer.Write("test.older", scope => scope.Execute("ALTER TABLE session_info DROP COLUMN read_seq;"));
+        return (withRows, without);
+    }
+
+    private static RowBatch Rows(int count)
+    {
+        var batch = new RowBatch();
+        for (var i = 0; i < count; i++)
+            batch.Rows.Add(new NewRow("run-1", null, Assembly.Domain.Rows.RowKind.User, System.Text.Json.JsonDocument.Parse("""{"text":"x"}""").RootElement, 1));
+        return batch;
+    }
+
     public void Dispose()
     {
         _database.Dispose();

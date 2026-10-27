@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
@@ -41,7 +42,7 @@ public sealed class SendMessageTool(SessionStore sessionStore, SessionRegistry s
         {
             runId = await delivery.SendAsync(target, framed, cancellationToken);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or CallFailed)
         {
             sessionStore.SetMessageFailed(message.MessageId, error.Message);
             return ToolResult.Error(error.Message);

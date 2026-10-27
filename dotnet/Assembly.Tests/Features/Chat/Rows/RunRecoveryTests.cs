@@ -153,6 +153,25 @@ public sealed class RunRecoveryTests : IDisposable
         Assert.Empty(_store.RunningItems(RowKind.Task));
     }
 
+    // The summaries are filled before recovery, and its closing rows go through the hub, so they update them.
+    [Fact]
+    public void Closing_a_run_and_its_tasks_updates_the_sessions_summary()
+    {
+        var converter = new RowConverter();
+        _store.Commit("t", converter.Apply(new TurnStarted(1, "run-1", "start it")));
+        _store.Commit("t", converter.Apply(new TaskChanged(2, "a", "sleep 15", "running", CanStop: true, ToolCallId: null)));
+        var summaries = SessionSummaries.Load(_store);
+        Assert.Equal(("run-1", 1), (summaries.Get("t").RunId, summaries.Get("t").Background));
+        var changed = new List<string>();
+        using var hub = new LiveHub(_store, summaries: summaries, summaryChanged: changed.Add);
+
+        RunRecovery.CloseUnfinished(_store, hub, RestartedAt, runsHere: _ => true);
+
+        Assert.Equal((null, 0), (summaries.Get("t").RunId, summaries.Get("t").Background));
+        Assert.Equal(summaries.Get("t").EndSeq, _store.RowsAfter("t", 0).Last(row => row.Kind == RowKind.Turn).Seq);
+        Assert.Equal(["t", "t"], changed);
+    }
+
     public void Dispose()
     {
         _database.Dispose();
