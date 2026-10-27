@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Assembly.Application.Common.Database;
 using Assembly.Domain.Events;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Features.Chat.Rows;
@@ -128,6 +129,16 @@ public sealed class RowStoreTests : IDisposable
 
         Assert.Equal(new StoredToolCall("ls -la", """{"command":"ls"}""", "file.txt", null, "/tmp"), _store.ToolCall("a", "t1"));
         Assert.Null(_store.ToolCall("a", "nope"));
+    }
+
+    [Fact]
+    public void A_page_reads_only_its_own_items_rows_not_the_whole_session()
+    {
+        // Every search of rows names more than the session: by seq below the page, or by one item.
+        var plan = _database.Query("EXPLAIN QUERY PLAN " + Schema.PageBefore, row => row.Text(3), CancellationToken.None,
+            new SqlArg("$session", "t"), new SqlArg("$before", long.MaxValue), new SqlArg("$limit", 50));
+
+        Assert.DoesNotContain(plan, step => step.EndsWith("(session_id=?)", StringComparison.Ordinal) || step.StartsWith("SCAN r", StringComparison.Ordinal));
     }
 
     [Fact]
