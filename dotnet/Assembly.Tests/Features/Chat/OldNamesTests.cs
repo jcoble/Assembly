@@ -3,7 +3,7 @@ using Microsoft.Extensions.Time.Testing;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Mac.Serve;
+using Assembly.Desktop.Serve;
 
 namespace Assembly.Tests.Features.Chat;
 
@@ -184,7 +184,7 @@ public sealed class OldNamesTests : IDisposable
             File.WriteAllText(Path.Combine(home, "agents.json"), "[]");
             var before = Schema(database);
 
-            await Assert.ThrowsAnyAsync<IOException>(() => MacServe.MainAsync(
+            await Assert.ThrowsAnyAsync<IOException>(() => DesktopServe.MainAsync(
                 ["--home", home, "--token-file", Path.Combine(home, "env"), "--port", "0"]).WaitAsync(TimeSpan.FromSeconds(30)));
 
             Assert.Equal(before, Schema(database));
