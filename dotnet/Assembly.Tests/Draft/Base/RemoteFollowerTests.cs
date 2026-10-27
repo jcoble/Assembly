@@ -47,10 +47,10 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
     public async Task A_watch_while_the_session_is_followed_follows_it_once_more_after()
     {
         _stub.Pings = false;
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
         await Until(() => _stub.LiveHits == 1);
 
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
 
         // The first link settles after 2 s of quiet; the second watch is still owed a pass.
         await Until(() => _stub.LiveHits == 2);
@@ -67,7 +67,7 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
             var watches = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
             {
                 ready.SignalAndWait();
-                _box.WatchRunning([id]);
+                _box.WatchRunning([id], []);
             })).ToArray();
             await Task.WhenAll(watches);
         }
@@ -82,11 +82,11 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
     {
         _stub.DropVersion = true;
         _log.Hold();
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
         // Held in the give-up, where it logs why.
         await _log.Reached.Task.WaitAsync(Wait);
 
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
         _stub.DropVersion = false;
         _log.Release();
 
@@ -100,7 +100,7 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
         Assert.NotNull(_hub.OpenRun("s1"));
         _stub.DropVersion = true;
 
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
         await Until(() => _stub.VersionHits == 1);
         await Task.Delay(1500);
 

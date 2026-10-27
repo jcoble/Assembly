@@ -171,7 +171,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
     [Fact]
     public async Task A_remote_with_a_live_follower_link_is_not_probed()
     {
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
         await Until(() => _stub.LiveHits == 1);
         // The link counts once the follower's connect returns, just after the stub sees it.
         await Task.Delay(200);
@@ -247,7 +247,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
         _stub.DropVersion = true;
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
         Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
 
         _stub.DropVersion = false;
@@ -263,11 +263,11 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
         _stub.DropVersion = true;
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
         Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
 
         _stub.DropVersion = false;
-        _box.WatchRunning(["s2"]);
+        _box.WatchRunning(["s2"], []);
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         await Until(() => _stub.LiveHits == 1);
         // The link counts once the follower's connect returns, just after the stub sees it.
@@ -289,7 +289,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         _status.Unreachable("box", "ssh tunnel exited");
         Assert.Equal(Change(1, Box(false, "ssh tunnel exited")), await ReadAsync(socket));
 
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
 
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
         Assert.Equal(1, _stub.VersionHits);
@@ -306,7 +306,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
             Row(2, "r2", """{"state":"started"}"""),
         ];
 
-        _box.WatchRunning(["s1"]);
+        _box.WatchRunning(["s1"], []);
 
         await Until(() => _hub.LastSeq("s1") == 2);
         Assert.Equal(1, _stub.TitleHits);
