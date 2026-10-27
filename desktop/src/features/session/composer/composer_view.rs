@@ -2,9 +2,9 @@
 //! draft while the window runs. Send is `send/send` with the draft and a clientId, which a retry of the same text
 //! reuses. While a turn runs, a send steers it and a Stop button beside the draft stops it (`send/stop` with the run
 //! id). The ring beside Send shows how much of the agent's context window is left (context_ring.rs), and the agent's
-//! own menus and "/" commands come from its config (composer_config.rs). It holds the attachments for when those are
-//! drawn; nothing attaches images yet, and a sent prompt isn't shown as pending before its row arrives. Drawn in
-//! composer_render.rs. Replaces Composer.svelte.
+//! own menus and "/" commands come from its config (composer_config.rs). Images attach by drop, paste or the picker
+//! and upload at once (composer_attach.rs); a send waits until each has uploaded. A sent prompt isn't shown as pending
+//! before its row arrives. Drawn in composer_render.rs. Replaces Composer.svelte.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -25,6 +25,10 @@ pub struct Composer {
     /// The other sessions' unsent drafts, by session id.
     drafts: HashMap<String, String>,
     attachments: Vec<Attachment>,
+    /// Each attachment's upload while it goes, by its id; a chip removed drops its upload.
+    uploads: HashMap<u64, Task<()>>,
+    /// How many attachments this composer has named, for the next id.
+    attached: u64,
     /// The "/" menu's highlighted row, or `None` while it's closed or Esc hid it.
     slash_selected: Option<usize>,
     /// The agent's menus and commands for this session, once read.
@@ -78,6 +82,8 @@ impl Composer {
             draft,
             drafts: HashMap::new(),
             attachments: Vec::new(),
+            uploads: HashMap::new(),
+            attached: 0,
             slash_selected: None,
             config: None,
             error: None,
@@ -115,6 +121,7 @@ impl Composer {
             .update(cx, |draft, cx| draft.set_value(text, window, cx));
         self.session = session;
         self.attachments.clear();
+        self.uploads.clear();
         self.slash_selected = None;
         (self.config, self.error, self._config) = (None, None, None);
         self.read_config(cx);
@@ -174,6 +181,7 @@ impl Composer {
         }
         let text = Attachment::with_lines(&typed, &self.attachments);
         self.attachments.clear();
+        self.uploads.clear();
         (self.slash_selected, self.error) = (None, None);
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
@@ -228,6 +236,8 @@ const DRAFT_ROWS: usize = 10;
 
 impl EventEmitter<ComposerEvent> for Composer {}
 
+#[path = "composer_attach.rs"]
+mod attach;
 #[path = "composer_config.rs"]
 mod config;
 #[path = "composer_render.rs"]

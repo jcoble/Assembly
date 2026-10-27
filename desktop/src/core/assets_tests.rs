@@ -9,7 +9,7 @@ use super::assets::AppAssets;
 #[test]
 fn the_window_has_every_icon_it_draws() {
     // The kit's own ChevronRight, and the window's own: the Home button's house, a question's marks, an unfinished step,
-    // the composer's Send and Stop.
+    // the composer's Send, Stop and Attach, and an attached image's chip.
     for icon in [
         IconName::ChevronRight,
         IconName::House,
@@ -18,6 +18,10 @@ fn the_window_has_every_icon_it_draws() {
         IconName::Dot,
         IconName::ArrowUp,
         IconName::Square,
+        IconName::Paperclip,
+        IconName::X,
+        IconName::Image,
+        IconName::CircleAlert,
     ] {
         let path = icon.path();
         let svg = AppAssets.load(&path).expect("loads").expect("is there");

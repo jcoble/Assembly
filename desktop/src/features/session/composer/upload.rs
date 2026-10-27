@@ -4,7 +4,7 @@
 //! There's no retry and no wait: a failed upload shows on its chip, and a failure after begin drops what it began.
 //! An upload whose task is dropped part way is left to the backend, which drops it when the socket closes.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -22,6 +22,11 @@ pub const CHUNK_BYTES: usize = 1024 * 1024;
 pub enum UploadSource {
     Path(PathBuf),
     Bytes(Arc<[u8]>),
+}
+
+/// A file's size on disk, to turn away one too large before it uploads; `None` when it can't be read.
+pub fn size_of(path: &Path) -> Option<u64> {
+    std::fs::metadata(path).ok().map(|metadata| metadata.len())
 }
 
 /// Uploads one image to the session and answers the path it was saved at.

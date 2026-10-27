@@ -14,7 +14,11 @@ gpui_kit::assets::icon_assets!(
         ShieldQuestionMark,
         Dot,
         ArrowUp,
-        Square
+        Square,
+        Paperclip,
+        X,
+        Image,
+        CircleAlert
     ]
 );
 
