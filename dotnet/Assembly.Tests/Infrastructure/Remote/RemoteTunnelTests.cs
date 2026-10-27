@@ -48,7 +48,7 @@ public sealed class RemoteTunnelTests
     [LinuxFact]
     public async Task The_command_has_its_own_stdout_and_stdin()
     {
-        var log = new StringWriter();
+        var log = new SharedLog();
         var here = $"/proc/{Environment.ProcessId}/fd";
         await using var tunnel = new RemoteTunnel("/bin/sh",
             ["-c", $"""[ "$(readlink /proc/$$/fd/0)" != "$(readlink {here}/0)" ] && [ "$(readlink /proc/$$/fd/1)" != "$(readlink {here}/1)" ] && echo own >&2 || echo shared >&2; exit 3"""],
