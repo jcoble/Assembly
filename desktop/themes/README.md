@@ -28,9 +28,14 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
   `shadow` false. The fonts stay unset, which is the system face and system monospace.
 - The kit has only two radii. The design system's 4 px (filters, fields) and 5 px (list and tree rows) are set by the
   components that draw those.
-- Motion: the kit's fast and normal steps are already 120 and 180 ms, but its slow step and its move spring (which
-  tab indicators use) are 280 ms (motion.rs:28, 36; tab/tab_bar.rs:249). Theme files can't set motion, so `set`
-  brings those two down to 180 ms.
+- Motion: theme files can't set it. The kit's `cx.theme().motion` (gpui-component theme/motion.rs) is the one place
+  animation timing lives, and every lane's animations read it instead of writing their own durations (Jesse,
+  2026-10-27: "small animations wherever we can"): `duration_fast` (120 ms) for hover fills and fades,
+  `duration_normal` (180 ms) for menus, popovers, the drawer and panes moving, `easing_enter`, `easing_exit` and
+  `easing_move` for their curves, and `spring_control` and `spring_move` for anything dragged or springing. The
+  kit's slow step and move spring are 280 ms (motion.rs:28, 36; tab indicators use the spring, tab/tab_bar.rs:249),
+  past the design system's 180, so `set` brings both down to 180 ms. Reduced motion is the kit's too: its components
+  already settle at rest when the system asks for it.
 - Kit 0.8.1 has no highlight keys for added, removed and changed lines (highlighter/registry.rs:318-349), so the
   design system's `add-bg`, `del-bg`, `mint` and `amber` for diffs belong to the diff view that draws them, not to
   these files.
