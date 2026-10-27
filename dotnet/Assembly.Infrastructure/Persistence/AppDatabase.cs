@@ -23,8 +23,9 @@ public sealed class AppDatabase : IAppDatabase, IDisposable
 
     /// <summary>
     /// A database from before sessions were renamed (format 3 or older, with a threads table) is copied to
-    /// <c>path.before-v4</c> before anything changes it. A copy already there is never overwritten. If the copy fails,
-    /// this throws and the database is left as it was.
+    /// <c>path.before-v4</c> before anything changes it. A copy already there is never overwritten. The copy is written
+    /// beside it and renamed into place once whole, so a half-written one is made again. If the copy fails, this throws
+    /// and the database is left as it was.
     /// </summary>
     private static void CopyBeforeRename(string path)
     {
@@ -37,9 +38,12 @@ public sealed class AppDatabase : IAppDatabase, IDisposable
         command.CommandText = "SELECT user_version < 4 AND EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threads') FROM pragma_user_version;";
         if ((long)command.ExecuteScalar()! == 0)
             return;
+        var partial = copy + ".partial";
+        File.Delete(partial);
         command.CommandText = "VACUUM INTO $copy;";
-        command.Parameters.AddWithValue("$copy", copy);
+        command.Parameters.AddWithValue("$copy", partial);
         command.ExecuteNonQuery();
+        File.Move(partial, copy);
     }
 
     public IAtomicWriter Writer => _writer;

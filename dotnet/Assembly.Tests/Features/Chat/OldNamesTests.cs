@@ -130,6 +130,18 @@ public sealed class OldNamesTests : IDisposable
     }
 
     [Fact]
+    public void A_copy_an_interrupted_open_left_half_written_is_made_again()
+    {
+        var backup = _db.Path + ".before-v4";
+        File.WriteAllText(backup + ".partial", "half a copy");
+
+        Open(out _, out _).Dispose();
+
+        Assert.Equal(["Old one", "Child"], Query("SELECT title FROM thread_info ORDER BY updated_at;", backup));
+        Assert.False(File.Exists(backup + ".partial"));
+    }
+
+    [Fact]
     public void A_database_the_first_rename_made_opens_as_it_is_with_no_copy()
     {
         // The rename as 627d704 shipped it (unchanged since) is what the box's data went through.
@@ -172,7 +184,7 @@ public sealed class OldNamesTests : IDisposable
             File.WriteAllText(Path.Combine(home, "agents.json"), "[]");
             var before = Schema(database);
 
-            await Assert.ThrowsAsync<SqliteException>(() => MacServe.MainAsync(
+            await Assert.ThrowsAnyAsync<IOException>(() => MacServe.MainAsync(
                 ["--home", home, "--token-file", Path.Combine(home, "env"), "--port", "0"]).WaitAsync(TimeSpan.FromSeconds(30)));
 
             Assert.Equal(before, Schema(database));

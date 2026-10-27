@@ -56,6 +56,9 @@ public sealed class MacBackend : IAsyncDisposable
         Directory.CreateDirectory(home);
         var database = Path.Combine(home, "assembly.db");
         var db = AppDatabase.Open(database);
+        // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
+        // before the API starts, so no session makes a checkout in sessions/ first.
+        AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System);
         var hub = new LiveHub(store);

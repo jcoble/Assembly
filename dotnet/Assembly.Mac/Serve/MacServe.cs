@@ -23,8 +23,6 @@ public static class MacServe
         var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, options.RemotePort, options.RemoteTokenFile, Console.Out) : (null, null);
         await using var stopTunnel = tunnel;
         await using var backend = await MacBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out, remote);
-        // After the database opens: a database the rename can't copy first stops here with the checkouts left alone.
-        AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         Console.WriteLine($"listening on {backend.Address}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");
