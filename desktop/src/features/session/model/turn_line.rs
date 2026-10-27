@@ -42,7 +42,8 @@ pub fn turn_line(stats: Option<&TurnStats>, live_started_at: Option<i64>, now: i
 /// "Checkout changed · main@1a2b3c4 → feat@5d6e7f8", or `None` when the run started where the last one left off.
 pub fn checkout_line(stats: Option<&TurnStats>) -> Option<String> {
     let stats = stats?;
-    let (head, prev_head) = (stats.head.as_deref()?, stats.prev_head.as_deref()?);
+    let head = stats.head.as_deref().filter(|head| !head.is_empty())?;
+    let prev_head = stats.prev_head.as_deref().filter(|head| !head.is_empty())?;
     if head == prev_head && stats.branch == stats.prev_branch {
         return None;
     }
@@ -101,7 +102,7 @@ fn count(n: i64) -> String {
 fn checkout(branch: Option<&str>, head: &str) -> String {
     let short: String = head.chars().take(7).collect();
     match branch {
-        None | Some("HEAD") => short,
+        None | Some("" | "HEAD") => short,
         Some(branch) => format!("{branch}@{short}"),
     }
 }

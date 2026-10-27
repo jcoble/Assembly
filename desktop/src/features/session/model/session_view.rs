@@ -27,8 +27,6 @@ pub struct SessionView {
     pub has_before: bool,
     /// The newest seq applied: the rows subscription's `after` on a reopen.
     pub newest: i64,
-    /// Prompts sent from here that no user row has echoed yet, as (client id, text), drawn pending at the end.
-    pub pending: Vec<(String, String)>,
 }
 
 /// The newest turn row: its seq, run, state and when it was written.
@@ -59,7 +57,7 @@ impl SessionView {
                 }
                 // A run the agent started itself has no prompt above it, so its reason stands in for one.
                 match reason {
-                    Some(text) if at.is_none() => ItemKind::Note { text },
+                    Some(text) if at.is_none() && !text.is_empty() => ItemKind::Note { text },
                     _ => return Change::Nothing,
                 }
             }
@@ -186,7 +184,14 @@ impl SessionView {
             RowBody::Error { message, code } => ItemKind::Error { message, code },
             RowBody::Other { kind } => ItemKind::Other { kind },
         };
-        if at.is_some() {
+        if let Some(i) = at {
+            // A row it couldn't read showed by name; a readable one for the same item draws it in its place.
+            if matches!(self.items[i].kind, ItemKind::Other { .. })
+                && !matches!(kind, ItemKind::Other { .. })
+            {
+                self.items[i].kind = kind;
+                return Change::Updated(i);
+            }
             return Change::Nothing;
         }
         self.index.insert(key.clone(), self.items.len());

@@ -5,7 +5,7 @@ Draft by Claude, not corrected by Jesse.
 g0-session#1 Opening a session shows its newest messages at once, then keeps up with new ones as they arrive.
 g0-session#2 Scrolling up loads older messages before you reach the top, and the message you're reading stays where it is.
 g0-session#3 History has no blank gaps, no repeated messages and no empty rows, also where a resumed session joins its earlier history.
-g0-session#4 A reply streams in place, its text coming in smoothly like typing, in one message, never as a new message per piece. It never falls more than a quarter second behind what has arrived, and stops moving once it has caught up.
+g0-session#4 A reply streams in place, its text coming in smoothly like typing, in one message, never as a new message per piece. It speeds up the further it falls behind, so even a long burst shows within two seconds, and it stops moving once it has caught up.
 g0-session#5 Sending a message shows it at once as pending, until the session's own copy of it arrives, and scrolls it to the top of the view with the reply writing below it.
 g0-session#6 "Jump to latest" goes to the newest message and keeps following while a turn writes; scrolling yourself stops following. Following never runs past the prompt.
 g0-session#7 Going back to the latest keeps the older messages already loaded.

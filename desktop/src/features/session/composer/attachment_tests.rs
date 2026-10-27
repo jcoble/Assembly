@@ -162,4 +162,7 @@ fn paths_go_in_at_the_caret_with_a_space_either_side_only_where_needed() {
         Attachment::insert_at("seeplease", 3, "/a"),
         ("see /a please".into(), 7)
     );
+    // A caret past the end or inside a character goes to the nearest boundary before it.
+    assert_eq!(Attachment::insert_at("ab", 5, "/a"), ("ab /a".into(), 5));
+    assert_eq!(Attachment::insert_at("é", 1, "/a"), ("/a é".into(), 3));
 }
