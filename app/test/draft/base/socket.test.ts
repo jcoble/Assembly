@@ -357,3 +357,48 @@ test('a save sent before the socket closes stops counting with it, and one still
   reopened.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'other') });
   assert.equal(a.values.get('theme'), 'other');
 });
+
+// Settles to `still waiting` if the call hasn't come back by the next turn.
+const now = (pending: Promise<Outcome>) => Promise.race([pending, settle().then(() => 'still waiting')]);
+
+test('an owner closing while the socket connects comes back aborted at once, and the socket still opens for the others', async () => {
+  const { call, failures } = await load();
+  const owner = new AbortController();
+  const cancelled = call('notes', 'get', {}, { signal: owner.signal });
+  const other = call('notes', 'list');
+  await settle();
+  owner.abort();
+  assert.deepEqual(await now(cancelled), { ok: false, why: 'aborted' });
+  const socket = await welcome();
+  assert.deepEqual(socket.sent.slice(1), [{ t: 'call', id: 2, feature: 'notes', method: 'list', args: {} }]);
+  socket.receive({ t: 'result', id: 2, result: [] });
+  assert.deepEqual(await other, { ok: true, result: [] });
+  assert.deepEqual(failures, []);
+});
+
+test('a keyed call a newer one takes over while the socket connects comes back aborted at once, and only the newer is sent', async () => {
+  const { call, failures } = await load();
+  const older = call('notes', 'get', {}, { key: 'notes/get' });
+  await settle();
+  const newer = call('notes', 'get', {}, { key: 'notes/get' });
+  assert.deepEqual(await now(older), { ok: false, why: 'aborted' });
+  const socket = await welcome();
+  assert.deepEqual(socket.sent.slice(1), [{ t: 'call', id: 2, feature: 'notes', method: 'get', args: {} }]);
+  socket.receive({ t: 'result', id: 2, result: { text: 'new' } });
+  assert.deepEqual(await newer, { ok: true, result: { text: 'new' } });
+  assert.deepEqual(failures, []);
+});
+
+test('a call its owner closed while connecting stays aborted when the socket then fails to open', async () => {
+  const { call, failures } = await load();
+  const owner = new AbortController();
+  const cancelled = call('notes', 'get', {}, { signal: owner.signal });
+  await settle();
+  owner.abort();
+  sockets[0]!.closeNow(1006);
+  await settle();
+  sockets[1]!.closeNow(1006);
+  await settle();
+  assert.deepEqual(await cancelled, { ok: false, why: 'aborted' });
+  assert.deepEqual(failures, []);
+});

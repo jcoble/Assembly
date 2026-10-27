@@ -19,7 +19,9 @@ public interface ICallRegistry
     void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save);
 
     // A topic's state for a new subscriber, with its key. Synchronous: Topics reads it under its lock, which can't span
-    // an await (5.7). Its token is the socket's closing. key gives each item's key, which its state frame carries, so the
-    // page can hold a key with a save in flight.
+    // an await (5.7). Its token is the socket's closing. Every write's publish waits on that lock, so state only reads
+    // and stays small: a write inside it would take the locks in the writer's opposite order and deadlock under load,
+    // and a big state stalls every write while it runs. key gives each item's key, which its state frame carries, so
+    // the page can hold a key with a save in flight.
     void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key, Func<string?, CallContext, IReadOnlyList<TItem>> state);
 }
