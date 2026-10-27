@@ -69,7 +69,11 @@ public sealed partial class SessionHost
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time))
         {
-            SelfStarted = true, Session = _kept!.Session, LastEventAt = at, Ended = ended, Done = ended.Task,
+            SelfStarted = true,
+            Session = _kept!.Session,
+            LastEventAt = at,
+            Ended = ended,
+            Done = ended.Task,
         };
         Apply(new RunStarted(at, _turn.RunId, "Continued after a background task finished"));
         _log.WriteLine($"session {_sessionId} run {_turn.RunId}: started by the agent");

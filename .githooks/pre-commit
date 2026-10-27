@@ -5,4 +5,5 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 scripts/check-pinned.sh origin/main "$(git write-tree)"
 [ ! -f app/scripts/guards.sh ] || bash app/scripts/guards.sh
-[ ! -f scripts/lint.sh ] || bash scripts/lint.sh
+# LINT_STAGED_ONLY=1: the .NET checks run only when the commit changes a .NET file (scripts/lint.d/50 and 70).
+[ ! -f scripts/lint.sh ] || LINT_STAGED_ONLY=1 bash scripts/lint.sh
