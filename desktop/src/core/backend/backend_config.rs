@@ -20,6 +20,9 @@ pub struct BackendConfig {
     pub remote_token_file: PathBuf,
     /// How long a backend gets to print its ready line before it's stopped.
     pub ready_limit: Duration,
+    /// How long a backend gets to exit after SIGTERM before it's killed; longer than the backend's own 8 s bound on
+    /// finishing its queued writes (ApiServer.ShutdownTimeout).
+    pub stop_grace: Duration,
 }
 
 impl BackendConfig {
@@ -52,6 +55,7 @@ impl BackendConfig {
             remote_port: port("remotePort")?,
             remote_token_file: path("remoteTokenFile")?,
             ready_limit: Duration::from_secs(60),
+            stop_grace: Duration::from_secs(10),
         })
     }
 }

@@ -13,8 +13,9 @@
 //! - A child that prints no ready line within `ready_limit` (60 s; a hung remote tunnel, say) is stopped, and the
 //!   log says why.
 //! - On quit it sends the child SIGTERM and waits until the thread has reaped it; the backend finishes its queued
-//!   writes and bounds that wait itself (8 s, ApiServer.ShutdownTimeout). The wait is in the quit handler's body, not
-//!   a quit future, which GPUI cuts off after 200 ms.
+//!   writes and bounds that wait itself (8 s, ApiServer.ShutdownTimeout). One still running after `stop_grace` (10 s)
+//!   gets SIGKILL, and the log says so. The wait is in the quit handler's body, not a quit future, which GPUI cuts off
+//!   after 200 ms.
 //!
 //! - The child's stdin is a pipe held until it exits, so it sees end of file if the window dies without quitting.
 //! - Dropping the launcher stops the child the same way, so nothing outlives the window.
@@ -50,6 +51,8 @@ pub struct Launcher {
     /// Set on quit, so the thread doesn't start another child.
     quitting: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    /// Disconnects when the thread ends, so a stop can wait for it with a deadline.
+    thread_done: Option<mpsc::Receiver<()>>,
     /// The main thread's loop over ready tokens, and the quit handler; held, never detached.
     _ready_loop: Option<Task<()>>,
     _quit: Option<Subscription>,
@@ -99,6 +102,7 @@ impl Launcher {
             pid: Arc::new(Mutex::new(0)),
             quitting: Arc::new(AtomicBool::new(false)),
             thread: None,
+            thread_done: None,
             _ready_loop: None,
             _quit: None,
         };
@@ -121,25 +125,49 @@ impl Launcher {
             self.pid.clone(),
             self.quitting.clone(),
         );
+        let (done, thread_done) = mpsc::channel();
+        self.thread_done = Some(thread_done);
         self.thread = Some(
             std::thread::Builder::new()
                 .name("backend".into())
-                .spawn(move || run(&config, &*ready, &pid, &quitting))
+                .spawn(move || {
+                    let _done = done;
+                    run(&config, &*ready, &pid, &quitting)
+                })
                 .expect("start the backend's thread"),
         );
     }
 
-    /// Sends the child SIGTERM and waits until it's reaped; no other child starts after.
+    /// Sends the child SIGTERM, then SIGKILL if it's still running after `stop_grace`, and waits until it's reaped; no
+    /// other child starts after.
     fn stop(&mut self) {
         self.quitting.store(true, Ordering::SeqCst);
-        let pid = self.pid.lock().unwrap();
-        if *pid != 0 {
-            terminate(*pid);
+        self.signal(libc::SIGTERM);
+        if let Some(done) = self.thread_done.take()
+            && done.recv_timeout(self.config.stop_grace) == Err(RecvTimeoutError::Timeout)
+            && self.signal(libc::SIGKILL)
+        {
+            let log = OpenOptions::new()
+                .append(true)
+                .open(self.config.home.join("backend.log"));
+            if let Ok(mut log) = log {
+                let grace = self.config.stop_grace;
+                _ = writeln!(
+                    log,
+                    "the backend didn't stop within {grace:?} of SIGTERM, so it was killed"
+                );
+            }
         }
-        drop(pid);
         if let Some(thread) = self.thread.take() {
             _ = thread.join();
         }
+    }
+
+    /// Sends the running child `signal`; false when none runs.
+    fn signal(&self, signal: i32) -> bool {
+        let pid = self.pid.lock().unwrap();
+        // SAFETY: kill only sends a signal, and the pid is our unreaped child's (see `Launcher::pid`).
+        *pid != 0 && unsafe { libc::kill(*pid as i32, signal) } == 0
     }
 }
 

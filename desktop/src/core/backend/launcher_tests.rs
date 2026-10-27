@@ -36,6 +36,7 @@ fn fake(name: &str, script: &str) -> BackendConfig {
         remote_port: 9877,
         remote_token_file: dir.join("remote.env"),
         ready_limit: Duration::from_secs(60),
+        stop_grace: Duration::from_secs(10),
     }
 }
 
@@ -160,4 +161,25 @@ fn a_backend_with_no_ready_line_in_time_is_stopped() {
     assert_eq!(read(&launcher.config, "stopped"), "stopped\n");
     let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
     assert!(log.contains("no ready line within 200ms"), "{log}");
+}
+
+#[test]
+fn a_backend_that_ignores_sigterm_is_killed_after_the_grace_period() {
+    // `exec` keeps the ignored SIGTERM, and leaves no other process holding the backend's stdout.
+    let script =
+        "trap '' TERM\necho 'listening on http://127.0.0.1:18877/'\nexec tail -f /dev/null";
+    let mut config = fake("stubborn", script);
+    config.stop_grace = Duration::from_millis(200);
+    let (mut launcher, ready) = launch(config);
+    ready.recv().unwrap();
+    let pid = *launcher.pid.lock().unwrap();
+    launcher.stop();
+    // SAFETY: signal 0 only asks whether the process exists.
+    assert_eq!(
+        unsafe { libc::kill(pid as i32, 0) },
+        -1,
+        "the child is gone"
+    );
+    let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
+    assert!(log.contains("didn't stop within 200ms of SIGTERM"), "{log}");
 }
