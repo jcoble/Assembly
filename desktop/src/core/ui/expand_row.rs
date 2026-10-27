@@ -100,6 +100,14 @@ impl ExpandRow {
         self.build_body = Box::new(body);
     }
 
+    /// Its title from now on, drawn from how far it has grown; called from the owner's render like `set_body`.
+    pub fn set_title(
+        &mut self,
+        title: impl Fn(f32, &mut Window, &mut App) -> AnyElement + 'static,
+    ) {
+        self.title = Box::new(title);
+    }
+
     pub fn is_open(&self) -> bool {
         self.open
     }

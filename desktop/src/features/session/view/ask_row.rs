@@ -2,10 +2,10 @@
 //! row on a lighter band, its message and controls under it: a permission's options as pill buttons, or a question's
 //! fields as inline fields (a label beside its pill input or choices), with Send, Skip and Cancel; Enter in a text
 //! field sends. Once answered it shrinks, growing in place backward, to one line: what it was answered with and its
-//! title. Replaces chat/Ask.svelte.
+//! title. It's an `ExpandRow` (pane_expand.rs), so its line opens and shuts it like any row that grows; a settled one
+//! opens to what it asked. Replaces chat/Ask.svelte.
 
 use std::rc::Rc;
-use std::time::Instant;
 
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -15,17 +15,14 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Map, Value, json};
 
-use super::grow::{band, grow, turn};
+use super::grow::chevron;
 use super::session_action::{OnAction, SessionAction};
-use crate::core::theme::grow::faded;
 use crate::features::session::rows::ask::{AskInput, AskPayload, AskSchema};
 
-#[derive(IntoElement)]
+#[derive(Clone)]
 pub struct AskRow {
     pub ask_id: String,
     pub ask: AskPayload,
-    /// When it settled while shown (`Kept::toggled_at`), so it shrinks from then; `None` for one drawn settled.
-    pub toggled_at: Option<Instant>,
     /// An open question's form; `None` for a permission or a settled card.
     pub form: Option<AskForm>,
     pub on_action: OnAction,
@@ -132,25 +129,12 @@ impl AskForm {
     }
 }
 
-impl RenderOnce for AskRow {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let open = self.ask.state == "open";
-        let turned = turn(open, self.toggled_at, window, cx);
-        let faded = faded(turned.0);
-        let head = self.head(open, cx);
-        let body = (open || turned.1).then(|| {
-            let controls = self.controls(cx);
-            let id = format!("ask:{}:grow", self.ask_id).into();
-            grow(id, turned, open, faded, controls, window, cx)
-        });
-        band(v_flex().child(head).children(body), turned.0, cx).text_sm()
-    }
-}
-
 impl AskRow {
-    /// The 28 px line: a mark, the title, and "Needs you" while open; settled, what it was answered with and the title.
-    fn head(&self, open: bool, cx: &App) -> Div {
+    /// The 28 px line: a chevron turned `grown` of the way, a mark, the title, and "Needs you" while open; settled,
+    /// what it was answered with and the title.
+    pub fn head(&self, grown: f32, cx: &App) -> Div {
         let theme = cx.theme();
+        let open = self.ask.state == "open";
         let kind = if self.ask.kind == "permission" {
             "Permission"
         } else {
@@ -168,6 +152,8 @@ impl AskRow {
         let line = h_flex()
             .h(px(28.))
             .gap_2()
+            .text_sm()
+            .child(chevron(grown))
             .child(Icon::new(mark).xsmall().text_color(color));
         if open {
             return line
@@ -193,8 +179,8 @@ impl AskRow {
         )
     }
 
-    /// The message and what answers it, under the title.
-    fn controls(&self, cx: &App) -> Div {
+    /// The message and what answers it, under the title; a settled one's message only.
+    pub fn controls(&self, cx: &App) -> Div {
         let theme = cx.theme();
         let ask_id = self.ask_id.clone();
         let button = |id: &str, label: String, action: SessionAction| {
@@ -210,16 +196,22 @@ impl AskRow {
             ask_id: ask_id.clone(),
             answer,
         };
-        let mut column = v_flex().gap_2().pl(px(24.)).pr_2().pb_2().when_some(
-            self.ask.message.clone(),
-            |column, message| {
+        let mut column = v_flex()
+            .gap_2()
+            .pl(px(24.))
+            .pr_2()
+            .pb_2()
+            .text_sm()
+            .when_some(self.ask.message.clone(), |column, message| {
                 column.child(
                     div()
                         .text_color(theme.foreground.opacity(0.9))
                         .child(message),
                 )
-            },
-        );
+            });
+        if self.ask.state != "open" {
+            return column;
+        }
         let Some(form) = &self.form else {
             let mut row = h_flex().gap_2().flex_wrap();
             for option in &self.ask.options {

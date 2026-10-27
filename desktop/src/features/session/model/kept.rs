@@ -12,15 +12,6 @@ pub struct Kept {
     pub all_diff: bool,
     /// An open tool's detail, and the state it was read for.
     pub detail: Option<(ToolState, ToolDetail)>,
-    /// When it was last opened or shut: its chevron and body ease from then.
+    /// When a fold was last opened or shut: its chevron and work ease from then.
     pub toggled_at: Option<Instant>,
-    /// When an opened tool's first detail arrived, after the click: its body grows from then, not from the click.
-    pub shown_at: Option<Instant>,
-}
-
-impl Kept {
-    /// When its body's ease started: the later of the toggle and the first detail arriving.
-    pub fn grown_at(&self) -> Option<Instant> {
-        self.toggled_at.max(self.shown_at)
-    }
 }

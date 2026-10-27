@@ -6,7 +6,6 @@
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
 use gpui_kit::base::motion::{Presence, Transition};
-use gpui_kit::component::dock::{panel_handle, register_panel};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -17,17 +16,15 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::ask_row::AskForm;
-use super::grow::{grow, toggled, turn};
+use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
-use crate::core::intents::open_session::OpenSession;
-use crate::core::state::selected_session::SelectedSession;
 use crate::core::theme::grow::{GROW, faded};
+use crate::core::ui::expand_row::ExpandRow;
 use crate::features::session::client::session_client::{
     CallError, RowUpdate, RowsSink, SessionClient,
 };
-use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::{Entry, entry_key};
@@ -78,7 +75,9 @@ pub struct SessionPane {
     live_since: Option<(String, i64)>,
     /// Tool calls whose detail is being read, by item key, with the state it's read for.
     reading: HashMap<String, ToolState>,
-    /// What's growing open or shut (an item's key, or `fold:<run>`), and whether its next frame is asked for.
+    /// Each tool call, thinking and question's row that opens in place, by item key, and what the pane hears from it.
+    expands: HashMap<String, (Entity<ExpandRow>, Subscription)>,
+    /// The folds growing open or shut (`fold:<run>`), and whether their next frame is asked for.
     growing: HashSet<String>,
     grow_asked: bool,
     /// The clock's ticks, only while a turn runs.
@@ -110,41 +109,6 @@ pub struct SessionPane {
 }
 
 impl SessionPane {
-    /// Registers the session pane as the layout's Chat pane, over the socket client, showing the selected session.
-    /// It runs after the placeholders register, since the last registration for a name wins. The pane also owns
-    /// the open session intent, which selects that session.
-    pub fn register(cx: &mut App) {
-        register_panel(cx, "Chat", |_, window, cx| {
-            panel_handle(cx.new(|cx| {
-                let mut pane = SessionPane::new(Rc::new(SocketSessionClient), window, cx);
-                let selected = SelectedSession::global(cx);
-                pane._selected = Some(cx.observe_in(
-                    &selected,
-                    window,
-                    |pane, selected, window, cx| pane.show_selected(selected, window, cx),
-                ));
-                pane.show_selected(selected, window, cx);
-                pane
-            }))
-        });
-        cx.on_action(|intent: &OpenSession, cx| {
-            let id = Some(intent.id.clone());
-            SelectedSession::global(cx).update(cx, |selected, cx| selected.select(id, cx));
-        });
-    }
-
-    /// Opens the selected session, or shows none.
-    fn show_selected(
-        &mut self,
-        selected: Entity<SelectedSession>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(session) = selected.read(cx).session_id().map(String::from) {
-            self.open(session, window, cx);
-        }
-    }
-
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pane = cx.weak_entity();
         let on_action: OnAction = {
@@ -158,12 +122,14 @@ impl SessionPane {
             let Some(pane) = pane.upgrade() else {
                 return div().into_any_element();
             };
-            pane.update(cx, |pane, cx| pane.make_form(entry, window, cx));
-            let (row, fresh, fold) = {
-                let pane = pane.read(cx);
-                let row = pane.row(entry, &pane.on_action, cx);
-                (row, pane.fresh_key(entry), pane.open_fold_of(entry))
-            };
+            let (row, fresh, fold) = pane.update(cx, |pane, cx| {
+                pane.make_form(entry, window, cx);
+                (
+                    pane.row(entry, cx),
+                    pane.fresh_key(entry),
+                    pane.open_fold_of(entry),
+                )
+            });
             let row = match fresh {
                 Some(key) => fade_in(key, row, window, cx),
                 None => row,
@@ -235,6 +201,7 @@ impl SessionPane {
             now: None,
             live_since: None,
             reading: HashMap::new(),
+            expands: HashMap::new(),
             growing: HashSet::new(),
             grow_asked: false,
             _clock: None,
@@ -271,6 +238,7 @@ impl SessionPane {
         self.fresh.clear();
         self.forms.clear();
         self.reading.clear();
+        self.expands.clear();
         self.growing.clear();
         self.reveal = None;
         self.plan_open = false;
@@ -354,9 +322,7 @@ impl SessionPane {
         if let (true, Change::Updated(at)) = (asked, change)
             && matches!(&self.view.items[at].kind, ItemKind::Ask { ask, .. } if ask.state != "open")
         {
-            let kept = self.kept.entry(key.clone()).or_default();
-            kept.toggled_at = Some(toggled(false, kept.toggled_at, Instant::now(), GROW));
-            self.start_growing(key.clone(), cx);
+            self.settle_ask(&key, cx);
         }
         if let (Change::Appended, Some(item)) = (change, self.view.items.last()) {
             let now = Instant::now();
@@ -548,6 +514,8 @@ impl SessionPane {
 
 #[path = "pane_actions.rs"]
 mod actions;
+#[path = "pane_expand.rs"]
+mod expand;
 #[path = "pane_render.rs"]
 mod render;
 #[path = "pane_reveal.rs"]

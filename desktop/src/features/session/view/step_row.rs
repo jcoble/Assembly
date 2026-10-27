@@ -22,9 +22,6 @@ pub enum StepState {
     Unfinished,
 }
 
-/// What a click on a step that opens does.
-pub type OnClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-
 #[derive(IntoElement)]
 pub struct StepRow {
     pub id: SharedString,
@@ -37,7 +34,6 @@ pub struct StepRow {
     pub took_ms: Option<i64>,
     /// How far its chevron has turned, for a step that opens.
     pub chevron: Option<f32>,
-    pub on_click: Option<OnClick>,
 }
 
 impl RenderOnce for StepRow {
@@ -72,9 +68,6 @@ impl RenderOnce for StepRow {
             .gap_2()
             .text_sm()
             .text_color(muted)
-            .when_some(self.on_click, |line, on_click| {
-                line.cursor_pointer().on_click(on_click)
-            })
             .children(self.chevron.map(chevron))
             .child(sign)
             .child(

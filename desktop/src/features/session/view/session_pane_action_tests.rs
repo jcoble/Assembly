@@ -10,6 +10,7 @@ use std::time::Instant;
 use super::SessionPane;
 use super::tests::{jump, live, open, page, row, show, user};
 use crate::core::theme::grow::GROW;
+use crate::core::ui::expand_row::{ExpandRow, ExpandRowEvent};
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::rows::tool::ToolState;
@@ -33,8 +34,28 @@ fn act(pane: &Entity<SessionPane>, action: SessionAction, cx: &mut VisualTestCon
     cx.run_until_parked();
 }
 
-fn toggle(pane: &Entity<SessionPane>, key: &str, cx: &mut VisualTestContext) {
-    act(pane, SessionAction::Toggle { key: key.into() }, cx);
+/// The row the pane drew for an item that opens in place.
+fn expand_row(
+    pane: &Entity<SessionPane>,
+    key: &str,
+    cx: &mut VisualTestContext,
+) -> Entity<ExpandRow> {
+    cx.update(|_, cx| pane.read(cx).expands.get(key).map(|(row, _)| row.clone()))
+        .expect("its row is drawn")
+}
+
+/// A click on its title, as the row takes one: it opens or shuts, and says so.
+fn click(pane: &Entity<SessionPane>, key: &str, cx: &mut VisualTestContext) {
+    expand_row(pane, key, cx).update(cx, |row, cx| {
+        let open = !row.is_open();
+        row.set_open(open, true, cx);
+        cx.emit(if open {
+            ExpandRowEvent::Opened
+        } else {
+            ExpandRowEvent::Closed
+        });
+    });
+    cx.run_until_parked();
 }
 
 /// A session open at its first page, with no calls left over.
@@ -65,7 +86,7 @@ fn an_opened_tool_call_reads_its_detail_once_and_again_when_its_state_changes(
 ) {
     let (pane, client, cx) = opened(vec![user(1, "go"), tool(2, "started")], cx);
     client.queue_answer(Ok(detail("")));
-    toggle(&pane, "tool:t1", cx);
+    click(&pane, "tool:t1", cx);
     assert_eq!(
         calls_after(&client, 1),
         [(
@@ -82,37 +103,14 @@ fn an_opened_tool_call_reads_its_detail_once_and_again_when_its_state_changes(
                 .unwrap_or_default()
         })
     };
-    assert!(
-        kept(cx).toggled_at.is_some(),
-        "its chevron turns and its detail eases in"
-    );
     assert!(kept(cx).open);
     assert_eq!(
         kept(cx).detail.map(|(state, _)| state),
         Some(ToolState::Started)
     );
-    assert!(
-        kept(cx).shown_at.is_some(),
-        "its first detail grows in from when it arrived"
-    );
-    // Clicked long ago, its detail just came: shut now, it turns back from the body's start, nearly shut already.
-    let now = Instant::now();
-    pane.update(cx, |pane, _| {
-        let kept = pane.kept.get_mut("tool:t1").unwrap();
-        (kept.toggled_at, kept.shown_at) = (Some(now - GROW * 50), Some(now));
-    });
-    toggle(&pane, "tool:t1", cx);
-    let shut = kept(cx).toggled_at.unwrap();
-    assert!(
-        shut < now - GROW / 2,
-        "it turns back from where the body is"
-    );
-    toggle(&pane, "tool:t1", cx);
-    assert_eq!(
-        kept(cx).shown_at,
-        None,
-        "detail it already had shows with the click"
-    );
+    click(&pane, "tool:t1", cx);
+    assert!(!kept(cx).open, "a second click shuts it");
+    click(&pane, "tool:t1", cx);
     assert_eq!(
         client.calls().len(),
         2,
@@ -272,9 +270,21 @@ fn stop_stops_the_task(cx: &mut TestAppContext) {
 #[gpui::test]
 fn an_opened_prompt_stays_open_until_closed(cx: &mut TestAppContext) {
     let (pane, _client, cx) = opened(vec![user(1, "go")], cx);
-    toggle(&pane, "seq:1", cx);
+    act(
+        &pane,
+        SessionAction::Toggle {
+            key: "seq:1".into(),
+        },
+        cx,
+    );
     assert!(cx.update(|_, cx| pane.read(cx).kept["seq:1"].open));
-    toggle(&pane, "seq:1", cx);
+    act(
+        &pane,
+        SessionAction::Toggle {
+            key: "seq:1".into(),
+        },
+        cx,
+    );
     assert!(!cx.update(|_, cx| pane.read(cx).kept["seq:1"].open));
 }
 
@@ -417,7 +427,7 @@ fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
     );
 }
 
-// An open ask whose answer arrives shrinks from then; one already answered when drawn stays still.
+// An open ask whose answer arrives shrinks shut; one already answered when drawn is drawn shut.
 // Pins: g0-session#16, g0-session#34
 #[gpui::test]
 fn an_ask_answered_while_shown_shrinks_and_one_drawn_answered_is_still(cx: &mut TestAppContext) {
@@ -434,27 +444,15 @@ fn an_ask_answered_while_shown_shrinks_and_one_drawn_answered_is_still(cx: &mut 
         ],
         cx,
     );
+    let is_open = |at: usize, cx: &mut VisualTestContext| {
+        let key = cx.update(|_, cx| pane.read(cx).view.items[at].key.clone());
+        let row = expand_row(&pane, &key, cx);
+        cx.update(|_, cx| row.read(cx).is_open())
+    };
+    assert!(is_open(1, cx), "an open ask is drawn open");
+    assert!(!is_open(2, cx), "drawn answered: shut");
     live(&client, ask(4, "ask:a1", "answered"), cx);
-    cx.update(|_, cx| {
-        let pane = pane.read(cx);
-        let key = |at: usize| pane.view.items[at].key.clone();
-        let toggled = |at: usize| pane.kept.get(&key(at)).and_then(|kept| kept.toggled_at);
-        assert!(
-            toggled(1).is_some() && pane.growing.contains(&key(1)),
-            "the answered one shrinks"
-        );
-        assert!(
-            toggled(2).is_none() && !pane.growing.contains(&key(2)),
-            "drawn answered: still"
-        );
-    });
-    // Once its shrink is done, it stops drawing frames.
-    pane.update_in(cx, |pane, window, cx| {
-        let key = pane.view.items[1].key.clone();
-        pane.kept.get_mut(&key).unwrap().toggled_at = Some(Instant::now() - GROW);
-        pane.grow_frame(window, cx);
-        assert!(pane.growing.is_empty(), "no more frames");
-    });
+    assert!(!is_open(1, cx), "the answered one shrinks shut");
     client.queue_answer(Ok(json!({ "ok": true })));
     let calls = client.calls().len();
     let answer = json!({ "optionId": "allow" });
