@@ -139,6 +139,10 @@ public sealed class ApiTests : IAsyncLifetime
     public async Task Sessions_are_created_and_listed_newest_first()
     {
         var first = await CreateSessionAsync();
+        // Sessions made in the same millisecond list by id, so the second waits for the clock to pass the first's time.
+        var firstAt = (await GetJsonAsync($"/sessions/{first}")).GetProperty("updatedAt").GetInt64();
+        while (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() <= firstAt)
+            await Task.Delay(1);
         var second = await CreateSessionAsync();
         Assert.Equal(HttpStatusCode.BadRequest, (await PostJsonAsync("/sessions", """{"agent":"gemini","repoUrl":"x"}""")).StatusCode);
 
