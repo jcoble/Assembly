@@ -30,7 +30,7 @@ use crate::features::session::client::session_client::{
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
-use crate::features::session::model::entries::Entry;
+use crate::features::session::model::entries::{Entry, entry_key, in_card};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
@@ -465,21 +465,33 @@ impl SessionPane {
 
     /// Draws the item at `at` again, measured again, with the entries as they are.
     fn redraw(&mut self, at: usize, cx: &mut Context<Self>) {
-        let key = &self.view.items[at].key;
+        let key = entry_key(&self.view.items[at], self.live_run());
         self.timeline
-            .update(cx, |timeline, cx| timeline.redraw_row(key, cx));
+            .update(cx, |timeline, cx| timeline.redraw_row(&key, cx));
+    }
+
+    /// The run going now, as the entries were last worked out.
+    fn live_run(&self) -> Option<&str> {
+        self.live_since.as_ref().map(|(run, _)| run.as_str())
     }
 
     /// Works the timeline's entries out again from the view, and tells the composer the run going now.
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
         let active = self.view.active_run(self.known_run.as_deref());
         let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
+        // An item changed in place is measured again; so is the activity card when a step arrives in it.
         let changed = match change {
-            Change::Updated(at) => Some(self.view.items[at].key.clone()),
-            _ => None,
+            Change::Updated(at) => Some(entry_key(&self.view.items[at], active.as_deref())),
+            Change::Appended => self
+                .view
+                .items
+                .last()
+                .filter(|item| in_card(item, active.as_deref()))
+                .map(|item| entry_key(item, active.as_deref())),
+            Change::Nothing => None,
         };
         let (items, loading) = (&self.view.items, self.loading);
-        let entries = Entry::all(items, &folds, &self.open_folds, loading, active.is_some());
+        let entries = Entry::all(items, &folds, &self.open_folds, loading, active.as_deref());
         self.folds = folds;
         self.timeline.update(cx, |timeline, cx| {
             let keyed = entries
@@ -556,6 +568,9 @@ const PAGE_ROWS: usize = 100;
 #[cfg(test)]
 #[path = "session_pane_action_tests.rs"]
 mod action_tests;
+#[cfg(test)]
+#[path = "session_pane_activity_tests.rs"]
+mod activity_tests;
 #[cfg(test)]
 #[path = "session_pane_real_switch_tests.rs"]
 mod real_switch_tests;

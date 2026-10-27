@@ -125,6 +125,7 @@ impl RenderOnce for ItemRow {
                 key: key.clone(),
                 tool,
                 kept: self.kept,
+                took_ms: None,
                 on_action: self.on_action.clone(),
             }
             .into_any_element(),

@@ -13,6 +13,7 @@ use crate::core::intents::open_session::OpenSession;
 use crate::core::theme::grow::GROW;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
+use crate::features::session::model::entries::entry_key;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::ToolDetail;
@@ -225,12 +226,16 @@ impl SessionPane {
                 && kept
                     .and_then(Kept::grown_at)
                     .is_some_and(|at| now.duration_since(at) < GROW);
-            let rows = match key
+            let rows: Vec<String> = match key
                 .strip_prefix("fold:")
                 .and_then(|run| self.folds.get(run))
             {
                 Some(fold) => fold.work.iter().cloned().collect(),
-                None => vec![key.clone()],
+                // A step in the activity card grows inside the card's row.
+                None => {
+                    let item = self.view.items.iter().find(|item| item.key == key);
+                    vec![item.map_or(key.clone(), |item| entry_key(item, self.live_run()))]
+                }
             };
             self.timeline.update(cx, |timeline, cx| {
                 rows.iter().for_each(|row| timeline.redraw_row(row, cx))
