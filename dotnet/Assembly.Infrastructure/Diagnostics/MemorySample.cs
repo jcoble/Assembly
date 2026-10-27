@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
-using Assembly.Infrastructure.Http;
+using Assembly.Application.Features.Diagnostics;
 namespace Assembly.Infrastructure.Diagnostics;
 
 /// <summary>
@@ -14,39 +14,41 @@ namespace Assembly.Infrastructure.Diagnostics;
 /// </summary>
 internal static class MemorySample
 {
+    public static MemoryReading Read()
+    {
+        var backend = Environment.ProcessId;
+        if (!OperatingSystem.IsMacOS())
+            return new MemoryReading(null, null, null, null, backend, Rss(backend));
+        var appPid = ResponsibleFor(backend);
+        var webPid = WebContentPid(appPid) ?? throw new InvalidOperationException("no WebContent process for this app");
+        return new MemoryReading(appPid, Rss(appPid), webPid, Rss(webPid), backend, Rss(backend));
+    }
+
     public static void Write(Utf8JsonWriter writer)
     {
-        if (!OperatingSystem.IsMacOS())
-        {
-            writer.WriteStartObject("result");
-            writer.WriteNull("appPid");
-            writer.WriteNull("appRssKb");
-            writer.WriteNull("webContentPid");
-            writer.WriteNull("webContentRssKb");
-            writer.WriteNumber("backendPid", Environment.ProcessId);
-            WriteRss(writer, "backendRssKb", Environment.ProcessId);
-            writer.WriteEndObject();
-            return;
-        }
-        var appPid = ResponsibleFor(Environment.ProcessId);
-        var webPid = WebContentPid(appPid) ?? throw new InvalidOperationException("no WebContent process for this app");
+        var reading = Read();
         writer.WriteStartObject("result");
-        writer.WriteNumber("appPid", appPid);
-        WriteRss(writer, "appRssKb", appPid);
-        writer.WriteNumber("webContentPid", webPid);
-        WriteRss(writer, "webContentRssKb", webPid);
-        writer.WriteNumber("backendPid", Environment.ProcessId);
-        WriteRss(writer, "backendRssKb", Environment.ProcessId);
+        WriteNumber(writer, "appPid", reading.AppPid);
+        WriteNumber(writer, "appRssKb", reading.AppRssKb);
+        WriteNumber(writer, "webContentPid", reading.WebContentPid);
+        WriteNumber(writer, "webContentRssKb", reading.WebContentRssKb);
+        writer.WriteNumber("backendPid", reading.BackendPid);
+        WriteNumber(writer, "backendRssKb", reading.BackendRssKb);
         writer.WriteEndObject();
     }
 
-    private static void WriteRss(Utf8JsonWriter writer, string name, int pid)
+    private static void WriteNumber(Utf8JsonWriter writer, string name, long? value)
     {
-        if (long.TryParse(Run("ps", "-o", "rss=", "-p", pid.ToString(CultureInfo.InvariantCulture)).Trim(), CultureInfo.InvariantCulture, out var kb))
-            writer.WriteNumber(name, kb);
+        if (value is { } number)
+            writer.WriteNumber(name, number);
         else
             writer.WriteNull(name);
     }
+
+    private static long? Rss(int pid) =>
+        long.TryParse(Run("ps", "-o", "rss=", "-p", pid.ToString(CultureInfo.InvariantCulture)).Trim(), CultureInfo.InvariantCulture, out var kb)
+            ? kb
+            : null;
 
     // The newest WebContent this app is responsible for.
     private static int? WebContentPid(int appPid) =>
