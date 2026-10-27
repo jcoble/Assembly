@@ -62,7 +62,8 @@ jobs:
       - run: cargo check --locked
       - run: cargo test --locked
   desktop:
-    # The GPUI window (desktop/README.md): builds, tests and passes clippy with warnings denied. Its guard runs in lint.
+    # The GPUI window (desktop/README.md): is formatted, builds, tests and passes clippy with warnings denied. Its guard
+    # runs in lint.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -79,6 +80,7 @@ jobs:
           key: desktop-${{ runner.os }}-${{ hashFiles('desktop/Cargo.lock', 'desktop/rust-toolchain.toml') }}
       # Installs the toolchain and components desktop/rust-toolchain.toml names.
       - run: rustup toolchain install
+      - run: cargo fmt --check
       - name: Install GPUI's Linux build dependencies
         run: |
           sudo apt-get update

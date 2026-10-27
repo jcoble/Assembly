@@ -18,13 +18,14 @@ rustup toolchain install 1.98.0 --profile minimal -c clippy -c rustfmt
 Then, in `desktop/`:
 
 ```sh
+cargo fmt --check
 cargo build --locked
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
 bash scripts/guard.sh
 ```
 
-CI's `desktop` job runs the first three on Linux; the guard runs before every commit and in CI's lint job
+CI's `desktop` job runs the first four on Linux; the guard runs before every commit and in CI's lint job
 (`scripts/lint.d/60-desktop-guard.sh`). agent-workbox has no window: windows run on the Mac.
 
 ## Layout
