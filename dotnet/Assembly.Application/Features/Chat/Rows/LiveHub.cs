@@ -59,6 +59,16 @@ public sealed class LiveHub : IDisposable
         }
     }
 
+    /// <summary>Raised, outside the hub's lock, when a session's last live socket goes.</summary>
+    public event Action<string>? Unwatched;
+
+    /// <summary>Whether a live socket watches the session's rows; a rows sub on the socket doesn't count.</summary>
+    public bool HasLiveSubscribers(string sessionId)
+    {
+        lock (_gate)
+            return _subscribers.ContainsKey(sessionId);
+    }
+
     /// <summary>Whether a webview watches the session's rows: its live socket, or a rows sub on the socket.</summary>
     public bool HasSubscribers(string sessionId)
     {
@@ -169,11 +179,14 @@ public sealed class LiveHub : IDisposable
 
     private void Close(LiveSubscription subscriber, Exception? reason)
     {
+        var last = false;
         lock (_gate)
         {
             subscriber.Queue.Writer.TryComplete(reason);
             if (_subscribers.TryGetValue(subscriber.SessionId, out var subscribers) && subscribers.Remove(subscriber) && subscribers.Count == 0)
-                _subscribers.Remove(subscriber.SessionId);
+                last = _subscribers.Remove(subscriber.SessionId);
         }
+        if (last)
+            Unwatched?.Invoke(subscriber.SessionId);
     }
 }

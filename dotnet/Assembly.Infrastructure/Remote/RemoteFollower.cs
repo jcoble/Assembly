@@ -173,7 +173,20 @@ internal sealed class RemoteFollower(
         using var done = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         var lastFrame = time.GetUtcNow();
         var copied = false;
-        var settling = SettleAsync(sessionId, () => lastFrame, done);
+        // Tells the settle to look again: a frame came, or the session's last live viewer left.
+        var wake = new SemaphoreSlim(0);
+        void Wake()
+        {
+            if (wake.CurrentCount == 0)
+                wake.Release();
+        }
+        void Unwatched(string unwatched)
+        {
+            if (unwatched == sessionId)
+                Wake();
+        }
+        hub.Unwatched += Unwatched;
+        var settling = SettleAsync(sessionId, () => lastFrame, wake, done);
         try
         {
             var buffer = new MemoryStream();
@@ -192,6 +205,7 @@ internal sealed class RemoteFollower(
                 while (!received.EndOfMessage);
 
                 lastFrame = time.GetUtcNow();
+                Wake();
                 using var frame = JsonDocument.Parse(buffer.ToArray());
                 if (frame.RootElement.GetProperty("type").GetString() != "row")
                     continue; // a ping
@@ -219,6 +233,7 @@ internal sealed class RemoteFollower(
         }
         finally
         {
+            hub.Unwatched -= Unwatched;
             Interlocked.Decrement(ref _links);
             await done.CancelAsync();
             await settling;
@@ -227,20 +242,29 @@ internal sealed class RemoteFollower(
 
     // Once the link has been quiet for a while, decides the row of a helper a restart found shown running (only here,
     // on a real connected link: a give-up, a dropped link, a Close or a seq mismatch leaves it running), then ends the
-    // socket if nobody is watching and no turn runs.
-    private async Task SettleAsync(string sessionId, Func<DateTimeOffset> lastFrame, CancellationTokenSource done)
+    // socket if nobody is watching and no turn runs. While it's needed it waits for a reason to look again: a frame (a
+    // copied turn end opens nothing more) or the last live viewer leaving. A watch only through the rows topic has no
+    // such signal, so it looks again a Settled later.
+    private async Task SettleAsync(string sessionId, Func<DateTimeOffset> lastFrame, SemaphoreSlim wake, CancellationTokenSource done)
     {
         try
         {
             while (true)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(500), time, done.Token);
-                if (time.GetUtcNow() - lastFrame() < Settled)
+                var quiet = time.GetUtcNow() - lastFrame();
+                if (quiet < Settled)
+                {
+                    await Task.Delay(Settled - quiet, time, done.Token);
                     continue;
+                }
                 if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
                     await turnEnded(sessionId);
                 if (!Needed(sessionId))
                     return;
+                if (hub.OpenRun(sessionId) is not null || hub.HasLiveSubscribers(sessionId))
+                    await wake.WaitAsync(done.Token);
+                else
+                    await WokenOrSettledAsync(wake, done.Token);
             }
         }
         catch (OperationCanceledException)
@@ -251,6 +275,14 @@ internal sealed class RemoteFollower(
             // Also when turnEnded throws, so the read isn't left waiting on a quiet link; the throw comes out of the follow.
             await done.CancelAsync();
         }
+    }
+
+    private async Task WokenOrSettledAsync(SemaphoreSlim wake, CancellationToken token)
+    {
+        using var either = CancellationTokenSource.CreateLinkedTokenSource(token);
+        await Task.WhenAny(wake.WaitAsync(either.Token), Task.Delay(Settled, time, either.Token));
+        await either.CancelAsync();
+        token.ThrowIfCancellationRequested();
     }
 
     public async ValueTask DisposeAsync()
