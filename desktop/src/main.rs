@@ -23,6 +23,7 @@ use crate::core::socket::outcome::Outcome;
 use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::Sessions;
+use crate::core::theme::{self, theme_id::ThemeId};
 use crate::core::window_root::WindowRoot;
 use crate::features::palette::palette_view::PaletteView;
 
@@ -41,19 +42,28 @@ fn main() {
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::meter::start_if_on(cx);
-            let options = WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Assembly".into()),
+            // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
+            // the layout's read and write are taken out on that call.
+            let layout = Cell::new(Some((read_layout, write_layout)));
+            theme::init(theme::THEMES_DIR.into(), cx, move |cx| {
+                let Some((read_layout, write_layout)) = layout.take() else {
+                    return;
+                };
+                let options = WindowOptions {
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Assembly".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            };
-            gpui_kit::open_window(options, cx, |window, cx| {
-                let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
-                cx.new(|_| WindowRoot::new(frame))
-            })
-            .expect("open the window");
-            cx.activate(true);
+                };
+                gpui_kit::open_window(options, cx, |window, cx| {
+                    theme::set(ThemeId::DEFAULT, window, cx);
+                    let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
+                    cx.new(|_| WindowRoot::new(frame))
+                })
+                .expect("open the window");
+                cx.activate(true);
+            });
         });
 }
 

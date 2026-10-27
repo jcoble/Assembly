@@ -126,6 +126,7 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"sleep 15","kind":"execute","status":"in_progress"}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        await Until(() => _log.ToString().Contains("kept open"));
 
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_spawned","asyncTaskId":"t1","name":"sleep 15","canStop":true,"toolCallId":"t1"}""");
         var task = (await RowsUntil(row => row.Kind == "task"))[^1];
@@ -145,6 +146,8 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"ls","kind":"execute","status":"in_progress"}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        // Kept for the grace, so the clock moves only once the grace's deadline is set.
+        await Until(() => _log.ToString().Contains("kept open"));
 
         _time.Advance(TimeSpan.FromMilliseconds(SessionHost.TaskGraceMs));
         await agent.CloseAsync();

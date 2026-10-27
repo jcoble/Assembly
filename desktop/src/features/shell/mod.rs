@@ -5,6 +5,7 @@
 pub mod default_layout;
 pub mod frame;
 pub mod layout_store;
+pub mod motion_skin;
 pub mod placeholder_pane;
 pub mod top_bar;
 pub mod utility_strip;

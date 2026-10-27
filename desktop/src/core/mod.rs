@@ -22,4 +22,5 @@ pub mod socket;
     reason = "nothing in the window uses these until the panes read the state"
 )]
 pub mod state;
+pub mod theme;
 pub mod window_root;
