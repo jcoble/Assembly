@@ -25,7 +25,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Composer>, FakeClient, Events, &mut 
     let subscription = cx.update(|_, cx| {
         cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
             seen.borrow_mut().push(match event {
-                ComposerEvent::Sending { text } => format!("sending {text}"),
+                ComposerEvent::Sending => "sending".to_string(),
                 ComposerEvent::Sent { session, run_id } => format!("sent {session} {run_id}"),
             })
         })
@@ -66,7 +66,7 @@ fn a_send_goes_out_for_the_session_clears_the_draft_and_says_its_run(cx: &mut Te
     );
     assert!(args["clientId"].as_str().is_some_and(|id| !id.is_empty()));
     assert_eq!(draft(&composer, cx), "");
-    assert_eq!(*events.borrow(), ["sending hello", "sent s1 r7"]);
+    assert_eq!(*events.borrow(), ["sending", "sent s1 r7"]);
 }
 
 // Pins: g0-session#22
@@ -115,7 +115,7 @@ fn a_send_that_fails_after_switching_sessions_goes_back_to_its_own_draft(cx: &mu
         composer.set_session(Some("s1".into()), window, cx)
     });
     assert_eq!(draft(&composer, cx), "for one");
-    assert_eq!(*events.borrow(), ["sending for one"]);
+    assert_eq!(*events.borrow(), ["sending"]);
 }
 
 // Pins: g0-session#8
@@ -186,4 +186,18 @@ fn a_retried_send_reuses_its_client_id_and_a_new_one_gets_its_own(cx: &mut TestA
         ids[1], ids[2],
         "a later send of the same words is a new message"
     );
+}
+
+// Pins: g0-session#22
+#[gpui::test]
+fn finished_sends_are_let_go(cx: &mut TestAppContext) {
+    let (composer, client, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx)
+    });
+    for text in ["one", "two", "three"] {
+        client.queue_answer(Ok(json!({ "runId": "r1" })));
+        type_and_send(&composer, text, cx);
+    }
+    assert_eq!(cx.update(|_, cx| composer.read(cx)._tasks.len()), 1);
 }

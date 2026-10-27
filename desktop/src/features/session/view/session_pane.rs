@@ -196,7 +196,7 @@ impl SessionPane {
         let header = cx.new(|_| Header::default());
         let heard = [
             cx.subscribe(&composer, |pane, _, event, cx| match event {
-                ComposerEvent::Sending { .. } => pane
+                ComposerEvent::Sending => pane
                     .timeline
                     .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx)),
                 ComposerEvent::Sent { session, run_id }

@@ -1,7 +1,7 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line) and each session's unsent
 //! draft while the window runs. Send is `send/send` with the draft and a clientId, which a retry of the same text
 //! reuses. While a turn runs, a send steers it and a Stop button beside the draft stops it (`send/stop` with the run
-//! id). It holds the attachments, the agent's config and the "/" menu's state for when those are drawn; nothing
+//! id). It holds the attachments and the "/" menu's state for when those are drawn; nothing
 //! attaches images, draws the menus or draws the context ring yet, and a sent prompt isn't shown as pending before its
 //! row arrives. Replaces Composer.svelte.
 
@@ -15,7 +15,6 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
 
-use super::agent_config::AgentConfig;
 use super::attachment::{Attachment, AttachmentState};
 use crate::features::session::client::session_client::{CallError, SessionClient};
 
@@ -26,7 +25,6 @@ pub struct Composer {
     /// The other sessions' unsent drafts, by session id.
     drafts: HashMap<String, String>,
     attachments: Vec<Attachment>,
-    config: Option<AgentConfig>,
     /// The "/" menu's highlighted row, or `None` while it's closed or Esc hid it.
     slash_selected: Option<usize>,
     /// The run going now, which Stop stops.
@@ -37,13 +35,14 @@ pub struct Composer {
     /// How many sends this composer has named, for the next clientId.
     named: u64,
     _enter: Subscription,
+    /// Sends and Stops still going; finished ones are let go at the next.
     _tasks: Vec<Task<()>>,
 }
 
 /// What the composer tells the session pane.
 pub enum ComposerEvent {
-    /// A send went out with this text: the timeline puts its prompt at the top once it arrives.
-    Sending { text: String },
+    /// A send went out: the timeline puts its prompt at the top once it arrives.
+    Sending,
     /// It answered its run id, for the session it was sent to.
     Sent { session: String, run_id: String },
 }
@@ -67,7 +66,6 @@ impl Composer {
             draft,
             drafts: HashMap::new(),
             attachments: Vec::new(),
-            config: None,
             slash_selected: None,
             running: None,
             retry_ids: HashMap::new(),
@@ -120,6 +118,7 @@ impl Composer {
         let call = self
             .client
             .call("send", "stop", json!({ "runId": run }), None, cx);
+        self._tasks.retain(|task| !task.is_ready());
         self._tasks.push(cx.spawn(async move |_, _| _ = call.await));
     }
 
@@ -140,7 +139,7 @@ impl Composer {
         self.attachments.clear();
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
-        cx.emit(ComposerEvent::Sending { text: text.clone() });
+        cx.emit(ComposerEvent::Sending);
         let client_id = match self.retry_ids.remove(&session) {
             Some((was, id)) if was == text => id,
             _ => {
@@ -151,6 +150,7 @@ impl Composer {
         };
         let args = json!({ "session": session, "text": text, "clientId": client_id });
         let call = self.client.call("send", "send", args, None, cx);
+        self._tasks.retain(|task| !task.is_ready());
         self._tasks
             .push(cx.spawn_in(window, async move |composer, cx| {
                 let answer = call.await;
