@@ -5,7 +5,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
 /// The machines a new session can run on, over the socket (plan C1): the <c>machines</c> topic sends each one and
-/// whether it answered last time, and <c>machines/agents</c> answers the agents a machine (this one when left out) can
+/// whether it answered last time, as <c>machines/list</c> answers it once, and <c>machines/agents</c> answers the agents a machine (this one when left out) can
 /// run. While the topic has a subscriber, the backend clock's ticks probe each remote: on the first tick after a
 /// subscribe, then every 15th.
 /// </summary>
@@ -49,6 +49,8 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             _startClock();
             return _status.Items;
         });
+        calls.Read(Feature, "list", SessionsJson.Default.ListArgs, SessionsJson.Default.MachineList, (_, _) =>
+            Task.FromResult(new MachineList(_status.Items)));
         calls.Read(Feature, "agents", SessionsJson.Default.AgentsArgs, SessionsJson.Default.AgentList, async (args, call) =>
         {
             // An empty name is this machine, as GET /agents?machine= takes it.
@@ -116,6 +118,10 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         await stop.CancelAsync();
         await Task.WhenAll(probes);
     }
+
+    internal sealed record ListArgs;
+
+    internal sealed record MachineList(IReadOnlyList<MachineItem> Machines);
 
     internal sealed record AgentsArgs(string? Machine = null);
 
