@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Agents;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Persistence;
@@ -259,6 +260,66 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         // The agent leaves plan mode itself.
         await agent.UpdateAsync($$"""{"sessionUpdate":"config_option_update","configOptions":{{Options("opus", "low")}}}""");
         await Until(() => _sessionStore.Config(_session.SessionId).Options?.Contains("\"currentValue\":\"default\"") == true);
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+    }
+
+    [Fact]
+    public async Task A_choice_cancelled_while_the_agent_decides_is_not_stored()
+    {
+        _host.Send("hi");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        var prompt = await agent.ReadAsync("session/prompt");
+
+        using var cancel = new CancellationTokenSource();
+        var choosing = _host.SetConfigAsync("mode", "plan", cancel.Token);
+        await agent.ReadAsync("session/set_config_option");
+        await cancel.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => choosing.WaitAsync(Wait));
+        Assert.False(_sessionStore.Config(_session.SessionId).Choices.ContainsKey("mode"));
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+    }
+
+    [Fact]
+    public async Task An_agent_that_applies_a_cancelled_choice_anyway_still_sets_the_stored_options()
+    {
+        _host.Send("hi");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        var prompt = await agent.ReadAsync("session/prompt");
+
+        using var cancel = new CancellationTokenSource();
+        var choosing = _host.SetConfigAsync("mode", "plan", cancel.Token);
+        await agent.ReadAsync("session/set_config_option");
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => choosing.WaitAsync(Wait));
+
+        // The agent took it after all and says so; the update is read before the turn's end.
+        await agent.UpdateAsync($$"""{"sessionUpdate":"config_option_update","configOptions":{{Options("opus", "low", "plan")}}}""");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        Assert.Contains("\"currentValue\":\"plan\"", _sessionStore.Config(_session.SessionId).Options);
+        await agent.CloseAsync();
+    }
+
+    [Fact]
+    public async Task A_choice_the_agent_refuses_fails_the_call_and_is_not_stored()
+    {
+        _host.Send("hi");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        var prompt = await agent.ReadAsync("session/prompt");
+
+        var choosing = _host.SetConfigAsync("mode", "plan", CancellationToken.None);
+        var set = await agent.ReadAsync("session/set_config_option");
+        await agent.ReplyErrorAsync(set, -32602, "no plan mode here");
+
+        var failed = await Assert.ThrowsAsync<CallFailed>(() => choosing.WaitAsync(Wait));
+        Assert.Equal("the agent didn't take mode=plan: no plan mode here", failed.Message);
+        Assert.False(_sessionStore.Config(_session.SessionId).Choices.ContainsKey("mode"));
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
