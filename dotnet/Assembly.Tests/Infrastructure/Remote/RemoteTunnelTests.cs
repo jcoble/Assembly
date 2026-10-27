@@ -43,6 +43,22 @@ public sealed class RemoteTunnelTests
         await Until(() => Volatile.Read(ref exits) >= 1);
     }
 
+    // ssh mustn't hold this process's stdout or stdin: after a hard exit here, an orphaned ssh would keep the window's
+    // launcher from seeing the end of this process's output.
+    [Fact]
+    public async Task The_command_has_its_own_stdout_and_stdin()
+    {
+        var log = new StringWriter();
+        var here = $"/proc/{Environment.ProcessId}/fd";
+        await using var tunnel = new RemoteTunnel("/bin/sh",
+            ["-c", $"""[ "$(readlink /proc/$$/fd/0)" != "$(readlink {here}/0)" ] && [ "$(readlink /proc/$$/fd/1)" != "$(readlink {here}/1)" ] && echo own >&2 || echo shared >&2; exit 3"""],
+            log);
+
+        await Until(() => log.ToString().Contains("tunnel: ssh exited"));
+
+        Assert.Contains("tunnel: ssh exited (3: own)", log.ToString());
+    }
+
     private static async Task Until(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);
