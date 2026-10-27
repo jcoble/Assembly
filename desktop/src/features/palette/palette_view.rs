@@ -3,6 +3,8 @@
 //! Choosing a command runs it and closes the palette. Escape clears the query first and then closes it, and a click
 //! outside closes it; the dialog handles both.
 
+use std::cell::Cell;
+
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::command::{Command, CommandState};
 use gpui_kit::*;
@@ -23,10 +25,19 @@ impl Global for OpenPalette {}
 impl PaletteView {
     /// Binds `secondary-k` to `TogglePalette` and handles it in whichever window is active.
     pub fn init(cx: &mut App) {
-        cx.bind_keys([KeyBinding::new("secondary-k", TogglePalette, None)]);
+        let toggle = KeyBinding::load(
+            "secondary-k",
+            Box::new(TogglePalette),
+            None,
+            false,
+            None,
+            cx,
+        );
+        cx.bind_keys([toggle.expect("the palette's key binding parses")]);
         cx.on_action(|_: &TogglePalette, cx| {
+            // A key press runs this while its window is being updated, so the window is updated once that's done.
             if let Some(window) = cx.active_window() {
-                _ = window.update(cx, |_, window, cx| Self::toggle(window, cx));
+                cx.defer(move |cx| _ = window.update(cx, |_, window, cx| Self::toggle(window, cx)));
             }
         });
     }
@@ -39,13 +50,17 @@ impl PaletteView {
             window.close_dialog(cx);
             return;
         }
-        let view = cx.new(|cx| Self {
-            state: cx.new(|cx| CommandState::new(window, cx)),
+        let state = cx.new(|cx| CommandState::new(window, cx));
+        let view = cx.new(|_| Self {
+            state: state.clone(),
         });
-        let state = view.read(cx).state.clone();
-        state.update(cx, |state, cx| state.focus(window, cx));
         cx.set_global(OpenPalette(view.downgrade()));
-        window.open_dialog(cx, move |dialog, _, _| {
+        // The dialog takes focus when it opens, so the search field takes it on the dialog's first draw.
+        let first_draw = Cell::new(true);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            if first_draw.replace(false) {
+                state.update(cx, |state, cx| state.focus(window, cx));
+            }
             dialog.close_button(false).child(view.clone())
         });
     }
