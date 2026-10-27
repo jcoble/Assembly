@@ -319,10 +319,18 @@ public sealed class SessionStore
     /// <summary>The session's list item: its stored columns and its summary.</summary>
     public SessionItem Item(SessionInfo session) => SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None);
 
-    /// <summary>Marks the session read up to <paramref name="seq"/>, publishing its item; a seq at or below what's read changes nothing.</summary>
+    /// <summary>
+    /// Marks the session read up to <paramref name="seq"/>, or its last row if that's lower, publishing its item; a seq
+    /// at or below what's read changes nothing.
+    /// </summary>
     internal void MarkRead(IWriteScope scope, string sessionId, long seq)
     {
-        if (scope.Execute("UPDATE session_info SET read_seq = $seq WHERE session_id = $id AND read_seq < $seq;",
+        // Never past the session's last row, so a turn that ends later is still unread.
+        if (scope.Execute(
+                """
+                UPDATE session_info SET read_seq = mark.seq FROM (SELECT MIN($seq, MAX(seq)) AS seq FROM rows WHERE session_id = $id) mark
+                WHERE session_id = $id AND read_seq < mark.seq;
+                """,
                 new SqlArg("$id", sessionId), new SqlArg("$seq", seq)) > 0)
             Publish(scope, sessionId);
     }
