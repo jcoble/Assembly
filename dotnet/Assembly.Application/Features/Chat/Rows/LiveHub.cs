@@ -145,20 +145,20 @@ public sealed class LiveHub : IDisposable
 
     private void Push(string sessionId, IReadOnlyList<StoredRow> rows)
     {
-        // Only a row that changes the session's summary sends its list item again, never one per row.
-        if (_summaries?.Apply(sessionId, rows) == true)
-            _summaryChanged(sessionId);
         // Deltas are the hottest path: a session nobody watches on rows isn't serialized.
         if (_topics is not null && _topics.HasSubscribers(RowsFeature.Topic, sessionId))
             foreach (var row in rows)
                 _topics.Publish(RowsFeature.Topic, sessionId, RowWire.ToJson(row));
-        if (!_subscribers.TryGetValue(sessionId, out var subscribers))
-            return;
-        foreach (var subscriber in subscribers.ToList())
-        {
-            if (!rows.All(subscriber.Queue.Writer.TryWrite))
-                Close(subscriber, new LiveFellBehind());
-        }
+        if (_subscribers.TryGetValue(sessionId, out var subscribers))
+            foreach (var subscriber in subscribers.ToList())
+            {
+                if (!rows.All(subscriber.Queue.Writer.TryWrite))
+                    Close(subscriber, new LiveFellBehind());
+            }
+        // Last, so the rows have gone out whatever the item's write does. Only a row that changes the session's
+        // summary sends its list item again, never one per row.
+        if (_summaries?.Apply(sessionId, rows) == true)
+            _summaryChanged(sessionId);
     }
 
     private void Close(LiveSubscription subscriber, Exception? reason)

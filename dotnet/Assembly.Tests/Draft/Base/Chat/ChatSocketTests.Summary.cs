@@ -116,18 +116,28 @@ public sealed partial class ChatSocketTests
             gate.Task.Wait();
             return 0;
         }));
-        await holding.Task.WaitAsync(Wait);
-        var commit = Task.Run(() => Row(session, RowKind.Turn, null, """{"state":"started"}"""));
-        // Nothing marks the moment the commit holds the hub and waits on the writer; give it that long.
-        await Task.Delay(200);
-        using var socket = await OpenAsync();
+        try
+        {
+            await holding.Task.WaitAsync(Wait);
+            var commit = Task.Run(() => Row(session, RowKind.Turn, null, """{"state":"started"}"""));
+            // A read that takes the hub's lock and doesn't finish means the commit holds it, waiting on the writer.
+            Task<long> probe;
+            do
+                probe = Task.Run(() => _hub.LastSeq(session));
+            while (await Task.WhenAny(probe, Task.Delay(100)) == probe);
+            using var socket = await OpenAsync();
 
-        await SendAsync(socket, """{"t":"sub","id":1,"topic":"sessions"}""");
-        Assert.StartsWith("""{"t":"state""", await ReadAsync(socket));
-        gate.SetResult();
-        await Task.WhenAll(writer, commit).WaitAsync(Wait);
+            await SendAsync(socket, """{"t":"sub","id":1,"topic":"sessions"}""");
+            Assert.StartsWith("""{"t":"state""", await ReadAsync(socket));
+            gate.SetResult();
+            await Task.WhenAll(writer, commit, probe).WaitAsync(Wait);
 
-        Assert.Equal("running", Text(Assert.Single(await ChangesAsync(socket)), "state"));
+            Assert.Equal("running", Text(Assert.Single(await ChangesAsync(socket)), "state"));
+        }
+        finally
+        {
+            gate.TrySetResult();
+        }
     }
 
     // One row in its own batch, as a turn streams them, under run-1.
