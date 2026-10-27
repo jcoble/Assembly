@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Topics;
 
 namespace Assembly.Infrastructure.Persistence;
 
@@ -13,11 +14,11 @@ public sealed class AppDatabase : IAppDatabase, IDisposable
     private readonly AtomicWriter _writer;
     private readonly string _reads;
 
-    private AppDatabase(string path)
+    private AppDatabase(string path, TimeProvider time, ITopics topics)
     {
         CopyBeforeRename(path);
         // The writer opens first: it makes the file and turns WAL on, which read-only connections can't.
-        _writer = new AtomicWriter(path);
+        _writer = new AtomicWriter(path, time, topics);
         _reads = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = true }.ToString();
     }
 
@@ -51,7 +52,8 @@ public sealed class AppDatabase : IAppDatabase, IDisposable
 
     public IAtomicWriter Writer => _writer;
 
-    public static AppDatabase Open(string path) => new(path);
+    /// <summary>Opens the file. Its writer reads the time from <paramref name="time"/> and sends publishes to <paramref name="topics"/>.</summary>
+    public static AppDatabase Open(string path, TimeProvider time, ITopics topics) => new(path, time, topics);
 
     public List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args)
     {

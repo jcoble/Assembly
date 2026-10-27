@@ -48,7 +48,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         {
             try
             {
-                running.Updates.Reopen(previous);
+                // The same ACP id on the same warm adapter, so the closed turn's late updates share it. The router opens it
+                // again at the answer, in pipe order (UpdateRouter), not when this await resumes on another thread.
                 var resumed = await running.Link.Client.ResumeSessionAsync(previous, folder, cancellationToken, mcpServers?.Invoke(sessionId));
                 stages.Mark("session resume");
                 var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
@@ -58,6 +59,14 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             {
                 // The agent lost its transcript. A new ACP session keeps the session usable; the agent won't remember it.
                 Console.Error.WriteLine($"session {sessionId}: could not resume {previous} ({error.Message}); starting a new session");
+            }
+            catch (Exception)
+            {
+                // Stopped or failed after the resume was sent: the agent may have the session open, so it's closed there
+                // too, and anything it sends for it from now on is dropped.
+                running.Updates.Forget(previous);
+                await CloseQuietlyAsync(running, previous);
+                throw;
             }
         }
 
@@ -78,6 +87,18 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
         var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);
         return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen);
+    }
+
+    private static async Task CloseQuietlyAsync(RunningAdapter running, string acpSessionId)
+    {
+        try
+        {
+            await running.Link.Client.CloseSessionAsync(acpSessionId, CancellationToken.None);
+        }
+        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
+        {
+            Console.Error.WriteLine($"session {acpSessionId} didn't close after a failed resume: {error.Message}");
+        }
     }
 
     /// <summary>Sets each chosen value the session doesn't have yet, saves the options as they end up, and returns their model's name.</summary>

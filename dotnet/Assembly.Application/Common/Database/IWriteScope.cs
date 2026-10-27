@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization.Metadata;
+
 namespace Assembly.Application.Common.Database;
 
 /// <summary>
@@ -12,4 +14,7 @@ public interface IWriteScope
     T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args);
 
     int Execute(string sql, params SqlArg[] args);
+
+    /// <summary>Queues a change for the topic's subscribers. It's sent after the write commits, and never if it doesn't.</summary>
+    void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type);
 }

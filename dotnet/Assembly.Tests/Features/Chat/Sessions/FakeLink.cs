@@ -66,11 +66,20 @@ internal sealed class FakeLink : IAgentLink
         return message;
     }
 
-    public Task UpdateAsync(string updateJson, string acpSessionId = AcpSessionId) =>
-        _agent.SendAsync($$$"""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"{{{acpSessionId}}}","update":{{{updateJson}}}}}""");
+    public Task UpdateAsync(string updateJson, string acpSessionId = AcpSessionId) => _agent.SendAsync(Update(updateJson, acpSessionId));
 
     public Task TextAsync(string text, string messageId = "m1", string acpSessionId = AcpSessionId) =>
-        UpdateAsync($$$"""{"sessionUpdate":"agent_message_chunk","messageId":"{{{messageId}}}","content":{"type":"text","text":{{{JsonSerializer.Serialize(text)}}}}}""", acpSessionId);
+        UpdateAsync(Text(text, messageId), acpSessionId);
+
+    /// <summary>Answers <paramref name="request"/> and sends a text in the same write, so the client reads both at once.</summary>
+    public Task ReplyThenTextAsync(JsonElement request, string resultJson, string text, string messageId) =>
+        _agent.SendAsync($$"""{"jsonrpc":"2.0","id":{{request.GetProperty("id").GetRawText()}},"result":{{resultJson}}}""" + "\n" + Update(Text(text, messageId), AcpSessionId));
+
+    private static string Update(string updateJson, string acpSessionId) =>
+        $$$"""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"{{{acpSessionId}}}","update":{{{updateJson}}}}}""";
+
+    private static string Text(string text, string messageId) =>
+        $$$"""{"sessionUpdate":"agent_message_chunk","messageId":"{{{messageId}}}","content":{"type":"text","text":{{{JsonSerializer.Serialize(text)}}}}}""";
 
     public Task ReplyAsync(JsonElement request, string resultJson) => _agent.ReplyAsync(request, resultJson);
 

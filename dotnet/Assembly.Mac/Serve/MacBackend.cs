@@ -19,6 +19,7 @@ using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Topics;
 
 namespace Assembly.Mac.Serve;
 
@@ -55,7 +56,7 @@ public sealed class MacBackend : IAsyncDisposable
     {
         Directory.CreateDirectory(home);
         var database = Path.Combine(home, "assembly.db");
-        var db = AppDatabase.Open(database);
+        var db = AppDatabase.Open(database, TimeProvider.System, new Topics());
         // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
         // before the API starts, so no session makes a checkout in sessions/ first.
         AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);

@@ -12,6 +12,7 @@ using Assembly.Domain.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
+using Assembly.Infrastructure.Topics;
 
 namespace Assembly.Remote.Serve;
 
@@ -31,7 +32,7 @@ public static class ServeRun
 
         Directory.CreateDirectory(options.Home);
         var token = TokenFile.ReadOrCreate(options.TokenFile);
-        using var db = AppDatabase.Open(options.Database);
+        using var db = AppDatabase.Open(options.Database, TimeProvider.System, new Topics());
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System);
         using var hub = new LiveHub(store);

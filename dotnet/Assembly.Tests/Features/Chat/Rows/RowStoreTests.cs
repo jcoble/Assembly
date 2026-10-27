@@ -17,7 +17,7 @@ public sealed class RowStoreTests : IDisposable
 
     public RowStoreTests()
     {
-        _database = AppDatabase.Open(_path);
+        _database = TestDatabase.Open(_path);
         _store = RowStore.Open(_database);
     }
 
@@ -66,7 +66,7 @@ public sealed class RowStoreTests : IDisposable
     {
         SaveFinishedMessageWithDeltas(version: 1);
 
-        using var reopenedDatabase = AppDatabase.Open(_path);
+        using var reopenedDatabase = TestDatabase.Open(_path);
         var reopened = RowStore.Open(reopenedDatabase);
         Assert.Equal([(3L, RowKind.Message)], reopened.RowsAfter("a", 0).Select(row => (row.Seq, row.Kind)));
         Assert.Equal(RowStore.FormatVersion, reopened.StoredFormatVersion);
@@ -77,7 +77,7 @@ public sealed class RowStoreTests : IDisposable
     {
         SaveFinishedMessageWithDeltas(version: RowStore.FormatVersion + 1);
 
-        using var reopenedDatabase = AppDatabase.Open(_path);
+        using var reopenedDatabase = TestDatabase.Open(_path);
         var reopened = RowStore.Open(reopenedDatabase);
         Assert.Equal([RowKind.Delta, RowKind.Delta, RowKind.Message], reopened.RowsAfter("a", 0).Select(row => row.Kind));
         Assert.Equal(RowStore.FormatVersion + 1, reopened.StoredFormatVersion);
@@ -184,7 +184,7 @@ public sealed class RowStoreTests : IDisposable
     {
         _store.Commit("a", Batch("x"));
         _database.Dispose();
-        using var reopenedDatabase = AppDatabase.Open(_path);
+        using var reopenedDatabase = TestDatabase.Open(_path);
         var reopened = RowStore.Open(reopenedDatabase);
         Assert.Equal(RowStore.FormatVersion, reopened.StoredFormatVersion);
         Assert.Equal([2L], reopened.Commit("a", Batch("y")).Select(row => row.Seq));
@@ -196,7 +196,7 @@ public sealed class RowStoreTests : IDisposable
         // The Mac copies a remote session's rows as the box numbered them, so "rows after N" means the same on both.
         var box = _store.Commit("a", Batch("x", "y", "z"));
         using var macDb = new TempDatabase();
-        using var macDatabase = AppDatabase.Open(macDb.Path);
+        using var macDatabase = TestDatabase.Open(macDb.Path);
         var mac = RowStore.Open(macDatabase);
 
         Assert.True(mac.Copy(box[0]));
@@ -213,7 +213,7 @@ public sealed class RowStoreTests : IDisposable
     public void A_copy_takes_a_row_across_a_gap_and_a_copied_message_deletes_its_deltas()
     {
         using var macDb = new TempDatabase();
-        using var macDatabase = AppDatabase.Open(macDb.Path);
+        using var macDatabase = TestDatabase.Open(macDb.Path);
         var mac = RowStore.Open(macDatabase);
         // Live, the Mac got the deltas before the message finished.
         var x = _store.Commit("a", Batch("x"));
@@ -225,7 +225,7 @@ public sealed class RowStoreTests : IDisposable
 
         // A Mac that joins later gets the box's rows with the gap, and takes them as they are.
         using var lateDb = new TempDatabase();
-        using var lateDatabase = AppDatabase.Open(lateDb.Path);
+        using var lateDatabase = TestDatabase.Open(lateDb.Path);
         var late = RowStore.Open(lateDatabase);
         var caughtUp = _store.RowsAfter("a", 0);
         Assert.False(late.Copy(caughtUp[1]));
@@ -241,7 +241,7 @@ public sealed class RowStoreTests : IDisposable
         batch.Rows.Add(Tool("t1", "completed", "ls"));
         var box = _store.Commit("a", batch);
         using var macDb = new TempDatabase();
-        using var macDatabase = AppDatabase.Open(macDb.Path);
+        using var macDatabase = TestDatabase.Open(macDb.Path);
         var mac = RowStore.Open(macDatabase);
         mac.Copy(box[0]);
 

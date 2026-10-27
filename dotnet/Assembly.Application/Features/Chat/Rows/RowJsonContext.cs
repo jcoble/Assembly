@@ -1,8 +1,9 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Assembly.Domain.Rows;
 
-namespace Assembly.Domain.Rows;
+namespace Assembly.Application.Features.Chat.Rows;
 
 /// <summary>Compile-time JSON for the row payloads, camelCase like the UI's types. Optional fields are left out when null.</summary>
 [JsonSerializable(typeof(TurnPayload))]

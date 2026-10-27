@@ -278,7 +278,6 @@ dotnet/
       Database/                  IAppDatabase, IWriteScope, IAtomicWriter, IRow, SqlArg
       Calls/                     ICallRegistry, IFeature, CallContext, CallFailed
       Topics/                    ITopics
-      Clock/                     IBackendClock
       Machines/                  IMachine, MachineSet
       Agents/                    IAgentLauncher, IAgentLink, AgentDescriptor, SharedAdapter
       Acp/                       the ACP protocol over streams: messages, V1, JSON-RPC, AcpClient
@@ -410,11 +409,12 @@ public interface ICallRegistry
         Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler);
     // A setting has no outside work, so a save is only the database part.
     void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> write);
-    void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<string?, CallContext, Task<IReadOnlyList<TItem>>> state);
+    // Synchronous: Topics reads a subscriber's state under its lock, which can't span an await (5.7).
+    void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<string?, CallContext, IReadOnlyList<TItem>> state);
 }
 ```
 
-`CallContext` carries the call's `CancellationToken`, the connection id, the machine, and a logger scope.
+`CallContext` carries the call's `CancellationToken` and the connection id. Nothing else until a feature needs it.
 
 `Infrastructure/Socket/SocketDispatcher.cs` runs the same steps around every call, so no feature can skip one:
 
@@ -443,7 +443,7 @@ internal sealed class PreferencesFeature(IAppDatabase db) : IFeature
     public void Register(ICallRegistry calls)
     {
         calls.Topic("preferences", PreferencesJson.Default.Preference,
-            (_, call) => Task.FromResult<IReadOnlyList<Preference>>(db.Query(All, Preference.Read, call.Cancellation)));
+            (_, call) => db.Query(All, Preference.Read, call.Cancellation));
         calls.Save("preferences", PreferencesJson.Default.JsonElement, (key, value, scope) =>
         {
             scope.Execute(Upsert, new("$key", key), new("$value", value.GetRawText()));
@@ -510,6 +510,12 @@ public interface IWriteScope
     void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type); // B3: queued, sent after commit
 }
 
+// Where the writer sends publishes (Common/Topics/). B3 makes it with this one method; B5 adds subscriptions.
+public interface ITopics
+{
+    void Publish(string topic, string? key, string json);
+}
+
 // One result row, read by column position. So every query names its columns: never SELECT *.
 public interface IRow
 {
@@ -530,18 +536,27 @@ Infrastructure classes turn a `SqlArg` into a `SqliteParameter` and wrap the dat
 Dapper and no other new package.
 
 **Connections.** One `AppDatabase` per database file owns the one `AtomicWriter`, and every store and feature on
-that file uses that one. The writer keeps one long-lived write connection behind one lock, held for the whole write.
+that file uses that one. B3 opens it as `AppDatabase.Open(path, time, topics)`: the writer reads the time for the
+audit and its prune from the `TimeProvider`, and sends publishes to the `ITopics`. The writer keeps one long-lived write connection behind one lock, held for the whole write.
 A plain lock is right, because the body can't await. Reads outside a write never use the write connection: each read
 takes a pooled read connection of its own, so a slow read never holds up another. That was measured (step B2a): with
 one shared read connection, a session list would wait behind a 200 ms page read, where today it takes about 90 µs.
+SQLite's automatic checkpoint is off on the write connection, because it runs inside the commit that crosses 1,000
+WAL pages (step B3b). Every 100 commits the writer starts one passive checkpoint on a second long-lived connection of
+its own, outside the lock, one at a time, and re-runs an incomplete pass up to 5 times so it catches up in the next
+quiet moment. Past a cap of 16,384 WAL frames (about 64 MB), a write does that copy itself, under the lock, after
+its commit.
 
 `Infrastructure/Persistence/AtomicWriter.cs` handles every write the same way:
 
 1. Take the database's one write lock.
 2. Begin a transaction on the one write connection.
 3. Run the feature's write.
-4. Insert one audit row: `audit(at, what)`, where a call's `what` is `feature/method`. B4 adds the connection id as one more column.
-5. Commit, then send the queued publishes.
+4. Insert one audit row: `audit(at, what)`, where a call's `what` is `feature/method`, and a save's is
+   `feature/set <key>`. There's no connection column: nothing reads one.
+5. Commit, then, still holding the write lock, hand the queued publishes to `ITopics`, so changes go out in commit
+   order. `ITopics.Publish` only puts the change on each subscribed connection's outgoing queue and never awaits a
+   send. Locks are always taken writer first, then Topics.
 6. If the write fails, roll back and publish nothing.
 
 No transaction is ever held open across an agent call, a network call, or a wait for a socket. No file, network or
@@ -573,7 +588,11 @@ instead of waiting a day per 5,000 rows.
 
 **Measured** in the same scratch program as 5.9: a 20-row batch with 400-byte payloads takes 131 to 138 µs at the
 median with its audit row, against 96 to 99 µs without. The 99th percentile is 2.7 to 3.4 ms with the audit row and
-2.6 to 2.7 ms without; most of that is the WAL write. Step B3 measures it again through the real writer.
+2.6 to 2.7 ms without; most of that is the WAL write. Through the real writer (step B3, agent-workbox), SQLite's
+automatic checkpoint was the slow tail: 0.2 to 0.3 ms at the median and 12 to 16 ms at the 99th percentile with it on,
+0.7 to 0.8 ms with it off. With B3b's checkpoints, a burst of 20,000 commits takes about 1 ms at the 99th percentile
+and 3 ms at the 99.9th; a write that pays the cap's catch-up takes 20 to 110 ms, and only past the cap.
+The Mac's NVMe fsync may be faster than the workbox's disk; the Mac lag check will tell once Mac builds resume.
 
 Reads go through `IAppDatabase`, which has no write methods.
 
@@ -583,8 +602,11 @@ Reads go through `IAppDatabase`, which has no write methods.
 `state(key)`, then each change the writer published for that topic and key. Unsubscribing, or closing the socket,
 removes the subscription. The `rows` topic is today's `LiveHub` (phase C1). `Topics` keeps `LiveHub`'s pattern
 (`LiveHub.cs:60-70`): the state is read and the subscription registered under one lock, which publishing takes too,
-so a write during the initial read is neither lost nor applied before the state. The writer commits under its own
-lock and publishes afterwards, so a snapshot taken between a commit and its publish already holds that write. For
+so a write during the initial read is neither lost nor applied before the state. The state function is synchronous,
+since a lock can't span an await. The writer commits, then takes the Topics lock while still holding its own, so
+changes are queued in commit order; a snapshot takes the Topics lock, then a pooled read connection, and never the
+writer. So the lock order is always writer, then Topics. A snapshot taken between a commit and its publish already
+holds that write. For
 rows, the snapshot carries the last row seq it includes, and the subscriber drops a delivered change whose seq is at
 or below it. Topics without a seq (settings, config) send whole-value upserts, so getting one twice changes nothing.
 
@@ -631,14 +653,15 @@ feature's topic, so other windows see it.
   the echo arrives (a save that fails, times out or is aborted sends no echo). While the count is above zero, the
   window holds the newest echo it gets for that key, its own or another window's; when the count reaches zero, it
   applies that held echo, so the committed value wins. After a failed save, the window shows the committed value
-  again: the held echo if there is one, or else one read of that key. On reconnect, every count resets to zero, and
+  again: the held echo if there is one, or else the key's current value from subscribing to its topic again. A
+  save's feature name is its topic name, which is how `socket.ts` matches echoes to saves. On reconnect, every count resets to zero, and
   the page reads the committed values as part of catch-up (the subscription's new snapshot), so a save lost with the
   socket can't leave a count stuck. There are no commit sequence numbers.
 - On the saving connection, the backend sends a save's topic change before that save's reply, because the publish is
   queued to the connection before `Write` returns. So when A2's reply brings the count to zero, A2's echo is already
   the newest held one, and the field never shows an older value for a moment.
-- Since the count drops on the reply, the page doesn't need the connection id to recognize its own echoes. The id
-  stays in the audit, not in the page's frames.
+- Since the count drops on the reply, the page doesn't need the connection id to recognize its own echoes, and the
+  page's frames don't carry it.
 
 **What makes the last value win.** Frames arrive in order on one socket. The dispatcher then hands **one
 connection's writes to the writer in the order they arrived**: each connection has one write queue, and its `Write`
@@ -655,8 +678,8 @@ it to exit, with an upper limit on the wait, in Rust, not a page timer (today's 
 it exits.
 
 **Audit volume.** Each save writes one audit row, so typing writes one per keystroke. A typical settings edit (a
-20-character value) is 20 audit rows. For settings saves the audit row records the time, the connection, the
-feature, the method and the key, **not the value**: about 60 bytes, so a 20-keystroke edit adds about 1.2 KB. That's
+20-character value) is 20 audit rows. For settings saves the audit row records the time and `feature/set <key>`,
+**not the value**: about 60 bytes, so a 20-keystroke edit adds about 1.2 KB. That's
 fine for a settings table people change a few times a day, and it keeps values (which could be long text) out of the
 audit. No batching or timer is added for it.
 
@@ -681,6 +704,8 @@ measures it again through the real `IAtomicWriter` and records the number.
 - **A visible "Disconnected" state.** If the socket drops while the backend is still up, no `backend-ready` event
   comes. So after the one reconnect fails, the page shows "Disconnected" with a Reconnect button. The button tries
   the socket again, and asks the shell to restart the backend only if the shell reports it has exited.
+- `backend-ready`, the shell's restart, "Disconnected" and Reconnect are built together in B9's reconnect group.
+  Until then (B4 on), `socket.ts` reconnects once and then reports the failure through `onFailure`.
 
 ## 6. What stays HTTP
 
@@ -948,58 +973,112 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
 
 - **Files:**
   - Application: the contracts in `Common/Database/` exist from B2a. B3 adds `Publish` to `IWriteScope` (5.6):
-    queued, sent after commit, with no subscribers yet. B5 wires it to Topics.
-  - Infrastructure: `Persistence/AtomicWriter.cs`, which B2a made, gains the audit row, the prunes, the publish
-    queue, and one `if (result is Task)` check that throws and rolls back before the commit (5.6). The audit row
-    records `what` and the time; B4 adds the connection id as one more column. The per-connection write queue comes
-    with the socket in B4. New: `Persistence/AuditSchema.cs`.
+    queued, sent after commit. New: `Common/Topics/ITopics.cs`, with only `Publish(topic, key, json)` (5.6).
+  - Infrastructure: `Persistence/AtomicWriter.cs`, which B2a made, takes a `TimeProvider` and an `ITopics`, and gains
+    the audit row, the prunes, the publish queue, and one `if (result is Task)` check that throws and rolls back
+    before the commit (5.6). The audit row is `audit(at, what)`. The per-connection write queue comes with the
+    socket in B4. New: `Persistence/AuditSchema.cs`, and `Topics/Topics.cs` with `Publish` only, which drops a change
+    nobody subscribes to (there are no subscribers until B5).
+  - `AppDatabase.Open(path)` becomes `AppDatabase.Open(path, time, topics)`. Its callers change with it:
+    `MacBackend.cs:58`, `ServeRun.cs:34` and `ReplayRun.cs:31`, which pass `TimeProvider.System` and the host's one
+    `Topics`, and the tests that open a database (about 18), which pass a fake time and a fake topics target.
   - Chat: `RowStore` and `SessionStore` stay plain SQL in their feature. B3 only changes the writer and the publish
     wiring.
   - Domain: the JSON context (`Domain/Rows/RowJsonContext.cs`) and `SessionConfig.ReadChoices` (its parsing) move to
-    `Application/Features/Chat/`. Domain keeps the records.
+    `Application/Features/Chat/`. Domain keeps the records. This is its own commit, with no behaviour change.
 - **Failing tests first,** in `Assembly.Tests/Infrastructure/Persistence/AtomicWriterTests.cs`, on a real temporary
   SQLite file:
   1. A write whose second statement throws leaves neither row, and publishes nothing.
   2. A successful write leaves its rows, one audit row, and its publish, which is queued and sent after commit (a
      fake publish target checks the order).
-  3. A failing commit (an injected failure) leaves nothing and publishes nothing.
-  4. Two writes at once run one after the other.
-  5. A chat row batch commit goes through the writer: its rows and one audit row commit together.
-  6. Startup prune, with `FakeTimeProvider`: a database with audit rows 31 days old and 29 days old keeps only the
+  3. A failing commit leaves nothing and publishes nothing. SQLite makes the failure itself: a deferred foreign key
+     the write breaks fails at commit. No test hooks go into the writer.
+  4. A chat row batch commit goes through the writer: its rows and one audit row commit together.
+  5. Startup prune, with `FakeTimeProvider`: a database with audit rows 31 days old and 29 days old keeps only the
      29-day ones after the writer opens.
-  7. Long-running prune: with no restart, advancing fake time 31 days and then writing deletes the expired rows. A
+  6. Long-running prune: with no restart, advancing fake time 31 days and then writing deletes the expired rows. A
      second write the same day doesn't prune again.
-  8. The triggering write comes first: with the fake publish target from test 2 and a hook on the prune's
-     transaction, the write's commit and its publish both happen before the prune's transaction begins, and the
-     prune is a separate transaction (a failure injected into the prune leaves the triggering write committed).
-  9. A backlog over the cap clears over the following writes: with 12,000 expired rows, the first write's prune
+  7. The triggering write comes first: with the fake publish target from test 2, the write's commit and its publish
+     both happen before the prune runs, and the prune is a separate transaction: a `BEFORE DELETE` trigger on
+     `audit` that raises `ABORT` makes the prune fail, and the triggering write stays committed.
+  8. A backlog over the cap clears over the following writes: with 12,000 expired rows, the first write's prune
      deletes 5,000, the second write's 5,000 and the third write's 2,000; a fourth write the same day doesn't prune.
-  10. An async lambda passed to `Write` throws, and the write rolls back: nothing is committed.
-- **Also:** chat's row and session writes move onto `IAtomicWriter` (5.6), and `scripts/lint.d/45-no-select-star.sh`
-  fails on `SELECT *` under `dotnet/` (rows are read by column position).
+  9. An async lambda passed to `Write` throws, and the write rolls back: nothing is committed.
+- **Also:** `scripts/lint.d/45-no-select-star.sh` fails on `SELECT[[:space:]]+\*[[:space:]]+FROM` under `dotnet/`
+  (rows are read by column position), so a comment like `IRow.cs`'s "never SELECT *" is left alone. It gets a probe
+  in `scripts/lint-checks.test.sh`. (Two writes at once running one after the other is already tested, in
+  `AppDatabaseTests.cs`. Chat's writes have gone through `IAtomicWriter` since B2a.)
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
   99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
 - **The commit's slow tail.** Before B2a, a 20-row commit took about 0.4 ms at the median but about 20 ms at the 99th
   percentile. B3 finds the cause (most likely WAL checkpoints, which SQLite runs inside the commit that crosses
-  1,000 pages) by timing commits with and without automatic checkpoints, and says what's done about it. A 20 ms
-  stall inside the one write lock also holds up a keystroke save waiting behind it, so the fix keeps checkpoints out
-  of the write lock (for example `wal_autocheckpoint` off on the write connection, with a checkpoint run after a
-  write releases the lock). Proof: the p99 before and after.
+  1,000 pages) by timing commits with and without automatic checkpoints. B3 only measures. If a commit's p99 is
+  still over about 5 ms, keeping checkpoints out of the write lock (for example `wal_autocheckpoint` off on the
+  write connection, with a checkpoint run after a write releases the lock) becomes its own step before B6, with its
+  p99 before and after. B3 measured it: automatic checkpoints were the cause (p99 12 to 16 ms with them, 0.7 to
+  0.8 ms without), so step B3b moves them out of the commit.
 - **Proof:** the tests, run, with their counts, the measurement, and check4.
 - **Size:** 250 to 350 lines with tests.
+
+### B3b. Checkpoints out of the commit
+
+- **Why:** SQLite's automatic checkpoint runs inside the commit that crosses 1,000 WAL pages, so about one commit in
+  a few hundred takes 12 to 20 ms (B3's measurement). B6's keystroke saves live in that tail.
+- **Change:** `AtomicWriter` turns `wal_autocheckpoint` off on the write connection. After every 100th commit, with
+  no checkpoint already running, it starts one `PRAGMA wal_checkpoint(PASSIVE)` with `Task.Run` on a second
+  long-lived connection, outside the lock. The pass re-runs, at most 5 times, while frames keep arriving. SQLite
+  rewinds the WAL only for a write that starts with every frame copied, and the copy ends in an fsync, so this
+  rewinds in a quiet moment. A turn that writes nonstop would never give it one: when no checkpoint is running and
+  the last one reported 16,384 frames or more (about 64 MB), a write runs the passive checkpoint itself, under the
+  lock, after its commit, so the next write rewinds. Both choices are made at that one point after the commit; with
+  the catch-up checked before the transaction instead, a new background checkpoint always started first and the
+  cap never fired (a 1 GB WAL over 8,000 commits of 100 KB).
+  `Dispose` waits for a running checkpoint under the lock, which is safe because a checkpoint never takes it. A
+  checkpoint left unfinished at quit is harmless: SQLite replays the WAL at the next open.
+- **Tests (`CheckpointTests.cs`):** the write connection reads `wal_autocheckpoint` 0; a checkpoint still copies the
+  WAL into the main file after 100 commits; the WAL rewinds once writes pause; with a small cap, writes with no
+  pause and writes 1 ms apart rewind again and again (with the catch-up checked before the transaction, the no-pause
+  case never rewound); a reader holding a snapshot stops the rewind but no commit waits on it, and the WAL rewinds
+  after it closes. The WAL's peak depends on the disk's fsync, so it's in the measurement, not the tests, as are the
+  full 20,000-commit and 1 ms-gap runs.
+- **Measured** on agent-workbox, before: SQLite's automatic checkpoint; after: B3b. Each cell gives the 99th
+  percentile / 99.9th / max / WAL peak / rewinds. After was measured once, with the box's load average near 10 from
+  other work.
+
+  | Run | Before | After |
+  | --- | --- | --- |
+  | 20,000 commits of 20 rows, no pause | 15-16 / 21 / 23-46 ms / 4 MB / 299 | 1.0 / 2.9 / 40 ms / 72 MB / 16 |
+  | 2,000 commits of one 100 KB row | 17-19 ms p99 / 22-34 ms max / 4 MB / 61 | 0.9 / 61 / 71 ms / 86 MB / 1 |
+  | 8,000 commits of one 100 KB row | — | 0.7 / 55 / 113 ms / 158 MB / 8 |
+  | 5,000 commits 1 ms apart | — | 1.5 / 3.9 / 23 ms / 67 MB / 3 |
+  | 200-commit bursts with 100 ms pauses | — | 1.6 / 3.5 / 5.5 ms / 12 MB / 13 |
+  | A reader holding a snapshot | 1.3 ms p99 / 110 MB / 0 | 0.7 / 1.9 / 2.5 ms / 114 MB / 0 |
+
+  The slow commits that remain are the cap's catch-ups, which happen only when writing never pauses for about one
+  fsync. The WAL's peak is then the cap plus what one background checkpoint leaves; with 100 KB rows that's more.
+  The Mac's NVMe fsync may be faster than the workbox's disk, which would make the catch-up cheaper; the Mac lag
+  check will tell once Mac builds resume.
+- **Proof:** the tests, the measurement, check4.
+- **Size:** about 240 lines: the writer +85, `CheckpointTests.cs` about 145, the plan.
 
 ### B4. The socket: endpoint, frames, dispatcher, cancellation
 
 - **Files:**
-  - Application: `Common/Calls/ICallRegistry.cs`, `CallContext.cs`, `CallFailed.cs`, `IFeature.cs`.
+  - Application: `Common/Calls/ICallRegistry.cs` with `Read` and `Write` (B5 adds `Topic`, B6 `Save`),
+    `CallContext.cs`, `CallFailed.cs`, `IFeature.cs`.
   - Infrastructure: `Socket/SocketEndpoint.cs`, `SocketConnection.cs` (one receive loop, one sender, a bounded
-    queue), `SocketDispatcher.cs`, `SocketFrames.cs`, `SocketJson.cs`.
-  - Page: `app/src/lib/socket.ts` (`call`, `onFailure`), and `app/src/lib/host/backend.ts` (`backend-ready`).
-  - Shell: `shell/src/main.rs` sends `backend-ready`.
+    queue), `SocketDispatcher.cs`, `SocketFrames.cs`, `SocketJson.cs`. `Http/TokenGuard.cs` lets `/socket` through,
+    since a browser socket can't send a header: its `hello` frame carries the token, checked with
+    `CryptographicOperations.FixedTimeEquals`. `Http/ApiServer.cs` maps `/socket`, and closes open sockets on
+    `ApplicationStopping` as it does for `/live`, so stopping doesn't wait on them.
+  - Page: `app/src/lib/socket.ts` (`call`, `onFailure`). It opens its socket with `TrackedWebSocket`
+    (`debug.svelte.ts`), which the locked guard allows, until B10 makes `socket.ts` the guard's `TRANSPORT`.
+  - No shell change, and `host/backend.ts` is unchanged: `backend-ready` comes in B9 (5.10).
 - **Failing tests first,** in `Assembly.Tests/Infrastructure/Socket/SocketTests.cs`, over a real loopback socket:
   1. A call answers `result`, and an unknown one `not_found`.
   2. Bad args answer `bad_args`.
-  3. A wrong token closes with 4401, and a wrong protocol with 4400.
+  3. A socket whose first frame isn't a valid `hello` is closed with 4400, and one whose token is wrong with 4401;
+     neither gets any data.
   4. `cancel` fires the handler's token (base#10).
   5. Closing the socket cancels running reads, and a write already queued still commits.
   6. Two calls at once each get their own answer.
@@ -1011,17 +1090,19 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
   1. Latest-wins by key sends `cancel` for the older call.
   2. The owner's signal sends `cancel`.
   3. A close fails pending calls as `aborted`.
-  4. One reconnect, then waiting for `backend-ready`.
+  4. One reconnect, then the failure reported through `onFailure`.
 - **Proof:** the tests. check4 passes, plus a new scenario, `scripts/features/socket.sh`, a one-line `.sh` that runs
-  `socket.ts` (node, since curl has no WebSocket on the Mac), which makes a call and a cancel on both machines.
+  `socket.ts` (node, since curl has no WebSocket on the Mac), which checks `hello`, `welcome` and a `not_found`
+  answer on both machines. No feature has a call before B7, so the real call and cancel are in B7's scenario.
 - **Size:** 600 to 800 lines with tests.
 
 ### B5. Topics and the backend clock
 
 - **Files:**
-  - Application: `Common/Topics/ITopics.cs`, `Common/Clock/IBackendClock.cs`.
-  - Infrastructure: `Topics/Topics.cs`, which the writer's publish queue (B3) now sends to, and
-    `Clock/BackendClock.cs`.
+  - Application: `ICallRegistry.Topic` (5.2).
+  - Infrastructure: `Topics/Topics.cs` (made in B3) gains subscriptions; the `sub`, `unsub`, `state` and `change`
+    frames in `SocketConnection` and `SocketDispatcher`; and `Clock/BackendClock.cs`, with no interface in
+    Application until a feature needs one.
   - Page: `socket.ts` gains `subscribe`.
 - **Failing tests first:**
   1. Subscribing sends `state`, then each `change` published after it.
@@ -1030,12 +1111,28 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
   4. A `minute` subscriber gets exactly one change per minute over three fake minutes, while a `second` subscriber
      on the same clock gets 180.
   5. Subscribing again after a reconnect gives the current state, not a replay.
-  6. A row committed before the snapshot but published after it is in the state, and is dropped when delivered (its
-     seq is at or below the snapshot's); and a duplicated settings upsert leaves the same value (5.7).
+  6. A duplicated settings upsert, from a write committed before the snapshot but published after it, leaves the
+     same value (5.7). The rows half (a row at or below the snapshot's seq is dropped) is tested in C1, with the rows
+     topic.
 
   On the page, a `subscribe` test applies `state` and `change` to a `$state` map.
 - **Proof:** the tests, and check4.
 - **Size:** 300 to 400 lines with tests.
+
+### B5b. A time limit on `session/close`
+
+Both closes wait on the agent's `session/close` answer with no limit: the normal one
+(`SessionHost.Background.cs:112`) and the one after a failed resume (`SessionOpener.CloseQuietlyAsync`). An adapter
+that stays connected but never answers holds up `Forget` and the adapter's release, so a stopped turn isn't really
+stopped (Sol's review of the late-update fix, finding 3).
+
+- **Files:** `SessionHost.Background.cs` and `SessionOpener.cs`; the limit is one constant both use.
+- **Failing tests first:** a fake adapter that never answers `session/close`. On the backend's `TimeProvider`
+  (`FakeTimeProvider` in the tests), never a page timer:
+  1. After a normal close times out, the session is forgotten, the adapter released, and the next turn starts.
+  2. The same after a resume that fails or is stopped.
+- **Proof:** the tests, and check4.
+- **Size:** about 60 lines with tests.
 
 ### B6. Saves as each change happens
 
@@ -1046,7 +1143,8 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
   - Page: `socket.ts` gains `save`.
   - No shell change.
 - **Failing tests first:**
-  1. One `save` makes one write, with one audit row (key, not value), and one publish after commit.
+  1. One `save` makes one write, with one audit row (`feature/set <key>`, not the value), and one publish after
+     commit.
   2. 50 rapid saves of one key, sent without waiting for answers, end on the last value.
   3. A slow write doesn't hold up a read on the same connection.
   4. A failed save reports once, and leaves the committed value as it was.
@@ -1054,7 +1152,7 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
      the backend exits.
 
   On the page:
-  1. `save` sends one call per `input` on a text field.
+  1. Each `save()` sends exactly one call. (One call per `input` on a text field is tested in B7, with a field.)
   2. Two windows, A and B, saving one key (5.9): commits A1, B1, A2 leave both windows on A2; commits A1, A2, B1
      leave both on B1.
   3. A failed save, then a successful save, then another window's update: the window ends on the other window's
@@ -1085,11 +1183,12 @@ Each is reviewed on its own.
   2. Two windows: a change in one reaches the other's subscription.
   3. A subscription that starts after a save gets the saved value.
 
-  The page tests change with it. `app/test/draft/base/call.test.ts` becomes `socket.test.ts`, and
-  `preferences.test.ts` is rewritten for the subscription.
+  The page tests change with it. `app/test/draft/base/call.test.ts` is deleted, any case still needed moving into
+  `socket.test.ts` (from B4); `preferences.test.ts` is rewritten for the subscription, and gains B6's moved test: a
+  settings text field sends one save per `input`.
 - **Proof:**
   - check4 passes, with `scripts/features/preferences.sh` a one-line `.sh` that runs a new `preferences.ts` over the
-    socket;
+    socket, which makes a real call and a cancel on both machines;
   - the move thread sees, in the window on the Mac, a theme change that survives a quit, and a second window that
     follows it. It also types in a settings field and quits right away, and the value is kept after reopening
     (base#7; moved here from B6).
@@ -1116,7 +1215,8 @@ Each is reviewed on its own.
 This step makes every row of section 7 and section 8 that isn't moved to a later phase true. It's one commit per row
 group:
 
-1. reconnect (row 5);
+1. reconnect (row 5), with 5.10's `backend-ready` (the shell sends it), the shell's restart, the "Disconnected" state
+   and the Reconnect button, built together;
 2. the reveal (row 6);
 3. `coverView` (row 7);
 4. the turn clock (row 8);
@@ -1146,7 +1246,8 @@ group:
 
 ### B10. The guard with no allowlist
 
-- **Files:** `app/scripts/guards.sh`, and deleting `app/scripts/guards-allowed.txt`. Both are locked, so this
+- **Files:** `app/scripts/guards.sh`, and deleting `app/scripts/guards-allowed.txt`, not adding to it. `socket.ts`
+  moves from `TrackedWebSocket` to a plain `WebSocket`, allowed as `TRANSPORT` (9.1). Both are locked, so this
   **needs Jesse's OK line.** `AGENTS.md`, which names `guards-allowed.txt` and the per-row tick rule (no longer needed
   once no file may tick); and the CI step for the build backstop (9.1).
 - **Test first:** new self-test probes for each new rule (`.then(`, `queueMicrotask`, `AbortSignal.timeout`, a
@@ -1469,6 +1570,19 @@ Each W phase:
 - **P6. Usage and resources** (Sol P31).
 - **P7. Run** (Sol P32).
 - **P8. Providers and Settings** (Sol P33).
+- **P8a. Agent sign-in, local and remote.** It can start once C2 (remote machines) and W4 (terminals) are in, without
+  waiting for the rest of P. Jesse (2026-10-27 01:30Z): "I don't want to have to login again. Even though, that is
+  onen of the things we were supposed to work on, wsa having an in app login." Draft behaviour, for Jesse to correct:
+  1. On the local machine, ACP `authenticate` at parity with the old app (mac-command-bar
+     `providers/authentication.rs`): the first advertised method it can start on its own (Codex `chat-gpt`,
+     Antigravity `oauth-personal`), with a time limit and a cancel.
+  2. Claude's terminal login method, run in an Assembly terminal.
+  3. On a remote host, the same flows, with the sign-in URL or device code shown and opened on the computer Jesse is
+     looking at. The old app refused this on `--assembly-server`, so it's new work, not a port.
+  4. Recreating or replacing a host never makes him sign in again.
+
+  Time limits run on the backend's `TimeProvider`, never a page timer. A sign-in belongs to the agent on a machine,
+  not to one session.
 
 Each P phase has the same shape as the W phases.
 

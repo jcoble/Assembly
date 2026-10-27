@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Assembly.Application.Common.Database;
 
 using Assembly.Domain.Sessions;
@@ -78,6 +79,15 @@ public sealed class SessionStore
             return 0;
         });
         return new SessionStore(db, db.Writer, time);
+    }
+
+    /// <summary>A config's chosen values, from its JSON object; anything not a string is left out.</summary>
+    internal static IReadOnlyDictionary<string, string> ReadChoices(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.EnumerateObject()
+            .Where(choice => choice.Value.ValueKind == JsonValueKind.String)
+            .ToDictionary(choice => choice.Name, choice => choice.Value.GetString()!);
     }
 
     public SessionInfo Create(string agent, string repoUrl)
@@ -237,7 +247,7 @@ public sealed class SessionStore
             LEFT JOIN agent_commands ac ON ac.agent = i.agent;
             """, row => new SessionConfig(
                 row.IsNull(0) ? null : row.Text(0),
-                row.IsNull(1) ? new Dictionary<string, string>() : SessionConfig.ReadChoices(row.Text(1)),
+                row.IsNull(1) ? new Dictionary<string, string>() : ReadChoices(row.Text(1)),
                 row.IsNull(2) ? null : row.Text(2)), CancellationToken.None, new SqlArg("$id", sessionId))!;
 
     /// <summary>Saves the slash commands the session's agent sent, as the session's and as that agent's latest.</summary>

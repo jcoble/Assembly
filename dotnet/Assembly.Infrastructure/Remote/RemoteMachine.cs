@@ -164,7 +164,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     private static SessionConfig ReadConfig(JsonElement config) =>
         new(config.TryGetProperty("options", out var options) && options.ValueKind == JsonValueKind.Array ? options.GetRawText() : null,
-            SessionConfig.ReadChoices(config.GetProperty("choices").GetRawText()),
+            SessionStore.ReadChoices(config.GetProperty("choices").GetRawText()),
             config.TryGetProperty("commands", out var commands) && commands.ValueKind == JsonValueKind.Array ? commands.GetRawText() : null);
 
     public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
