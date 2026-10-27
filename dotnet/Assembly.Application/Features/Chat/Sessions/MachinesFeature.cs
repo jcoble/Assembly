@@ -68,7 +68,9 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             lock (_probes)
                 if (_probes.Values.Any(probe => !probe.IsCompleted))
                     (stop, _stop) = (_stop, new CancellationTokenSource());
+            // Cancelled first, so a probe that links its token only now still sees it cancelled.
             stop?.Cancel();
+            stop?.Dispose();
             return;
         }
         lock (_probes)
