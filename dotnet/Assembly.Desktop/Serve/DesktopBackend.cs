@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Infrastructure.Http;
@@ -35,6 +36,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly AppDatabase _db;
     private readonly LiveHub _hub;
     private readonly SessionRegistry _sessions;
+    private readonly BackgroundWork _work;
     private readonly RemoteMachine? _remote;
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
@@ -42,8 +44,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly DiagnosticsHost _diagnostics;
     private readonly MachinesFeature _machinesFeature;
 
-    private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
-        WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature)
+    private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteMachine? remote,
+        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature)
     {
         _homeLock = homeLock;
         _machinesFeature = machinesFeature;
@@ -52,6 +54,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         _db = db;
         _hub = hub;
         _sessions = sessions;
+        _work = work;
         _app = app;
         _diagnostics = diagnostics;
         Address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -111,7 +114,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
         // Loading the summaries tells nobody: a remote's run left open holds it from the start.
         diagnostics.HoldActivity(summaries.AnyRunOpen);
-        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
+        var work = new BackgroundWork(TimeProvider.System, log);
+        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
         var status = new MachineStatus(topics, remote is null ? [] : [remote.Name]);
         var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
@@ -132,9 +136,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         Uri? address = null;
         Action dropSockets = () => { };
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
-        // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
-        // the last socket.
-        var clock = new BackendClock(topics, TimeProvider.System);
+        var clock = new BackendClock(topics, TimeProvider.System, work);
         var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
         clock.Ticked += machinesFeature.Tick;
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
@@ -153,7 +155,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, remoteMachine, outbox, app, diagnostics, machinesFeature);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -171,6 +173,8 @@ public sealed class DesktopBackend : IAsyncDisposable
         if (_outbox is not null)
             await _outbox.DisposeAsync();
         await _sessions.DisposeAsync();
+        // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
+        await _work.DisposeAsync();
         if (_remote is not null)
             await _remote.DisposeAsync();
         _hub.Dispose();

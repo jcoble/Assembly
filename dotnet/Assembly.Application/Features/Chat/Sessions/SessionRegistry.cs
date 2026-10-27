@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Application.Features.Chat.Rows;
@@ -20,22 +21,24 @@ public sealed class SessionRegistry : IAsyncDisposable
     private readonly SessionOpener _opener;
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
+    private readonly BackgroundWork _work;
     // Each helper session, by id, with the session whose agent started it.
     private readonly ConcurrentDictionary<string, string> _helperOf = new();
     // The last run a helper's prompt or message went into, before its rows reach here from another machine.
     private readonly ConcurrentDictionary<string, string> _helperRun = new();
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
-        HelperLimits? limits = null)
+        BackgroundWork work, HelperLimits? limits = null)
     {
         _hub = hub;
         _sessionStore = sessionStore;
         _launcher = launcher;
         Helpers = new HelperSessions(sessionStore, this, hub, limits ?? new HelperLimits());
-        _opener = new SessionOpener(sessionStore, launcher, agent => _adapters.GetOrAdd(agent, id => new SharedAdapter(launcher, id, time)),
+        _opener = new SessionOpener(sessionStore, launcher, agent => _adapters.GetOrAdd(agent, id => new SharedAdapter(launcher, id, time, log)),
             Helpers.Tokens.ServersFor);
         _time = time;
         _log = log;
+        _work = work;
     }
 
     /// <summary>The agents this machine can run.</summary>
@@ -49,7 +52,7 @@ public sealed class SessionRegistry : IAsyncDisposable
         {
             if (_sessionStore.Get(id) is { Helper: true, ParentSessionId: { } parent })
                 _helperOf[id] = parent;
-            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, () => HelpersWorking(id), Helpers.Row.TurnEnded, Helpers.Tokens.Revoke);
+            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => HelpersWorking(id), Helpers.Row.TurnEnded, Helpers.Tokens.Revoke);
         });
 
     /// <summary>Whether a helper session the session's agent started has a turn running.</summary>
