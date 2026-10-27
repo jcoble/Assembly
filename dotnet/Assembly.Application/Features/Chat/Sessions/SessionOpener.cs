@@ -74,7 +74,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
 
         // Neither adapter honours a request's cancel, so session/new goes out on a token the cancel doesn't cut: a cancel
         // after it went out waits for the answer and closes the session the agent opened. That delays the cancel by up to
-        // the close limit.
+        // twice the close limit: the wait for the answer, then the close.
         cancellationToken.ThrowIfCancellationRequested();
         var opening = running.Link.Client.NewSessionAsync(folder, CancellationToken.None, mcpServers?.Invoke(sessionId));
         NewSessionResponse acp;
