@@ -13,7 +13,7 @@
       "radius.lg": 8,
       "shadow": false,
       "colors": {
-        "background": "#18181bb8",
+        "background": "#18181b78",
         "foreground": "#d4d4dc",
         "border": "#ececf01f",
         "accent.background": "#1f1f24",
