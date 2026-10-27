@@ -4,6 +4,7 @@
 mod core;
 mod features;
 
+use std::cell::Cell;
 use std::path::PathBuf;
 
 use features::shell::frame::Frame;
@@ -11,6 +12,8 @@ use gpui_kit::*;
 
 use crate::core::backend::backend_config::BackendConfig;
 use crate::core::backend::launcher::Launcher;
+use crate::core::socket::client::SocketClient;
+use crate::core::socket::endpoint::Endpoint;
 use crate::core::window_root::WindowRoot;
 use crate::features::palette::palette_view::PaletteView;
 
@@ -59,12 +62,23 @@ fn start_backend(cx: &mut App) {
         .ok_or("no backend folder".to_string())
         .and_then(|dir| BackendConfig::read(&dir, remote))
     {
-        // The socket client (lane g0-socket) starts on the first ready and reconnects on each later one.
-        Ok(config) => Launcher::start(
-            config,
-            |port, _token, _cx| println!("backend ready on port {port}"),
-            cx,
-        ),
+        // The first ready line starts the socket client; each later one (a restarted backend, whose token may be new)
+        // has it reconnect.
+        Ok(config) => {
+            let started = Cell::new(false);
+            Launcher::start(
+                config,
+                move |port, token, cx| {
+                    let endpoint = Endpoint { port, token };
+                    if started.replace(true) {
+                        SocketClient::global(cx).read(cx).reconnect(endpoint);
+                    } else {
+                        SocketClient::start(endpoint, cx);
+                    }
+                },
+                cx,
+            )
+        }
         Err(error) => eprintln!("no backend: {error}"),
     }
 }
