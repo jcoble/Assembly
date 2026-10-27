@@ -239,8 +239,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stopping.Cancel();
-        // The answers end on _stopping; they and the read loop share the same 5 s.
-        var answers = _answers.StopAsync(TimeSpan.FromSeconds(5));
+        // The read loop ends first, so no answer starts after the answers' stop has looked; the answers end on
+        // _stopping, which is disposed only after they have.
         try
         {
             await Completion.WaitAsync(TimeSpan.FromSeconds(5));
@@ -248,7 +248,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
         catch (TimeoutException)
         {
         }
-        await answers;
+        await _answers.StopAsync(TimeSpan.FromSeconds(5));
         _stopping.Dispose();
     }
 }
