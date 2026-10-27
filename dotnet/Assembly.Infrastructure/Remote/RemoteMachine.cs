@@ -106,12 +106,13 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public async Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken)
     {
+        // Before the send, so a catch-up settling meanwhile can't end the row of the turn it starts; a send that fails
+        // leaves the row as it is.
+        _follower.TakeShownRunning(session.SessionId);
         using var response = await SendRequestAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/send", Body(("text", text)), cancellationToken);
         if (response.StatusCode == HttpStatusCode.Conflict)
             return null;
         var runId = (await ReadJsonAsync(response, cancellationToken)).GetProperty("runId").GetString();
-        // A new turn: a restart's catch-up must no longer end this helper's row.
-        _follower.TakeShownRunning(session.SessionId);
         _follower.Watch(session.SessionId);
         return runId;
     }
