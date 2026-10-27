@@ -14,7 +14,9 @@ use gpui_kit::*;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::follow::{Follow, FollowEvent, FollowStep};
 
-pub type RenderRow = Rc<dyn Fn(&Entry, &mut Window, &mut App) -> AnyElement>;
+/// Draws one entry; `last` is the list's last, which has no space below it. The space between rows is the row's own,
+/// so a row growing in place grows its space with it.
+pub type RenderRow = Rc<dyn Fn(&Entry, bool, &mut Window, &mut App) -> AnyElement>;
 
 /// Load the next older page when the top row on screen is this close to the first loaded entry.
 pub const LOAD_OLDER_WITHIN: usize = 10;
@@ -206,12 +208,15 @@ impl EventEmitter<TimelineEvent> for Timeline {}
 impl Render for Timeline {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let (entries, render_row) = (self.entries.clone(), self.render_row.clone());
+        let count = entries.len();
         MessageScroller::new("timeline", self.scroller.clone(), move |at, window, cx| {
             entries.get(at).map_or_else(
                 || div().into_any_element(),
-                |(_, entry)| render_row(entry, window, cx),
+                |(_, entry)| render_row(entry, at + 1 == count, window, cx),
             )
         })
+        // The kit's space between rows sits outside them; the rows draw their own (RenderRow).
+        .with_row_style(StyleRefinement::default().pb_0())
         .size_full()
     }
 }

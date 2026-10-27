@@ -63,6 +63,7 @@ pub fn faded(open: bool, toggled_at: Option<Instant>, cx: &App) -> f32 {
 pub fn grow(
     id: SharedString,
     (grown, moving): (f32, bool),
+    open: bool,
     faded: f32,
     body: impl IntoElement,
     window: &mut Window,
@@ -73,7 +74,8 @@ pub fn grow(
     let inner = div().flex_none().w_full().opacity(faded).child(body);
     div()
         .w_full()
-        .when(moving, |outer| {
+        // Not measured yet (just drawn), a body shutting is drawn whole for this frame rather than from 0.
+        .when(moving && (open || *height.read(cx) > px(0.)), |outer| {
             outer.h(*height.read(cx) * grown).overflow_hidden()
         })
         .on_children_prepainted(move |bounds, _, cx| {

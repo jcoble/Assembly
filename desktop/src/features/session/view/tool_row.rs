@@ -110,7 +110,7 @@ impl RenderOnce for ToolRow {
             .map(|(_, detail)| self.detail(detail, cx));
         let detail = detail.map(|detail| {
             let id = format!("{}:grow", self.key).into();
-            grow(id, turned, faded, detail, window, cx)
+            grow(id, turned, open, faded, detail, window, cx)
         });
         v_flex().w_full().gap_1().child(line).children(detail)
     }

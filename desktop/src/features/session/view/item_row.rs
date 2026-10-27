@@ -111,6 +111,7 @@ impl RenderOnce for ItemRow {
                         column.child(grow(
                             format!("{key}:grow").into(),
                             turned,
+                            open,
                             faded,
                             body,
                             window,

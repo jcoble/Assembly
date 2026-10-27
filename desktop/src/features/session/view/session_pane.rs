@@ -7,6 +7,7 @@
 
 use gpui_kit::base::motion::{Presence, Transition};
 use gpui_kit::component::dock::{panel_handle, register_panel};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use std::collections::{HashMap, HashSet};
@@ -149,7 +150,7 @@ impl SessionPane {
                     .ok();
             })
         };
-        let render_row: RenderRow = Rc::new(move |entry, window, cx| {
+        let render_row: RenderRow = Rc::new(move |entry, last, window, cx| {
             let Some(pane) = pane.upgrade() else {
                 return div().into_any_element();
             };
@@ -163,12 +164,25 @@ impl SessionPane {
                 Some(key) => fade_in(key, row, window, cx),
                 None => row,
             };
+            // The kit's space between rows (pb_8), inside the row so it grows with it.
+            let row = div()
+                .when(!last, |row| row.pb_8())
+                .child(row)
+                .into_any_element();
             // A fold's work grows in place as the fold opens and shuts.
             match fold {
                 Some((key, open, toggled_at)) => {
                     let grown = turn(open, toggled_at, window, cx);
                     let faded = faded(open, toggled_at, cx);
-                    grow(format!("{key}:grow").into(), grown, faded, row, window, cx)
+                    grow(
+                        format!("{key}:fold-grow").into(),
+                        grown,
+                        open,
+                        faded,
+                        row,
+                        window,
+                        cx,
+                    )
                 }
                 None => row,
             }
