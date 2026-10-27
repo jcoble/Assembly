@@ -21,6 +21,8 @@ pub enum Reply {
     Close(u16),
     /// Ends the connection with no close frame, as a dropped connection does.
     Drop,
+    /// Stops reading the connection and keeps it open, as a wedged backend does.
+    Stall,
 }
 
 type Answer = Arc<Mutex<dyn FnMut(&Value) -> Vec<Reply> + Send>>;
@@ -119,5 +121,8 @@ fn send(socket: &mut WebSocket<TcpStream>, raw: &TcpStream, reply: Reply) -> boo
             let _ = raw.shutdown(Shutdown::Both);
             false
         }
+        Reply::Stall => loop {
+            thread::park();
+        },
     }
 }

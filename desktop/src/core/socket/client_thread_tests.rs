@@ -234,6 +234,38 @@ fn dropping_the_client_ends_its_threads_and_closes_the_socket() {
         .expect("the socket closed within the deadline");
 }
 
+// A backend that stops reading can't hold the client thread: a write that can't finish within its bound ends the
+// connection like a drop, and the client still stops when dropped.
+#[test]
+fn a_backend_that_stops_reading_ends_the_connection_and_the_client_still_stops() {
+    let backend = FakeBackend::start(|frame| {
+        hello(frame).unwrap_or_else(|| match frame["method"].as_str() {
+            Some("stall") => vec![Reply::Stall],
+            _ => vec![],
+        })
+    });
+    let mut client = Client::start(backend.port);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    let _stall = client.call("stall", None);
+    let big = "x".repeat(1 << 20);
+    for id in 1000..1064 {
+        let (answer, _) = futures_channel::oneshot::channel();
+        let call = Event::Call {
+            id,
+            feature: "test".into(),
+            method: "big".into(),
+            args: json!({"big": big}),
+            key: None,
+            answer,
+        };
+        client.events.send(call).unwrap();
+    }
+    // The writes fill the socket's buffers, and the one that can't finish fails after 5 s.
+    let ended = client.state_within(Duration::from_secs(15));
+    assert_eq!(ended, Some(ConnectionState::Connecting));
+}
+
 // Pins: g0-socket#4
 #[test]
 fn dropping_a_pending_call_before_its_answer_cancels_it() {

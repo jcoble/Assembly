@@ -234,7 +234,7 @@ impl ClientThread {
             Event::Ping(payload) => {
                 self.heard();
                 if let Some(connection) = &mut self.connection {
-                    let _ = connection.pong(payload);
+                    connection.pong(payload);
                 }
             }
             Event::Closed => self.closed(),
@@ -346,7 +346,7 @@ impl ClientThread {
     /// Sends on the open connection, if there is one. A failed send needs nothing here: the reader sends `Closed`.
     fn send(&mut self, frame: &OutFrame<'_>) {
         if let Some(connection) = &mut self.connection {
-            let _ = connection.send(frame);
+            connection.send(frame);
         }
     }
 

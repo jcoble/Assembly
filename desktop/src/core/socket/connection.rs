@@ -6,6 +6,8 @@
 //! so tungstenite's own pong and close replies never reach the wire, and a ping goes to the client thread as
 //! `Event::Ping` for it to answer. Nothing is lost in the split: the backend sends nothing after the welcome until
 //! the client writes. Dropping the connection shuts the stream down, which ends its reader, and waits for it.
+//! Every write stays bounded: a backend that stops reading can't hold the client thread, since a write that fails
+//! shuts the stream down, so the reader sends `Closed`, as on a drop.
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
@@ -23,7 +25,7 @@ use super::open_failure::OpenFailure;
 use super::out_frame::OutFrame;
 
 pub(super) const PROTOCOL: u32 = 1;
-/// How long opening may take, connected to welcomed, on the same machine.
+/// How long opening may take, connected to welcomed, on the same machine, and how long any one write may take.
 const OPENING: Duration = Duration::from_secs(5);
 
 pub(super) struct Connection {
@@ -37,7 +39,8 @@ impl Connection {
     pub fn open(endpoint: &Endpoint, events: Sender<Event>) -> Result<Self, OpenFailure> {
         let stream = TcpStream::connect(("127.0.0.1", endpoint.port)).map_err(failed)?;
         // A backend that takes the connection but never welcomes it (wedged, or another process on the port) would
-        // hold the client thread, and every call waiting on it, for good: opening gets a bound, lifted after.
+        // hold the client thread, and every call waiting on it, for good: opening gets a bound. Reads lose it after
+        // the welcome (the reader waits as long as the socket is quiet); writes keep it.
         stream.set_read_timeout(Some(OPENING)).map_err(failed)?;
         stream.set_write_timeout(Some(OPENING)).map_err(failed)?;
         let read_half = stream.try_clone().map_err(failed)?;
@@ -60,7 +63,6 @@ impl Connection {
         };
         let opened = writer.get_ref();
         opened.set_read_timeout(None).map_err(failed)?;
-        opened.set_write_timeout(None).map_err(failed)?;
         let reader = WebSocket::from_raw_socket(ReadOnly(read_half), Role::Client, None);
         let reader = thread::Builder::new()
             .name("socket reader".into())
@@ -73,15 +75,20 @@ impl Connection {
         })
     }
 
-    /// Sends one frame; an error means the socket is gone (its reader sends `Closed`).
-    pub fn send(&mut self, frame: &OutFrame<'_>) -> Result<(), String> {
-        self.writer.send(text(frame)).map_err(|e| e.to_string())
+    /// Sends one frame. A write that fails or runs past its bound shuts the stream down, so the reader sends `Closed`.
+    pub fn send(&mut self, frame: &OutFrame<'_>) {
+        self.write(text(frame));
     }
 
-    pub fn pong(&mut self, payload: Vec<u8>) -> Result<(), String> {
-        self.writer
-            .send(Message::Pong(payload.into()))
-            .map_err(|e| e.to_string())
+    pub fn pong(&mut self, payload: Vec<u8>) {
+        self.write(Message::Pong(payload.into()));
+    }
+
+    fn write(&mut self, message: Message) {
+        if let Err(error) = self.writer.send(message) {
+            eprintln!("socket: a write failed, so the connection ends: {error}");
+            let _ = self.writer.get_ref().shutdown(Shutdown::Both);
+        }
     }
 }
 
