@@ -1472,7 +1472,9 @@ catalogue stays the reference.
         - `CheckFormatAsync` throws `MachineUnreachable` when the remote stores another row format (`:180-186`). The
           machine answers but can't be used, so it counts as unreachable, and its message says why.
         - `ReadJsonAsync` also throws `MachineUnreachable` for any non-2xx answer (`:228-230`). That's wrong for this
-          flag: the machine answered. It becomes `CallFailed` (`failed`) in this step. The callers that catch
+          flag: the machine answered. It becomes `CallFailed` (`failed`) in this step, except 401 and 403: the remote
+          refused this computer's token, so nothing will work until that's fixed, and it stays `MachineUnreachable`
+          with the reason "the remote refused this computer's token". The callers that catch
           `MachineUnreachable` get a test each for the new code: the follower (`RemoteFollower.cs:52`), the title
           refresh (`RemoteMachine.cs:201`), the outbox (`RemoteOutbox.cs:51`) and the helper tools
           (`StartSessionTool.cs:50,62`, `SendMessageTool.cs:44`).
@@ -1496,16 +1498,18 @@ catalogue stays the reference.
         does.
       - **The probe.** Calls and the tunnel can't see a remote backend that dies while ssh stays up and nobody calls
         it, and the old app never saw that either (it only had ssh keepalive). So while anyone subscribes to
-        `machines`, each remote gets `GET /version` every 15 s (ssh keepalive's interval). It also checks the row
-        format, so a remote that's upgraded in place is seen. It rides B9's clock:
+        `machines`, each remote with no live follower link gets `GET /version` every 15 s (ssh keepalive's interval).
+        An open follower link already proves the remote is there. The probe also checks the row format, so a remote
+        that's upgraded in place is seen. It rides B9's clock:
         - `BackendClock` (`Infrastructure/Clock/BackendClock.cs`) today runs only while `clock` has a subscriber, and
           stops on the first tick with none (`:40-62`). It changes to run while `clock` or `machines` has one, and
-          `MachinesFeature` counts its ticks: every 15th, it starts one probe per remote, unless the last one is still
-          out. The probe uses the call's usual timeout, and its outcome goes through the same two paths as a call's.
-          That's the only timing; no new timer.
+          `MachinesFeature` counts its ticks: every 15th, it starts one probe per remote that has no live link.
+        - **Limits:** the probe has its own 5 s timeout, not `HttpClient`'s 30 s. A remote's probe never starts while
+          its last one is still out. When the last `machines` subscriber leaves, the probe in flight is cancelled.
+          Its outcome goes through the same two paths as a call's. That's the only timing; no new timer.
         - **Cost per tick:** 14 ticks in 15 do nothing past a counter. On the 15th, one GET of a few hundred bytes per
-          remote over the tunnel, off the tick's thread. With no subscriber to `machines`, nothing at all. A machine
-          that comes back shows within 15 s, or on the next call.
+          remote without a link, over the tunnel, off the tick's thread. With no subscriber to `machines`, nothing at
+          all. A machine that comes back shows within 15 s, or on the next call.
     - **The `machines` topic.**
       - **Key:** none; one subscription covers every machine.
       - **State:** one item per machine, keyed by name (`local` for this machine), with:
@@ -1514,12 +1518,14 @@ catalogue stays the reference.
         - `kind`: `local` or `remote`;
         - `host`: the ssh target, remote only;
         - `reachable`;
-        - `version`: the backend version from its last `/version`, remote only. The old Settings list showed it.
-        - That's what the old app's machine UI showed (`RemoteConnections.svelte:234-237`, `:309-310`, `:71-81`;
-          `WorktreeAgentRow.svelte:145-149`, `:223-228`): a name, a status dot, the ssh target, connected or not,
-          and the version. Its third status, `reconnecting` (`sessionRailStore.svelte.ts:20`), was "a connect is in
+        - `reason`: set while `reachable` is false, and null otherwise. It's "didn't answer", "ssh tunnel exited",
+          "the remote refused this computer's token", or a format mismatch such as "stores rows in format 3; this
+          computer reads 4".
+        - The old app's machine UI (`RemoteConnections.svelte:234-237`, `:309-310`, `:71-81`;
+          `WorktreeAgentRow.svelte:145-149`, `:223-228`) showed a name, a status dot, the ssh target, connected or
+          not, and the backend version. The version isn't carried here. Its third status, `reconnecting` (`sessionRailStore.svelte.ts:20`), was "a connect is in
           progress". Here that's the window's own pending call, not machine state, so it isn't in the item.
-      - **Upserts:** only when an item changes (`reachable` flips, or `version` changes). Each call or probe that
+      - **Upserts:** only when an item changes (`reachable` flips, or `reason` changes). Each call or probe that
         leaves it as it was publishes nothing.
       - **`machines/list` folds in:** the topic's state replaces it, and it's deleted in the same step.
         `machines/agents` stays a call.
@@ -1533,10 +1539,14 @@ catalogue stays the reference.
       answer.
     - **Tests (red first):**
       - a call that fails `unreachable` sends the `machines` change before its error frame;
-      - a non-2xx answer fails `failed` and leaves the machine reachable;
+      - a non-2xx answer fails `failed` and leaves the machine reachable; a 401 or 403 marks it unreachable with the
+        token reason;
       - ssh exiting marks the remote unreachable, and the next answer marks it reachable;
       - with `machines` watched and a remote that stops answering, the 15th tick's probe marks it unreachable (on a
         fake `TimeProvider`); with nobody watching, no probe goes out;
+      - a remote with a live follower link isn't probed; a probe still out when the next 15th tick comes isn't
+        doubled; one that hangs gives up at 5 s; the last subscriber leaving cancels the probe in flight;
+      - the clock still stops when neither `clock` nor `machines` has a subscriber;
       - a second identical outcome publishes nothing.
     - **C2** turns `RemoteMachine` into one socket per remote. Its open and close then replace most of the signals
       above, and the probe becomes that socket's keepalive. The topic's shape stays the same.
