@@ -32,6 +32,17 @@ public sealed class RemoteTunnelTests
         Assert.Contains("tunnel: ssh exited (3: gone); again in 1 s", log.ToString());
     }
 
+    [Fact]
+    public async Task It_says_when_the_command_exits()
+    {
+        var exits = 0;
+        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", "exit 3"], TextWriter.Null);
+        tunnel.Exited += () => Interlocked.Increment(ref exits);
+
+        // The first exit may come before the handler; the next start's won't.
+        await Until(() => Volatile.Read(ref exits) >= 1);
+    }
+
     private static async Task Until(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(5);

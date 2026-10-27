@@ -147,7 +147,7 @@ public sealed class ClockSocketTests : IAsyncLifetime
     }
 
     // A fake clock that counts its live timers, so a test can see the backend clock's timer stop.
-    private sealed class CountingTime(DateTimeOffset start) : FakeTimeProvider(start)
+    internal sealed class CountingTime(DateTimeOffset start) : FakeTimeProvider(start)
     {
         private int _timers;
         public int Timers => Volatile.Read(ref _timers);

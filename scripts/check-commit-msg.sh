@@ -4,8 +4,9 @@
 #   scripts/check-commit-msg.sh --commit <id> <branch>  CI, on each of a pull request's own commits
 # A message has no Co-Authored-By line and ends with `Committed-by: <name>`. On a tsk-<n> branch it has
 # `Task: TSK-<n> https://app.notion.com/p/<page id>`. A fix commit (subject starting "fix") changes a test
-# (dotnet/Assembly.Tests/, app/test/ or a scripts/*.test.sh) or says why not with a `No-test: <reason>` line. A commit
-# that doesn't change docs/architecture.md says `Architecture: unchanged`.
+# (dotnet/Assembly.Tests/, app/test/, a scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or anything under
+# desktop/tests/) or says why not with a `No-test: <reason>` line. A commit that doesn't change docs/architecture.md says
+# `Architecture: unchanged`.
 set -euo pipefail
 
 if [ "${1:-}" = --commit ]; then
@@ -40,8 +41,8 @@ grep -qFx 'docs/architecture.md' <<<"$changed" || grep -Eiq '^Architecture: unch
   || stop "update docs/architecture.md in this commit, or say Architecture: unchanged when it describes nothing this changes."
 
 if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
-  grep -Eq '^(dotnet/Assembly\.Tests/|app/test/|scripts/[^/]+\.test\.sh$)' <<<"$changed" \
+  grep -Eq '^(dotnet/Assembly\.Tests/|app/test/|scripts/[^/]+\.test\.sh$|desktop/src/(.*/)?([^/]*_)?tests\.rs$|desktop/tests/)' <<<"$changed" \
     || grep -Eq '^No-test:[[:space:]]*[^[:space:]]' <<<"$(tail -n +2 <<<"$message")" \
-    || stop "a fix commit changes a test (dotnet/Assembly.Tests/, app/test/ or scripts/*.test.sh), or says why not with No-test: <reason>."
+    || stop "a fix commit changes a test (dotnet/Assembly.Tests/, app/test/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/), or says why not with No-test: <reason>."
 fi
 exit 0
