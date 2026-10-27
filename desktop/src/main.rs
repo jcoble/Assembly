@@ -10,6 +10,7 @@ use gpui_kit::*;
 
 use crate::core::backend::backend_config::BackendConfig;
 use crate::core::backend::launcher::Launcher;
+use crate::core::window_root::WindowRoot;
 
 fn main() {
     // On macOS GPUI's default keeps the app running with no window open.
@@ -25,8 +26,11 @@ fn main() {
                 }),
                 ..Default::default()
             };
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| EmptyView))
-                .expect("open the window");
+            gpui_kit::open_window(options, cx, |_, cx| {
+                let content = cx.new(|_| EmptyView);
+                cx.new(|_| WindowRoot::new(content))
+            })
+            .expect("open the window");
             cx.activate(true);
         });
 }

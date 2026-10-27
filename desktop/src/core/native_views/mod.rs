@@ -6,5 +6,5 @@
 
 mod native_surface;
 pub mod native_view_id;
-pub mod native_views;
 pub mod view_state;
+pub mod views;
