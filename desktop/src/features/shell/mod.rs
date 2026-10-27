@@ -7,6 +7,7 @@ pub mod frame;
 pub mod layout_store;
 pub mod motion_skin;
 pub mod placeholder_pane;
+mod side_tabs;
 pub mod top_bar;
 pub mod utility_strip;
 
@@ -14,3 +15,5 @@ pub mod utility_strip;
 mod frame_limits_tests;
 #[cfg(test)]
 mod frame_tests;
+#[cfg(test)]
+mod side_tabs_tests;
