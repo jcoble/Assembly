@@ -88,7 +88,8 @@ public sealed class DesktopBackend : IAsyncDisposable
         diagnostics.HoldActivity(summaries.AnyRunOpen);
         var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
-        var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log,
+        var status = new MachineStatus(remote is null ? [] : [remote.Name]);
+        var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
             sessions.Helpers.Row.TurnEnded);
         var machines = remoteMachine is null
             ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
@@ -105,7 +106,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         // the last socket.
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
-                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines),
+                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status),
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new DiagnosticsFeature(diagnostics, () =>
                 {
