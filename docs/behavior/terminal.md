@@ -10,7 +10,8 @@ terminal#1 A terminal opens in a folder you name and runs your login shell there
 terminal#2 What you type reaches the program, Ctrl-C included: the shell is the terminal's own, with job control, as in any terminal app.
 terminal#3 The program's output reaches the window byte for byte, unchanged: the backend never decodes, re-encodes or cuts it, so a character split across two reads still draws whole.
 terminal#4 Resizing the view resizes the terminal, and the program sees the new size. A size is kept between 20 and 300 columns and 4 and 100 rows.
-terminal#5 Hiding the view, switching sessions or losing the connection leaves the terminal running. Coming back shows its last 4 MB of output, then carries on live, with nothing missed or repeated.
+terminal#5 Switching sessions disposes the terminal's view in the window, every time (its Ghostty surface and its subscription), while the backend keeps the terminal running with its output. Hiding the view or losing the connection does the same. Switching back builds a new view that shows the last 4 MB of output, then carries on live, with nothing missed or repeated. Jesse, 2026-10-27: "We have to make sure that it gets disposed of on each session switch but the pty keeps everything on the backend until session switches back to it."
+
 terminal#6 A terminal keeps at most 16 MB of output; past that it drops the oldest down to 12 MB. A slow window can't make it keep more.
 terminal#7 When the program exits, the window sees all of its output first, then the exit code or the signal that ended it. An exited terminal keeps its output readable until you close it.
 terminal#8 Closing a terminal ends its program and everything the program started, and lets go of its output. Quitting the app or stopping a remote host closes every terminal it started.

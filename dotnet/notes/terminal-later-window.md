@@ -23,6 +23,11 @@ Research, 2026-10-27. `old/` = mac-command-bar `2089290:tauri-svelte-preview/src
 
 ## 2. Ghostty client against the new wire
 
+- Jesse, 2026-10-27: the view is disposed on every session switch (the Ghostty surface, its subscription and any
+  buffers), and the backend keeps the terminal and its output until the session is switched back to, when a new
+  view subscribes with `after` and replays (terminal#5). Nothing about the terminal stays in the window while its
+  session isn't shown.
+
 - Start with `{cwd, cols, rows, owner}`; use the answered size (`F/TerminalHost.cs:80-81`).
 - Subscribe `terminal` with `after` = last byte offset held. The state frame's seq is where live rows continue (`lane/dotnet/Assembly.Infrastructure/Socket/SocketDispatcher.cs:100-105`). If the gap was over 1 MB or trimmed, seq is the end and no row comes (`F/RunningTerminal.cs:228`): call `terminal/read` from `after` (raised to the last 4 MB, `F/OutputRing.cs:334`) until `end` reaches that seq.
 - Keep a high-water offset; apply only bytes above it. A piece starting past it means trimmed bytes: show a gap.
