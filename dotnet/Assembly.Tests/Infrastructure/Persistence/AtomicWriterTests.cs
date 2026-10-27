@@ -259,6 +259,8 @@ public sealed class AtomicWriterTests : IDisposable
             Sent.Add((topic, key, json));
         }
 
+        public event Action<string, string?>? Unsubscribed { add { } remove { } }
+
         public bool HasSubscribers(string topic, string key) => true;
     }
 }
