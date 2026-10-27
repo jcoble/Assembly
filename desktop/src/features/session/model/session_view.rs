@@ -44,6 +44,9 @@ impl SessionView {
         self.newest = self.newest.max(row.seq);
         let key = key_of(row);
         let at = self.index.get(&key).copied();
+        if let Some(i) = at {
+            self.items[i].at = row.created_at;
+        }
         let run_id = row.run_id.clone();
         let kind = match RowBody::of(row) {
             RowBody::Turn { state, reason } => {
@@ -195,7 +198,12 @@ impl SessionView {
             return Change::Nothing;
         }
         self.index.insert(key.clone(), self.items.len());
-        self.items.push(Item { key, run_id, kind });
+        self.items.push(Item {
+            key,
+            run_id,
+            kind,
+            at: row.created_at,
+        });
         Change::Appended
     }
 

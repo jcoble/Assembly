@@ -17,19 +17,20 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::ask_row::AskForm;
-use super::grow::{GROW, faded, grow, toggled, turn};
+use super::grow::{grow, toggled, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::intents::open_session::OpenSession;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::theme::grow::{GROW, faded};
 use crate::features::session::client::session_client::{
     CallError, RowUpdate, RowsSink, SessionClient,
 };
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
-use crate::features::session::model::entries::Entry;
+use crate::features::session::model::entries::{Entry, entry_key};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
@@ -195,7 +196,7 @@ impl SessionPane {
         let header = cx.new(|_| Header::default());
         let heard = [
             cx.subscribe(&composer, |pane, _, event, cx| match event {
-                ComposerEvent::Sending { .. } => pane
+                ComposerEvent::Sending => pane
                     .timeline
                     .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx)),
                 ComposerEvent::Sent { session, run_id }
@@ -464,21 +465,29 @@ impl SessionPane {
 
     /// Draws the item at `at` again, measured again, with the entries as they are.
     fn redraw(&mut self, at: usize, cx: &mut Context<Self>) {
-        let key = &self.view.items[at].key;
+        let key = entry_key(&self.view.items[at], self.live_run());
         self.timeline
-            .update(cx, |timeline, cx| timeline.redraw_row(key, cx));
+            .update(cx, |timeline, cx| timeline.redraw_row(&key, cx));
+    }
+
+    /// The run going now, as the entries were last worked out.
+    fn live_run(&self) -> Option<&str> {
+        self.live_since.as_ref().map(|(run, _)| run.as_str())
     }
 
     /// Works the timeline's entries out again from the view, and tells the composer the run going now.
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
         let active = self.view.active_run(self.known_run.as_deref());
         let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
+        // An item changed in place is measured again, and a running turn's card on any change: a step can arrive in
+        // it live or on an older page.
         let changed = match change {
-            Change::Updated(at) => Some(self.view.items[at].key.clone()),
+            Change::Updated(at) => Some(entry_key(&self.view.items[at], active.as_deref())),
             _ => None,
-        };
+        }
+        .or_else(|| active.is_some().then(|| Entry::Working.key(&[])));
         let (items, loading) = (&self.view.items, self.loading);
-        let entries = Entry::all(items, &folds, &self.open_folds, loading, active.is_some());
+        let entries = Entry::all(items, &folds, &self.open_folds, loading, active.as_deref());
         self.folds = folds;
         self.timeline.update(cx, |timeline, cx| {
             let keyed = entries
@@ -487,12 +496,20 @@ impl SessionPane {
                 .collect();
             timeline.set_entries(keyed, changed.as_deref(), cx);
         });
+        // The turn row's time once it's loaded (the backend's clock, as the steps' are); until then when the pane first
+        // saw the run, on the backend clock if it's ticking.
+        let started = active
+            .as_deref()
+            .and_then(|run| self.view.run_started_at(run));
         if self.live_since.as_ref().map(|(run, _)| run) != active.as_ref() {
             self.live_since = active.clone().map(|run| {
-                let at = self.view.run_started_at(&run);
-                let since = at.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-                (run, since)
+                let seen = self
+                    .now
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                (run, started.unwrap_or(seen))
             });
+        } else if let (Some((_, since)), Some(started)) = (&mut self.live_since, started) {
+            *since = started;
         }
         match (active.is_some(), self._clock.is_some()) {
             (true, false) => {
@@ -555,6 +572,9 @@ const PAGE_ROWS: usize = 100;
 #[cfg(test)]
 #[path = "session_pane_action_tests.rs"]
 mod action_tests;
+#[cfg(test)]
+#[path = "session_pane_activity_tests.rs"]
+mod activity_tests;
 #[cfg(test)]
 #[path = "session_pane_real_switch_tests.rs"]
 mod real_switch_tests;

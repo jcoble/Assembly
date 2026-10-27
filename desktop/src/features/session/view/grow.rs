@@ -1,5 +1,5 @@
 //! Things that open underneath grow in place (look direction #13, #16): a tool call's detail, thinking's text and a
-//! fold's work ease their height from 0 to what they hold over `GROW` on the design system's curve, their content
+//! fold's work ease their height from 0 to what they hold over `GROW` (core/theme/grow.rs) on the design system's curve, their content
 //! fades in from `FADE_AFTER` in, and the rows below slide down as the virtual list measures the row again
 //! each frame; shutting runs it back. A chevron turns with it, and an open row sits on a lighter band. It's timed from
 //! the toggle (`Kept::toggled_at`), not from when the row was drawn, so a row already open when drawn, or drawn again
@@ -14,10 +14,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// How long a row takes to grow open or shut, and a new row to fade in: the one pace of the session view's motion.
-pub const GROW: Duration = Duration::from_millis(160);
-/// How far into the grow what it holds starts to fade in.
-pub const FADE_AFTER: Duration = Duration::from_millis(40);
+use crate::core::theme::grow::GROW;
 
 /// The design system's grow curve, `cubic-bezier(0.16, 1, 0.3, 1)`: from 0 to 1 as `t` goes from 0 to 1.
 pub fn ease(t: f32) -> f32 {
@@ -66,14 +63,6 @@ pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &A
         window.request_animation_frame();
     }
     (grown, moving)
-}
-
-/// How far a growing row's content has faded in, from how far it has grown: nothing until the height is where it is
-/// `FADE_AFTER` into the grow, then in with it to the end (about 120 ms). Taken from the height, it turns around with
-/// it, so shutting a row partway open never shows content that was still hidden.
-pub fn faded(grown: f32) -> f32 {
-    let from = ease(FADE_AFTER.as_secs_f32() / GROW.as_secs_f32());
-    ((grown - from) / (1.0 - from)).clamp(0.0, 1.0)
 }
 
 /// An open row's lighter band (the design system's `raised`), coming in as it grows: `row` keeps its place, the band

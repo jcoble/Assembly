@@ -7,7 +7,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::ask_row::{AskForm, AskRow};
-use super::grow::{band, chevron, faded, grow, turn};
+use super::grow::{band, chevron, grow, turn};
 use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
 use super::sent_message::SentMessage;
@@ -15,6 +15,7 @@ use super::session_action::{OnAction, SessionAction};
 use super::subagent_card::SubagentCard;
 use super::task_card::TaskCard;
 use super::tool_row::ToolRow;
+use crate::core::theme::grow::faded;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::kept::Kept;
@@ -124,6 +125,7 @@ impl RenderOnce for ItemRow {
                 key: key.clone(),
                 tool,
                 kept: self.kept,
+                took_ms: None,
                 on_action: self.on_action.clone(),
             }
             .into_any_element(),
