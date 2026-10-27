@@ -599,7 +599,8 @@ Reads go through `IAppDatabase`, which has no write methods.
 ### 5.7 Topics
 
 `Infrastructure/Topics/Topics.cs` keeps each connection's subscriptions. When a page subscribes, it gets
-`state(key)`, then each change the writer published for that topic and key. Unsubscribing, or closing the socket,
+`state(key)`, then each change the writer published for that topic and key. A subscription with no key gets every
+change on its topic. Unsubscribing, or closing the socket,
 removes the subscription. The `rows` topic is today's `LiveHub` (phase C1). `Topics` keeps `LiveHub`'s pattern
 (`LiveHub.cs:60-70`): the state is read and the subscription registered under one lock, which publishing takes too,
 so a write during the initial read is neither lost nor applied before the state. The state function is synchronous,
@@ -624,6 +625,8 @@ or below it. Topics without a seq (settings, config) send whole-value upserts, s
 - **Only one component reads `now`:** `app/src/lib/time/Time.svelte`, which shows either an elapsed time or a
   relative time. Every other place that shows a time uses `<Time>`, so the clock has one reader on the page.
 - **Tests** use `FakeTimeProvider`, as the spike does now.
+- **When:** the clock comes with its first user, B9's turn clock, with `second` only. `counters` comes with B9's
+  counters group, and `minute` when a step first shows a relative time.
 
 The backend's other waits are listed in the timer inventory: the `SessionHost` coalesce timer, the adapter idle
 grace, the SSH backoff, and the follower's backoff. They stay where they are, since they're backend work that needs
@@ -1125,26 +1128,45 @@ of the shell, check4, and the same grep. Not done until the window starts the re
   unless it's the case's own machine (`CHECK4_HOST_NAME`), so a box case that reached the desktop fails. No feature has a call before B7, so the real call and cancel are in B7's scenario.
 - **Size:** 600 to 800 lines with tests.
 
-### B5. Topics and the backend clock
+### B5. Topics
 
 - **Files:**
-  - Application: `ICallRegistry.Topic` (5.2).
-  - Infrastructure: `Topics/Topics.cs` (made in B3) gains subscriptions; the `sub`, `unsub`, `state` and `change`
-    frames in `SocketConnection` and `SocketDispatcher`; and `Clock/BackendClock.cs`, with no interface in
-    Application until a feature needs one.
-  - Page: `socket.ts` gains `subscribe`.
+  - Application: `ICallRegistry.Topic` (5.2). Its state function is synchronous, and its `CallContext` carries the
+    connection's `Closed` token and id.
+  - Infrastructure:
+    - `Topics/Topics.cs` (made in B3) gains subscriptions. A subscribe reads the state, queues the `state` frame and
+      registers the subscription under the Topics lock, so a change can't overtake its state. `Publish` runs under
+      the writer's lock, then the Topics lock (5.7), and only queues: it calls the connection's `Send` (made
+      `internal`), which never awaits a socket send.
+    - Changes go through the connection's one outbox, the same as answers, so a write's change goes out before its
+      `result` (5.9 needs this).
+    - `SocketConnection` handles `sub` and `unsub`; its `finally` drops the socket's subscriptions. `InFrame` gains
+      `Topic` and `Key` only: `after` and the `rows` frame come in C1.
+    - `SocketDispatcher` registers topics. A `sub` to an unknown topic answers `error` with its `id`, code
+      `not_found`.
+    - One `Topics` per host goes to both `AppDatabase.Open` and the `SocketDispatcher`: `DesktopBackend.cs`,
+      `ServeRun.cs` and `ApiServer.cs` (through `ApiServices`). `ReplayRun.cs` serves no socket and keeps its own.
+  - Keys: a subscription with no key gets every change on its topic; one with a key gets only changes published with
+    that key.
+  - B5 sends only `upsert`. `remove` comes with the first feature that deletes, since `Publish` has no op yet.
+  - Page: `socket.ts` gains `subscribe`, and subscribes again after a reopen.
+  - The backend clock (5.8) isn't in B5: nothing in B5 or B6 shows a time. It comes with its first user, the turn
+    clock in B9.
 - **Failing tests first:**
   1. Subscribing sends `state`, then each `change` published after it.
   2. Unsubscribing, or closing the socket, stops changes.
-  3. The clock ticks only while subscribed (`FakeTimeProvider`).
-  4. A `minute` subscriber gets exactly one change per minute over three fake minutes, while a `second` subscriber
-     on the same clock gets 180.
-  5. Subscribing again after a reconnect gives the current state, not a replay.
-  6. A duplicated settings upsert, from a write committed before the snapshot but published after it, leaves the
-     same value (5.7). The rows half (a row at or below the snapshot's seq is dropped) is tested in C1, with the rows
-     topic.
+  3. A subscription with no key gets every change on its topic; one with a key only that key's.
+  4. A `sub` to an unknown topic answers `not_found` with its `id`.
+  5. Subscribing again, after a reconnect or on the same socket, gives the current state, not a replay. This is how a
+     failed save is read back (5.9).
+  6. A duplicated settings upsert leaves the same value (5.7), at the Topics level: the snapshot already holds a
+     committed value, then `Publish` delivers the same upsert as a `change`; applying `state` then `change` leaves
+     one value. The rows half (a row at or below the snapshot's seq is dropped) is tested in C1, with the rows topic.
+  7. A write published while a subscriber's state is being read comes once, after the state: its publish waits on
+     the Topics lock (a race test with no hook in production code).
 
-  On the page, a `subscribe` test applies `state` and `change` to a `$state` map.
+  On the page (`socket.test.ts`): a `subscribe` test applies `state` and `change` to a map; a reopen sends `sub`
+  again; and a call superseded by its key reports nothing when the socket can't open (from the review of f092092).
 - **Proof:** the tests, and check4.
 - **Size:** 300 to 400 lines with tests.
 
@@ -1248,7 +1270,7 @@ group:
    and the Reconnect button, built together;
 2. the reveal (row 6);
 3. `coverView` (row 7);
-4. the turn clock (row 8);
+4. the turn clock (row 8), with `Clock/BackendClock.cs` (5.8), `second` only;
 5. the Composer microtask (row 12);
 6. lag, counters and soak, as Jesse decided in D2 (rows 2 to 4). From `debug.svelte.ts`, only the helpers that count
    timers and frame callbacks move to `app/measure/`; `counters`, `measures` and the lifecycle functions stay (section
@@ -1257,7 +1279,8 @@ group:
 
 **Failing test first, for each:**
 
-- Turn clock: the elapsed time follows `clock` changes.
+- Turn clock: the elapsed time follows `clock` changes. The clock ticks only while subscribed, and a `second`
+  subscriber gets 180 changes over three fake minutes (`FakeTimeProvider`).
 - Reveal: streamed text shows as rows arrive, with nothing waiting on a frame.
 - `coverView`: a `ResizeObserver` callback runs it. This is a logic test of the function on fake measurements, not a
   test of the layout.
@@ -1361,6 +1384,8 @@ catalogue stays the reference.
     - pending runs, apart from base#9: the pending run is shown during the gap before the copied row arrives (the
       failing test is written before the fix);
     - the rows-topic catch-up and `prevSeq` tests that exist today, moved;
+    - a row committed before the rows snapshot but published after it (5.7, from B5's test 6, whose frames carry no
+      seq): the page gets `state` at seq N with the row, then a `change` at seq N, and drops the change;
     - attachments as chunked calls (D4): a 20 MB image, the limit, arrives in about 20 calls and commits once; one
       byte over the limit is refused; cancelling midway leaves nothing linked.
   - **Proof:** check4 with `rows.sh`, `sessions.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and

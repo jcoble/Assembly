@@ -14,7 +14,8 @@ namespace Assembly.Infrastructure.Http;
 /// <summary>
 /// What the routes work with. <c>Machines</c> runs each session's turns; <c>Token</c> guards every route but the MCP
 /// server's, which <c>Helpers</c> serves when given,
-/// and the socket's, whose <c>hello</c> carries it. <c>Writer</c>, when given, runs the socket's writes.
+/// and the socket's, whose <c>hello</c> carries it. <c>Writer</c> and <c>Topics</c>, when given, serve the socket: its
+/// writes, and its subscriptions to what the writer publishes, so they must be the database's own.
 /// </summary>
 public sealed record ApiServices(LiveHub Hub, SessionStore SessionStore, MachineSet Machines, AttachmentStore Attachments, string Token,
-    HelperSessions? Helpers = null, IAtomicWriter? Writer = null);
+    HelperSessions? Helpers = null, IAtomicWriter? Writer = null, Topics.Topics? Topics = null);

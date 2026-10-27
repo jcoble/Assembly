@@ -56,7 +56,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     {
         Directory.CreateDirectory(home);
         var database = Path.Combine(home, "assembly.db");
-        var db = AppDatabase.Open(database, TimeProvider.System, new Topics());
+        var topics = new Topics();
+        var db = AppDatabase.Open(database, TimeProvider.System, topics);
         // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
         // before the API starts, so no session makes a checkout in sessions/ first.
         AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
@@ -81,7 +82,7 @@ public sealed class DesktopBackend : IAsyncDisposable
 
         Uri? address = null;
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
-        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer), port, routes =>
+        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));

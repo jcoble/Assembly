@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Socket;
 
@@ -25,6 +26,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private readonly Channel<Func<Task>> _writes = Channel.CreateUnbounded<Func<Task>>(new() { SingleReader = true });
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
+    // This socket's subscriptions, by their sub id. Only the receive loop, and then its finally, touch it.
+    private readonly Dictionary<long, TopicSet.Subscription> _subscriptions = [];
     private long _waiting;
     // Why the socket closes, once the receive loop ends; closed after the last answer is sent, since a socket can't
     // send two things at once.
@@ -54,6 +57,9 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         }
         finally
         {
+            foreach (var subscription in _subscriptions.Values)
+                calls.Unsubscribe(subscription);
+            _subscriptions.Clear();
             await _closed.CancelAsync();
             _writes.Writer.TryComplete();
             await writing;
@@ -124,6 +130,16 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
                 else
                     Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", $"call {id} is already running"), SocketJson.Default.ErrorFrame));
                 return true;
+            case { T: "sub", Id: { } id, Topic: not null } sub:
+                if (_subscriptions.ContainsKey(id))
+                    Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", $"subscription {id} is already open"), SocketJson.Default.ErrorFrame));
+                else if (calls.Subscribe(sub, id, this) is { } subscription)
+                    _subscriptions[id] = subscription;
+                return true;
+            case { T: "unsub", Id: { } id }:
+                if (_subscriptions.Remove(id, out var unsubscribed))
+                    calls.Unsubscribe(unsubscribed);
+                return true;
             case { T: "cancel", Id: { } id }:
                 // Never disposed, so a cancel racing the call's end is safe.
                 if (_running.TryGetValue(id, out var running))
@@ -147,10 +163,14 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         }
     }
 
-    private void Send(ReadOnlyMemory<byte> frame)
+    /// <summary>
+    /// Queues a frame for the sender and returns at once, so a publish under the writer's lock never waits on a socket.
+    /// Answers, states and changes share this one queue, so a write's change goes out before its result.
+    /// </summary>
+    internal void Send(ReadOnlyMemory<byte> frame)
     {
-        // A page that stops reading is closed; it reconnects and loads again.
-        if (Interlocked.Add(ref _waiting, frame.Length) > MaxWaiting)
+        // A page that stops reading is closed, and so is one sent a change over 4 MB; it reconnects and loads again.
+        if (frame.Length > MaxFrame || Interlocked.Add(ref _waiting, frame.Length) > MaxWaiting)
             socket.Abort();
         else
             _outbox.Writer.TryWrite(frame);

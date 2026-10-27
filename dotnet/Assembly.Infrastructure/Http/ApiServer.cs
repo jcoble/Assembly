@@ -42,9 +42,9 @@ public static class ApiServer
                 services.Machines.Named(session.Machine)?.Watch(session);
             return LiveSocket.HandleAsync(context, services.Hub);
         });
-        if (services.Writer is not null)
+        if (services is { Writer: { } writer, Topics: { } topics })
         {
-            var calls = new SocketDispatcher(services.Writer, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"));
+            var calls = new SocketDispatcher(writer, topics, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"));
             var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
             app.Map("/socket", socket.HandleAsync);

@@ -6,6 +6,7 @@ type Outcome = { ok: true; result: unknown } | { ok: false; why: 'failed' | 'abo
 type Socket = {
   call: (feature: string, method: string, args?: Record<string, unknown>, options?: { key?: string; signal?: AbortSignal }) => Promise<Outcome>;
   onFailure: (handler: (message: string) => void) => void;
+  subscribe: <T>(topic: string, key: string | undefined, apply: { state: (items: T[]) => void; change: (item: T) => void }, signal?: AbortSignal) => void;
 };
 
 // A socket the test drives: it opens, receives and closes when told, and keeps what the page sent.
@@ -163,6 +164,66 @@ test('an open socket that closes is reopened once, and the failure is told if th
   assert.equal(sockets.length, 2);
   assert.equal(failures.length, 1);
   assert.match(failures[0]!, /couldn't reopen/);
+});
+
+test('a superseded call reports nothing when the socket can\'t open', async () => {
+  const { call, failures } = await load();
+  const older = call('notes', 'get', {}, { key: 'notes/get' });
+  const newer = call('notes', 'get', {}, { key: 'notes/get' });
+  await settle();
+  sockets[0]!.closeNow(1006);
+  await settle();
+  sockets[1]!.closeNow(1006);
+  assert.deepEqual(await older, { ok: false, why: 'aborted' });
+  assert.deepEqual(await newer, { ok: false, why: 'failed' });
+  assert.equal(failures.length, 1);
+});
+
+type Setting = { key: string; value: string };
+
+test('subscribe applies state and change to a map, and its owner closing sends unsub', async () => {
+  const { subscribe } = await load();
+  const values = new Map<string, string>();
+  const owner = new AbortController();
+  subscribe<Setting>(
+    'settings',
+    undefined,
+    {
+      state: (items) => {
+        values.clear();
+        for (const item of items) values.set(item.key, item.value);
+      },
+      change: (item) => values.set(item.key, item.value),
+    },
+    owner.signal,
+  );
+  const socket = await welcome();
+  assert.deepEqual(socket.sent.at(-1), { t: 'sub', id: 1, topic: 'settings' });
+  socket.receive({ t: 'state', sub: 1, items: [{ key: 'theme', value: 'dark' }] });
+  socket.receive({ t: 'change', sub: 1, op: 'upsert', item: { key: 'theme', value: 'light' } });
+  socket.receive({ t: 'change', sub: 1, op: 'upsert', item: { key: 'font', value: 'mono' } });
+  assert.deepEqual([...values], [['theme', 'light'], ['font', 'mono']]);
+
+  owner.abort();
+  assert.deepEqual(socket.sent.at(-1), { t: 'unsub', id: 1 });
+  socket.receive({ t: 'change', sub: 1, op: 'upsert', item: { key: 'theme', value: 'late' } });
+  assert.equal(values.get('theme'), 'light');
+});
+
+test('a reopened socket subscribes again', async () => {
+  const { subscribe } = await load();
+  const states: Setting[][] = [];
+  subscribe<Setting>('settings', 'theme', { state: (items) => states.push(items), change: () => {} });
+  const socket = await welcome();
+  assert.deepEqual(socket.sent.at(-1), { t: 'sub', id: 1, topic: 'settings', key: 'theme' });
+  socket.closeNow(1006);
+  const reopened = sockets[1]!;
+  reopened.open();
+  reopened.receive({ t: 'welcome', protocol: 1, machine: 'test-machine' });
+  await settle();
+  assert.deepEqual(reopened.sent.at(-1), { t: 'sub', id: 1, topic: 'settings', key: 'theme' });
+  reopened.receive({ t: 'state', sub: 1, items: [{ key: 'theme', value: 'dark' }] });
+  assert.deepEqual(states, [[{ key: 'theme', value: 'dark' }]]);
 });
 
 // Settles to `still waiting` if the call hasn't come back by the next turn.

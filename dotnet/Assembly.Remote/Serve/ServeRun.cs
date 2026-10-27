@@ -32,7 +32,8 @@ public static class ServeRun
 
         Directory.CreateDirectory(options.Home);
         var token = TokenFile.ReadOrCreate(options.TokenFile);
-        using var db = AppDatabase.Open(options.Database, TimeProvider.System, new Topics());
+        var topics = new Topics();
+        using var db = AppDatabase.Open(options.Database, TimeProvider.System, topics);
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System);
         using var hub = new LiveHub(store);
@@ -47,7 +48,7 @@ public static class ServeRun
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer), options.Port,
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics), options.Port,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

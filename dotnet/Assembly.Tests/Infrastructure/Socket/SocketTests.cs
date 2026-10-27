@@ -13,17 +13,19 @@ using Microsoft.Extensions.Time.Testing;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Infrastructure.Socket;
+using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Socket;
 
 /// <summary>The socket (plan 5.1 to 5.3, B4) over a real loopback socket, with calls registered by each test.</summary>
-public sealed class SocketTests : IAsyncLifetime
+public sealed partial class SocketTests : IAsyncLifetime
 {
     private const string Token = "socket-token";
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     private readonly FakeTimeProvider _time = new();
     private readonly FakeWriter _writer = new();
+    private readonly TopicSet _topics = new();
     private readonly FakeLog _log = new();
     private SocketDispatcher _calls = null!;
     private WebApplication _app = null!;
@@ -31,7 +33,7 @@ public sealed class SocketTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _calls = new SocketDispatcher(_writer, _time, _log);
+        _calls = new SocketDispatcher(_writer, _topics, _time, _log);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -482,6 +484,9 @@ public sealed class SocketTests : IAsyncLifetime
 
 public sealed record Note(string Text = "");
 
+public sealed record Setting(string Key, string Value);
+
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(Note))]
+[JsonSerializable(typeof(Setting))]
 internal sealed partial class TestJson : JsonSerializerContext;

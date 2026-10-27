@@ -2,7 +2,8 @@ import { TrackedWebSocket } from './debug.svelte';
 import { BASE_WS, TOKEN } from './host/backend';
 
 // The page's one socket to the backend (plan 5.1): `hello` with the token, then `call` frames answered by `result` or
-// `error`, and `cancel` for a call nobody wants any more. The backend's side is
+// `error`, `cancel` for a call nobody wants any more, and `sub`/`unsub` for a topic's `state` and `change` frames
+// (subscribe). The backend's side is
 // dotnet/Assembly.Infrastructure/Socket/. The socket opens on the first call; if it can't, it's tried once more and
 // the call fails. An open socket that closes is reopened once (reopen). There are no timers here: the backend ends every call within 30 s.
 
@@ -16,14 +17,17 @@ export const onFailure = (handler: (message: string) => void) => (report = handl
 // 'aborted' (a newer call took its place, its owner closed, the socket closed) isn't an error and shows nothing.
 export type Outcome<T> = { ok: true; result: T } | { ok: false; why: 'failed' | 'aborted' };
 
-type Frame = { t: string; id?: number; result?: unknown; code?: string; message?: string };
+type Frame = { t: string; id?: number; result?: unknown; code?: string; message?: string; sub?: number; items?: unknown[]; item?: unknown };
 type Pending = { name: string; settle: (outcome: Outcome<unknown>) => void };
+type Apply<T> = { state: (items: T[]) => void; change: (item: T) => void };
+type Subscription = { topic: string; key?: string; apply: Apply<unknown> };
 
 let connecting: Promise<WebSocket> | undefined;
 let current: WebSocket | undefined;
 let lastId = 0;
 const pending = new Map<number, Pending>();
 const running = new Map<string, number>();
+const subscriptions = new Map<number, Subscription>();
 // Calls still waiting for the socket to open, so a newer call for the same key can stop the wait.
 const waiting = new Map<number, AbortController>();
 
@@ -48,10 +52,14 @@ function open(): Promise<WebSocket> {
       if (frame.t === 'welcome') {
         welcomed = true;
         current = socket;
+        // Every subscription, again after a reopen: its state comes back current.
+        for (const id of subscriptions.keys()) sendSub(socket, id);
         return resolve(socket);
       }
+      if (frame.t === 'state') return subscriptions.get(frame.sub!)?.apply.state(frame.items!);
+      if (frame.t === 'change') return subscriptions.get(frame.sub!)?.apply.change(frame.item);
       const call = pending.get(frame.id!);
-      if (!call) return;
+      if (!call) return failSub(frame);
       pending.delete(frame.id!);
       if (frame.t === 'result') return call.settle({ ok: true, result: frame.result });
       if (frame.code === 'cancelled') return call.settle({ ok: false, why: 'aborted' });
@@ -104,7 +112,7 @@ export async function call<T>(feature: string, method: string, args: Record<stri
     try {
       socket = await unlessAborted(connect(), mine.signal);
     } catch (e) {
-      if (mine.signal.aborted) return { ok: false, why: 'aborted' };
+      if (mine.signal.aborted || (key && running.get(key) !== id)) return { ok: false, why: 'aborted' };
       report(`${name} failed: ${e instanceof Error ? e.message : e}`);
       return { ok: false, why: 'failed' };
     } finally {
@@ -145,4 +153,29 @@ function supersede(id: number) {
   cancel(id);
   pending.delete(id);
   call.settle({ ok: false, why: 'aborted' });
+}
+
+// A topic's state, then each change to it (plan 5.7). With no key, every change on the topic; with a key, only that
+// key's. It stays subscribed until `signal` aborts, across reopens, each of which sends the current state again.
+export function subscribe<T>(topic: string, key: string | undefined, apply: Apply<T>, signal?: AbortSignal): void {
+  if (signal?.aborted) return;
+  const id = ++lastId;
+  subscriptions.set(id, { topic, key, apply: apply as Apply<unknown> });
+  signal?.addEventListener('abort', () => subscriptions.delete(id) && current?.send(JSON.stringify({ t: 'unsub', id })), { once: true });
+  // An open socket takes it now; otherwise the welcome sends it.
+  if (current) sendSub(current, id);
+  else connect().catch((e) => report(`${topic} failed: ${e instanceof Error ? e.message : e}`));
+}
+
+function sendSub(socket: WebSocket, id: number) {
+  const { topic, key } = subscriptions.get(id)!;
+  socket.send(JSON.stringify({ t: 'sub', id, topic, key }));
+}
+
+// An error for a subscription, such as a topic the backend doesn't have: told, and the subscription dropped.
+function failSub(frame: Frame) {
+  const subscription = subscriptions.get(frame.id!);
+  if (frame.t !== 'error' || !subscription) return;
+  subscriptions.delete(frame.id!);
+  report(`${subscription.topic} failed: ${frame.message}`);
 }
