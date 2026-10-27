@@ -1292,6 +1292,12 @@ Each is reviewed on its own.
 
 ### B8. The Mac's page calls onto the socket
 
+**Status (2026-10-27):** the backend calls are done (`diagnostics/memory.sample`, `activity.begin`, `activity.end`,
+`drop` and `soak.append` over the socket, with a failing test per call first, and check4). `drop` closes only the `/live`
+row subscriptions, as `POST /debug/drop` does, until rows move onto the socket; a `/socket` drop with reconnect comes
+with the reconnect work in the GPUI switch plan. The thumbnail and path-upload calls, the page's move off
+`pageCall.ts` and the deletions wait for the GPUI switch plan too.
+
 - **Files:** one folder, `Application/Features/Diagnostics/`: `DiagnosticsFeature.cs` (memory sample, App Nap begin
   and end, dropping the link for the debug control, the composer's thumbnail and path-upload calls, and
   `soak.append`) and its small classes. Infrastructure gets only what calls the
