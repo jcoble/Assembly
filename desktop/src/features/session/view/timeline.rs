@@ -8,11 +8,11 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use gpui_kit::component::message_scroller::MessageScrollerState;
+use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
 use gpui_kit::*;
 
 use crate::features::session::model::entries::Entry;
-use crate::features::session::model::follow::Follow;
+use crate::features::session::model::follow::{Follow, FollowEvent, FollowStep};
 use crate::features::session::model::kept::Kept;
 
 pub type RenderRow = Rc<dyn Fn(&Entry, &mut Window, &mut App) -> AnyElement>;
@@ -25,7 +25,8 @@ pub struct Timeline {
     /// Draws one entry: the pane's, reading its view and sending its actions.
     render_row: RenderRow,
     session: Option<String>,
-    entries: Vec<Entry>,
+    /// The entries on the list, each with its key.
+    entries: Rc<Vec<(String, Entry)>>,
     /// Each item's kept state, by item key.
     kept: HashMap<String, Kept>,
     /// The folds the reader opened, by run id.
@@ -33,41 +34,149 @@ pub struct Timeline {
     follow: Follow,
     /// Each session's reading place, by session id.
     places: HashMap<String, ListOffset>,
+    /// The top row on screen when the scroller last changed.
+    top: usize,
+    _scrolled: Subscription,
+}
+
+/// What the timeline tells the pane.
+pub enum TimelineEvent {
+    /// The reader scrolled to near the top: time for the next older page.
+    NearTop,
 }
 
 impl Timeline {
-    pub fn new(_render_row: RenderRow, _cx: &mut Context<Self>) -> Self {
-        todo!()
+    pub fn new(render_row: RenderRow, cx: &mut Context<Self>) -> Self {
+        let scroller = cx.new(|cx| MessageScrollerState::new(0, cx));
+        // Only the reader moving the top row counts: while the list follows its end, rows added there don't load
+        // older ones.
+        let scrolled = cx.observe(&scroller, |timeline: &mut Timeline, scroller, cx| {
+            let (top, following) = (
+                scroller.read(cx).logical_scroll_top().item_ix,
+                scroller.read(cx).is_following_tail(),
+            );
+            if top != timeline.top {
+                timeline.top = top;
+                if top < LOAD_OLDER_WITHIN && !following {
+                    cx.emit(TimelineEvent::NearTop);
+                }
+            }
+            cx.notify();
+        });
+        Timeline {
+            scroller,
+            render_row,
+            session: None,
+            entries: Rc::default(),
+            kept: HashMap::new(),
+            open_folds: HashSet::new(),
+            follow: Follow::default(),
+            places: HashMap::new(),
+            top: 0,
+            _scrolled: scrolled,
+        }
     }
 
     /// Switches to another session's entries: keeps the reading place of the one it leaves, and goes back to the
     /// one it left the new one at, or the end.
     pub fn set_session(
         &mut self,
-        _session: Option<String>,
-        _entries: Vec<Entry>,
-        _cx: &mut Context<Self>,
+        session: Option<String>,
+        entries: Vec<(String, Entry)>,
+        cx: &mut Context<Self>,
     ) {
-        todo!()
+        if let Some(left) = self.session.take() {
+            self.places
+                .insert(left, self.scroller.read(cx).logical_scroll_top());
+        }
+        let place = session
+            .as_ref()
+            .and_then(|session| self.places.get(session))
+            .map(|place| place.item_ix);
+        self.session = session;
+        self.kept.clear();
+        self.open_folds.clear();
+        self.follow = Follow::default();
+        let count = entries.len();
+        self.entries = Rc::new(entries);
+        self.scroller.update(cx, |scroller, cx| {
+            scroller.reset(count, cx);
+            if let Some(place) = place {
+                scroller.scroll_to_item(place, cx);
+            }
+        });
+        cx.notify();
     }
 
-    /// Takes the entries worked out again from the view, and splices, appends or measures again only what changed.
-    pub fn set_entries(&mut self, _entries: Vec<Entry>, _cx: &mut Context<Self>) {
-        todo!()
+    /// Takes the entries worked out again from the view, and splices in only what changed; `changed` is an item
+    /// updated in place, which is measured again.
+    pub fn set_entries(
+        &mut self,
+        entries: Vec<(String, Entry)>,
+        changed: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        let old = &self.entries;
+        let same = |a: &(String, Entry), b: &(String, Entry)| a.0 == b.0;
+        let start = old
+            .iter()
+            .zip(&entries)
+            .take_while(|(a, b)| same(a, b))
+            .count();
+        let end = old[start..]
+            .iter()
+            .rev()
+            .zip(entries[start..].iter().rev())
+            .take_while(|(a, b)| same(a, b))
+            .count();
+        let removed = start..old.len() - end;
+        let added = entries.len() - start - end;
+        let remeasure = changed.and_then(|key| entries.iter().position(|(entry, _)| entry == key));
+        self.entries = Rc::new(entries);
+        self.scroller.update(cx, |scroller, cx| {
+            if !removed.is_empty() || added > 0 {
+                scroller.splice(removed, added, cx);
+            }
+            if let Some(at) = remeasure {
+                scroller.remeasure_items(at..at + 1, cx);
+            }
+        });
+        cx.notify();
     }
 
-    /// Whether the reader is near enough the top for the next older page.
-    pub fn near_top(&self, _cx: &App) -> bool {
-        todo!()
+    /// Tells the timeline what happened, for the one scroll the list doesn't make itself.
+    pub fn follow(&mut self, event: FollowEvent, cx: &mut Context<Self>) {
+        if let FollowStep::ShowAtTop(key) = self.follow.on(event)
+            && let Some(at) = self.entries.iter().position(|(entry, _)| *entry == key)
+        {
+            self.scroller
+                .update(cx, |scroller, cx| scroller.scroll_to_item(at, cx));
+        }
     }
 
-    pub fn toggle_fold(&mut self, _run_id: &str, _cx: &mut Context<Self>) {
-        todo!()
+    pub fn open_folds(&self) -> &HashSet<String> {
+        &self.open_folds
+    }
+
+    pub fn toggle_fold(&mut self, run_id: &str, cx: &mut Context<Self>) {
+        if !self.open_folds.remove(run_id) {
+            self.open_folds.insert(run_id.to_string());
+        }
+        cx.notify();
     }
 }
 
+impl EventEmitter<TimelineEvent> for Timeline {}
+
 impl Render for Timeline {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let (entries, render_row) = (self.entries.clone(), self.render_row.clone());
+        MessageScroller::new("timeline", self.scroller.clone(), move |at, window, cx| {
+            entries.get(at).map_or_else(
+                || div().into_any_element(),
+                |(_, entry)| render_row(entry, window, cx),
+            )
+        })
+        .size_full()
     }
 }

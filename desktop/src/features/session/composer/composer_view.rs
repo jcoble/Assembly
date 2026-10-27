@@ -9,12 +9,13 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::input::TextareaState;
+use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::*;
+use serde_json::json;
 
 use super::agent_config::AgentConfig;
-use super::attachment::Attachment;
-use crate::features::session::client::session_client::SessionClient;
+use super::attachment::{Attachment, AttachmentState};
+use crate::features::session::client::session_client::{CallError, SessionClient};
 
 pub struct Composer {
     client: Rc<dyn SessionClient>,
@@ -28,6 +29,7 @@ pub struct Composer {
     slash_selected: Option<usize>,
     /// The run going now, which Stop stops.
     running: Option<String>,
+    _enter: Subscription,
     _tasks: Vec<Task<()>>,
 }
 
@@ -40,39 +42,125 @@ pub enum ComposerEvent {
 }
 
 impl Composer {
-    pub fn new(
-        _client: Rc<dyn SessionClient>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Self {
-        todo!()
+    pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let draft = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(1, DRAFT_ROWS)
+                .submit_on_enter(true)
+                .placeholder("Message")
+        });
+        let enter = cx.subscribe_in(&draft, window, |composer, _, event, window, cx| {
+            if let InputEvent::PressEnter { shift: false, .. } = event {
+                composer.send(window, cx);
+            }
+        });
+        Composer {
+            client,
+            session: None,
+            draft,
+            drafts: HashMap::new(),
+            attachments: Vec::new(),
+            config: None,
+            slash_selected: None,
+            running: None,
+            _enter: enter,
+            _tasks: Vec::new(),
+        }
     }
 
     /// Points the composer at a session: keeps the draft it leaves and puts back the one it left there.
     pub fn set_session(
         &mut self,
-        _session: Option<String>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        session: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        todo!()
+        if self.session == session {
+            return;
+        }
+        if let Some(left) = self.session.take() {
+            let text = self.draft.read(cx).value().to_string();
+            if !text.is_empty() {
+                self.drafts.insert(left, text);
+            }
+        }
+        let text = session
+            .as_ref()
+            .and_then(|session| self.drafts.remove(session))
+            .unwrap_or_default();
+        self.draft
+            .update(cx, |draft, cx| draft.set_value(text, window, cx));
+        self.session = session;
+        self.attachments.clear();
+        self.slash_selected = None;
+        cx.notify();
     }
 
-    pub fn set_running(&mut self, _run: Option<String>, _cx: &mut Context<Self>) {
-        todo!()
+    pub fn set_running(&mut self, run: Option<String>, cx: &mut Context<Self>) {
+        if self.running != run {
+            self.running = run;
+            cx.notify();
+        }
     }
 
     /// Sends the draft once every attachment has uploaded.
-    fn send(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        todo!()
+    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.session.clone() else {
+            return;
+        };
+        let typed = self.draft.read(cx).value().trim().to_string();
+        let uploading = self
+            .attachments
+            .iter()
+            .any(|attachment| matches!(attachment.state, AttachmentState::Uploading));
+        if uploading || (typed.is_empty() && self.attachments.is_empty()) {
+            return;
+        }
+        let text = Attachment::with_lines(&typed, &self.attachments);
+        self.attachments.clear();
+        self.draft
+            .update(cx, |draft, cx| draft.set_value("", window, cx));
+        cx.emit(ComposerEvent::Sending { text: text.clone() });
+        let call = self.client.call(
+            "send",
+            "send",
+            json!({ "session": session, "text": text }),
+            None,
+        );
+        self._tasks
+            .push(cx.spawn_in(window, async move |composer, cx| {
+                let answer = call.await;
+                composer
+                    .update_in(cx, |composer, window, cx| match answer {
+                        Ok(answer) => {
+                            if let Some(run_id) = answer["runId"].as_str() {
+                                cx.emit(ComposerEvent::Sent {
+                                    run_id: run_id.to_string(),
+                                });
+                            }
+                        }
+                        Err(CallError::Aborted) => {}
+                        // The prompt didn't go out: it comes back to the draft, unless something new was typed.
+                        Err(_) if composer.draft.read(cx).value().is_empty() => {
+                            composer
+                                .draft
+                                .update(cx, |draft, cx| draft.set_value(typed, window, cx));
+                        }
+                        Err(_) => {}
+                    })
+                    .ok();
+            }));
     }
 }
+
+/// The most lines the draft grows to before it scrolls.
+const DRAFT_ROWS: usize = 10;
 
 impl EventEmitter<ComposerEvent> for Composer {}
 
 impl Render for Composer {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        div().w_full().child(Textarea::new(&self.draft))
     }
 }
 
