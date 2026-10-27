@@ -20,8 +20,6 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(ConfigFeature.GetArgs))]
 [JsonSerializable(typeof(ConfigFeature.SetArgs))]
 [JsonSerializable(typeof(JsonElement))]
-[JsonSerializable(typeof(MachinesFeature.ListArgs))]
-[JsonSerializable(typeof(MachinesFeature.MachineList))]
 [JsonSerializable(typeof(MachineItem))]
 [JsonSerializable(typeof(MachinesFeature.AgentsArgs))]
 [JsonSerializable(typeof(MachinesFeature.AgentList))]
