@@ -3,6 +3,7 @@ using Microsoft.Extensions.Time.Testing;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Desktop.Serve;
 
 namespace Assembly.Tests.Features.Chat;
 
@@ -51,7 +52,11 @@ public sealed class OldNamesTests : IDisposable
             """);
     }
 
-    public void Dispose() => _db.Dispose();
+    public void Dispose()
+    {
+        _db.Dispose();
+        File.Delete(_db.Path + ".before-v4");
+    }
 
     [Fact]
     public void Every_old_session_and_row_is_there_under_the_new_names()
@@ -101,19 +106,115 @@ public sealed class OldNamesTests : IDisposable
         }
     }
 
-    private AppDatabase Open(out RowStore rows, out SessionStore sessions)
+    [Fact]
+    public void The_database_is_copied_as_it_was_before_the_rename()
     {
-        var database = TestDatabase.Open(_db.Path);
+        Open(out _, out _).Dispose();
+
+        var backup = _db.Path + ".before-v4";
+        Assert.Equal(["3"], Query("SELECT CAST(user_version AS TEXT) FROM pragma_user_version;", backup));
+        Assert.Equal(["Old one", "Child"], Query("SELECT title FROM thread_info ORDER BY updated_at;", backup));
+        Assert.Equal(["3"], Query("SELECT CAST(COUNT(*) AS TEXT) FROM rows WHERE thread_id = 's1';", backup));
+    }
+
+    [Fact]
+    public void A_copy_already_there_is_never_overwritten()
+    {
+        var backup = _db.Path + ".before-v4";
+        File.WriteAllText(backup, "an earlier copy");
+
+        using (Open(out _, out var sessions))
+            Assert.Equal("Old one", sessions.Get("s1")!.Title);
+
+        Assert.Equal("an earlier copy", File.ReadAllText(backup));
+    }
+
+    [Fact]
+    public void A_copy_an_interrupted_open_left_half_written_is_made_again()
+    {
+        var backup = _db.Path + ".before-v4";
+        File.WriteAllText(backup + ".partial", "half a copy");
+
+        Open(out _, out _).Dispose();
+
+        Assert.Equal(["Old one", "Child"], Query("SELECT title FROM thread_info ORDER BY updated_at;", backup));
+        Assert.False(File.Exists(backup + ".partial"));
+    }
+
+    [Fact]
+    public void A_database_the_first_rename_made_opens_as_it_is_with_no_copy()
+    {
+        // The rename as 627d704 shipped it (unchanged since) is what the box's data went through.
+        Open(out _, out _).Dispose();
+        File.Delete(_db.Path + ".before-v4");
+        var renamed = Schema();
+        var everything = Query("SELECT session_id || ':' || seq || ':' || payload FROM rows ORDER BY session_id, seq;");
+
+        using (Open(out var rows, out var sessions))
+        {
+            Assert.Equal(["Old one"], sessions.List(before: null, limit: 10).Sessions.Select(session => session.Title));
+            Assert.Equal("s1", sessions.Get("s2")!.ParentSessionId);
+            Assert.Equal(4, rows.StoredFormatVersion);
+        }
+
+        Assert.Equal(renamed, Schema());
+        Assert.Equal(everything, Query("SELECT session_id || ':' || seq || ':' || payload FROM rows ORDER BY session_id, seq;"));
+        Assert.False(File.Exists(_db.Path + ".before-v4"));
+    }
+
+    [Fact]
+    public void A_new_database_gets_no_copy()
+    {
+        using var fresh = new TempDatabase();
+        using (Open(fresh.Path, out _, out _)) { }
+
+        Assert.False(File.Exists(fresh.Path + ".before-v4"));
+    }
+
+    [Fact]
+    public async Task A_copy_that_fails_leaves_the_database_and_the_old_checkouts_as_they_were()
+    {
+        var home = Directory.CreateTempSubdirectory("assembly-home-").FullName;
+        try
+        {
+            var database = Path.Combine(home, "assembly.db");
+            File.Copy(_db.Path, database);
+            Directory.CreateDirectory(database + ".before-v4");
+            Directory.CreateDirectory(Path.Combine(home, "threads"));
+            File.WriteAllText(Path.Combine(home, "agents.json"), "[]");
+            var before = Schema(database);
+
+            await Assert.ThrowsAnyAsync<IOException>(() => DesktopServe.MainAsync(
+                ["--home", home, "--token-file", Path.Combine(home, "env"), "--port", "0"]).WaitAsync(TimeSpan.FromSeconds(30)));
+
+            Assert.Equal(before, Schema(database));
+            Assert.Equal(["3"], Query("SELECT CAST(user_version AS TEXT) FROM pragma_user_version;", database));
+            Assert.True(Directory.Exists(Path.Combine(home, "threads")));
+            Assert.False(Directory.Exists(Path.Combine(home, "sessions")));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(home, recursive: true);
+        }
+    }
+
+    private AppDatabase Open(out RowStore rows, out SessionStore sessions) => Open(_db.Path, out rows, out sessions);
+
+    private AppDatabase Open(string path, out RowStore rows, out SessionStore sessions)
+    {
+        var database = TestDatabase.Open(path);
         rows = RowStore.Open(database);
         sessions = SessionStore.Open(database, _time);
         return database;
     }
 
-    private string Schema() => string.Join("\n", Query("SELECT type || ' ' || name || ': ' || sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name;"));
+    private string Schema(string? path = null) =>
+        string.Join("\n", Query("SELECT type || ' ' || name || ': ' || sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name;", path));
 
-    private List<string> Query(string sql)
+    private List<string> Query(string sql, string? path = null)
     {
-        using var db = new SqliteConnection($"Data Source={_db.Path};Pooling=False");
+        using var db = new SqliteConnection($"Data Source={path ?? _db.Path};Pooling=False");
         db.Open();
         using var command = db.CreateCommand();
         command.CommandText = sql;

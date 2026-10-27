@@ -58,6 +58,9 @@ public sealed class DesktopBackend : IAsyncDisposable
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
+        // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
+        // before the API starts, so no session makes a checkout in sessions/ first.
+        AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System);
         var hub = new LiveHub(store);
