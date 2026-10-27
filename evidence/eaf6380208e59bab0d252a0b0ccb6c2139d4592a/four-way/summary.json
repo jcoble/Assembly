@@ -1,0 +1,180 @@
+{
+  "commit": "eaf6380208e59bab0d252a0b0ccb6c2139d4592a",
+  "lane": "base",
+  "localMachine": "agent-workbox",
+  "startedAt": "2026-10-27T01:40:51Z",
+  "finishedAt": "2026-10-27T01:41:46Z",
+  "builtFrom": {
+    "local": "eaf6380208e59bab0d252a0b0ccb6c2139d4592a",
+    "workboxTest": "eaf6380208e59bab0d252a0b0ccb6c2139d4592a"
+  },
+  "features": [
+    "preferences",
+    "rows"
+  ],
+  "partial": false,
+  "pass": true,
+  "cases": [
+    {
+      "agent": "claude",
+      "machine": "local",
+      "sessionId": "12b80449-8a1f-4953-90a2-595bdf347944",
+      "runId": "766d2722-16c0-4f59-a6bf-d8861c577adf",
+      "startedAt": "2026-10-27T01:40:52Z",
+      "finishedAt": "2026-10-27T01:41:08Z",
+      "state": "finished",
+      "reply": "agent-workbox\nfour-way-ok",
+      "acpSessionId": "530caef0-4d5c-4d6c-9405-9d795ea2390c",
+      "transcript": {
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-base-mac-sessions-12b80449-8a1f-4953-90a2-595bdf347944/530caef0-4d5c-4d6c-9405-9d795ea2390c.jsonl",
+        "bytes": 377561
+      },
+      "rows": "claude-local.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a saved value comes back",
+            "ok a later save keeps the keys it doesn't name",
+            "ok an unknown call is a 404"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 12 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (14)",
+            "ok the socket from 6 starts at 7 with prevSeq 6"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "claude",
+      "machine": "workbox-test",
+      "sessionId": "58d8d2e7-6485-4901-8182-e0461de81394",
+      "runId": "27fc5921-7f3d-4062-bfb6-552fd99767b4",
+      "startedAt": "2026-10-27T01:41:08Z",
+      "finishedAt": "2026-10-27T01:41:19Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "e6549e35-de15-4bbd-819b-395ed335a7ca",
+      "transcript": {
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-base-serve-sessions-58d8d2e7-6485-4901-8182-e0461de81394/e6549e35-de15-4bbd-819b-395ed335a7ca.jsonl",
+        "bytes": 233432
+      },
+      "rows": "claude-workbox-test.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok skipped on workbox-test: desktop-only"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 11 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (12)",
+            "ok the socket from 5 starts at 6 with prevSeq 5"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "local",
+      "sessionId": "2704b7a0-8fe8-4d6b-9cf9-76cece8fff7e",
+      "runId": "9a36468a-1eb4-49ae-a3bd-382651e9c4ac",
+      "startedAt": "2026-10-27T01:41:19Z",
+      "finishedAt": "2026-10-27T01:41:32Z",
+      "state": "finished",
+      "reply": "agent-workbox\nfour-way-ok",
+      "acpSessionId": "01a17b04-e319-7bd3-9caa-33fa95d87e2e",
+      "transcript": {
+        "path": "/home/blackcolours/.codex/sessions/2026/10/26/rollout-2026-10-26T21-41-20-01a17b04-e319-7bd3-9caa-33fa95d87e2e.jsonl",
+        "bytes": 156034
+      },
+      "rows": "codex-local.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a saved value comes back",
+            "ok a later save keeps the keys it doesn't name",
+            "ok an unknown call is a 404"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 15 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (16)",
+            "ok the socket from 7 starts at 8 with prevSeq 7"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "workbox-test",
+      "sessionId": "af355806-5134-4092-919b-b5abdd425773",
+      "runId": "87e6a9ea-3960-47bb-a8a5-7d9098334aaa",
+      "startedAt": "2026-10-27T01:41:32Z",
+      "finishedAt": "2026-10-27T01:41:46Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "01a17b05-141e-7f82-ab55-1ce32028e76e",
+      "transcript": {
+        "path": "/home/blackcolours/.codex/sessions/2026/10/27/rollout-2026-10-27T01-41-32-01a17b05-141e-7f82-ab55-1ce32028e76e.jsonl",
+        "bytes": 72568
+      },
+      "rows": "codex-workbox-test.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok skipped on workbox-test: desktop-only"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 15 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (16)",
+            "ok the socket from 7 starts at 8 with prevSeq 7"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    }
+  ],
+  "windowScreenshots": "missing"
+}
