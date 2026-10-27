@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -26,6 +27,44 @@ internal sealed class ConfigFeature : IFeature
 
     public void Register(ICallRegistry calls)
     {
+        calls.Read(Feature, "get", SessionsJson.Default.GetArgs, SessionsJson.Default.JsonElement, async (args, call) =>
+        {
+            var session = _store.Get(args.Session) ?? throw new CallFailed("unknown session");
+            return Json(await _machines.For(session).ConfigAsync(session, call.Cancellation));
+        });
+        calls.Write(Feature, "set", SessionsJson.Default.SetArgs, SessionsJson.Default.JsonElement, async (args, call) =>
+        {
+            var session = _store.Get(args.Session) ?? throw new CallFailed("unknown session");
+            var config = Json(await _machines.For(session).SetConfigAsync(session, args.ConfigId, args.Value, call.Cancellation));
+            return _ => config;
+        });
+    }
+
+    // The agent's options and commands are its own JSON, kept as it sent them.
+    private static JsonElement Json(SessionConfig config)
+    {
+        using var buffer = new MemoryStream();
+        using (var json = new Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            json.WritePropertyName("options");
+            if (config.Options is { } options)
+                json.WriteRawValue(options);
+            else
+                json.WriteNullValue();
+            json.WriteStartObject("choices");
+            foreach (var (id, value) in config.Choices)
+                json.WriteString(id, value);
+            json.WriteEndObject();
+            json.WritePropertyName("commands");
+            if (config.Commands is { } commands)
+                json.WriteRawValue(commands);
+            else
+                json.WriteNullValue();
+            json.WriteEndObject();
+        }
+        using var document = JsonDocument.Parse(buffer.ToArray());
+        return document.RootElement.Clone();
     }
 
     internal sealed record GetArgs([property: JsonRequired] string Session);

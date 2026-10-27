@@ -1,4 +1,3 @@
-using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 
@@ -18,6 +17,13 @@ internal sealed class MachinesFeature : IFeature
 
     public void Register(ICallRegistry calls)
     {
+        calls.Read(Feature, "list", SessionsJson.Default.ListArgs, SessionsJson.Default.MachineList, (_, _) =>
+            Task.FromResult(new MachineList([.. _machines.Remotes.Select(machine => machine.Name!)])));
+        calls.Read(Feature, "agents", SessionsJson.Default.AgentsArgs, SessionsJson.Default.AgentList, async (args, call) =>
+        {
+            var machine = _machines.Named(args.Machine) ?? throw new CallFailed("unknown machine");
+            return new AgentList([.. (await machine.AgentsAsync(call.Cancellation)).Select(agent => new Agent(agent.Id, agent.Name))]);
+        });
     }
 
     internal sealed record ListArgs;

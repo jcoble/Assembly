@@ -132,6 +132,20 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"that run isn't running"}""", await ReadTextAsync(socket));
     }
 
+    [Fact]
+    public async Task The_socket_serves_the_desktops_config_and_machines()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+
+        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"config","method":"get","args":{"session":"no-such-session"}}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
+        await SendTextAsync(socket, """{"t":"call","id":2,"feature":"machines","method":"agents","args":{"machine":"no-such-machine"}}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown machine"}""", await ReadTextAsync(socket));
+    }
+
     private static Task SendTextAsync(WebSocket socket, string text) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
 
