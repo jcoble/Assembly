@@ -1,4 +1,6 @@
+using System.Net;
 using System.Text.Json;
+using Assembly.Tests.Features.Chat.Sessions;
 using Microsoft.Data.Sqlite;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -34,6 +36,47 @@ public sealed partial class RemoteMachineTests
     [Fact]
     public async Task A_remote_helper_whose_turn_end_was_copied_but_not_applied_shows_idle_after_a_restart()
     {
+        var (parent, helperId, _) = await RemoteHelperIdleAsync();
+
+        // The desktop stops as if between copying the helper's turn end and showing its row idle.
+        await _desktop!.DisposeAsync();
+        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
+        await StartDesktopAsync();
+
+        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+    }
+
+    [Fact]
+    public async Task A_remote_helper_sent_a_message_just_before_a_restart_stays_running_until_its_new_turn_ends()
+    {
+        var (parent, helperId, box) = await RemoteHelperIdleAsync();
+        var before = (await RowsAsync(_desktop!, DesktopToken, parent)).Max(row => row.GetProperty("seq").GetInt64());
+
+        // The desktop stops as if just after send_message showed the helper running, before it copied the box's new turn.
+        await _desktop!.DisposeAsync();
+        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
+        using (var http = Client(_box, BoxToken))
+            Assert.Equal(HttpStatusCode.OK, (await http.PostAsync($"/sessions/{helperId}/send", Json("""{"text":"Which file?"}"""))).StatusCode);
+        await box.CloseAsync();
+        await box.OpenAsync();
+        var secondPrompt = await box.ReadAsync("session/prompt");
+        await StartDesktopAsync();
+
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, helperId)).LastOrDefault(row => row.GetProperty("kind").GetString() == "turn")
+            is { } turn && turn.GetProperty("payload").GetProperty("state").GetString() == "started");
+        Assert.Equal("running", await HelperStateAsync(parent, helperId));
+
+        await box.ReplyAsync(secondPrompt, """{"stopReason":"end_turn"}""");
+        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        // Past the follower settling (2 s quiet), which must not end the row a second time.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+        Assert.Single(await RowsAsync(_desktop!, DesktopToken, parent), row => row.GetProperty("seq").GetInt64() > before
+            && row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
+    }
+
+    // A remote helper started by a parent here, whose first turn has ended and whose row here shows idle.
+    private async Task<(string Parent, string HelperId, FakeLink Box)> RemoteHelperIdleAsync()
+    {
         using var http = Client(_desktop!, DesktopToken);
         var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
         var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
@@ -49,13 +92,7 @@ public sealed partial class RemoteMachineTests
         await Until(async () => await HelperStateAsync(parent, helperId) == "running");
         await box.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
-
-        // The desktop stops as if between copying the helper's turn end and showing its row idle.
-        await _desktop!.DisposeAsync();
-        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
-        await StartDesktopAsync();
-
-        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        return (parent, helperId, box);
     }
 
     private async Task<string?> HelperStateAsync(string parent, string helperId) =>
