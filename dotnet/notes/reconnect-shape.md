@@ -86,3 +86,12 @@ keeps it held; a remote session's copied start row holds it; a backend started w
 
 Part 1: about 60 lines of code and 120 of tests. Part 2: a test and a comment. Part 3: about 40 lines of code, 80 of
 tests, about 30 deleted.
+
+## Later
+
+Mapped in `reconnect-later-remote.md`, `reconnect-later-window.md` and `reconnect-later-diagnostics.md`. The base
+lane's recon adds open points for those steps: `/mnt/project-files/notes/base-lane/ultra-1027/recon-reconnect.md` and
+`docs/plans/2026-10-27/recon/` on `lane/base-recon` (5239292). The main ones: the clock can't reach a window whose
+socket is down, so after its one failed reopen it waits on "Disconnected"; the remote retries are `Task.Delay` loops
+that C2 moves onto the clock; a full stop can outlast the shell's 10 s wait; no close code tells "stopping" from
+"fell behind"; and `send/send` and `sessions/create` take no client id, so a retry can't be told from a new one.
