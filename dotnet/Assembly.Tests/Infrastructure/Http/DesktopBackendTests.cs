@@ -22,7 +22,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
 
     private readonly string _home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
     private readonly FakeLauncher _launcher = new();
-    private readonly StringWriter _log = new();
+    private readonly SharedLog _log = new();
     private DesktopBackend _backend = null!;
     private bool _disposed;
     private HttpClient _http = null!;

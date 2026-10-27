@@ -24,7 +24,7 @@ public sealed class RemoteTunnelTests
     [Fact]
     public async Task It_starts_again_when_the_command_exits()
     {
-        var log = new StringWriter();
+        var log = new SharedLog();
         await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", "echo gone >&2; exit 3"], log);
 
         await Until(() => tunnel.Starts >= 2);
