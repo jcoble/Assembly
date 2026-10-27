@@ -288,6 +288,23 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await agent.CloseAsync();
     }
 
+    [Fact]
+    public async Task A_backend_that_fails_to_start_releases_its_home()
+    {
+        var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
+        try
+        {
+            await Assert.ThrowsAnyAsync<IOException>(() => DesktopBackend.StartAsync(home, Token, _backend.Address.Port, _launcher, _log));
+
+            await using var again = await DesktopBackend.StartAsync(home, Token, port: 0, _launcher, _log);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.Delete(home, recursive: true);
+        }
+    }
+
     /// <summary>Every row in the home's database, read apart from the backend.</summary>
     private List<string> Rows()
     {
