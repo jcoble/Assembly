@@ -177,9 +177,10 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
 
     /// <summary>Follows the remote sessions whose copied rows show a turn still running, as after a desktop restart mid-turn.</summary>
-    public void WatchRunning(IEnumerable<string> sessionIds)
+    public void WatchRunning(IEnumerable<string> sessionIds, IEnumerable<string> helpersShownRunning)
     {
-        foreach (var sessionId in sessionIds)
+        _follower.ShownRunning(helpersShownRunning);
+        foreach (var sessionId in sessionIds.Concat(helpersShownRunning).Distinct())
             _follower.Watch(sessionId);
     }
 

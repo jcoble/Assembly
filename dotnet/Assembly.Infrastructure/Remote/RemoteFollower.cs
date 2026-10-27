@@ -28,6 +28,8 @@ internal sealed class RemoteFollower(
     private readonly Dictionary<string, Task> _following = [];
     private readonly HashSet<string> _again = [];
     private readonly HashSet<string> _gaveUp = [];
+    // Remote helpers a restart found shown running here, until their follower first catches up. Under the same lock.
+    private readonly HashSet<string> _shownRunning = [];
     private readonly CancellationTokenSource _stopping = new();
     private int _links;
 
@@ -62,6 +64,19 @@ internal sealed class RemoteFollower(
         }
         foreach (var sessionId in gaveUp)
             Watch(sessionId);
+    }
+
+    /// <summary>Helpers a restart found shown running: each is ended once its follower catches up with no turn open.</summary>
+    public void ShownRunning(IEnumerable<string> helperIds)
+    {
+        lock (_following)
+            _shownRunning.UnionWith(helperIds);
+    }
+
+    private bool TakeShownRunning(string sessionId)
+    {
+        lock (_following)
+            return _shownRunning.Remove(sessionId);
     }
 
     private bool Again(string sessionId)
@@ -170,12 +185,18 @@ internal sealed class RemoteFollower(
                     return;
                 }
                 if (row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started")
+                {
+                    TakeShownRunning(sessionId);
                     await turnEnded(sessionId);
+                }
             }
         }
         catch (OperationCanceledException) when (done.IsCancellationRequested && !stopping.IsCancellationRequested)
         {
-            // Caught up, and nobody needs more.
+            // Caught up, and nobody needs more. Only this exit, a real read that found nothing newer, ends a helper's row
+            // a restart found shown running; a give-up, a dropped link, a stop or a seq mismatch leaves it running.
+            if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
+                await turnEnded(sessionId);
         }
         finally
         {

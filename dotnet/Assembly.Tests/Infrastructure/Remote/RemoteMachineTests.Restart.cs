@@ -74,6 +74,21 @@ public sealed partial class RemoteMachineTests
             && row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
     }
 
+    [Fact]
+    public async Task A_remote_helper_shown_running_stays_running_after_a_restart_while_the_box_is_down()
+    {
+        var (parent, helperId, _) = await RemoteHelperIdleAsync();
+
+        await _desktop!.DisposeAsync();
+        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
+        await using var down = await StubAsync(_ => { }, () => 500);
+        _desktop = await DesktopOnAsync(down, _desktopHome);
+
+        // The follower gives up; only Resume or the stop button ends the row.
+        await Until(() => _log.ToString().Contains($"remote session {helperId}: {Box} answered 500"));
+        Assert.Equal("running", await HelperStateAsync(parent, helperId));
+    }
+
     // A remote helper started by a parent here, whose first turn has ended and whose row here shows idle.
     private async Task<(string Parent, string HelperId, FakeLink Box)> RemoteHelperIdleAsync()
     {
