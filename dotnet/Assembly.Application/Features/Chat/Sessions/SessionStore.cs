@@ -93,7 +93,7 @@ public sealed class SessionStore
     public SessionInfo Create(string agent, string repoUrl)
     {
         var session = new SessionInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now());
-        Execute(
+        Change(session.SessionId,
             "INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at) VALUES ($id, $agent, $repo, $now, $now);",
             ("$id", session.SessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt));
         return session;
@@ -103,7 +103,7 @@ public sealed class SessionStore
     public SessionInfo Add(string sessionId, string agent, string repoUrl, string machine, string? parentSessionId = null, bool helper = false)
     {
         var session = new SessionInfo(sessionId, agent, repoUrl, null, null, Now(), machine, ParentSessionId: parentSessionId, Helper: helper);
-        Execute("""
+        Change(sessionId, """
             INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at, machine, parent_session_id, helper)
             VALUES ($id, $agent, $repo, $now, $now, $machine, $parent, $helper);
             """, ("$id", sessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt), ("$machine", machine),
@@ -129,6 +129,7 @@ public sealed class SessionStore
                 VALUES ($id, $agent, $repo, $title, $session, $now, $now, $machine, $parent);
                 """, new SqlArg("$id", child.SessionId), new SqlArg("$agent", child.Agent), new SqlArg("$repo", child.RepoUrl), new SqlArg("$title", title),
                 new SqlArg("$session", childSessionId), new SqlArg("$now", child.UpdatedAt), new SqlArg("$machine", child.Machine), new SqlArg("$parent", parent.SessionId));
+            Publish(scope, child.SessionId);
             return child;
         });
 
@@ -137,7 +138,7 @@ public sealed class SessionStore
     {
         var helper = new SessionInfo(Guid.NewGuid().ToString(), agent, parent.RepoUrl, title, null, Now(), parent.Machine,
             ParentSessionId: parent.SessionId, Helper: true);
-        Execute("""
+        Change(helper.SessionId, """
             INSERT INTO session_info(session_id, agent, repo_url, title, created_at, updated_at, machine, parent_session_id, helper)
             VALUES ($id, $agent, $repo, $title, $now, $now, $machine, $parent, 1);
             """, ("$id", helper.SessionId), ("$agent", agent), ("$repo", helper.RepoUrl), ("$title", title), ("$now", helper.UpdatedAt),
@@ -223,10 +224,10 @@ public sealed class SessionStore
     }
 
     public void SetTitle(string sessionId, string title) =>
-        Execute("UPDATE session_info SET title = $title WHERE session_id = $id;", ("$id", sessionId), ("$title", title));
+        Change(sessionId, "UPDATE session_info SET title = $title WHERE session_id = $id;", ("$id", sessionId), ("$title", title));
 
     public void SetAcpSession(string sessionId, string acpSessionId) =>
-        Execute("UPDATE session_info SET acp_session_id = $session WHERE session_id = $id;", ("$id", sessionId), ("$session", acpSessionId));
+        Change(sessionId, "UPDATE session_info SET acp_session_id = $session WHERE session_id = $id;", ("$id", sessionId), ("$session", acpSessionId));
 
     /// <summary>Saves the session's reported total, kept as text so the decimal comes back exactly.</summary>
     public void SetSessionCost(string sessionId, decimal total) =>
@@ -285,12 +286,27 @@ public sealed class SessionStore
 
     /// <summary>Marks the session as just used, which puts it at the top of the list.</summary>
     public void Touch(string sessionId) =>
-        Execute("UPDATE session_info SET updated_at = $now WHERE session_id = $id;", ("$id", sessionId), ("$now", Now()));
+        Change(sessionId, "UPDATE session_info SET updated_at = $now WHERE session_id = $id;", ("$id", sessionId), ("$now", Now()));
 
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 
     private void Execute(string sql, params (string Name, object? Value)[] parameters) =>
         _writer.Write("sessions", scope => scope.Execute(sql, Args(parameters)));
+
+    // A write to a session's list item, which publishes the item as it now is on the sessions topic.
+    private void Change(string sessionId, string sql, params (string Name, object? Value)[] parameters) =>
+        _writer.Write("sessions", scope =>
+        {
+            var changed = scope.Execute(sql, Args(parameters));
+            Publish(scope, sessionId);
+            return changed;
+        });
+
+    private static void Publish(IWriteScope scope, string sessionId)
+    {
+        if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", sessionId)) is { } session)
+            scope.Publish(SessionsFeature.Topic, sessionId, SessionItem.From(session), SessionsJson.Default.SessionItem);
+    }
 
     private List<SessionInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>
         _db.Query(sql, ReadSession, CancellationToken.None, Args(parameters));

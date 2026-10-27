@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -27,6 +28,28 @@ internal sealed class SessionsFeature : IFeature
 
     public void Register(ICallRegistry calls)
     {
+        calls.Topic(Topic, SessionsJson.Default.SessionItem, session => session.SessionId, (key, call) =>
+            key is null
+                ? [.. _store.List(null, ListLimit, call.Cancellation).Sessions.Select(SessionItem.From)]
+                : _store.Get(key) is { } session ? [SessionItem.From(session)] : []);
+        calls.Read(Topic, "page", SessionsJson.Default.PageArgs, SessionsJson.Default.Page, (args, call) =>
+        {
+            var page = _store.List(args.Before, Math.Clamp(args.Limit, 1, ListLimit), call.Cancellation);
+            return Task.FromResult(new Page([.. page.Sessions.Select(SessionItem.From)], page.NextBefore));
+        });
+        // The machine's work runs before the write, which only answers: the store's own write publishes the new
+        // session, so it goes out on this socket before the answer.
+        calls.Write(Topic, "create", SessionsJson.Default.CreateArgs, SessionsJson.Default.Created, async (args, call) =>
+        {
+            var machine = _machines.Named(args.Machine) ?? throw new CallFailed("unknown machine");
+            if (!(await machine.AgentsAsync(call.Cancellation)).Any(known => known.Id == args.Agent))
+                throw new CallFailed($"this machine has no agent {args.Agent}");
+            var session = args.ParentSessionId is { } parentId
+                ? await machine.CreateHelperAsync(new SessionInfo(parentId, args.Agent, args.RepoUrl, null, null, 0), args.Agent,
+                    args.Title ?? "Helper", call.Cancellation)
+                : await machine.CreateSessionAsync(args.Agent, args.RepoUrl, call.Cancellation);
+            return _ => new Created(session.SessionId);
+        });
     }
 
     internal sealed record PageArgs(long? Before = null, int Limit = 50);

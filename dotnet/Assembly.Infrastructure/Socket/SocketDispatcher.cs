@@ -5,6 +5,7 @@ using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Machines;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Socket;
@@ -184,6 +185,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         catch (CallFailed error)
         {
             return Error(id, "failed", error.Message);
+        }
+        catch (MachineUnreachable error)
+        {
+            return Bounded(Frame(new ErrorFrame(id, "unreachable", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
         }
         catch (OperationCanceledException) when (limit.IsCancellationRequested)
         {

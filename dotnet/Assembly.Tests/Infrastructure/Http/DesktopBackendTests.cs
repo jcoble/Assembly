@@ -106,6 +106,19 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal("""{"t":"result","id":1,"result":{}}""", await ReadTextAsync(socket));
     }
 
+    [Fact]
+    public async Task The_socket_serves_the_desktops_sessions()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+
+        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"sessions","key":"no-such-session"}""");
+
+        Assert.Equal("""{"t":"state","sub":1,"items":[]}""", await ReadTextAsync(socket));
+    }
+
     private static Task SendTextAsync(WebSocket socket, string text) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
 

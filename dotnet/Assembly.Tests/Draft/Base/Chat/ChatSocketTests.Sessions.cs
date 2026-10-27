@@ -89,6 +89,6 @@ public sealed partial class ChatSocketTests
 
         await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","repoUrl":"repo","machine":"box"}""");
 
-        Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box didn't answer","machine":"box"}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
     }
 }
