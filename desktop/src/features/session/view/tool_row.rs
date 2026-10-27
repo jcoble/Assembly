@@ -66,9 +66,12 @@ impl RenderOnce for ToolRow {
         };
         let open = self.kept.open && self.tool.has_detail;
         let toggled_at = self.kept.toggled_at;
-        let turned = turn(open, toggled_at, window, cx);
-        let faded = faded(open, toggled_at, cx);
-        let turn = self.tool.has_detail.then(|| chevron(turned.0));
+        let chevron = self
+            .tool
+            .has_detail
+            .then(|| chevron(turn(open, toggled_at, window, cx).0));
+        let turned = turn(open, self.kept.grown_at(), window, cx);
+        let faded = faded(open, self.kept.grown_at(), cx);
         let theme = cx.theme();
         let (key, on_action) = (self.key.clone(), self.on_action.clone());
         let line = h_flex()
@@ -81,7 +84,7 @@ impl RenderOnce for ToolRow {
                     on_action(SessionAction::Toggle { key: key.clone() }, window, cx)
                 })
             })
-            .children(turn)
+            .children(chevron)
             .child(mark)
             .child(
                 div()

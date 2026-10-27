@@ -13,6 +13,7 @@ use crate::core::intents::open_session::OpenSession;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
+use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::ToolDetail;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::grow::{GROW, toggled};
@@ -170,8 +171,16 @@ impl SessionPane {
                     });
                     match detail {
                         Ok(detail) => {
-                            pane.kept.entry(key.clone()).or_default().detail =
-                                Some((state, detail));
+                            let kept = pane.kept.entry(key.clone()).or_default();
+                            // The first detail of a call just opened grows in from now, as it had nothing to show.
+                            let first = kept.detail.is_none() && kept.open;
+                            if first {
+                                kept.shown_at = Some(Instant::now());
+                            }
+                            kept.detail = Some((state, detail));
+                            if first {
+                                pane.growing.insert(key.clone());
+                            }
                             if let Some(at) =
                                 pane.view.items.iter().position(|item| item.key == key)
                             {
@@ -204,7 +213,7 @@ impl SessionPane {
             let kept = self.kept.get(&key);
             let moving = !still
                 && kept
-                    .and_then(|kept| kept.toggled_at)
+                    .and_then(Kept::grown_at)
                     .is_some_and(|at| now.duration_since(at) < GROW);
             let rows = match key
                 .strip_prefix("fold:")

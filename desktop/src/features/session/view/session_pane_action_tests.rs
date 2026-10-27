@@ -91,8 +91,18 @@ fn an_opened_tool_call_reads_its_detail_once_and_again_when_its_state_changes(
         kept(cx).detail.map(|(state, _)| state),
         Some(ToolState::Started)
     );
+    let first = kept(cx).shown_at;
+    assert!(
+        first.is_some(),
+        "its first detail grows in from when it arrived"
+    );
     toggle(&pane, "tool:t1", cx);
     toggle(&pane, "tool:t1", cx);
+    assert_eq!(
+        kept(cx).shown_at,
+        first,
+        "detail it already had shows with the click"
+    );
     assert_eq!(
         client.calls().len(),
         2,
