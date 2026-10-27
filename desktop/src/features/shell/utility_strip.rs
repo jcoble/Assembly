@@ -31,6 +31,11 @@ fn figure(id: &'static str, label: &'static str, body: &'static str) -> impl Int
         Popover::new(id)
             .anchor(Anchor::BottomRight)
             .trigger(Button::new(label).ghost().compact().label(label))
-            .content(move |_, _, _| div().debug_selector(move || format!("{id}-body")).p_2().child(body)),
+            .content(move |_, _, _| {
+                div()
+                    .debug_selector(move || format!("{id}-body"))
+                    .p_2()
+                    .child(body)
+            }),
     )
 }

@@ -153,6 +153,25 @@ public sealed class RunRecoveryTests : IDisposable
         Assert.Empty(_store.RunningItems(RowKind.Task));
     }
 
+    [Fact]
+    public void Recovery_leaves_a_running_remote_helper_s_row_alone()
+    {
+        var converter = new RowConverter();
+        _store.Commit("here", converter.Apply(new TurnStarted(1, "run-1", "start them")));
+        foreach (var child in new[] { "child-here", "child-remote" })
+            _store.Commit("here", converter.Apply(new SubagentShown(2, child,
+                new SubagentPayload(child, "Helper", null, "running", null, null, CanStop: true, ToolCallId: null, Helper: true))));
+        _store.Commit("here", converter.Apply(new TurnEnded(3, "end_turn", null)));
+        using var hub = new LiveHub(_store);
+
+        RunRecovery.CloseUnfinished(_store, hub, RestartedAt, runsHere: session => session != "child-remote");
+
+        var rows = _store.RowsAfter("here", 0);
+        var here = rows.Last(row => row.ItemId == "subagent:child-here").Payload;
+        Assert.Equal(("idle", "cancelled"), (here.GetProperty("state").GetString(), here.GetProperty("stopReason").GetString()));
+        Assert.Equal("running", rows.Last(row => row.ItemId == "subagent:child-remote").Payload.GetProperty("state").GetString());
+    }
+
     // The summaries are filled before recovery, and its closing rows go through the hub, so they update them.
     [Fact]
     public void Closing_a_run_and_its_tasks_updates_the_sessions_summary()

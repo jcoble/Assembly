@@ -148,4 +148,48 @@ public sealed partial class ChatSocketTests
 
         Assert.Equal(made.Order(), seen.Order());
     }
+
+    [Fact]
+    public async Task Sessions_page_whose_answer_is_over_4_MB_answers_failed()
+    {
+        var title = new string('a', Mb);
+        for (var i = 0; i < 5; i++)
+            _sessions.SetTitle(_sessions.Create("claude", $"repo-{i}").SessionId, title);
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "sessions", "page", "{}");
+
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"the answer is over 4 MB"}""", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task Sessions_create_fails_for_an_unknown_machine_or_an_agent_the_machine_doesnt_have()
+    {
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "sessions", "create", """{"agent":"claude","repoUrl":"repo","machine":"nope"}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown machine"}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "sessions", "create", """{"agent":"codex","repoUrl":"repo"}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"this machine has no agent codex"}""", await ReadAsync(socket));
+
+        Assert.Equal(["agents"], _here.Asked);
+        Assert.Empty(_box.Asked);
+    }
+
+    [Fact]
+    public async Task Sessions_create_with_a_parent_makes_a_helper_with_its_title_or_Helper()
+    {
+        var parent = _sessions.Create("claude", "repo");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "sessions", "create",
+            $$"""{"agent":"claude","repoUrl":"repo","parentSessionId":"{{parent.SessionId}}","title":"Look"}""");
+        var titled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
+        await CallAsync(socket, 2, "sessions", "create", $$"""{"agent":"claude","repoUrl":"repo","parentSessionId":"{{parent.SessionId}}"}""");
+        var untitled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
+
+        Assert.Equal((parent.SessionId, true, "Look"), (titled.ParentSessionId, titled.Helper, titled.Title));
+        Assert.Equal((parent.SessionId, true, "Helper"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
+        Assert.Equal(["agents", "helper", "agents", "helper"], _here.Asked);
+    }
 }

@@ -15,8 +15,9 @@ public sealed class HelperRow(SessionStore sessionStore, SessionRegistry session
 {
     public void Show(SessionInfo helper, string state, string? stopReason = null, string? error = null)
     {
-        // A helper started from another machine has its row there.
-        if (helper.ParentSessionId is not { } parent || sessionStore.Get(parent) is null)
+        // A helper's row is shown only by the machine that runs its parent: a parent on another machine commits it
+        // there, and this machine copies it.
+        if (helper.ParentSessionId is not { } parent || sessionStore.Get(parent) is not { Machine: null })
             return;
         var payload = new SubagentPayload(helper.SessionId, helper.Title ?? "Helper", $"Helper session ({helper.Agent})", state, stopReason, error,
             CanStop: state != "idle", ToolCallId: null, Agent: helper.Agent, Helper: true);
