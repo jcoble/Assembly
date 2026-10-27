@@ -125,19 +125,12 @@ impl SocketClient {
         TopicSubscription::new(id, self.events.clone(), receiver)
     }
 
-    /// Tries the socket again, at `endpoint`, when it's `Disconnected`; nothing otherwise. The launcher calls it on
-    /// the backend's ready line (`listening on ...`), after restarting a backend that exited (whose token may be new),
-    /// and when the Reconnect button finds the backend still running.
+    /// Tries the socket again, at `endpoint`, when it's `Disconnected`; nothing otherwise. The launcher calls it, on
+    /// the main thread, for each ready line (`listening on ...`) after the first, which starts the client: after
+    /// restarting a backend that exited (whose token may be new), and when the Reconnect button finds the backend
+    /// still running.
     pub fn reconnect(&self, endpoint: Endpoint) {
         let _ = self.events.send(Event::Reconnect(endpoint));
-    }
-
-    /// `reconnect` for the launcher's stdout thread, which isn't the window's: it only sends to the client thread.
-    pub fn reconnector(&self) -> impl Fn(Endpoint) + Send + Sync + 'static {
-        let events = self.events.clone();
-        move |endpoint| {
-            let _ = events.send(Event::Reconnect(endpoint));
-        }
     }
 
     fn id(&self) -> u64 {
