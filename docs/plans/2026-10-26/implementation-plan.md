@@ -1531,7 +1531,9 @@ catalogue stays the reference.
       Its guard, `scripts/lint.d/40-routes.sh` ("every feature route goes through FeatureCalls"), changes to one
       named owner with no list: no `Map`, `MapGet`, `MapPost` or `MapGroup` call outside `Infrastructure/Http/`.
       Probes go both ways: a `Map` call outside the folder fails, and one inside passes. The folder then shrinks
-      through C2 in review, with no list to edit. The move thread OKed the change in this form (2026-10-27).
+      through C2 in review, with no list to edit. The move thread OKed the change in this form (2026-10-27). The only
+      `Map` call outside the folder today is `/mcp` (`Infrastructure/Mcp/McpRoutes.cs:19`), so `McpRoutes.cs` moves
+      into `Infrastructure/Http/` in the same commit.
     - **Stays until C2, because the desktop's remote client calls it on the remote:**
       - `/version` (`RemoteMachine.cs:184`, the format check) and `/agents` (`:63`);
       - `POST /sessions` (`:70`, `:77`) and `GET /sessions/{id}` (`:196`);
