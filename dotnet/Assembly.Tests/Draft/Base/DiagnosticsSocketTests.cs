@@ -86,6 +86,10 @@ public sealed class DiagnosticsSocketTests : IAsyncLifetime
         Assert.Contains("\"failed\"", await CallAsync("soak.append", """{"name":"","line":"5,6"}"""));
         Assert.Contains("\"failed\"", await CallAsync("soak.append", """{"line":"7,8"}"""));
         Assert.Contains("\"failed\"", await CallAsync("soak.append", """{"name":"run.csv"}"""));
+        Assert.Contains("\"failed\"", await CallAsync("soak.append", """{"name":".","line":"9"}"""));
+        Assert.Contains("\"failed\"", await CallAsync("soak.append", """{"name":"..","line":"9"}"""));
+        Assert.Contains("\"failed\"", await CallAsync("soak.append", """{"name":"C:x","line":"9"}"""));
+        Assert.Contains("\"failed\"", await CallAsync("soak.append", """{"name":"run.csv:x","line":"9"}"""));
         Assert.Equal([("run.csv", "1,2")], _host.Soak);
     }
 
