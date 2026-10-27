@@ -1,14 +1,20 @@
-# On every push and pull request: the backend builds with no warnings and its tests pass, the app checks, tests and
-# builds, the shell checks and tests, the window (desktop/) builds, tests and passes clippy, every scripts/*.test.sh
-# passes, the app's guards and lint pass, and (on a pull request) each of its own commits passes
-# scripts/check-commit-msg.sh.
+# On every pull request and every push to main (a lane branch's push runs once, as its pull request): the backend
+# builds with no warnings and its tests pass, the app checks, tests and builds, the shell checks and tests, the window
+# (desktop/) builds, tests and passes clippy, every scripts/*.test.sh passes, the app's guards and lint pass, and (on a
+# pull request) each of its own commits passes scripts/check-commit-msg.sh.
 name: ci
 on:
   push:
+    branches: [main]
   pull_request:
+# A new push to a pull request cancels its run still going; each main commit gets its own run, never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   dotnet:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: dotnet
@@ -21,6 +27,7 @@ jobs:
       - run: dotnet test --no-build
   app:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: app
@@ -35,6 +42,7 @@ jobs:
       - run: pnpm build
   shell:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: shell
@@ -56,7 +64,6 @@ jobs:
   desktop:
     # The GPUI window (desktop/README.md): builds, tests and passes clippy with warnings denied. Its guard runs in lint.
     runs-on: ubuntu-latest
-    # A test waits on events, so one that misses an event hangs; this bounds it.
     timeout-minutes: 30
     defaults:
       run:
@@ -82,6 +89,7 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
   scripts:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -95,6 +103,7 @@ jobs:
   lint:
     # The app's guards and scripts/lint.sh. They read the checkout, not its history; lint.sh's .NET checks need dotnet.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -106,6 +115,7 @@ jobs:
     # A pull request's own commits; pushes to main aren't checked, since agent work reaches main through a pull request.
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
