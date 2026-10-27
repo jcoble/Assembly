@@ -40,6 +40,12 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
 
     public void Release() => _held?.TrySetResult();
 
+    /// <summary>
+    /// A held call has already done its work: a cancel only sets <see cref="Cancelled"/>, and the call still answers once
+    /// released.
+    /// </summary>
+    public bool Started { get; set; }
+
     /// <summary>How many probes reached it. Each answers as <see cref="Probe"/> does, which may ignore the probe's token.</summary>
     public int Probes;
     public Func<CancellationToken, Task> Probe { get; set; } = _ => Task.CompletedTask;
@@ -101,6 +107,12 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         if (_held is { } held)
         {
             Reached.TrySetResult();
+            if (Started)
+            {
+                using (cancellationToken.Register(() => Cancelled.TrySetResult()))
+                    await held.Task;
+                return answer();
+            }
             try
             {
                 await held.Task.WaitAsync(cancellationToken);

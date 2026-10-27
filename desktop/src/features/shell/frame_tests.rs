@@ -26,7 +26,7 @@ use super::placeholder_pane::PlaceholderPane;
 type Writes = Rc<RefCell<Vec<Value>>>;
 
 /// Opens a frame that reads `saved` and records each layout it writes, after the app start's setup.
-fn open(
+pub(super) fn open(
     saved: Option<Value>,
     cx: &mut TestAppContext,
 ) -> (Entity<Frame>, Writes, &mut VisualTestContext) {
@@ -70,7 +70,7 @@ fn open_reading(
     (frame, cx)
 }
 
-fn dump(frame: &Entity<Frame>, cx: &mut VisualTestContext) -> Value {
+pub(super) fn dump(frame: &Entity<Frame>, cx: &mut VisualTestContext) -> Value {
     cx.update(|_, cx| serde_json::to_value(frame.read(cx).dock().read(cx).dump(cx)).unwrap())
 }
 

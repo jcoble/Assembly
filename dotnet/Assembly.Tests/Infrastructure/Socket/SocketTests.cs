@@ -272,8 +272,10 @@ public sealed partial class SocketTests : IAsyncLifetime
         Assert.Equal(["notes/save"], _writer.Written);
     }
 
+    // A write out of time while queued never runs; one whose handler returns after the limit did its work, so it
+    // answers its result.
     [Fact]
-    public async Task Writes_out_of_time_answer_timeout_and_commit_nothing()
+    public async Task A_write_out_of_time_in_the_queue_answers_timeout_and_one_that_ran_answers_its_result()
     {
         var gate = new TaskCompletionSource();
         var first = new TaskCompletionSource();
@@ -297,9 +299,9 @@ public sealed partial class SocketTests : IAsyncLifetime
         gate.SetResult();
 
         var answers = await ReadByIdAsync(socket, 2);
-        Assert.Equal("timeout", Code(answers[0], id: 1));
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":""}}""", answers[0]);
         Assert.Equal("timeout", Code(answers[1], id: 2));
-        Assert.Empty(_writer.Written);
+        Assert.Equal(["notes/first"], _writer.Written);
     }
 
     [Fact]

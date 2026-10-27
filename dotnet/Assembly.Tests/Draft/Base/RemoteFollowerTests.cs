@@ -59,7 +59,8 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
     [Fact]
     public async Task Watches_at_the_same_moment_start_one_follower()
     {
-        _stub.Pings = false;
+        // Pings keep every link from settling, so no owed second pass opens while the test counts.
+        _stub.Pings = true;
         var ids = Enumerable.Range(0, 40).Select(n => $"s{n}").ToArray();
         foreach (var id in ids)
         {
@@ -72,9 +73,9 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
             await Task.WhenAll(watches);
         }
 
-        await Until(() => _stub.LiveHits >= ids.Length);
-        await Task.Delay(300);
-        Assert.Equal(ids.Length, _stub.LiveHits);
+        // One link per session at once means one follower; eight followers would show here as eight links.
+        await Task.WhenAll(ids.Select(_stub.LiveSeenAsync)).WaitAsync(Wait);
+        Assert.Equal(1, _stub.MostLiveAtOnce);
     }
 
     [Fact]

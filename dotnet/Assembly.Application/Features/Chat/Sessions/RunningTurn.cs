@@ -15,6 +15,9 @@ internal sealed class RunningTurn(string runId, StageTimes stages)
     /// <summary>Set under the host's lock once the session is open.</summary>
     public OpenSession? Session { get; set; }
 
+    /// <summary>Set once the turn's open has finished, whether the session opened or the turn ended without one.</summary>
+    public TaskCompletionSource Opened { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     public Task Done { get; set; } = Task.CompletedTask;
 
     /// <summary>The agent started this run itself, on a session kept open for background work; no prompt is waiting on it.</summary>

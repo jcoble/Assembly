@@ -403,8 +403,10 @@ Each part has one implementation, registered in DI, and features reach it only t
 The limits are fixed, not settings:
 
 - 4 MB per frame, and 16 MB queued per connection. A slow page is closed and can reconnect from its last sequence.
-- 30 seconds per call (`CancelAfter` in the dispatcher). A call that runs over answers `timeout`. There's no
-  exception to the 30 s limit, ever, saves included.
+- 30 seconds per call (`CancelAfter` in the dispatcher). At 30 s the limit cancels the handler's token, and a
+  call that runs over answers `timeout`. Writes are the one difference: a write still queued past the limit never
+  runs and answers `timeout`, and a write whose handler returns after the limit has done its work, so it commits
+  and answers its result (C2, #73).
 
 **Calls are short.** Long work, such as a clone, a big search or a git operation, is *started* by a call, which
 answers at once with a job id. The work then reports its progress and its result on a topic keyed by that id, and
