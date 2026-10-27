@@ -149,6 +149,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
 
     internal void Unsubscribe(TopicSet.Subscription subscription) => topics.Unsubscribe(subscription);
 
+    public void Closed(Action<string> connection)
+    {
+    }
+
     /// <summary>Runs one <c>call</c> frame to its answer. <paramref name="cancelled"/> is its <c>cancel</c>.</summary>
     internal async Task<ReadOnlyMemory<byte>> AnswerAsync(InFrame frame, long id, SocketConnection connection, CancellationToken cancelled)
     {

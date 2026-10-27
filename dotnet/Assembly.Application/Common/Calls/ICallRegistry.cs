@@ -21,6 +21,10 @@ public interface ICallRegistry
     // value. Its database part publishes the change on the topic named after its feature, which must be registered first.
     void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save);
 
+    // Runs once for each socket that closes, with its connection, after every write it queued has run, so a feature
+    // can let go of what that socket left open (an unfinished upload, say) without racing a write still to come.
+    void Closed(Action<string> connection);
+
     // A topic's state for a new subscriber, with its key. Synchronous: Topics reads it under its lock, which can't span
     // an await (5.7). Its token is the socket's closing. Every write's publish waits on that lock, so state only reads
     // and stays small: a write inside it would take the locks in the writer's opposite order and deadlock under load,
