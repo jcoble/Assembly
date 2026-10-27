@@ -7,8 +7,9 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::grow::{band, chevron, faded, grow, turn};
+use super::grow::{band, chevron, grow, turn};
 use super::session_action::{OnAction, SessionAction};
+use crate::core::theme::grow::faded;
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::{ToolDetail, ToolPayload, ToolState};
