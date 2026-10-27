@@ -141,6 +141,7 @@ public sealed class ApiTests : IAsyncLifetime
     public async Task Sessions_are_created_and_listed_newest_first()
     {
         var first = await CreateSessionAsync();
+        _time.Advance(TimeSpan.FromMilliseconds(10));
         var second = await CreateSessionAsync();
         Assert.Equal(HttpStatusCode.BadRequest, (await PostJsonAsync("/sessions", """{"agent":"gemini","repoUrl":"x"}""")).StatusCode);
 
