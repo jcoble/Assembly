@@ -277,6 +277,10 @@ fn a_sent_prompt_goes_to_the_top_once_it_arrives(cx: &mut TestAppContext) {
     show(&pane, "s1", cx);
     client.queue_answer(Ok(page(users(1..=30), false, None)));
     jump(&client, 30, cx);
+    // The reader is up in the history when they send.
+    let timeline = cx.update(|_, cx| pane.read(cx).timeline.clone());
+    cx.update(|_, cx| timeline.update(cx, |timeline, cx| timeline.scroll_to_row(0, cx)));
+    cx.run_until_parked();
     let composer = cx.update(|_, cx| pane.read(cx).composer.clone());
     cx.update(|_, cx| {
         composer.update(cx, |_, cx| {
@@ -284,7 +288,8 @@ fn a_sent_prompt_goes_to_the_top_once_it_arrives(cx: &mut TestAppContext) {
         })
     });
     live(&client, user(31, "hi"), cx);
-    assert_eq!(top(&pane, cx), 30);
+    // The list stops where its end fills the window, so the prompt sits as high as the rows allow.
+    assert!(top(&pane, cx) > 0, "the view went to the prompt");
 }
 
 // Pins: g0-session#22

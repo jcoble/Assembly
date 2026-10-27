@@ -1,7 +1,7 @@
 //! `Timeline` owns the virtual list (the kit's MessageScroller, which lays out only the rows on screen and keeps the
 //! reading place when a page goes on top), the entries it draws, each item's `Kept`, and the folds the reader opened.
-//! Where it scrolls is `Follow`'s decision. Each session's reading place is kept in memory, written only when the
-//! top item changes from scrolling and when the session closes, never on a draw; G0 doesn't keep it across
+//! Where it scrolls is `Follow`'s decision. Each session's reading place is kept in memory, written when the session is
+//! left, never on a draw; G0 doesn't keep it across
 //! relaunches. Replaces the virtualizer half of
 //! Conversation.svelte and session/scroll.ts.
 
@@ -32,8 +32,10 @@ pub struct Timeline {
     /// The folds the reader opened, by run id.
     open_folds: HashSet<String>,
     follow: Follow,
-    /// Each session's reading place, by session id.
-    places: HashMap<String, ListOffset>,
+    /// Each session's reading place, by session id: the key of the top row on screen when it was left.
+    places: HashMap<String, String>,
+    /// The reading place to go back to once its row is in the entries.
+    restore: Option<String>,
     /// The top row on screen when the scroller last changed.
     top: usize,
     _scrolled: Subscription,
@@ -72,13 +74,14 @@ impl Timeline {
             open_folds: HashSet::new(),
             follow: Follow::default(),
             places: HashMap::new(),
+            restore: None,
             top: 0,
             _scrolled: scrolled,
         }
     }
 
     /// Switches to another session's entries: keeps the reading place of the one it leaves, and goes back to the
-    /// one it left the new one at, or the end.
+    /// one it left the new one at once that row is loaded, or the end. One left at its end goes back to the end.
     pub fn set_session(
         &mut self,
         session: Option<String>,
@@ -86,25 +89,28 @@ impl Timeline {
         cx: &mut Context<Self>,
     ) {
         if let Some(left) = self.session.take() {
-            self.places
-                .insert(left, self.scroller.read(cx).logical_scroll_top());
+            let top = self.scroller.read(cx).logical_scroll_top().item_ix;
+            match self
+                .entries
+                .get(top)
+                .filter(|_| !self.scroller.read(cx).is_following_tail())
+            {
+                Some((key, _)) => self.places.insert(left, key.clone()),
+                None => self.places.remove(&left),
+            };
         }
-        let place = session
+        self.restore = session
             .as_ref()
             .and_then(|session| self.places.get(session))
-            .map(|place| place.item_ix);
+            .cloned();
         self.session = session;
         self.kept.clear();
         self.open_folds.clear();
         self.follow = Follow::default();
         let count = entries.len();
         self.entries = Rc::new(entries);
-        self.scroller.update(cx, |scroller, cx| {
-            scroller.reset(count, cx);
-            if let Some(place) = place {
-                scroller.scroll_to_item(place, cx);
-            }
-        });
+        self.scroller
+            .update(cx, |scroller, cx| scroller.reset(count, cx));
         cx.notify();
     }
 
@@ -141,6 +147,15 @@ impl Timeline {
                 scroller.remeasure_items(at..at + 1, cx);
             }
         });
+        if let Some(at) = self
+            .restore
+            .as_ref()
+            .and_then(|key| self.entries.iter().position(|(entry, _)| entry == key))
+        {
+            self.restore = None;
+            self.scroller
+                .update(cx, |scroller, cx| scroller.scroll_to_item(at, cx));
+        }
         cx.notify();
     }
 

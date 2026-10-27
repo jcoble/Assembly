@@ -25,6 +25,7 @@ use crate::features::session::model::fold::Fold;
 use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::session_view::SessionView;
+use crate::features::session::rows::row::Row;
 use crate::features::session::rows::row_page::RowPage;
 
 pub struct SessionPane {
@@ -38,6 +39,9 @@ pub struct SessionPane {
     composer: Entity<Composer>,
     /// The streaming reply's reveal, stepped once a frame while it's behind; `None` at rest.
     reveal: Option<crate::features::session::model::reveal::Reveal>,
+    /// Live rows that came before the first page, applied once it lands: a delta needs the blocks the page has.
+    /// `None` once the first page is in.
+    held: Option<Vec<Row>>,
     /// An older page is loading.
     loading: bool,
     /// The `before` of the last older page that failed: it isn't asked for again by itself, so a failure can't loop.
@@ -69,10 +73,14 @@ impl SessionPane {
                 ComposerEvent::Sending { .. } => pane
                     .timeline
                     .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx)),
-                ComposerEvent::Sent { run_id, .. } => {
+                ComposerEvent::Sent { session, run_id }
+                    if pane.session.as_ref() == Some(session) =>
+                {
                     pane.known_run = Some(run_id.clone());
                     pane.refresh(Change::Nothing, cx);
                 }
+                // A session left before its send answered gets its run from its rows when it's open again.
+                ComposerEvent::Sent { .. } => {}
             }),
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
                 pane.load_older(cx)
@@ -87,6 +95,7 @@ impl SessionPane {
             timeline,
             composer,
             reveal: None,
+            held: None,
             loading: false,
             failed_before: None,
             status: SharedString::default(),
@@ -107,6 +116,7 @@ impl SessionPane {
         self._rows = None;
         self._tasks.clear();
         self.view = SessionView::default();
+        self.held = Some(Vec::new());
         (
             self.known_run,
             self.loading,
@@ -130,11 +140,9 @@ impl SessionPane {
 
     /// Loads the page above what's loaded, when the timeline nears its top and one isn't already loading.
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
-        let Some(before) = self
-            .view
-            .oldest
-            .filter(|_| self.view.has_before && !self.loading)
-        else {
+        let Some(before) = self.view.oldest.filter(|_| {
+            self.view.has_before && !self.loading && self.failed_before != self.view.oldest
+        }) else {
             return;
         };
         self.loading = true;
@@ -149,25 +157,32 @@ impl SessionPane {
             RowsEvent::Jump { seq } => {
                 self._tasks.clear();
                 self.view = SessionView::default();
+                self.held = Some(Vec::new());
                 (self.loading, self.failed_before) = (false, None);
                 self.timeline.update(cx, |timeline, cx| {
                     timeline.set_entries(Vec::new(), None, cx)
                 });
                 self.load_page(seq + 1, true, cx);
             }
-            RowsEvent::Row(row) => {
-                let change = self.view.apply(&row);
-                if change == Change::Appended
-                    && let Some(item) = self.view.items.last()
-                    && matches!(item.kind, ItemKind::User { .. })
-                {
-                    let key = item.key.clone();
-                    self.timeline.update(cx, |timeline, cx| {
-                        timeline.follow(FollowEvent::UserItem(key), cx)
-                    });
-                }
-                self.refresh(change, cx);
-            }
+            RowsEvent::Row(row) => match &mut self.held {
+                Some(held) => held.push(*row),
+                None => self.apply_live(&row, cx),
+            },
+        }
+    }
+
+    fn apply_live(&mut self, row: &Row, cx: &mut Context<Self>) {
+        let change = self.view.apply(row);
+        // The entries take the new item first, so the timeline can find it to scroll to.
+        self.refresh(change, cx);
+        if change == Change::Appended
+            && let Some(item) = self.view.items.last()
+            && matches!(item.kind, ItemKind::User { .. })
+        {
+            let key = item.key.clone();
+            self.timeline.update(cx, |timeline, cx| {
+                timeline.follow(FollowEvent::UserItem(key), cx)
+            });
         }
     }
 
@@ -215,6 +230,11 @@ impl SessionPane {
                 self.known_run = page.active_run_id;
             }
             self.view.prepend_page(page.rows, page.has_before);
+        }
+        if first {
+            for row in self.held.take().unwrap_or_default() {
+                self.view.apply(&row);
+            }
         }
         self.refresh(Change::Nothing, cx);
     }

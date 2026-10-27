@@ -135,19 +135,24 @@ impl Composer {
                         Ok(answer) => {
                             if let Some(run_id) = answer["runId"].as_str() {
                                 cx.emit(ComposerEvent::Sent {
-                                    session: String::new(),
+                                    session,
                                     run_id: run_id.to_string(),
                                 });
                             }
                         }
                         Err(CallError::Aborted) => {}
-                        // The prompt didn't go out: it comes back to the draft, unless something new was typed.
-                        Err(_) if composer.draft.read(cx).value().is_empty() => {
-                            composer
-                                .draft
-                                .update(cx, |draft, cx| draft.set_value(typed, window, cx));
+                        // The prompt didn't go out: it comes back to its session's draft, unless something new was
+                        // typed there.
+                        Err(_) if composer.session.as_ref() == Some(&session) => {
+                            if composer.draft.read(cx).value().is_empty() {
+                                composer
+                                    .draft
+                                    .update(cx, |draft, cx| draft.set_value(typed, window, cx));
+                            }
                         }
-                        Err(_) => {}
+                        Err(_) => {
+                            composer.drafts.entry(session).or_insert(typed);
+                        }
                     })
                     .ok();
             }));
