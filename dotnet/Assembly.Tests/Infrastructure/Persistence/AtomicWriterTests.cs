@@ -49,6 +49,20 @@ public sealed class AtomicWriterTests : IDisposable
     }
 
     [Fact]
+    public void A_write_started_inside_a_write_on_the_same_thread_throws_and_the_outer_one_leaves_nothing()
+    {
+        // The lock lets the same thread back in, so it's the transaction that stops it, with an error, never a hang.
+        Assert.Throws<InvalidOperationException>(() => _db.Writer.Write("test.outer", scope =>
+        {
+            scope.Execute("INSERT INTO notes(id, text) VALUES (1, 'a');");
+            return _db.Writer.Write("test.inner", inner => inner.Execute("INSERT INTO notes(id, text) VALUES (2, 'b');"));
+        }));
+
+        Assert.Equal(0, Count("notes"));
+        Assert.Empty(_topics.Sent);
+    }
+
+    [Fact]
     public void A_write_leaves_its_rows_one_audit_row_and_its_publish_sent_after_commit()
     {
         // The fake target reads the file on its own connection: the row is there by the time the publish arrives.

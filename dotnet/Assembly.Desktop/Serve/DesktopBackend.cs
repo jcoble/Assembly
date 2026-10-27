@@ -65,15 +65,18 @@ public sealed class DesktopBackend : IAsyncDisposable
         // before the API starts, so no session makes a checkout in sessions/ first.
         AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
         var store = RowStore.Open(db);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System);
-        var hub = new LiveHub(store, topics: topics);
+        // Filled before recovery, whose closing rows go through the hub and so update it.
+        var summaries = SessionSummaries.Load(store);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System, summaries);
+        var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: sessionStore.PublishSummary);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             runsHere: session => sessionStore.Get(session) is not { Machine: not null });
         if (closed > 0)
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
         var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
-        var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log,
+        var status = new MachineStatus(remote is null ? [] : [remote.Name]);
+        var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
             sessions.Helpers.Row.TurnEnded);
         var machines = remoteMachine is null
             ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
@@ -89,7 +92,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         // the last socket.
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
-                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines),
+                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status),
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>
         {

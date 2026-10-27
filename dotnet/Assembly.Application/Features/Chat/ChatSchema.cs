@@ -45,14 +45,42 @@ internal static class Schema
         scope.Execute("DROP INDEX IF EXISTS thread_info_updated;");
     }
 
-    public const string Create = """
+    // rows_summary holds only the kinds a summary reads, so deltas, messages and tools pay nothing for it.
+    public const string Create = $"""
         CREATE TABLE IF NOT EXISTS sessions(session_id TEXT PRIMARY KEY, next_seq INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS rows(session_id TEXT NOT NULL, seq INTEGER NOT NULL, run_id TEXT, item_id TEXT,
           kind TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY (session_id, seq));
         CREATE INDEX IF NOT EXISTS rows_item ON rows(session_id, item_id, kind, seq);
+        CREATE INDEX IF NOT EXISTS rows_summary ON rows(session_id, kind, item_id, seq) WHERE {SummaryKinds};
         CREATE TABLE IF NOT EXISTS tool_details(session_id TEXT NOT NULL, item_id TEXT NOT NULL, input TEXT, output TEXT,
           diff TEXT, path TEXT, PRIMARY KEY (session_id, item_id));
         """;
+
+    /// <summary>
+    /// Every session's newest turn row and the newest row of each of its asks, tasks and subagents, in session and seq
+    /// order (<see cref="SessionSummaries"/>).
+    /// </summary>
+    public const string SummaryRows = $"""
+        SELECT session_id, seq, run_id, item_id, kind, payload, created_at FROM rows WHERE (session_id, seq) IN (
+          SELECT session_id, MAX(seq) FROM rows INDEXED BY rows_summary WHERE {SummaryKinds}
+          GROUP BY session_id, kind, CASE WHEN kind = 'turn' THEN NULL ELSE item_id END)
+        ORDER BY session_id, seq;
+        """;
+
+    /// <summary>
+    /// The seq of the session's newest turn row that ended a turn, if any. Turn rows have no item, so ordering by item
+    /// then seq is the index's own order: it walks them back from the newest and stops at the first end, however many
+    /// turns the session has.
+    /// </summary>
+    public const string LastTurnEnd = $"""
+        SELECT seq FROM rows INDEXED BY rows_summary WHERE session_id = $session AND {SummaryKinds} AND kind = 'turn'
+          AND json_extract(payload, '$.state') IN ('finished', 'failed', 'cancelled')
+        ORDER BY item_id DESC, seq DESC LIMIT 1;
+        """;
+
+    // The kinds a summary reads. SQLite uses a partial index only for a query that names its condition as the index
+    // does, so the queries use this text as it is; INDEXED BY makes a query that drifts from it fail to prepare.
+    private const string SummaryKinds = "kind IN ('turn', 'ask', 'task', 'subagent')";
 
     /// <summary>
     /// One page, in one statement, reading only the page's own items. <c>picked</c> is the newest <c>$limit + 1</c>
