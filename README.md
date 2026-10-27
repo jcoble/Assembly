@@ -1,6 +1,6 @@
 # Assembly
 
-A desktop app for running coding agents, Claude Code and Codex, on this Mac and on remote machines.
+A desktop app for running coding agents, Claude Code and Codex, on this computer and on remote machines.
 
 - `app/`: the UI (SvelteKit).
 - `dotnet/`: the backend and the window (.NET).

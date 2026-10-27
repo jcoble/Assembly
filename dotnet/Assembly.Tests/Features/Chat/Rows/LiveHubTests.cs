@@ -129,7 +129,7 @@ public sealed class LiveHubTests : IDisposable
     [Fact]
     public async Task A_copied_row_reaches_sockets_once_like_a_committed_one()
     {
-        // On the Mac, a remote session's rows arrive as copies that keep the box's seqs.
+        // On the desktop, a remote session's rows arrive as copies that keep the box's seqs.
         using var boxDb = new TempDatabase();
         using var boxDatabase = TestDatabase.Open(boxDb.Path);
         var box = RowStore.Open(boxDatabase);

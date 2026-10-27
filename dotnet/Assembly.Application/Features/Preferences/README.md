@@ -4,8 +4,8 @@ How a feature is laid out in the backend. Copy this shape.
 
 - One folder per feature, one class per file: `Assembly.Application/Features/<Feature>/`, with its outside systems in
   `Assembly.Infrastructure/<Feature>/`. A feature every machine serves (its own files, git, terminals) has a line in
-  `Assembly.Infrastructure/Http/MachineFeatureList.cs`; one only the Mac's window needs has a line in
-  `Assembly.Infrastructure/Http/MacFeatureList.cs`. Preferences is Mac-only, so Workbox Test has no preferences
+  `Assembly.Infrastructure/Http/MachineFeatureList.cs`; one only the desktop's window needs has a line in
+  `Assembly.Infrastructure/Http/DesktopFeatureList.cs`. Preferences is desktop-only, so Workbox Test has no preferences
   table. Every feature has to say which it is.
 - `<Feature>Routes.cs` (in `Assembly.Infrastructure/Http/` until the routes move in B7) has a static `Add(routes, context)` that makes the feature's `FeatureCalls` and adds each call
   with `calls.Map("<method>", handler)`, plus one method per call. That's the only way to add a route

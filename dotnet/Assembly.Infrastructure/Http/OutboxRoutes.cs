@@ -8,7 +8,7 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// Messages this machine's sessions sent to sessions on the machine that reaches it (a helper's parent on the Mac),
+/// Messages this machine's sessions sent to sessions on the machine that reaches it (a helper's parent on the desktop),
 /// which can't be pushed there: <c>GET /outbox</c> lists those waiting, <c>POST /outbox/:id {runId}</c> or
 /// <c>{error}</c> says how delivering went, and <c>POST /outbox/:id/answer {state, reply, error?}</c> brings the
 /// answer back.

@@ -2,7 +2,7 @@
 
 The .NET backend and window. It started as the TanStack AI spike's .NET backend (branch `spike/dotnet`) and was copied here at its commit cd097fc.
 
-The Mac's backend listens on 127.0.0.1:18797, a remote's on 9797 (reached from the Mac on 19797). The Mac's data is in `~/assembly-dotnet/`, its token in `~/.config/assembly-dotnet/env`.
+The desktop backend listens on 127.0.0.1:18797, a remote's on 9797 (reached from the desktop on 19797). The desktop's data is in `~/assembly-dotnet/`, its token in `~/.config/assembly-dotnet/env`.
 
 ## Step 1: headless ACP client
 
@@ -48,7 +48,7 @@ dotnet run --project Assembly.Remote -- serve --home /tmp/assembly-home -- \
   node <adapters>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 ```
 
-On Workbox Test, for the app on the Mac (its tunnel forwards 18797 and 18798 to the box's 9797):
+On Workbox Test, for the desktop app (its tunnel forwards 18797 and 18798 to the box's 9797):
 
 ```sh
 dotnet/scripts/workbox.sh serve          # publishes the committed head and (re)starts the assembly-dotnet user unit
@@ -75,7 +75,7 @@ rules.
   processes and git (`Agents/`), the local and remote machines (`Machines/`, `Remote/`), the transcript replay, `/mcp`,
   the files behind chat and diagnostics (`Chat/`, `Diagnostics/`), and today's HTTP routes (`Http/`) until the socket
   replaces them.
-- `Assembly.Mac/`: the Mac's host. `Assembly.Remote/`: the host on the machine that runs the agent (Workbox):
+- `Assembly.Desktop/`: the desktop host, next to the window. `Assembly.Remote/`: the host on the machine that runs the agent (Workbox):
   `serve`, plus the step 1 and 2 test benches (`smoke`, `record`, `rows`).
 - `Assembly.Tests/`: one project. `Architecture/`, `Core/`, `Infrastructure/` and `Features/<Feature>/` follow the
   code; `Draft/`, `Pinned/` and `Fixtures/` stay where they were.

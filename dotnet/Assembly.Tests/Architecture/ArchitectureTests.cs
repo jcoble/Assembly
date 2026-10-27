@@ -75,7 +75,7 @@ public sealed partial class ArchitectureTests
     public void Infrastructure_references_no_host()
     {
         var references = OurReferences("Assembly.Infrastructure");
-        Assert.DoesNotContain("Assembly.Mac", references);
+        Assert.DoesNotContain("Assembly.Desktop", references);
         Assert.DoesNotContain("Assembly.Remote", references);
     }
 

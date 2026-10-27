@@ -11,7 +11,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// <summary>
 /// One session's events to rows. It keeps only what is still open: the streaming message, the thinking,
 /// the tool calls not yet finished, and the turn's tallies. The same events always give the same rows,
-/// because time comes from the events, so the Mac and Workbox convert alike.
+/// because time comes from the events, so the desktop and Workbox convert alike.
 /// </summary>
 public sealed class RowConverter
 {

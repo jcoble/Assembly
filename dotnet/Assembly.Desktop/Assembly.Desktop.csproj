@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- The Mac's backend: the engine plus its API on 127.0.0.1:18797, which the page in the shell talks to. -->
+  <!-- The desktop backend: the engine plus its API on 127.0.0.1:18797, which the page in the shell talks to. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsAotCompatible>true</IsAotCompatible>

@@ -193,37 +193,37 @@ public sealed class RowStoreTests : IDisposable
     [Fact]
     public void A_copied_row_keeps_its_seq_and_only_the_next_one_is_taken()
     {
-        // The Mac copies a remote session's rows as the box numbered them, so "rows after N" means the same on both.
+        // The desktop copies a remote session's rows as the box numbered them, so "rows after N" means the same on both.
         var box = _store.Commit("a", Batch("x", "y", "z"));
         using var macDb = new TempDatabase();
-        using var macDatabase = TestDatabase.Open(macDb.Path);
-        var mac = RowStore.Open(macDatabase);
+        using var desktopDatabase = TestDatabase.Open(macDb.Path);
+        var desktop = RowStore.Open(desktopDatabase);
 
-        Assert.True(mac.Copy(box[0]));
-        Assert.False(mac.Copy(box[0]));
-        Assert.False(mac.Copy(box[2]));
-        Assert.True(mac.Copy(box[1]));
-        Assert.True(mac.Copy(box[2]));
-        Assert.Equal(box.Select(Json), mac.RowsAfter("a", 0).Select(Json));
-        Assert.Equal(3, mac.LastSeq("a"));
-        Assert.Equal(0, mac.LastSeq("b"));
+        Assert.True(desktop.Copy(box[0]));
+        Assert.False(desktop.Copy(box[0]));
+        Assert.False(desktop.Copy(box[2]));
+        Assert.True(desktop.Copy(box[1]));
+        Assert.True(desktop.Copy(box[2]));
+        Assert.Equal(box.Select(Json), desktop.RowsAfter("a", 0).Select(Json));
+        Assert.Equal(3, desktop.LastSeq("a"));
+        Assert.Equal(0, desktop.LastSeq("b"));
     }
 
     [Fact]
     public void A_copy_takes_a_row_across_a_gap_and_a_copied_message_deletes_its_deltas()
     {
         using var macDb = new TempDatabase();
-        using var macDatabase = TestDatabase.Open(macDb.Path);
-        var mac = RowStore.Open(macDatabase);
-        // Live, the Mac got the deltas before the message finished.
+        using var desktopDatabase = TestDatabase.Open(macDb.Path);
+        var desktop = RowStore.Open(desktopDatabase);
+        // Live, the desktop got the deltas before the message finished.
         var x = _store.Commit("a", Batch("x"));
         var deltas = _store.Commit("a", Rows(Delta("m", "a"), Delta("m", "b")));
-        Assert.All(x.Concat(deltas), row => Assert.True(mac.Copy(row)));
+        Assert.All(x.Concat(deltas), row => Assert.True(desktop.Copy(row)));
         var message = _store.Commit("a", Rows(Message("m")));
-        Assert.True(mac.Copy(message[0]));
-        Assert.Equal(_store.RowsAfter("a", 0).Select(Json), mac.RowsAfter("a", 0).Select(Json));
+        Assert.True(desktop.Copy(message[0]));
+        Assert.Equal(_store.RowsAfter("a", 0).Select(Json), desktop.RowsAfter("a", 0).Select(Json));
 
-        // A Mac that joins later gets the box's rows with the gap, and takes them as they are.
+        // A desktop that joins later gets the box's rows with the gap, and takes them as they are.
         using var lateDb = new TempDatabase();
         using var lateDatabase = TestDatabase.Open(lateDb.Path);
         var late = RowStore.Open(lateDatabase);
@@ -241,13 +241,13 @@ public sealed class RowStoreTests : IDisposable
         batch.Rows.Add(Tool("t1", "completed", "ls"));
         var box = _store.Commit("a", batch);
         using var macDb = new TempDatabase();
-        using var macDatabase = TestDatabase.Open(macDb.Path);
-        var mac = RowStore.Open(macDatabase);
-        mac.Copy(box[0]);
+        using var desktopDatabase = TestDatabase.Open(macDb.Path);
+        var desktop = RowStore.Open(desktopDatabase);
+        desktop.Copy(box[0]);
 
-        Assert.Null(mac.ToolCall("a", "t1"));
-        mac.SaveToolDetail("a", new ToolDetail("t1", Input: """{"command":"ls"}""", Output: "a.txt"));
-        Assert.Equal(new StoredToolCall("ls", """{"command":"ls"}""", "a.txt", null, null), mac.ToolCall("a", "t1"));
+        Assert.Null(desktop.ToolCall("a", "t1"));
+        desktop.SaveToolDetail("a", new ToolDetail("t1", Input: """{"command":"ls"}""", Output: "a.txt"));
+        Assert.Equal(new StoredToolCall("ls", """{"command":"ls"}""", "a.txt", null, null), desktop.ToolCall("a", "t1"));
     }
 
     [Fact]

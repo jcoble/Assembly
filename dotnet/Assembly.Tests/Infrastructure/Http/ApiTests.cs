@@ -158,7 +158,7 @@ public sealed class ApiTests : IAsyncLifetime
     [Fact]
     public async Task The_row_format_and_the_machines_are_reported()
     {
-        // The Mac copies a box's rows only when their row formats match.
+        // The desktop copies a box's rows only when their row formats match.
         Assert.Equal(RowStore.FormatVersion, (await GetJsonAsync("/version")).GetProperty("formatVersion").GetInt32());
         Assert.Empty((await GetJsonAsync("/machines")).GetProperty("machines").EnumerateArray());
         Assert.Equal(HttpStatusCode.BadRequest,

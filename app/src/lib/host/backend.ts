@@ -1,4 +1,4 @@
-// The Mac's .NET backend, which the shell starts and names to the page before it loads:
+// The desktop's .NET backend, which the shell starts and names to the page before it loads:
 // window.__ASSEMBLY__ = { port, token }. Outside the shell (vite dev) the port is the checkout's (vite.config.ts)
 // and there's no token.
 type Injected = { port: number; token: string };

@@ -99,7 +99,7 @@ fn main() {
         .setup(|app| {
             let backend = app.path().resource_dir()?.join("backend");
             let lane = read_lane(&backend.join("lane.json"))?;
-            let child = start_backend(&backend.join("Assembly.Mac"), &lane)?;
+            let child = start_backend(&backend.join("Assembly.Desktop"), &lane)?;
             app.manage(Backend(Mutex::new(Some(child))));
             let token = read_token(&lane.token_file)?;
             let script = format!("window.__ASSEMBLY__ = {{ port: {}, token: {} }};", lane.port, serde_json::to_string(&token)?);

@@ -10,8 +10,8 @@ using Assembly.Application.Features.Chat;
 namespace Assembly.Infrastructure.Remote;
 
 /// <summary>
-/// Copies a remote session's rows into the Mac's store, in seq order, and publishes them on the Mac's hub. One socket
-/// per session to the remote's <c>/live?after=</c>, opened from the Mac's last seq for the session: the backlog is the
+/// Copies a remote session's rows into the desktop's store, in seq order, and publishes them on the desktop's hub. One socket
+/// per session to the remote's <c>/live?after=</c>, opened from the desktop's last seq for the session: the backlog is the
 /// catch-up, then live rows follow. It keeps following while the turn runs or a webview has the session open, and
 /// reconnects from the last seq when the link drops or a row doesn't follow the one before it.
 /// </summary>

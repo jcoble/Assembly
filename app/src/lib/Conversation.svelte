@@ -68,7 +68,7 @@
   setContext(TOOL_DETAIL, (itemId: string) => toolDetail(token, sessionId, itemId, owner.signal));
   setContext(ASK_ANSWER, (askId: string, answer: Record<string, unknown>) => answerAsk(token, sessionId, askId, answer, owner.signal));
   setContext(TASK_STOP, (taskId: string) => stopTask(token, sessionId, taskId, owner.signal));
-  // Replies and the header name the session's agent, from its machine's list, or this Mac's when that one
+  // Replies and the header name the session's agent, from its machine's list, or this computer's when that one
   // doesn't answer (both name the agents alike); its id until one does.
   let speaker = $state(agent);
   const nameIn = ({ agents }: { agents: { id: string; name: string }[] }) => agents.find((a) => a.id === agent)?.name;

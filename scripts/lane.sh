@@ -34,7 +34,7 @@ case "$mode" in
     (cd "$dir/app" && pnpm install --silent --prefer-offline)
     [ "$(uname)" = Darwin ] && (cd "$dir/shell" && pnpm install --silent --prefer-offline)
     (cd "$dir" && . scripts/lane-env.sh && echo "lane $name (number $number) is at $dir on lane/$name:
-  Mac backend 127.0.0.1:$MAC_PORT, vite dev localhost:$DEV_PORT, data $DATA
+  Desktop backend 127.0.0.1:$DESKTOP_PORT, vite dev localhost:$DEV_PORT, data $DATA
   Workbox Test host 127.0.0.1:$BOX_PORT, unit $BOX_UNIT, folder ~/$BOX_DATA") ;;
   adopt)
     [ -n "$name" ] || { echo "usage: scripts/lane.sh adopt <name>" >&2; exit 2; }
@@ -65,7 +65,7 @@ case "$mode" in
     git -C "$main" worktree remove "$dir"
     git -C "$main" worktree prune
     git -C "$main" branch -d "lane/$name" 2>/dev/null && echo "deleted the local branch lane/$name (merged, or all of it pushed)" || echo "kept branch lane/$name (it has commits that aren't merged or pushed)"
-    echo "removed lane $name; its Mac data folder, if any, stays at ~/assembly-dotnet-$name" ;;
+    echo "removed lane $name; its desktop data folder, if any, stays at ~/assembly-dotnet-$name" ;;
   list)
     git -C "$main" worktree list | grep "$lanes/" || echo "no lanes here"
     echo "numbers reserved on Workbox Test:"

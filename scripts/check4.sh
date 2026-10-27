@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The four-way check: one turn each for Claude Code and Codex, on this checkout's local backend and on its Workbox
-# Test host, against this commit. It needs both running from this commit: the local backend on MAC_PORT (the window,
+# Test host, against this commit. It needs both running from this commit: the local backend on DESKTOP_PORT (the window,
 # `shell/assembly.sh start` with ASSEMBLY_REMOTE=workbox-test, or the headless backend on the workbox) and the host
 # (`dotnet/scripts/workbox.sh serve`). Evidence goes to evidence/<commit>/four-way/: per case its rows and the
 # agent's transcript path and size, and summary.json and summary.md. Commit that folder; a code commit pushed
@@ -53,7 +53,7 @@ mkdir -p "$out"
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 started=$(now)
-local_base=http://127.0.0.1:$MAC_PORT
+local_base=http://127.0.0.1:$DESKTOP_PORT
 box_base=http://127.0.0.1:$((BOX_PORT + 10000))   # the local backend's tunnel to the host
 # Tokens stay in variables and reach curl on stdin, never in argv, a file or the log.
 local_token=$(sed -n 's/^ASSEMBLY_TOKEN=//p' "$TOKEN_FILE" 2>/dev/null || true)

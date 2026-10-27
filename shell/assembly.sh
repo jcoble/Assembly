@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Builds and runs Assembly from this checkout: the shell (shell/) with the .NET backend (dotnet/Assembly.Mac)
+# Builds and runs Assembly from this checkout: the shell (shell/) with the .NET backend (dotnet/Assembly.Desktop)
 # bundled inside it, on this checkout's ports and folders (scripts/lane-env.sh).
-#   shell/assembly.sh build             publishes Assembly.Mac (Native AOT) to shell/backend with the lane's
+#   shell/assembly.sh build             publishes Assembly.Desktop (Native AOT) to shell/backend with the lane's
 #                                       values (backend/lane.json), builds app/ and the shell, and puts the
 #                                       bundle at DATA/mac/APP_NAME.app
 #   shell/assembly.sh start [--counters] writes the agents file and opens the bundle with `open`, so WebKit's
@@ -26,10 +26,10 @@ case "$mode" in
   build)
     export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 MSBUILDDISABLENODEREUSE=1
     rm -rf shell/backend
-    dotnet publish -v q --nologo -c Release -r osx-arm64 -p:PublishAot=true -o shell/backend dotnet/Assembly.Mac
+    dotnet publish -v q --nologo -c Release -r osx-arm64 -p:PublishAot=true -o shell/backend dotnet/Assembly.Desktop
     rm -rf shell/backend/*.dbg shell/backend/*.dSYM
     cat > shell/backend/lane.json <<JSON
-{ "port": $MAC_PORT, "home": "$home", "tokenFile": "$TOKEN_FILE", "remotePort": $BOX_PORT, "remoteTokenFile": "$BOX_TOKEN_FILE" }
+{ "port": $DESKTOP_PORT, "home": "$home", "tokenFile": "$TOKEN_FILE", "remotePort": $BOX_PORT, "remoteTokenFile": "$BOX_TOKEN_FILE" }
 JSON
     config=$(printf '{"identifier":"%s","productName":"%s"}' "$APP_ID" "$APP_NAME")
     (cd shell && pnpm install --silent && pnpm tauri build --bundles app --config "$config" >/dev/null)
@@ -48,11 +48,11 @@ JSON
     [ -n "${ASSEMBLY_REMOTE:-}" ] && envs+=(--env "ASSEMBLY_REMOTE=$ASSEMBLY_REMOTE")
     [ -n "$query" ] && envs+=(--env "ASSEMBLY_QUERY=$query")
     open -n "${envs[@]}" "$bundle"
-    for _ in $(seq 100); do nc -z 127.0.0.1 "$MAC_PORT" >/dev/null 2>&1 && break; sleep 0.2; done
+    for _ in $(seq 100); do nc -z 127.0.0.1 "$DESKTOP_PORT" >/dev/null 2>&1 && break; sleep 0.2; done
     pid=$(pgrep -nf "$bundle/Contents/MacOS/assembly-shell" || true)
     [ -n "$pid" ] || { echo "$APP_NAME didn't start; see $home/backend.log" >&2; exit 1; }
     echo "$pid" > "$pidfile"
-    echo "$APP_NAME (pid $pid) runs; its backend is on 127.0.0.1:$MAC_PORT; log: $home/backend.log" ;;
+    echo "$APP_NAME (pid $pid) runs; its backend is on 127.0.0.1:$DESKTOP_PORT; log: $home/backend.log" ;;
   stop)
     running || { echo "$APP_NAME isn't running" >&2; exit 1; }
     pid=$(cat "$pidfile")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dotnet/scripts/agents-file.sh ADAPTERS OUT
 # Installs the pinned ACP adapters under ADAPTERS (with pnpm) if they're missing, and writes OUT: the agents file
-# Assembly.Mac and Assembly.Remote serve read (AgentDescriptor). Codex runs with this machine's own ~/.codex and login;
+# Assembly.Desktop and Assembly.Remote serve read (AgentDescriptor). Codex runs with this machine's own ~/.codex and login;
 # CODEX_CONFIG sets the model for Assembly's sessions only (its config file stays as it is) until the model menu.
 # ASSEMBLY_USER_MCP=off (the default) also turns off, for Assembly's Codex sessions only, every MCP server and plugin
 # named in ~/.codex/config.toml (read, never written) and Codex's bundled plugins: each session would otherwise start

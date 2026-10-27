@@ -21,13 +21,13 @@ using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Topics;
 
-namespace Assembly.Mac.Serve;
+namespace Assembly.Desktop.Serve;
 
 /// <summary>
-/// The Mac's backend, running: the row store and sessions list in <c>home/assembly.db</c>, the live hub, the local
+/// The desktop backend, running: the row store and sessions list in <c>home/assembly.db</c>, the live hub, the local
 /// sessions and the API. Port 0 picks a free port (for tests).
 /// </summary>
-public sealed class MacBackend : IAsyncDisposable
+public sealed class DesktopBackend : IAsyncDisposable
 {
     private readonly AppDatabase _db;
     private readonly LiveHub _hub;
@@ -36,7 +36,7 @@ public sealed class MacBackend : IAsyncDisposable
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
 
-    private MacBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
+    private DesktopBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
         WebApplication app)
     {
         _remote = remote;
@@ -52,7 +52,7 @@ public sealed class MacBackend : IAsyncDisposable
     public Uri Address { get; }
 
     /// <summary>Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there.</summary>
-    public static async Task<MacBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
+    public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
     {
         Directory.CreateDirectory(home);
         var database = Path.Combine(home, "assembly.db");
@@ -73,7 +73,7 @@ public sealed class MacBackend : IAsyncDisposable
             : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
         sessions.Helpers.Delivery.Machines = machines;
         var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, sessionStore, hub, machines.Named(null)!, log);
-        // Turns a remote was running when the Mac stopped: catch up on them rather than mark them lost.
+        // Turns a remote was running when the desktop stopped: catch up on them rather than mark them lost.
         remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId).Where(id => sessionStore.Get(id)?.Machine == remote!.Name));
 
         Uri? address = null;
@@ -81,12 +81,12 @@ public sealed class MacBackend : IAsyncDisposable
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
-            MacFeatureList.Add(routes, new FeatureContext(db));
+            DesktopFeatureList.Add(routes, new FeatureContext(db));
             new DebugRoutes(hub).Map(routes);
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new MacBackend(db, hub, sessions, remoteMachine, outbox, app);
+        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();

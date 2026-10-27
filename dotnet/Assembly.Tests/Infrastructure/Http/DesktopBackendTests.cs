@@ -4,7 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using Assembly.Mac.Serve;
+using Assembly.Desktop.Serve;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Http;
 using Assembly.Tests.Features.Chat.Sessions;
@@ -13,21 +13,21 @@ using Assembly.Tests.Features.Diagnostics;
 using Assembly.Tests.Infrastructure.Remote;
 namespace Assembly.Tests.Infrastructure.Http;
 
-/// <summary>Assembly.Mac's backend on a free port, with a scripted agent behind it.</summary>
-public sealed class MacBackendTests : IAsyncLifetime
+/// <summary>Assembly.Desktop's backend on a free port, with a scripted agent behind it.</summary>
+public sealed class DesktopBackendTests : IAsyncLifetime
 {
-    private const string Token = "mac-token";
+    private const string Token = "desktop-token";
 
-    private readonly string _home = Directory.CreateTempSubdirectory("assembly-mac-").FullName;
+    private readonly string _home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
     private readonly FakeLauncher _launcher = new();
     private readonly StringWriter _log = new();
-    private MacBackend _backend = null!;
+    private DesktopBackend _backend = null!;
     private bool _disposed;
     private HttpClient _http = null!;
 
     public async Task InitializeAsync()
     {
-        _backend = await MacBackend.StartAsync(_home, Token, port: 0, _launcher, _log);
+        _backend = await DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log);
         _http = new HttpClient { BaseAddress = _backend.Address };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
     }

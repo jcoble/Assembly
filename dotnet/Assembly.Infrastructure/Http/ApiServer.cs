@@ -8,7 +8,7 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// The API on 127.0.0.1: the webview's, on the Mac, and the Mac's, on a remote machine. Port 0 picks a free port
+/// The API on 127.0.0.1: the webview's, on the desktop, and the desktop's, on a remote machine. Port 0 picks a free port
 /// (for tests). <paramref name="more"/> maps a host's own routes after the shared ones.
 /// </summary>
 public static class ApiServer

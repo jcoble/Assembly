@@ -17,7 +17,7 @@ using Assembly.Infrastructure.Topics;
 namespace Assembly.Remote.Serve;
 
 /// <summary>
-/// Runs the remote host: the row store and sessions list, the live hub, the sessions, and the API a Mac copies the
+/// Runs the remote host: the row store and sessions list, the live hub, the sessions, and the API a desktop copies the
 /// rows through, until Ctrl+C. Every session here runs here.
 /// </summary>
 public static class ServeRun

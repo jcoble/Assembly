@@ -8,7 +8,7 @@ using Assembly.Domain.Sessions;
 namespace Assembly.Infrastructure.Remote;
 
 /// <summary>
-/// Messages a remote's helper sessions send to their parents here, which the remote can't push: the Mac picks them up
+/// Messages a remote's helper sessions send to their parents here, which the remote can't push: the desktop picks them up
 /// every second while a helper of a session here has a run open there and once more after it ends, and every few
 /// seconds otherwise while the remote has helpers of sessions here, so a helper that sends and ends between two looks
 /// isn't missed. It delivers each to its session (a prompt, or steered into the running turn), and tells the remote
@@ -92,7 +92,7 @@ internal sealed class RemoteOutbox : IAsyncDisposable
         if (_sessionStore.Message(messageId) is { } recorded)
         {
             await _remote.DeliveredAsync(messageId, recorded.RunId,
-                recorded.Error ?? "The Mac stopped before it could deliver the message.", cancellationToken);
+                recorded.Error ?? "The desktop app stopped before it could deliver the message.", cancellationToken);
             return;
         }
 
@@ -107,7 +107,7 @@ internal sealed class RemoteOutbox : IAsyncDisposable
             error = runId is null ? "That session is busy and can't take a message now; try again when it's done." : null;
         }
         else
-            error = "There's no such session on the Mac.";
+            error = "There's no such session on this computer.";
 
         if (runId is not null)
             _sessionStore.SetMessageRun(messageId, runId);
