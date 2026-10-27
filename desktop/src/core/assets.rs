@@ -6,7 +6,21 @@ use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, Result, SharedString};
 
-gpui_kit::assets::icon_assets!(Extra, [House, CircleQuestionMark, ShieldQuestionMark, Dot]);
+gpui_kit::assets::icon_assets!(
+    Extra,
+    [
+        House,
+        CircleQuestionMark,
+        ShieldQuestionMark,
+        Dot,
+        GitBranch,
+        ListChecks,
+        GitFork,
+        CirclePlay,
+        Gauge,
+        RotateCcwClock
+    ]
+);
 
 pub struct AppAssets;
 

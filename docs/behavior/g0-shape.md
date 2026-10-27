@@ -34,3 +34,8 @@ this one row (Jesse 2026-10-27, "many list items from diff places get the same b
 click and each frame's height, can open or shut it itself, and can draw the band and the body from its own state.
 g0-shape#11 The sessions column can be dragged from 220 to 560 px wide and the drawer from 240 to 640 px (the approved
 look); a dragged edge stops at the limit, and the drag still saves once, when it ends.
+g0-shape#12 The side docks' tabs are the old app's (Jesse 2026-10-27, "make these more like the ones in the old app,
+same with left side"). The drawer's are one rounded strip of icon pills, the old app's icons, the shown one lit and the
+name on hover. The sessions column's are the old top tab row's text chips. A click shows that pane, a side tab still
+drags its pane anywhere (g0-shape#2), and a row too narrow for its tabs scrolls. Chat and the bottom dock keep the
+kit's tabs.
