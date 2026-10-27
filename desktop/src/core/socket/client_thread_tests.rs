@@ -1,7 +1,7 @@
 //! The client thread's rules against `FakeBackend`: hello, calls and their answers, cancel and latest-wins,
 //! subscriptions, and a dropped socket's one reopen. Pins the draft list in docs/behavior/g0-socket.md.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_executor::block_on;
 use serde_json::{Value, json};
@@ -249,6 +249,8 @@ fn a_backend_that_stops_reading_ends_the_connection_and_the_client_still_stops()
     assert_eq!(client.state(), connected());
     let _stall = client.call("stall", None);
     let big = "x".repeat(1 << 20);
+    // The first few writes fill the socket's buffers in milliseconds; the one after blocks.
+    let blocked = Instant::now();
     for id in 1000..1064 {
         let (answer, _) = futures_channel::oneshot::channel();
         let call = Event::Call {
@@ -261,9 +263,14 @@ fn a_backend_that_stops_reading_ends_the_connection_and_the_client_still_stops()
         };
         client.events.send(call).unwrap();
     }
-    // The writes fill the socket's buffers, and the one that can't finish fails after 5 s.
+    // A send has 5 s in all, however the kernel takes its bytes, so the connection ends 5 s after the send blocks.
     let ended = client.state_within(Duration::from_secs(15));
     assert_eq!(ended, Some(ConnectionState::Connecting));
+    let took = blocked.elapsed();
+    assert!(
+        took < Duration::from_secs(8),
+        "the connection ended after {took:?}"
+    );
 }
 
 // Pins: g0-socket#4
