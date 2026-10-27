@@ -5,12 +5,12 @@
 //! (tungstenite's read and send both take `&mut`). Only the client thread writes: the reader's stream drops writes,
 //! so tungstenite's own pong and close replies never reach the wire, and a ping goes to the client thread as
 //! `Event::Ping` for it to answer. Nothing is lost in the split: the backend sends nothing after the welcome until
-//! the client writes. Dropping the connection shuts the stream down, which ends its reader.
+//! the client writes. Dropping the connection shuts the stream down, which ends its reader, and waits for it.
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::mpsc::Sender;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use tungstenite::protocol::Role;
@@ -29,6 +29,7 @@ const OPENING: Duration = Duration::from_secs(5);
 pub(super) struct Connection {
     pub machine: String,
     writer: WebSocket<TcpStream>,
+    reader: Option<JoinHandle<()>>,
 }
 
 impl Connection {
@@ -61,11 +62,15 @@ impl Connection {
         opened.set_read_timeout(None).map_err(failed)?;
         opened.set_write_timeout(None).map_err(failed)?;
         let reader = WebSocket::from_raw_socket(ReadOnly(read_half), Role::Client, None);
-        thread::Builder::new()
+        let reader = thread::Builder::new()
             .name("socket reader".into())
             .spawn(move || read_frames(reader, events))
             .map_err(failed)?;
-        Ok(Self { machine, writer })
+        Ok(Self {
+            machine,
+            writer,
+            reader: Some(reader),
+        })
     }
 
     /// Sends one frame; an error means the socket is gone (its reader sends `Closed`).
@@ -122,6 +127,9 @@ fn read_frames(mut socket: WebSocket<ReadOnly>, events: Sender<Event>) {
 impl Drop for Connection {
     fn drop(&mut self) {
         let _ = self.writer.get_ref().shutdown(Shutdown::Both);
+        if let Some(reader) = self.reader.take() {
+            let _ = reader.join();
+        }
     }
 }
 

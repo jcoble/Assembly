@@ -1,5 +1,5 @@
 //! `Event` is everything the client thread waits on, on one channel: the window's requests, the
-//! reader thread's frames, the socket closing, and `Reconnect`.
+//! reader thread's frames, the socket closing, `Reconnect`, and `Stop`.
 
 use futures_channel::mpsc::UnboundedSender;
 use futures_channel::oneshot;
@@ -49,4 +49,7 @@ pub(super) enum Event {
     /// The backend closed it with 4400 or 4401, which a reopen with the same can't change: `Refused`, no retry.
     Refused(u16),
     Reconnect(Endpoint),
+    /// The client is dropped: waiting calls settle `Aborted`, the connection closes (its reader ends), and the
+    /// thread returns.
+    Stop,
 }

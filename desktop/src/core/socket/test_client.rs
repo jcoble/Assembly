@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use futures_channel::mpsc::{UnboundedReceiver, unbounded};
@@ -29,6 +29,7 @@ pub(super) struct TestClient {
     pub events: Sender<Event>,
     states: Receiver<ConnectionState>,
     ids: Arc<AtomicU64>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl TestClient {
@@ -40,7 +41,8 @@ impl TestClient {
         let (events, receiver) = mpsc::channel();
         let (states_tx, mut changes) = unbounded();
         let ids = Arc::new(AtomicU64::new(0));
-        ClientThread::spawn(endpoint, receiver, events.clone(), states_tx, ids.clone());
+        let thread =
+            ClientThread::spawn(endpoint, receiver, events.clone(), states_tx, ids.clone());
         // The state channel is async; a thread hands each state on to one the test can wait on with a deadline.
         let (forward, states) = mpsc::channel();
         thread::spawn(move || {
@@ -54,6 +56,7 @@ impl TestClient {
             events,
             states,
             ids,
+            thread: Some(thread),
         }
     }
 
@@ -119,6 +122,24 @@ impl TestClient {
             })
             .unwrap();
         receiver
+    }
+}
+
+/// Stops the client thread as `SocketClient` does, and fails the test if it doesn't end within the deadline.
+impl Drop for TestClient {
+    fn drop(&mut self) {
+        let _ = self.events.send(Event::Stop);
+        let Some(thread) = self.thread.take() else {
+            return;
+        };
+        let (done, ended) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = thread.join();
+            let _ = done.send(());
+        });
+        if ended.recv_timeout(DEADLINE).is_err() && !thread::panicking() {
+            panic!("the client thread didn't end within the deadline");
+        }
     }
 }
 

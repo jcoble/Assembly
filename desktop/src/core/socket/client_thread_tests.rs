@@ -13,7 +13,9 @@ use super::event::Event;
 use super::fake_backend::{FakeBackend, Reply, hello};
 use super::outcome::Outcome;
 use super::pending_call::PendingCall;
-use super::test_client::{TestClient as Client, backend, connected, endpoint, error, outcome};
+use super::test_client::{
+    DEADLINE, TestClient as Client, backend, connected, endpoint, error, outcome,
+};
 use super::update::Update;
 
 // Pins: g0-socket#1
@@ -215,6 +217,21 @@ fn a_connection_that_answered_gets_the_reopen_at_once_again() {
     drop(client.call("drop", None));
     assert_eq!(client.state(), ConnectionState::Connecting);
     assert_eq!(client.state(), connected());
+}
+
+// Dropping the client ends its thread and its connection's reader (the test client joins the thread, with a
+// deadline), and the backend sees the socket close.
+#[test]
+fn dropping_the_client_ends_its_threads_and_closes_the_socket() {
+    let backend = backend();
+    let mut client = Client::start(backend.port);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    drop(client);
+    backend
+        .closed
+        .recv_timeout(DEADLINE)
+        .expect("the socket closed within the deadline");
 }
 
 // Pins: g0-socket#4

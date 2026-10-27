@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use futures_channel::mpsc::UnboundedSender;
@@ -80,14 +80,14 @@ struct Rows {
 }
 
 impl ClientThread {
-    /// Starts the thread, which opens the socket at once.
+    /// Starts the thread, which opens the socket at once and runs until `Event::Stop`.
     pub fn spawn(
         endpoint: Endpoint,
         events: Receiver<Event>,
         sender: Sender<Event>,
         states: UnboundedSender<ConnectionState>,
         ids: Arc<AtomicU64>,
-    ) {
+    ) -> JoinHandle<()> {
         let mut client = Self {
             endpoint,
             events,
@@ -107,7 +107,7 @@ impl ClientThread {
         thread::Builder::new()
             .name("socket".into())
             .spawn(move || client.run())
-            .expect("spawn the socket thread");
+            .expect("spawn the socket thread")
     }
 
     fn run(&mut self) {
@@ -132,6 +132,10 @@ impl ClientThread {
                     Err(_) => return,
                 }
             };
+            if let Event::Stop = event {
+                self.close();
+                return;
+            }
             self.handle(event);
         }
     }
@@ -242,6 +246,7 @@ impl ClientThread {
                 self.close();
                 self.disconnected();
             }
+            Event::Stop => {}
             Event::Reconnect(endpoint) => {
                 if self.connection.is_none() {
                     self.endpoint = endpoint;

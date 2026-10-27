@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
+use std::thread::JoinHandle;
 
 use futures_channel::mpsc::unbounded;
 use futures_channel::oneshot;
@@ -28,11 +29,23 @@ pub struct SocketClient {
     state: ConnectionState,
     /// Brings the client thread's state changes to the entity.
     _states: Task<()>,
+    /// Joined on drop, after `Event::Stop`.
+    thread: Option<JoinHandle<()>>,
 }
 
 struct GlobalSocket(Entity<SocketClient>);
 
 impl Global for GlobalSocket {}
+
+impl Drop for SocketClient {
+    /// Ends the client thread, which closes the socket and ends its reader, and waits for it.
+    fn drop(&mut self) {
+        let _ = self.events.send(Event::Stop);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
 
 impl EventEmitter<ConnectionState> for SocketClient {}
 
@@ -42,7 +55,8 @@ impl SocketClient {
         let (events, receiver) = mpsc::channel();
         let (states, mut changes) = unbounded();
         let next_id = Arc::new(AtomicU64::new(0));
-        ClientThread::spawn(endpoint, receiver, events.clone(), states, next_id.clone());
+        let thread =
+            ClientThread::spawn(endpoint, receiver, events.clone(), states, next_id.clone());
         let client = cx.new(|cx| {
             let states = cx.spawn(async move |this, cx| {
                 while let Ok(state) = changes.recv().await {
@@ -61,6 +75,7 @@ impl SocketClient {
                 next_id,
                 state: ConnectionState::Connecting,
                 _states: states,
+                thread: Some(thread),
             }
         });
         cx.set_global(GlobalSocket(client.clone()));
