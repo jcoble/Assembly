@@ -247,14 +247,16 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
     {
         if (!update.Update.TryGetProperty("sessionId", out var id) || id.GetString() is not { Length: > 0 } childId || childId == update.SessionId)
             return;
-        var idle = update.Update.TryGetProperty("state", out var work) && work.ValueKind == JsonValueKind.Object
-                   && work.TryGetProperty("state", out var state) && state.GetString() == "idle";
+        // An update that names no state (a new title, say) leaves a child as it was; a new child is at work.
+        var state = update.Update.TryGetProperty("state", out var work) && work.ValueKind == JsonValueKind.Object
+                    && work.TryGetProperty("state", out var named) ? named.GetString() : null;
         CancellationTokenSource? ended = null;
         lock (_childrenGate)
         {
             var parent = _children.TryGetValue(update.SessionId, out var grandparent) ? grandparent.Parent : update.SessionId;
-            _children.TryGetValue(childId, out var known);
-            if (idle)
+            if (_children.TryGetValue(childId, out var known) && state is null)
+                return;
+            if (state == "idle")
                 (ended, _children[childId]) = (known.Working, (parent, null));
             else
                 _children[childId] = (parent, known.Working ?? new CancellationTokenSource());
