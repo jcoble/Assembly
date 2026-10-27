@@ -31,3 +31,7 @@ pub fn upload_image(
 ) -> Task<Result<String, CallError>> {
     todo!()
 }
+
+#[cfg(test)]
+#[path = "upload_tests.rs"]
+mod tests;

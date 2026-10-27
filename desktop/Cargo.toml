@@ -9,6 +9,7 @@ gpui-kit = "=0.8.1"
 gpui-fps = "=0.8.1"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+base64 = "=0.22.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
 tungstenite = "=0.27.0"
 
