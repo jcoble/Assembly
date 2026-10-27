@@ -183,6 +183,19 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
             _follower.Watch(sessionId);
     }
 
+    /// <summary>
+    /// Reads the remote's row format again, so a remote upgraded in place is seen, unless an open follower link already
+    /// shows it's there. Once it answers, the sessions the follower gave up on while it was unreachable are followed again.
+    /// </summary>
+    public async Task ProbeAsync(CancellationToken cancellationToken)
+    {
+        if (_follower.Linked)
+            return;
+        _formatChecked = false;
+        await CheckFormatAsync(cancellationToken);
+        _follower.Resume();
+    }
+
     // The remote's rows are copied as they are, so it must write the format this computer reads. Until it's known to,
     // an answer doesn't mark it reachable, so another format never shows reachable first.
     private async Task CheckFormatAsync(CancellationToken cancellationToken)

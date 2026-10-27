@@ -22,7 +22,7 @@ public static class DesktopServe
         var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
         var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, options.RemotePort, options.RemoteTokenFile, Console.Out) : (null, null);
         await using var stopTunnel = tunnel;
-        await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out, remote);
+        await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out, remote, tunnel);
         Console.WriteLine($"listening on {backend.Address}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");

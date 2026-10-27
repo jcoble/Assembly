@@ -40,7 +40,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
     public int Starts { get; private set; }
 
     /// <summary>Raised each time the command exits on its own.</summary>
-    public event Action? Exited { add { } remove { } }
+    public event Action? Exited;
 
     // Leads a new group, runs the command in it, and exits as the command did; once this process (its parent) is gone,
     // it kills the group. SIGCHLD wakes the sleep, so the command's exit is seen at once.
@@ -146,6 +146,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
             // A link that held for a while starts again quickly.
             if (DateTime.UtcNow - startedAt > MaxBackoff)
                 backoff = TimeSpan.FromSeconds(1);
+            Exited?.Invoke();
             _log.WriteLine($"tunnel: ssh exited ({process.ExitCode}: {(await errors).Trim()}); again in {backoff.TotalSeconds:0} s");
             try
             {

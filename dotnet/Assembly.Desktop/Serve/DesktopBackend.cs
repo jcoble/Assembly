@@ -54,7 +54,10 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// <summary>Where the API listens, as <c>http://127.0.0.1:port</c>.</summary>
     public Uri Address { get; }
 
-    /// <summary>Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there.</summary>
+    /// <summary>
+    /// Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there, and
+    /// <paramref name="tunnel"/>'s exits mark it unreachable.
+    /// </summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
         RemoteTunnel? tunnel = null)
     {
@@ -83,6 +86,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
             : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
         sessions.Helpers.Delivery.Machines = machines;
+        if (tunnel is not null && remote is not null)
+            tunnel.Exited += () => status.Unreachable(remote.Name, "ssh tunnel exited");
         var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, sessionStore, hub, machines.Named(null)!, log);
         // Turns a remote was running when the desktop stopped: catch up on them rather than mark them lost.
         remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId).Where(id => sessionStore.Get(id)?.Machine == remote!.Name));
@@ -91,9 +96,12 @@ public sealed class DesktopBackend : IAsyncDisposable
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
         // the last socket.
+        var clock = new BackendClock(topics, TimeProvider.System);
+        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
+        clock.Ticked += machinesFeature.Tick;
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
-                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status, () => { }, TimeProvider.System),
+            [new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>
         {

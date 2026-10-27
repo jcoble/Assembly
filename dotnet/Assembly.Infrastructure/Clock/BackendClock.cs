@@ -1,13 +1,15 @@
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Sessions;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Clock;
 
 /// <summary>
 /// The one backend clock (plan 5.8): a <see cref="PeriodicTimer"/> on the injected <see cref="TimeProvider"/> that
-/// publishes <c>{ now }</c> on the <c>clock</c> topic, key <c>second</c>, while someone is subscribed. The first
-/// subscription starts it, and the first tick that finds no subscriber stops it.
+/// publishes <c>{ now }</c> on the <c>clock</c> topic, key <c>second</c>, while someone is subscribed, and tells the
+/// machines probe each tick. It runs while <c>clock</c> or <c>machines</c> has a subscriber: the first subscription
+/// starts it, and the first tick that finds neither stops it.
 /// </summary>
 internal sealed class BackendClock : IFeature, IDisposable
 {
@@ -22,7 +24,8 @@ internal sealed class BackendClock : IFeature, IDisposable
     // Set by a subscribe, so a subscription that lands while a tick looks for one keeps the timer going.
     private bool _asked;
 
-    internal event Action<bool>? Ticked { add { } remove { } }
+    /// <summary>Each tick, with whether <c>machines</c> has a subscriber; false on the tick that stops the clock too.</summary>
+    internal event Action<bool>? Ticked;
 
     public BackendClock(TopicSet topics, TimeProvider time)
     {
@@ -39,7 +42,8 @@ internal sealed class BackendClock : IFeature, IDisposable
             return [Now()];
         });
 
-    // Runs inside the topics' lock, with the subscription it's for, so a tick's HasSubscribers sees it or waits for it.
+    // Runs inside the topics' lock, with the subscription it's for (clock's or machines'), so a tick's HasSubscribers
+    // sees it or waits for it.
     internal void Start()
     {
         lock (_gate)
@@ -62,15 +66,22 @@ internal sealed class BackendClock : IFeature, IDisposable
                 lock (_gate)
                     _asked = false;
                 var watched = _topics.HasSubscribers(Topic);
+                var machinesWatched = _topics.HasSubscribers(MachinesFeature.Topic);
+                bool stopping;
                 lock (_gate)
                 {
-                    if (!watched && !_asked)
-                    {
+                    stopping = !watched && !machinesWatched && !_asked;
+                    if (stopping)
                         _running = false;
-                        return;
-                    }
                 }
-                _topics.Publish(Topic, Second, JsonSerializer.Serialize(Now(), ClockJson.Default.ClockTime));
+                if (stopping)
+                {
+                    Ticked?.Invoke(false);
+                    return;
+                }
+                if (watched)
+                    _topics.Publish(Topic, Second, JsonSerializer.Serialize(Now(), ClockJson.Default.ClockTime));
+                Ticked?.Invoke(machinesWatched);
             }
         }
         catch (OperationCanceledException)
