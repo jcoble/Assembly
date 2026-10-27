@@ -148,6 +148,40 @@ public sealed partial class SocketTests
         Assert.Equal(new Dictionary<string, string> { ["theme"] = "dark" }, values);
     }
 
+    // A write that commits and publishes while a subscriber's state is being read is neither lost nor sent before the
+    // state: its publish waits on the Topics lock until the state is queued and the subscription registered (5.7).
+    [Fact]
+    public async Task A_write_published_during_the_initial_read_comes_once_after_the_state()
+    {
+        var rows = new List<string> { "a" };
+        var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var gate = new ManualResetEventSlim();
+        _calls.Topic("notes", TestJson.Default.Note, (_, _) =>
+        {
+            var snapshot = rows.Select(text => new Note(text)).ToList();
+            reading.SetResult();
+            gate.Wait(Wait);
+            return snapshot;
+        });
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"notes"}""");
+        await reading.Task.WaitAsync(Wait);
+        // The write commits after the read began, then publishes on its own thread, which blocks on the Topics lock.
+        rows.Add("b");
+        var publisher = new Thread(() => _topics.Publish("notes", "b", """{"text":"b"}"""));
+        publisher.Start();
+        await UntilAsync(() => publisher.ThreadState.HasFlag(ThreadState.WaitSleepJoin));
+        gate.Set();
+
+        Assert.Equal("""{"t":"state","sub":1,"items":[{"text":"a"}]}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"text":"b"}}""", await ReadAsync(socket));
+        publisher.Join(Wait);
+        await CallAsync(socket, 2, "notes", "echo", "{}");
+        Assert.Equal("""{"t":"result","id":2,"result":{"text":""}}""", await ReadAsync(socket));
+    }
+
     // Waits for something the backend does on its own after the socket closes, giving up after Wait.
     private static async Task UntilAsync(Func<bool> done)
     {

@@ -1382,6 +1382,8 @@ catalogue stays the reference.
     - pending runs, apart from base#9: the pending run is shown during the gap before the copied row arrives (the
       failing test is written before the fix);
     - the rows-topic catch-up and `prevSeq` tests that exist today, moved;
+    - a row committed before the rows snapshot but published after it (5.7, from B5's test 6, whose frames carry no
+      seq): the page gets `state` at seq N with the row, then a `change` at seq N, and drops the change;
     - attachments as chunked calls (D4): a 20 MB image, the limit, arrives in about 20 calls and commits once; one
       byte over the limit is refused; cancelling midway leaves nothing linked.
   - **Proof:** check4 with `rows.sh`, `sessions.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
