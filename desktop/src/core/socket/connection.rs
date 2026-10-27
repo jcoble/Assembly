@@ -19,6 +19,7 @@ use tungstenite::{Message, WebSocket};
 use super::endpoint::Endpoint;
 use super::event::Event;
 use super::in_frame::InFrame;
+use super::open_failure::OpenFailure;
 use super::out_frame::OutFrame;
 
 pub(super) const PROTOCOL: u32 = 1;
@@ -32,42 +33,38 @@ pub(super) struct Connection {
 
 impl Connection {
     /// Opens the socket and waits for its welcome; an error if it can't. Then starts its reader.
-    pub fn open(endpoint: &Endpoint, events: Sender<Event>) -> Result<Self, String> {
-        let stream = TcpStream::connect(("127.0.0.1", endpoint.port)).map_err(|e| e.to_string())?;
+    pub fn open(endpoint: &Endpoint, events: Sender<Event>) -> Result<Self, OpenFailure> {
+        let stream = TcpStream::connect(("127.0.0.1", endpoint.port)).map_err(failed)?;
         // A backend that takes the connection but never welcomes it (wedged, or another process on the port) would
         // hold the client thread, and every call waiting on it, for good: opening gets a bound, lifted after.
-        stream
-            .set_read_timeout(Some(OPENING))
-            .map_err(|e| e.to_string())?;
-        stream
-            .set_write_timeout(Some(OPENING))
-            .map_err(|e| e.to_string())?;
-        let read_half = stream.try_clone().map_err(|e| e.to_string())?;
+        stream.set_read_timeout(Some(OPENING)).map_err(failed)?;
+        stream.set_write_timeout(Some(OPENING)).map_err(failed)?;
+        let read_half = stream.try_clone().map_err(failed)?;
         let url = format!("ws://127.0.0.1:{}/socket", endpoint.port);
-        let (mut writer, _) = tungstenite::client(url, stream).map_err(|e| e.to_string())?;
+        let (mut writer, _) = tungstenite::client(url, stream).map_err(failed)?;
         let hello = OutFrame::Hello {
             token: &endpoint.token,
             protocol: PROTOCOL,
         };
-        writer.send(text(&hello)).map_err(|e| e.to_string())?;
-        let machine = match writer.read().map_err(|e| e.to_string())? {
+        writer.send(text(&hello)).map_err(failed)?;
+        let machine = match writer.read().map_err(failed)? {
             Message::Text(text) => match serde_json::from_str(text.as_str()) {
                 Ok(InFrame::Welcome { machine, .. }) => machine,
-                _ => return Err(format!("expected a welcome, got {text}")),
+                _ => return Err(failed(format!("expected a welcome, got {text}"))),
             },
-            Message::Close(frame) => {
-                return Err(format!("the backend refused the hello: {frame:?}"));
+            Message::Close(Some(frame)) if matches!(u16::from(frame.code), 4400 | 4401) => {
+                return Err(OpenFailure::Refused(frame.code.into()));
             }
-            other => return Err(format!("expected a welcome, got {other:?}")),
+            other => return Err(failed(format!("expected a welcome, got {other:?}"))),
         };
         let opened = writer.get_ref();
-        opened.set_read_timeout(None).map_err(|e| e.to_string())?;
-        opened.set_write_timeout(None).map_err(|e| e.to_string())?;
+        opened.set_read_timeout(None).map_err(failed)?;
+        opened.set_write_timeout(None).map_err(failed)?;
         let reader = WebSocket::from_raw_socket(ReadOnly(read_half), Role::Client, None);
         thread::Builder::new()
             .name("socket reader".into())
             .spawn(move || read_frames(reader, events))
-            .map_err(|e| e.to_string())?;
+            .map_err(failed)?;
         Ok(Self { machine, writer })
     }
 
@@ -81,6 +78,10 @@ impl Connection {
             .send(Message::Pong(payload.into()))
             .map_err(|e| e.to_string())
     }
+}
+
+fn failed(error: impl ToString) -> OpenFailure {
+    OpenFailure::Failed(error.to_string())
 }
 
 fn text(frame: &OutFrame<'_>) -> Message {

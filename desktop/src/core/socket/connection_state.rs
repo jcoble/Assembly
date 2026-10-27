@@ -7,6 +7,10 @@ pub enum ConnectionState {
     Connecting,
     /// Welcomed by the backend, which names its machine.
     Connected { machine: String },
-    /// The socket dropped and the one try to reopen it failed: it waits for `SocketClient::reconnect`.
+    /// The socket dropped and the try to reopen it at once failed: it tries again after a short wait, or on
+    /// `SocketClient::reconnect`.
     Disconnected,
+    /// The backend refused the hello: 4401, the token isn't its token, or 4400, this client speaks another protocol.
+    /// Trying again with the same can't help, so it waits for `SocketClient::reconnect`.
+    Refused { code: u16 },
 }

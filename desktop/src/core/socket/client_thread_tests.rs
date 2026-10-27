@@ -35,7 +35,7 @@ fn hello_carries_the_token_and_the_welcome_names_the_machine() {
 
 // Pins: g0-socket#1, g0-socket#8
 #[test]
-fn a_refused_hello_is_disconnected_until_it_tries_again() {
+fn a_refused_hello_is_shown_and_not_retried_until_reconnect() {
     let backend = backend();
     let (events, receiver) = mpsc::channel();
     let (states_tx, mut states) = unbounded();
@@ -56,9 +56,9 @@ fn a_refused_hello_is_disconnected_until_it_tries_again() {
     );
     assert_eq!(
         block_on(states.recv()).ok(),
-        Some(ConnectionState::Disconnected)
+        Some(ConnectionState::Refused { code: 4401 })
     );
-    // Reconnect tries again at once, ahead of the wait.
+    // Only Reconnect (the launcher, with the token file read again) tries again.
     events
         .send(Event::Reconnect(endpoint(backend.port)))
         .unwrap();
@@ -183,7 +183,7 @@ fn a_failed_reopen_is_disconnected_until_reconnect_and_calls_fail_at_once() {
         if frame["t"] == "hello" {
             hellos += 1;
             if hellos == 2 {
-                return vec![Reply::Close(4401)];
+                return vec![Reply::Drop];
             }
         }
         hello(frame).unwrap_or_else(|| vec![Reply::Drop])
@@ -238,7 +238,7 @@ fn a_disconnected_client_tries_again_on_its_own_after_a_short_wait() {
         if frame["t"] == "hello" {
             hellos += 1;
             if hellos == 1 {
-                return vec![Reply::Close(4401)];
+                return vec![Reply::Drop];
             }
         }
         hello(frame).unwrap_or_default()

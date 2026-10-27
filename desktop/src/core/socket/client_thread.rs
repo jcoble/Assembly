@@ -26,6 +26,7 @@ use super::connection_state::ConnectionState;
 use super::endpoint::Endpoint;
 use super::error_code::ErrorCode;
 use super::event::Event;
+use super::open_failure::OpenFailure;
 use super::out_frame::OutFrame;
 use super::outcome::Outcome;
 use super::row_update::RowUpdate;
@@ -266,7 +267,11 @@ impl ClientThread {
                 rows.into_iter().for_each(|id| self.send_rows(id));
                 self.set_state(ConnectionState::Connected { machine });
             }
-            Err(error) => {
+            Err(OpenFailure::Refused(code)) => {
+                eprintln!("socket: the backend refused the hello ({code})");
+                self.set_state(ConnectionState::Refused { code });
+            }
+            Err(OpenFailure::Failed(error)) => {
                 eprintln!("socket: couldn't open: {error}");
                 self.set_state(ConnectionState::Disconnected);
             }

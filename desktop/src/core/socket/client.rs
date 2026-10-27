@@ -26,6 +26,8 @@ pub struct SocketClient {
     /// Call and subscription ids, shared by every caller so a handle knows its own id to cancel or unsub.
     next_id: Arc<AtomicU64>,
     state: ConnectionState,
+    /// Brings the client thread's state changes to the entity.
+    _states: Task<()>,
 }
 
 struct GlobalSocket(Entity<SocketClient>);
@@ -41,22 +43,26 @@ impl SocketClient {
         let (states, mut changes) = unbounded();
         let next_id = Arc::new(AtomicU64::new(0));
         ClientThread::spawn(endpoint, receiver, events.clone(), states, next_id.clone());
-        let client = cx.new(|_| Self {
-            events,
-            next_id,
-            state: ConnectionState::Connecting,
-        });
-        let entity = client.clone();
-        cx.spawn(async move |cx| {
-            while let Ok(state) = changes.recv().await {
-                entity.update(cx, |client, cx| {
-                    client.state = state.clone();
-                    cx.emit(state);
-                    cx.notify();
-                });
+        let client = cx.new(|cx| {
+            let states = cx.spawn(async move |this, cx| {
+                while let Ok(state) = changes.recv().await {
+                    let changed = this.update(cx, |client: &mut Self, cx| {
+                        client.state = state.clone();
+                        cx.emit(state);
+                        cx.notify();
+                    });
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            });
+            Self {
+                events,
+                next_id,
+                state: ConnectionState::Connecting,
+                _states: states,
             }
-        })
-        .detach();
+        });
         cx.set_global(GlobalSocket(client.clone()));
         client
     }

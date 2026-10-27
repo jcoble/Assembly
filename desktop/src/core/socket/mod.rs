@@ -21,6 +21,7 @@ mod event;
 #[cfg(test)]
 mod fake_backend;
 mod in_frame;
+mod open_failure;
 mod out_frame;
 pub mod outcome;
 pub mod pending_call;
