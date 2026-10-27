@@ -5,7 +5,7 @@
 //! name through the core registry (lane g0-host, names from lane g0-shape), never by importing another feature.
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
-use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -16,8 +16,9 @@ use serde_json::{Value, json};
 use super::session_action::SessionAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::features::session::client::session_client::{
-    CallError, RowsEvent, RowsSink, SessionClient,
+    CallError, RowUpdate, RowsSink, SessionClient,
 };
+use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::Entry;
@@ -57,6 +58,14 @@ pub struct SessionPane {
 }
 
 impl SessionPane {
+    /// Registers the session pane as the layout's Chat pane, over the socket client. It runs after the placeholders
+    /// register, since the last registration for a name wins.
+    pub fn register(cx: &mut App) {
+        register_panel(cx, "Chat", |_, window, cx| {
+            panel_handle(cx.new(|cx| SessionPane::new(Rc::new(SocketSessionClient), window, cx)))
+        });
+    }
+
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pane = cx.weak_entity();
         let render_row: RenderRow = Rc::new(move |entry, _, cx| {
@@ -127,7 +136,7 @@ impl SessionPane {
         let sink: RowsSink = Box::new(move |event, cx| {
             pane.update(cx, |pane, cx| pane.on_rows(event, cx)).ok();
         });
-        self._rows = Some(self.client.subscribe_rows(&session, None, sink));
+        self._rows = Some(self.client.subscribe_rows(&session, None, sink, cx));
         self.session = Some(session.clone());
         self.timeline.update(cx, |timeline, cx| {
             timeline.set_session(Some(session.clone()), Vec::new(), cx)
@@ -152,9 +161,9 @@ impl SessionPane {
 
     /// Takes a rows event: a `Jump` drops what's held and loads the page again; a row updates its item and the
     /// timeline measures only that one again.
-    fn on_rows(&mut self, event: RowsEvent, cx: &mut Context<Self>) {
+    fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
         match event {
-            RowsEvent::Jump { seq } => {
+            RowUpdate::Jump { seq } => {
                 self._tasks.clear();
                 self.view = SessionView::default();
                 self.held = Some(Vec::new());
@@ -164,7 +173,7 @@ impl SessionPane {
                 });
                 self.load_page(seq + 1, true, cx);
             }
-            RowsEvent::Row(row) => match &mut self.held {
+            RowUpdate::Row(row) => match &mut self.held {
                 Some(held) => held.push(*row),
                 None => self.apply_live(&row, cx),
             },
@@ -192,9 +201,13 @@ impl SessionPane {
             return;
         };
         let args = json!({ "session": session, "before": before, "limit": PAGE_ROWS });
-        let call = self
-            .client
-            .call("rows", "page", args, Some(&format!("rows/page:{session}")));
+        let call = self.client.call(
+            "rows",
+            "page",
+            args,
+            Some(&format!("rows/page:{session}")),
+            cx,
+        );
         self._tasks.push(cx.spawn(async move |pane, cx| {
             let answer = call.await;
             pane.update(cx, |pane, cx| pane.on_page(answer, before, first, cx))
@@ -294,12 +307,16 @@ impl BasePanel for SessionPane {
     fn panel_name(&self) -> &'static str {
         "Chat"
     }
+
+    /// A permanent tab, as the layout's other panes.
+    fn closable(&self, _cx: &App) -> bool {
+        false
+    }
 }
 
 impl Panel for SessionPane {
-    /// The session's title, cut to one line.
     fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        "Chat"
     }
 }
 

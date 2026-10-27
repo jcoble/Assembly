@@ -32,6 +32,7 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
+            features::session::view::session_pane::SessionPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::meter::start_if_on(cx);

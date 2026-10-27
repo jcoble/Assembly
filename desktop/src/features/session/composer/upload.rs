@@ -43,14 +43,16 @@ pub fn upload_image(
     cx.spawn(async move |cx| {
         let bytes = read.await?;
         let begin = json!({ "session": session, "mime": mime, "size": bytes.len() });
-        let begun = client.call("attachments", "begin", begin, None).await?;
+        let begun = cx
+            .update(|cx| client.call("attachments", "begin", begin, None, cx))
+            .await?;
         let upload = begun["upload"]
             .as_str()
             .ok_or_else(|| CallError::Failed("The upload didn't start.".into()))?;
         let saved = send(&*client, upload, bytes, cx).await;
         if saved.is_err() {
-            client
-                .call("attachments", "drop", json!({ "upload": upload }), None)
+            let drop = json!({ "upload": upload });
+            cx.update(|cx| client.call("attachments", "drop", drop, None, cx))
                 .await
                 .ok();
         }
@@ -72,17 +74,13 @@ async fn send(
                 STANDARD.encode(&chunk[offset..(offset + CHUNK_BYTES).min(chunk.len())])
             })
             .await;
-        client
-            .call(
-                "attachments",
-                "chunk",
-                json!({ "upload": upload, "offset": offset, "data": data }),
-                None,
-            )
+        let chunk = json!({ "upload": upload, "offset": offset, "data": data });
+        cx.update(|cx| client.call("attachments", "chunk", chunk, None, cx))
             .await?;
     }
-    let committed = client
-        .call("attachments", "commit", json!({ "upload": upload }), None)
+    let commit = json!({ "upload": upload });
+    let committed = cx
+        .update(|cx| client.call("attachments", "commit", commit, None, cx))
         .await?;
     committed["path"]
         .as_str()

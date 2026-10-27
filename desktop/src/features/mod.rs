@@ -4,7 +4,7 @@ pub mod meter;
 pub mod palette;
 #[expect(
     dead_code,
-    reason = "nothing in the window uses the session view until its pane registers"
+    reason = "the session view's row views are drawn in a later step"
 )]
 pub mod session;
 #[expect(

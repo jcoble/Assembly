@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::SessionPane;
 use crate::features::session::client::fake_client::FakeClient;
-use crate::features::session::client::session_client::{CallError, RowsEvent};
+use crate::features::session::client::session_client::{CallError, RowUpdate};
 use crate::features::session::composer::composer_view::ComposerEvent;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::row::Row;
@@ -36,12 +36,12 @@ fn page(rows: Vec<Value>, has_before: bool, active: Option<&str>) -> Value {
 
 fn live(client: &FakeClient, row: Value, cx: &mut VisualTestContext) {
     let row: Row = serde_json::from_value(row).unwrap();
-    cx.update(|_, cx| client.push(RowsEvent::Row(Box::new(row)), cx));
+    cx.update(|_, cx| client.push(RowUpdate::Row(Box::new(row)), cx));
     cx.run_until_parked();
 }
 
 fn jump(client: &FakeClient, seq: i64, cx: &mut VisualTestContext) {
-    cx.update(|_, cx| client.push(RowsEvent::Jump { seq }, cx));
+    cx.update(|_, cx| client.push(RowUpdate::Jump { seq }, cx));
     cx.run_until_parked();
 }
 
@@ -244,8 +244,8 @@ fn rows_that_arrive_before_the_first_page_wait_for_it(cx: &mut TestAppContext) {
     client.queue_answer(Ok(page(vec![message(5, 0, &["a", "b"])], false, None)));
     let delta: Row = serde_json::from_value(message(6, 2, &["c"])).unwrap();
     cx.update(|_, cx| {
-        client.push(RowsEvent::Jump { seq: 5 }, cx);
-        client.push(RowsEvent::Row(Box::new(delta)), cx);
+        client.push(RowUpdate::Jump { seq: 5 }, cx);
+        client.push(RowUpdate::Row(Box::new(delta)), cx);
     });
     cx.run_until_parked();
     let blocks = cx.update(|_, cx| match &pane.read(cx).view.items[0].kind {

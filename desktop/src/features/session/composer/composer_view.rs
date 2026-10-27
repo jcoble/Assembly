@@ -126,6 +126,7 @@ impl Composer {
             "send",
             json!({ "session": session, "text": text }),
             None,
+            cx,
         );
         self._tasks
             .push(cx.spawn_in(window, async move |composer, cx| {

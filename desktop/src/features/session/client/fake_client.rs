@@ -10,7 +10,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 use serde_json::Value;
 
-use super::session_client::{CallError, RowsEvent, RowsSink, SessionClient};
+use super::session_client::{CallError, RowUpdate, RowsSink, SessionClient};
 
 #[derive(Clone, Default)]
 pub struct FakeClient {
@@ -35,7 +35,7 @@ impl FakeClient {
     }
 
     /// Delivers a rows event to the open subscription, as the socket would.
-    pub fn push(&self, event: RowsEvent, cx: &mut App) {
+    pub fn push(&self, event: RowUpdate, cx: &mut App) {
         let (sink, cancels) = {
             let mut state = self.state.borrow_mut();
             (state.sink.take(), state.cancels)
@@ -64,7 +64,13 @@ impl FakeClient {
 }
 
 impl SessionClient for FakeClient {
-    fn subscribe_rows(&self, session: &str, after: Option<i64>, sink: RowsSink) -> Subscription {
+    fn subscribe_rows(
+        &self,
+        session: &str,
+        after: Option<i64>,
+        sink: RowsSink,
+        _cx: &App,
+    ) -> Subscription {
         let mut state = self.state.borrow_mut();
         state.subscribed.push((session.to_string(), after));
         state.sink = Some(sink);
@@ -82,6 +88,7 @@ impl SessionClient for FakeClient {
         method: &str,
         args: Value,
         _key: Option<&str>,
+        _cx: &App,
     ) -> Task<Result<Value, CallError>> {
         let mut state = self.state.borrow_mut();
         state.calls.push((format!("{feature}/{method}"), args));
