@@ -21,7 +21,8 @@ internal sealed class MachinesFeature : IFeature
             Task.FromResult(new MachineList([.. _machines.Remotes.Select(machine => machine.Name!)])));
         calls.Read(Feature, "agents", SessionsJson.Default.AgentsArgs, SessionsJson.Default.AgentList, async (args, call) =>
         {
-            var machine = _machines.Named(args.Machine) ?? throw new CallFailed("unknown machine");
+            // An empty name is this machine, as GET /agents?machine= takes it.
+            var machine = _machines.Named(args.Machine is { Length: > 0 } name ? name : null) ?? throw new CallFailed("unknown machine");
             return new AgentList([.. (await machine.AgentsAsync(call.Cancellation)).Select(agent => new Agent(agent.Id, agent.Name))]);
         });
     }

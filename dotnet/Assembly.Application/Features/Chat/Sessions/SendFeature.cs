@@ -50,6 +50,8 @@ internal sealed class SendFeature : IFeature
         });
         calls.Write(Feature, "answer", SessionsJson.Default.AnswerArgs, SessionsJson.Default.Done, async (args, call) =>
         {
+            if (args.Answer.ValueKind != JsonValueKind.Object)
+                throw new CallFailed("expected { optionId } or { action, content }");
             var session = Session(args.Session);
             return await _machines.For(session).AnswerAsync(session, args.Ask, args.Answer, call.Cancellation)
                 ? _ => new Done(true)

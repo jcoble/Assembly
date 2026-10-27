@@ -41,6 +41,8 @@ internal sealed class SessionsFeature : IFeature
         // session, so it goes out on this socket before the answer.
         calls.Write(Topic, "create", SessionsJson.Default.CreateArgs, SessionsJson.Default.Created, async (args, call) =>
         {
+            if (args.Agent.Length == 0 || args.RepoUrl.Length == 0)
+                throw new CallFailed("expected an agent and a repoUrl");
             var machine = _machines.Named(args.Machine) ?? throw new CallFailed("unknown machine");
             if (!(await machine.AgentsAsync(call.Cancellation)).Any(known => known.Id == args.Agent))
                 throw new CallFailed($"this machine has no agent {args.Agent}");

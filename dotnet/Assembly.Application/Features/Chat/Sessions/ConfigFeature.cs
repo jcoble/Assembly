@@ -34,6 +34,8 @@ internal sealed class ConfigFeature : IFeature
         });
         calls.Write(Feature, "set", SessionsJson.Default.SetArgs, SessionsJson.Default.JsonElement, async (args, call) =>
         {
+            if (args.ConfigId.Length == 0)
+                throw new CallFailed("expected a configId");
             var session = _store.Get(args.Session) ?? throw new CallFailed("unknown session");
             var config = Json(await _machines.For(session).SetConfigAsync(session, args.ConfigId, args.Value, call.Cancellation));
             return _ => config;
