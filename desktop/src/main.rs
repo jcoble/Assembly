@@ -20,6 +20,9 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::outcome::Outcome;
+use crate::core::state::machines::Machines;
+use crate::core::state::selected_session::SelectedSession;
+use crate::core::state::sessions::Sessions;
 use crate::core::window_root::WindowRoot;
 use crate::features::palette::palette_view::PaletteView;
 
@@ -32,7 +35,9 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
+            SelectedSession::init(cx);
             features::session::view::session_pane::SessionPane::register(cx);
+            features::sessions::sessions_pane::SessionsPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::meter::start_if_on(cx);
@@ -87,6 +92,8 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                         None => {
                             let client = SocketClient::start(endpoint, cx);
                             _ = socket.set(client.clone());
+                            Sessions::start(cx);
+                            Machines::start(cx);
                             if let Some(connected) = connected.take() {
                                 _ = connected.send(client);
                             }

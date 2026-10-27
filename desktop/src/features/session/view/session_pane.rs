@@ -22,6 +22,8 @@ use super::ask_card::AskForm;
 use super::plan_card::PlanCard;
 use super::session_action::{OnAction, SessionAction};
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
+use crate::core::intents::open_session::OpenSession;
+use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::session_client::{
     CallError, RowUpdate, RowsSink, SessionClient,
 };
@@ -94,17 +96,46 @@ pub struct SessionPane {
     _page: Option<Task<()>>,
     /// The calls a row's buttons started, by what they're for, so a newer one of the same kind replaces the older.
     _tasks: HashMap<String, Task<()>>,
+    /// The selected session, followed once the pane is registered.
+    _selected: Option<Subscription>,
     /// The composer's events and the timeline's scrolling.
     _heard: [Subscription; 2],
 }
 
 impl SessionPane {
-    /// Registers the session pane as the layout's Chat pane, over the socket client. It runs after the placeholders
-    /// register, since the last registration for a name wins.
+    /// Registers the session pane as the layout's Chat pane, over the socket client, showing the selected session.
+    /// It runs after the placeholders register, since the last registration for a name wins. The pane also owns
+    /// the open session intent, which selects that session.
     pub fn register(cx: &mut App) {
         register_panel(cx, "Chat", |_, window, cx| {
-            panel_handle(cx.new(|cx| SessionPane::new(Rc::new(SocketSessionClient), window, cx)))
+            panel_handle(cx.new(|cx| {
+                let mut pane = SessionPane::new(Rc::new(SocketSessionClient), window, cx);
+                let selected = SelectedSession::global(cx);
+                pane._selected = Some(cx.observe_in(
+                    &selected,
+                    window,
+                    |pane, selected, window, cx| pane.show_selected(selected, window, cx),
+                ));
+                pane.show_selected(selected, window, cx);
+                pane
+            }))
         });
+        cx.on_action(|intent: &OpenSession, cx| {
+            let id = Some(intent.id.clone());
+            SelectedSession::global(cx).update(cx, |selected, cx| selected.select(id, cx));
+        });
+    }
+
+    /// Opens the selected session, or shows none.
+    fn show_selected(
+        &mut self,
+        selected: Entity<SelectedSession>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = selected.read(cx).session_id().map(String::from) {
+            self.open(session, window, cx);
+        }
     }
 
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -178,6 +209,7 @@ impl SessionPane {
             retry_first: None,
             status: SharedString::default(),
             _rows: None,
+            _selected: None,
             _page: None,
             _tasks: HashMap::new(),
             _heard: heard,

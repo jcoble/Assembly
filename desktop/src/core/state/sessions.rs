@@ -35,7 +35,23 @@ pub struct Sessions {
 
 impl EventEmitter<SessionChange> for Sessions {}
 
+struct GlobalSessions(Entity<Sessions>);
+
+impl Global for GlobalSessions {}
+
 impl Sessions {
+    /// Starts the window's sessions list, once the socket client has started.
+    pub fn start(cx: &mut App) {
+        let state = cx.new(Sessions::new);
+        cx.set_global(GlobalSessions(state));
+    }
+
+    /// The sessions list, once the socket client has started.
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalSessions>()
+            .map(|state| state.0.clone())
+    }
+
     /// Subscribes to the `sessions` topic.
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut subscription = SocketClient::global(cx).read(cx).subscribe(TOPIC, None);
