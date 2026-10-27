@@ -17,6 +17,7 @@ using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Draft.Base.Chat;
+using Assembly.Tests.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.Base;
@@ -37,6 +38,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
     private FakeMachine _box = null!;
     private TopicSet _topics = null!;
     private SocketDispatcher _calls = null!;
+    private SocketEndpoint _endpoint = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
 
@@ -55,9 +57,9 @@ public sealed class RowsSocketTests : IAsyncLifetime
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        var endpoint = new SocketEndpoint("rows-token", _calls, "test-machine", TimeProvider.System);
-        _app.Map("/socket", endpoint.HandleAsync);
-        _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
+        _endpoint = new SocketEndpoint("rows-token", _calls, "test-machine", TimeProvider.System);
+        _app.Map("/socket", _endpoint.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(_endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _address = new Uri($"ws://{http.Authority}/socket");
@@ -173,6 +175,30 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Assert.Equal("""{"t":"state","sub":1,"seq":3,"items":[]}""", await ReadAsync(socket));
         Commit("s", 1);
         AssertRow(await ReadAsync(socket), sub: 1, seq: 4, prevSeq: 3);
+    }
+
+    // The window's reconnect after the backend drops its socket: it subscribes again with after = the last seq it
+    // applied, and gets the rows saved while it was away, once each, then the new ones.
+    [Fact]
+    public async Task A_reconnect_after_a_drop_gets_only_the_rows_it_missed()
+    {
+        Commit("s", 2);
+        using (var socket = await OpenAsync())
+        {
+            await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s"}""");
+            Assert.Equal("""{"t":"state","sub":1,"seq":2,"items":[]}""", await ReadAsync(socket));
+            _endpoint.DropAll();
+            await SocketTests.AssertEndsAsync(socket);
+        }
+
+        Commit("s", 2);
+        using var again = await OpenAsync();
+        await SendAsync(again, """{"t":"sub","id":1,"topic":"rows","key":"s","after":2}""");
+        Assert.Equal("""{"t":"state","sub":1,"seq":2,"items":[]}""", await ReadAsync(again));
+        AssertRow(await ReadAsync(again), sub: 1, seq: 3, prevSeq: 2);
+        AssertRow(await ReadAsync(again), sub: 1, seq: 4, prevSeq: 3);
+        Commit("s", 1);
+        AssertRow(await ReadAsync(again), sub: 1, seq: 5, prevSeq: 4);
     }
 
     [Fact]

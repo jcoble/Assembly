@@ -53,7 +53,7 @@ public sealed class ApiTests : IAsyncLifetime
         _sessions = new SessionRegistry(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null);
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));
-        _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token), port: 0);
+        _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token), port: 0, out _);
         await _app.StartAsync();
         var address = _app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         _base = new Uri(address);

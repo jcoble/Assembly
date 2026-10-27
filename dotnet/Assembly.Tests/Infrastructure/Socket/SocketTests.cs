@@ -28,6 +28,7 @@ public sealed partial class SocketTests : IAsyncLifetime
     private readonly TopicSet _topics = new();
     private readonly FakeLog _log = new();
     private SocketDispatcher _calls = null!;
+    private SocketEndpoint _endpoint = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
 
@@ -39,10 +40,10 @@ public sealed partial class SocketTests : IAsyncLifetime
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        var endpoint = new SocketEndpoint(Token, _calls, "test-machine", _time);
-        _app.Map("/socket", endpoint.HandleAsync);
+        _endpoint = new SocketEndpoint(Token, _calls, "test-machine", _time);
+        _app.Map("/socket", _endpoint.HandleAsync);
         // As ApiServer does.
-        _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
+        _app.Lifetime.ApplicationStopping.Register(_endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _address = new Uri($"ws://{http.Authority}/socket");

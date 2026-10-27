@@ -9,9 +9,9 @@ internal sealed class DiagnosticsHost(string soakResults) : IDiagnosticsHost
 
     public MemoryReading Memory() => MemorySample.Read();
 
-    public void BeginActivity() => _activity.Begin();
+    public bool ActivityHeld => _activity.Held;
 
-    public void EndActivity() => _activity.End();
+    public void HoldActivity(bool held) => _activity.Hold(held);
 
     public void AppendSoak(string name, string line)
     {
