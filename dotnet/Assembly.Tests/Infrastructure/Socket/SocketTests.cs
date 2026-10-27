@@ -1,0 +1,343 @@
+using System.Net;
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Database;
+using Assembly.Infrastructure.Socket;
+
+namespace Assembly.Tests.Infrastructure.Socket;
+
+/// <summary>The socket (plan 5.1 to 5.3, B4) over a real loopback socket, with calls registered by each test.</summary>
+public sealed class SocketTests : IAsyncLifetime
+{
+    private const string Token = "socket-token";
+    private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
+
+    private readonly FakeTimeProvider _time = new();
+    private readonly FakeWriter _writer = new();
+    private readonly FakeLog _log = new();
+    private SocketDispatcher _calls = null!;
+    private WebApplication _app = null!;
+    private Uri _address = null!;
+
+    public async Task InitializeAsync()
+    {
+        _calls = new SocketDispatcher(_writer, _time, _log);
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.Logging.ClearProviders();
+        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
+        _app = builder.Build();
+        _app.UseWebSockets();
+        _app.Map("/socket", new SocketEndpoint(Token, _calls, "test-machine").HandleAsync);
+        await _app.StartAsync();
+        var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+        _address = new Uri($"ws://{http.Authority}/socket");
+    }
+
+    public async Task DisposeAsync() => await _app.DisposeAsync();
+
+    [Fact]
+    public async Task A_call_answers_its_result_and_an_unknown_one_not_found()
+    {
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note with { Text = note.Text + "!" }));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "echo", """{"text":"hi"}""");
+        await CallAsync(socket, 2, "notes", "missing", "{}");
+
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":"hi!"}}""", await ReadAsync(socket));
+        Assert.Equal("not_found", Code(await ReadAsync(socket), id: 2));
+    }
+
+    [Fact]
+    public async Task Bad_args_answer_bad_args()
+    {
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "echo", """{"text":5}""");
+        await SendAsync(socket, """{"t":"call","id":2,"feature":"notes","method":"echo"}""");
+
+        Assert.Equal("bad_args", Code(await ReadAsync(socket), id: 1));
+        Assert.Equal("bad_args", Code(await ReadAsync(socket), id: 2));
+    }
+
+    [Theory]
+    [InlineData("""{"t":"call","id":1,"feature":"notes","method":"echo","args":{}}""", 4400)]
+    [InlineData("""{"t":"hello","token":"socket-token","protocol":2}""", 4400)]
+    [InlineData("not json", 4400)]
+    [InlineData("""{"t":"hello","token":"wrong-token","protocol":1}""", 4401)]
+    public async Task A_socket_that_starts_without_a_valid_hello_is_closed_before_any_data(string first, int code)
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(_address, CancellationToken.None);
+
+        await SendAsync(socket, first);
+
+        var buffer = new byte[1024];
+        var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(Wait);
+        Assert.Equal(WebSocketMessageType.Close, received.MessageType);
+        Assert.Equal(code, (int)socket.CloseStatus!);
+    }
+
+    [Fact]
+    public async Task The_welcome_names_the_protocol_and_the_machine()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(_address, CancellationToken.None);
+
+        await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":1}""");
+
+        Assert.Equal("""{"t":"welcome","protocol":1,"machine":"test-machine"}""", await ReadAsync(socket));
+    }
+
+    // Pins: base#10
+    [Fact]
+    public async Task Cancel_fires_the_handlers_token()
+    {
+        var running = new Running();
+        _calls.Read("notes", "wait", TestJson.Default.Note, TestJson.Default.Note, running.WaitAsync);
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "wait", "{}");
+        await running.Started.Task.WaitAsync(Wait);
+        await SendAsync(socket, """{"t":"cancel","id":1}""");
+
+        Assert.Equal("cancelled", Code(await ReadAsync(socket), id: 1));
+        Assert.True(running.Cancelled.Task.IsCompletedSuccessfully);
+    }
+
+    [Fact]
+    public async Task Closing_the_socket_cancels_running_reads_and_queued_writes_still_commit()
+    {
+        var read = new Running();
+        _calls.Read("notes", "wait", TestJson.Default.Note, TestJson.Default.Note, read.WaitAsync);
+        var gate = new TaskCompletionSource();
+        var first = new TaskCompletionSource();
+        _calls.Write("notes", "first", TestJson.Default.Note, TestJson.Default.Note, async (note, _) =>
+        {
+            first.SetResult();
+            await gate.Task;
+            return _ => note;
+        });
+        _calls.Write("notes", "second", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult<Func<IWriteScope, Note>>(_ => note));
+        var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "wait", "{}");
+        await CallAsync(socket, 2, "notes", "first", "{}");
+        await CallAsync(socket, 3, "notes", "second", "{}");
+        await read.Started.Task.WaitAsync(Wait);
+        await first.Task.WaitAsync(Wait);
+        socket.Abort();
+        socket.Dispose();
+
+        await read.Cancelled.Task.WaitAsync(Wait);
+        Assert.Empty(_writer.Written);
+        gate.SetResult();
+        await _writer.Count(2).WaitAsync(Wait);
+        Assert.Equal(["notes/first", "notes/second"], _writer.Written);
+    }
+
+    [Fact]
+    public async Task Two_calls_at_once_each_get_their_own_answer()
+    {
+        var gates = new Dictionary<string, TaskCompletionSource>
+            { ["a"] = new(TaskCreationOptions.RunContinuationsAsynchronously), ["b"] = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        _calls.Read("notes", "gated", TestJson.Default.Note, TestJson.Default.Note, async (note, _) =>
+        {
+            await gates[note.Text].Task;
+            return note;
+        });
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "gated", """{"text":"a"}""");
+        await CallAsync(socket, 2, "notes", "gated", """{"text":"b"}""");
+        gates["b"].SetResult();
+        var second = await ReadAsync(socket);
+        gates["a"].SetResult();
+        var firstAnswer = await ReadAsync(socket);
+
+        Assert.Equal("""{"t":"result","id":2,"result":{"text":"b"}}""", second);
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":"a"}}""", firstAnswer);
+    }
+
+    [Fact]
+    public async Task A_handler_that_throws_answers_failed_and_logs_at_error()
+    {
+        _calls.Read<Note, Note>("notes", "boom", TestJson.Default.Note, TestJson.Default.Note, (_, _) => throw new InvalidOperationException("broke"));
+        _calls.Read<Note, Note>("notes", "refuse", TestJson.Default.Note, TestJson.Default.Note, (_, _) => throw new CallFailed("no such note"));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "boom", "{}");
+        await CallAsync(socket, 2, "notes", "refuse", "{}");
+
+        var boom = await ReadAsync(socket);
+        var refuse = await ReadAsync(socket);
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"notes/boom failed"}""", boom);
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"no such note"}""", refuse);
+        Assert.Contains(_log.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains("notes/boom"));
+        Assert.DoesNotContain(_log.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains("notes/refuse"));
+    }
+
+    [Fact]
+    public async Task A_call_over_30_seconds_answers_timeout()
+    {
+        var running = new Running();
+        _calls.Read("notes", "wait", TestJson.Default.Note, TestJson.Default.Note, running.WaitAsync);
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "wait", "{}");
+        await running.Started.Task.WaitAsync(Wait);
+        _time.Advance(TimeSpan.FromSeconds(29));
+        Assert.False(running.Cancelled.Task.IsCompleted);
+        _time.Advance(TimeSpan.FromSeconds(1));
+
+        Assert.Equal("timeout", Code(await ReadAsync(socket), id: 1));
+    }
+
+    [Fact]
+    public async Task A_frame_over_4_MB_closes_the_socket()
+    {
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, new string('x', 4 * 1024 * 1024 + 1));
+
+        var received = await socket.ReceiveAsync(new ArraySegment<byte>(new byte[1024]), CancellationToken.None).WaitAsync(Wait);
+        Assert.Equal(WebSocketMessageType.Close, received.MessageType);
+        Assert.Equal(WebSocketCloseStatus.MessageTooBig, socket.CloseStatus);
+    }
+
+    private async Task<ClientWebSocket> OpenAsync()
+    {
+        var socket = new ClientWebSocket();
+        await socket.ConnectAsync(_address, CancellationToken.None);
+        await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
+        return socket;
+    }
+
+    private static Task CallAsync(WebSocket socket, long id, string feature, string method, string args) =>
+        SendAsync(socket, $$"""{"t":"call","id":{{id}},"feature":"{{feature}}","method":"{{method}}","args":{{args}}}""");
+
+    private static Task SendAsync(WebSocket socket, string text) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+    private static async Task<string> ReadAsync(WebSocket socket)
+    {
+        var buffer = new byte[64 * 1024];
+        var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(Wait);
+        Assert.Equal(WebSocketMessageType.Text, received.MessageType);
+        Assert.True(received.EndOfMessage);
+        return Encoding.UTF8.GetString(buffer, 0, received.Count);
+    }
+
+    private static string Code(string frame, long id)
+    {
+        var root = JsonDocument.Parse(frame).RootElement;
+        Assert.Equal("error", root.GetProperty("t").GetString());
+        Assert.Equal(id, root.GetProperty("id").GetInt64());
+        return root.GetProperty("code").GetString()!;
+    }
+
+    // A read that waits on its token until it's cancelled.
+    private sealed class Running
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<Note> WaitAsync(Note note, CallContext call)
+        {
+            Started.TrySetResult();
+            try
+            {
+                await Task.Delay(Timeout.Infinite, call.Cancellation);
+            }
+            catch (OperationCanceledException)
+            {
+                Cancelled.TrySetResult();
+                throw;
+            }
+            return note;
+        }
+    }
+
+    // Runs each database part as it comes and notes the write, in order.
+    private sealed class FakeWriter : IAtomicWriter
+    {
+        private readonly List<string> _written = [];
+        private readonly List<(int Count, TaskCompletionSource Done)> _waiting = [];
+
+        public List<string> Written
+        {
+            get
+            {
+                lock (_written)
+                    return [.. _written];
+            }
+        }
+
+        public T Write<T>(string what, Func<IWriteScope, T> write)
+        {
+            lock (_written)
+            {
+                var result = write(null!);
+                _written.Add(what);
+                foreach (var (count, done) in _waiting)
+                    if (_written.Count >= count)
+                        done.TrySetResult();
+                return result;
+            }
+        }
+
+        public Task Count(int count)
+        {
+            lock (_written)
+            {
+                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                if (_written.Count >= count)
+                    done.SetResult();
+                _waiting.Add((count, done));
+                return done.Task;
+            }
+        }
+    }
+
+    private sealed class FakeLog : ILogger
+    {
+        private readonly List<(LogLevel Level, string Message)> _entries = [];
+
+        public List<(LogLevel Level, string Message)> Entries
+        {
+            get
+            {
+                lock (_entries)
+                    return [.. _entries];
+            }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries)
+                _entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
+}
+
+public sealed record Note(string Text = "");
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(Note))]
+internal sealed partial class TestJson : JsonSerializerContext;

@@ -78,7 +78,7 @@ public sealed class DesktopBackend : IAsyncDisposable
 
         Uri? address = null;
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
-        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers), port, routes =>
+        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));

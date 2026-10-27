@@ -108,8 +108,8 @@ for agent in claude codex; do
     if [ -n "$blocked" ]; then
       reason=$blocked
     else
-      repo=$repo_local machine_json=""; host=$host_local
-      [ $where = box ] && repo=$repo_box machine_json=',"machine":"workbox-test"' host=$host_box
+      repo=$repo_local machine_json=""; host=$host_local host_base=$local_base host_token=$local_token
+      [ $where = box ] && repo=$repo_box machine_json=',"machine":"workbox-test"' host=$host_box host_base=$box_base host_token=$box_token
       session=$(api local POST /sessions "{\"agent\":\"$agent\",\"repoUrl\":\"$repo\"$machine_json}" | jq -r '.sessionId // empty' 2>/dev/null || true)
       prompt="Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
       [ -n "$session" ] && run=$(api local POST "/sessions/$session/send" "$(jq -cn --arg t "$prompt" '{text: $t}')" | jq -r '.runId // empty' 2>/dev/null || true)
@@ -120,7 +120,8 @@ for agent in claude codex; do
         pids=()
         for f in ${features[@]+"${features[@]}"}; do
           CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_SESSION=$session CHECK4_RUN=$run CHECK4_AGENT=$agent \
-            CHECK4_MACHINE=${name#*-} CHECK4_REPO=$repo "scripts/features/$f.sh" > "$out/$name.$f.log" 2>&1 &
+            CHECK4_MACHINE=${name#*-} CHECK4_REPO=$repo CHECK4_HOST_API=$host_base CHECK4_HOST_TOKEN=$host_token \
+            CHECK4_HOST_NAME=$host "scripts/features/$f.sh" > "$out/$name.$f.log" 2>&1 &
           pids+=($!)
         done
         for _ in $(seq 120); do
