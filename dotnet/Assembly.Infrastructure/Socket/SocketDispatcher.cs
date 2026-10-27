@@ -31,9 +31,11 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TimeProvider time, 
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
         {
-            // A write cancelled or out of time while it waited in the queue never runs.
+            // A write cancelled or out of time while it waited in the queue never runs, and one whose outside part ran
+            // over commits nothing.
             call.Cancellation.ThrowIfCancellationRequested();
             var database = await handler((TArgs)value, call);
+            call.Cancellation.ThrowIfCancellationRequested();
             return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
         }));
     }
@@ -70,7 +72,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TimeProvider time, 
                 ? await connection.QueueWriteAsync(() => call.RunAsync(args, context))
                 : await Task.Run(() => call.RunAsync(args, context));
             var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
-            return answer.Length <= SocketConnection.MaxFrame ? answer : Error(id, "failed", $"{name}'s answer is over 4 MB");
+            return answer.Length <= SocketConnection.MaxFrame ? answer : TooBig(id);
         }
         catch (CallFailed error)
         {
@@ -93,8 +95,15 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TimeProvider time, 
 
     internal static ReadOnlyMemory<byte> Frame<T>(T frame, JsonTypeInfo<T> type) => JsonSerializer.SerializeToUtf8Bytes(frame, type);
 
-    private static ReadOnlyMemory<byte> Error(long id, string code, string message) =>
-        Frame(new ErrorFrame(id, code, message), SocketJson.Default.ErrorFrame);
+    private static ReadOnlyMemory<byte> Error(long id, string code, string message)
+    {
+        var frame = Frame(new ErrorFrame(id, code, message), SocketJson.Default.ErrorFrame);
+        return frame.Length <= SocketConnection.MaxFrame ? frame : TooBig(id);
+    }
+
+    // No frame goes out over 4 MB (plan 5.1), an answer included.
+    private static ReadOnlyMemory<byte> TooBig(long id) =>
+        Frame(new ErrorFrame(id, "failed", "the answer is over 4 MB"), SocketJson.Default.ErrorFrame);
 
     private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync);
 }

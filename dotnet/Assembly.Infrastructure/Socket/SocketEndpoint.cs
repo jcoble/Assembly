@@ -9,7 +9,7 @@ namespace Assembly.Infrastructure.Socket;
 /// set a header on a socket; its <c>hello</c> carries the token instead. <paramref name="machine"/> is the name the
 /// <c>welcome</c> gives, this host's.
 /// </summary>
-internal sealed class SocketEndpoint(string token, SocketDispatcher calls, string machine)
+internal sealed class SocketEndpoint(string token, SocketDispatcher calls, string machine, TimeProvider time)
 {
     private readonly byte[] _token = Encoding.UTF8.GetBytes(token);
     private readonly CancellationTokenSource _stopping = new();
@@ -24,7 +24,7 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, _stopping.Token);
-        await new SocketConnection(socket, calls).RunAsync(_token, machine, stopping.Token);
+        await new SocketConnection(socket, calls, time).RunAsync(_token, machine, stopping.Token);
     }
 
     /// <summary>Closes every socket, as the host starts stopping, so it doesn't wait on them.</summary>

@@ -37,7 +37,7 @@ public sealed class SocketTests : IAsyncLifetime
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        _app.Map("/socket", new SocketEndpoint(Token, _calls, "test-machine").HandleAsync);
+        _app.Map("/socket", new SocketEndpoint(Token, _calls, "test-machine", _time).HandleAsync);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _address = new Uri($"ws://{http.Authority}/socket");
@@ -227,12 +227,53 @@ public sealed class SocketTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Writes_out_of_time_answer_timeout_and_commit_nothing()
+    {
+        var gate = new TaskCompletionSource();
+        var first = new TaskCompletionSource();
+        _calls.Write("notes", "first", TestJson.Default.Note, TestJson.Default.Note, async (note, _) =>
+        {
+            first.SetResult();
+            await gate.Task;
+            return _ => note;
+        });
+        _calls.Write("notes", "second", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult<Func<IWriteScope, Note>>(_ => note));
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "first", "{}");
+        await first.Task.WaitAsync(Wait);
+        await CallAsync(socket, 2, "notes", "second", "{}");
+        // Frames are read in order, so once this answers, the second write is queued with its 30 s running.
+        await CallAsync(socket, 3, "notes", "echo", "{}");
+        Assert.Equal("""{"t":"result","id":3,"result":{"text":""}}""", await ReadAsync(socket));
+        _time.Advance(SocketDispatcher.Limit);
+        gate.SetResult();
+
+        var answers = await ReadByIdAsync(socket, 2);
+        Assert.Equal("timeout", Code(answers[0], id: 1));
+        Assert.Equal("timeout", Code(answers[1], id: 2));
+        Assert.Empty(_writer.Written);
+    }
+
+    [Fact]
     public async Task An_answer_over_4_MB_answers_failed()
     {
         _calls.Read("notes", "big", TestJson.Default.Note, TestJson.Default.Note, (_, _) => Task.FromResult(new Note(new string('x', 4 * 1024 * 1024))));
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "notes", "big", "{}");
+
+        Assert.Equal("failed", Code(await ReadAsync(socket), id: 1));
+    }
+
+    [Fact]
+    public async Task An_error_over_4_MB_answers_a_short_failed()
+    {
+        using var socket = await OpenAsync();
+
+        // Each < is escaped to six bytes in the not_found message, so 1.5 MB in is 9 MB out.
+        await CallAsync(socket, 1, new string('<', 1_500_000), "missing", "{}");
 
         Assert.Equal("failed", Code(await ReadAsync(socket), id: 1));
     }

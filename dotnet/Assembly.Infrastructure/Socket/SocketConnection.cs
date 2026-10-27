@@ -13,7 +13,7 @@ namespace Assembly.Infrastructure.Socket;
 /// runs its writes one at a time in arrival order. A frame over 4 MB, or more than 16 MB waiting to be sent, closes
 /// it. Closing cancels its reads; writes already queued still commit.
 /// </summary>
-internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
+internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls, TimeProvider time)
 {
     internal const int Protocol = 1;
     internal const int MaxFrame = 4 * 1024 * 1024;
@@ -216,7 +216,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
     {
         try
         {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2), time);
             await socket.CloseOutputAsync(status, reason, timeout.Token);
         }
         catch (Exception error) when (error is OperationCanceledException or WebSocketException)
