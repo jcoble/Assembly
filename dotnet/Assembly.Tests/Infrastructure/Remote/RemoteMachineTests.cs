@@ -149,6 +149,110 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_remote_helper_s_turn_end_doesnt_put_a_row_into_its_remote_parent_here()
+    {
+        var (parent, parentAgent, parentPrompt, helperId, helperAgent, helperPrompt) = await StartRemoteHelperOfRemoteParentAsync();
+
+        // Follow the helper here, and let its turn end.
+        await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{helperId}/rows");
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, helperId)).Any(row => row.GetProperty("kind").GetString() == "user"));
+        await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, parent)).Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
+
+        // The parent's turn ends, and it runs another.
+        await parentAgent.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
+        await parentAgent.CloseAsync();
+        await SendAsync(parent);
+        await parentAgent.OpenAsync();
+        await parentAgent.ReplyAsync(await parentAgent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
+        await Until(async () => (await RowsAsync(_box, BoxToken, parent)).Count(row => row.GetProperty("kind").GetString() == "turn"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "finished") == 2);
+        var box = await RowsAsync(_box, BoxToken, parent);
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, parent)).Max(row => row.GetProperty("seq").GetInt64()) >= box.Max(row => row.GetProperty("seq").GetInt64()));
+        var desktop = await RowsAsync(_desktop!, DesktopToken, parent);
+
+        // Every row here is the box's copy, at the box's seq.
+        static (long, string?, string?, long) Key(JsonElement row) =>
+            (row.GetProperty("seq").GetInt64(), row.GetProperty("kind").GetString(), row.GetProperty("itemId").GetString(), row.GetProperty("createdAt").GetInt64());
+        var copied = desktop.Select(Key).ToHashSet();
+        foreach (var row in box.Where(row => row.GetProperty("kind").GetString() is "user" or "turn"))
+            Assert.Contains(Key(row), copied);
+        var boxRows = box.Select(Key).ToHashSet();
+        foreach (var row in desktop)
+            Assert.Contains(Key(row), boxRows);
+    }
+
+    [Fact]
+    public async Task Stop_on_a_remote_parent_s_own_remote_helper_stops_it_on_the_box()
+    {
+        var (parent, _, _, helperId, helperAgent, _) = await StartRemoteHelperOfRemoteParentAsync();
+
+        using var http = Client(_desktop!, DesktopToken);
+        var stopped = await http.PostAsync($"/sessions/{parent}/tasks/{helperId}/stop", null);
+
+        Assert.Equal(HttpStatusCode.OK, stopped.StatusCode);
+        Assert.Equal("acp-helper", (await helperAgent.ReadAsync("session/cancel")).GetProperty("params").GetProperty("sessionId").GetString());
+    }
+
+    [Fact]
+    public async Task StopTask_on_a_remote_parent_s_own_remote_helper_stops_it_on_the_box()
+    {
+        var (parent, _, _, helperId, helperAgent, _) = await StartRemoteHelperOfRemoteParentAsync();
+
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{_desktop!.Address.Authority}/socket"), CancellationToken.None);
+        await SocketSendAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await SocketReadAsync(socket));
+        await SocketSendAsync(socket, $$$"""{"t":"call","id":1,"feature":"send","method":"stopTask","args":{"session":"{{{parent}}}","task":"{{{helperId}}}"}}""");
+        string result;
+        while (!(result = await SocketReadAsync(socket)).Contains("\"id\":1"))
+        {
+        }
+
+        Assert.Equal("""{"t":"result","id":1,"result":{"ok":true}}""", result);
+        Assert.Equal("acp-helper", (await helperAgent.ReadAsync("session/cancel")).GetProperty("params").GetProperty("sessionId").GetString());
+    }
+
+    // A session on the box whose agent starts a helper on the box, both mid-turn; the desktop knows the helper.
+    private async Task<(string Parent, FakeLink ParentAgent, JsonElement ParentPrompt, string Helper, FakeLink HelperAgent, JsonElement HelperPrompt)>
+        StartRemoteHelperOfRemoteParentAsync()
+    {
+        var parent = await CreateSessionAsync();
+        await SendAsync(parent);
+        var parentAgent = await _boxLauncher.NextAsync();
+        var parentToken = SessionToken(await parentAgent.StartAsync());
+        var parentPrompt = await parentAgent.ReadAsync("session/prompt");
+        var helperId = (await ToolAsync(_box, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex" })).GetProperty("sessionId").GetString()!;
+        var helperAgent = await _boxLauncher.NextAsync();
+        await helperAgent.StartAsync(acpSessionId: "acp-helper");
+        var helperPrompt = await helperAgent.ReadAsync("session/prompt");
+        using var http = Client(_desktop!, DesktopToken);
+        await Until(async () => (await http.GetAsync($"/sessions/{helperId}")).StatusCode == HttpStatusCode.OK);
+        return (parent, parentAgent, parentPrompt, helperId, helperAgent, helperPrompt);
+    }
+
+    private static async Task<List<JsonElement>> RowsAsync(DesktopBackend backend, string token, string sessionId) =>
+        (await GetJsonAsync(backend, token, $"/sessions/{sessionId}/rows?limit=500")).GetProperty("rows").EnumerateArray().ToList();
+
+    private static Task SocketSendAsync(WebSocket socket, string text) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+    private static async Task<string> SocketReadAsync(WebSocket socket)
+    {
+        using var message = new MemoryStream();
+        var buffer = new byte[64 * 1024];
+        WebSocketReceiveResult received;
+        do
+        {
+            received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+            message.Write(buffer, 0, received.Count);
+        }
+        while (!received.EndOfMessage);
+        return Encoding.UTF8.GetString(message.ToArray());
+    }
+
+    [Fact]
     public async Task A_mac_session_starts_a_helper_on_the_remote_and_each_messages_the_other_once()
     {
         using var http = Client(_desktop!, DesktopToken);
