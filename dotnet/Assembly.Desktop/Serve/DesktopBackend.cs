@@ -38,9 +38,10 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly RemoteMachine? _remote;
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
+    private readonly DiagnosticsHost _diagnostics;
 
     private DesktopBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
-        WebApplication app)
+        WebApplication app, DiagnosticsHost diagnostics)
     {
         _remote = remote;
         _outbox = outbox;
@@ -48,11 +49,15 @@ public sealed class DesktopBackend : IAsyncDisposable
         _hub = hub;
         _sessions = sessions;
         _app = app;
+        _diagnostics = diagnostics;
         Address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
     }
 
     /// <summary>Where the API listens, as <c>http://127.0.0.1:port</c>.</summary>
     public Uri Address { get; }
+
+    /// <summary>Whether App Nap is held, while any turn runs.</summary>
+    internal bool ActivityHeld => _diagnostics.ActivityHeld;
 
     /// <summary>Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there.</summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
@@ -68,11 +73,19 @@ public sealed class DesktopBackend : IAsyncDisposable
         // Filled before recovery, whose closing rows go through the hub and so update it.
         var summaries = SessionSummaries.Load(store);
         var sessionStore = SessionStore.Open(db, TimeProvider.System, summaries);
-        var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: sessionStore.PublishSummary);
+        // App Nap is held while any session has a run open, here or on a remote.
+        var diagnostics = new DiagnosticsHost(Path.Combine(home, "soak-results"));
+        var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
+        {
+            sessionStore.PublishSummary(session);
+            diagnostics.HoldActivity(summaries.AnyRunOpen);
+        });
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             runsHere: session => sessionStore.Get(session) is not { Machine: not null });
         if (closed > 0)
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
+        // Loading the summaries tells nobody: a remote's run left open holds it from the start.
+        diagnostics.HoldActivity(summaries.AnyRunOpen);
         var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
         var status = new MachineStatus(remote is null ? [] : [remote.Name]);
@@ -87,6 +100,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId).Where(id => sessionStore.Get(id)?.Machine == remote!.Name));
 
         Uri? address = null;
+        Action dropSockets = () => { };
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
         // the last socket.
@@ -94,7 +108,11 @@ public sealed class DesktopBackend : IAsyncDisposable
             [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status),
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
-                new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>
+                new DiagnosticsFeature(diagnostics, () =>
+                {
+                    hub.CloseSubscriptions();
+                    dropSockets();
+                })]), port, out dropSockets, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));
@@ -102,7 +120,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app);
+        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app, diagnostics);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
