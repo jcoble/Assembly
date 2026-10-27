@@ -6,7 +6,6 @@ use futures_channel::mpsc::UnboundedSender;
 use futures_channel::oneshot;
 use serde_json::Value;
 
-use super::connection_state::ConnectionState;
 use super::endpoint::Endpoint;
 use super::in_frame::InFrame;
 use super::outcome::Outcome;
@@ -48,6 +47,4 @@ pub(super) enum Event {
         connection: u64,
     },
     Reconnect(Endpoint),
-    /// Where state changes go: the foreground task that updates the `SocketClient` entity.
-    WatchState(UnboundedSender<ConnectionState>),
 }

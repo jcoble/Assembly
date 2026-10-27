@@ -4,7 +4,6 @@
 use gpui_kit::*;
 
 use super::session_item::SessionItem;
-use crate::core::socket::topic_subscription::TopicSubscription;
 use crate::core::socket::update::Update;
 
 pub struct Sessions {
@@ -12,8 +11,8 @@ pub struct Sessions {
     items: Vec<SessionItem>,
     /// Where the next older page starts, (`nextBefore`, `nextBeforeId`); `None` once there are no more.
     older: Option<(i64, String)>,
+    /// Owns the `sessions` subscription; dropping it unsubscribes.
     feed: Option<Task<()>>,
-    subscription: Option<TopicSubscription<Update>>,
     loading_older: Option<Task<()>>,
 }
 
