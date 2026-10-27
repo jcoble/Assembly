@@ -250,6 +250,25 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Assert.Equal(RowsFeature.PageLimit, answer.RootElement.GetProperty("result").GetProperty("rows").GetArrayLength());
     }
 
+    // The window's socket dropping ends its rows sub like an unsub, and the session's last watcher going is told.
+    [Fact]
+    public async Task A_dropped_socket_s_rows_sub_leaves_its_session_unwatched()
+    {
+        var unwatched = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _hub.Unwatched += session => unwatched.TrySetResult(session);
+        var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s"}""");
+        for (var tries = 0; !_hub.HasSubscribers("s") && tries < 100; tries++)
+            await Task.Delay(20);
+        Assert.True(_hub.HasSubscribers("s"));
+
+        socket.Abort();
+        socket.Dispose();
+
+        Assert.Equal("s", await unwatched.Task.WaitAsync(Wait));
+        Assert.False(_hub.HasSubscribers("s"));
+    }
+
     // A closed tab really stops: the catch-up rows still queued for a sub it drops never go out.
     [Fact]
     public async Task An_unsub_drops_the_rows_still_queued_for_it()

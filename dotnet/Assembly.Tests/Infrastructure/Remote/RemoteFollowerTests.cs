@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.WebSockets;
-using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
@@ -8,6 +7,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Time.Testing;
+using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
@@ -22,7 +22,7 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
 
     private readonly TempDatabase _db = new();
     private readonly AppDatabase _database;
-    private readonly WatchedTopic _topic = new();
+    private readonly TopicSet _topics = new();
     private readonly LiveHub _hub;
     private readonly CountingTime _time = new(DateTimeOffset.UtcNow);
     private readonly TaskCompletionSource _connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -33,7 +33,7 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
     public RemoteFollowerTests()
     {
         _database = TestDatabase.Open(_db.Path);
-        _hub = new LiveHub(RowStore.Open(_database), topics: _topic);
+        _hub = new LiveHub(RowStore.Open(_database), topics: _topics);
     }
 
     [Fact]
@@ -64,15 +64,33 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         await _closed.Task.WaitAsync(Wait);
     }
 
+    // The window views sessions through the rows topic, not /live: the same, for a rows-topic viewer.
     [Fact]
-    public async Task A_session_watched_only_through_the_rows_topic_settles_a_Settled_after_the_watch_ends()
+    public async Task A_rows_topic_viewer_s_follower_makes_no_timers_while_its_link_is_quiet()
     {
-        _topic.Watched = true;
+        var viewer = _topics.Subscribe(RowsFeature.Topic, "s1", _ => { }, (_, _) => { });
+        await FollowPastSettledAsync();
+
+        var made = _time.Made;
+        for (var second = 0; second < 60; second++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Delay(5);
+        }
+
+        Assert.Equal(made, _time.Made);
+        Assert.False(_closed.Task.IsCompleted);
+        _topics.Unsubscribe(viewer);
+    }
+
+    [Fact]
+    public async Task A_follower_settles_as_soon_as_its_last_rows_topic_viewer_unsubscribes()
+    {
+        var viewer = _topics.Subscribe(RowsFeature.Topic, "s1", _ => { }, (_, _) => { });
         await FollowPastSettledAsync();
         Assert.False(_closed.Task.IsCompleted);
 
-        _topic.Watched = false;
-        _time.Advance(PastSettled);
+        _topics.Unsubscribe(viewer);
 
         await _closed.Task.WaitAsync(Wait);
     }
@@ -132,18 +150,5 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
             Interlocked.Increment(ref _made);
             return base.CreateTimer(callback, state, dueTime, period);
         }
-    }
-
-    // A rows-topic watcher on every session, while Watched.
-    private sealed class WatchedTopic : ITopics
-    {
-        private volatile bool _watched;
-        public bool Watched { get => _watched; set => _watched = value; }
-
-        public void Publish(string topic, string? key, string json, bool keyedOnly = false)
-        {
-        }
-
-        public bool HasSubscribers(string topic, string key) => _watched;
     }
 }
