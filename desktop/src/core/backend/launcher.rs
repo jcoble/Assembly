@@ -12,7 +12,11 @@
 //!   writes and bounds that wait itself (8 s, ApiServer.ShutdownTimeout). The wait is in the quit handler's body, not
 //!   a quit future, which GPUI cuts off after 200 ms.
 //!
-//! The token is never printed or logged.
+//! - The child's stdin is a pipe held until it exits, so it sees end of file if the window dies without quitting.
+//! - Dropping the launcher stops the child the same way, so nothing outlives the window.
+//!
+//! It never attaches to a backend it didn't start: a backend that can't take its port exits before it's ready, and
+//! the error names the port. The token is never printed or logged.
 
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -37,9 +41,19 @@ pub struct Launcher {
     /// Set on quit, so the thread doesn't start another child.
     quitting: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    /// The main thread's loop over ready tokens, and the quit handler; held, never detached.
+    _ready_loop: Option<Task<()>>,
+    _quit: Option<Subscription>,
 }
 
 impl Global for Launcher {}
+
+/// Dropping the launcher stops the backend, so nothing outlives the window.
+impl Drop for Launcher {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
 
 impl Launcher {
     /// Starts the backend and its output thread, calls `on_ready` on the main thread with the port and token each
@@ -51,22 +65,20 @@ impl Launcher {
     ) {
         let port = config.port;
         let (sender, mut receiver) = futures_channel::mpsc::unbounded::<String>();
-        let launcher = Self::new(
+        let mut launcher = Self::new(
             config,
             Arc::new(move |token| _ = sender.unbounded_send(token)),
         );
-        cx.set_global(launcher);
-        cx.spawn(async move |cx| {
+        launcher._ready_loop = Some(cx.spawn(async move |cx| {
             while let Ok(token) = receiver.recv().await {
                 cx.update(|cx| on_ready(port, token, cx));
             }
-        })
-        .detach();
-        cx.on_app_quit(|cx| {
+        }));
+        launcher._quit = Some(cx.on_app_quit(|cx| {
             cx.global_mut::<Self>().stop();
             async {}
-        })
-        .detach();
+        }));
+        cx.set_global(launcher);
     }
 
     fn new(config: BackendConfig, ready: Ready) -> Self {
@@ -76,6 +88,8 @@ impl Launcher {
             pid: Arc::new(Mutex::new(0)),
             quitting: Arc::new(AtomicBool::new(false)),
             thread: None,
+            _ready_loop: None,
+            _quit: None,
         };
         launcher.restart_if_stopped();
         launcher
@@ -136,7 +150,8 @@ fn run(
         let was_ready = run_child(config, &mut log, ready, pid, quitting);
         if !was_ready && !quitting.load(Ordering::SeqCst) {
             let line = format!(
-                "the backend stopped before it was ready; see {}",
+                "the backend stopped before it was ready (is port {} taken by another program?); see {}",
+                config.port,
                 log_path.display()
             );
             _ = writeln!(log, "{line}");
@@ -178,7 +193,12 @@ fn run_child(
         Ok(file) => Stdio::from(file),
         Err(_) => Stdio::null(),
     };
-    let mut child = match command.stdout(Stdio::piped()).stderr(stderr).spawn() {
+    let mut child = match command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(stderr)
+        .spawn()
+    {
         Ok(child) => child,
         Err(error) => {
             _ = writeln!(
