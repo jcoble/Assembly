@@ -5,8 +5,8 @@ use gpui_kit::*;
 
 pub(super) trait NativeSurface {
     /// Shows the view at `frame` in window coordinates, or hides it and frees its drawing surface when `None`.
-    fn place(&mut self, frame: Option<Bounds<Pixels>>, window: &mut Window);
+    fn place(&mut self, frame: Option<Bounds<Pixels>>);
 
     /// Destroys the view; nothing is drawn or kept after.
-    fn release(self: Box<Self>, window: &mut Window);
+    fn release(self: Box<Self>);
 }

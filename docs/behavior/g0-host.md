@@ -28,6 +28,8 @@ nothing of it paints outside its column (b0845e27, c65922f6, 893cc7dd, ba5a652f)
 g0-host#8 While a pane is dragged or a divider resized, terminals and browsers are hidden; on drag end they're placed
 again where their panes now are.
 g0-host#9 A hidden terminal or browser frees what it draws with (f127df9a), and closing its tab releases it (4f61e404).
+Switching sessions releases the window's terminal view; the backend keeps the terminal's output until the session
+is switched back to, and the view shows it again (Jesse, 2026-10-27).
 g0-host#10 After a theme change the terminal shows the new theme's colors (34223b94).
 
 ## Palette, commands and opening things

@@ -3,3 +3,5 @@
 //! `main.rs` only: write `::core::` there.
 
 pub mod backend;
+pub mod native_views;
+pub mod window_root;
