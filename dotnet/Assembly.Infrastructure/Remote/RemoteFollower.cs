@@ -92,7 +92,7 @@ internal sealed class RemoteFollower(
                 {
                     log.WriteLine($"remote session {sessionId}: {error.Message}");
                     gaveUp = true;
-                    return;
+                    break;
                 }
                 catch (Exception error) when (error is WebSocketException or HttpRequestException or IOException
                                               || (error is OperationCanceledException && !_stopping.IsCancellationRequested))
@@ -113,13 +113,15 @@ internal sealed class RemoteFollower(
             {
                 _following.Remove(sessionId);
                 again = _again.Remove(sessionId);
-                if (gaveUp)
+                // A watch that came meanwhile wins over giving up.
+                if (gaveUp && !again)
                     _gaveUp.Add(sessionId);
             }
         }
 
-        // Watched or needed again between the last check and the removal: start over.
-        if (!_stopping.IsCancellationRequested && (again || Needed(sessionId)))
+        // Watched or needed again between the last check and the removal: start over. A give-up doesn't start over on
+        // its own; Resume or a new watch does.
+        if (!_stopping.IsCancellationRequested && (again || (!gaveUp && Needed(sessionId))))
             Watch(sessionId);
     }
 
