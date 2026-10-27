@@ -18,8 +18,9 @@ g0-shape#4 Launching the app doesn't save the layout. Changes made together save
 behind older ones (378bc67d).
 g0-shape#5 Opening the drawer pushes the panes over instead of covering them. Closing it gives the center its width
 back (289c449b).
-g0-shape#6 The round Home button sits above the sessions column and keeps its width, so the dividers line up with the top
-row. It follows the column while the column's edge is dragged (f4898b79, 668f7350).
+g0-shape#6 The round Home button, with the old app's house icon, sits above the sessions column and keeps its width,
+so the dividers line up with the top row. It follows the column while the column's edge is dragged (f4898b79,
+668f7350).
 g0-shape#7 The drawer's tabs, Sessions, Chat and Problems have no close button (951f2b43).
 g0-shape#8 A pane shows nothing until the lane that owns it fills it, and nothing hidden is mounted (6353dc4d).
 g0-shape#9 The utility strip at the foot of the sessions column has Resources and Usage (there's no bottom bar), so
