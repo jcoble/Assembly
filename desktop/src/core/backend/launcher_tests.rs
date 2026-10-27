@@ -256,3 +256,11 @@ fn quitting_is_not_giving_up() {
     launcher.stop();
     assert_eq!(calls.try_iter().count(), 0);
 }
+
+#[test]
+fn the_backend_is_asked_to_exit_when_its_stdin_closes() {
+    let (mut launcher, _ready) = launch(fake("stdin", "echo \"$@\" > $DIR/args\nexit 3"));
+    launcher.thread.take().unwrap().join().unwrap();
+    let args = read(&launcher.config, "args");
+    assert!(args.contains("--exit-on-stdin-close"), "{args}");
+}
