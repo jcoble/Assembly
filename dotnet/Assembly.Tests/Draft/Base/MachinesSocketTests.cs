@@ -40,6 +40,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
     private SessionStore _sessions = null!;
     private readonly ClockSocketTests.CountingTime _time = new(Start);
     private BackendClock _clock = null!;
+    private MachineStatus _status = null!;
     private RemoteMachine _box = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
@@ -51,7 +52,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _hub = new LiveHub(RowStore.Open(_db), topics: topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System);
-        var status = new MachineStatus(topics, ["box"]);
+        var status = _status = new MachineStatus(topics, ["box"]);
         _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, _sessions, TextWriter.Null, status);
         var machines = new MachineSet(new FakeMachine(null, _sessions), _box);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
@@ -251,6 +252,44 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
 
         await Until(() => _stub.LiveHits == 1);
+    }
+
+    [Fact]
+    public async Task A_probe_with_another_session_s_link_open_follows_the_given_up_session_again()
+    {
+        using var socket = await OpenAsync();
+        await SubAsync(socket, 1, "machines");
+        _stub.DropVersion = true;
+        _box.WatchRunning(["s1"]);
+        Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
+
+        _stub.DropVersion = false;
+        _box.WatchRunning(["s2"]);
+        Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
+        await Until(() => _stub.LiveHits == 1);
+        // The link counts once the follower's connect returns, just after the stub sees it.
+        await Task.Delay(200);
+        await SubAsync(socket, 2, "clock", "second");
+        await TickAsync(socket);
+
+        await Until(() => _stub.LiveHits == 2);
+    }
+
+    [Fact]
+    public async Task A_follower_link_opened_after_the_tunnel_exits_shows_the_remote_reachable_with_no_probe()
+    {
+        using var socket = await OpenAsync();
+        await SubAsync(socket, 1, "machines");
+        await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
+        Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
+        Assert.Contains("\"result\":", await ReadAsync(socket));
+        _status.Unreachable("box", "ssh tunnel exited");
+        Assert.Equal(Change(1, Box(false, "ssh tunnel exited")), await ReadAsync(socket));
+
+        _box.WatchRunning(["s1"]);
+
+        Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
+        Assert.Equal(1, _stub.VersionHits);
     }
 
     [Fact]
