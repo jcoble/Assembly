@@ -18,7 +18,7 @@ pub struct PendingCall<T> {
     id: u64,
     events: Sender<Event>,
     answer: Receiver<Outcome<Value>>,
-    result: PhantomData<T>,
+    result: PhantomData<fn() -> T>,
 }
 
 impl<T: DeserializeOwned> Future for PendingCall<T> {

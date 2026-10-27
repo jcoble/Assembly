@@ -6,7 +6,8 @@ the commit that adds this file. Step 2 brings the logic, test first, against a r
 
 ## Decisions from the pre-implementation check (2026-10-27)
 
-- Threads: one client thread blocks on one `Event` channel with no timeout; each open connection has a reader thread
+- Threads (a change from the brief's "one background thread", reviewed and kept): one thread can't block on both a
+  socket and a channel without a timeout or a poll loop, which the rules forbid. So one client thread blocks on one `Event` channel with no timeout; each open connection has a reader thread
   that blocks on the socket. The writer is a second tungstenite `WebSocket` on a clone of the stream. The backend
   sends no pings (no KeepAlive in ApiServer.cs), so the reader never writes except a close reply. Frames and closes
   carry a connection number so a dropped connection's late events are ignored. Dropping a connection shuts the
@@ -20,10 +21,16 @@ the commit that adds this file. Step 2 brings the logic, test first, against a r
   `RowUpdate::Jump`: g0-session drops what it holds and reloads with `rows/page`, `before = seq + 1`.
 - Machines: main answers names only. `Machine` has `name` now; `reachable` is added when the base lane's M1 merges
   (no optional field as a fallback). M2 then turns `machines/list` into a topic.
-- `reconnect(endpoint)` takes the endpoint each time: a restarted backend may have a new port, or a new token if its
-  token file was deleted. A 4401 close means the launcher re-reads the token file; 4400 stops.
-- State changes reach the window through an unbounded channel read on the foreground, which updates the
-  `SocketClient` entity; it emits `ConnectionState`.
+- `reconnect(endpoint)` takes the endpoint each time, and the launcher reads the token file afresh for it: a
+  restarted backend may have a new port, or a new token if its token file was deleted. So a hello refused with 4401
+  (bad token) needs no handling of its own: it's a failed open, `Disconnected`, and the next `reconnect` brings the
+  current token. 4400 (wrong protocol) is a build mismatch and also just shows `Disconnected`.
+- State changes reach the window through an unbounded channel, handed to the client thread when it starts and read
+  on the foreground, which updates the `SocketClient` entity; it emits `ConnectionState`.
+- An entity's subscription is owned by the task that reads its updates; dropping the task unsubscribes.
+- Every call sends `args: {}` at least, never null (a null answers `bad_args`, SocketDispatcher.cs:201).
+- A first rows open (no `after`) gets `state.seq = last` with no rows, which reads as a `Jump`: the session view
+  loads its newest page then, the same as after a far-behind reconnect.
 
 The backend lane's window contract is dotnet/notes/reconnect-later-window.md on its branch (PR #27): never resend
 `send/send`, `sessions/create` or `attachments/commit` after a drop; restart an upload from `begin`.

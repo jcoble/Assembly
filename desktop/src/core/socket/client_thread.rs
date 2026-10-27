@@ -32,7 +32,8 @@ pub(super) struct ClientThread {
     sender: Sender<Event>,
     connection: Option<Connection>,
     connections_opened: u64,
-    state_watch: Option<UnboundedSender<ConnectionState>>,
+    /// Read on the foreground, which updates the `SocketClient` entity.
+    states: UnboundedSender<ConnectionState>,
     calls: HashMap<u64, oneshot::Sender<Outcome<Value>>>,
     /// The newest call per key.
     keys: HashMap<String, u64>,
@@ -41,9 +42,13 @@ pub(super) struct ClientThread {
 }
 
 impl ClientThread {
-    /// Starts the thread, which opens the socket at once. State changes go to `state_watch`, which the
-    /// `SocketClient` entity reads on the foreground.
-    pub fn spawn(_endpoint: Endpoint, _events: Receiver<Event>, _sender: Sender<Event>) {
+    /// Starts the thread, which opens the socket at once.
+    pub fn spawn(
+        _endpoint: Endpoint,
+        _events: Receiver<Event>,
+        _sender: Sender<Event>,
+        _states: UnboundedSender<ConnectionState>,
+    ) {
         todo!()
     }
 
