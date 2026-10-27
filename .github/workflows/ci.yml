@@ -86,8 +86,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev \
             libxcb1-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
+      # The socket tests against the real backend start this build's binary (core/socket/real_backend.rs). With
+      # ASSEMBLY_REAL_BACKEND set, a backend that isn't built fails them rather than letting them pass empty.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet build ../dotnet/Assembly.Desktop/Assembly.Desktop.csproj
       - run: cargo build --locked
       - run: cargo test --locked
+        env:
+          ASSEMBLY_REAL_BACKEND: "1"
       - run: cargo clippy --locked --all-targets -- -D warnings
   scripts:
     runs-on: ubuntu-latest

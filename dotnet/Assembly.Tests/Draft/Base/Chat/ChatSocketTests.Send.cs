@@ -95,4 +95,22 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
     }
+
+    [Fact]
+    public async Task Stop_answer_and_stopTask_on_a_machine_thats_down_are_unreachable()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        var turn = new RowBatch();
+        turn.Rows.Add(new NewRow("run-7", null, RowKind.Turn, JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
+        _hub.Publish(session.SessionId, turn);
+        _box.Down = true;
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "send", "stop", """{"runId":"run-7"}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "send", "answer", $$$"""{"session":"{{{session.SessionId}}}","ask":"ask-1","answer":{"optionId":"yes"}}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        await CallAsync(socket, 3, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+    }
 }

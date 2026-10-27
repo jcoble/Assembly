@@ -40,6 +40,16 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
 
     public void Release() => _held?.TrySetResult();
 
+    /// <summary>How many probes reached it. Each answers as <see cref="Probe"/> does, which may ignore the probe's token.</summary>
+    public int Probes;
+    public Func<CancellationToken, Task> Probe { get; set; } = _ => Task.CompletedTask;
+
+    public Task ProbeAsync(CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref Probes);
+        return Probe(cancellationToken);
+    }
+
     public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
         Remote<IReadOnlyList<(string, string)>>("agents", () => [("claude", "Claude")], cancellationToken);
 

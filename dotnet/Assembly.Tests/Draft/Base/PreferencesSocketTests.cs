@@ -81,6 +81,21 @@ public sealed class PreferencesSocketTests : IAsyncLifetime
         Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"theme","item":{"key":"theme","value":"light"}}]}""", await ReadAsync(later));
     }
 
+    [Fact]
+    public async Task A_set_without_a_value_or_with_a_key_that_isnt_text_is_bad_args_and_saves_nothing()
+    {
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, """{"t":"call","id":1,"feature":"preferences","method":"set","args":{"key":"theme"}}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"bad_args","message":"preferences/set: a save takes a key and a value"}""",
+            await ReadAsync(socket));
+        await SendAsync(socket, """{"t":"call","id":2,"feature":"preferences","method":"set","args":{"key":5,"value":"dark"}}""");
+        Assert.Contains("\"code\":\"bad_args\"", await ReadAsync(socket));
+
+        await SendAsync(socket, """{"t":"sub","id":3,"topic":"preferences"}""");
+        Assert.Equal("""{"t":"state","sub":3,"items":[]}""", await ReadAsync(socket));
+    }
+
     private async Task StartAsync()
     {
         var topics = new TopicSet();

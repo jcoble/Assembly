@@ -55,12 +55,13 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _here = new FakeMachine(null, _sessions);
         _box = new FakeMachine("box", _sessions);
         var machines = new MachineSet(_here, _box);
-        var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
+        // On the fake clock, so a test can run a call past its 30 s limit.
+        var calls = new SocketDispatcher(_db.Writer, topics, _time, NullLogger.Instance);
         new SessionsFeature(_sessions, machines).Register(calls);
         new SendFeature(_sessions, machines, _hub).Register(calls);
         new RowsFeature(_hub, rows, _sessions, machines).Register(calls);
         new ConfigFeature(_sessions, machines).Register(calls);
-        new MachinesFeature(machines, new MachineStatus(["box"])).Register(calls);
+        new MachinesFeature(machines, new MachineStatus(topics, ["box"]), () => { }, TimeProvider.System).Register(calls);
         new PreferencesFeature(_db).Register(calls);
         _attachments = new AttachmentStore(Path.Combine(_home.FullName, "attachments"));
         new AttachmentsFeature(_sessions, machines, _attachments, Staging).Register(calls);

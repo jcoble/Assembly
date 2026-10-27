@@ -28,6 +28,8 @@ bash scripts/guard.sh
 CI's `desktop` job runs the first four on Linux; the guard runs before every commit and in CI's lint job
 (`scripts/lint.d/60-desktop-guard.sh`). agent-workbox has no window: windows run on the Mac.
 
+Rust tests live in a `tests.rs` or `*_tests.rs` file beside the code (`#[cfg(test)] mod frames_tests;`), or in `desktop/tests/`.
+
 ## Layout
 
 - `src/core/`: what every feature shares. The socket client is `core/socket/`, the only code that opens a socket.

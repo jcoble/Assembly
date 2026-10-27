@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
+using Assembly.Application.Common;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Socket;
@@ -29,6 +30,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private readonly Dictionary<string, Task> _ordered = [];
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
+    // The running calls' answers, waited for as the socket ends.
+    private readonly BackgroundWork _answers = new(time, Console.Error);
     // This socket's subscriptions, by their sub id. Only the receive loop, and then its finally, touch it.
     private readonly Dictionary<long, TopicSet.Subscription> _subscriptions = [];
     private long _waiting;
@@ -72,6 +75,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             lock (_ordered)
                 ordered = [.. _ordered.Values];
             await Task.WhenAll(ordered.Select(write => write.ContinueWith(_ => { }, TaskScheduler.Default)));
+            // Every write has run; the reads still answering were cancelled as the socket closed.
+            await _answers.StopAsync(TimeSpan.FromSeconds(5));
             calls.ConnectionClosed(Id);
             _outbox.Writer.TryComplete();
             await sending;
@@ -165,7 +170,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             case { T: "call", Id: { } id, Feature: not null, Method: not null } call:
                 var cancel = new CancellationTokenSource();
                 if (_running.TryAdd(id, cancel))
-                    _ = AnswerAsync(call, id, cancel);
+                    _answers.Start($"call {id}", stopping => AnswerAsync(call, id, cancel, stopping));
                 else
                     Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", $"call {id} is already running"), SocketJson.Default.ErrorFrame));
                 return true;
@@ -190,8 +195,9 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         }
     }
 
-    private async Task AnswerAsync(InFrame call, long id, CancellationTokenSource cancel)
+    private async Task AnswerAsync(InFrame call, long id, CancellationTokenSource cancel, CancellationToken stopping)
     {
+        using var stopped = stopping.Register(cancel.Cancel);
         try
         {
             Send(await calls.AnswerAsync(call, id, this, cancel.Token));

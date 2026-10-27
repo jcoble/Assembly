@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Infrastructure.Http;
@@ -35,19 +36,25 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly AppDatabase _db;
     private readonly LiveHub _hub;
     private readonly SessionRegistry _sessions;
+    private readonly BackgroundWork _work;
     private readonly RemoteMachine? _remote;
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
+    private readonly FileStream _homeLock;
     private readonly DiagnosticsHost _diagnostics;
+    private readonly MachinesFeature _machinesFeature;
 
-    private DesktopBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
-        WebApplication app, DiagnosticsHost diagnostics)
+    private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteMachine? remote,
+        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature)
     {
+        _homeLock = homeLock;
+        _machinesFeature = machinesFeature;
         _remote = remote;
         _outbox = outbox;
         _db = db;
         _hub = hub;
         _sessions = sessions;
+        _work = work;
         _app = app;
         _diagnostics = diagnostics;
         Address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -59,10 +66,31 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// <summary>Whether App Nap is held, while any turn runs.</summary>
     internal bool ActivityHeld => _diagnostics.ActivityHeld;
 
-    /// <summary>Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there.</summary>
-    public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
+    /// <summary>
+    /// Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there, and
+    /// <paramref name="tunnel"/>'s exits mark it unreachable.
+    /// </summary>
+    public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
+        RemoteTunnel? tunnel = null)
     {
         Directory.CreateDirectory(home);
+        // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
+        // the start fails, so the home isn't left locked.
+        var homeLock = HomeLock.Take(home);
+        try
+        {
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel);
+        }
+        catch
+        {
+            homeLock.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
+        RemoteConfig? remote, RemoteTunnel? tunnel)
+    {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
@@ -86,15 +114,18 @@ public sealed class DesktopBackend : IAsyncDisposable
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
         // Loading the summaries tells nobody: a remote's run left open holds it from the start.
         diagnostics.HoldActivity(summaries.AnyRunOpen);
-        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
+        var work = new BackgroundWork(TimeProvider.System, log);
+        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
-        var status = new MachineStatus(remote is null ? [] : [remote.Name]);
+        var status = new MachineStatus(topics, remote is null ? [] : [remote.Name]);
         var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
             sessions.Helpers.Row.TurnEnded);
         var machines = remoteMachine is null
             ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
             : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
         sessions.Helpers.Delivery.Machines = machines;
+        if (tunnel is not null && remote is not null)
+            tunnel.Exited += () => status.Unreachable(remote.Name, "ssh tunnel exited");
         var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, sessionStore, hub, machines.Named(null)!, log);
         // Turns a remote was running when the desktop stopped: catch up on them rather than mark them lost. And remote
         // helpers whose row here is still running, whose rows may not have been copied yet.
@@ -105,11 +136,12 @@ public sealed class DesktopBackend : IAsyncDisposable
         Uri? address = null;
         Action dropSockets = () => { };
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
-        // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
-        // the last socket.
+        var clock = new BackendClock(topics, TimeProvider.System, work);
+        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
+        clock.Ticked += machinesFeature.Tick;
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
-                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status),
+            [new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new DiagnosticsFeature(diagnostics, () =>
                 {
@@ -123,7 +155,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app, diagnostics);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -136,12 +168,17 @@ public sealed class DesktopBackend : IAsyncDisposable
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
+        // Before the remote, so no probe is still out on it.
+        await _machinesFeature.DisposeAsync();
         if (_outbox is not null)
             await _outbox.DisposeAsync();
         await _sessions.DisposeAsync();
+        // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
+        await _work.DisposeAsync();
         if (_remote is not null)
             await _remote.DisposeAsync();
         _hub.Dispose();
         _db.Dispose();
+        _homeLock.Dispose();
     }
 }

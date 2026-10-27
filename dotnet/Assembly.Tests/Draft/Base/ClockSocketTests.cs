@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
+using Assembly.Application.Common;
 using Assembly.Infrastructure.Clock;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
@@ -27,6 +28,7 @@ public sealed class ClockSocketTests : IAsyncLifetime
 
     private readonly TempDatabase _file = new();
     private readonly CountingTime _time = new(Start);
+    private BackgroundWork _work = null!;
     private AppDatabase _db = null!;
     private BackendClock _clock = null!;
     private WebApplication _app = null!;
@@ -37,7 +39,8 @@ public sealed class ClockSocketTests : IAsyncLifetime
         var topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        _clock = new BackendClock(topics, _time);
+        _work = new BackgroundWork(_time, TextWriter.Null);
+        _clock = new BackendClock(topics, _time, _work);
         _clock.Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
@@ -56,12 +59,12 @@ public sealed class ClockSocketTests : IAsyncLifetime
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
-        _clock.Dispose();
+        await _work.StopAsync(Wait);
         _db.Dispose();
         _file.Dispose();
     }
 
-    // Pins: base#9
+    // The clock topic: a second subscriber gets one change a second, 180 over three minutes.
     [Fact]
     public async Task A_second_subscriber_gets_180_changes_over_three_minutes()
     {
@@ -95,6 +98,18 @@ public sealed class ClockSocketTests : IAsyncLifetime
         await ReadAsync(socket);
         _time.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(Change(3, 2), await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task The_clock_stops_when_the_backends_work_stops_even_with_a_subscriber_left()
+    {
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
+        await ReadAsync(socket);
+        Assert.Equal(1, _time.Timers);
+
+        Assert.Equal(0, await _work.StopAsync(TimeSpan.FromSeconds(5)).WaitAsync(Wait));
+        Assert.Equal(0, _time.Timers);
     }
 
     private static long Ms(int seconds) => Start.AddSeconds(seconds).ToUnixTimeMilliseconds();
@@ -132,7 +147,7 @@ public sealed class ClockSocketTests : IAsyncLifetime
     }
 
     // A fake clock that counts its live timers, so a test can see the backend clock's timer stop.
-    private sealed class CountingTime(DateTimeOffset start) : FakeTimeProvider(start)
+    internal sealed class CountingTime(DateTimeOffset start) : FakeTimeProvider(start)
     {
         private int _timers;
         public int Timers => Volatile.Read(ref _timers);

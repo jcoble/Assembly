@@ -1,4 +1,5 @@
 using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Infrastructure.Http;
@@ -31,6 +32,8 @@ public static class ServeRun
         }
 
         Directory.CreateDirectory(options.Home);
+        // Before the database opens, so a second host on this home writes nothing into the live one's; disposed last.
+        using var homeLock = HomeLock.Take(options.Home);
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var topics = new Topics();
         using var db = AppDatabase.Open(options.Database, TimeProvider.System, topics);
@@ -40,7 +43,9 @@ public static class ServeRun
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
-        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out);
+        // Stopped after the sessions, before the hub and the database.
+        await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
+        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work);
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
