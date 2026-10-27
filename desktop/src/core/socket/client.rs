@@ -86,6 +86,12 @@ impl SocketClient {
         cx.global::<GlobalSocket>().0.clone()
     }
 
+    /// The client, once the backend's first ready line started it.
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalSocket>()
+            .map(|socket| socket.0.clone())
+    }
+
     pub fn state(&self) -> &ConnectionState {
         &self.state
     }

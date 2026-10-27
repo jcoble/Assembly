@@ -21,7 +21,7 @@ use super::endpoint::Endpoint;
 /// How long the backend may take to print its ready line.
 const READY: Duration = Duration::from_secs(30);
 
-pub(super) struct RealBackend {
+pub(crate) struct RealBackend {
     running: Running,
     pub port: u16,
     token: String,

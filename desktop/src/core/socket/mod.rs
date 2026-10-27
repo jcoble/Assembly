@@ -19,16 +19,16 @@ pub mod endpoint;
 pub mod error_code;
 mod event;
 #[cfg(test)]
-mod fake_backend;
+pub(crate) mod fake_backend;
 mod in_frame;
 mod open_failure;
 mod out_frame;
 pub mod outcome;
 pub mod pending_call;
 #[cfg(test)]
-mod real_backend;
+pub(crate) mod real_backend;
 #[cfg(test)]
-mod real_backend_cancel_tests;
+pub(crate) mod real_backend_cancel_tests;
 #[cfg(test)]
 mod real_backend_tests;
 pub mod row;
@@ -38,5 +38,7 @@ mod rows_feed;
 mod rows_tests;
 #[cfg(test)]
 mod test_client;
+#[cfg(test)]
+pub(crate) mod test_wait;
 pub mod topic_subscription;
 pub mod update;
