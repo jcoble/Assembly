@@ -20,6 +20,9 @@ internal sealed class TurnActivity
         get { lock (_lock) return _token != IntPtr.Zero; }
     }
 
+    /// <summary>Holds it while <paramref name="held"/>, else releases it.</summary>
+    public void Hold(bool held) => throw new NotImplementedException();
+
     public void Begin()
     {
         lock (_lock)

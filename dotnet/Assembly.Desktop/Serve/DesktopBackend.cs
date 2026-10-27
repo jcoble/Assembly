@@ -54,6 +54,9 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// <summary>Where the API listens, as <c>http://127.0.0.1:port</c>.</summary>
     public Uri Address { get; }
 
+    /// <summary>Whether App Nap is held, while any turn runs.</summary>
+    internal bool ActivityHeld => throw new NotImplementedException();
+
     /// <summary>Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there.</summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
     {

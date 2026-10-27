@@ -55,6 +55,24 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await Until(() => _log.ToString().Contains($"session {sessionId} run {runId}: initialize "));
     }
 
+    // App Nap is held while a turn runs, by the backend from its rows, with no window calls.
+    [Fact]
+    public async Task A_running_turn_holds_app_nap_until_it_ends()
+    {
+        var sessionId = await CreateSessionAsync();
+        Assert.False(_backend.ActivityHeld);
+        await SendAsync(sessionId);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.True(_backend.ActivityHeld);
+
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+
+        await Until(() => !_backend.ActivityHeld);
+        await agent.CloseAsync();
+    }
+
     [Fact]
     public async Task The_socket_serves_the_desktops_preferences()
     {
