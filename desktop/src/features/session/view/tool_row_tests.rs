@@ -35,3 +35,17 @@ fn an_open_tool_shows_its_command_not_its_arguments_json() {
     assert_eq!(command_of(r#"{"file_path":"/a.rs"}"#), None);
     assert_eq!(command_of("not json"), None);
 }
+
+// Pins: g0-session#13
+#[test]
+fn a_codex_shell_call_shows_its_argv_as_one_command() {
+    let argv = r#"{"command":["bash","-lc","cargo test"]}"#;
+    assert_eq!(command_of(argv), Some("bash -lc cargo test".to_string()));
+    let cmd = r#"{"cmd":["git","status"]}"#;
+    assert_eq!(command_of(cmd), Some("git status".to_string()));
+    assert_eq!(
+        command_of(r#"{"cmd":"ls -la"}"#),
+        Some("ls -la".to_string())
+    );
+    assert_eq!(command_of(r#"{"command":["bash",1]}"#), None);
+}

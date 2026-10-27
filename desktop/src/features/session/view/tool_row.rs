@@ -46,7 +46,16 @@ pub fn diff_lines(diff: &str, all: bool) -> (Vec<&str>, usize) {
 /// as in the web app.
 pub fn command_of(input: &str) -> Option<String> {
     let input: serde_json::Value = serde_json::from_str(input).ok()?;
-    input["command"].as_str().map(str::to_string)
+    let command = ["command", "cmd"]
+        .into_iter()
+        .find_map(|key| input.get(key))?;
+    if let Some(text) = command.as_str() {
+        return Some(text.to_string());
+    }
+    // Codex sends a command as its argv, as ToolSummary.cs reads it.
+    let argv = command.as_array()?.iter().map(serde_json::Value::as_str);
+    argv.collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join(" "))
 }
 
 /// The output's last `OUTPUT_TAIL` lines.
