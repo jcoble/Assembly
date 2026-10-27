@@ -38,7 +38,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
 
     public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
-        Action<TArgs, CallContext>? cancelled = null)
+        Action<TArgs, CallContext>? failed = null)
     {
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
@@ -52,9 +52,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 call.Cancellation.ThrowIfCancellationRequested();
                 return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
             }
-            catch (OperationCanceledException) when (call.Cancellation.IsCancellationRequested && cancelled is not null)
+            catch (OperationCanceledException) when (call.Cancellation.IsCancellationRequested && failed is not null)
             {
-                cancelled((TArgs)value, call);
+                failed((TArgs)value, call);
                 throw;
             }
         }, order is null ? null : value => order((TArgs)value)));

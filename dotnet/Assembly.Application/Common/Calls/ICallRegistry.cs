@@ -17,7 +17,7 @@ public interface ICallRegistry
     // cancelled or timeout, whether or not its handler ran, so a feature can let go of what the call would have finished.
     void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
-        Action<TArgs, CallContext>? cancelled = null);
+        Action<TArgs, CallContext>? failed = null);
 
     // A save (5.9): `{feature}/set` with {key, value}, one write each, audited as "{feature}/set <key>", never with its
     // value. Its database part publishes the change on the topic named after its feature, which must be registered first.
