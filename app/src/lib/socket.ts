@@ -81,14 +81,15 @@ function reopen() {
 }
 
 // One of a feature's calls. With `key`, a newer call for the same key cancels the one still running, so a fast switch
-// never waits on a stale load; `signal` (its owner closing) cancels it too. A cancelled call comes back 'aborted'
-// once the backend answers `cancelled`.
+// never waits on a stale load: the older one comes back 'aborted' at once, and its result, if the backend had
+// already finished it, never reaches its caller. `signal` (its owner closing) cancels it too, and that call settles on
+// the backend's answer: 'aborted' for `cancelled`, or its result if it had already finished.
 export async function call<T>(feature: string, method: string, args: Record<string, unknown> = {}, { key, signal }: { key?: string; signal?: AbortSignal } = {}): Promise<Outcome<T>> {
   const name = `${feature}/${method}`;
   const mine = new AbortController();
   if (key) {
     const older = running.get(key);
-    if (older !== undefined) cancel(older);
+    if (older !== undefined) supersede(older);
     running.set(key, ++lastId);
   }
   const id = key ? running.get(key)! : ++lastId;
@@ -117,4 +118,14 @@ export async function call<T>(feature: string, method: string, args: Record<stri
 // had already finished, so a write that committed is never taken for a lost one.
 function cancel(id: number) {
   if (pending.has(id)) current?.send(JSON.stringify({ t: 'cancel', id }));
+}
+
+// A newer call took this one's key: tell the backend, and answer 'aborted' now, so a stale result can't land after
+// the newer one. Keys are for loads.
+function supersede(id: number) {
+  const call = pending.get(id);
+  if (!call) return;
+  cancel(id);
+  pending.delete(id);
+  call.settle({ ok: false, why: 'aborted' });
 }

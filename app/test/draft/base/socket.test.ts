@@ -73,10 +73,34 @@ test('a newer call with the same key sends cancel for the older one, quietly', a
     { t: 'cancel', id: 1 },
     { t: 'call', id: 2, feature: 'notes', method: 'get', args: {} },
   ]);
-  socket.receive({ t: 'error', id: 1, code: 'cancelled', message: 'notes/get was cancelled' });
   assert.deepEqual(await older, { ok: false, why: 'aborted' });
-  socket.receive({ t: 'result', id: 2, result: { text: 'hi' } });
-  assert.deepEqual(await newer, { ok: true, result: { text: 'hi' } });
+  socket.receive({ t: 'result', id: 2, result: { text: 'new' } });
+  assert.deepEqual(await newer, { ok: true, result: { text: 'new' } });
+  assert.deepEqual(failures, []);
+});
+
+// Pins: base#10
+test("an older call's result that arrives after a newer call took its key never reaches its caller", async () => {
+  const { call, failures } = await load();
+  const older = call('notes', 'get', {}, { key: 'notes/get' });
+  const socket = await welcome();
+  const newer = call('notes', 'get', {}, { key: 'notes/get' });
+  await settle();
+  // The backend had already finished the older one: its result arrives after the newer call was sent.
+  socket.receive({ t: 'result', id: 1, result: { text: 'stale' } });
+  assert.deepEqual(await older, { ok: false, why: 'aborted' });
+  socket.receive({ t: 'result', id: 2, result: { text: 'new' } });
+  assert.deepEqual(await newer, { ok: true, result: { text: 'new' } });
+
+  // And when the older result comes after the newer one's.
+  const third = call('notes', 'get', {}, { key: 'notes/get' });
+  await settle();
+  const fourth = call('notes', 'get', {}, { key: 'notes/get' });
+  await settle();
+  socket.receive({ t: 'result', id: 4, result: { text: 'newest' } });
+  socket.receive({ t: 'result', id: 3, result: { text: 'stale' } });
+  assert.deepEqual(await fourth, { ok: true, result: { text: 'newest' } });
+  assert.deepEqual(await third, { ok: false, why: 'aborted' });
   assert.deepEqual(failures, []);
 });
 
