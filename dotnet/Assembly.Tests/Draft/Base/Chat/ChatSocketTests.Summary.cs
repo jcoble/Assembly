@@ -120,10 +120,19 @@ public sealed partial class ChatSocketTests
         {
             await holding.Task.WaitAsync(Wait);
             var commit = Task.Run(() => Row(session, RowKind.Turn, null, """{"state":"started"}"""));
-            // A read that takes the hub's lock and doesn't finish means the commit holds it, waiting on the writer.
+            // A read that takes the hub's lock, on its own thread, still not done 100 ms after it started means the
+            // commit holds the lock, waiting on the writer.
             Task<long> probe;
             do
-                probe = Task.Run(() => _hub.LastSeq(session));
+            {
+                var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                probe = Task.Factory.StartNew(() =>
+                {
+                    started.SetResult();
+                    return _hub.LastSeq(session);
+                }, TaskCreationOptions.LongRunning);
+                await started.Task.WaitAsync(Wait);
+            }
             while (await Task.WhenAny(probe, Task.Delay(100)) == probe);
             using var socket = await OpenAsync();
 
