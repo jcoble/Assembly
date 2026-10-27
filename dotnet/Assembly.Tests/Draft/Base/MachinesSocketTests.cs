@@ -9,9 +9,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Socket;
@@ -148,6 +150,28 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         Assert.Equal((2, 0), (_stub.VersionHits, _stub.AgentsHits));
     }
 
+    [Theory]
+    [InlineData(202, "stopped")]
+    [InlineData(404, "not running")]
+    [InlineData(500, "failed")]
+    public async Task Stopping_a_run_on_the_remote_fails_on_an_error_status_instead_of_saying_it_isnt_running(int status, string expected)
+    {
+        _stub.StopStatus = status;
+        var session = new SessionInfo("s1", "claude", "https://github.com/o/r", "", null, 0);
+
+        string outcome;
+        try
+        {
+            outcome = await _box.StopAsync(session, "r1", CancellationToken.None) ? "stopped" : "not running";
+        }
+        catch (CallFailed)
+        {
+            outcome = "failed";
+        }
+
+        Assert.Equal(expected, outcome);
+    }
+
     private static string Box(bool reachable, string? reason) =>
         $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}}}""";
 
@@ -199,6 +223,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         public Uri Address { get; private set; } = null!;
         public int Format { get; set; } = RowStore.FormatVersion;
         public int AgentsStatus { get; set; } = 200;
+        public int StopStatus { get; set; } = 202;
         public bool Drop { get; set; }
         public int VersionHits;
         public int AgentsHits;
@@ -226,6 +251,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
                     ? Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json")
                     : Results.Text("boom", statusCode: AgentsStatus);
             });
+            _app.MapPost("/runs/{id}/stop", () => Results.Text(StopStatus == 500 ? "boom" : "", statusCode: StopStatus));
             await _app.StartAsync();
             Address = new Uri(_app.Urls.Single());
         }
