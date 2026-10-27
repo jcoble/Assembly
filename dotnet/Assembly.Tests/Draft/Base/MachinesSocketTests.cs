@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
@@ -40,6 +41,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
     private SessionStore _sessions = null!;
     private readonly ClockSocketTests.CountingTime _time = new(Start);
     private BackendClock _clock = null!;
+    private BackgroundWork _work = null!;
     private MachineStatus _status = null!;
     private RemoteMachine _box = null!;
     private WebApplication _app = null!;
@@ -56,7 +58,8 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, _sessions, TextWriter.Null, status);
         var machines = new MachineSet(new FakeMachine(null, _sessions), _box);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        _clock = new BackendClock(topics, _time);
+        _work = new BackgroundWork(_time, TextWriter.Null);
+        _clock = new BackendClock(topics, _time, _work);
         var feature = new MachinesFeature(machines, status, _clock.Start, _time);
         _clock.Ticked += feature.Tick;
         _clock.Register(calls);
@@ -78,7 +81,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
-        _clock.Dispose();
+        await _work.StopAsync(Wait);
         await _box.DisposeAsync();
         await _stub.DisposeAsync();
         _hub.Dispose();

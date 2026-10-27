@@ -81,6 +81,22 @@ for bad in 'const string All = "SELECT * FROM preferences";' 'var sql = "select 
 done
 rm -rf "$r"
 
+r=$(repo_with 80-no-bare-task-starts.sh)
+mkdir -p "$r/dotnet/Assembly.Application" "$r/dotnet/Assembly.Tests"
+printf '%s\n' 'var task = Task.Run(Work);' '_ = kill(-pid, 9);' 'work.Start("clock", TickAsync);' '// _ = RunAsync(); in a comment' \
+  >"$r/dotnet/Assembly.Application/A.cs"
+printf '%s\n' '// Never use async void.' '    /// No async void here.' '     * nor async void here' '    _ => RunAsync(),' \
+  >"$r/dotnet/Assembly.Application/B.cs"
+expect 0 "bare task starts: held tasks, a discarded non-task call, comments and a lambda pass" "$r" 80-no-bare-task-starts.sh
+rm "$r/dotnet/Assembly.Application/B.cs"
+for bad in '_ = RunAsync();' '_=RunAsync();' '_ = RunAsync ();' '    _ = Task.Run(Work);' '_ = write.ContinueWith(_ => { });' 'Task.Run(Work);' \
+  'Task.Factory.StartNew(Work);' 'ThreadPool.UnsafeQueueUserWorkItem(Work, null);' 'new Thread(Work).Start();' 'private async void OnClick() { }'; do
+  echo "$bad" >"$r/dotnet/Assembly.Tests/T.cs"
+  expect 1 "bare task starts: fails on: $bad (tests too)" "$r" 80-no-bare-task-starts.sh
+  rm "$r/dotnet/Assembly.Tests/T.cs"
+done
+rm -rf "$r"
+
 # The two .NET checks fail on a probe in a scratch copy. In the commit hook (LINT_STAGED_ONLY=1) each skips a commit
 # with no .NET file in it, and runs on a .cs change.
 r=$(dotnet_repo_with 50-dotnet-format.sh)
