@@ -25,11 +25,16 @@ impl LayoutStore {
 
     /// The saved layout when this build can read it, otherwise the default.
     pub fn layout_to_open(saved: Option<Value>) -> DockAreaState {
-        let Some(value) = saved else { return default_state() };
+        let Some(value) = saved else {
+            return default_state();
+        };
         match serde_json::from_value::<DockAreaState>(value) {
             Ok(state) if state.version == Some(LAYOUT_VERSION) => state,
             Ok(state) => {
-                eprintln!("shell: the saved layout is version {:?}, not {LAYOUT_VERSION}, so the default opens", state.version);
+                eprintln!(
+                    "shell: the saved layout is version {:?}, not {LAYOUT_VERSION}, so the default opens",
+                    state.version
+                );
                 default_state()
             }
             Err(error) => {
@@ -51,7 +56,9 @@ impl LayoutStore {
                 let state = frame.dock().read(cx).dump(cx);
                 match serde_json::to_value(state) {
                     Ok(layout) => (frame.layout.write)(layout, cx),
-                    Err(error) => eprintln!("shell: the layout didn't serialize, so it wasn't saved: {error}"),
+                    Err(error) => {
+                        eprintln!("shell: the layout didn't serialize, so it wasn't saved: {error}")
+                    }
                 }
             });
         }));
