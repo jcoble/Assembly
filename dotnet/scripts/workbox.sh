@@ -23,6 +23,7 @@ cd "$(dirname "$0")/../.."
 . scripts/lane-env.sh
 mode=${1:?usage: dotnet/scripts/workbox.sh smoke|record|serve|stop|remove|kill-adapter|row-log [branch]}
 branch=${2:-$(git branch --show-current)}
+echo "lane ${LANE_NAME:-main}: box port $BOX_PORT, unit $BOX_UNIT, box data ~/$BOX_DATA" >&2
 case "$mode" in
   smoke|record|serve) ;;
   stop)
@@ -44,6 +45,7 @@ echo "removed $unit, ~/$data and ~/assembly/$branch"
 BOX
     exit ;;
   kill-adapter)
+    [ -n "$LANE_NAME" ] || { echo "kill-adapter is for a lane's host; main's host keeps its adapter" >&2; exit 1; }
     ssh workbox-test bash -s -- "$BOX_UNIT" <<'BOX'
 set -euo pipefail
 unit=$1
@@ -61,6 +63,16 @@ BOX
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
 esac
 commit=$(git rev-parse --verify "$branch^{commit}")
+# Main's host runs only what's on main: a clean checkout of origin/main as it is now. Main's host is anything that
+# resolves to its unit, port or data, whatever the branch or .lane.
+if [ "$mode" = serve ] && { [ "$BOX_UNIT" = assembly-dotnet ] || [ "$BOX_PORT" = 9797 ] || [ "$BOX_DATA" = assembly-dotnet ]; }; then
+  git fetch -q origin main
+  main=$(git rev-parse origin/main)
+  if [ "$commit" != "$main" ] || [ "$(git rev-parse HEAD)" != "$main" ] || [ -n "$(git status --porcelain)" ]; then
+    echo "stop: $BOX_UNIT is main's host and runs only a clean checkout of origin/main ($main); this is $commit" >&2
+    exit 1
+  fi
+fi
 
 ssh workbox-test 'test -d ~/assembly.git || git init -q --bare ~/assembly.git'
 git push -q --force ssh://workbox-test/~/assembly.git "$commit:refs/heads/$branch"
@@ -86,10 +98,11 @@ fi
 adapters=~/spike-dotnet/adapters
 entry=$adapters/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 # The box has pnpm but no npm.
-mkdir -p ~/"$data"/serve
-"$dir/dotnet/scripts/agents-file.sh" "$adapters" ~/"$data"/serve/agents.json
 
 if [ "$mode" = serve ]; then
+  # Only the server reads agents.json; smoke and record start the adapter themselves.
+  mkdir -p ~/"$data"/serve
+  "$dir/dotnet/scripts/agents-file.sh" "$adapters" ~/"$data"/serve/agents.json
   # Published apart from the checkout, so a later smoke build never swaps files under the running server.
   bin=~/$data/bin/$commit
   dotnet publish -v q --nologo -c Release -o "$bin" "$dir/dotnet/Assembly.Remote" >&2
