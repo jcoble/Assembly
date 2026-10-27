@@ -65,8 +65,10 @@ public sealed class DesktopBackend : IAsyncDisposable
         // before the API starts, so no session makes a checkout in sessions/ first.
         AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
         var store = RowStore.Open(db);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System);
-        var hub = new LiveHub(store, topics: topics);
+        // Filled before recovery, whose closing rows go through the hub and so update it.
+        var summaries = SessionSummaries.Load(store);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System, summaries);
+        var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: sessionStore.PublishSummary);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             runsHere: session => sessionStore.Get(session) is not { Machine: not null });
         if (closed > 0)

@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using Assembly.Domain.Sessions;
 
@@ -8,7 +9,9 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// <summary>
 /// The sessions over the socket (plan C1): the <c>sessions</c> topic, whose state is the newest
 /// <see cref="ListLimit"/> sessions (or, with a key, that one), with an upsert for every change to any session, so one
-/// that wakes up moves into the list; <c>sessions/page</c> for older ones; and <c>sessions/create</c>.
+/// that wakes up moves into the list; <c>sessions/page</c> for older ones; <c>sessions/create</c>; and
+/// <c>sessions/read</c>, which marks a session read up to a seq. Each item carries its summary from memory, so the
+/// state, read under the Topics lock, reads no rows.
 /// </summary>
 internal sealed class SessionsFeature : IFeature
 {
@@ -30,12 +33,23 @@ internal sealed class SessionsFeature : IFeature
     {
         calls.Topic(Topic, SessionsJson.Default.SessionItem, session => session.SessionId, (key, call) =>
             key is null
-                ? [.. _store.List(null, ListLimit, call.Cancellation).Sessions.Select(SessionItem.From)]
-                : _store.Get(key) is { } session ? [SessionItem.From(session)] : []);
+                ? [.. _store.List(null, ListLimit, call.Cancellation).Sessions.Select(_store.Item)]
+                : _store.Get(key) is { } session ? [_store.Item(session)] : []);
         calls.Read(Topic, "page", SessionsJson.Default.PageArgs, SessionsJson.Default.Page, (args, call) =>
         {
             var page = _store.List(args.Before, Math.Clamp(args.Limit, 1, ListLimit), call.Cancellation, args.BeforeId);
-            return Task.FromResult(new Page([.. page.Sessions.Select(SessionItem.From)], page.NextBefore, page.NextBeforeId));
+            return Task.FromResult(new Page([.. page.Sessions.Select(_store.Item)], page.NextBefore, page.NextBeforeId));
+        });
+        // Only the database: no order key, as nothing outside it can hang.
+        calls.Write(Topic, "read", SessionsJson.Default.ReadArgs, SessionsJson.Default.Done, (args, _) =>
+        {
+            if (_store.Get(args.Session) is null)
+                throw new CallFailed("unknown session");
+            return Task.FromResult<Func<IWriteScope, SendFeature.Done>>(scope =>
+            {
+                _store.MarkRead(scope, args.Session, args.Seq);
+                return new SendFeature.Done(true);
+            });
         });
         // The machine's work runs before the write, which only answers: the store's own write publishes the new
         // session, so it goes out on this socket before the answer. It's keyed on its machine, so one that hangs holds
@@ -64,4 +78,6 @@ internal sealed class SessionsFeature : IFeature
         string? ParentSessionId = null, string? Title = null);
 
     internal sealed record Created(string SessionId);
+
+    internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] long Seq);
 }
