@@ -38,9 +38,12 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 
 ## One socket
 
-The page talks to the backend over one WebSocket, through one file, `app/src/lib/socket.ts` (plan step B4). Until
-that lands, `app/src/lib/call.ts` and `Assembly.Infrastructure/Http/` are the one HTTP path, and the `/live` socket
-carries the rows. The only other HTTP is `/mcp`, which the agents use.
+The page talks to the backend over one WebSocket, `/socket`, through one file, `app/src/lib/socket.ts`. The backend's
+side is `Assembly.Infrastructure/Socket/`: a feature registers its calls on `ICallRegistry`
+(`Assembly.Application/Common/Calls/`), and `SocketDispatcher` runs every call the same way (plan 5.2). The socket
+exists from plan step B4, but features move onto it from B7; until then `app/src/lib/call.ts` and
+`Assembly.Infrastructure/Http/` are their HTTP path, and the `/live` socket carries the rows. The only other HTTP is
+`/mcp`, which the agents use.
 
 ## Where a new feature goes
 

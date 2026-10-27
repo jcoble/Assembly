@@ -25,7 +25,7 @@ How to read it:
 ### D1. Database access: EF Core `DbContext`, or plain `Microsoft.Data.Sqlite`
 
 Jesse wants `DbContext` used directly, as in the codewithmukesh article, instead of a repository layer. The backend
-also ships as Native AOT today: `shell/assembly.sh:29` publishes `Assembly.Mac` with `-p:PublishAot=true`, and every
+also ships as Native AOT today: `shell/assembly.sh:29` publishes `Assembly.Desktop` with `-p:PublishAot=true`, and every
 project has `IsAotCompatible=true` and `TreatWarningsAsErrors=true` (`dotnet/Directory.Build.props`). Those two goals
 pull in opposite directions.
 
@@ -83,7 +83,7 @@ steps it drives. Zero timers in `app/src` means they can't stay where they are. 
   outside the app, which drives the page through the socket and the native UI tool.
 - **B. A backend "clock" topic.** The backend's one shared timer pushes a tick, and the page samples its counters on
   each tick. This can sample anything the page counts: open sockets, listeners, subscriptions, rows drawn, and memory
-  (the Mac backend reads it). It **can't** measure frame gaps or key-to-paint latency, because those need the page's
+  (the desktop backend reads it). It **can't** measure frame gaps or key-to-paint latency, because those need the page's
   own frame callback. With only B, the lag meter loses its two main numbers.
 - **A and B together.** Counters come from the clock topic, which always works, including in a normal run.
   Frame-timing measurement stays a measure-mode tool, as in A.
@@ -285,15 +285,15 @@ dotnet/
       Chat/                      ChatFeature.cs, ChatSchema.cs, and Rows/ Sessions/ Helpers/ Attachments/
       Preferences/               step B7
       Diagnostics/               step B8
-    DependencyInjection.cs       AddApplication(), AddMachineFeatures(), AddMacFeatures()
+    DependencyInjection.cs       AddApplication(), AddMachineFeatures(), AddDesktopFeatures()
   Assembly.Infrastructure/       references Application
     Persistence/                 AppDatabase, AtomicWriter and the audit
     Socket/                      SocketEndpoint, SocketConnection, SocketDispatcher
     Topics/  Clock/  Agents/  Machines/  Remote/  Transcript/  Mcp/
     Http/                        today's HTTP routes, FeatureCalls and the feature lists, until B7, B8, C1 and
                                  C2 delete them
-    DependencyInjection.cs       AddInfrastructure(), AddMacInfrastructure()
-  Assembly.Mac/                  Program.cs, and MacOptions.cs for its arguments
+    DependencyInjection.cs       AddInfrastructure(), AddDesktopInfrastructure()
+  Assembly.Desktop/              Program.cs, and DesktopOptions.cs for its arguments
   Assembly.Remote/               Program.cs, and its Serve, Smoke, Record and Replay commands
   Assembly.Tests/                Architecture/ Core/ Infrastructure/ Features/<Feature>/, plus today's Draft/,
                                  Pinned/ and Fixtures/
@@ -352,12 +352,12 @@ delete:
 | Today | Goes to |
 | --- | --- |
 | `Assembly.Domain/Rows/RowJsonContext` and `SessionConfig.ReadChoices` (its JSON parsing) | `Assembly.Application/Features/Chat/`, in B3; Domain keeps the records |
-| `Assembly.Infrastructure/Http/FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`, `MacFeatureList` | Deleted in B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
+| `Assembly.Infrastructure/Http/FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`, `DesktopFeatureList` | Deleted in B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
 | `Assembly.Infrastructure/Http/PreferencesRoutes`, `Assembly.Application/Features/Preferences/PreferenceStore` | Deleted in B7 |
 | `Assembly.Infrastructure/Http/PageRoutes`, `DebugRoutes` | Deleted in B8 |
 | `Assembly.Infrastructure/Http/` (the chat routes, `LiveSocket`, `TokenGuard`) | Deleted as each route's last caller moves onto the socket: the page's in C1, the remote client's in C2 |
 | `Assembly.Application/Features/Chat/Rows/LiveHub` | The `rows` topic, in C1 |
-| `Assembly.Mac/Serve/` | Stays until B7, which makes it `Assembly.Mac/Program.cs` and `MacOptions.cs` |
+| `Assembly.Desktop/Serve/` | Stays until B7, which makes it `Assembly.Desktop/Program.cs` and `DesktopOptions.cs` |
 
 ## 5. The shared plumbing
 
@@ -365,7 +365,7 @@ Each part has one implementation, registered in DI, and features reach it only t
 
 ### 5.1 One socket, its frames
 
-- **Endpoint.** The page opens `ws://127.0.0.1:<port>/socket` and connects nowhere else. The Mac backend opens the
+- **Endpoint.** The page opens `ws://127.0.0.1:<port>/socket` and connects nowhere else. The desktop backend opens the
   same endpoint on each remote host, through the SSH tunnel (phase C2). Both machines speak the same protocol.
 - **Frame format.** Every frame is one JSON text message with a `t` field naming its type. The JSON uses
   source-generated serialization (`SocketJson.cs`), so it works under AOT.
@@ -456,7 +456,7 @@ internal sealed class PreferencesFeature(IAppDatabase db) : IFeature
 The feature makes its table as `PreferenceStore` does today (`PreferenceStore.cs:14`): `PreferencesSchema.Create`
 runs through `db.Writer` when the feature is built. `ICallRegistry` has no schema method, because B7 doesn't need one.
 
-`AddMacFeatures()` registers `PreferencesFeature`. `AddMachineFeatures()` registers what every machine serves.
+`AddDesktopFeatures()` (today's `DesktopFeatureList`) registers `PreferencesFeature`. `AddMachineFeatures()` registers what every machine serves.
 
 ### 5.3 Cancellation
 
@@ -710,7 +710,7 @@ measures it again through the real `IAtomicWriter` and records the number.
 ## 6. What stays HTTP
 
 - **`/mcp`.** Agents call Assembly's tools over the MCP protocol, which runs over HTTP. The page never uses it.
-- **Nothing else.** Every route the page or the Mac backend calls today moves onto the socket and is deleted
+- **Nothing else.** Every route the page or the desktop backend calls today moves onto the socket and is deleted
   (section 11).
 
 ## 7. Every timer in `app/src` today, and where it goes
@@ -1094,7 +1094,11 @@ of the shell, check4, and the same grep. Not done until the window starts the re
     `ApplicationStopping` as it does for `/live`, so stopping doesn't wait on them.
   - Page: `app/src/lib/socket.ts` (`call`, `onFailure`). It opens its socket with `TrackedWebSocket`
     (`debug.svelte.ts`), which the locked guard allows, until B10 makes `socket.ts` the guard's `TRANSPORT`.
-  - No shell change, and `host/backend.ts` is unchanged: `backend-ready` comes in B9 (5.10).
+  - No shell change, and `host/backend.ts` is unchanged: `socket.ts` imports its `BASE_WS` and `TOKEN`, and
+    `backend-ready` comes in B9 (5.10).
+  - Scripts: `scripts/check4.sh` also gives each scenario its case's own machine, as `CHECK4_HOST_API` and
+    `CHECK4_HOST_TOKEN` (the desktop for a local case, the Workbox Test host through its tunnel for a box case), kept
+    in variables, never in argv or a log. The other scenarios still go through the desktop (`CHECK4_API`).
 - **Failing tests first,** in `Assembly.Tests/Infrastructure/Socket/SocketTests.cs`, over a real loopback socket:
   1. A call answers `result`, and an unknown one `not_found`.
   2. Bad args answer `bad_args`.
@@ -1111,10 +1115,14 @@ of the shell, check4, and the same grep. Not done until the window starts the re
   1. Latest-wins by key sends `cancel` for the older call.
   2. The owner's signal sends `cancel`.
   3. A close fails pending calls as `aborted`.
-  4. One reconnect, then the failure reported through `onFailure`.
+  4. One reconnect, then the failure reported through `onFailure`. Only the single reopen: waiting for
+     `backend-ready` after it fails is B9's.
+  5. A call cancelled after the backend finished it still comes back with its result, so a committed save is never
+     taken for a lost one (and on the backend, a `cancel` that comes while a write commits answers `result`).
 - **Proof:** the tests. check4 passes, plus a new scenario, `scripts/features/socket.sh`, a one-line `.sh` that runs
   `socket.ts` (node, since curl has no WebSocket on the Mac), which checks `hello`, `welcome` and a `not_found`
-  answer on both machines. No feature has a call before B7, so the real call and cancel are in B7's scenario.
+  answer on both machines, against `CHECK4_HOST_API`. `welcome.machine` is the host's name, and the scenario fails
+  unless it's the case's own machine (`CHECK4_HOST_NAME`), so a box case that reached the desktop fails. No feature has a call before B7, so the real call and cancel are in B7's scenario.
 - **Size:** 600 to 800 lines with tests.
 
 ### B5. Topics and the backend clock
@@ -1253,7 +1261,9 @@ group:
 - Reveal: streamed text shows as rows arrive, with nothing waiting on a frame.
 - `coverView`: a `ResizeObserver` callback runs it. This is a logic test of the function on fake measurements, not a
   test of the layout.
-- Reconnect: `socket.test.ts` (B4).
+- Reconnect, in `socket.test.ts` (B4 has the single reopen): after the one reopen fails, nothing tries again until
+  `backend-ready`; a `backend-ready` event opens the socket and subscribes again; "Disconnected" with its Reconnect
+  button shows meanwhile, and the button tries the socket again.
 
 **Proof:**
 

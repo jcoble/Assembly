@@ -2,9 +2,11 @@ using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 using Assembly.Infrastructure.Mcp;
+using Assembly.Infrastructure.Socket;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
@@ -40,6 +42,13 @@ public static class ApiServer
                 services.Machines.Named(session.Machine)?.Watch(session);
             return LiveSocket.HandleAsync(context, services.Hub);
         });
+        if (services.Writer is not null)
+        {
+            var calls = new SocketDispatcher(services.Writer, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"));
+            var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
+            app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
+            app.Map("/socket", socket.HandleAsync);
+        }
         more?.Invoke(app);
         return app;
     }

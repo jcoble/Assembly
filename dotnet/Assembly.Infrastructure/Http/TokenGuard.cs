@@ -8,7 +8,8 @@ namespace Assembly.Infrastructure.Http;
 /// <summary>
 /// Every request needs the token as <c>Authorization: Bearer</c>; only the live socket may pass it as <c>?token=</c>,
 /// since a browser can't set headers on a WebSocket. Preflights are answered first, as they carry no token, and
-/// only the webview's origins may read the answers. <c>/mcp</c> takes a session's own token instead (<see cref="McpRoutes"/>).
+/// only the webview's origins may read the answers. <c>/mcp</c> takes a session's own token instead (<see cref="McpRoutes"/>),
+/// and <c>/socket</c> takes it in its first frame (<see cref="Socket.SocketConnection"/>).
 /// </summary>
 internal sealed class TokenGuard
 {
@@ -35,7 +36,7 @@ internal sealed class TokenGuard
             return;
         }
 
-        if (context.Request.Path != "/mcp" && !Carries(context))
+        if (context.Request.Path != "/mcp" && context.Request.Path != "/socket" && !Carries(context))
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status401Unauthorized, "unauthorized");
             return;

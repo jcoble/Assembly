@@ -47,7 +47,7 @@ public static class ServeRun
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers), options.Port,
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer), options.Port,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

@@ -6,13 +6,15 @@ using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
+using Assembly.Application.Common.Database;
 
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
 /// What the routes work with. <c>Machines</c> runs each session's turns; <c>Token</c> guards every route but the MCP
-/// server's, which <c>Helpers</c> serves when given.
+/// server's, which <c>Helpers</c> serves when given,
+/// and the socket's, whose <c>hello</c> carries it. <c>Writer</c>, when given, runs the socket's writes.
 /// </summary>
 public sealed record ApiServices(LiveHub Hub, SessionStore SessionStore, MachineSet Machines, AttachmentStore Attachments, string Token,
-    HelperSessions? Helpers = null);
+    HelperSessions? Helpers = null, IAtomicWriter? Writer = null);

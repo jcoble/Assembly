@@ -11,6 +11,9 @@ The lane writes the scenario against the API, from the feature's corrected spec.
 - `CHECK4_SESSION`, `CHECK4_RUN`: the case's session and the turn running in it
 - `CHECK4_AGENT`: `claude` or `codex`; `CHECK4_MACHINE`: `local` or `workbox-test`
 - `CHECK4_REPO`: the session's repo, on the machine it runs on
+- `CHECK4_HOST_API`, `CHECK4_HOST_TOKEN`, `CHECK4_HOST_NAME`: the case's own machine, its token and its hostname: the
+  local backend for a local case, the Workbox Test host (through its tunnel) for a box case. For a scenario that must
+  reach the host itself rather than the desktop, such as `socket.sh`
 
 It prints one line per step, `ok <step>` or `fail <step>: <why>`, and exits 0 only if every step passed. The lines
 are saved as the case's steps in the summary.
