@@ -6,6 +6,7 @@ using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
 using Assembly.Application.Features.Chat;
@@ -28,6 +29,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     private readonly HttpClient _http;
     private readonly RemoteFollower _follower;
     private readonly Action<string> _turnEnded;
+    private readonly MachineStatus _status;
     private bool _formatChecked;
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
@@ -38,6 +40,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _name = name;
         _hub = hub;
         _sessionStore = sessionStore;
+        _status = status;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, RefreshAsync, AddSubagentSession, log);
@@ -177,15 +180,20 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
             _follower.Watch(sessionId);
     }
 
-    // The remote's rows are copied as they are, so it must write the format this computer reads.
+    // The remote's rows are copied as they are, so it must write the format this computer reads. Until it's known to,
+    // an answer doesn't mark it reachable, so another format never shows reachable first.
     private async Task CheckFormatAsync(CancellationToken cancellationToken)
     {
         if (_formatChecked)
             return;
         var version = (await JsonAsync(HttpMethod.Get, "/version", null, cancellationToken)).GetProperty("formatVersion").GetInt32();
         if (version != RowStore.FormatVersion)
-            throw new MachineUnreachable(_name, $"{_name} stores rows in format {version}; this computer reads format {RowStore.FormatVersion}");
+        {
+            var reason = $"stores rows in format {version}; this computer reads format {RowStore.FormatVersion}";
+            throw Unreachable(reason, $"{_name} {reason}");
+        }
         _formatChecked = true;
+        _status.Reachable(_name);
     }
 
     // A finished turn may have named the session on the remote.
@@ -199,7 +207,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
                 _sessionStore.SetTitle(sessionId, title);
             _sessionStore.Touch(sessionId);
         }
-        catch (MachineUnreachable)
+        catch (Exception error) when (error is MachineUnreachable or CallFailed)
         {
             // The title can wait for the next turn.
         }
@@ -211,24 +219,42 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         return await ReadJsonAsync(response, cancellationToken);
     }
 
+    // Any answer means the remote is there, unless it refused this computer's token: then nothing will work.
     private async Task<HttpResponseMessage> SendRequestAsync(HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
     {
+        HttpResponseMessage response;
         try
         {
             using var request = new HttpRequestMessage(method, path) { Content = content };
-            return await _http.SendAsync(request, cancellationToken);
+            response = await _http.SendAsync(request, cancellationToken);
         }
         catch (Exception error) when (error is HttpRequestException || (error is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            throw new MachineUnreachable(_name, $"{_name} didn't answer: {error.Message}", error);
+            throw Unreachable("didn't answer", $"{_name} didn't answer: {error.Message}", error);
         }
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+        {
+            response.Dispose();
+            throw Unreachable("the remote refused this computer's token", $"{_name}: the remote refused this computer's token");
+        }
+        if (_formatChecked)
+            _status.Reachable(_name);
+        return response;
     }
 
+    // Recorded before it's thrown.
+    private MachineUnreachable Unreachable(string reason, string message, Exception? inner = null)
+    {
+        _status.Unreachable(_name, reason);
+        return new MachineUnreachable(_name, message, inner);
+    }
+
+    // The remote answered, so a failure here is the call's, not the machine's.
     private async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
-            throw new MachineUnreachable(_name, $"{_name} answered {(int)response.StatusCode}: {body}");
+            throw new CallFailed($"{_name} answered {(int)response.StatusCode}: {body}");
         using var json = JsonDocument.Parse(body);
         return json.RootElement.Clone();
     }

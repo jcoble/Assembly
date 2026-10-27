@@ -50,7 +50,7 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
         {
             answer = await config(session);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;

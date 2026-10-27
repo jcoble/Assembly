@@ -55,7 +55,7 @@ internal sealed class AttachmentRoutes(SessionStore sessionStore, MachineSet mac
         {
             path = await machines.For(session).SaveAttachmentAsync(session, type, bytes.Value, context.RequestAborted);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;
