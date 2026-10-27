@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Data.Sqlite;
 using Assembly.Desktop.Serve;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Http;
@@ -237,6 +238,40 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, notAnImage.StatusCode);
         Assert.Equal("Only files can be attached", JsonDocument.Parse(await notAnImage.Content.ReadAsStringAsync()).RootElement.GetProperty("error").GetString());
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+    }
+
+    [Fact]
+    public async Task A_second_backend_on_the_same_home_fails_and_writes_nothing()
+    {
+        var sessionId = await CreateSessionAsync();
+        await SendAsync(sessionId);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        var before = Rows();
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log));
+
+        Assert.StartsWith("home in use by pid ", error.Message);
+        Assert.Equal(before, Rows());
+        Assert.Contains(before, row => row.StartsWith($"{sessionId}:", StringComparison.Ordinal) && row.Contains(":turn:", StringComparison.Ordinal));
+        await GetJsonAsync("/version");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+    }
+
+    /// <summary>Every row in the home's database, read apart from the backend.</summary>
+    private List<string> Rows()
+    {
+        using var db = new SqliteConnection($"Data Source={Path.Combine(_home, "assembly.db")};Mode=ReadOnly;Pooling=False");
+        db.Open();
+        using var command = db.CreateCommand();
+        command.CommandText = "SELECT session_id || ':' || seq || ':' || kind || ':' || payload FROM rows ORDER BY session_id, seq;";
+        using var reader = command.ExecuteReader();
+        var rows = new List<string>();
+        while (reader.Read())
+            rows.Add(reader.GetString(0));
+        return rows;
     }
 
     private async Task<string> CreateSessionAsync()
