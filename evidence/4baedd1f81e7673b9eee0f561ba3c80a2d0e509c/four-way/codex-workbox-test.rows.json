@@ -1,0 +1,155 @@
+[
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 1,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793136494904,
+    "firstSeq": 1
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 2,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793136494904,
+    "firstSeq": 2
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 6,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": "rs_0cc0c2400c38440f016ae1177253348191a988cadbd37b2a43:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Executing hostname command**",
+      "done": true
+    },
+    "createdAt": 1793136500579,
+    "firstSeq": 3
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 15,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": "context:9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "kind": "context",
+    "payload": {
+      "used": 15106,
+      "size": 258400
+    },
+    "createdAt": 1793136503885,
+    "firstSeq": 5
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 10,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": "exec-7319a2cd-1863-404f-949b-6c4ef9bee54c",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "/bin/bash -lc hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793136502833,
+    "firstSeq": 7
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 9,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": "guardian_assessment:2613bda2-29ee-45d2-8303-5fcaa5015bf5",
+    "kind": "tool",
+    "payload": {
+      "name": "Guardian Review",
+      "state": "completed",
+      "hasDetail": true,
+      "kind": "think"
+    },
+    "createdAt": 1793136502793,
+    "firstSeq": 8
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 13,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": "rs_0cc0c2400c38440f016ae1177789f48191875056ca51a86292:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Refining output line count**",
+      "done": true
+    },
+    "createdAt": 1793136503817,
+    "firstSeq": 12
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 16,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": "msg_0cc0c2400c38440f016ae11777cb488191b00cb227931efb35",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "workbox-test\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793136503894,
+    "firstSeq": 16
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 17,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+      "status": "completed",
+      "startedAt": 1793136494904,
+      "durationMs": 8990,
+      "firstTokenMs": 8913,
+      "model": "5.6 Luna",
+      "inputTokens": 15489,
+      "outputTokens": 251,
+      "cacheHitPct": 65.4,
+      "toolCalls": 2,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793136503894,
+    "firstSeq": 17
+  },
+  {
+    "sessionId": "8d543478-0109-4dce-9f24-62ea2d2d8f91",
+    "seq": 18,
+    "runId": "9f1f0c80-0c53-42b2-9bf6-3bb93cd1643f",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793136503894,
+    "firstSeq": 18
+  }
+]
