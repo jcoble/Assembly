@@ -1,26 +1,50 @@
 //! `LayoutStore` owns turning the saved layout into the one to open, and saving the layout when it changes: once per
-//! update, however many changes the update made, with no timer. The read and the write come from outside: lane
-//! g0-socket's preferences calls once it lands, the tests' own until then. Replaces layoutStorage.ts and frame.ts's
-//! persistence.
+//! update, however many changes the update made, with no timer. The read and the write come from outside: the
+//! backend's `preferences` topic and `preferences/set` call (main.rs), the tests' own in tests. Replaces
+//! layoutStorage.ts and frame.ts's persistence.
 
 use gpui_kit::component::dock::DockAreaState;
 use gpui_kit::*;
 use serde_json::Value;
 
+use crate::core::socket::update::Update;
+
 use super::default_layout::{LAYOUT_VERSION, default_state};
 use super::frame::Frame;
 
-pub type WriteLayout = Box<dyn Fn(Value, &mut App)>;
+/// The layout's key among the backend's preferences.
+pub const LAYOUT_KEY: &str = "shell.dock-layout";
+
+/// Saves a layout, until the returned task finishes. Dropping the task gives the save up.
+pub type WriteLayout = Box<dyn Fn(Value, &mut App) -> Task<()>>;
 
 pub struct LayoutStore {
     write: WriteLayout,
     /// The save asked for in this update, until it runs.
     save: Option<Task<()>>,
+    /// The last save, while it's being written. A newer one replaces it, so the newest layout wins.
+    writing: Option<Task<()>>,
+}
+
+/// The saved layout in the `preferences` topic's first update, its state. `None` when there's none, or the
+/// subscription ended first.
+pub fn saved_layout(first: Option<Update>) -> Option<Value> {
+    let Some(Update::State(items)) = first else {
+        return None;
+    };
+    items
+        .into_iter()
+        .find(|(key, _)| key == LAYOUT_KEY)
+        .and_then(|(_, mut item)| item.get_mut("value").map(Value::take))
 }
 
 impl LayoutStore {
     pub fn new(write: WriteLayout) -> Self {
-        Self { write, save: None }
+        Self {
+            write,
+            save: None,
+            writing: None,
+        }
     }
 
     /// The saved layout when this build can read it, otherwise the default.
@@ -55,7 +79,7 @@ impl LayoutStore {
                 frame.layout.save = None;
                 let state = frame.dock().read(cx).dump(cx);
                 match serde_json::to_value(state) {
-                    Ok(layout) => (frame.layout.write)(layout, cx),
+                    Ok(layout) => frame.layout.writing = Some((frame.layout.write)(layout, cx)),
                     Err(error) => {
                         eprintln!("shell: the layout didn't serialize, so it wasn't saved: {error}")
                     }

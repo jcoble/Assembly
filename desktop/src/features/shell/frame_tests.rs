@@ -13,7 +13,10 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 
+use crate::core::socket::update::Update;
+
 use super::default_layout::CHAT;
+use super::layout_store::{LAYOUT_KEY, WriteLayout, saved_layout};
 
 use super::frame::Frame;
 use super::placeholder_pane::PlaceholderPane;
@@ -38,17 +41,24 @@ fn open_window(
 ) -> (Entity<Frame>, Writes, &mut VisualTestContext) {
     let writes = Writes::default();
     let sink = writes.clone();
-    let (frame, cx) = cx.add_window_view(move |window, cx| {
-        Frame::new(
-            Task::ready(saved),
-            Box::new(move |layout, _| sink.borrow_mut().push(layout)),
-            window,
-            cx,
-        )
+    let write: WriteLayout = Box::new(move |layout, _| {
+        sink.borrow_mut().push(layout);
+        Task::ready(())
     });
+    let (frame, cx) = open_with(saved, write, cx);
+    (frame, writes, cx)
+}
+
+fn open_with(
+    saved: Option<Value>,
+    write: WriteLayout,
+    cx: &mut TestAppContext,
+) -> (Entity<Frame>, &mut VisualTestContext) {
+    let (frame, cx) =
+        cx.add_window_view(move |window, cx| Frame::new(Task::ready(saved), write, window, cx));
     cx.simulate_resize(size(px(1400.), px(900.)));
     cx.run_until_parked();
-    (frame, writes, cx)
+    (frame, cx)
 }
 
 fn dump(frame: &Entity<Frame>, cx: &mut VisualTestContext) -> Value {
@@ -364,5 +374,66 @@ fn the_usage_popover_is_built_only_once_it_opens(cx: &mut TestAppContext) {
     assert!(
         body.bottom() <= button.top(),
         "the popover opens above the strip"
+    );
+}
+
+// Pins: g0-shape#3
+#[test]
+fn the_saved_layout_is_the_layout_preference_in_the_first_state() {
+    let layout = json!({"version": 1});
+    let state = Update::State(vec![
+        ("theme".into(), json!({"key": "theme", "value": "dark"})),
+        (
+            LAYOUT_KEY.into(),
+            json!({"key": LAYOUT_KEY, "value": layout}),
+        ),
+    ]);
+    assert_eq!(saved_layout(Some(state)), Some(layout));
+    assert_eq!(saved_layout(Some(Update::State(Vec::new()))), None);
+    // The subscription ended without a state: the backend refused it.
+    assert_eq!(saved_layout(None), None);
+}
+
+/// Counts how many of the saves still being written were given up.
+struct GivenUp(Rc<Cell<usize>>);
+
+impl Drop for GivenUp {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() + 1);
+    }
+}
+
+// Pins: g0-shape#4
+#[gpui::test]
+fn a_newer_save_replaces_one_still_being_written(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        PlaceholderPane::register_all(cx);
+    });
+    let given_up = Rc::new(Cell::new(0));
+    let counter = given_up.clone();
+    // A backend that never answers a save.
+    let write: WriteLayout = Box::new(move |_, cx| {
+        let pending = GivenUp(counter.clone());
+        cx.spawn(async move |_| {
+            let _pending = pending;
+            std::future::pending::<()>().await
+        })
+    });
+    let (frame, cx) = open_with(None, write, cx);
+    for placement in [DockPlacement::Right, DockPlacement::Bottom] {
+        cx.update(|window, cx| {
+            frame
+                .read(cx)
+                .dock()
+                .clone()
+                .update(cx, |dock, cx| dock.toggle_dock(placement, window, cx))
+        });
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        given_up.get(),
+        1,
+        "the first save was given up for the second"
     );
 }
