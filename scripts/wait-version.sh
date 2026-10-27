@@ -13,14 +13,14 @@ same_code() { [ "$1" = "$commit" ] || { git cat-file -e "$1^{commit}" 2>/dev/nul
 
 last="no answer"
 end=$((SECONDS + deadline))
-while :; do
-  seen=$(printf 'Authorization: Bearer %s\n' "$token" | curl -s --max-time 5 -H @- "$base/version" | jq -r '.commit // empty' 2>/dev/null || true)
+# Each request gets at most the time left, so an answer after the deadline doesn't count.
+while [ "$SECONDS" -lt "$end" ]; do
+  seen=$(printf 'Authorization: Bearer %s\n' "$token" | curl -s --max-time $((end - SECONDS)) -H @- "$base/version" | jq -r '.commit // empty' 2>/dev/null || true)
   if [ -n "$seen" ]; then
     same_code "$seen" && { echo "$seen"; exit 0; }
     last="it answered with $seen"
   fi
-  [ "$SECONDS" -lt "$end" ] || break
-  sleep 1
+  [ "$SECONDS" -lt "$end" ] && sleep 1
 done
 echo "$name on port ${base##*:} didn't answer /version with the code of ${commit:0:7} in $deadline s; last: $last"
 exit 1
