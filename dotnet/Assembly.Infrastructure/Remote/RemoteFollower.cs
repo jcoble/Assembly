@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
 using Assembly.Domain.Rows;
@@ -49,7 +50,7 @@ internal sealed class RemoteFollower(
                     await FollowOnceAsync(sessionId, _stopping.Token);
                     backoff = TimeSpan.FromSeconds(1);
                 }
-                catch (MachineUnreachable error)
+                catch (Exception error) when (error is MachineUnreachable or CallFailed)
                 {
                     log.WriteLine($"remote session {sessionId}: {error.Message}");
                     return;

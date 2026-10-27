@@ -54,7 +54,7 @@ internal sealed class RowRoutes(LiveHub hub, SessionStore sessionStore, MachineS
             if (sessionStore.Get(RequestValues.Route(context, "id")) is { } session)
                 call = await machines.For(session).ToolCallAsync(session, RequestValues.Route(context, "item"), context.RequestAborted);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;
