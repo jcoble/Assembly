@@ -17,7 +17,7 @@ namespace Assembly.Infrastructure.Remote;
 /// </summary>
 internal sealed class RemoteFollower(
     Uri address, string token, LiveHub hub, Func<CancellationToken, Task> checkFormat, Action linked, Func<string, Task> turnEnded,
-    Action<string, StoredRow> subagentCopied, TextWriter log) : IAsyncDisposable
+    Action<string, StoredRow> subagentCopied, TextWriter log, TimeProvider time) : IAsyncDisposable
 {
     // How long a socket may stay quiet, with nobody watching and no turn running, before it counts as caught up.
     private static readonly TimeSpan Settled = TimeSpan.FromSeconds(2);
@@ -114,7 +114,7 @@ internal sealed class RemoteFollower(
                     {
                         // Closed or out of step before catching up: waits like a lost link, so a box that keeps doing it
                         // isn't asked again at once, forever.
-                        await Task.Delay(backoff, _stopping.Token);
+                        await Task.Delay(backoff, time, _stopping.Token);
                         backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
                     }
                 }
@@ -128,7 +128,7 @@ internal sealed class RemoteFollower(
                                               || (error is OperationCanceledException && !_stopping.IsCancellationRequested))
                 {
                     log.WriteLine($"remote session {sessionId}: link lost ({error.GetType().Name}); again in {backoff.TotalSeconds:0} s");
-                    await Task.Delay(backoff, _stopping.Token);
+                    await Task.Delay(backoff, time, _stopping.Token);
                     backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
                 }
             }
@@ -171,7 +171,7 @@ internal sealed class RemoteFollower(
         linked();
 
         using var done = CancellationTokenSource.CreateLinkedTokenSource(stopping);
-        var lastFrame = DateTime.UtcNow;
+        var lastFrame = time.GetUtcNow();
         var copied = false;
         var settling = SettleAsync(sessionId, () => lastFrame, done);
         try
@@ -191,7 +191,7 @@ internal sealed class RemoteFollower(
                 }
                 while (!received.EndOfMessage);
 
-                lastFrame = DateTime.UtcNow;
+                lastFrame = time.GetUtcNow();
                 using var frame = JsonDocument.Parse(buffer.ToArray());
                 if (frame.RootElement.GetProperty("type").GetString() != "row")
                     continue; // a ping
@@ -228,14 +228,14 @@ internal sealed class RemoteFollower(
     // Once the link has been quiet for a while, decides the row of a helper a restart found shown running (only here,
     // on a real connected link: a give-up, a dropped link, a Close or a seq mismatch leaves it running), then ends the
     // socket if nobody is watching and no turn runs.
-    private async Task SettleAsync(string sessionId, Func<DateTime> lastFrame, CancellationTokenSource done)
+    private async Task SettleAsync(string sessionId, Func<DateTimeOffset> lastFrame, CancellationTokenSource done)
     {
         try
         {
             while (true)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(500), done.Token);
-                if (DateTime.UtcNow - lastFrame() < Settled)
+                await Task.Delay(TimeSpan.FromMilliseconds(500), time, done.Token);
+                if (time.GetUtcNow() - lastFrame() < Settled)
                     continue;
                 if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
                     await turnEnded(sessionId);

@@ -43,7 +43,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status = status;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, () => _status.Reachable(_name), RefreshAsync, AddSubagentSession, log);
+        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, () => _status.Reachable(_name), RefreshAsync, AddSubagentSession, log, TimeProvider.System);
     }
 
     public string? Name => _name;
