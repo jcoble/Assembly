@@ -31,6 +31,8 @@ public static class ServeRun
         }
 
         Directory.CreateDirectory(options.Home);
+        // Before the database opens, so a second host on this home writes nothing into the live one's; disposed last.
+        using var homeLock = HomeLock.Take(options.Home);
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var topics = new Topics();
         using var db = AppDatabase.Open(options.Database, TimeProvider.System, topics);
