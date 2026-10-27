@@ -138,13 +138,13 @@ public sealed class RowStore
     public RowPage PageBefore(string sessionId, long before, int limit, CancellationToken cancel = default)
     {
         var picked = 0L;
-        var rows = Query(Schema.PageBefore, reader =>
+        var rows = _db.Query(Schema.PageBefore, reader =>
         {
             picked = reader.Long(9);
             var row = ReadRow(reader) with { FirstSeq = reader.Long(7) };
             // A message still streaming comes back as one delta that draws all of its text.
             return reader.IsNull(8) ? row : row with { Payload = WholeDelta(reader.Text(8)) };
-        }, new SqlArg("$session", sessionId), new SqlArg("$before", before), new SqlArg("$limit", limit));
+        }, cancel, new SqlArg("$session", sessionId), new SqlArg("$before", before), new SqlArg("$limit", limit));
 
         // One item more than asked for says there is more. It's the oldest, and all its rows go.
         var hasBefore = picked > limit;

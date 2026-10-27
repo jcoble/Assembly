@@ -69,10 +69,10 @@ public sealed class LiveHub : IDisposable
         }
     }
 
-    public RowPage Page(string sessionId, long before, int limit)
+    public RowPage Page(string sessionId, long before, int limit, CancellationToken cancel = default)
     {
         lock (_gate)
-            return _store.PageBefore(sessionId, before, limit);
+            return _store.PageBefore(sessionId, before, limit, cancel);
     }
 
     public StoredToolCall? ToolCall(string sessionId, string itemId)
