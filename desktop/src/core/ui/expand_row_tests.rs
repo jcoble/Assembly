@@ -6,7 +6,8 @@ use gpui_kit::{
     ParentElement as _, Pixels, Styled as _, VisualTestContext, div, px,
 };
 
-use super::expand_row::{ExpandRow, GROW, fade};
+use super::expand_row::{ExpandRow, fade};
+use crate::core::theme::grow::GROW;
 
 /// A row with a 28 px title and a 60 px body, drawn in a window.
 fn row(open: bool, cx: &mut TestAppContext) -> (Entity<ExpandRow>, &mut VisualTestContext) {

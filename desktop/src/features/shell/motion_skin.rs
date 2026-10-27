@@ -5,7 +5,8 @@
 //!   jump to the end. New: the old app had no dock motion.
 //! - splits and tab groups paint no fill of their own, so the sessions column shows the rail and the rest shows the
 //!   work panel that Frame draws behind them (the design system's "a ground and one panel").
-//! - the sessions column carries the utility strip at its foot, as the old app did; there's no bottom bar.
+//! - the sessions column carries the utility strip at its foot, as the approved look has it
+//!   (the design system's look-final/README.md:66); there's no bottom bar.
 //!
 //! Every other piece of the skin passes through, the drag edge and its save on release included.
 

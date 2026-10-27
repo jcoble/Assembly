@@ -13,10 +13,8 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// The design system's grow time: the row's height takes this long.
-pub const GROW: Duration = Duration::from_millis(160);
-/// When, into the grow, the body starts fading in. It's fully in at `GROW`, 120 ms later.
-const FADE_START: Duration = Duration::from_millis(40);
+use crate::core::theme::grow::{FADE, FADE_AFTER, GROW};
+
 /// The open row's band corners (the design system's `radius-sm`).
 const BAND_RADIUS: Pixels = px(8.);
 
@@ -115,7 +113,7 @@ fn travel(from: f32, to: f32) -> Duration {
 /// The body's opacity at an openness: 0 until 40 ms into the grow, then up to 1 by 160 ms.
 pub(super) fn fade(openness: f32) -> f32 {
     let at = openness * GROW.as_secs_f32();
-    ((at - FADE_START.as_secs_f32()) / (GROW - FADE_START).as_secs_f32()).clamp(0., 1.)
+    ((at - FADE_AFTER.as_secs_f32()) / FADE.as_secs_f32()).clamp(0., 1.)
 }
 
 impl Render for ExpandRow {
@@ -139,9 +137,7 @@ impl Render for ExpandRow {
         let (to, full) = (self.target(), self.body_height);
         let easing = cx.theme().motion_tokens().easing_enter.clone();
         v_flex()
-            .when(shown, |row| {
-                row.bg(cx.theme().secondary).rounded(BAND_RADIUS)
-            })
+            .when(shown, |row| row.bg(cx.theme().accent).rounded(BAND_RADIUS))
             .child(
                 div()
                     .id("expand-row-title")

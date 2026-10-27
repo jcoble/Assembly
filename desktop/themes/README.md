@@ -46,6 +46,8 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
   kit's slow step and move spring are 280 ms (motion.rs:28, 36; tab indicators use the spring, tab/tab_bar.rs:249),
   past the design system's 180, so `set` brings both down to 180 ms. Reduced motion is the kit's too: its components
   already settle at rest when the system asks for it.
+  The one motion token that isn't the kit's is grow in place's timing, `GROW` 160 ms, `FADE` 120 ms and
+  `FADE_AFTER` 40 ms (src/core/theme/grow.rs), on `easing_enter`: every row that grows open reads it from there.
 - A theme switch fades: the window root draws the old theme's `background` over everything and fades it to clear over
   `duration_normal` on `easing_enter` (src/core/theme/fade.rs). There's no fade when the window first opens, when the
   theme in force is set again, or when the new theme has the same `background`.
