@@ -79,6 +79,12 @@ internal sealed class RemoteFollower(
             return _shownRunning.Remove(sessionId);
     }
 
+    private bool IsShownRunning(string sessionId)
+    {
+        lock (_following)
+            return _shownRunning.Contains(sessionId);
+    }
+
     private bool Again(string sessionId)
     {
         lock (_following)
@@ -117,7 +123,9 @@ internal sealed class RemoteFollower(
                     backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
                 }
             }
-            while (!_stopping.IsCancellationRequested && (Again(sessionId) | Needed(sessionId)));
+            // A helper a restart found shown running is followed until a real catch-up decides its row; not in Needed,
+            // which would keep it from ever settling.
+            while (!_stopping.IsCancellationRequested && (Again(sessionId) | Needed(sessionId) || IsShownRunning(sessionId)));
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
         {
