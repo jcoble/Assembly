@@ -24,3 +24,6 @@ g0-shape#7 The drawer's tabs, Sessions, Chat and Problems have no close button (
 g0-shape#8 A pane shows nothing until the lane that owns it fills it, and nothing hidden is mounted (6353dc4d).
 g0-shape#9 The utility strip at the foot of the sessions column has Resources and Usage (there's no bottom bar), and each opens a popover anchored to it, on
 screen and above the strip (fa39c659, 36abf71a, a56526ec). Nothing in the strip polls.
+g0-shape#10 A row or card reveals more by growing in place, never as an accordion (Jesse 2026-10-27, look items 13
+and 16). A click on its title grows it to fit its body, the title stays where it was, and a second click shrinks it
+back; the body stays until the row has shrunk, then goes. A row that's open when it first shows is drawn open.
