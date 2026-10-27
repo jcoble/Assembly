@@ -33,6 +33,7 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
   The state (one owner per fact), the theme and the registries are the rest.
 - `src/features/<feature>/`: one folder per feature, which never uses another feature's folder.
 - One type per file, and no file over about 300 lines.
+- A timer or animation is a `Task` held by the view that started it, never detached, so closing the view stops it.
 - The root module is named `core`, so in `main.rs` the `core` crate is `::core::`.
 
 ## The guard
