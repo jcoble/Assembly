@@ -1,5 +1,6 @@
 //! The session pane's actions: what a row's button or link asks for, and reading an open tool call's detail.
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,9 +14,7 @@ use crate::core::intents::open_session::OpenSession;
 use crate::core::theme::grow::GROW;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
-use crate::features::session::model::entries::entry_key;
 use crate::features::session::model::item::ItemKind;
-use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::ToolDetail;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::grow::toggled;
@@ -49,14 +48,9 @@ impl SessionPane {
             SessionAction::Toggle { key } => {
                 let kept = self.kept.entry(key.clone()).or_default();
                 kept.open = !kept.open;
-                // From where the body is: its ease may have started when its first detail came, after the click.
-                kept.toggled_at = Some(toggled(kept.open, kept.grown_at(), Instant::now(), GROW));
-                kept.shown_at = None;
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {
                     self.refresh(Change::Updated(at), cx);
-                    self.read_detail_if_stale(at, cx);
                 }
-                self.start_growing(key, cx);
             }
             SessionAction::RetryPage => {
                 if let Some(before) = self.retry_first {
@@ -182,16 +176,9 @@ impl SessionPane {
                     });
                     match detail {
                         Ok(detail) => {
-                            let kept = pane.kept.entry(key.clone()).or_default();
-                            // The first detail of a call just opened grows in from now, as it had nothing to show.
-                            let first = kept.detail.is_none() && kept.open;
-                            if first {
-                                kept.shown_at = Some(Instant::now());
-                            }
-                            kept.detail = Some((state, detail));
-                            if first {
-                                pane.growing.insert(key.clone());
-                            }
+                            // A call opened before its first detail came grows into it now (its ExpandRow).
+                            pane.kept.entry(key.clone()).or_default().detail =
+                                Some((state, Rc::new(detail)));
                             if let Some(at) =
                                 pane.view.items.iter().position(|item| item.key == key)
                             {
@@ -207,14 +194,14 @@ impl SessionPane {
         );
     }
 
-    /// Starts `key`'s ease (an item's key, or `fold:<run>`): the next draw runs its frames, unless they're running.
+    /// Starts a fold's ease (`fold:<run>`): the next draw runs its frames, unless they're running.
     pub(super) fn start_growing(&mut self, key: String, cx: &mut Context<Self>) {
         self.growing.insert(key);
         cx.notify();
     }
 
-    /// One frame of the rows growing: the list measures each again, so the rows below slide with it. An ease that's
-    /// done is dropped, and a fold that has shut takes its work off the list.
+    /// One frame of the folds growing: the list measures each one's work again, so the rows below slide with it. An
+    /// ease that's done is dropped, and a fold that has shut takes its work off the list.
     pub(super) fn grow_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.grow_asked = false;
         let (now, still) = (Instant::now(), cx.reduce_motion());
@@ -224,19 +211,13 @@ impl SessionPane {
             let kept = self.kept.get(&key);
             let moving = !still
                 && kept
-                    .and_then(Kept::grown_at)
+                    .and_then(|kept| kept.toggled_at)
                     .is_some_and(|at| now.duration_since(at) < GROW);
-            let rows: Vec<String> = match key
+            let rows: Vec<String> = key
                 .strip_prefix("fold:")
                 .and_then(|run| self.folds.get(run))
-            {
-                Some(fold) => fold.work.iter().cloned().collect(),
-                // A step in the activity card grows inside the card's row.
-                None => {
-                    let item = self.view.items.iter().find(|item| item.key == key);
-                    vec![item.map_or(key.clone(), |item| entry_key(item, self.live_run()))]
-                }
-            };
+                .map(|fold| fold.work.iter().cloned().collect())
+                .unwrap_or_default();
             self.timeline.update(cx, |timeline, cx| {
                 rows.iter().for_each(|row| timeline.redraw_row(row, cx))
             });

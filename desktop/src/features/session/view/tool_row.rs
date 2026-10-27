@@ -1,16 +1,14 @@
-//! `ToolRow` draws a tool call: its step line (`StepRow`: sign, title, summary, line counts), and, opened, the
-//! command it ran, its output tail and diff from `rows/tool`. The detail is read when it opens and again only when the
-//! call's state changes (an edit's diff once the edit finishes). A long diff shows its first lines until shown in
-//! full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
+//! `ToolRow` draws a tool call: its step line (`StepRow`: sign, title, summary, line counts), and, opened as an
+//! `ExpandRow` (pane_expand.rs), the command it ran, its output tail and diff from `rows/tool`. The detail is read
+//! when it opens and again only when the call's state changes (an edit's diff once the edit finishes). A long diff
+//! shows its first lines until shown in full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::grow::{band, grow, turn};
 use super::session_action::{OnAction, SessionAction};
-use super::step_row::{OnClick, StepRow, StepState};
-use crate::core::theme::grow::faded;
+use super::step_row::{StepRow, StepState};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::{ToolDetail, ToolPayload, ToolState};
@@ -21,7 +19,7 @@ pub const DIFF_SHOWN: usize = 12;
 /// The most output lines an open tool shows, from its end.
 pub const OUTPUT_TAIL: usize = 200;
 
-#[derive(IntoElement)]
+#[derive(Clone)]
 pub struct ToolRow {
     /// The item's key, which its toggle sends.
     pub key: String,
@@ -75,8 +73,10 @@ pub fn output_tail(output: &str) -> &str {
     }
 }
 
-impl RenderOnce for ToolRow {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+impl ToolRow {
+    /// Its step line: sign, title, summary, line counts and time, with a chevron turned `chevron` of the way for a call
+    /// that opens.
+    pub fn line(&self, chevron: Option<f32>, cx: &App) -> StepRow {
         let theme = cx.theme();
         let (success, danger) = (theme.success, theme.danger);
         let state = match self.tool.state {
@@ -85,15 +85,6 @@ impl RenderOnce for ToolRow {
             ToolState::Completed => StepState::Done,
             ToolState::Failed => StepState::Failed,
         };
-        let open = self.kept.open && self.tool.has_detail;
-        let turned = turn(open, self.kept.grown_at(), window, cx);
-        let faded = faded(turned.0);
-        let (key, on_action) = (self.key.clone(), self.on_action.clone());
-        let on_click = self.tool.has_detail.then(|| {
-            Box::new(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                on_action(SessionAction::Toggle { key: key.clone() }, window, cx)
-            }) as OnClick
-        });
         let tags = [
             self.tool
                 .added
@@ -108,41 +99,25 @@ impl RenderOnce for ToolRow {
         .flatten()
         .map(IntoElement::into_any_element)
         .collect();
-        let line = StepRow {
+        StepRow {
             id: SharedString::from(format!("{}:line", self.key)),
             state,
             title: Fold::tool_title(&self.tool.name).into(),
             summary: self.tool.summary.clone().map(Into::into),
             tags,
             took_ms: self.took_ms,
-            chevron: self
-                .tool
-                .has_detail
-                .then(|| turn(open, self.kept.toggled_at, window, cx).0),
-            on_click,
-        };
-        let detail = self
-            .kept
-            .detail
-            .as_ref()
-            .filter(|_| open || turned.1)
-            .map(|(_, detail)| self.detail(detail, cx));
-        let detail = detail.map(|detail| {
-            let id = format!("{}:grow", self.key).into();
-            grow(id, turned, open, faded, detail, window, cx)
-        });
-        let column = v_flex().gap_1().child(line).children(detail);
-        // Lit as its body grows: not while an opened call's first detail is still on its way.
-        let lit = if self.kept.detail.is_some() {
-            turned.0
-        } else {
-            0.
-        };
-        band(column, lit, cx)
+            chevron,
+        }
     }
-}
 
-impl ToolRow {
+    /// What it shows open: its detail once read, nothing before.
+    pub fn body(&self, cx: &App) -> AnyElement {
+        match &self.kept.detail {
+            Some((_, detail)) => self.detail(detail, cx).into_any_element(),
+            None => div().into_any_element(),
+        }
+    }
+
     fn detail(&self, detail: &ToolDetail, cx: &App) -> Div {
         let theme = cx.theme();
         let block = || {

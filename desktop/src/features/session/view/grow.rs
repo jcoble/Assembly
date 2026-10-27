@@ -1,10 +1,10 @@
-//! Things that open underneath grow in place (look direction #13, #16): a tool call's detail, thinking's text and a
-//! fold's work ease their height from 0 to what they hold over `GROW` (core/theme/grow.rs) on the design system's curve, their content
-//! fades in from `FADE_AFTER` in, and the rows below slide down as the virtual list measures the row again
-//! each frame; shutting runs it back. A chevron turns with it, and an open row sits on a lighter band. It's timed from
-//! the toggle (`Kept::toggled_at`), not from when the row was drawn, so a row already open when drawn, or drawn again
-//! after scrolling back, is still and draws no frames: only a click moves it. Under Reduce Motion it's at its end at
-//! once.
+//! A fold's work grows in place (look direction #13, #16): its rows ease their height from 0 to what they hold over
+//! `GROW` (core/theme/grow.rs) on the design system's curve, their content fades in from `FADE_AFTER` in, and the rows
+//! below slide down as the virtual list measures the rows again each frame; shutting runs it back. Its chevron turns
+//! with it. It's timed from the toggle (`Kept::toggled_at`), not from when the row was drawn, so a fold already open
+//! when drawn, or drawn again after scrolling back, is still and draws no frames: only a click moves it. Under Reduce
+//! Motion it's at its end at once. A tool call, thinking and a question open through the shared `ExpandRow` instead
+//! (pane_expand.rs), on `band`.
 
 use std::f32::consts::FRAC_PI_2;
 use std::time::{Duration, Instant};

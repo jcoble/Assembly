@@ -7,6 +7,7 @@ use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::SessionPane;
+use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::{CallError, RowUpdate};
 use crate::features::session::composer::composer_view::ComposerEvent;
@@ -375,4 +376,28 @@ fn a_reading_place_older_than_the_newest_page_opens_at_the_end_and_never_jumps_l
         top(&pane, cx) >= at_open,
         "the older page that holds the old place doesn't scroll to it"
     );
+}
+
+// The Chat pane is made after a session may already be picked (the sessions column draws first): that one opens when
+// the pane is made, and each one picked after opens too.
+#[gpui::test]
+fn a_session_picked_before_the_chat_pane_is_made_opens_when_it_is(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        SelectedSession::init(cx);
+        let s1 = Some("s1".to_string());
+        SelectedSession::global(cx).update(cx, |selected, cx| selected.select(s1, cx));
+    });
+    let client = FakeClient::default();
+    let fake = client.clone();
+    let (pane, cx) =
+        cx.add_window_view(move |window, cx| SessionPane::chat(Rc::new(fake), window, cx));
+    assert_eq!(client.subscribed(), [("s1".to_string(), None)]);
+    cx.update(|_, cx| {
+        let s2 = Some("s2".to_string());
+        SelectedSession::global(cx).update(cx, |selected, cx| selected.select(s2, cx));
+    });
+    cx.run_until_parked();
+    let shown = cx.update(|_, cx| pane.read(cx).session.clone());
+    assert_eq!(shown.as_deref(), Some("s2"));
 }

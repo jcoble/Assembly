@@ -14,8 +14,6 @@ use crate::features::session::model::turn_line::checkout_line;
 use crate::features::session::view::activity_card::ActivityCard;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::ItemRow;
-use crate::features::session::view::session_action::OnAction;
-use crate::features::session::view::tool_row::ToolRow;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
@@ -32,7 +30,8 @@ impl SessionPane {
         Some((key.clone(), kept.open, kept.toggled_at))
     }
 
-    pub(super) fn row(&self, entry: &Entry, on_action: &OnAction, cx: &App) -> AnyElement {
+    pub(super) fn row(&mut self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+        let on_action = &self.on_action.clone();
         let muted = cx.theme().muted_foreground;
         let now = self
             .now
@@ -40,6 +39,14 @@ impl SessionPane {
         match entry {
             Entry::Loading => line("Loading older messages…", muted),
             Entry::Item(at) => {
+                // Only a row that opens in place needs its own copy, for the pane's `&mut` while it's made.
+                let opens = matches!(
+                    self.view.items[*at].kind,
+                    ItemKind::Tool { .. } | ItemKind::Thinking { .. } | ItemKind::Ask { .. }
+                );
+                let expand = opens
+                    .then(|| self.view.items[*at].clone())
+                    .and_then(|item| self.expand_of(&item, None, cx));
                 let item = &self.view.items[*at];
                 let mut shown = item.clone();
                 if let ItemKind::Message { blocks, .. } = &mut shown.kind
@@ -53,10 +60,7 @@ impl SessionPane {
                     session: self.session.clone().unwrap_or_default().into(),
                     copy: self.copy_text(item),
                     checkout: self.checkout(item),
-                    form: match &item.kind {
-                        ItemKind::Ask { ask_id, .. } => self.forms.get(ask_id).cloned(),
-                        _ => None,
-                    },
+                    expand,
                     now,
                     on_action: on_action.clone(),
                 }
@@ -92,18 +96,9 @@ impl SessionPane {
                 let steps = steps
                     .into_iter()
                     .filter_map(|step| {
-                        let item = &self.view.items[step.at];
-                        let ItemKind::Tool { tool, .. } = &item.kind else {
-                            return None;
-                        };
-                        let row = ToolRow {
-                            key: item.key.clone(),
-                            tool: tool.clone(),
-                            kept: self.kept.get(&item.key).cloned().unwrap_or_default(),
-                            took_ms: Some(step.took_ms),
-                            on_action: on_action.clone(),
-                        };
-                        Some(row.into_any_element())
+                        let item = self.view.items[step.at].clone();
+                        let tool = matches!(item.kind, ItemKind::Tool { .. });
+                        tool.then(|| self.expand_of(&item, Some(step.took_ms), cx))?
                     })
                     .collect();
                 ActivityCard { steps, footer }.into_any_element()

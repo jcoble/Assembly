@@ -1,15 +1,66 @@
-//! The session pane as a dock panel, and its drawing: the header, the timeline, the plan card, the status line and the
-//! composer, top to bottom.
+//! The session pane as a dock panel: registered as the Chat pane, following the selected session, and its drawing: the
+//! header, the timeline, the plan card, the status line and the composer, top to bottom.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
+use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use std::rc::Rc;
+
 use super::SessionPane;
+use crate::core::intents::open_session::OpenSession;
+use crate::core::state::selected_session::SelectedSession;
+use crate::features::session::client::session_client::SessionClient;
+use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::view::plan_card::PlanCard;
 use crate::features::session::view::session_action::SessionAction;
+
+impl SessionPane {
+    /// Registers the session pane as the layout's Chat pane, over the socket client, showing the selected session.
+    /// It runs after the placeholders register, since the last registration for a name wins. The pane also owns
+    /// the open session intent, which selects that session.
+    pub fn register(cx: &mut App) {
+        register_panel(cx, "Chat", |_, window, cx| {
+            panel_handle(cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx)))
+        });
+        cx.on_action(|intent: &OpenSession, cx| {
+            let id = Some(intent.id.clone());
+            SelectedSession::global(cx).update(cx, |selected, cx| selected.select(id, cx));
+        });
+    }
+
+    /// The Chat pane: shows the selected session, the one already selected when it's made included, and each one
+    /// selected after.
+    pub(super) fn chat(
+        client: Rc<dyn SessionClient>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut pane = SessionPane::new(client, window, cx);
+        let selected = SelectedSession::global(cx);
+        pane._selected = Some(
+            cx.observe_in(&selected, window, |pane, selected, window, cx| {
+                pane.show_selected(selected, window, cx)
+            }),
+        );
+        pane.show_selected(selected, window, cx);
+        pane
+    }
+
+    /// Opens the selected session, or shows none.
+    fn show_selected(
+        &mut self,
+        selected: Entity<SelectedSession>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(session) = selected.read(cx).session_id().map(String::from) {
+            self.open(session, window, cx);
+        }
+    }
+}
 
 impl EventEmitter<PanelEvent> for SessionPane {}
 

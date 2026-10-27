@@ -17,7 +17,7 @@ g0-session#12 While a turn runs, its tool calls show as one card at the foot of 
 g0-session#13 A tool call shows its title, summary and line counts; opened, its command, the end of its output and its diff. A long diff shows its first lines until you ask for all of it. Output cut by the backend says so.
 g0-session#14 An opened tool call reads its detail once, and again only when the call's state changes; an edited file's diff shows once the edit finishes.
 g0-session#15 What you opened (a tool call, thinking, a fold, a long prompt) stays open when you scroll away and back.
-g0-session#16 A permission or question from the agent shows as a card you answer in place; once answered it shows the answer.
+g0-session#16 A permission or question from the agent shows as a card you answer in place; once answered it shrinks to the answer, and opening it again shows what it asked.
 g0-session#17 Background work shows its state and a Stop button while it runs; a subagent shows its title and state, has a Stop button while it runs, and opens its own session on click.
 g0-session#18 The agent's plan shows above the composer, with the step in progress marked.
 g0-session#19 A failed run says what went wrong in a sentence, not raw JSON; "The conversation is full" says what to do. A run you stopped shows no error.
