@@ -44,6 +44,9 @@ public sealed class AppDatabase : IAppDatabase, IDisposable
         command.CommandText = "VACUUM INTO $copy;";
         command.Parameters.AddWithValue("$copy", partial);
         command.ExecuteNonQuery();
+        // SQLite doesn't sync VACUUM INTO's output: sync it, so a crash right after the rename can't leave a cut-off copy.
+        using (var written = new FileStream(partial, FileMode.Open, FileAccess.ReadWrite))
+            written.Flush(flushToDisk: true);
         File.Move(partial, copy);
     }
 
