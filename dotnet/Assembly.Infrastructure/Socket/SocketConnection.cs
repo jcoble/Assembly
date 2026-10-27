@@ -87,15 +87,32 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
 
     /// <summary>
     /// Runs a write's whole call after the writes before it with the same order key, or with none, on the socket's
-    /// queue. A socket that closes still runs every write it queued.
+    /// queue. A socket that closes still runs every write it queued. A write cancelled while it waits answers at once;
+    /// it still runs in its turn, where it ends at once and drops what it held, as any failed write does.
     /// </summary>
-    public Task<T> QueueWriteAsync<T>(string? order, Func<Task<T>> run)
+    public Task<T> QueueWriteAsync<T>(string? order, Func<Task<T>> run, CancellationToken cancellation)
     {
+        var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiting = cancellation.Register(() => done.TrySetCanceled(cancellation));
+        async Task Turn()
+        {
+            // Waits for a cancel already firing; from here on a cancel is the handler's to see.
+            waiting.Dispose();
+            try
+            {
+                done.TrySetResult(await run());
+            }
+            catch (Exception error)
+            {
+                done.TrySetException(error);
+            }
+        }
+
         if (order is not null)
         {
             lock (_ordered)
             {
-                var write = AfterAsync(_ordered.GetValueOrDefault(order), run);
+                var write = AfterAsync(_ordered.GetValueOrDefault(order), Turn);
                 _ordered[order] = write;
                 write.ContinueWith(_ =>
                 {
@@ -103,34 +120,21 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
                         if (_ordered.GetValueOrDefault(order) == write)
                             _ordered.Remove(order);
                 }, TaskScheduler.Default);
-                return write;
             }
         }
-
-        var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_writes.Writer.TryWrite(async () =>
-            {
-                try
-                {
-                    done.SetResult(await run());
-                }
-                catch (Exception error)
-                {
-                    done.SetException(error);
-                }
-            }))
-            done.SetException(new OperationCanceledException("The socket closed."));
+        else if (!_writes.Writer.TryWrite(Turn))
+            done.TrySetException(new OperationCanceledException("The socket closed."));
         return done.Task;
     }
 
     // The write starts on the thread pool, never inline: off the order lock and the receive loop, so a handler's work
     // before its first await holds up neither, as the socket's queue and reads already do.
-    private static async Task<T> AfterAsync<T>(Task? before, Func<Task<T>> run)
+    private static async Task AfterAsync(Task? before, Func<Task> run)
     {
         await Task.Yield();
         if (before is not null)
             await before.ContinueWith(_ => { }, TaskScheduler.Default);
-        return await run();
+        await run();
     }
 
     // The first frame must be a hello with this protocol and the token; nothing is sent before it.

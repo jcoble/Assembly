@@ -223,6 +223,7 @@ mod tests {
         let window = cx.add_empty_window();
         for (id, dark) in [
             (ThemeId::Houston, true),
+            (ThemeId::AssemblyLight, false),
             (ThemeId::RosePineDawn, false),
             (ThemeId::AyuLight, false),
             (ThemeId::Houston, true),
@@ -286,8 +287,8 @@ mod tests {
         let changed = copy_of_themes("changed");
         let file = changed.join("houston.json");
         let text = fs::read_to_string(&file).expect("read houston.json");
-        assert!(text.contains("\"radius\": 6,"));
-        fs::write(&file, text.replace("\"radius\": 6,", "\"radius\": 3,"))
+        assert!(text.contains("\"radius\": 8,"));
+        fs::write(&file, text.replace("\"radius\": 8,", "\"radius\": 3,"))
             .expect("save houston.json");
         cx.update(|cx| {
             ThemeRegistry::watch_dir(changed, cx, |_| {}).expect("reload the changed copy")
