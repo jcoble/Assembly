@@ -8,6 +8,8 @@ use gpui_kit::component::dock::{DockArea, DockPlacement};
 use gpui_kit::component::h_flex;
 use gpui_kit::*;
 
+/// The row's height, the old app's `--center-head-row-height` (lib/shell/styles/nextTokens.css:287).
+const HEIGHT: Pixels = px(42.);
 /// The Home cap's narrowest width, when the sessions column is folded or narrow (routes/+page.svelte:1045-1052).
 const MIN_HOME_WIDTH: Pixels = px(172.);
 
@@ -32,7 +34,7 @@ impl Render for TopBar {
         } else {
             px(0.)
         };
-        h_flex().h(px(36.)).flex_none().child(
+        h_flex().h(HEIGHT).flex_none().child(
             h_flex()
                 .w(sessions.max(MIN_HOME_WIDTH))
                 .h_full()

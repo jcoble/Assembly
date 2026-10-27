@@ -14,13 +14,13 @@ pub type WriteLayout = Box<dyn Fn(Value, &mut App)>;
 
 pub struct LayoutStore {
     write: WriteLayout,
-    /// A save is already asked for in this update.
-    save_pending: bool,
+    /// The save asked for in this update, until it runs.
+    save: Option<Task<()>>,
 }
 
 impl LayoutStore {
     pub fn new(write: WriteLayout) -> Self {
-        Self { write, save_pending: false }
+        Self { write, save: None }
     }
 
     /// The saved layout when this build can read it, otherwise the default.
@@ -42,20 +42,18 @@ impl LayoutStore {
     /// Saves the frame's layout once this update has settled, so the changes that follow from it (a tab click reaches
     /// the dock later in the same update) save with it; more changes before then add nothing.
     pub fn save_soon(&mut self, cx: &mut Context<Frame>) {
-        if self.save_pending {
+        if self.save.is_some() {
             return;
         }
-        self.save_pending = true;
-        cx.spawn(async move |frame, cx| {
+        self.save = Some(cx.spawn(async move |frame, cx| {
             _ = frame.update(cx, |frame, cx| {
-                frame.layout.save_pending = false;
+                frame.layout.save = None;
                 let state = frame.dock().read(cx).dump(cx);
                 match serde_json::to_value(state) {
                     Ok(layout) => (frame.layout.write)(layout, cx),
                     Err(error) => eprintln!("shell: the layout didn't serialize, so it wasn't saved: {error}"),
                 }
             });
-        })
-        .detach();
+        }));
     }
 }

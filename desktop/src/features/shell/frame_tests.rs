@@ -1,29 +1,39 @@
 //! Tests for saving and reloading the window's layout (docs/behavior/g0-shape.md).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::TestAppContext;
-use gpui_kit::component::dock::DockPlacement;
-use gpui_kit::{Entity, Task, VisualTestContext, px};
+use gpui_kit::component::dock::{BasePanel, DockPlacement, Panel, PanelEvent, panel_handle, register_panel};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, Modifiers, MouseButton,
+    Render, Task, VisualTestContext, Window, div, point, px, size,
+};
 use serde_json::{Value, json};
+
+use super::default_layout::CHAT;
 
 use super::frame::Frame;
 use super::placeholder_pane::PlaceholderPane;
 
 type Writes = Rc<RefCell<Vec<Value>>>;
 
-/// Opens a frame that reads `saved` and records each layout it writes.
+/// Opens a frame that reads `saved` and records each layout it writes, after the app start's setup.
 fn open(saved: Option<Value>, cx: &mut TestAppContext) -> (Entity<Frame>, Writes, &mut VisualTestContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         PlaceholderPane::register_all(cx);
     });
+    open_window(saved, cx)
+}
+
+fn open_window(saved: Option<Value>, cx: &mut TestAppContext) -> (Entity<Frame>, Writes, &mut VisualTestContext) {
     let writes = Writes::default();
     let sink = writes.clone();
     let (frame, cx) = cx.add_window_view(move |window, cx| {
         Frame::new(Task::ready(saved), Box::new(move |layout, _| sink.borrow_mut().push(layout)), window, cx)
     });
+    cx.simulate_resize(size(px(1400.), px(900.)));
     cx.run_until_parked();
     (frame, writes, cx)
 }
@@ -147,4 +157,126 @@ fn each_later_change_saves_the_latest_layout(cx: &mut TestAppContext) {
     let writes = writes.borrow();
     assert_eq!(writes.len(), 2);
     assert_eq!(docks(&writes[1]), docks(&dump(&frame, cx)));
+}
+
+fn pane_names(group: &Value) -> Vec<&str> {
+    group["children"].as_array().unwrap().iter().map(|pane| pane["panel_name"].as_str().unwrap()).collect()
+}
+
+// Pins: g0-shape#1
+#[gpui::test]
+fn the_window_opens_in_the_old_layout(cx: &mut TestAppContext) {
+    let (frame, _, cx) = open(None, cx);
+    let layout = dump(&frame, cx);
+    let [left, right, bottom] = docks(&layout);
+    assert_eq!((&left["size"], &left["open"]), (&json!(326.0), &json!(true)));
+    assert_eq!(pane_names(&left["panel"]), ["Sessions"]);
+    assert_eq!((&right["size"], &right["open"]), (&json!(320.0), &json!(false)));
+    assert_eq!(
+        pane_names(&right["panel"]),
+        ["Files", "Source control", "Agents", "Tasks", "Worktrees", "Run", "Context", "History"]
+    );
+    assert_eq!((&bottom["size"], &bottom["open"]), (&json!(180.0), &json!(false)));
+    assert_eq!(pane_names(&bottom["panel"]), ["Problems", "Terminal"]);
+    assert_eq!(pane_names(&layout["center"]["children"][0]), [CHAT]);
+}
+
+/// A real pane, as a feature lane registers one.
+struct RealChat {
+    focus: FocusHandle,
+}
+
+impl EventEmitter<PanelEvent> for RealChat {}
+
+impl Focusable for RealChat {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl BasePanel for RealChat {
+    fn panel_name(&self) -> &'static str {
+        CHAT
+    }
+}
+
+impl Panel for RealChat {}
+
+impl Render for RealChat {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+// Pins: g0-shape#8
+#[gpui::test]
+fn a_real_pane_registered_after_the_placeholders_replaces_one(cx: &mut TestAppContext) {
+    let built = Rc::new(Cell::new(false));
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        PlaceholderPane::register_all(cx);
+        let built = built.clone();
+        register_panel(cx, CHAT, move |_, _, cx| {
+            built.set(true);
+            panel_handle(cx.new(|cx| RealChat { focus: cx.focus_handle() }))
+        });
+    });
+    let (_, writes, _) = open_window(None, cx);
+    assert!(built.get(), "the default layout built the real Chat pane, not the placeholder");
+    assert!(writes.borrow().is_empty());
+}
+
+// Pins: g0-shape#3
+#[gpui::test]
+fn a_pane_this_build_does_not_know_survives_a_save(cx: &mut TestAppContext) {
+    let (fresh, _, cx) = open(None, cx);
+    let mut saved = dump(&fresh, cx);
+    saved["right_dock"]["panel"]["children"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"panel_name": "PaneFromTheFuture", "children": [], "info": {"panel": {"kept": 1}}}));
+
+    let (frame, writes, cx) = open(Some(saved), &mut cx.cx);
+    cx.update(|window, cx| {
+        frame.read(cx).dock().clone().update(cx, |dock, cx| dock.toggle_dock(DockPlacement::Right, window, cx))
+    });
+    cx.run_until_parked();
+    let written = writes.borrow().last().cloned().expect("the toggle was saved");
+    let future = written["right_dock"]["panel"]["children"].as_array().unwrap().last().cloned().unwrap();
+    assert_eq!(future, json!({"panel_name": "PaneFromTheFuture", "children": [], "info": {"panel": {"kept": 1}}}));
+}
+
+// Pins: g0-shape#4
+#[gpui::test]
+fn dragging_the_sessions_edge_saves_once_when_the_drag_ends(cx: &mut TestAppContext) {
+    let (frame, writes, cx) = open(None, cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    // The sessions column is 326 wide, so its edge sits just inside x = 326; the panes start under the 42 px top bar.
+    let y = px(400.);
+    cx.simulate_mouse_down(point(px(324.5), y), MouseButton::Left, Modifiers::none());
+    for x in [330., 360., 400.] {
+        cx.simulate_mouse_move(point(px(x), y), MouseButton::Left, Modifiers::none());
+    }
+    cx.run_until_parked();
+    assert!(writes.borrow().is_empty(), "nothing saves while the edge is being dragged");
+    cx.simulate_mouse_up(point(px(400.), y), MouseButton::Left, Modifiers::none());
+    cx.run_until_parked();
+    let writes = writes.borrow();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0]["left_dock"]["size"], json!(400.0));
+    assert_eq!(cx.update(|_, cx| frame.read(cx).dock().read(cx).dock_size(DockPlacement::Left)), Some(px(400.)));
+}
+
+// Pins: g0-shape#9
+#[gpui::test]
+fn the_usage_popover_is_built_only_once_it_opens(cx: &mut TestAppContext) {
+    let (_, _, cx) = open(None, cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("usage-body").is_none());
+    let button = cx.debug_bounds("usage-button").expect("the strip shows Usage");
+    cx.simulate_click(button.center(), Modifiers::none());
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let body = cx.debug_bounds("usage-body").expect("the popover opened");
+    assert!(body.bottom() <= button.top(), "the popover opens above the strip");
 }

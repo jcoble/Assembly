@@ -26,9 +26,11 @@ impl Render for UtilityStrip {
 }
 
 /// A strip button whose popover opens above it. The body is only built while the popover is open.
-fn figure(id: &'static str, label: &'static str, body: &'static str) -> Popover {
-    Popover::new(id)
-        .anchor(Anchor::BottomRight)
-        .trigger(Button::new(label).ghost().compact().label(label))
-        .content(move |_, _, _| div().p_2().child(body))
+fn figure(id: &'static str, label: &'static str, body: &'static str) -> impl IntoElement {
+    div().debug_selector(move || format!("{id}-button")).child(
+        Popover::new(id)
+            .anchor(Anchor::BottomRight)
+            .trigger(Button::new(label).ghost().compact().label(label))
+            .content(move |_, _, _| div().debug_selector(move || format!("{id}-body")).p_2().child(body)),
+    )
 }
