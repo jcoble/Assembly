@@ -54,6 +54,25 @@ public sealed class SessionSummariesTests : IDisposable
             Assert.Equal(Expected(db, session), summaries.Get(session));
     }
 
+    // What holds App Nap: any session with a run open, from the start's load and then from each saved row.
+    [Fact]
+    public void Any_run_open_follows_the_turn_rows_of_every_session()
+    {
+        using var db = TestDatabase.Open(_file.Path);
+        var store = RowStore.Open(db);
+        Commit(store, "a", ("r1", null, RowKind.Turn, "started"));
+        var summaries = SessionSummaries.Load(store);
+        using var hub = new LiveHub(store, summaries: summaries);
+        Assert.True(summaries.AnyRunOpen);
+
+        hub.Publish("b", Batch(("r2", null, RowKind.Turn, "started")));
+        hub.Publish("a", Batch(("r1", null, RowKind.Turn, "finished")));
+        Assert.True(summaries.AnyRunOpen);
+
+        hub.Publish("b", Batch(("r2", null, RowKind.Turn, "cancelled")));
+        Assert.False(summaries.AnyRunOpen);
+    }
+
     public void Dispose() => _file.Dispose();
 
     // The session's summary from its own queries: its newest turn row, its newest ended turn, its open asks, and its
@@ -79,12 +98,15 @@ public sealed class SessionSummariesTests : IDisposable
         return new SessionSummary(turn.State == "started" ? turn.Run : null, turn.State, end, ask, background);
     }
 
-    private static void Commit(RowStore store, string session, params (string Run, string? Item, string Kind, string? State)[] rows)
+    private static void Commit(RowStore store, string session, params (string Run, string? Item, string Kind, string? State)[] rows) =>
+        store.Commit(session, Batch(rows));
+
+    private static RowBatch Batch(params (string Run, string? Item, string Kind, string? State)[] rows)
     {
         var batch = new RowBatch();
         foreach (var (run, item, kind, state) in rows)
             batch.Rows.Add(new NewRow(run, item, kind, JsonSerializer.SerializeToElement(new { state, text = "x" }), 1));
-        store.Commit(session, batch);
+        return batch;
     }
 }
 

@@ -45,6 +45,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     {
         if (!await HelloAsync(token, machine, stopping))
             return;
+        // A drop or the host stopping cancels the reads at once, even one the receive loop is busy with (a sub's state).
+        using var stopReads = stopping.Register(_closed.Cancel);
 
         var sending = SendLoopAsync();
         var writing = WriteLoopAsync();

@@ -12,7 +12,8 @@ namespace Assembly.Infrastructure.Http;
 
 /// <summary>
 /// The API on 127.0.0.1: the webview's, on the desktop, and the desktop's, on a remote machine. Port 0 picks a free port
-/// (for tests). <paramref name="more"/> maps a host's own routes after the shared ones.
+/// (for tests). <paramref name="more"/> maps a host's own routes after the shared ones. <paramref name="dropSockets"/>
+/// ends every open <c>/socket</c>, for the debug control's drop.
 /// </summary>
 public static class ApiServer
 {
@@ -21,8 +22,9 @@ public static class ApiServer
     // (scripts/shutdown-timing.test.sh checks it).
     public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(8);
 
-    public static WebApplication Build(ApiServices services, int port, Action<WebApplication>? more = null)
+    public static WebApplication Build(ApiServices services, int port, out Action dropSockets, Action<WebApplication>? more = null)
     {
+        dropSockets = () => { };
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
         builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = ShutdownTimeout);
@@ -56,6 +58,7 @@ public static class ApiServer
                 feature.Register(calls);
             var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
+            dropSockets = socket.DropAll;
             app.Map("/socket", socket.HandleAsync);
         }
         more?.Invoke(app);

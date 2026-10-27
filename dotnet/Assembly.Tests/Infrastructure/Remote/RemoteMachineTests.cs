@@ -78,6 +78,30 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         Assert.Equal(ran, Shape(await ApiTests.ReadUntilTurnEndsAsync(desktop)));
     }
 
+    // App Nap is held for a remote's turn too, from its copied rows, and by a Mac restarted while it still runs.
+    [Fact]
+    public async Task A_remote_turn_holds_app_nap_here_across_a_mac_restart_until_it_ends()
+    {
+        var sessionId = await CreateSessionAsync();
+        await SendAsync(sessionId);
+        var agent = await _boxLauncher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        using (var watching = await OpenLiveAsync(_desktop!, DesktopToken, sessionId, after: 0))
+            await ApiTests.ReadRowsAsync(watching, 2);
+        Assert.True(_desktop!.ActivityHeld);
+
+        await _desktop.DisposeAsync();
+        await StartDesktopAsync();
+        Assert.True(_desktop.ActivityHeld);
+
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        using var desktop = await OpenLiveAsync(_desktop, DesktopToken, sessionId, after: 0);
+        await ApiTests.ReadUntilTurnEndsAsync(desktop);
+        await Until(() => !_desktop.ActivityHeld);
+    }
+
     [Fact]
     public async Task A_mac_restarted_mid_turn_catches_up_instead_of_marking_the_turn_lost()
     {
