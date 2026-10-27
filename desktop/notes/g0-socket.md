@@ -162,3 +162,8 @@ The behavior list is docs/behavior/g0-socket.md.
   now used once until the connection's first frame or ping, and the waits start over only then too.
 - Fixed: a frame that doesn't read (`Broken`) waits like a failed open, so it retries at most every 5 s.
 - Fixed: every wait in the tests has a 5 s deadline that fails with a message.
+
+## Machines on the topic (2026-10-27)
+
+- `Machines` reads the `machines` topic (#47), keyed by name, "local" for this machine, upserted in place. It no
+  longer calls `machines/list`, which the base lane can now delete; the real-backend call test uses `machines/agents`.

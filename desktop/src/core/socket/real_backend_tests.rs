@@ -57,20 +57,38 @@ fn a_wrong_token_is_refused_with_4401() {
     assert_eq!(client.state(), ConnectionState::Refused { code: 4401 });
 }
 
-// Pins: g0-socket#2, g0-socket#14
+// Pins: g0-socket#2
 #[test]
 fn a_call_gets_its_result_or_not_found() {
     let Some(backend) = RealBackend::start() else {
         return;
     };
     let (client, _) = connect(&backend);
-    let (_, machines) = client.call_to("machines", "list", None);
-    let Outcome::Ok(list) = outcome(machines) else {
-        panic!("machines/list failed");
+    let (_, agents) = client.call_to("machines", "agents", None);
+    let Outcome::Ok(list) = outcome(agents) else {
+        panic!("machines/agents failed");
     };
-    assert_eq!(list["machines"][0]["reachable"], json!(true));
+    assert_eq!(list["agents"], json!([]));
     let (_, missing) = client.call_to("machines", "nope", None);
     assert!(matches!(outcome(missing), Outcome::Failed(f) if f.code == ErrorCode::NotFound));
+}
+
+// Pins: g0-socket#5, g0-socket#14
+#[test]
+fn the_machines_topic_starts_with_this_machine_reachable() {
+    let Some(backend) = RealBackend::start() else {
+        return;
+    };
+    let (client, _) = connect(&backend);
+    let (_, machines) = client.subscribe("machines");
+    let machines = updates(machines);
+    let Update::State(items) = update(&machines) else {
+        panic!("expected the machines state first");
+    };
+    let local = items.iter().find(|(key, _)| key == "local");
+    let (_, local) = local.expect("this machine, keyed local");
+    assert_eq!(local["name"], json!(null));
+    assert_eq!(local["reachable"], json!(true));
 }
 
 // Pins: g0-socket#5, g0-socket#15
