@@ -6,7 +6,6 @@
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
 use gpui_kit::base::motion::{Presence, Transition};
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{panel_handle, register_panel};
 use gpui_kit::*;
 
@@ -17,6 +16,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::ask_card::AskForm;
+use super::chevron::ease;
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
@@ -496,7 +496,7 @@ const FADE_FOR: Duration = Duration::from_millis(400);
 
 /// A row fading in, on the theme's timing; plain with Reduce Motion on.
 fn fade_in(key: String, row: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
-    let duration = cx.theme().motion.duration_normal;
+    let duration = ease(cx);
     let shown = Presence::new(SharedString::from(format!("{key}:fade")), true)
         .transition(Transition::new(duration))
         .sample(window, cx);

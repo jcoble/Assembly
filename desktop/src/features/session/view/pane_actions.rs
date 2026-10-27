@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -16,7 +15,7 @@ use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::tool::ToolDetail;
 use crate::features::session::view::ask_card::AskForm;
-use crate::features::session::view::chevron::toggled;
+use crate::features::session::view::chevron::{ease, toggled};
 use crate::features::session::view::lightbox::open_lightbox;
 use crate::features::session::view::session_action::SessionAction;
 
@@ -33,7 +32,7 @@ impl SessionPane {
         };
         match action {
             SessionAction::ToggleFold { run_id } => {
-                let (now, duration) = (Instant::now(), cx.theme().motion.duration_normal);
+                let (now, duration) = (Instant::now(), ease(cx));
                 let opening = !self.open_folds.remove(&run_id);
                 let kept = self.kept.entry(format!("fold:{run_id}")).or_default();
                 kept.toggled_at = Some(toggled(opening, kept.toggled_at, now, duration));
@@ -50,7 +49,7 @@ impl SessionPane {
                 self.refresh(Change::Nothing, cx);
             }
             SessionAction::Toggle { key } => {
-                let duration = cx.theme().motion.duration_normal;
+                let duration = ease(cx);
                 let kept = self.kept.entry(key.clone()).or_default();
                 kept.open = !kept.open;
                 kept.toggled_at = Some(toggled(

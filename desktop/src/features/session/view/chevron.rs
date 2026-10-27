@@ -8,6 +8,12 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::*;
 
+/// How long a row's ease takes, opening, shutting or fading in: the theme's one motion duration for it, so every
+/// ease in the session view moves at the same pace.
+pub fn ease(cx: &App) -> Duration {
+    cx.theme().motion.duration_normal
+}
+
 /// How far open it is, 0 shut to 1 open, eased out over `duration` from the toggle, `elapsed` ago; `None` for one
 /// never toggled. The second value is whether it's still moving.
 pub fn progress(open: bool, elapsed: Option<Duration>, duration: Duration) -> (f32, bool) {
@@ -32,12 +38,11 @@ pub fn toggled(open: bool, last: Option<Instant>, now: Instant, duration: Durati
     now - duration.mul_f32(1.0 - (1.0 - covered).sqrt())
 }
 
-/// `progress` at this frame, over the theme's normal duration; asks for the next frame while it moves. With Reduce
+/// `progress` at this frame, over `ease`; asks for the next frame while it moves. With Reduce
 /// Motion on it's at its end at once.
 pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &App) -> f32 {
     let toggled_at = toggled_at.filter(|_| !cx.reduce_motion());
-    let duration = cx.theme().motion.duration_normal;
-    let (turned, moving) = progress(open, toggled_at.map(|at| at.elapsed()), duration);
+    let (turned, moving) = progress(open, toggled_at.map(|at| at.elapsed()), ease(cx));
     if moving {
         window.request_animation_frame();
     }
