@@ -15,16 +15,23 @@ public sealed class LiveHub : IDisposable
     private readonly RowStore _store;
     private readonly int _queueLimit;
     private readonly ITopics? _topics;
+    private readonly SessionSummaries? _summaries;
+    private readonly Action<string> _summaryChanged;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, List<LiveSubscription>> _subscribers = [];
 
     /// <param name="queueLimit">Rows a socket may fall behind before it's closed.</param>
     /// <param name="topics">Where each saved row is also published, on the <c>rows</c> topic under its session.</param>
-    public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null)
+    /// <param name="summaries">The sessions' summaries, which every saved row updates.</param>
+    /// <param name="summaryChanged">Told, under the hub's lock, the session whose summary a row changed.</param>
+    public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null, SessionSummaries? summaries = null,
+        Action<string>? summaryChanged = null)
     {
         _store = store;
         _queueLimit = queueLimit;
         _topics = topics;
+        _summaries = summaries;
+        _summaryChanged = summaryChanged ?? (_ => { });
     }
 
     /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
@@ -142,13 +149,16 @@ public sealed class LiveHub : IDisposable
         if (_topics is not null && _topics.HasSubscribers(RowsFeature.Topic, sessionId))
             foreach (var row in rows)
                 _topics.Publish(RowsFeature.Topic, sessionId, RowWire.ToJson(row));
-        if (!_subscribers.TryGetValue(sessionId, out var subscribers))
-            return;
-        foreach (var subscriber in subscribers.ToList())
-        {
-            if (!rows.All(subscriber.Queue.Writer.TryWrite))
-                Close(subscriber, new LiveFellBehind());
-        }
+        if (_subscribers.TryGetValue(sessionId, out var subscribers))
+            foreach (var subscriber in subscribers.ToList())
+            {
+                if (!rows.All(subscriber.Queue.Writer.TryWrite))
+                    Close(subscriber, new LiveFellBehind());
+            }
+        // Last, so the rows have gone out whatever the item's write does. Only a row that changes the session's
+        // summary sends its list item again, never one per row.
+        if (_summaries?.Apply(sessionId, rows) == true)
+            _summaryChanged(sessionId);
     }
 
     private void Close(LiveSubscription subscriber, Exception? reason)
