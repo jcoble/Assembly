@@ -3,17 +3,17 @@
 //! markup in routes/+page.svelte. Panes are empty placeholders until the lanes that own them register real ones.
 
 pub mod default_layout;
+mod dock_tabs;
 pub mod frame;
 pub mod layout_store;
 pub mod motion_skin;
 pub mod placeholder_pane;
-mod side_tabs;
 pub mod top_bar;
 pub mod utility_strip;
 
 #[cfg(test)]
+mod dock_tabs_tests;
+#[cfg(test)]
 mod frame_limits_tests;
 #[cfg(test)]
 mod frame_tests;
-#[cfg(test)]
-mod side_tabs_tests;

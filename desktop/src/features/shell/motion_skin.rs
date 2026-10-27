@@ -7,7 +7,7 @@
 //!   work panel that Frame draws behind them (the design system's "a ground and one panel").
 //! - the sessions column carries the utility strip at its foot, as the approved look has it
 //!   (the design system's look-final/README.md:66); there's no bottom bar.
-//! - the side docks' tabs are the old app's (side_tabs.rs); the chat's title and the bottom dock's tabs are the kit's.
+//! - the docks' tabs are the old app's drawer pills (dock_tabs.rs); the chat's title is the kit's.
 //!
 //! Every other piece of the skin passes through, the drag edge and its save on release included.
 
@@ -23,7 +23,7 @@ use gpui_kit::component::dock::{
 use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
-use super::side_tabs;
+use super::dock_tabs;
 
 pub struct MotionSkin {
     pub inner: Rc<DockSkin>,
@@ -104,7 +104,7 @@ impl DockAreaRenderer for MotionSkin {
 }
 
 /// The kit's tab groups with their fill taken out (TabGroupSkin::frame paints `background`), so the ground behind
-/// shows, and the side docks' own tabs. Everything else passes through.
+/// shows, and the docks' own tabs. Everything else passes through.
 struct Unfilled(Rc<dyn TabGroupRenderer>, WeakEntity<DockArea>);
 
 impl TabGroupRenderer for Unfilled {
@@ -127,10 +127,9 @@ impl TabGroupRenderer for Unfilled {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
-        match side(&self.1, group.node(), cx) {
-            Some(DockPlacement::Left) => side_tabs::chips(group, window, cx),
-            Some(DockPlacement::Right) => side_tabs::pills(group, window, cx),
-            _ => self.0.render_tab_bar(group, window, cx),
+        match dock_of(&self.1, group.node(), cx) {
+            Some(dock) => dock_tabs::pills(group, dock, &self.1, cx),
+            None => self.0.render_tab_bar(group, window, cx),
         }
     }
 
@@ -191,15 +190,19 @@ fn entering(
         .into_any_element()
 }
 
-/// Which side dock holds the group, if one does. The area isn't being drawn while a group draws its tabs (the group is
-/// its own view), so it can be read; the kit's own tab bar reads it the same way.
-fn side(area: &WeakEntity<DockArea>, node: NodeId, cx: &App) -> Option<DockPlacement> {
+/// Which dock holds the group, if one does (the center isn't a dock). The area isn't being drawn while a group draws
+/// its tabs (the group is its own view), so it can be read; the kit's own tab bar reads it the same way.
+fn dock_of(area: &WeakEntity<DockArea>, node: NodeId, cx: &App) -> Option<DockPlacement> {
     let area = area.upgrade()?;
     let area = area.read(cx);
-    [DockPlacement::Left, DockPlacement::Right]
-        .into_iter()
-        .find(|dock| {
-            area.layout(*dock)
-                .is_some_and(|tree| tree.find_node(node).is_some())
-        })
+    [
+        DockPlacement::Left,
+        DockPlacement::Right,
+        DockPlacement::Bottom,
+    ]
+    .into_iter()
+    .find(|dock| {
+        area.layout(*dock)
+            .is_some_and(|tree| tree.find_node(node).is_some())
+    })
 }
