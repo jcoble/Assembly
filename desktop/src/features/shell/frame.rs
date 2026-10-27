@@ -1,6 +1,8 @@
-//! `Frame` owns the window's root view: the top bar, the DockArea (built with the kit's DockSkin, which is what emits
-//! a layout change when a dock edge drag ends) and the utility strip. Replaces ShellFrame.svelte and the `next-shell`
+//! `Frame` owns the window's root view: the top bar, the DockArea (drawn by MotionSkin over the kit's DockSkin, which is
+//! what emits a layout change when a dock edge drag ends) and the utility strip. Replaces ShellFrame.svelte and the `next-shell`
 //! markup in routes/+page.svelte (lines 817-958).
+
+use std::rc::Rc;
 
 use gpui_kit::component::dock::{DockArea, DockEvent, DockSkin};
 use gpui_kit::component::v_flex;
@@ -9,6 +11,7 @@ use serde_json::Value;
 
 use super::default_layout::LAYOUT_VERSION;
 use super::layout_store::{LayoutStore, WriteLayout};
+use super::motion_skin::MotionSkin;
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
 use crate::core::native_views::views::NativeViews;
@@ -33,7 +36,11 @@ impl Frame {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (dock, _skin) = DockSkin::dock_area("assembly-shell", Some(LAYOUT_VERSION), window, cx);
+        let dock = cx.new(|cx| {
+            let skin = MotionSkin(DockSkin::new(cx));
+            DockArea::new("assembly-shell", Some(LAYOUT_VERSION), window, cx)
+                .with_renderer(Rc::new(skin))
+        });
         let top_bar = cx.new(|cx| TopBar::new(dock.clone(), cx));
         let utility_strip = cx.new(|_| UtilityStrip);
         // Any dock change (a layout change, zoom, a live edge drag, a resize) moves panes, so the terminal and
