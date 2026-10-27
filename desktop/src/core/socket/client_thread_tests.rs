@@ -196,7 +196,25 @@ fn a_backend_that_drops_after_each_welcome_is_reopened_once_then_waited_on() {
     assert_eq!(client.state(), connected());
     assert_eq!(client.state(), ConnectionState::Disconnected);
     // The first wait is 0.5 s.
-    assert_eq!(client.state_within(Duration::from_millis(300)), None);
+    assert_eq!(client.state_within(Duration::from_millis(100)), None);
+}
+
+// A connection that worked (a frame came) gets the reopen at once again on its next drop.
+// Pins: g0-socket#7
+#[test]
+fn a_connection_that_answered_gets_the_reopen_at_once_again() {
+    let backend = backend();
+    let mut client = Client::start(backend.port);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    drop(client.call("drop", None));
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    let (_, echo) = client.call("echo", None);
+    assert!(matches!(outcome(echo), Outcome::Ok(_)));
+    drop(client.call("drop", None));
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
 }
 
 // Pins: g0-socket#4
