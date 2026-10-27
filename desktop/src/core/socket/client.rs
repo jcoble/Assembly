@@ -77,4 +77,10 @@ impl SocketClient {
     pub fn reconnect(&self, _endpoint: Endpoint) {
         todo!()
     }
+
+    /// `reconnect` for the launcher's stdout thread, which isn't the window's: it only sends to the client thread.
+    pub fn reconnector(&self) -> impl Fn(Endpoint) + Send + Sync + 'static {
+        let _events = self.events.clone();
+        move |_endpoint| todo!()
+    }
 }
