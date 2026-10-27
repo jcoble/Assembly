@@ -16,8 +16,6 @@ internal sealed class PageRoutes(string token, string soakResults, Func<Uri> bac
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
-    private readonly TurnActivity _activity = new();
-
     public void Map(IEndpointRouteBuilder routes) => routes.MapPost("/page/{method}", CallAsync);
 
     private async Task CallAsync(HttpContext context)
@@ -49,13 +47,6 @@ internal sealed class PageRoutes(string token, string soakResults, Func<Uri> bac
         {
             case "memory.sample":
                 return MemorySample.Write;
-            // A turn started or ended (Conversation.svelte).
-            case "activity.begin":
-                _activity.Begin();
-                return Null;
-            case "activity.end":
-                _activity.End();
-                return Null;
             // { data: base64 image } -> base64 thumbnail (a pasted or HTML5-dropped image).
             case "attachment.thumbnail":
                 var data = Convert.FromBase64String(String(parameters, "data"));

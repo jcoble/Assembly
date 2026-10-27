@@ -3,9 +3,9 @@ using System.Runtime.InteropServices;
 namespace Assembly.Infrastructure.Diagnostics;
 
 /// <summary>
-/// <c>activity.begin</c> / <c>activity.end</c>: while a turn runs, an <c>NSProcessInfo</c> activity keeps App Nap from
-/// throttling the app, as the Tauri app does. A user-initiated activity that still allows idle system sleep, so the
-/// Mac and its display may still sleep. A second begin while one is held does nothing.
+/// While any turn runs, an <c>NSProcessInfo</c> activity keeps App Nap from throttling the app. A user-initiated
+/// activity that still allows idle system sleep, so the Mac and its display may still sleep. Holding it while it's
+/// held does nothing. Off macOS only <see cref="Held"/> changes.
 /// </summary>
 internal sealed class TurnActivity
 {
@@ -14,58 +14,64 @@ internal sealed class TurnActivity
 
     private readonly Lock _lock = new();
     private IntPtr _token;
+    private bool _held;
 
     public bool Held
     {
-        get { lock (_lock) return _token != IntPtr.Zero; }
+        get { lock (_lock) return _held; }
     }
 
-    public void Begin()
+    /// <summary>Holds it while <paramref name="held"/>, else releases it.</summary>
+    public void Hold(bool held)
     {
         lock (_lock)
         {
-            if (_token != IntPtr.Zero)
+            if (held == _held)
                 return;
-            var pool = objc_autoreleasePoolPush();
-            try
-            {
-                var utf8 = Marshal.StringToCoTaskMemUTF8("A turn is running");
-                try
-                {
-                    var reason = Send(Class("NSString"), Selector("stringWithUTF8String:"), utf8);
-                    var token = SendOptions(ProcessInfo(), Selector("beginActivityWithOptions:reason:"), UserInitiatedAllowingIdleSystemSleep, reason);
-                    // The token comes back autoreleased; it is held until End.
-                    _token = Send(token, Selector("retain"));
-                }
-                finally
-                {
-                    Marshal.FreeCoTaskMem(utf8);
-                }
-            }
-            finally
-            {
-                objc_autoreleasePoolPop(pool);
-            }
+            if (OperatingSystem.IsMacOS() && held)
+                Begin();
+            else if (OperatingSystem.IsMacOS())
+                End();
+            _held = held;
         }
     }
 
-    public void End()
+    private void Begin()
     {
-        lock (_lock)
+        var pool = objc_autoreleasePoolPush();
+        try
         {
-            if (_token == IntPtr.Zero)
-                return;
-            var pool = objc_autoreleasePoolPush();
+            var utf8 = Marshal.StringToCoTaskMemUTF8("A turn is running");
             try
             {
-                Send(ProcessInfo(), Selector("endActivity:"), _token);
-                Send(_token, Selector("release"));
-                _token = IntPtr.Zero;
+                var reason = Send(Class("NSString"), Selector("stringWithUTF8String:"), utf8);
+                var token = SendOptions(ProcessInfo(), Selector("beginActivityWithOptions:reason:"), UserInitiatedAllowingIdleSystemSleep, reason);
+                // The token comes back autoreleased; it is held until End.
+                _token = Send(token, Selector("retain"));
             }
             finally
             {
-                objc_autoreleasePoolPop(pool);
+                Marshal.FreeCoTaskMem(utf8);
             }
+        }
+        finally
+        {
+            objc_autoreleasePoolPop(pool);
+        }
+    }
+
+    private void End()
+    {
+        var pool = objc_autoreleasePoolPush();
+        try
+        {
+            Send(ProcessInfo(), Selector("endActivity:"), _token);
+            Send(_token, Selector("release"));
+            _token = IntPtr.Zero;
+        }
+        finally
+        {
+            objc_autoreleasePoolPop(pool);
         }
     }
 

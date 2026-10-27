@@ -34,6 +34,8 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 27, 12, 0, 0, TimeSpan.Zero));
     private AppDatabase _db = null!;
     private LiveHub _hub = null!;
+    private RowStore _rows = null!;
+    private SessionSummaries _summaries = null!;
     private SessionStore _sessions = null!;
     private FakeMachine _here = null!;
     private FakeMachine _box = null!;
@@ -45,9 +47,11 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     {
         var topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
-        var rows = RowStore.Open(_db);
-        _hub = new LiveHub(rows, topics: topics);
-        _sessions = SessionStore.Open(_db, _time);
+        _rows = RowStore.Open(_db);
+        _summaries = SessionSummaries.Load(_rows);
+        _sessions = SessionStore.Open(_db, _time, _summaries);
+        _hub = new LiveHub(_rows, topics: topics, summaries: _summaries, summaryChanged: _sessions.PublishSummary);
+        var rows = _rows;
         _here = new FakeMachine(null, _sessions);
         _box = new FakeMachine("box", _sessions);
         var machines = new MachineSet(_here, _box);
@@ -56,7 +60,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new SendFeature(_sessions, machines, _hub).Register(calls);
         new RowsFeature(_hub, rows, _sessions, machines).Register(calls);
         new ConfigFeature(_sessions, machines).Register(calls);
-        new MachinesFeature(machines).Register(calls);
+        new MachinesFeature(machines, new MachineStatus(["box"])).Register(calls);
         new PreferencesFeature(_db).Register(calls);
         _attachments = new AttachmentStore(Path.Combine(_home.FullName, "attachments"));
         new AttachmentsFeature(_sessions, machines, _attachments, Staging).Register(calls);

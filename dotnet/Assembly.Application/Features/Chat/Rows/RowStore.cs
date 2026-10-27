@@ -179,6 +179,16 @@ public sealed class RowStore
             """,
             reader => ReadRow(reader), new SqlArg("$kind", kind));
 
+    /// <summary>
+    /// For <see cref="SessionSummaries"/>, every session's newest turn row and the newest row of each of its asks, tasks
+    /// and subagents, in session and seq order.
+    /// </summary>
+    public IReadOnlyList<StoredRow> SummaryRows() => Query(Schema.SummaryRows, reader => ReadRow(reader));
+
+    /// <summary>For <see cref="SessionSummaries"/>, the seq of the session's newest turn row that ended a turn, or 0.</summary>
+    public long LastTurnEnd(string sessionId) =>
+        Query(Schema.LastTurnEnd, reader => reader.Long(0), new SqlArg("$session", sessionId)).FirstOrDefault();
+
     /// <summary>The run of the session's newest turn row if that row says <c>started</c>, else null.</summary>
     public string? OpenRun(string sessionId) =>
         Query(

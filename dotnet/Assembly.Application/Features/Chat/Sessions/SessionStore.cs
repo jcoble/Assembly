@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -24,7 +25,7 @@ public sealed class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper";
+    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -38,6 +39,11 @@ public sealed class SessionStore
     // And one made before helper sessions marks none of its sessions a helper.
     private const string HasHelper = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'helper';";
 
+    // And one made before sessions were marked read starts with each read up to its last row, so none is unread.
+    private const string HasReadSeq = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'read_seq';";
+
+    private const string HasRows = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'rows';";
+
     // And one made before a message could fail gets the error, empty.
     private const string HasMessageError = "SELECT COUNT(*) FROM pragma_table_info('helper_messages') WHERE name = 'error';";
 
@@ -49,15 +55,17 @@ public sealed class SessionStore
     private readonly IAppDatabase _db;
     private readonly IAtomicWriter _writer;
     private readonly TimeProvider _time;
+    private readonly SessionSummaries? _summaries;
 
-    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time)
+    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time, SessionSummaries? summaries)
     {
+        _summaries = summaries;
         _db = db;
         _writer = writer;
         _time = time;
     }
 
-    public static SessionStore Open(IAppDatabase db, TimeProvider time)
+    public static SessionStore Open(IAppDatabase db, TimeProvider time, SessionSummaries? summaries = null)
     {
         db.Writer.Write("sessions.schema", scope =>
         {
@@ -72,13 +80,20 @@ public sealed class SessionStore
                 scope.Execute("ALTER TABLE session_info ADD COLUMN parent_session_id TEXT;");
             if (Missing(HasHelper))
                 scope.Execute("ALTER TABLE session_info ADD COLUMN helper INTEGER NOT NULL DEFAULT 0;");
+            // The column and its values in one write: a start that stops between them would leave every session unread.
+            if (Missing(HasReadSeq))
+            {
+                scope.Execute("ALTER TABLE session_info ADD COLUMN read_seq INTEGER NOT NULL DEFAULT 0;");
+                if (!Missing(HasRows))
+                    scope.Execute("UPDATE session_info SET read_seq = COALESCE((SELECT MAX(seq) FROM rows WHERE rows.session_id = session_info.session_id), 0);");
+            }
             if (Missing(HasMessageError))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
             if (Missing(HasMessageAnswer))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
             return 0;
         });
-        return new SessionStore(db, db.Writer, time);
+        return new SessionStore(db, db.Writer, time, summaries);
     }
 
     /// <summary>A config's chosen values, from its JSON object; anything not a string is left out.</summary>
@@ -292,6 +307,34 @@ public sealed class SessionStore
             ON CONFLICT(agent) DO UPDATE SET options = $options;
             """, ("$agent", agent), ("$options", options));
 
+    /// <summary>Publishes the session's list item again, for a change to its summary. It goes through the writer, like
+    /// every other change to the item, so the items go out in the order they were read.</summary>
+    public void PublishSummary(string sessionId) =>
+        _writer.Write("sessions.summary", scope =>
+        {
+            Publish(scope, sessionId);
+            return 0;
+        });
+
+    /// <summary>The session's list item: its stored columns and its summary.</summary>
+    public SessionItem Item(SessionInfo session) => SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None);
+
+    /// <summary>
+    /// Marks the session read up to <paramref name="seq"/>, or its last row if that's lower, publishing its item; a seq
+    /// at or below what's read changes nothing.
+    /// </summary>
+    internal void MarkRead(IWriteScope scope, string sessionId, long seq)
+    {
+        // Never past the session's last row, so a turn that ends later is still unread.
+        if (scope.Execute(
+                """
+                UPDATE session_info SET read_seq = mark.seq FROM (SELECT MIN($seq, MAX(seq)) AS seq FROM rows WHERE session_id = $id) mark
+                WHERE session_id = $id AND read_seq < mark.seq;
+                """,
+                new SqlArg("$id", sessionId), new SqlArg("$seq", seq)) > 0)
+            Publish(scope, sessionId);
+    }
+
     /// <summary>Marks the session as just used, which puts it at the top of the list.</summary>
     public void Touch(string sessionId) =>
         Change(sessionId, "UPDATE session_info SET updated_at = $now WHERE session_id = $id;", ("$id", sessionId), ("$now", Now()));
@@ -310,11 +353,11 @@ public sealed class SessionStore
             return changed;
         });
 
-    private static void Publish(IWriteScope scope, string sessionId)
+    private void Publish(IWriteScope scope, string sessionId)
     {
         if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", sessionId)) is { } session)
             // The list holds top-level sessions only; a subagent's is opened from its parent.
-            scope.Publish(SessionsFeature.Topic, sessionId, SessionItem.From(session), SessionsJson.Default.SessionItem,
+            scope.Publish(SessionsFeature.Topic, sessionId, Item(session), SessionsJson.Default.SessionItem,
                 keyedOnly: session.ParentSessionId is not null);
     }
 
@@ -325,7 +368,7 @@ public sealed class SessionStore
         new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4), row.Long(5),
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
-            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1);
+            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10));
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

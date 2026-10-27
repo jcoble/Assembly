@@ -38,7 +38,7 @@ internal sealed class InfoRoutes(MachineSet machines)
         {
             agents = await machine.AgentsAsync(context.RequestAborted);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;

@@ -10,3 +10,4 @@ pub mod session;
     reason = "nothing in the window uses the sessions column until its pane registers"
 )]
 pub mod sessions;
+pub mod shell;
