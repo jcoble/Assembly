@@ -1,13 +1,12 @@
-//! `Follow` decides where the timeline scrolls: a sent message scrolls to the top, "Jump to latest" pins the bottom
-//! and keeps following while a turn writes, and the reader's own scroll ends both. It never runs past the prompt.
-//! Ported from mac-command-bar's conversationScrollAnchor.ts (decideConversationScroll), whose tests come with it.
+//! `Follow` decides the one scroll the kit's list doesn't: a sent message's prompt goes to the top once its item
+//! arrives (the old app's send anchor; whether it goes to the top or the end is open for Jesse). Following the end
+//! while a turn writes, stopping when the reader scrolls, and "Jump to latest" are the kit's MessageScroller. Ported
+//! from the send part of mac-command-bar's conversationScrollAnchor.ts.
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Follow {
     /// A send waits for its prompt's item, to scroll it to the top.
     pending_send: bool,
-    /// "Jump to latest" pinned the bottom: growth keeps it there.
-    pinned: bool,
 }
 
 /// What happened to the timeline.
@@ -16,11 +15,8 @@ pub enum FollowEvent {
     Send,
     /// A user item arrived, with its key.
     UserItem(String),
-    /// A reply grew.
-    Growth,
-    /// The reader scrolled, wheeled or pressed a key.
+    /// The reader scrolled before the prompt arrived: it stays where they put it.
     ReaderInput,
-    JumpToLatest,
 }
 
 /// What the timeline does about it.
@@ -29,7 +25,6 @@ pub enum FollowStep {
     None,
     /// Scroll the item with this key to the top.
     ShowAtTop(String),
-    ScrollToLatest,
 }
 
 impl Follow {

@@ -27,6 +27,8 @@ pub struct SessionView {
     pub has_before: bool,
     /// The newest seq applied: the rows subscription's `after` on a reopen.
     pub newest: i64,
+    /// Prompts sent from here that no user row has echoed yet, as (client id, text), drawn pending at the end.
+    pub pending: Vec<(String, String)>,
 }
 
 /// The newest turn row: its seq, run, state and when it was written.

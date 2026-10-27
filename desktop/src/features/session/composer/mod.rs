@@ -1,6 +1,7 @@
 //! The composer under the timeline: the draft, send and stop, the "/" menu, the agent's config menus, the context
 //! ring and attached images with their uploads.
 
+pub mod agent_config;
 pub mod attachment;
 pub mod composer;
 pub mod config_menu;

@@ -3,12 +3,14 @@
 
 use gpui_kit::*;
 
+use super::session_action::OnAction;
+
 use crate::features::session::rows::task::TaskPayload;
 
 #[derive(IntoElement)]
 pub struct TaskCard {
     pub task_id: String,
-    pub task: TaskPayload,
+    pub task: TaskPayload,    pub on_action: OnAction,
 }
 
 impl RenderOnce for TaskCard {

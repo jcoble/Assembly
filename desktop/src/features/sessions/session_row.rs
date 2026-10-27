@@ -1,5 +1,5 @@
-//! `SessionRow` is one session in the column: its title, agent and machine, and a still dot while it works (no
-//! loop, and the age column never moves). Selected, it's marked.
+//! `SessionRow` is one session in the column: its title, agent and machine. Selected, it's marked. The still dot
+//! for a working session waits for the sessions list to carry that state (the base lane's session summaries).
 
 use gpui_kit::*;
 
@@ -9,7 +9,6 @@ pub struct SessionRow {
     pub title: SharedString,
     /// "Claude Code · Workbox Test".
     pub place: SharedString,
-    pub working: bool,
     pub selected: bool,
 }
 

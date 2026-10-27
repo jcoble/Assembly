@@ -30,7 +30,6 @@ pub enum ItemKind {
     /// A run the agent started itself, with its reason standing in for a prompt.
     Note { text: String },
     Stats { stats: TurnStats },
-    Compaction { trigger: String, pre_tokens: i64, post_tokens: Option<i64> },
     /// A kind this build doesn't draw, by name.
     Other { kind: String },
 }

@@ -1,5 +1,5 @@
 //! `Block` is a message's markdown as the backend parsed and cleaned it (SafeMarkdownBlock), with its inline parts.
-//! A complete code block carries its highlighted lines.
+//! The backend doesn't highlight code yet, so a code block is its text.
 
 use serde::Deserialize;
 
@@ -8,7 +8,7 @@ use serde::Deserialize;
 pub enum Block {
     Paragraph { parts: Vec<Inline> },
     Heading { level: u8, parts: Vec<Inline> },
-    Code { language: String, value: String, complete: bool, lines: Option<Vec<Vec<CodeToken>>> },
+    Code { language: String, value: String, complete: bool },
     Quote { blocks: Vec<Block> },
     List { ordered: bool, items: Vec<ListItem> },
     Table { headers: Vec<Vec<Inline>>, rows: Vec<Vec<Vec<Inline>>> },
@@ -33,12 +33,4 @@ pub struct ListItem {
     pub checked: bool,
     pub parts: Vec<Inline>,
     pub blocks: Vec<Block>,
-}
-
-/// One highlighted piece of a code line; `class_name` is keyword, string, comment, number, type or plain.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodeToken {
-    pub value: String,
-    pub class_name: String,
 }

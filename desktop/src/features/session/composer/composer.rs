@@ -1,21 +1,25 @@
-//! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line), the attached images and
-//! the "/" menu's state. Send is `send/send` with the draft and its "Attached image:" lines; while a turn runs, a
-//! send steers it and Stop (`send/stop`) shows beside it. Dropped or pasted images attach; any other dropped file
-//! goes into the draft as its path. The draft is saved through the save lane g0-host provides on the backend clock;
-//! this owns no timer. It draws, so it never reads a file: `Upload` does. Replaces Composer.svelte.
+//! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line), the attached images, the
+//! agent's config (`config/get`, read again when a turn ends) and the "/" menu's state. Send is `send/send` with the
+//! draft, its "Attached image:" lines and a client id made here, which the session's user row echoes: until it does,
+//! the timeline shows the prompt as pending. While a turn runs, a send steers it and Stop (`send/stop`) shows beside
+//! it. Dropped or pasted images attach; any other dropped file
+//! goes into the draft as its path. The draft lives here while the window runs. It draws, so it never reads a file: `Upload` does. Replaces Composer.svelte.
 
-use gpui_kit::component::input::InputState;
+use std::rc::Rc;
+
+use gpui_kit::component::input::TextareaState;
 use gpui_kit::*;
 
+use super::agent_config::AgentConfig;
 use super::attachment::Attachment;
-use super::slash_menu::SlashCommand;
+use crate::features::session::client::session_client::SessionClient;
 
 pub struct Composer {
+    client: Rc<dyn SessionClient>,
     session: Option<String>,
-    draft: Entity<InputState>,
+    draft: Entity<TextareaState>,
     attachments: Vec<Attachment>,
-    /// The agent's slash commands, as `config/get` last listed them.
-    commands: Vec<SlashCommand>,
+    config: Option<AgentConfig>,
     /// The "/" menu's highlighted row, or `None` while it's closed or Esc hid it.
     slash_selected: Option<usize>,
     /// The run going now, which Stop stops.
@@ -25,12 +29,14 @@ pub struct Composer {
 
 /// What the composer tells the session pane.
 pub enum ComposerEvent {
-    /// A send went out and answered its run id: the timeline scrolls the prompt to the top.
-    Sent { run_id: String },
+    /// A send went out with this client id: the timeline shows it pending and scrolls to it.
+    Sending { client_id: String, text: String },
+    /// It answered its run id.
+    Sent { client_id: String, run_id: String },
 }
 
 impl Composer {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(_client: Rc<dyn SessionClient>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
         todo!()
     }
 

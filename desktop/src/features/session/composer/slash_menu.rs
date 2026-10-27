@@ -7,7 +7,12 @@ use serde::Deserialize;
 pub struct SlashCommand {
     pub name: String,
     pub description: String,
-    /// The input hint a pick selects, so typing replaces it.
+    pub input: Option<SlashInput>,
+}
+
+/// ACP's command input: the hint a pick selects, so typing replaces it.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct SlashInput {
     pub hint: Option<String>,
 }
 

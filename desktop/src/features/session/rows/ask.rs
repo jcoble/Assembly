@@ -1,8 +1,6 @@
 //! `AskPayload` is a card asking the user: a permission (one of the agent's options, by ACP kind) or a question (a
 //! flat JSON Schema form). Its answer goes back through `send/answer`.
 
-use std::collections::BTreeMap;
-
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -18,7 +16,8 @@ pub struct AskPayload {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub options: Vec<AskOption>,
-    pub schema: Option<AskSchema>,
+    /// A question's form, as JSON Schema; `AskSchema::of` reads it.
+    pub schema: Option<Value>,
     /// The option's `{ optionId }` or the form's `{ action, content }`.
     pub answer: Option<Value>,
 }
@@ -32,12 +31,17 @@ pub struct AskOption {
     pub kind: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+/// The form's fields in the JSON's order, which is the form's order (read by hand in step 2: serde's maps sort).
+#[derive(Clone, Debug, PartialEq)]
 pub struct AskSchema {
-    #[serde(default)]
-    pub properties: BTreeMap<String, AskField>,
-    #[serde(default)]
+    pub properties: Vec<(String, AskField)>,
     pub required: Vec<String>,
+}
+
+impl AskSchema {
+    pub fn of(_schema: &Value) -> Option<AskSchema> {
+        todo!()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -48,6 +52,16 @@ pub struct AskField {
     pub title: Option<String>,
     pub description: Option<String>,
     pub one_of: Option<Vec<AskChoice>>,
+    #[serde(rename = "enum")]
+    pub choices: Option<Vec<String>>,
+    /// A multi-select's choices.
+    pub items: Option<AskItems>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AskItems {
+    pub any_of: Option<Vec<AskChoice>>,
     #[serde(rename = "enum")]
     pub choices: Option<Vec<String>>,
 }

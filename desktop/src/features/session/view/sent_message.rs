@@ -4,15 +4,19 @@
 
 use gpui_kit::*;
 
+use super::session_action::OnAction;
+
 /// A prompt folds past this many lines.
 pub const FOLD_LINES: usize = 10;
 
 #[derive(IntoElement)]
 pub struct SentMessage {
     pub text: SharedString,
-    /// "Helper · Claude Code on Workbox Test" when another session sent it.
-    pub sender: Option<SharedString>,
-    pub open: bool,
+    /// "Helper · Claude Code on Workbox Test" when another session sent it, and that session's id.
+    pub sender: Option<(SharedString, String)>,
+    /// The attached images its lines name, as (path, name); a click reads one and opens it full size.
+    pub images: Vec<(String, String)>,
+    pub open: bool,    pub on_action: OnAction,
 }
 
 impl RenderOnce for SentMessage {

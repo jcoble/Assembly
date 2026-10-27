@@ -1,7 +1,8 @@
 //! `Timeline` owns the virtual list (the kit's MessageScroller, which lays out only the rows on screen and keeps the
 //! reading place when a page goes on top), the entries it draws, each item's `Kept`, and the folds the reader opened.
-//! Where it scrolls is `Follow`'s decision. The reading place is saved from scrolling only, at most once a frame,
-//! through the save lane g0-host provides on the backend clock; this owns no timer. Replaces the virtualizer half of
+//! Where it scrolls is `Follow`'s decision. Each session's reading place is kept in memory, written only when the
+//! top item changes from scrolling and when the session closes, never on a draw; G0 doesn't keep it across
+//! relaunches. Replaces the virtualizer half of
 //! Conversation.svelte and session/scroll.ts.
 
 use std::collections::{HashMap, HashSet};
@@ -24,6 +25,8 @@ pub struct Timeline {
     /// The folds the reader opened, by run id.
     open_folds: HashSet<String>,
     follow: Follow,
+    /// Each session's reading place, by session id.
+    places: HashMap<String, ListOffset>,
 }
 
 impl Timeline {

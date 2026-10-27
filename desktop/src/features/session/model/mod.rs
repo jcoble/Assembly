@@ -9,5 +9,6 @@ pub mod item;
 pub mod kept;
 pub mod markdown_text;
 pub mod notices;
+pub mod reveal;
 pub mod session_view;
 pub mod turn_line;

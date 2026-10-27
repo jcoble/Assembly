@@ -1,6 +1,10 @@
-//! `Row` is one row of a session, with its kind's payload. Ported from rows/store.ts's `Row` and `Payloads`.
+//! `Row` is one row of a session as the `rows` topic and `rows/page` send it (RowWire.cs), the same envelope as the
+//! socket client's (lane g0-socket), which replaces this one when it lands. `RowBody` is its kind's payload, read
+//! per kind; a kind this build doesn't know, or a payload it can't read, is `Other` with the kind's name, so nothing
+//! silently disappears. Ported from rows/store.ts's `Row` and `Payloads`.
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::ask::AskPayload;
 use super::markdown::Block;
@@ -18,17 +22,16 @@ pub struct Row {
     pub run_id: Option<String>,
     /// The item the row updates; a row with none is its own item, keyed by its seq.
     pub item_id: Option<String>,
-    #[serde(flatten)]
-    pub body: RowBody,
+    pub kind: String,
+    pub payload: Value,
     pub created_at: i64,
     /// On page rows only: the seq of the item's first row, which places it.
     pub first_seq: Option<i64>,
+    /// On live rows: the seq before it (the socket client's gap check).
+    pub prev_seq: Option<i64>,
 }
 
-/// The row's kind and payload. A kind this build doesn't know is `Other`, shown by name so nothing silently
-/// disappears.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "kind", content = "payload", rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RowBody {
     /// `reason`: why a run the agent started itself started.
     Turn { state: TurnState, reason: Option<String> },
@@ -47,10 +50,13 @@ pub enum RowBody {
     Subagent(SubagentPayload),
     /// How full the agent's context window is, in tokens: one item per run.
     Context { used: i64, size: i64 },
-    #[serde(rename_all = "camelCase")]
-    Compaction { trigger: String, pre_tokens: i64, post_tokens: Option<i64> },
-    #[serde(other)]
-    Other,
+    Other { kind: String },
+}
+
+impl RowBody {
+    pub fn of(_row: &Row) -> RowBody {
+        todo!()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]

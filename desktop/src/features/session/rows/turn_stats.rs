@@ -6,7 +6,7 @@ use serde::Deserialize;
 #[serde(rename_all = "camelCase")]
 pub struct TurnStats {
     pub run_id: String,
-    /// running, finished, failed or aborted.
+    /// running, completed, failed or aborted (OpenTurn.cs).
     pub status: String,
     pub started_at: Option<i64>,
     pub duration_ms: Option<i64>,

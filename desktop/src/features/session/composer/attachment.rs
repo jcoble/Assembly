@@ -1,8 +1,6 @@
-//! `Attachment` is an image attached to the draft: its name, type, size and thumbnail for the chip, and where its
-//! upload is. A sent message carries each as an "Attached image: <path> (<name>) thumbnail: <path>" line after the
+//! `Attachment` is an image attached to the draft: its name, type and size for the chip, and where its upload is.
+//! G0 makes no thumbnails; a sent message's lines may still name one, from the old app. A sent message carries each as an "Attached image: <path> (<name>) thumbnail: <path>" line after the
 //! text, which the history reads back. Only png, jpeg, gif and webp up to 20 MB attach. Replaces attachments.ts.
-
-use std::sync::Arc;
 
 use gpui_kit::*;
 
@@ -10,14 +8,13 @@ pub struct Attachment {
     pub name: SharedString,
     pub mime: &'static str,
     pub size: u64,
-    pub thumbnail: Option<Arc<Image>>,
     pub state: AttachmentState,
 }
 
 pub enum AttachmentState {
     Uploading,
-    /// Saved where the session's agent runs: the original's path and its thumbnail's.
-    Saved { path: String, thumbnail: Option<String> },
+    /// Saved where the session's agent runs, at this path.
+    Saved { path: String },
     Failed(SharedString),
 }
 

@@ -5,6 +5,8 @@
 
 use gpui_kit::*;
 
+use super::session_action::OnAction;
+
 use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::ToolPayload;
 
@@ -18,7 +20,7 @@ pub const OUTPUT_TAIL: usize = 200;
 pub struct ToolRow {
     pub item_id: String,
     pub tool: ToolPayload,
-    pub kept: Kept,
+    pub kept: Kept,    pub on_action: OnAction,
 }
 
 impl RenderOnce for ToolRow {

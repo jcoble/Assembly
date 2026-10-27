@@ -7,7 +7,8 @@ use serde::Deserialize;
 pub struct ToolPayload {
     pub name: String,
     pub state: ToolState,
-    pub summary: String,
+    /// Left out when it's the tool's name.
+    pub summary: Option<String>,
     pub path: Option<String>,
     pub added: Option<i64>,
     pub removed: Option<i64>,

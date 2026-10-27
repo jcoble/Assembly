@@ -5,6 +5,7 @@ pub mod ask;
 pub mod markdown;
 pub mod plan;
 pub mod row;
+pub mod row_page;
 pub mod subagent;
 pub mod task;
 pub mod tool;

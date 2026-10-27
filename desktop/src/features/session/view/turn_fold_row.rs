@@ -3,12 +3,14 @@
 
 use gpui_kit::*;
 
+use super::session_action::OnAction;
+
 use crate::features::session::model::fold::Fold;
 
 #[derive(IntoElement)]
 pub struct TurnFoldRow {
     pub fold: Fold,
-    pub open: bool,
+    pub open: bool,    pub on_action: OnAction,
 }
 
 impl RenderOnce for TurnFoldRow {
