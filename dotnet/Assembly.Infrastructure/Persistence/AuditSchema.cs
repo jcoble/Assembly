@@ -13,5 +13,5 @@ internal static class AuditSchema
     // At most PruneCap rows a prune, so it stays short for the write waiting behind it.
     public const int PruneCap = 5_000;
 
-    public const string Prune = "DELETE FROM audit WHERE rowid IN (SELECT rowid FROM audit WHERE at < $before LIMIT 5000);";
+    public const string Prune = "DELETE FROM audit WHERE rowid IN (SELECT rowid FROM audit WHERE at < $before LIMIT $cap);";
 }

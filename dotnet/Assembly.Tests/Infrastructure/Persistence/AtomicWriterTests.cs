@@ -115,9 +115,18 @@ public sealed class AtomicWriterTests : IDisposable
     {
         _time.Advance(31 * Day);
         AddAudit(_time.GetUtcNow() - 31 * Day, 4);
+        // The write commits and publishes before the prune runs: its publish still finds the expired rows.
+        _topics.OnPublish = () => Assert.Equal(4, Count("audit WHERE what = 'old'"));
 
-        Note(1);
+        _db.Writer.Write("notes/add", scope =>
+        {
+            scope.Execute("INSERT INTO notes(id, text) VALUES (1, 'a');");
+            scope.Publish("notes", "1", "a", NoteJson);
+            return 0;
+        });
+        Assert.Single(_topics.Sent);
         Assert.Equal(0, Count("audit WHERE what = 'old'"));
+        _topics.OnPublish = null;
 
         AddAudit(_time.GetUtcNow() - 31 * Day, 4);
         _time.Advance(TimeSpan.FromHours(23));

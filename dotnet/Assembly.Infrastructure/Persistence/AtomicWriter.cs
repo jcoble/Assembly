@@ -84,7 +84,7 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
     {
         var now = _time.GetUtcNow();
         using var transaction = _db.BeginTransaction();
-        var deleted = Sql.Execute(_db, AuditSchema.Prune, [new("$before", (now - Kept).ToUnixTimeMilliseconds())]);
+        var deleted = Sql.Execute(_db, AuditSchema.Prune, [new("$before", (now - Kept).ToUnixTimeMilliseconds()), new("$cap", (long)AuditSchema.PruneCap)]);
         transaction.Commit();
         _pruned = deleted < AuditSchema.PruneCap ? now : null;
     }
