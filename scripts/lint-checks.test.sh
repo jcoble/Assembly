@@ -85,8 +85,11 @@ r=$(repo_with 80-no-bare-task-starts.sh)
 mkdir -p "$r/dotnet/Assembly.Application" "$r/dotnet/Assembly.Tests"
 printf '%s\n' 'var task = Task.Run(Work);' '_ = kill(-pid, 9);' 'work.Start("clock", TickAsync);' '// _ = RunAsync(); in a comment' \
   >"$r/dotnet/Assembly.Application/A.cs"
-expect 0 "bare task starts: held tasks, a discarded non-task call and a comment pass" "$r" 80-no-bare-task-starts.sh
-for bad in '_ = RunAsync();' '    _ = Task.Run(Work);' '_ = write.ContinueWith(_ => { });' 'Task.Run(Work);' \
+printf '%s\n' '// Never use async void.' '    /// No async void here.' '     * nor async void here' '    _ => RunAsync(),' \
+  >"$r/dotnet/Assembly.Application/B.cs"
+expect 0 "bare task starts: held tasks, a discarded non-task call, comments and a lambda pass" "$r" 80-no-bare-task-starts.sh
+rm "$r/dotnet/Assembly.Application/B.cs"
+for bad in '_ = RunAsync();' '_=RunAsync();' '_ = RunAsync ();' '    _ = Task.Run(Work);' '_ = write.ContinueWith(_ => { });' 'Task.Run(Work);' \
   'Task.Factory.StartNew(Work);' 'ThreadPool.UnsafeQueueUserWorkItem(Work, null);' 'new Thread(Work).Start();' 'private async void OnClick() { }'; do
   echo "$bad" >"$r/dotnet/Assembly.Tests/T.cs"
   expect 1 "bare task starts: fails on: $bad (tests too)" "$r" 80-no-bare-task-starts.sh

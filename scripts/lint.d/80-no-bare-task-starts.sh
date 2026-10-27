@@ -4,7 +4,8 @@
 # (Task.Run, Task.Factory.StartNew, ThreadPool.QueueUserWorkItem), starts a new Thread, or is async void. Tests are
 # scanned too, with no exceptions.
 cd "$(dirname "$0")/../.."
-bare='^[[:space:]]*_ = .*(Async\(|Task\.Run\(|ContinueWith\()|^[[:space:]]*(_ = )?(Task\.Run|Task\.Factory\.StartNew|ThreadPool\.[A-Za-z]*QueueUserWorkItem)\(|^[[:space:]]*new Thread\(|async void'
+# A discard is '_ =' with any spacing, but not '_ =>' or '_ =='. async void counts unless the line is a comment.
+bare='^[[:space:]]*_[[:space:]]*=[^=>].*(Async|Task\.Run|ContinueWith)[[:space:]]*\(|^[[:space:]]*(_[[:space:]]*=[[:space:]]*)?(Task\.Run|Task\.Factory\.StartNew|ThreadPool\.[A-Za-z]*QueueUserWorkItem)[[:space:]]*\(|^[[:space:]]*new Thread[[:space:]]*\(|^[[:space:]]*([^/*[:space:]].*)?async void'
 hits=$(git grep -nE "$bare" -- '*.cs')
 rc=$?
 [ "$rc" -le 1 ] || { echo "bare task starts: git grep failed ($rc); refusing" >&2; exit 2; }
