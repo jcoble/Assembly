@@ -46,6 +46,8 @@ pub struct Composer {
     retry_ids: HashMap<String, (String, String)>,
     /// How many sends this composer has named, for the next clientId.
     named: u64,
+    /// Counts each pick's start and answer; a config read that saw it change answers what came before.
+    picks: u64,
     _enter: Subscription,
     /// The config read going now.
     _config: Option<Task<()>>,
@@ -94,6 +96,7 @@ impl Composer {
             meter: None,
             retry_ids: HashMap::new(),
             named: 0,
+            picks: 0,
             _enter: enter,
             _config: None,
             _tasks: Vec::new(),

@@ -226,3 +226,20 @@ fn the_lit_row_scrolls_into_sight_when_the_keys_move_past_the_list(cx: &mut Test
         "and back to the first row, just under the list's padding"
     );
 }
+
+// Pins: g0-session#27
+#[gpui::test]
+fn a_read_sent_while_a_pick_is_going_doesnt_put_the_old_value_back(cx: &mut TestAppContext) {
+    let (composer, client, cx) = on_s1(cx);
+    composer.update(cx, |composer, cx| {
+        client.set_config(Some(config("opus")));
+        composer.choose("model".into(), "opus".into(), cx);
+        // A turn ends while the pick is going; the read answers from before it.
+        client.set_config(Some(config("sonnet")));
+        composer.set_running(Some("r1".into()), cx);
+        composer.set_running(None, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(client.config_calls().len(), 3, "read, pick, read");
+    assert_eq!(menus(&composer, cx)[0].1, "opus");
+}

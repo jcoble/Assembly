@@ -15,11 +15,13 @@ use crate::features::session::composer::agent_config::{AgentConfig, ConfigOption
 use crate::features::session::composer::slash_menu::SlashCommand;
 
 impl Composer {
-    /// Reads the session's config; a newer read takes the place of one still going.
+    /// Reads the session's config; a newer read takes the place of one still going. One a pick started or answered
+    /// during is let go: it may answer the value from before the pick, and the pick's own answer is newer.
     pub(super) fn read_config(&mut self, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
             return;
         };
+        let picks = self.picks;
         let key = format!("config/get:{session}");
         let args = json!({ "session": session });
         let call = self.client.call("config", "get", args, Some(&key), cx);
@@ -27,7 +29,8 @@ impl Composer {
             let answer = call.await;
             composer
                 .update(cx, |composer, cx| {
-                    if let (true, Ok(config)) = (composer.session == Some(session), parse(answer)) {
+                    let current = composer.session == Some(session) && composer.picks == picks;
+                    if let (true, Ok(config)) = (current, parse(answer)) {
                         composer.config = Some(config);
                         cx.notify();
                     }
@@ -46,7 +49,7 @@ impl Composer {
             .into_iter()
             .find(|(option, _)| option.id == config_id)
             .map_or(config_id.clone(), |(option, _)| option.name.clone());
-        // A read still going would answer the value from before the pick.
+        self.picks += 1;
         self._config = None;
         let args = json!({ "session": session, "configId": config_id, "value": value });
         let call = self.client.call("config", "set", args, None, cx);
@@ -55,6 +58,7 @@ impl Composer {
             let answer = call.await;
             composer
                 .update(cx, |composer, cx| {
+                    composer.picks += 1;
                     if composer.session != Some(session) {
                         return;
                     }
