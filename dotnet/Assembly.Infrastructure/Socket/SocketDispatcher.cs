@@ -64,9 +64,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                     return 0;
                 });
             }
-            catch (Exception error) when (error is not (CallFailed or OperationCanceledException))
+            catch (Exception error) when (error is not CallFailed)
             {
-                // Its message could hold the value, which never goes into a log (some settings hold tokens).
+                // Its message could hold the value, which never goes into a log (some settings hold tokens). The call's
+                // own cancel was checked before the write, so anything here is the save's.
                 log.LogError("{Save} failed with {Type}", $"{feature}/set {key}", error.GetType().Name);
                 throw new CallFailed($"{feature}/set {key} failed");
             }

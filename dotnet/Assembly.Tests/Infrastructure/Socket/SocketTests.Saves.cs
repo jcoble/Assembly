@@ -118,10 +118,12 @@ public sealed partial class SocketTests
         // Bad args: an object where the value is a string.
         await SaveAsync(socket, 3, "theme", $$"""{"text":"{{Marker}}"}""");
         await SaveAsync(socket, 4, "theme", $"\"crash {Marker}\"");
-        var answers = await ReadByIdAsync(socket, 4);
+        await SaveAsync(socket, 5, "theme", $"\"cancel {Marker}\"");
+        var answers = await ReadByIdAsync(socket, 5);
         Assert.Equal("bad_args", Code(answers[2], id: 3));
         Assert.Equal("failed", Code(answers[3], id: 4));
-        Assert.DoesNotContain(Marker, answers[3]);
+        Assert.Equal("failed", Code(answers[4], id: 5));
+        Assert.All(answers, answer => Assert.DoesNotContain(Marker, answer));
         Assert.Contains(_log.Entries, entry => entry.Level == LogLevel.Error);
 
         Assert.Equal(Marker, Value(database.Path, "notion-token"));
@@ -137,8 +139,8 @@ public sealed partial class SocketTests
     }
 
     // A settings table in a real writer, the settings topic, and its save: an upsert that publishes the setting. A value
-    // starting "refused" fails the save; one starting "crash" throws an exception that holds it. before runs inside the
-    // write, first.
+    // starting "refused" fails the save; one starting "crash" or "cancel" throws an exception that holds it. before runs
+    // inside the write, first.
     private TempDatabase Settings(Action? before = null)
     {
         var database = new TempDatabase();
@@ -160,6 +162,8 @@ public sealed partial class SocketTests
                 throw new CallFailed("refused");
             if (value.StartsWith("crash", StringComparison.Ordinal))
                 throw new InvalidOperationException(value);
+            if (value.StartsWith("cancel", StringComparison.Ordinal))
+                throw new OperationCanceledException(value);
             scope.Execute("INSERT INTO settings(key, value) VALUES ($key, $value) ON CONFLICT(key) DO UPDATE SET value = $value",
                 new SqlArg("$key", key), new SqlArg("$value", value));
             scope.Publish("settings", key, new Setting(key, value), TestJson.Default.Setting);
