@@ -38,10 +38,12 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly RemoteMachine? _remote;
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
+    private readonly MachinesFeature _machinesFeature;
 
     private DesktopBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
-        WebApplication app)
+        WebApplication app, MachinesFeature machinesFeature)
     {
+        _machinesFeature = machinesFeature;
         _remote = remote;
         _outbox = outbox;
         _db = db;
@@ -111,7 +113,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app);
+        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app, machinesFeature);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -124,6 +126,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
+        // Before the remote, so no probe is still out on it.
+        await _machinesFeature.DisposeAsync();
         if (_outbox is not null)
             await _outbox.DisposeAsync();
         await _sessions.DisposeAsync();

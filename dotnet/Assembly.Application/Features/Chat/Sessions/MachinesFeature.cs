@@ -21,8 +21,9 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
     private readonly MachineStatus _status;
     private readonly Action _startClock;
     private readonly TimeProvider _time;
-    // The remotes with a probe out, which never get a second; guarded by itself, as are _stop and _ticks.
-    private readonly HashSet<string> _probing = [];
+    // Each remote's last probe, run off the tick's thread; a remote whose probe is still out gets no second. Guarded
+    // by itself, as are _stop and _ticks.
+    private readonly Dictionary<string, Task> _probes = [];
     private CancellationTokenSource _stop = new();
     private int _ticks = Every - 1;
 
@@ -42,7 +43,7 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             if (key is not null)
                 throw new CallFailed("machines has no keys");
             // The first tick after a subscribe probes.
-            lock (_probing)
+            lock (_probes)
                 _ticks = Every - 1;
             _startClock();
             return _status.Items;
@@ -60,31 +61,27 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
     {
         if (!watched)
         {
-            lock (_probing)
-                if (_probing.Count > 0)
-                {
-                    _stop.Cancel();
-                    _stop = new CancellationTokenSource();
-                }
+            CancellationTokenSource? stop = null;
+            lock (_probes)
+                if (_probes.Values.Any(probe => !probe.IsCompleted))
+                    (stop, _stop) = (_stop, new CancellationTokenSource());
+            stop?.Cancel();
             return;
         }
-        lock (_probing)
+        lock (_probes)
         {
             if (++_ticks < Every)
                 return;
             _ticks = 0;
         }
-        foreach (var machine in _machines.Remotes)
-        {
-            CancellationToken stop;
-            lock (_probing)
+        lock (_probes)
+            foreach (var machine in _machines.Remotes)
             {
-                if (!_probing.Add(machine.Name!))
+                if (_probes.TryGetValue(machine.Name!, out var probe) && !probe.IsCompleted)
                     continue;
-                stop = _stop.Token;
+                var stop = _stop.Token;
+                _probes[machine.Name!] = Task.Run(() => ProbeAsync(machine, stop));
             }
-            _ = ProbeAsync(machine, stop);
-        }
     }
 
     private async Task ProbeAsync(IMachine machine, CancellationToken stop)
@@ -103,14 +100,18 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         {
             // The machine recorded what it saw, and a probe cancelled for nobody watching records nothing.
         }
-        finally
-        {
-            lock (_probing)
-                _probing.Remove(machine.Name!);
-        }
     }
 
-    public ValueTask DisposeAsync() => throw new NotImplementedException();
+    /// <summary>Cancels the probes out and waits for them to end.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        Task[] probes;
+        CancellationTokenSource stop;
+        lock (_probes)
+            (probes, stop) = ([.. _probes.Values], _stop);
+        await stop.CancelAsync();
+        await Task.WhenAll(probes);
+    }
 
     internal sealed record AgentsArgs(string? Machine = null);
 
