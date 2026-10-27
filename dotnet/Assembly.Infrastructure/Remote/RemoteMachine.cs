@@ -117,7 +117,11 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     public async Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken)
     {
         using var response = await SendRequestAsync(HttpMethod.Post, $"/runs/{runId}/stop", null, cancellationToken);
-        return response.StatusCode == HttpStatusCode.Accepted;
+        if (response.StatusCode is HttpStatusCode.Accepted or HttpStatusCode.NotFound)
+            return response.StatusCode == HttpStatusCode.Accepted;
+        // Any other answer fails the call.
+        await ReadJsonAsync(response, cancellationToken);
+        return false;
     }
 
     // From the copied rows, so it agrees with what the webview has.
