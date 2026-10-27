@@ -9,6 +9,8 @@
 //!   `Reconnect`.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, Sender};
 
 use futures_channel::mpsc::UnboundedSender;
@@ -48,6 +50,7 @@ impl ClientThread {
         _events: Receiver<Event>,
         _sender: Sender<Event>,
         _states: UnboundedSender<ConnectionState>,
+        _ids: Arc<AtomicU64>,
     ) {
         todo!()
     }

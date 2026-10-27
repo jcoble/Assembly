@@ -1,6 +1,5 @@
 //! `Event` is everything the client thread waits on, on one channel with no timeout: the window's requests, the
-//! reader thread's frames, the socket closing, and `Reconnect`. Frames and closes carry their connection's number, so
-//! a dropped connection's late frames and close are ignored.
+//! reader thread's frames, the socket closing, and `Reconnect`.
 
 use futures_channel::mpsc::UnboundedSender;
 use futures_channel::oneshot;
@@ -39,17 +38,10 @@ pub(super) enum Event {
     Unsubscribe {
         id: u64,
     },
-    Frame {
-        connection: u64,
-        frame: InFrame,
-    },
+    Frame(InFrame),
     /// A ping the reader got: the client thread, the only writer, answers it.
-    Ping {
-        connection: u64,
-        payload: Vec<u8>,
-    },
-    Closed {
-        connection: u64,
-    },
+    Ping(Vec<u8>),
+    /// The open connection's reader ended. There's one reader at a time: a new connection opens only after this.
+    Closed,
     Reconnect(Endpoint),
 }
