@@ -34,7 +34,7 @@ public sealed class SessionRegistry : IAsyncDisposable
         _sessionStore = sessionStore;
         _launcher = launcher;
         Helpers = new HelperSessions(sessionStore, this, hub, limits ?? new HelperLimits());
-        _opener = new SessionOpener(sessionStore, launcher, agent => _adapters.GetOrAdd(agent, id => new SharedAdapter(launcher, id, time)),
+        _opener = new SessionOpener(sessionStore, launcher, agent => _adapters.GetOrAdd(agent, id => new SharedAdapter(launcher, id, time, log)),
             Helpers.Tokens.ServersFor);
         _time = time;
         _log = log;

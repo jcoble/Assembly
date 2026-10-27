@@ -17,7 +17,7 @@ internal sealed record RunningAdapter(IAgentLink Link, InitializeResponse Init, 
 /// retired process to exit, so two processes never have the same ACP session open (Claude Code doesn't guard against
 /// it; Codex refuses the second writer).
 /// </summary>
-public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeProvider time) : IAsyncDisposable
+public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeProvider time, TextWriter log) : IAsyncDisposable
 {
     /// <summary>How long an adapter with no open session stays up.</summary>
     public static readonly TimeSpan IdleGrace = TimeSpan.FromSeconds(60);
@@ -94,7 +94,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
                 {
                     _retired.Remove(running);
                     _stopping.RemoveAll(task => task.IsCompleted);
-                    _stopping.Add(stopping = running.Link.DisposeAsync().AsTask());
+                    _stopping.Add(stopping = EndAsync(running));
                 }
                 return;
             }
@@ -188,10 +188,21 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     private async Task StopAsync()
     {
         if (Interlocked.Exchange(ref _running, null) is { } running)
+            await EndAsync(running);
+    }
+
+    // Disposes the link, which completes its updates and so ends the router's pump, and waits up to the close limit
+    // for the pump.
+    private async Task EndAsync(RunningAdapter running)
+    {
+        await running.Link.DisposeAsync();
+        try
         {
-            await running.Link.DisposeAsync();
-            // Disposing the link completes its updates, which ends the router's pump.
-            await running.Updates.Completion;
+            await running.Updates.Completion.WaitAsync(CloseLimit, time);
+        }
+        catch (TimeoutException)
+        {
+            log.WriteLine($"shutdown: update pump for {agentId} still running after {CloseLimit.TotalSeconds:0.#} s");
         }
     }
 
@@ -205,7 +216,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
             await _idleTask;
             await StopAsync();
             foreach (var retired in _retired.Keys)
-                await retired.Link.DisposeAsync();
+                await EndAsync(retired);
             _retired.Clear();
             await Task.WhenAll(_stopping);
         }

@@ -38,7 +38,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         _hub = new LiveHub(_store);
         _sessionStore = SessionStore.Open(_database, _time);
         _session = _sessionStore.Create("claude", "https://github.com/o/r");
-        _adapter = new SharedAdapter(_launcher, "claude", _time);
+        _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
         _work = new BackgroundWork(_time, _log);
         _host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 
@@ -121,6 +122,69 @@ public sealed partial class SessionHostTests
         await Until(() => first.Disposed);
         await _adapter.ClosedAsync(FakeLink.AcpSessionId, CancellationToken.None);
         await other.StopForShutdownAsync();
+    }
+
+    // An update pump that never ends holds the adapter's dispose only up to the close limit, and is logged.
+    [Fact]
+    public async Task A_stuck_update_pump_holds_the_dispose_only_to_the_close_limit()
+    {
+        var (adapter, link, _) = await HeldAdapterAsync();
+
+        var disposing = adapter.DisposeAsync().AsTask();
+        await Until(() =>
+        {
+            _time.Advance(SharedAdapter.CloseLimit);
+            return disposing.IsCompleted;
+        });
+        await disposing;
+        Assert.Contains("shutdown: update pump for claude still running after 5 s", _log.ToString());
+        await link.DisposeAsync();
+    }
+
+    // A retired adapter's last release waits for its update pump too, up to the same limit.
+    [Fact]
+    public async Task A_retired_adapters_last_release_waits_for_its_update_pump()
+    {
+        var (adapter, link, running) = await HeldAdapterAsync();
+        var closing = adapter.CloseAsync(running, FakeLink.AcpSessionId);
+        await link.ReadAsync("session/close");
+        await Until(() =>
+        {
+            _time.Advance(SharedAdapter.CloseLimit);
+            return closing.IsCompleted;
+        });
+        await Assert.ThrowsAsync<TimeoutException>(() => closing);
+
+        var releasing = adapter.ReleaseAsync(running);
+        await Until(() =>
+        {
+            _time.Advance(SharedAdapter.CloseLimit);
+            return releasing.IsCompleted;
+        });
+        await releasing;
+        Assert.Contains("shutdown: update pump for claude still running after 5 s", _log.ToString());
+        await adapter.DisposeAsync();
+        await link.DisposeAsync();
+    }
+
+    // An adapter, with one session on it, whose link's dispose doesn't end its updates, so its pump never ends.
+    private async Task<(SharedAdapter, FakeLink, RunningAdapter)> HeldAdapterAsync()
+    {
+        var link = new FakeLink();
+        var launcher = new FakeLauncher { Launch = _ => Task.FromResult<IAgentLink>(new HeldLink(link)) };
+        var adapter = new SharedAdapter(launcher, "claude", _time, _log);
+        var getting = adapter.GetAsync(new StageTimes(_time), CancellationToken.None);
+        await link.ReplyAsync(await link.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        return (adapter, link, await getting.WaitAsync(Wait));
+    }
+
+    private sealed class HeldLink(FakeLink inner) : IAgentLink
+    {
+        public AcpClient Client => inner.Client;
+
+        public Task Exited => inner.Exited;
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     // Moves the clock past the close's limit until its turn has ended. Once is enough unless the limit's timer
