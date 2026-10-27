@@ -48,13 +48,19 @@ public sealed class Topics : ITopics
         }
     }
 
+    public event Action<string, string?>? Unsubscribed;
+
     internal void Unsubscribe(Subscription subscription)
     {
+        bool last;
         lock (_lock)
         {
             subscription.Open = false;
-            _subscriptions.Remove(subscription);
+            last = _subscriptions.Remove(subscription)
+                && !_subscriptions.Exists(other => other.Topic == subscription.Topic && other.Key == subscription.Key);
         }
+        if (last)
+            Unsubscribed?.Invoke(subscription.Topic, subscription.Key);
     }
 
     internal sealed class Subscription(string topic, string? key, Action<string?, string> change)

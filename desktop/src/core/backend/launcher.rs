@@ -21,7 +21,8 @@
 //!   of their own, so they aren't hit. In its own group the backend doesn't get the terminal's Ctrl-C; it goes when
 //!   its stdin closes.
 //!
-//! - The child's stdin is a pipe held until it exits, so it sees end of file if the window dies without quitting.
+//! - The child's stdin is a pipe held until it exits, and it runs with `--exit-on-stdin-close`, so a window that dies
+//!   without quitting (a crash, a force quit) still stops it, which frees its home folder's lock and its port.
 //! - Dropping the launcher stops the child the same way, so nothing outlives the window.
 //!
 //! A home with no `agents.json` gets an empty one, so a window launched straight on a fresh home still starts its
@@ -47,8 +48,9 @@ use crate::core::commands::command_registry::CommandRegistry;
 
 actions!(backend, [RestartBackend]);
 
-/// Gets the token each time a backend is ready.
-type Ready = Arc<dyn Fn(String) + Send + Sync>;
+/// Gets the token each time a backend is ready, and `None` when the launcher gives up (it starts no other backend until
+/// "Restart backend").
+type Ready = Arc<dyn Fn(Option<String>) + Send + Sync>;
 
 pub struct Launcher {
     config: Arc<BackendConfig>,
@@ -77,21 +79,26 @@ impl Drop for Launcher {
 
 impl Launcher {
     /// Starts the backend and its output thread, calls `on_ready` on the main thread with the port and token each
-    /// time a backend is ready, and stops the backend when the app quits.
+    /// time a backend is ready, and `on_gave_up` each time the launcher gives up, and stops the backend when the app
+    /// quits.
     pub fn start(
         config: BackendConfig,
         on_ready: impl Fn(u16, String, &mut App) + 'static,
+        on_gave_up: impl Fn(&mut App) + 'static,
         cx: &mut App,
     ) {
         let port = config.port;
-        let (sender, mut receiver) = futures_channel::mpsc::unbounded::<String>();
+        let (sender, mut receiver) = futures_channel::mpsc::unbounded::<Option<String>>();
         let mut launcher = Self::new(
             config,
             Arc::new(move |token| _ = sender.unbounded_send(token)),
         );
         launcher._ready_loop = Some(cx.spawn(async move |cx| {
             while let Ok(token) = receiver.recv().await {
-                cx.update(|cx| on_ready(port, token, cx));
+                cx.update(|cx| match token {
+                    Some(token) => on_ready(port, token, cx),
+                    None => on_gave_up(cx),
+                });
             }
         }));
         launcher._quit = Some(cx.on_app_quit(|cx| {
@@ -140,7 +147,10 @@ impl Launcher {
                 .name("backend".into())
                 .spawn(move || {
                     let _done = done;
-                    run(&config, &*ready, &pid, &quitting)
+                    run(&config, &*ready, &pid, &quitting);
+                    if !quitting.load(Ordering::SeqCst) {
+                        ready(None);
+                    }
                 })
                 .expect("start the backend's thread"),
         );
@@ -194,7 +204,7 @@ const QUICK_EXITS: u32 = 3;
 /// app quits.
 fn run(
     config: &BackendConfig,
-    ready: &(dyn Fn(String) + Send + Sync),
+    ready: &(dyn Fn(Option<String>) + Send + Sync),
     pid: &Mutex<u32>,
     quitting: &AtomicBool,
 ) {
@@ -208,17 +218,22 @@ fn run(
     // The backend won't start without its agents file. shell/assembly.sh writes the real one (agents-file.sh, which
     // needs node and pnpm); a window launched on a fresh home gets an empty list, so its backend starts with no agents.
     let agents = config.home.join("agents.json");
-    if !agents.exists() {
-        match std::fs::write(&agents, "[]\n") {
-            Ok(()) => {
-                _ = writeln!(
-                    log,
-                    "{} was missing, so the backend starts with no agents; dotnet/scripts/agents-file.sh writes the real one",
-                    agents.display()
-                )
-            }
-            Err(error) => _ = writeln!(log, "{}: {error}", agents.display()),
+    // create_new leaves a file that's there (or appears meanwhile) as it is.
+    let created = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&agents)
+        .and_then(|mut file| file.write_all(b"[]\n"));
+    match created {
+        Ok(()) => {
+            _ = writeln!(
+                log,
+                "{} was missing, so the backend starts with no agents; dotnet/scripts/agents-file.sh writes the real one",
+                agents.display()
+            )
         }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => _ = writeln!(log, "{}: {error}", agents.display()),
     }
     let mut quick_exits = 0;
     while !quitting.load(Ordering::SeqCst) {
@@ -254,7 +269,7 @@ fn run(
 fn run_child(
     config: &BackendConfig,
     log: &mut File,
-    ready: &(dyn Fn(String) + Send + Sync),
+    ready: &(dyn Fn(Option<String>) + Send + Sync),
     pid: &Mutex<u32>,
     quitting: &AtomicBool,
 ) -> Option<Instant> {
@@ -267,7 +282,8 @@ fn run_child(
         .arg("--home")
         .arg(&config.home)
         .arg("--token-file")
-        .arg(&config.token_file);
+        .arg(&config.token_file)
+        .arg("--exit-on-stdin-close");
     if let Some(remote) = &config.remote {
         command
             .arg("--remote")
@@ -332,7 +348,7 @@ fn run_child(
                         Ok(token) => {
                             ready_at = Some(Instant::now());
                             _ = seen.send(());
-                            ready(token);
+                            ready(Some(token));
                         }
                         Err(error) => _ = writeln!(log, "{error}"),
                     }

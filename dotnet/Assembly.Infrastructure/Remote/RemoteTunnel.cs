@@ -57,7 +57,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
     public static RemoteTunnel ForSsh(string host, int localPort, int remotePort, TextWriter log) =>
         Wrapped(
             [
-                "ssh", "-N",
+                "ssh", "-N", "-n",
                 "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                 "-L", $"127.0.0.1:{localPort}:127.0.0.1:{remotePort}", host,
             ],
@@ -126,7 +126,14 @@ public sealed class RemoteTunnel : IAsyncDisposable
         var backoff = TimeSpan.FromSeconds(1);
         while (!_stopping.IsCancellationRequested)
         {
-            var start = new ProcessStartInfo(_file) { UseShellExecute = false, RedirectStandardError = true };
+            // Its own stdout and stdin, so after a hard exit here an orphaned ssh doesn't hold this process's output open.
+            var start = new ProcessStartInfo(_file)
+            {
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+            };
             foreach (var arg in _args)
                 start.ArgumentList.Add(arg);
             using var process = Process.Start(start)!;
@@ -134,6 +141,8 @@ public sealed class RemoteTunnel : IAsyncDisposable
             Starts++;
             var startedAt = DateTime.UtcNow;
             var errors = process.StandardError.ReadToEndAsync();
+            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+            process.StandardInput.Close();
             try
             {
                 await process.WaitForExitAsync(_stopping.Token);
@@ -147,6 +156,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
             if (DateTime.UtcNow - startedAt > MaxBackoff)
                 backoff = TimeSpan.FromSeconds(1);
             Exited?.Invoke();
+            await output;
             _log.WriteLine($"tunnel: ssh exited ({process.ExitCode}: {(await errors).Trim()}); again in {backoff.TotalSeconds:0} s");
             try
             {

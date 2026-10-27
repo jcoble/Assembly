@@ -1,10 +1,17 @@
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Net;
+using System.Net.Sockets;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Assembly.Application.Common.Acp;
+using Assembly.Application.Common.Agents;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Infrastructure.Agents;
 using Assembly.Desktop.Serve;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Http;
@@ -22,7 +29,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
 
     private readonly string _home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
     private readonly FakeLauncher _launcher = new();
-    private readonly StringWriter _log = new();
+    private readonly SharedLog _log = new();
     private DesktopBackend _backend = null!;
     private bool _disposed;
     private HttpClient _http = null!;
@@ -325,6 +332,69 @@ public sealed class DesktopBackendTests : IAsyncLifetime
             Directory.Delete(home, recursive: true);
         }
     }
+
+    [Fact]
+    public void DesktopOptions_take_exit_on_stdin_close_as_a_flag_among_the_valued_ones()
+    {
+        var mixed = DesktopOptions.Parse(["--port", "1", "--exit-on-stdin-close", "--home", _home])!;
+        Assert.True(mixed.ExitOnStdinClose);
+        Assert.Equal((1, _home), (mixed.Port, mixed.Home));
+        Assert.True(DesktopOptions.Parse(["--exit-on-stdin-close"])!.ExitOnStdinClose);
+        Assert.False(DesktopOptions.Parse(["--port", "1"])!.ExitOnStdinClose);
+    }
+
+    // The window's launcher holds the backend's stdin open for its whole life: its end, from a quit or a crash, stops
+    // the backend as a normal stop does, with a turn running on a real adapter process.
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_stop_ends_the_adapter_and_the_background_work_and_frees_the_home_and_port(bool stdinCloses)
+    {
+        var prompted = Path.Combine(_home, "prompted");
+        AgentConnection? adapter = null;
+        _launcher.Launch = _ => Task.FromResult<IAgentLink>(adapter = AgentConnection.Start(
+            new AgentCommand("/usr/bin/perl", ["-e", FakeAdapter, prompted], _home), new UnclaimedPermissions(), TranscriptLog.Discard()));
+        var sessionId = await CreateSessionAsync();
+        var runId = await SendAsync(sessionId);
+        await Until(() => File.Exists(prompted));
+        var port = _backend.Address.Port;
+
+        if (stdinCloses)
+        {
+            using var stdin = new AnonymousPipeServerStream(PipeDirection.Out);
+            using var reading = new AnonymousPipeClientStream(PipeDirection.In, stdin.ClientSafePipeHandle);
+            _backend.StopAtEndOf(reading);
+            stdin.Dispose();
+            await _backend.WaitForShutdownAsync().WaitAsync(TimeSpan.FromSeconds(8));
+        }
+        await DisposeBackendAsync();
+
+        Assert.Equal(0, _backend.BackgroundRunning);
+        Assert.NotEqual(0, kill(adapter!.ProcessId, 0));
+        Assert.NotEqual(0, kill(-adapter.ProcessId, 0));
+        // The rows a stop writes for a turn still running: its adapter lost, and the run closed as failed.
+        var rows = Rows().Where(row => row.StartsWith($"{sessionId}:", StringComparison.Ordinal)).ToList();
+        Assert.Equal(["user", "turn", "error", "stats", "turn"], rows.Select(row => row.Split(':')[2]));
+        Assert.Contains($$"""{"runId":"{{runId}}","status":"failed",""", rows[3]);
+        Assert.EndsWith("""turn:{"state":"failed"}""", rows[4]);
+        using var listener = new TcpListener(IPAddress.Loopback, port);
+        listener.Start();
+        await using var again = await DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log);
+    }
+
+    // Answers initialize and session/new, then marks the prompt and never answers it. Ends when its stdin does.
+    private const string FakeAdapter = """
+        $| = 1;
+        while (<STDIN>) {
+            my ($id) = /"id":(\d+)/;
+            print qq({"jsonrpc":"2.0","id":$id,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}\n) if /"method":"initialize"/;
+            print qq({"jsonrpc":"2.0","id":$id,"result":{"sessionId":"acp-1"}}\n) if /"method":"session\/new"/;
+            if (/"method":"session\/prompt"/) { open(my $f, ">", $ARGV[0]); close($f); }
+        }
+        """;
+
+    [DllImport("libc")]
+    private static extern int kill(int pid, int signal);
 
     /// <summary>Every row in the home's database, read apart from the backend.</summary>
     private List<string> Rows()
