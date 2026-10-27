@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
 
 use super::{BackendConfig, Launcher};
 
@@ -34,6 +35,7 @@ fn fake(name: &str, script: &str) -> BackendConfig {
         remote: None,
         remote_port: 9877,
         remote_token_file: dir.join("remote.env"),
+        ready_limit: Duration::from_secs(60),
     }
 }
 
@@ -128,4 +130,16 @@ fn dropping_the_launcher_stops_the_backend() {
         -1,
         "the child is gone"
     );
+}
+
+#[test]
+fn a_backend_with_no_ready_line_in_time_is_stopped() {
+    let mut config = fake("late", WAIT_FOR_TERM);
+    config.ready_limit = Duration::from_millis(200);
+    let (mut launcher, ready) = launch(config);
+    launcher.thread.take().unwrap().join().unwrap();
+    assert!(ready.try_recv().is_err());
+    assert_eq!(read(&launcher.config, "stopped"), "stopped\n");
+    let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
+    assert!(log.contains("no ready line within 200ms"), "{log}");
 }
