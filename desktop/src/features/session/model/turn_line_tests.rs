@@ -80,6 +80,14 @@ fn the_checkout_line_shows_only_when_the_checkout_moved_between_turns() {
         .as_deref(),
         Some("Checkout changed · main@aaaaaaa → bbbbbbb")
     );
+    assert_eq!(checkout_line(Some(&stats(json!({ "head": "" })))), None);
+    assert_eq!(
+        checkout_line(Some(&stats(
+            json!({ "branch": "", "head": "b".repeat(40) })
+        )))
+        .as_deref(),
+        Some("Checkout changed · main@aaaaaaa → bbbbbbb")
+    );
 }
 
 fn local(day: u32, hour: u32, minute: u32) -> i64 {

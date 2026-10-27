@@ -23,7 +23,7 @@ fn a_sent_prompt_goes_to_the_top_once_its_item_arrives() {
     );
 }
 
-// Pins: g0-session#5, g0-session#8
+// Pins: g0-session#5, g0-session#6
 #[test]
 fn scrolling_before_the_prompt_arrives_keeps_the_view_where_the_reader_put_it() {
     let mut follow = Follow::default();

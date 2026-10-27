@@ -24,6 +24,8 @@ pub mod reveal;
 mod reveal_tests;
 pub mod session_view;
 #[cfg(test)]
+mod session_view_edge_tests;
+#[cfg(test)]
 mod session_view_tests;
 #[cfg(test)]
 mod test_rows;

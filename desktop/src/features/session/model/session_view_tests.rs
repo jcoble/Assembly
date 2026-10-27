@@ -2,6 +2,7 @@
 
 use serde_json::json;
 
+use super::change::Change;
 use super::item::{Item, ItemKind};
 use super::session_view::SessionView;
 use super::test_rows::{all, fixture, keys, live, message, newest_form, row};
@@ -496,7 +497,7 @@ fn an_ask_row_opens_a_card_that_its_settled_row_updates_in_place() {
     );
 }
 
-// Pins: g0-session#29
+// Pins: g0-session#28
 #[test]
 fn the_newest_context_report_wins_live_or_paged_and_draws_no_item() {
     let context = |seq: i64, used: i64| {
@@ -542,7 +543,6 @@ fn a_kind_this_build_does_not_know_or_cannot_read_shows_by_name() {
 // Pins: g0-session#4
 #[test]
 fn applying_a_row_says_what_changed_so_only_that_item_is_measured_again() {
-    use super::change::Change;
     let rows = fixture("rows-text.json");
     let mut view = SessionView::default();
     assert_eq!(view.apply(&rows[0]), Change::Appended);

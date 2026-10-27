@@ -40,6 +40,13 @@ fn the_reveal_keeps_a_steady_pace_speeds_up_when_behind_and_stops_at_the_text() 
         frames += 1;
     }
     assert_eq!(shown, 2_000);
+    // A big burst drains fast, then slows to the steady pace: 50,000 characters show within two seconds.
+    let (mut shown, mut ms) = (0, 0.0);
+    while shown < 50_000 && ms < 2_000.0 {
+        shown = Reveal::step(shown, 50_000, frame);
+        ms += frame;
+    }
+    assert_eq!(shown, 50_000);
 }
 
 // Pins: g0-session#4
@@ -69,13 +76,36 @@ fn clipping_shows_the_first_characters_of_the_blocks_keeping_whole_blocks_as_the
             value: "const x = 1;".into(),
             complete: true,
         },
+        Block::Quote {
+            blocks: vec![Block::Heading {
+                level: 2,
+                parts: vec![text("quo")],
+            }],
+        },
+        Block::List {
+            ordered: true,
+            items: vec![ListItem {
+                task: false,
+                checked: false,
+                parts: vec![Inline::Link {
+                    href: "h".into(),
+                    parts: vec![text("ab")],
+                }],
+                blocks: vec![Block::Paragraph {
+                    parts: vec![Inline::FileLink {
+                        path: "p".into(),
+                        parts: vec![text("cd")],
+                    }],
+                }],
+            }],
+        },
         Block::Table {
             headers: vec![vec![text("a")], vec![text("b")]],
             rows: vec![vec![vec![text("cc")], vec![text("dd")]]],
         },
     ];
     let total = Reveal::chars(&blocks);
-    assert_eq!(total, 11 + 18 + 12 + 6);
+    assert_eq!(total, 11 + 18 + 12 + 3 + 4 + 6);
     for n in 0..=total {
         assert_eq!(Reveal::chars(&Reveal::clip(&blocks, n)), n, "at {n}");
     }

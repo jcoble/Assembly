@@ -43,6 +43,10 @@ fn an_image_alone_still_sends_text_and_a_name_cannot_break_the_line() {
         format!("Attached image: {SHOT} (two lines.png)")
     );
     assert_eq!(Attachment::with_lines("just text", &[]), "just text");
+    assert_eq!(
+        Attachment::with_lines("", &[saved(SHOT, "shot\r\n")]),
+        format!("Attached image: {SHOT} (shot )")
+    );
 }
 
 // Pins: g0-session#25
