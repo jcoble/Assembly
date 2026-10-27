@@ -52,6 +52,12 @@ internal sealed class RowsFeature : IFeature
                 && rows.Select(RowWire.ToJson).ToList() is var json && json.Sum(row => (long)Encoding.UTF8.GetByteCount(row)) <= CatchUpBytes)
                 return (from, json);
             return (last, []);
+        }, (session, _) =>
+        {
+            // A rows sub has the session's machine watch it, as rows/page and GET /sessions/{id}/rows do, so a remote
+            // session's rows are copied in on a resume too, and keep coming while it's open.
+            if (_sessions.Get(session) is { } info)
+                _machines.Named(info.Machine)?.Watch(info);
         });
         // Opening a session's rows has its machine watch it, as GET /sessions/{id}/rows does.
         calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, (args, call) =>
