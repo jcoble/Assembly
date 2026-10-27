@@ -32,7 +32,7 @@ done
 "#;
 
 /// A backend whose one agent is the stub, and a git repo with one commit for its sessions to clone.
-fn backend_with_stub() -> Option<(RealBackend, String)> {
+pub(crate) fn backend_with_stub() -> Option<(RealBackend, String)> {
     let mut repo = None;
     let backend = RealBackend::start_with_agents(|folder| {
         let stub = folder.join("stub.sh");

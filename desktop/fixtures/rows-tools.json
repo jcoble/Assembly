@@ -1,0 +1,39 @@
+{
+  "_source": "Written by hand against the plan's Row contract, not recorded from the relay; follows rows-text.json (seq 10 on). A tool turn: thinking, two tools started then one completed and one failed, an Edit with added/removed and hasDetail, a TodoWrite with its plan row, a closing message, then a run error, the failed turn and its stats. `details` holds what GET /sessions/:id/tools/:itemId returns for three of the calls.",
+  "rows": [
+    { "sessionId": "t1", "seq": 10, "runId": "r2", "itemId": "u2", "kind": "user", "payload": { "text": "Fix the README\n\nAttached image: /home/u/spike-sandboxes/attachments/t1/a.png (a.png) thumbnail: /home/u/spike-sandboxes/attachments/t1/a.webp" }, "createdAt": 1761130100000 },
+    { "sessionId": "t1", "seq": 11, "runId": "r2", "itemId": null, "kind": "turn", "payload": { "state": "started" }, "createdAt": 1761130100100 },
+    { "sessionId": "t1", "seq": 12, "runId": "r2", "itemId": "th1", "kind": "thinking", "payload": { "text": "Let me look", "done": false }, "createdAt": 1761130100200 },
+    { "sessionId": "t1", "seq": 13, "runId": "r2", "itemId": "th1", "kind": "thinking", "payload": { "text": "Let me look at the file first.", "done": true }, "createdAt": 1761130100300 },
+    { "sessionId": "t1", "seq": 14, "runId": "r2", "itemId": "tool1", "kind": "tool", "payload": { "name": "Bash", "state": "started", "summary": "List files", "hasDetail": false }, "createdAt": 1761130100400 },
+    { "sessionId": "t1", "seq": 15, "runId": "r2", "itemId": "tool2", "kind": "tool", "payload": { "name": "Read", "state": "started", "summary": "/repo/missing.md", "path": "/repo/missing.md", "hasDetail": false }, "createdAt": 1761130100500 },
+    { "sessionId": "t1", "seq": 16, "runId": "r2", "itemId": "tool1", "kind": "tool", "payload": { "name": "Bash", "state": "completed", "summary": "List files", "hasDetail": true }, "createdAt": 1761130100600 },
+    { "sessionId": "t1", "seq": 17, "runId": "r2", "itemId": "tool2", "kind": "tool", "payload": { "name": "Read", "state": "failed", "summary": "/repo/missing.md", "path": "/repo/missing.md", "hasDetail": true }, "createdAt": 1761130100700 },
+    { "sessionId": "t1", "seq": 18, "runId": "r2", "itemId": "tool3", "kind": "tool", "payload": { "name": "Edit", "state": "started", "summary": "/repo/README", "path": "/repo/README", "hasDetail": false }, "createdAt": 1761130100800 },
+    { "sessionId": "t1", "seq": 19, "runId": "r2", "itemId": "tool3", "kind": "tool", "payload": { "name": "Edit", "state": "completed", "summary": "/repo/README", "path": "/repo/README", "added": 3, "removed": 1, "hasDetail": true }, "createdAt": 1761130100900 },
+    { "sessionId": "t1", "seq": 20, "runId": "r2", "itemId": "tool4", "kind": "tool", "payload": { "name": "TodoWrite", "state": "started", "summary": "Plan updated · 2 steps", "hasDetail": false }, "createdAt": 1761130101000 },
+    { "sessionId": "t1", "seq": 21, "runId": "r2", "itemId": "tool4", "kind": "plan", "payload": { "items": [
+      { "text": "Read the README", "status": "completed" },
+      { "text": "Fix the typo", "status": "in_progress" }
+    ] }, "createdAt": 1761130101100 },
+    { "sessionId": "t1", "seq": 22, "runId": "r2", "itemId": "tool4", "kind": "tool", "payload": { "name": "TodoWrite", "state": "completed", "summary": "Plan updated · 2 steps", "hasDetail": true }, "createdAt": 1761130101200 },
+    { "sessionId": "t1", "seq": 23, "runId": "r2", "itemId": "m2", "kind": "delta", "payload": { "from": 0, "text": "Fixed.", "blocks": [
+      { "kind": "paragraph", "parts": [{ "kind": "text", "value": "Fixed." }] }
+    ] }, "createdAt": 1761130101300 },
+    { "sessionId": "t1", "seq": 24, "runId": "r2", "itemId": "m2", "kind": "message", "payload": { "blocks": [
+      { "kind": "paragraph", "parts": [{ "kind": "text", "value": "Fixed. See " }, { "kind": "file-link", "path": "/repo/README", "parts": [{ "kind": "text", "value": "README" }] }, { "kind": "text", "value": "." }] }
+    ] }, "createdAt": 1761130101400 },
+    { "sessionId": "t1", "seq": 25, "runId": "r2", "itemId": null, "kind": "error", "payload": { "message": "API Error: 529 Overloaded", "code": "overloaded" }, "createdAt": 1761130101500 },
+    { "sessionId": "t1", "seq": 26, "runId": "r2", "itemId": null, "kind": "turn", "payload": { "state": "failed" }, "createdAt": 1761130101600 },
+    { "sessionId": "t1", "seq": 27, "runId": "r2", "itemId": null, "kind": "stats", "payload": {
+      "runId": "r2", "status": "failed", "startedAt": 1761130100100, "durationMs": 1500, "firstTokenMs": 200, "model": "claude-opus-4-8",
+      "inputTokens": 5400, "outputTokens": 310, "cacheHitPct": 80, "costUsd": 0.021, "toolCalls": 4,
+      "branch": "fix-readme", "head": "1111111111111111111111111111111111111111", "prevBranch": "master", "prevHead": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d"
+    }, "createdAt": 1761130101700 }
+  ],
+  "details": {
+    "tool1": { "summary": "List files", "input": "{\"command\":\"ls -la\",\"description\":\"List files\"}", "output": "README\n", "diff": null, "path": null },
+    "tool2": { "summary": "/repo/missing.md", "input": "{\"file_path\":\"/repo/missing.md\"}", "output": "File does not exist.", "diff": null, "path": "/repo/missing.md" },
+    "tool3": { "summary": "/repo/README", "input": "{\"file_path\":\"/repo/README\",\"old_string\":\"Hello Wrold\",\"new_string\":\"Hello World\"}", "output": null, "diff": "--- a/repo/README\n+++ b/repo/README\n@@ -1 +1,3 @@\n-Hello Wrold\n+Hello World\n+\n+Fixed.\n", "path": "/repo/README" }
+  }
+}

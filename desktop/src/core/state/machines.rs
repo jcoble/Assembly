@@ -18,7 +18,23 @@ pub struct Machines {
     _feed: Task<()>,
 }
 
+struct GlobalMachines(Entity<Machines>);
+
+impl Global for GlobalMachines {}
+
 impl Machines {
+    /// Starts the window's machines list, once the socket client has started.
+    pub fn start(cx: &mut App) {
+        let state = cx.new(Machines::new);
+        cx.set_global(GlobalMachines(state));
+    }
+
+    /// The machines list, once the socket client has started.
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalMachines>()
+            .map(|state| state.0.clone())
+    }
+
     /// Subscribes to the `machines` topic.
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut subscription = SocketClient::global(cx).read(cx).subscribe(TOPIC, None);

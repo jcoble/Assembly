@@ -7,7 +7,21 @@ pub struct SelectedSession {
     session_id: Option<String>,
 }
 
+struct GlobalSelected(Entity<SelectedSession>);
+
+impl Global for GlobalSelected {}
+
 impl SelectedSession {
+    /// Makes the window's one selection, none at first. It runs once at app start.
+    pub fn init(cx: &mut App) {
+        let selected = cx.new(|_| SelectedSession::new());
+        cx.set_global(GlobalSelected(selected));
+    }
+
+    pub fn global(cx: &App) -> Entity<Self> {
+        cx.global::<GlobalSelected>().0.clone()
+    }
+
     pub fn new() -> Self {
         Self { session_id: None }
     }
