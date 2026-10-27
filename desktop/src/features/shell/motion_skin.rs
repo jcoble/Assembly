@@ -7,11 +7,12 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{
-    BasePanelView, DockAreaRenderer, DockContext, DockPlacement, DockSkin, NodeId, PanelState, TabGroupRenderer,
+    BasePanelView, DockAreaRenderer, DockContext, DockPlacement, DockSkin, NodeId, PanelState,
+    TabGroupRenderer,
 };
-use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::*;
 
 pub struct MotionSkin(pub Rc<DockSkin>);
@@ -21,7 +22,13 @@ impl DockAreaRenderer for MotionSkin {
         self.0.frame(window, cx)
     }
 
-    fn split_frame(&self, node: NodeId, axis: Axis, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+    fn split_frame(
+        &self,
+        node: NodeId,
+        axis: Axis,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Stateful<Div> {
         self.0.split_frame(node, axis, window, cx)
     }
 
@@ -38,10 +45,18 @@ impl DockAreaRenderer for MotionSkin {
         self.0.render_split_handle(handle, window, cx)
     }
 
-    fn render_dock(&self, dock: &DockContext, content: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render_dock(
+        &self,
+        dock: &DockContext,
+        content: AnyElement,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         // A closed bottom dock still shows its tab bar, so only the side docks slide in: a closed side dock draws nothing.
         let content = match dock.placement() {
-            DockPlacement::Left | DockPlacement::Right if dock.is_open() => entering(dock.placement(), content, window, cx),
+            DockPlacement::Left | DockPlacement::Right if dock.is_open() => {
+                entering(dock.placement(), content, window, cx)
+            }
             _ => content,
         };
         self.0.render_dock(dock, content, window, cx)
@@ -63,7 +78,12 @@ impl DockAreaRenderer for MotionSkin {
 
 /// An open side dock's content, fading in and sliding in from its outer edge. A closed side dock draws no content, so
 /// its animation state goes and the next opening plays it again.
-fn entering(placement: DockPlacement, content: AnyElement, window: &Window, cx: &App) -> AnyElement {
+fn entering(
+    placement: DockPlacement,
+    content: AnyElement,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
     let motion = cx.theme().motion_tokens();
     let travel = f32::from(motion.distance_medium.to_pixels(window.rem_size()));
     let easing = motion.easing_enter.clone();
@@ -77,7 +97,8 @@ fn entering(placement: DockPlacement, content: AnyElement, window: &Window, cx: 
         .child(content)
         .with_animation(
             id,
-            Animation::new(motion.duration_normal).with_easing(move |t| easing.sample(t).clamp(0., 1.)),
+            Animation::new(motion.duration_normal)
+                .with_easing(move |t| easing.sample(t).clamp(0., 1.)),
             move |content, t| content.left(px(dx * (1. - t))).opacity(t),
         )
         .into_any_element()

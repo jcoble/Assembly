@@ -29,10 +29,16 @@ impl Frame {
     /// Builds the DockArea and loads the saved layout, or the default one when there's none, through
     /// `DockArea::load` either way. Only then does it subscribe to layout changes, so a launch doesn't write the
     /// layout straight back.
-    pub fn new(read: Task<Option<Value>>, write: WriteLayout, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        read: Task<Option<Value>>,
+        write: WriteLayout,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let dock = cx.new(|cx| {
             let skin = MotionSkin(DockSkin::new(cx));
-            DockArea::new("assembly-shell", Some(LAYOUT_VERSION), window, cx).with_renderer(Rc::new(skin))
+            DockArea::new("assembly-shell", Some(LAYOUT_VERSION), window, cx)
+                .with_renderer(Rc::new(skin))
         });
         let top_bar = cx.new(|cx| TopBar::new(dock.clone(), cx));
         let utility_strip = cx.new(|_| UtilityStrip);
@@ -40,16 +46,26 @@ impl Frame {
             let state = LayoutStore::layout_to_open(read.await);
             _ = this.update_in(cx, |frame, window, cx| {
                 // The kit's load always succeeds: a pane it doesn't know loads as a placeholder that keeps its state.
-                frame.dock.update(cx, |dock, cx| _ = dock.load(state, window, cx));
-                let changes = cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent, _, cx| {
-                    if matches!(event, DockEvent::LayoutChanged) {
-                        frame.layout.save_soon(cx);
-                    }
-                });
+                frame
+                    .dock
+                    .update(cx, |dock, cx| _ = dock.load(state, window, cx));
+                let changes =
+                    cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent, _, cx| {
+                        if matches!(event, DockEvent::LayoutChanged) {
+                            frame.layout.save_soon(cx);
+                        }
+                    });
                 frame._subscriptions.push(changes);
             });
         });
-        Self { top_bar, dock, utility_strip, layout: LayoutStore::new(write), _load, _subscriptions: Vec::new() }
+        Self {
+            top_bar,
+            dock,
+            utility_strip,
+            layout: LayoutStore::new(write),
+            _load,
+            _subscriptions: Vec::new(),
+        }
     }
 
     pub fn dock(&self) -> &Entity<DockArea> {

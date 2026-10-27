@@ -27,8 +27,20 @@ pub const PROBLEMS: &str = "Problems";
 pub const TERMINAL: &str = "Terminal";
 
 /// Every pane in the default layout.
-pub const PANES: [&str; 12] =
-    [SESSIONS, CHAT, FILES, SOURCE_CONTROL, AGENTS, TASKS, WORKTREES, RUN, CONTEXT, HISTORY, PROBLEMS, TERMINAL];
+pub const PANES: [&str; 12] = [
+    SESSIONS,
+    CHAT,
+    FILES,
+    SOURCE_CONTROL,
+    AGENTS,
+    TASKS,
+    WORKTREES,
+    RUN,
+    CONTEXT,
+    HISTORY,
+    PROBLEMS,
+    TERMINAL,
+];
 
 /// The sessions column opens so its card is 320 px wide (frame.ts SESSIONS_WIDTH).
 pub const SESSIONS_WIDTH: Pixels = px(326.);
@@ -42,14 +54,33 @@ pub fn default_state() -> DockAreaState {
     DockAreaState {
         version: Some(LAYOUT_VERSION),
         center: tabs(&[CHAT]),
-        left_dock: Some(DockState::new(tabs(&[SESSIONS]), DockPlacement::Left, SESSIONS_WIDTH, true)),
+        left_dock: Some(DockState::new(
+            tabs(&[SESSIONS]),
+            DockPlacement::Left,
+            SESSIONS_WIDTH,
+            true,
+        )),
         right_dock: Some(DockState::new(
-            tabs(&[FILES, SOURCE_CONTROL, AGENTS, TASKS, WORKTREES, RUN, CONTEXT, HISTORY]),
+            tabs(&[
+                FILES,
+                SOURCE_CONTROL,
+                AGENTS,
+                TASKS,
+                WORKTREES,
+                RUN,
+                CONTEXT,
+                HISTORY,
+            ]),
             DockPlacement::Right,
             DRAWER_WIDTH,
             false,
         )),
-        bottom_dock: Some(DockState::new(tabs(&[PROBLEMS, TERMINAL]), DockPlacement::Bottom, DOCK_HEIGHT, false)),
+        bottom_dock: Some(DockState::new(
+            tabs(&[PROBLEMS, TERMINAL]),
+            DockPlacement::Bottom,
+            DOCK_HEIGHT,
+            false,
+        )),
     }
 }
 
