@@ -22,11 +22,20 @@ use crate::core::native_views::views::NativeViews;
 const PANEL_GAP: Pixels = px(8.);
 /// The work panel's corners (the design system's `radius-lg`).
 const PANEL_RADIUS: Pixels = px(16.);
+/// How narrow and how wide the sessions column and the drawer can be dragged (the approved look's layout). The kit
+/// has no per-dock limits, so Frame holds them.
+const LIMITS: [(DockPlacement, Pixels, Pixels); 2] = [
+    (DockPlacement::Left, px(220.), px(560.)),
+    (DockPlacement::Right, px(240.), px(640.)),
+];
 
 pub struct Frame {
     top_bar: Entity<TopBar>,
     dock: Entity<DockArea>,
     pub(super) layout: LayoutStore,
+    /// How many of Frame's holds to a dock's limits still have their own layout event to come. Those events don't
+    /// save, so a drag still saves once, when it ends.
+    held: usize,
     /// Reads the saved layout, then applies it.
     _load: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -62,22 +71,35 @@ impl Frame {
             let state = LayoutStore::layout_to_open(read.await);
             _ = this.update_in(cx, |frame, window, cx| {
                 // The kit's load always succeeds: a pane it doesn't know loads as a placeholder that keeps its state.
-                frame
-                    .dock
-                    .update(cx, |dock, cx| _ = dock.load(state, window, cx));
+                // A layout saved past the limits opens held to them; like the load, that isn't saved.
+                frame.dock.update(cx, |dock, cx| {
+                    _ = dock.load(state, window, cx);
+                    hold_to_limits(dock, window, cx);
+                });
                 let changes =
                     cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent, _, cx| {
-                        if matches!(event, DockEvent::LayoutChanged) {
+                        if !matches!(event, DockEvent::LayoutChanged) {
+                            return;
+                        }
+                        if frame.held > 0 {
+                            frame.held -= 1;
+                        } else {
                             frame.layout.save_soon(cx);
                         }
                     });
-                frame._subscriptions.push(changes);
+                // After the subscription, so every hold's layout event reaches it and clears `held`. A drag moves
+                // the edge on each pointer move, and this puts it back at the limit before it's drawn.
+                let limits = cx.observe_in(&frame.dock, window, |frame, dock, window, cx| {
+                    frame.held += dock.update(cx, |dock, cx| hold_to_limits(dock, window, cx));
+                });
+                frame._subscriptions.extend([changes, limits]);
             });
         });
         Self {
             top_bar,
             dock,
             layout: LayoutStore::new(write),
+            held: 0,
             _load,
             _subscriptions: vec![docked],
         }
@@ -86,6 +108,21 @@ impl Frame {
     pub fn dock(&self) -> &Entity<DockArea> {
         &self.dock
     }
+}
+
+/// Puts a side dock sized past its limits back at the nearest one, and says how many it put back.
+fn hold_to_limits(dock: &mut DockArea, window: &mut Window, cx: &mut Context<DockArea>) -> usize {
+    let mut held = 0;
+    for (placement, min, max) in LIMITS {
+        let Some(size) = dock.dock_size(placement) else {
+            continue;
+        };
+        if size < min || size > max {
+            held += 1;
+            dock.set_dock_size(placement, size.clamp(min, max), window, cx);
+        }
+    }
+    held
 }
 
 impl Render for Frame {
