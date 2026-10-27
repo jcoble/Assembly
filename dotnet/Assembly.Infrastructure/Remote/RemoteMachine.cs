@@ -110,6 +110,8 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         if (response.StatusCode == HttpStatusCode.Conflict)
             return null;
         var runId = (await ReadJsonAsync(response, cancellationToken)).GetProperty("runId").GetString();
+        // A new turn: a restart's catch-up must no longer end this helper's row.
+        _follower.TakeShownRunning(session.SessionId);
         _follower.Watch(session.SessionId);
         return runId;
     }

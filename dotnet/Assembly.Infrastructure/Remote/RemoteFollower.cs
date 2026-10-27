@@ -73,7 +73,7 @@ internal sealed class RemoteFollower(
             _shownRunning.UnionWith(helperIds);
     }
 
-    private bool TakeShownRunning(string sessionId)
+    public bool TakeShownRunning(string sessionId)
     {
         lock (_following)
             return _shownRunning.Remove(sessionId);
