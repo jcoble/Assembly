@@ -1,0 +1,157 @@
+[
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 1,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793075347678,
+    "firstSeq": 1
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 2,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793075347678,
+    "firstSeq": 2
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 6,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": "rs_0c064e24ff0ba6e8016ae028961340819180dc94edead7f845:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Balancing commentary with output-only response**\n\n**Preparing to execute hostname command with minimal commentary**",
+      "done": true
+    },
+    "createdAt": 1793075351762,
+    "firstSeq": 3
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 9,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": "msg_0c064e24ff0ba6e8016ae02897be808191abd7c19027131350",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "Running "
+            },
+            {
+              "kind": "code",
+              "value": "hostname"
+            },
+            {
+              "kind": "text",
+              "value": "."
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793075351914,
+    "firstSeq": 9
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 11,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": "exec-fcb8fdb4-5bc0-48aa-ad54-f588d5bc2c64",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793075351915,
+    "firstSeq": 10
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 14,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": "context:26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "kind": "context",
+    "payload": {
+      "used": 26157,
+      "size": 258400
+    },
+    "createdAt": 1793075352869,
+    "firstSeq": 12
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 15,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": "msg_0c064e24ff0ba6e8016ae02898cc008191be495e9baa9feb3f",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "agent-workbox\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793075352879,
+    "firstSeq": 15
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 16,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+      "status": "completed",
+      "startedAt": 1793075347678,
+      "durationMs": 5201,
+      "firstTokenMs": 4084,
+      "model": "5.6 Luna",
+      "inputTokens": 26255,
+      "outputTokens": 280,
+      "cacheHitPct": 49.5,
+      "toolCalls": 1,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793075352879,
+    "firstSeq": 16
+  },
+  {
+    "sessionId": "3b75fbf3-128d-4c67-89fb-0a5002954c48",
+    "seq": 17,
+    "runId": "26c506c8-897e-4bc2-aead-6cfed56fe70c",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793075352879,
+    "firstSeq": 17
+  }
+]

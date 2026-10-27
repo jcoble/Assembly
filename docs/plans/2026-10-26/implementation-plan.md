@@ -1209,19 +1209,38 @@ path `Forget` has already run, so only the release and the next turn are held up
 ### B6. Saves as each change happens
 
 - **Files:**
-  - Application: `Common/Calls/ICallRegistry.Save`.
+  - Application: `Common/Calls/ICallRegistry.Save(feature, value type, (key, value, scope) => ...)`, registered as
+    `{feature}/set` with `{key, value}`. Its audit row is `{feature}/set <key>`, never the value, since some settings
+    will hold tokens. Its database part publishes on the topic named after its feature, so registering a save with no
+    topic of that name fails at startup.
+  - `ICallRegistry.Topic` takes each item's key (`Func<TItem, string>`), required. Frames carry it: `state` is
+    `{t, sub, items: [{key, item}]}` and `change` is `{t, sub, op, key, item}`, so the page applies both the same way
+    and never parses an item.
   - Infrastructure: the dispatcher runs `Save` handlers inside `IAtomicWriter`, from the connection's write queue
-    (5.9). On stop, the backend drains each connection's write queue and commits before it exits (5.9, "Quitting").
-  - Page: `socket.ts` gains `save`.
-  - No shell change.
+    (5.9). Stopping already drains each connection's write queue (`ApiServer` closes the sockets as stopping starts,
+    and each connection's `finally` awaits its queue) before the database closes in `DesktopBackend.DisposeAsync`.
+  - Stopping is bounded inside the shell's wait: `ApiServer.ShutdownTimeout` (8 s) sits below the shell's
+    `BACKEND_STOP_WAIT` (10 s after SIGTERM), and `scripts/shutdown-timing.test.sh` reads both from source. Before
+    B6 nothing set it, so the host's 30 s default didn't nest inside the shell's 10 s.
+  - Page: `socket.ts` gains `save`. Per (topic, key) it counts the window's saves in flight and holds the newest
+    value that arrives meanwhile, from a change or a state, then shows it at the last answer. After a failure with
+    nothing held, it subscribes to the topic again to read the committed value back. Counts reset when an open
+    socket closes.
+  - `state` is upsert while topics have no remove op, so a reconnect's state can't drop an item deleted while the
+    socket was down until removes exist; the first topic with removes owns that case (state then replaces, held keys
+    kept).
+  - No shell change beyond the named constant.
 - **Failing tests first:**
-  1. One `save` makes one write, with one audit row (`feature/set <key>`, not the value), and one publish after
-     commit.
+  1. One `save` makes one write, with one audit row (`feature/set <key>`, not the value), and its change goes out
+     before its result.
   2. 50 rapid saves of one key, sent without waiting for answers, end on the last value.
-  3. A slow write doesn't hold up a read on the same connection.
+  3. A slow write doesn't hold up a read on the same connection. (Already true from B4: reads run off the queue.)
   4. A failed save reports once, and leaves the committed value as it was.
   5. Quitting: a save held on purpose in the write queue, then the backend asked to stop; the save commits before
-     the backend exits.
+     the backend stops. (Already true; this pins it.)
+  6. A save for a feature with no topic of its name is refused when it's registered.
+  7. A saved value (a marker string) is in no audit row and no log.
+  8. A state frame carries each item with its key, and a change its key.
 
   On the page:
   1. Each `save()` sends exactly one call. (One call per `input` on a text field is tested in B7, with a field.)
@@ -1231,10 +1250,12 @@ path `Forget` has already run, so only the release and the next turn are held up
      value.
   4. A1, B1, A2, with A2's reply arriving right after its echo: the window ends on A2 and never shows B1 after A2's
      echo.
-- **Measure:** time a single-row settings upsert through the real `IAtomicWriter`, with its audit row, on
-  agent-workbox. Record the median and 99th percentile, as 5.9 did for the scratch program (17 µs and 81 µs).
+  5. A read-back's state doesn't overwrite a key that still has a save in flight.
+- **Measure:** a single-row settings upsert through the real `IAtomicWriter`, with its audit row, on agent-workbox:
+  median 24 to 26 µs and 99th percentile 55 to 93 µs over three runs of 5,000 (5.9's scratch program: 17 µs and
+  81 µs).
 - **Proof:** the tests, the measurement, and check4. The window proof is in B7, once preferences use the new save.
-- **Size:** 200 to 300 lines with tests.
+- **Size:** 300 to 400 lines with tests.
 
 ### B7. Preferences rebuilt on the base (the example every feature copies)
 

@@ -21,6 +21,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     // No call runs longer, saves included (plan 5.1). Long work is started by a call and reports on a topic.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30);
 
+    private static readonly JsonElement Null = JsonDocument.Parse("null").RootElement.Clone();
+
     private readonly Dictionary<string, Call> _calls = [];
     // Each topic's state frame for a new subscriber: (sub id, key, context) to the frame.
     private readonly Dictionary<string, Func<long, string?, CallContext, ReadOnlyMemory<byte>>> _topics = [];
@@ -45,8 +47,37 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }));
     }
 
-    public void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<string?, CallContext, IReadOnlyList<TItem>> state) =>
-        _topics.Add(topic, (sub, key, context) => StateFrame(sub, state(key, context), item));
+    public void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save)
+    {
+        // The page holds a save's echo by its topic and key, so the topic has to exist.
+        if (!_topics.ContainsKey(feature))
+            throw new InvalidOperationException($"{feature} saves, but there's no topic {feature} for their changes");
+        _calls.Add($"{feature}/set", new Call(Writes: true, json => ReadSave(json, value), (args, call) =>
+        {
+            var (key, item) = ((string, TValue))args;
+            call.Cancellation.ThrowIfCancellationRequested();
+            try
+            {
+                writer.Write($"{feature}/set {key}", scope =>
+                {
+                    save(key, item, scope);
+                    return 0;
+                });
+            }
+            catch (Exception error) when (error is not CallFailed)
+            {
+                // Its message could hold the value, which never goes into a log (some settings hold tokens). The call's
+                // own cancel was checked before the write, so anything here is the save's.
+                log.LogError("{Save} failed with {Type}", $"{feature}/set {key}", error.GetType().Name);
+                throw new CallFailed($"{feature}/set {key} failed");
+            }
+            return Task.FromResult(Null);
+        }));
+    }
+
+    public void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key,
+        Func<string?, CallContext, IReadOnlyList<TItem>> state) =>
+        _topics.Add(topic, (sub, subKey, context) => StateFrame(sub, state(subKey, context), item, key));
 
     /// <summary>
     /// Subscribes the socket to a <c>sub</c> frame's topic: its state is read and queued, and the subscription registered,
@@ -69,7 +100,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 if (snapshot.Length > SocketConnection.MaxFrame)
                     throw new CallFailed($"{frame.Topic}'s state is over 4 MB");
                 connection.Send(snapshot);
-            }, json => connection.Send(ChangeFrame(id, json)));
+            }, (key, json) => connection.Send(ChangeFrame(id, key, json)));
         }
         catch (CallFailed error)
         {
@@ -154,8 +185,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             ? frame
             : Frame(new ErrorFrame(id, "failed", "the answer is over 4 MB"), SocketJson.Default.ErrorFrame);
 
-    // {"t":"state","sub":N,"items":[...]}, written directly, since the items' type is the topic's.
-    private static ReadOnlyMemory<byte> StateFrame<TItem>(long sub, IReadOnlyList<TItem> items, JsonTypeInfo<TItem> type)
+    // {"t":"state","sub":N,"items":[{"key":K,"item":...}]}, written directly, since the items' type is the topic's. Each
+    // entry has the key and item a change frame has, so the page applies both the same way.
+    private static ReadOnlyMemory<byte> StateFrame<TItem>(long sub, IReadOnlyList<TItem> items, JsonTypeInfo<TItem> type, Func<TItem, string> key)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var json = new Utf8JsonWriter(buffer))
@@ -165,16 +197,29 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             json.WriteNumber("sub", sub);
             json.WriteStartArray("items");
             foreach (var item in items)
+            {
+                json.WriteStartObject();
+                json.WriteString("key", key(item));
+                json.WritePropertyName("item");
                 JsonSerializer.Serialize(json, item, type);
+                json.WriteEndObject();
+            }
             json.WriteEndArray();
             json.WriteEndObject();
         }
         return buffer.WrittenMemory;
     }
 
-    // {"t":"change","sub":N,"op":"upsert","item":...}: the item is the JSON the writer published. Only upsert until a
-    // feature deletes.
-    private static ReadOnlyMemory<byte> ChangeFrame(long sub, string item)
+    // A save's args, {key, value}, read by hand: the value's type is the feature's.
+    private static (string, TValue) ReadSave<TValue>(JsonElement json, JsonTypeInfo<TValue> value) =>
+        json.TryGetProperty("key", out var key) && key.GetString() is { } name
+            && json.TryGetProperty("value", out var item) && item.Deserialize(value) is { } read
+            ? (name, read)
+            : throw new JsonException("a save takes a key and a value");
+
+    // {"t":"change","sub":N,"op":"upsert","key":K,"item":...}: the key it was published with, and the JSON the writer
+    // published. Only upsert until a feature deletes.
+    private static ReadOnlyMemory<byte> ChangeFrame(long sub, string? key, string item)
     {
         var buffer = new ArrayBufferWriter<byte>();
         using (var json = new Utf8JsonWriter(buffer))
@@ -183,6 +228,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             json.WriteString("t", "change");
             json.WriteNumber("sub", sub);
             json.WriteString("op", "upsert");
+            json.WriteString("key", key);
             json.WritePropertyName("item");
             json.WriteRawValue(item, skipInputValidation: true);
             json.WriteEndObject();
