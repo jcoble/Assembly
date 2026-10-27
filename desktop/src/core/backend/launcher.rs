@@ -14,12 +14,12 @@
 //!   log says why.
 //! - On quit it sends the child SIGTERM and waits until the thread has reaped it; the backend finishes its queued
 //!   writes and bounds that wait itself (8 s, ApiServer.ShutdownTimeout). One still running after `stop_grace` (10 s)
-//!   gets SIGKILL, and the log says so.
+//!   gets SIGKILL, and the log says so. The wait is in the quit handler's body, not a quit future, which GPUI cuts
+//!   off after 200 ms.
 //! - The child leads its own process group. When it exits, by itself or killed, the rest of the group is killed, so a
 //!   stray that holds its stdout (its ssh tunnel) can't keep the thread waiting for end of file. Adapters lead groups
 //!   of their own, so they aren't hit. In its own group the backend doesn't get the terminal's Ctrl-C; it goes when
-//!   its stdin closes. The wait is in the quit handler's body, not a quit future, which GPUI cuts off
-//!   after 200 ms.
+//!   its stdin closes.
 //!
 //! - The child's stdin is a pipe held until it exits, so it sees end of file if the window dies without quitting.
 //! - Dropping the launcher stops the child the same way, so nothing outlives the window.
