@@ -1,7 +1,7 @@
-//! `ToolRow` draws a tool call: its mark (running, done or failed), title, summary and line counts, and, opened, its
-//! command, output tail and diff from `rows/tool`. The detail is read when it opens and again only when the call's
-//! state changes (an edit's diff once the edit finishes). A long diff shows its first lines until shown in full.
-//! Replaces chat/Tool.svelte and chat/tools/tool.ts.
+//! `ToolRow` draws a tool call: its mark (running, done or failed), title, summary and line counts, and, opened, the
+//! command it ran, its output tail and diff from `rows/tool`. The detail is read when it opens and again only when the
+//! call's state changes (an edit's diff once the edit finishes). A long diff shows its first lines until shown in
+//! full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -37,6 +37,13 @@ pub fn diff_lines(diff: &str, all: bool) -> (Vec<&str>, usize) {
     }
     let hidden = lines.len() - DIFF_SHOWN;
     (lines[..DIFF_SHOWN].to_vec(), hidden)
+}
+
+/// The command a call ran, from its arguments' JSON: what an open tool shows of its input. Other arguments show nothing,
+/// as in the web app.
+pub fn command_of(input: &str) -> Option<String> {
+    let input: serde_json::Value = serde_json::from_str(input).ok()?;
+    input["command"].as_str().map(str::to_string)
 }
 
 /// The output's last `OUTPUT_TAIL` lines.
@@ -140,8 +147,8 @@ impl ToolRow {
                 .overflow_x_hidden()
         };
         let mut column = v_flex().gap_1().pl_5();
-        if let Some(input) = detail.input.as_deref().filter(|input| !input.is_empty()) {
-            column = column.child(block().child(input.to_string()));
+        if let Some(command) = detail.input.as_deref().and_then(command_of) {
+            column = column.child(block().child(command));
         }
         if let Some(output) = detail.output.as_deref().filter(|output| !output.is_empty()) {
             column = column.child(block().child(output_tail(output).to_string()));

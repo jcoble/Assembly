@@ -1,8 +1,9 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line) and each session's unsent
-//! draft while the window runs. Send is `send/send` with the draft. While a turn runs, a send steers it and a Stop
-//! button beside the draft stops it (`send/stop` with the run id). It holds the attachments, the agent's config and
-//! the "/" menu's state for when those are drawn; nothing attaches images, draws the menus or draws the context ring
-//! yet. (A pending prompt waits on the base lane echoing a client id on the user row.) Replaces Composer.svelte.
+//! draft while the window runs. Send is `send/send` with the draft and a clientId, which a retry of the same text
+//! reuses. While a turn runs, a send steers it and a Stop button beside the draft stops it (`send/stop` with the run
+//! id). It holds the attachments, the agent's config and the "/" menu's state for when those are drawn; nothing
+//! attaches images, draws the menus or draws the context ring yet, and a sent prompt isn't shown as pending before its
+//! row arrives. Replaces Composer.svelte.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -30,6 +31,11 @@ pub struct Composer {
     slash_selected: Option<usize>,
     /// The run going now, which Stop stops.
     running: Option<String>,
+    /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
+    /// the agent the backend answers its run instead of starting another.
+    retry_ids: HashMap<String, (String, String)>,
+    /// How many sends this composer has named, for the next clientId.
+    named: u64,
     _enter: Subscription,
     _tasks: Vec<Task<()>>,
 }
@@ -64,6 +70,8 @@ impl Composer {
             config: None,
             slash_selected: None,
             running: None,
+            retry_ids: HashMap::new(),
+            named: 0,
             _enter: enter,
             _tasks: Vec::new(),
         }
@@ -133,13 +141,16 @@ impl Composer {
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
         cx.emit(ComposerEvent::Sending { text: text.clone() });
-        let call = self.client.call(
-            "send",
-            "send",
-            json!({ "session": session, "text": text }),
-            None,
-            cx,
-        );
+        let client_id = match self.retry_ids.remove(&session) {
+            Some((was, id)) if was == text => id,
+            _ => {
+                self.named += 1;
+                let ms = chrono::Utc::now().timestamp_millis();
+                format!("{ms}-{}-{}", std::process::id(), self.named)
+            }
+        };
+        let args = json!({ "session": session, "text": text, "clientId": client_id });
+        let call = self.client.call("send", "send", args, None, cx);
         self._tasks
             .push(cx.spawn_in(window, async move |composer, cx| {
                 let answer = call.await;
@@ -156,15 +167,17 @@ impl Composer {
                         Err(CallError::Aborted) => {}
                         // The prompt didn't go out: it comes back to its session's draft, unless something new was
                         // typed there.
-                        Err(_) if composer.session.as_ref() == Some(&session) => {
-                            if composer.draft.read(cx).value().is_empty() {
+                        Err(_) => {
+                            composer
+                                .retry_ids
+                                .insert(session.clone(), (text, client_id));
+                            if composer.session.as_ref() != Some(&session) {
+                                composer.drafts.entry(session).or_insert(typed);
+                            } else if composer.draft.read(cx).value().is_empty() {
                                 composer
                                     .draft
                                     .update(cx, |draft, cx| draft.set_value(typed, window, cx));
                             }
-                        }
-                        Err(_) => {
-                            composer.drafts.entry(session).or_insert(typed);
                         }
                     })
                     .ok();
