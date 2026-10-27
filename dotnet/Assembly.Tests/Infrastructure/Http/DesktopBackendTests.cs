@@ -129,7 +129,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
 
         await SendTextAsync(socket, """{"t":"call","id":1,"feature":"send","method":"stop","args":{"runId":"no-such-run"}}""");
 
-        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"that run isn\u0027t running"}""", await ReadTextAsync(socket));
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"that run isn't running"}""", await ReadTextAsync(socket));
     }
 
     private static Task SendTextAsync(WebSocket socket, string text) =>

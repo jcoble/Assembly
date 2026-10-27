@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
@@ -205,7 +206,19 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }
     }
 
-    internal static ReadOnlyMemory<byte> Frame<T>(T frame, JsonTypeInfo<T> type) => JsonSerializer.SerializeToUtf8Bytes(frame, type);
+    /// <summary>
+    /// Frames carry text as it is: escaped, an accent or apostrophe takes six bytes, so a big answer of such text would
+    /// pass the 4 MB frame limit. The frames are read as JSON, never put into HTML.
+    /// </summary>
+    private static readonly JsonWriterOptions Json = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    internal static ReadOnlyMemory<byte> Frame<T>(T frame, JsonTypeInfo<T> type)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var json = new Utf8JsonWriter(buffer, Json))
+            JsonSerializer.Serialize(json, frame, type);
+        return buffer.WrittenMemory;
+    }
 
     private static ReadOnlyMemory<byte> Error(long id, string code, string message) =>
         Bounded(Frame(new ErrorFrame(id, code, message), SocketJson.Default.ErrorFrame), id);
@@ -221,7 +234,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> StateFrame<TItem>(long sub, IReadOnlyList<TItem> items, JsonTypeInfo<TItem> type, Func<TItem, string> key)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "state");
@@ -253,7 +266,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> ChangeFrame(long sub, string? key, string item)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "change");
@@ -271,7 +284,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> RowsStateFrame(long sub, long seq)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "state");
@@ -304,7 +317,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> RowsFrame(long sub, string row)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "rows");

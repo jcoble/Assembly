@@ -91,4 +91,18 @@ public sealed partial class ChatSocketTests
 
         Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
     }
+
+    // Escaped, an accent or apostrophe takes six bytes; a big answer of such text would pass the 4 MB frame limit.
+    [Fact]
+    public async Task Frames_carry_text_as_it_is()
+    {
+        var session = _sessions.Create("claude", "repo");
+        _sessions.SetTitle(session.SessionId, "Café's");
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{session.SessionId}}"}""");
+        Assert.Contains("\"title\":\"Café's\"", await ReadAsync(socket));
+        await CallAsync(socket, 2, "sessions", "page", "{}");
+        Assert.Contains("\"title\":\"Café's\"", await ReadAsync(socket));
+    }
 }
