@@ -1,19 +1,20 @@
 //! `ClientThread` is the socket's one thread of logic. It owns the open connection, the calls waiting on an answer,
-//! the latest call per key, and every subscription, and it blocks on its `Event` channel with no timeout.
+//! the latest call per key, and every subscription, and it blocks on its `Event` channel (with a timeout only while `Disconnected`).
 //! - A call is sent if the socket is open; while it's opening, events wait in the channel; while `Disconnected` it
 //!   fails at once.
 //! - A newer call with the same key answers the older `Aborted` and sends its `cancel`.
 //! - Calls and subscriptions share one id counter, so an `error` names one or the other: on a subscription it drops
 //!   it and ends its updates.
 //! - When the socket closes: every waiting call settles `Aborted`, it tries to reopen once at once, and on success
-//!   sends every subscription again (rows with `after` = their last seq). On failure it's `Disconnected` until
-//!   `Reconnect`.
+//!   sends every subscription again (rows with `after` = their last seq). On failure it's `Disconnected`, and tries
+//!   again after a short wait that doubles up to 5 s, or at once on `Reconnect` (the backend's ready line).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread;
+use std::time::Duration;
 
 use futures_channel::mpsc::UnboundedSender;
 use futures_channel::oneshot;
@@ -34,6 +35,10 @@ use super::update::Update;
 mod frames;
 
 const ROWS: &str = "rows";
+/// While `Disconnected` it tries again after a wait that doubles from the first to the longest; a `Reconnect` (the
+/// backend's ready line) tries at once. Each successful open starts the waits over.
+const FIRST_WAIT: Duration = Duration::from_millis(500);
+const LONGEST_WAIT: Duration = Duration::from_secs(5);
 
 pub(super) struct ClientThread {
     endpoint: Endpoint,
@@ -42,6 +47,8 @@ pub(super) struct ClientThread {
     sender: Sender<Event>,
     connection: Option<Connection>,
     state: ConnectionState,
+    /// The wait before the next try while `Disconnected`.
+    wait: Duration,
     /// Read on the foreground, which updates the `SocketClient` entity.
     states: UnboundedSender<ConnectionState>,
     /// The window's call and subscription ids; a re-subscribe after a gap takes a fresh one.
@@ -81,6 +88,7 @@ impl ClientThread {
             sender,
             connection: None,
             state: ConnectionState::Disconnected,
+            wait: FIRST_WAIT,
             states,
             ids,
             calls: HashMap::new(),
@@ -96,7 +104,23 @@ impl ClientThread {
 
     fn run(&mut self) {
         self.open();
-        while let Ok(event) = self.events.recv() {
+        loop {
+            let event = if self.state == ConnectionState::Disconnected {
+                match self.events.recv_timeout(self.wait) {
+                    Ok(event) => event,
+                    Err(RecvTimeoutError::Timeout) => {
+                        self.wait = (self.wait * 2).min(LONGEST_WAIT);
+                        self.open();
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            } else {
+                match self.events.recv() {
+                    Ok(event) => event,
+                    Err(_) => return,
+                }
+            };
             self.handle(event);
         }
     }
@@ -234,6 +258,7 @@ impl ClientThread {
         match Connection::open(&self.endpoint, self.sender.clone()) {
             Ok(connection) => {
                 let machine = connection.machine.clone();
+                self.wait = FIRST_WAIT;
                 self.connection = Some(connection);
                 let topics: Vec<u64> = self.topics.keys().copied().collect();
                 topics.into_iter().for_each(|id| self.send_topic(id));

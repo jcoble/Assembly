@@ -35,7 +35,7 @@ fn hello_carries_the_token_and_the_welcome_names_the_machine() {
 
 // Pins: g0-socket#1, g0-socket#8
 #[test]
-fn a_refused_hello_is_disconnected_with_no_retry() {
+fn a_refused_hello_is_disconnected_until_it_tries_again() {
     let backend = backend();
     let (events, receiver) = mpsc::channel();
     let (states_tx, mut states) = unbounded();
@@ -58,7 +58,7 @@ fn a_refused_hello_is_disconnected_with_no_retry() {
         block_on(states.recv()).ok(),
         Some(ConnectionState::Disconnected)
     );
-    // A retry would show Connecting before Reconnect's.
+    // Reconnect tries again at once, ahead of the wait.
     events
         .send(Event::Reconnect(endpoint(backend.port)))
         .unwrap();
@@ -228,4 +228,24 @@ fn a_frame_that_does_not_read_is_disconnected_with_no_reopen() {
     let (_, waiting) = client.call("echo", None);
     assert!(matches!(outcome(waiting), Outcome::Aborted));
     assert_eq!(client.state(), ConnectionState::Disconnected);
+}
+
+// Pins: g0-socket#8
+#[test]
+fn a_disconnected_client_tries_again_on_its_own_after_a_short_wait() {
+    let mut hellos = 0;
+    let backend = FakeBackend::start(move |frame| {
+        if frame["t"] == "hello" {
+            hellos += 1;
+            if hellos == 1 {
+                return vec![Reply::Close(4401)];
+            }
+        }
+        hello(frame).unwrap_or_default()
+    });
+    let mut client = Client::start(backend.port);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), ConnectionState::Disconnected);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
 }
