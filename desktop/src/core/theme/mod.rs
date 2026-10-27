@@ -4,6 +4,8 @@
 
 pub mod apply;
 pub mod fade;
+#[cfg(test)]
+mod redraw_tests;
 pub mod theme_id;
 
 pub use apply::{THEMES_DIR, init, set};
