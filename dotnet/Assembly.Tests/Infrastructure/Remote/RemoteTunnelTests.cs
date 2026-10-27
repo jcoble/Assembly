@@ -45,7 +45,7 @@ public sealed class RemoteTunnelTests
 
     // ssh mustn't hold this process's stdout or stdin: after a hard exit here, an orphaned ssh would keep the window's
     // launcher from seeing the end of this process's output.
-    [Fact]
+    [LinuxFact]
     public async Task The_command_has_its_own_stdout_and_stdin()
     {
         var log = new StringWriter();
@@ -57,6 +57,16 @@ public sealed class RemoteTunnelTests
         await Until(() => log.ToString().Contains("tunnel: ssh exited"));
 
         Assert.Contains("tunnel: ssh exited (3: own)", log.ToString());
+    }
+
+    // It reads /proc, which macOS doesn't have.
+    private sealed class LinuxFactAttribute : FactAttribute
+    {
+        public LinuxFactAttribute()
+        {
+            if (!OperatingSystem.IsLinux())
+                Skip = "Linux only";
+        }
     }
 
     private static async Task Until(Func<bool> condition)
