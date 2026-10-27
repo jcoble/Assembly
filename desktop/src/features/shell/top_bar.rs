@@ -50,7 +50,7 @@ impl Render for TopBar {
                 .child(
                     Button::new("home")
                         .primary()
-                        .icon(IconName::LayoutDashboard)
+                        .icon(IconName::House)
                         .rounded(cx.theme().radius_full())
                         .with_size(HOME_SIZE)
                         .tooltip("Home"),
