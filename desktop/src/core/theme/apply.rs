@@ -10,7 +10,7 @@ use gpui_kit::{App, Window, WindowBackgroundAppearance};
 use super::theme_id::ThemeId;
 
 /// The theme files, read in place from the source tree. A packaged app's location comes with packaging.
-const THEMES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/themes");
+pub(super) const THEMES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/themes");
 
 /// The design system's slowest motion, which the kit's slow step and move spring are brought down to.
 const MOTION_CEILING: Duration = Duration::from_millis(180);
@@ -24,16 +24,23 @@ pub fn init(cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
 }
 
 /// Puts `id` in force: makes its file the kit's active theme, sets the window background to blurred for glass and
-/// opaque for the rest, and brings the kit's 280 ms slow step and move spring down to 180 ms.
+/// opaque for the rest, and brings the kit's 280 ms slow step and move spring down to 180 ms. Off macOS there's no
+/// blur, so glass gives Assembly. A theme whose file didn't load leaves the theme in force as it is.
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
-    let config = ThemeRegistry::global(cx)
+    let id = if id.is_glass() && !cfg!(target_os = "macos") {
+        ThemeId::Assembly
+    } else {
+        id
+    };
+    let Some(config) = ThemeRegistry::global(cx)
         .themes()
         .get(id.theme_name())
-        .cloned();
+        .cloned()
+    else {
+        return;
+    };
     Theme::update(cx, |theme| {
-        if let Some(config) = config {
-            theme.dark_theme = config;
-        }
+        theme.dark_theme = config;
         theme.motion.duration_slow = MOTION_CEILING;
         // The kit's own spring_move, with the shorter response.
         theme.motion.spring_move = Spring::new(MOTION_CEILING)
@@ -53,7 +60,7 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
 mod tests {
     use super::{init, set};
     use crate::core::theme::theme_id::ThemeId;
-    use gpui_kit::component::{Theme, ThemeRegistry};
+    use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
     use gpui_kit::{Context, IntoElement, Render, TestAppContext, Window, div, gpui};
     use std::{cell::Cell, rc::Rc, time::Duration};
 
@@ -70,48 +77,70 @@ mod tests {
         let count = ready.clone();
         cx.update(|cx| {
             gpui_kit::init(cx);
-            init(cx, move |_| count.set(count.get() + 1));
+            init(cx, move |cx| {
+                // Every file is in the registry by the time the window would open here.
+                for id in ThemeId::ALL {
+                    let name = id.theme_name();
+                    assert!(
+                        ThemeRegistry::global(cx).themes().contains_key(name),
+                        "{name}"
+                    );
+                }
+                count.set(count.get() + 1);
+            });
         });
         cx.run_until_parked();
         ready
     }
 
-    #[gpui::test]
-    fn every_theme_file_is_loaded_before_the_window_opens(cx: &mut TestAppContext) {
-        let ready = load_themes(cx);
-        assert_eq!(ready.get(), 1);
+    fn assert_motion_within_180_ms(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            for id in ThemeId::ALL {
-                assert!(
-                    ThemeRegistry::global(cx)
-                        .themes()
-                        .contains_key(id.theme_name()),
-                    "{}",
-                    id.theme_name()
-                );
-            }
+            // Spring has no public response to read, so the slow step stands for both.
+            assert!(Theme::global(cx).motion.duration_slow <= Duration::from_millis(180));
         });
     }
 
     #[gpui::test]
-    fn set_puts_the_theme_in_force_and_keeps_motion_within_180_ms(cx: &mut TestAppContext) {
+    fn the_window_opens_once_every_theme_file_has_loaded(cx: &mut TestAppContext) {
+        assert_eq!(load_themes(cx).get(), 1);
+    }
+
+    #[gpui::test]
+    fn set_switches_between_themes_and_keeps_motion_within_180_ms(cx: &mut TestAppContext) {
+        load_themes(cx);
+        let window = cx.add_window(|_, _| Blank);
+        for id in [ThemeId::Houston, ThemeId::Dracula] {
+            window
+                .update(cx, |_, window, cx| set(id, window, cx))
+                .expect("the test window is open");
+            cx.update(|cx| {
+                let theme = Theme::global(cx);
+                assert_eq!(theme.theme_name().as_ref(), id.theme_name());
+                assert!(theme.is_dark());
+            });
+        }
+        // A later change of mode, as the kit's registry observer makes on a reload, keeps the motion.
+        cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
+        assert_motion_within_180_ms(cx);
+    }
+
+    #[gpui::test]
+    fn glass_gives_assembly_off_macos(cx: &mut TestAppContext) {
         load_themes(cx);
         let window = cx.add_window(|_, _| Blank);
         window
-            .update(cx, |_, window, cx| set(ThemeId::Houston, window, cx))
+            .update(cx, |_, window, cx| set(ThemeId::AssemblyGlass, window, cx))
             .expect("the test window is open");
+        let expected = if cfg!(target_os = "macos") {
+            ThemeId::AssemblyGlass
+        } else {
+            ThemeId::Assembly
+        };
         cx.update(|cx| {
-            let theme = Theme::global(cx);
-            assert_eq!(theme.theme_name().as_ref(), "Houston");
-            assert!(theme.is_dark());
-            assert!(theme.motion.duration_slow <= Duration::from_millis(180));
+            assert_eq!(
+                Theme::global(cx).theme_name().as_ref(),
+                expected.theme_name()
+            )
         });
-
-        // The kit re-applies the theme in force by name whenever its registry changes, as a reload does.
-        cx.update(|cx| {
-            ThemeRegistry::global_mut(cx);
-        });
-        cx.run_until_parked();
-        cx.update(|cx| assert_eq!(Theme::global(cx).theme_name().as_ref(), "Houston"));
     }
 }

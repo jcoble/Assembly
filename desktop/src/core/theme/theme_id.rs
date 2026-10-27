@@ -7,7 +7,7 @@
     not(test),
     expect(
         dead_code,
-        reason = "picked by the palette commands (g0-host) and preferences (the cut); until then only the default opens"
+        reason = "picked by the palette commands (on g0-host's registry) and preferences (the cut); until then only the default opens"
     )
 )]
 pub enum ThemeId {
@@ -28,7 +28,7 @@ pub enum ThemeId {
     not(test),
     expect(
         dead_code,
-        reason = "picked by the palette commands (g0-host) and preferences (the cut); until then only the default opens"
+        reason = "picked by the palette commands (on g0-host's registry) and preferences (the cut); until then only the default opens"
     )
 )]
 impl ThemeId {
@@ -50,14 +50,12 @@ impl ThemeId {
         ThemeId::Tomorrow,
     ];
 
-    /// The theme a saved id means: an unknown id (such as the old "dark") gives `DEFAULT`, and glass gives Assembly
-    /// off macOS, where there's no blur.
+    /// The theme a saved id means: an unknown id (such as the old "dark") gives `DEFAULT`.
     pub fn resolve(raw: &str) -> ThemeId {
-        match ThemeId::ALL.into_iter().find(|id| id.as_str() == raw) {
-            Some(ThemeId::AssemblyGlass) if !cfg!(target_os = "macos") => ThemeId::Assembly,
-            Some(id) => id,
-            None => ThemeId::DEFAULT,
-        }
+        ThemeId::ALL
+            .into_iter()
+            .find(|id| id.as_str() == raw)
+            .unwrap_or(ThemeId::DEFAULT)
     }
 
     /// The id the setting saves, which is also the file's stem in desktop/themes/.
@@ -117,19 +115,14 @@ mod tests {
     #[test]
     fn every_saved_id_reads_back_as_its_theme() {
         for id in ThemeId::ALL {
-            let expected = if id == ThemeId::AssemblyGlass && !cfg!(target_os = "macos") {
-                ThemeId::Assembly
-            } else {
-                id
-            };
-            assert_eq!(ThemeId::resolve(id.as_str()), expected, "{}", id.as_str());
+            assert_eq!(ThemeId::resolve(id.as_str()), id, "{}", id.as_str());
         }
     }
 
     #[test]
     fn the_themes_folder_has_one_file_per_id_and_nothing_else() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
-        let files: BTreeSet<String> = fs::read_dir(&dir)
+        let dir = Path::new(super::super::apply::THEMES_DIR);
+        let files: BTreeSet<String> = fs::read_dir(dir)
             .expect("read desktop/themes")
             .map(|entry| {
                 entry
