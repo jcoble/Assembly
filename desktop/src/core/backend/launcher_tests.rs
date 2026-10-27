@@ -112,3 +112,20 @@ fn the_token_never_reaches_the_log() {
     let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
     assert!(!log.contains(TOKEN), "{log}");
 }
+
+#[test]
+fn dropping_the_launcher_stops_the_backend() {
+    let script = format!("echo 'listening on http://127.0.0.1:18877/'\n{WAIT_FOR_TERM}");
+    let (launcher, ready) = launch(fake("drop", &script));
+    ready.recv().unwrap();
+    let pid = *launcher.pid.lock().unwrap();
+    let config = launcher.config.clone();
+    drop(launcher);
+    assert_eq!(read(&config, "stopped"), "stopped\n");
+    // SAFETY: signal 0 only asks whether the process exists.
+    assert_eq!(
+        unsafe { libc::kill(pid as i32, 0) },
+        -1,
+        "the child is gone"
+    );
+}
