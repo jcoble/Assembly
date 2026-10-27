@@ -1528,9 +1528,10 @@ catalogue stays the reference.
 
     - **Removed with them:** the handlers behind each route above, `DebugRoutes.cs`, and `PreferencesRoutes.cs`.
       With preferences gone, `FeatureCalls.cs` maps nothing, so it goes too, with `Draft/Base/FeatureCallsTests.cs`.
-      Its guard, `scripts/lint.d/40-routes.sh` ("every feature route goes through FeatureCalls"), then becomes a
-      fixed list of the route files left, which only shrinks. That changes a guard, so it needs the move thread's OK
-      first.
+      Its guard, `scripts/lint.d/40-routes.sh` ("every feature route goes through FeatureCalls"), changes to one
+      named owner with no list: no `Map`, `MapGet`, `MapPost` or `MapGroup` call outside `Infrastructure/Http/`.
+      Probes go both ways: a `Map` call outside the folder fails, and one inside passes. The folder then shrinks
+      through C2 in review, with no list to edit. The move thread OKed the change in this form (2026-10-27).
     - **Stays until C2, because the desktop's remote client calls it on the remote:**
       - `/version` (`RemoteMachine.cs:184`, the format check) and `/agents` (`:63`);
       - `POST /sessions` (`:70`, `:77`) and `GET /sessions/{id}` (`:196`);
@@ -1561,14 +1562,14 @@ catalogue stays the reference.
         `rowsPage` (`:90`) and `dropLink` (`:115`, also used by `soak.ts:239`);
       - `send` in `app/src/lib/call.ts:17-20`, behind `call` and `save` (`:44`, `:70`), which carry preferences.
       - `rows/client.ts` (`/live`) and the other `api.ts` calls keep working until C2.
-    - **Open question, for Jesse:** what happens to `app/` once its HTTP routes go? It can stay as it is and break
-      (paused), get those few calls moved to its existing `socket.ts`, or be removed. This note doesn't decide it.
-      The cut only goes ahead once it's answered.
+    - **`app/`, Jesse's decision** (a card answer, 2026-10-27 12:11Z: "Keep app/ until GPUI replaces it"): `app/`
+      keeps working until the GPUI session view replaces it. So the cut's deletions wait until the GPUI session view
+      runs. Until then, no route `app/` calls is deleted, and the move thread recommended the same.
     - **Commit order, each one green (it builds and the full suite passes):**
       1. The tests above move off the routes being deleted, while those routes still exist.
       2. check4's rows read and `rows.sh` move to `rows/page` over the socket. Proof: check4 on that head.
       3. One commit per row of the table, each deleting the route, its handler and its test-only helpers.
-         Preferences goes last, with `FeatureCalls` and the guard change, after the move thread's OK.
+         Preferences goes last, with `FeatureCalls` and the guard change.
       4. Proof: check4 on the last head, and a grep showing no `.NET`, script or test caller of a deleted path.
 - **C2. One socket per remote machine** (Sol P11, P13).
   - **Files:** `Infrastructure/Remote/RemoteMachine.cs` becomes a socket client of the remote's `/socket`, and
