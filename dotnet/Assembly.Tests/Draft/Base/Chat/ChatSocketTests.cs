@@ -83,7 +83,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _home.Delete(recursive: true);
     }
 
-    private string Staging => Path.Combine(_home.FullName, "uploads");
+    private string Staging => Path.Combine(_home.FullName, "staging", "attachments");
 
     private async Task<ClientWebSocket> OpenAsync()
     {
