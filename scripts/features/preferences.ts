@@ -39,7 +39,11 @@ async function open() {
   });
   socket.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
   if ((await frame()).t !== 'welcome') fail('hello is answered with welcome', 'it was not');
-  const send = (message: object) => socket.send(JSON.stringify(message));
+  // Once cleanup starts the scenario sends nothing more, so it can't race the key being put back.
+  const send = (message: object) => {
+    if (finishing) throw new Failed();
+    socket.send(JSON.stringify(message));
+  };
   return { socket, frame, send };
 }
 
@@ -88,21 +92,29 @@ async function run() {
   console.log(`ok a cancelled save is all or nothing (${cancelled.t === 'result' ? 'it had committed' : 'cancelled'})`);
 }
 
-// Every way out puts the key back, on a socket of its own, then closes the sockets.
-async function finish(code: number): Promise<never> {
+// Every way out puts the key back, on a socket of its own, then closes the sockets. Cleanup runs once, and exits with
+// the worst code any way out asked for.
+let exitCode = 0;
+let finishing: Promise<never> | undefined;
+function finish(code: number): Promise<never> {
+  exitCode = Math.max(exitCode, code);
+  return (finishing ??= cleanUp());
+}
+
+async function cleanUp(): Promise<never> {
   if (changed) {
     try {
       const restore = await open();
       sockets.push(restore);
-      restore.send(save(3, putBack));
+      restore.socket.send(JSON.stringify(save(3, putBack)));
       if ((await restore.frame()).t !== 'result') throw new Error('the save failed');
     } catch (e) {
       console.log(`fail the key is put back: ${e instanceof Error ? e.message : e}`);
-      code = 1;
+      exitCode = 1;
     }
   }
   for (const each of sockets) each.socket.close();
-  process.exit(code);
+  process.exit(exitCode);
 }
 
 setTimeout(() => {
