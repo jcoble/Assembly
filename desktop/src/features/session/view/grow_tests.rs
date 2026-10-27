@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use gpui::TestAppContext;
 
-use super::{FADE, FADE_AFTER, GROW, ease, faded, progress, toggled, turn};
+use super::{FADE_AFTER, GROW, ease, faded, progress, toggled, turn};
 
 const EASE: Duration = Duration::from_millis(200);
 
@@ -60,7 +60,6 @@ fn reduce_motion_puts_a_toggle_at_its_end(cx: &mut TestAppContext) {
     window.update(|window, cx| {
         cx.set_reduce_motion(true);
         assert_eq!(turn(true, just, window, cx), (1.0, false));
-        assert_eq!(faded(true, just, cx), 1.0);
         assert_eq!(turn(false, just, window, cx), (0.0, false));
     });
 }
@@ -79,22 +78,22 @@ fn the_grow_curve_is_quick_then_settles() {
     );
 }
 
-// Opening, the content stays hidden for the first 40 ms and is in by 160 ms; shutting runs it back, out by 120 ms.
+// Opening, the content stays hidden for the first 40 ms and is in by 160 ms. It follows the height, so shutting a row
+// that was still hidden shows nothing, and one drawn open shows its content.
 // Pins: g0-session#34
-#[gpui::test]
-fn the_content_fades_in_from_forty_ms_into_the_grow(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        let ago = |elapsed: Duration| Some(Instant::now() - elapsed);
-        assert_eq!(faded(true, ago(FADE_AFTER / 2), cx), 0.0);
-        let midway = faded(true, ago(FADE_AFTER + FADE / 2), cx);
-        assert!(midway > 0.0 && midway < 1.0, "{midway}");
-        assert_eq!(faded(true, ago(GROW), cx), 1.0);
-        assert!(faded(false, ago(FADE / 2), cx) < 1.0);
-        assert_eq!(faded(false, ago(FADE), cx), 0.0);
-        assert_eq!(
-            faded(true, None, cx),
-            1.0,
-            "already open when drawn: shown, no fade"
-        );
-    });
+#[test]
+fn the_content_fades_in_from_forty_ms_into_the_grow() {
+    let open_at = |elapsed: Duration| progress(true, Some(elapsed), GROW).0;
+    assert_eq!(faded(open_at(FADE_AFTER / 2)), 0.0);
+    let midway = faded(open_at(FADE_AFTER * 2));
+    assert!(midway > 0.0 && midway < 1.0, "{midway}");
+    assert_eq!(faded(open_at(GROW)), 1.0);
+    let now = Instant::now();
+    let shut = toggled(false, Some(now - FADE_AFTER / 2), now, GROW);
+    assert_eq!(
+        faded(progress(false, Some(now - shut), GROW).0),
+        0.0,
+        "still hidden as it turns back"
+    );
+    assert_eq!(faded(progress(true, None, GROW).0), 1.0, "drawn open");
 }

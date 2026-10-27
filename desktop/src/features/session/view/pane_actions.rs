@@ -47,7 +47,9 @@ impl SessionPane {
             SessionAction::Toggle { key } => {
                 let kept = self.kept.entry(key.clone()).or_default();
                 kept.open = !kept.open;
-                kept.toggled_at = Some(toggled(kept.open, kept.toggled_at, Instant::now(), GROW));
+                // From where the body is: its ease may have started when its first detail came, after the click.
+                kept.toggled_at = Some(toggled(kept.open, kept.grown_at(), Instant::now(), GROW));
+                kept.shown_at = None;
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {
                     self.refresh(Change::Updated(at), cx);
                     self.read_detail_if_stale(at, cx);

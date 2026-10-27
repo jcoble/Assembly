@@ -135,7 +135,7 @@ impl RenderOnce for AskRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let open = self.ask.state == "open";
         let turned = turn(open, self.toggled_at, window, cx);
-        let faded = faded(open, self.toggled_at, cx);
+        let faded = faded(turned.0);
         let head = self.head(open, cx);
         let body = (open || turned.1).then(|| {
             let controls = self.controls(cx);

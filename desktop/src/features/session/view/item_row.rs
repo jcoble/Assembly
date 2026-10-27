@@ -89,7 +89,7 @@ impl RenderOnce for ItemRow {
                 let open = self.kept.open;
                 let toggled_at = self.kept.toggled_at;
                 let turned = turn(open, toggled_at, window, cx);
-                let faded = faded(open, toggled_at, cx);
+                let faded = faded(turned.0);
                 let column = v_flex().gap_1();
                 band(column, turned.0, cx)
                     .text_sm()

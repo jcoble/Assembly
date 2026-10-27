@@ -71,7 +71,7 @@ impl RenderOnce for ToolRow {
             .has_detail
             .then(|| chevron(turn(open, toggled_at, window, cx).0));
         let turned = turn(open, self.kept.grown_at(), window, cx);
-        let faded = faded(open, self.kept.grown_at(), cx);
+        let faded = faded(turned.0);
         let theme = cx.theme();
         let (key, on_action) = (self.key.clone(), self.on_action.clone());
         let line = h_flex()

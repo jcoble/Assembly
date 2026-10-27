@@ -91,16 +91,26 @@ fn an_opened_tool_call_reads_its_detail_once_and_again_when_its_state_changes(
         kept(cx).detail.map(|(state, _)| state),
         Some(ToolState::Started)
     );
-    let first = kept(cx).shown_at;
     assert!(
-        first.is_some(),
+        kept(cx).shown_at.is_some(),
         "its first detail grows in from when it arrived"
     );
+    // Clicked long ago, its detail just came: shut now, it turns back from the body's start, nearly shut already.
+    let now = Instant::now();
+    pane.update(cx, |pane, _| {
+        let kept = pane.kept.get_mut("tool:t1").unwrap();
+        (kept.toggled_at, kept.shown_at) = (Some(now - GROW * 50), Some(now));
+    });
     toggle(&pane, "tool:t1", cx);
+    let shut = kept(cx).toggled_at.unwrap();
+    assert!(
+        shut < now - GROW / 2,
+        "it turns back from where the body is"
+    );
     toggle(&pane, "tool:t1", cx);
     assert_eq!(
         kept(cx).shown_at,
-        first,
+        None,
         "detail it already had shows with the click"
     );
     assert_eq!(
