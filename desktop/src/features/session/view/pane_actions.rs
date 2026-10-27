@@ -110,6 +110,13 @@ impl SessionPane {
                 self.on_action(SessionAction::Answer { ask_id, answer }, window, cx);
             }
             SessionAction::Answer { ask_id, answer } => {
+                // A settled ask still shows its controls while it shrinks; they answer nothing more.
+                let open = self.view.items.iter().any(|item| {
+                    matches!(&item.kind, ItemKind::Ask { ask_id: id, ask } if *id == ask_id && ask.state == "open")
+                });
+                if !open {
+                    return;
+                }
                 self.status = SharedString::default();
                 let task = format!("answer:{ask_id}");
                 let args = json!({ "session": session, "ask": ask_id, "answer": answer });

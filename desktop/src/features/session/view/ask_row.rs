@@ -244,7 +244,7 @@ impl AskRow {
                         div()
                             .flex_1()
                             .capture_key_down(move |event, window, cx| {
-                                if event.keystroke.key == "enter" {
+                                if event.keystroke.key == "enter" && !event.is_held {
                                     on_action(submit.clone(), window, cx);
                                 }
                             })

@@ -223,7 +223,11 @@ fn a_finished_turns_fold_opens_and_closes_by_its_run(cx: &mut TestAppContext) {
 // Pins: g0-session#16
 #[gpui::test]
 fn answering_an_ask_sends_its_answer(cx: &mut TestAppContext) {
-    let (pane, client, cx) = opened(vec![user(1, "go")], cx);
+    let payload = json!({ "kind": "permission", "state": "open", "options": [], "answer": null });
+    let (pane, client, cx) = opened(
+        vec![user(1, "go"), row(2, "ask", Some("ask:a1"), payload)],
+        cx,
+    );
     client.queue_answer(Ok(json!({ "ok": true })));
     let answer = json!({ "optionId": "allow" });
     act(
@@ -444,4 +448,27 @@ fn an_ask_answered_while_shown_shrinks_and_one_drawn_answered_is_still(cx: &mut 
             "drawn answered: still"
         );
     });
+    // Once its shrink is done, it stops drawing frames.
+    pane.update_in(cx, |pane, window, cx| {
+        let key = pane.view.items[1].key.clone();
+        pane.kept.get_mut(&key).unwrap().toggled_at = Some(Instant::now() - GROW);
+        pane.grow_frame(window, cx);
+        assert!(pane.growing.is_empty(), "no more frames");
+    });
+    client.queue_answer(Ok(json!({ "ok": true })));
+    let calls = client.calls().len();
+    let answer = json!({ "optionId": "allow" });
+    act(
+        &pane,
+        SessionAction::Answer {
+            ask_id: "a1".into(),
+            answer,
+        },
+        cx,
+    );
+    assert_eq!(
+        client.calls().len(),
+        calls,
+        "an answered ask answers nothing more"
+    );
 }

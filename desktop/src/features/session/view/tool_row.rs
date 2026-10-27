@@ -116,7 +116,13 @@ impl RenderOnce for ToolRow {
             grow(id, turned, open, faded, detail, window, cx)
         });
         let column = v_flex().gap_1().child(line).children(detail);
-        band(column, turned.0, cx)
+        // Lit as its body grows: not while an opened call's first detail is still on its way.
+        let lit = if self.kept.detail.is_some() {
+            turned.0
+        } else {
+            0.
+        };
+        band(column, lit, cx)
     }
 }
 

@@ -105,7 +105,8 @@ async fn clicking_across_real_sessions_shows_only_the_last_ones_messages(cx: &mu
     })
     .await;
     // Each click once the session before has asked for its page.
-    for session in sessions.iter().rev() {
+    // From the one shown (the last), back to the first.
+    for session in sessions.iter().rev().skip(1) {
         pane.update_in(cx, |pane, window, cx| {
             pane.open(session.clone(), window, cx)
         });
