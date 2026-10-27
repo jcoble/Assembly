@@ -139,6 +139,8 @@ public sealed class RowStoreTests : IDisposable
             new SqlArg("$session", "t"), new SqlArg("$before", long.MaxValue), new SqlArg("$limit", 50));
 
         Assert.DoesNotContain(plan, step => step.EndsWith("(session_id=?)", StringComparison.Ordinal) || step.StartsWith("SCAN r", StringComparison.Ordinal));
+        // And the page's items are picked walking back from $before: if SQLite words its plans differently, this goes red.
+        Assert.Contains(plan, step => step.StartsWith("SEARCH r ", StringComparison.Ordinal) && step.EndsWith("(session_id=? AND seq<?)", StringComparison.Ordinal));
     }
 
     [Fact]
