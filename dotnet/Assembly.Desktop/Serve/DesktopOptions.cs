@@ -12,7 +12,7 @@ namespace Assembly.Desktop.Serve;
 /// with its token in <c>--remote-token-file</c> (relative to its home folder).
 /// </summary>
 public sealed record DesktopOptions(int Port, string Home, string TokenFile, string AgentsFile, string? Remote = null, int RemotePort = 9797,
-    string RemoteTokenFile = ".config/assembly-dotnet/env")
+    string RemoteTokenFile = ".config/assembly-dotnet/env", bool ExitOnStdinClose = false)
 {
     public const string Usage =
         "usage: Assembly.Desktop serve [--port 18797] [--home ~/assembly-dotnet/mac] [--token-file ~/.config/assembly-dotnet/env] [--agents HOME/agents.json] [--remote workbox-test] [--remote-port 9797] [--remote-token-file .config/assembly-dotnet/env]";
