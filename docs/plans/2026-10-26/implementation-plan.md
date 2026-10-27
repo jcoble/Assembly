@@ -1396,6 +1396,15 @@ catalogue stays the reference.
 ### C. Chat on the socket
 
 - **C1. Sessions, rows, sends and config** (Sol P03, P07, P12, P14).
+  - **Status (2026-10-27):** rows are on the socket, backend only: the `rows` topic with `after` (keyed by session; a
+    resume catches up at most `RowsFeature.PageLimit` rows, and further behind, or a first open, starts from the
+    session's last seq) and `rows/page`. `PageBefore`'s query fix and the reads on the caller's token are done too.
+    `/live` and the HTTP chat routes stay until the cut.
+  - **Next, its own PR right after, before the cut:** every chat route the window calls moves onto the socket: the
+    sessions list, send, cancel, tool detail, ask answers, run rows, and anything else under `/sessions`, with bytes
+    as D4's chunked calls. **The cut** then deletes `/live` and the HTTP chat routes together, with the HTTP
+    preferences path. After the cut: the reconnect group with `backend-ready`, and the App Nap hold held in the
+    backend while any turn runs.
   - **Files:**
     - `Features/Chat/Sessions/SessionsFeature.cs`, with its topic: one summary per session (state, active run, pending
       ask, needs attention, background work, title, machine, online, project, last activity, unread);
