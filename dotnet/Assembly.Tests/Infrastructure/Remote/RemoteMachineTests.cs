@@ -329,6 +329,41 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         await Until(() => _log.ToString().Contains($"remote session s1: {Box} answered 500"));
     }
 
+    [Fact]
+    public async Task Ssh_exiting_marks_the_remote_unreachable_and_the_next_answer_marks_it_reachable()
+    {
+        // The tunnel's command exits each time this file appears.
+        var exit = Path.Combine(Directory.CreateTempSubdirectory("assembly-tunnel-").FullName, "exit");
+        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", $"while [ ! -e '{exit}' ]; do sleep 0.1; done; rm '{exit}'"], TextWriter.Null);
+        await using var desktop = await DesktopBackend.StartAsync(Directory.CreateTempSubdirectory("assembly-desktop-").FullName, DesktopToken, 0,
+            _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken), tunnel);
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{desktop.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"machines"}""");
+        Assert.Contains("not checked yet", await ReadTextAsync(socket));
+        // The first tick after the subscribe probes it.
+        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
+
+        File.WriteAllText(exit, "");
+        Assert.Contains("\"reachable\":false,\"reason\":\"ssh tunnel exited\"", await ReadTextAsync(socket));
+
+        await SendTextAsync(socket, $$$"""{"t":"call","id":2,"feature":"machines","method":"agents","args":{"machine":"{{{Box}}}"}}""");
+        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
+        Assert.Contains("\"result\":", await ReadTextAsync(socket));
+    }
+
+    private static Task SendTextAsync(WebSocket socket, string text) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+    private static async Task<string> ReadTextAsync(WebSocket socket)
+    {
+        var buffer = new byte[64 * 1024];
+        var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        return Encoding.UTF8.GetString(buffer, 0, received.Count);
+    }
+
     // A stand-in for the remote: /version answers this computer's format, or the status given, beside the routes the test maps.
     private static async Task<WebApplication> StubAsync(Action<WebApplication> map, Func<int>? versionStatus = null)
     {

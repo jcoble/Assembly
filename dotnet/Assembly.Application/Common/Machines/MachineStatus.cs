@@ -1,3 +1,5 @@
+using Assembly.Application.Common.Topics;
+
 namespace Assembly.Application.Common.Machines;
 
 /// <summary>
@@ -11,8 +13,9 @@ public sealed record MachineItem(string? Name, string Kind, bool Reachable, stri
 /// <c>RemoteMachine</c> records each answer and each failure. Writers swap the snapshot under the lock; readers take
 /// it with none.
 /// </summary>
-public sealed class MachineStatus(IEnumerable<string> remotes)
+public sealed class MachineStatus(ITopics topics, IEnumerable<string> remotes)
 {
+    private readonly ITopics _topics = topics;
     private readonly Lock _gate = new();
     private volatile MachineItem[] _items =
         [new(null, "local", true, null), .. remotes.Select(name => new MachineItem(name, "remote", false, "not checked yet"))];

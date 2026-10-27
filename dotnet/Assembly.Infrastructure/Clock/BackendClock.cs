@@ -22,6 +22,8 @@ internal sealed class BackendClock : IFeature, IDisposable
     // Set by a subscribe, so a subscription that lands while a tick looks for one keeps the timer going.
     private bool _asked;
 
+    internal event Action<bool>? Ticked { add { } remove { } }
+
     public BackendClock(TopicSet topics, TimeProvider time)
     {
         _topics = topics;
@@ -38,7 +40,7 @@ internal sealed class BackendClock : IFeature, IDisposable
         });
 
     // Runs inside the topics' lock, with the subscription it's for, so a tick's HasSubscribers sees it or waits for it.
-    private void Start()
+    internal void Start()
     {
         lock (_gate)
         {

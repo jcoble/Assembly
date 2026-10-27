@@ -10,15 +10,18 @@ namespace Assembly.Application.Features.Chat.Sessions;
 internal sealed class MachinesFeature : IFeature
 {
     public const string Feature = "machines";
+    public const string Topic = "machines";
 
     private readonly MachineSet _machines;
     private readonly MachineStatus _status;
 
-    public MachinesFeature(MachineSet machines, MachineStatus status)
+    public MachinesFeature(MachineSet machines, MachineStatus status, Action startClock, TimeProvider time)
     {
         _machines = machines;
         _status = status;
     }
+
+    public void Tick(bool watched) => throw new NotImplementedException();
 
     public void Register(ICallRegistry calls)
     {

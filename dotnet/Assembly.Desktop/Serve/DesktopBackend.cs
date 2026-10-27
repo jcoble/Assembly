@@ -55,7 +55,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     public Uri Address { get; }
 
     /// <summary>Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there.</summary>
-    public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
+    public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
+        RemoteTunnel? tunnel = null)
     {
         Directory.CreateDirectory(home);
         var database = Path.Combine(home, "assembly.db");
@@ -75,7 +76,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
         var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
-        var status = new MachineStatus(remote is null ? [] : [remote.Name]);
+        var status = new MachineStatus(topics, remote is null ? [] : [remote.Name]);
         var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
             sessions.Helpers.Row.TurnEnded);
         var machines = remoteMachine is null
@@ -92,7 +93,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         // the last socket.
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
-                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status),
+                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status, () => { }, TimeProvider.System),
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>
         {
