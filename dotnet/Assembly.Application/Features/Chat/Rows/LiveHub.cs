@@ -32,6 +32,8 @@ public sealed class LiveHub : IDisposable
         _topics = topics;
         _summaries = summaries;
         _summaryChanged = summaryChanged ?? (_ => { });
+        if (_topics is not null)
+            _topics.Unsubscribed += RowsUnsubscribed;
     }
 
     /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
@@ -59,15 +61,11 @@ public sealed class LiveHub : IDisposable
         }
     }
 
-    /// <summary>Raised when a session's last live socket goes; sometimes under the hub's lock, so a handler only signals.</summary>
+    /// <summary>
+    /// Raised when nobody watches the session's rows any more, by live socket or rows sub, whichever went last; sometimes
+    /// under the hub's lock, so a handler only signals.
+    /// </summary>
     public event Action<string>? Unwatched;
-
-    /// <summary>Whether a live socket watches the session's rows; a rows sub on the socket doesn't count.</summary>
-    public bool HasLiveSubscribers(string sessionId)
-    {
-        lock (_gate)
-            return _subscribers.ContainsKey(sessionId);
-    }
 
     /// <summary>Whether a webview watches the session's rows: its live socket, or a rows sub on the socket.</summary>
     public bool HasSubscribers(string sessionId)
@@ -157,7 +155,24 @@ public sealed class LiveHub : IDisposable
     }
 
     /// <summary>Ends every subscription. The store belongs to the caller.</summary>
-    public void Dispose() => CloseSubscriptions();
+    public void Dispose()
+    {
+        if (_topics is not null)
+            _topics.Unsubscribed -= RowsUnsubscribed;
+        CloseSubscriptions();
+    }
+
+    private void RowsUnsubscribed(string topic, string? key)
+    {
+        if (topic == RowsFeature.Topic && key is not null)
+            UnwatchedIfNobody(key);
+    }
+
+    private void UnwatchedIfNobody(string sessionId)
+    {
+        if (!HasSubscribers(sessionId))
+            Unwatched?.Invoke(sessionId);
+    }
 
     private void Push(string sessionId, IReadOnlyList<StoredRow> rows)
     {
@@ -187,6 +202,6 @@ public sealed class LiveHub : IDisposable
                 last = _subscribers.Remove(subscriber.SessionId);
         }
         if (last)
-            Unwatched?.Invoke(subscriber.SessionId);
+            UnwatchedIfNobody(subscriber.SessionId);
     }
 }

@@ -173,7 +173,7 @@ internal sealed class RemoteFollower(
         using var done = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         var lastFrame = time.GetUtcNow();
         var copied = false;
-        // Tells the settle to look again: a frame came, or the session's last live viewer left.
+        // Tells the settle to look again: a frame came, or the session's last viewer left.
         var wake = new SemaphoreSlim(0);
         void Wake()
         {
@@ -243,8 +243,7 @@ internal sealed class RemoteFollower(
     // Once the link has been quiet for a while, decides the row of a helper a restart found shown running (only here,
     // on a real connected link: a give-up, a dropped link, a Close or a seq mismatch leaves it running), then ends the
     // socket if nobody is watching and no turn runs. While it's needed it waits for a reason to look again: a frame (a
-    // copied turn end opens nothing more) or the last live viewer leaving. A watch only through the rows topic has no
-    // such signal, so it looks again a Settled later.
+    // copied turn end opens nothing more) or its last viewer leaving, by live socket or rows sub.
     private async Task SettleAsync(string sessionId, Func<DateTimeOffset> lastFrame, SemaphoreSlim wake, CancellationTokenSource done)
     {
         try
@@ -261,10 +260,7 @@ internal sealed class RemoteFollower(
                     await turnEnded(sessionId);
                 if (!Needed(sessionId))
                     return;
-                if (hub.OpenRun(sessionId) is not null || hub.HasLiveSubscribers(sessionId))
-                    await wake.WaitAsync(done.Token);
-                else
-                    await WokenOrSettledAsync(wake, done.Token);
+                await wake.WaitAsync(done.Token);
             }
         }
         catch (OperationCanceledException)
@@ -275,14 +271,6 @@ internal sealed class RemoteFollower(
             // Also when turnEnded throws, so the read isn't left waiting on a quiet link; the throw comes out of the follow.
             await done.CancelAsync();
         }
-    }
-
-    private async Task WokenOrSettledAsync(SemaphoreSlim wake, CancellationToken token)
-    {
-        using var either = CancellationTokenSource.CreateLinkedTokenSource(token);
-        await Task.WhenAny(wake.WaitAsync(either.Token), Task.Delay(Settled, time, either.Token));
-        await either.CancelAsync();
-        token.ThrowIfCancellationRequested();
     }
 
     public async ValueTask DisposeAsync()
