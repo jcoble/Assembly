@@ -1,0 +1,18 @@
+# Terminal: behavior list
+
+Draft by Claude, not corrected by Jesse.
+
+The terminal host is the backend half of W4 (plan section W, Sol P22). The backend owns each terminal's process and
+passes its bytes through untouched; the window's Ghostty draws them. Source: mac-command-bar 2089290
+`tauri-svelte-preview/src-tauri/src/terminal/mod.rs`, a reference for details, not the source of truth.
+
+terminal#1 A terminal opens in a folder you name and runs your login shell there, or one command in it that exits when it's done. A folder that no longer exists fails with its path.
+terminal#2 What you type reaches the program, Ctrl-C included: the shell is the terminal's own, with job control, as in any terminal app.
+terminal#3 The program's output reaches the window byte for byte, unchanged: the backend never decodes, re-encodes or cuts it, so a character split across two reads still draws whole.
+terminal#4 Resizing the view resizes the terminal, and the program sees the new size. A size is kept between 20 and 300 columns and 4 and 100 rows.
+terminal#5 Hiding the view, switching sessions or losing the connection leaves the terminal running. Coming back shows its last 4 MB of output, then carries on live, with nothing missed or repeated.
+terminal#6 A terminal keeps at most 16 MB of output; past that it drops the oldest down to 12 MB. A slow window can't make it keep more.
+terminal#7 When the program exits, the window sees all of its output first, then the exit code or the signal that ended it. An exited terminal keeps its output readable until you close it.
+terminal#8 Closing a terminal ends its program and everything the program started, and lets go of its output. Quitting the app or stopping a remote host closes every terminal it started.
+terminal#9 A session asks for its terminal again and gets the one it already has while that one is still running.
+terminal#10 A terminal on a remote machine behaves the same as one on this computer.
