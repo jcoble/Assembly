@@ -165,8 +165,13 @@ impl Render for SessionsPane {
                 // After a failure, only Retry asks again.
                 let failed = sessions.read(cx).older_error().is_some();
                 if !failed && range.end + LOAD_OLDER_WITHIN >= sessions.read(cx).items().len() {
+                    // Checked again when it runs: a page that failed since this was queued waits for Retry.
                     cx.on_next_frame(window, move |_, _, cx| {
-                        sessions.update(cx, |sessions, cx| sessions.load_older(cx))
+                        sessions.update(cx, |sessions, cx| {
+                            if sessions.older_error().is_none() {
+                                sessions.load_older(cx);
+                            }
+                        })
                     });
                 }
                 let selected = SelectedSession::global(cx)
