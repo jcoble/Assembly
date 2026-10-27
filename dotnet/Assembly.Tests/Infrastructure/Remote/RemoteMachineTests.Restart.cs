@@ -1,5 +1,7 @@
+using System.Globalization;
 using System.Net;
 using System.Net.WebSockets;
+using System.Text;
 using System.Text.Json;
 using Assembly.Tests.Features.Chat.Sessions;
 using Microsoft.AspNetCore.Builder;
@@ -151,6 +153,51 @@ public sealed partial class RemoteMachineTests
         await Task.Delay(TimeSpan.FromSeconds(2.5));
         Assert.InRange(Volatile.Read(ref links), 1, 3);
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
+    }
+
+    [Fact]
+    public async Task A_follower_whose_link_copies_a_row_and_then_closes_reconnects_after_a_second_each_time()
+    {
+        var (parent, helperId, _) = await RemoteHelperIdleAsync();
+
+        await _desktop!.DisposeAsync();
+        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
+        // Every /live sends the next row and then closes: a healthy link, so the backoff stays at 1 s.
+        var links = 0;
+        await using var progressing = await StubAsync(app =>
+        {
+            app.UseWebSockets();
+            app.Map("/live", async (HttpContext context) =>
+            {
+                Interlocked.Increment(ref links);
+                var after = long.Parse(context.Request.Query["after"]!, CultureInfo.InvariantCulture);
+                using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                var row = $$$"""{"type":"row","row":{"sessionId":"{{{helperId}}}","seq":{{{after + 1}}},"runId":null,"itemId":null,"kind":"text","payload":{"text":"x"},"createdAt":1,"prevSeq":{{{after}}}}}""";
+                await socket.SendAsync(Encoding.UTF8.GetBytes(row), WebSocketMessageType.Text, endOfMessage: true, context.RequestAborted);
+                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted);
+            });
+        });
+        _desktop = await DesktopOnAsync(progressing, _desktopHome);
+
+        // Connects at about 0, 1, 2 ... 6 s; doubling would give 0, 1 and 3.
+        await Until(() => Volatile.Read(ref links) >= 1);
+        await Task.Delay(TimeSpan.FromSeconds(6.5));
+        Assert.True(Volatile.Read(ref links) >= 5, $"{links} connects");
+    }
+
+    [Fact]
+    public async Task A_remote_helper_shown_running_shows_idle_after_a_restart_while_its_session_is_open()
+    {
+        var (parent, helperId, _) = await RemoteHelperIdleAsync();
+
+        await _desktop!.DisposeAsync();
+        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
+        await StartDesktopAsync();
+        // Someone opens the helper's session before its follower settles; it stays open.
+        using var watching = await OpenLiveAsync(_desktop!, DesktopToken, helperId, 0);
+
+        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        Assert.Equal(WebSocketState.Open, watching.State);
     }
 
     // A remote helper started by a parent here, whose first turn has ended and whose row here shows idle.
