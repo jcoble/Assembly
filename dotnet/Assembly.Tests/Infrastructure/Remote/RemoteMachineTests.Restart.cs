@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Tests.Features.Chat.Sessions;
 using Microsoft.AspNetCore.Builder;
@@ -122,6 +123,34 @@ public sealed partial class RemoteMachineTests
 
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
         Assert.True(links >= 2);
+    }
+
+    [Fact]
+    public async Task A_follower_whose_link_closes_at_once_reconnects_with_backoff()
+    {
+        var (parent, helperId, _) = await RemoteHelperIdleAsync();
+
+        await _desktop!.DisposeAsync();
+        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
+        // Every /live opens and closes at once, so the follower never settles.
+        var links = 0;
+        await using var closing = await StubAsync(app =>
+        {
+            app.UseWebSockets();
+            app.Map("/live", async (HttpContext context) =>
+            {
+                Interlocked.Increment(ref links);
+                using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted);
+            });
+        });
+        _desktop = await DesktopOnAsync(closing, _desktopHome);
+
+        // Backoff of 1 s, then 2 s: connects at about 0, 1 and 3 s.
+        await Until(() => Volatile.Read(ref links) >= 1);
+        await Task.Delay(TimeSpan.FromSeconds(2.5));
+        Assert.InRange(Volatile.Read(ref links), 1, 3);
+        Assert.Equal("running", await HelperStateAsync(parent, helperId));
     }
 
     // A remote helper started by a parent here, whose first turn has ended and whose row here shows idle.
