@@ -121,12 +121,15 @@ decision; it's one key per file to change if Jesse wants the old light editors b
 
 The window background is blurred (`WindowBackgroundAppearance::Blurred`) on macOS. What shows the blur:
 
-- The kit's root paints `background` over the whole window (root.rs:723), and every dock tab group paints it again
-  (tab_panel.rs:713); split frames and tab strips paint `tab_bar.background` (dock.rs:66, tab_panel.rs:495 and 688).
-  So `background` and `tab_bar.background` are the translucent ones. The sessions column, chat, drawer and dock all
-  share that one ground; `sidebar`, `status_bar` and `title_bar` do nothing for the dock.
-- The layers stack (root, split frame, tab group), so the opacity on screen is higher than any one value. It's tuned
-  on the Mac from screenshots.
+- Each dock split frame paints `tab_bar.background` (dock.rs:66) under its tab groups, and each tab group paints
+  `background` (tab_panel.rs:713); tab strips paint `tab_bar.background` too (tab_panel.rs:495 and 688). The window
+  root paints nothing of its own: gpui-base's Root doesn't, and gpui-component's Root, if a window uses it, paints
+  `background` once more (root.rs:723). So `background` and `tab_bar.background` are the translucent ones. The
+  sessions column, chat, drawer and dock all share that one ground; `sidebar`, `status_bar` and `title_bar` do
+  nothing for the dock.
+- Translucent layers stack, so `tab_bar.background` is clear: then a pane's ground is the one `background` fill
+  (0.47 now), not 0.47 over 0.55. Jesse judges the values on the Mac (spike thread, look direction in
+  notes/gpui-g0/look-direction.md).
 - The rule for other lanes: a view whose text has to stay readable paints its own opaque ground. The chat column
   (g0-session) and code views paint `list.background` (surface) or highlight `editor.background`, which stay opaque here.
   `popover.background` stays opaque too.
