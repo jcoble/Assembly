@@ -460,7 +460,12 @@ fn a_backend_that_refuses_the_window_opens_the_default_layout(cx: &mut TestAppCo
     let (connection, read) = cx.update(|_, cx| {
         let connection = cx.new(|_| Connection);
         // The preferences state never comes; the refusal is what ends the wait.
-        let read = read_saved_layout(std::future::pending(), &connection, cx);
+        let read = read_saved_layout(
+            std::future::pending(),
+            std::future::pending(),
+            &connection,
+            cx,
+        );
         (connection, read)
     });
     let (frame, cx) = open_reading(read, Box::new(|_, _| Task::ready(())), &mut cx.cx);
@@ -484,7 +489,8 @@ fn a_backend_that_connects_the_window_opens_the_saved_layout(cx: &mut TestAppCon
     let (state, first) = oneshot::channel::<Update>();
     let (connection, read) = cx.update(|_, cx| {
         let connection = cx.new(|_| Connection);
-        let read = read_saved_layout(async { first.await.ok() }, &connection, cx);
+        let first = async { first.await.ok() };
+        let read = read_saved_layout(first, std::future::pending(), &connection, cx);
         (connection, read)
     });
     let (frame, cx) = open_reading(read, Box::new(|_, _| Task::ready(())), &mut cx.cx);
@@ -497,4 +503,35 @@ fn a_backend_that_connects_the_window_opens_the_saved_layout(cx: &mut TestAppCon
     _ = state.send(Update::State(vec![(LAYOUT_KEY.into(), item)]));
     cx.run_until_parked();
     assert_eq!(without_sizes(dump(&frame, cx)), without_sizes(saved));
+}
+
+// Pins: g0-shape#3
+#[gpui::test]
+fn a_launcher_that_gives_up_after_ready_the_window_opens_the_default_layout(
+    cx: &mut TestAppContext,
+) {
+    let (fresh, _, cx) = open(None, cx);
+    let default = dump(&fresh, cx);
+    let (give_up, gave_up) = oneshot::channel::<()>();
+    let (connection, read) = cx.update(|_, cx| {
+        let connection = cx.new(|_| Connection);
+        // The backend was ready, then died before the preferences state, until the launcher gave up.
+        let gave_up = async { _ = gave_up.await };
+        let read = read_saved_layout(std::future::pending(), gave_up, &connection, cx);
+        (connection, read)
+    });
+    let (frame, cx) = open_reading(read, Box::new(|_, _| Task::ready(())), &mut cx.cx);
+    let connected = ConnectionState::Connected {
+        machine: "mac".into(),
+    };
+    cx.update(|_, cx| connection.update(cx, |_, cx| cx.emit(connected)));
+    cx.run_until_parked();
+    assert_ne!(
+        dump(&frame, cx),
+        default,
+        "the window waits for the saved layout"
+    );
+    drop(give_up);
+    cx.run_until_parked();
+    assert_eq!(dump(&frame, cx), default);
 }

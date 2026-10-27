@@ -59,6 +59,8 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
     // Answered with the client on the first ready line; dropped unanswered when there's no backend or the launcher gives
     // up before one is ready, so the window opens the default layout instead of waiting.
     let (connected, client) = oneshot::channel();
+    // Dropped when the launcher gives up, which also ends a read whose backend died after its ready line.
+    let (give_up, launcher_gave_up) = oneshot::channel::<()>();
     let backend = std::env::var_os("ASSEMBLY_BACKEND_DIR")
         .map(PathBuf::from)
         .or_else(|| {
@@ -74,7 +76,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
     {
         Ok(config) => {
             let (socket, connected) = (socket.clone(), Rc::new(Cell::new(Some(connected))));
-            let gave_up = connected.clone();
+            let (gave_up, give_up) = (connected.clone(), Rc::new(Cell::new(Some(give_up))));
             Launcher::start(
                 config,
                 move |port, token, cx| {
@@ -90,7 +92,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                         }
                     }
                 },
-                move |_| drop(gave_up.take()),
+                move |_| drop((gave_up.take(), give_up.take())),
                 cx,
             )
         }
@@ -105,7 +107,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
             }
             let mut preferences = client.read(cx).subscribe("preferences", None);
             let first = async move { preferences.updates.recv().await.ok() };
-            read_saved_layout(first, &client, cx)
+            read_saved_layout(first, async { _ = launcher_gave_up.await }, &client, cx)
         })
         .await
     });

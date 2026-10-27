@@ -43,18 +43,19 @@ pub fn saved_layout(first: Option<Update>) -> Option<Value> {
         .and_then(|(_, mut item)| item.get_mut("value").map(Value::take))
 }
 
-/// The saved layout in `first`, the `preferences` topic's first update, unless `connection` reports first that the
-/// backend refused the client (a token or protocol it doesn't take). Then it's `None`, so the window opens the default
-/// layout instead of waiting for a reconnect.
+/// The saved layout in `first`, the `preferences` topic's first update, unless the launcher gives up (`gave_up` ends)
+/// or `connection` reports that the backend refused the client (a token or protocol it doesn't take) before it comes.
+/// Then it's `None`, so the window opens the default layout instead of waiting for a backend that won't answer.
 pub fn read_saved_layout<C: EventEmitter<ConnectionState>>(
     first: impl Future<Output = Option<Update>> + 'static,
+    gave_up: impl Future<Output = ()> + 'static,
     connection: &Entity<C>,
     cx: &mut App,
 ) -> Task<Option<Value>> {
-    // Answered by whichever comes first, the update or the refusal.
+    // Answered by whichever comes first: the update, the give-up or the refusal.
     let (answer, answered) = oneshot::channel::<Option<Update>>();
     let answer = Rc::new(Cell::new(Some(answer)));
-    let refused = answer.clone();
+    let (refused, given_up) = (answer.clone(), answer.clone());
     let watch = cx.subscribe(connection, move |_, state, _| {
         if let ConnectionState::Refused { .. } = state
             && let Some(answer) = refused.take()
@@ -68,9 +69,15 @@ pub fn read_saved_layout<C: EventEmitter<ConnectionState>>(
             _ = answer.send(update);
         }
     });
+    let giving_up = cx.spawn(async move |_| {
+        gave_up.await;
+        if let Some(answer) = given_up.take() {
+            _ = answer.send(None);
+        }
+    });
     cx.spawn(async move |_| {
         // Held until the answer, then dropped, which ends the subscription.
-        let _held = (watch, reading);
+        let _held = (watch, reading, giving_up);
         saved_layout(answered.await.ok().flatten())
     })
 }
