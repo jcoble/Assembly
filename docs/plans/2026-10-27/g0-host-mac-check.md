@@ -7,7 +7,7 @@ Run through "Spike a GPUI session view", with the lane's own backend folder (`AS
    `Assembly.Desktop` left running. The token appears nowhere in the output or backend.log.
 2. Kill the backend from outside: a new one starts at once. Take its port first so it can't start: the log says so
    once, and the palette's "Restart backend" starts it after the port is free.
-3. Cmd-K opens the palette with its slide-in; typing filters; Enter on "Restart backend" runs it and closes the
+3. Cmd-K opens the palette (the tests in features/palette cover the keys; here, its look) with its slide-in; typing filters; Enter on "Restart backend" runs it and closes the
    palette; Escape clears the query, then closes; Cmd-K again closes it; a click outside closes it.
 4. Once a terminal or browser pane exists (g0-shape, the terminal and browser lanes): the palette, a dialog (and
    its 250 ms fade-out), a menu, a popover and a pane drag each hide it, and it comes back where its pane is. A tab

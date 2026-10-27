@@ -74,3 +74,7 @@ impl Render for PaletteView {
             .on_confirm(|_, window, cx| window.close_dialog(cx))
     }
 }
+
+#[cfg(test)]
+#[path = "palette_view_tests.rs"]
+mod tests;
