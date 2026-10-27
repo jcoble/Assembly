@@ -120,6 +120,8 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Until(() => _host.ActiveRunId is null);
+        // The close's answer is handled before the clock moves, or the jump would time the close out.
+        await Until(() => _log.ToString().Contains("session close"));
 
         // Inside the grace the next turn finds it warm.
         _time.Advance(SharedAdapter.IdleGrace - TimeSpan.FromSeconds(1));
@@ -129,6 +131,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Until(() => _host.ActiveRunId is null);
+        await Until(() => _log.ToString().Split("session close").Length == 3);
         Assert.False(agent.Disposed);
 
         // The grace starts once the close's answer is in, so the clock moves on in steps until the adapter stops.

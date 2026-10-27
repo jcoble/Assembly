@@ -35,6 +35,8 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     private readonly Dictionary<RunningAdapter, int> _retired = [];
     // Each ACP session whose close timed out, with its retired adapter's exit.
     private readonly Dictionary<string, Task> _closing = [];
+    // Retired adapters being stopped, so disposing this waits for them too.
+    private readonly List<Task> _stopping = [];
 
     /// <summary>The running adapter, started if need be, for one more session; <see cref="ReleaseAsync"/> gives it back.</summary>
     internal async Task<RunningAdapter> GetAsync(StageTimes stages, CancellationToken cancellationToken)
@@ -77,7 +79,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     /// </summary>
     internal async Task ReleaseAsync(RunningAdapter running)
     {
-        var stop = false;
+        Task? stopping = null;
         await _gate.WaitAsync();
         try
         {
@@ -86,7 +88,11 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
                 if (left > 1)
                     _retired[running] = left - 1;
                 else
-                    stop = _retired.Remove(running);
+                {
+                    _retired.Remove(running);
+                    _stopping.RemoveAll(task => task.IsCompleted);
+                    _stopping.Add(stopping = running.Link.DisposeAsync().AsTask());
+                }
                 return;
             }
             if (--_sessions > 0)
@@ -98,8 +104,8 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         {
             _gate.Release();
             // Outside the gate: a stuck process takes its grace to end, and other sessions shouldn't wait on it.
-            if (stop)
-                await running.Link.DisposeAsync();
+            if (stopping is not null)
+                await stopping;
         }
     }
 
@@ -193,6 +199,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
             foreach (var retired in _retired.Keys)
                 await retired.Link.DisposeAsync();
             _retired.Clear();
+            await Task.WhenAll(_stopping);
         }
         finally
         {
