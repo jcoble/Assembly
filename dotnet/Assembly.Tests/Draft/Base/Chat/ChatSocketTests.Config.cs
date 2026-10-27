@@ -100,4 +100,19 @@ public sealed partial class ChatSocketTests
 
         await _box.Cancelled.Task.WaitAsync(Wait);
     }
+
+    [Fact]
+    public async Task Config_get_set_and_machines_agents_on_a_machine_thats_down_are_unreachable()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Down = true;
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "config", "get", $$"""{"session":"{{session.SessionId}}"}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "config", "set", $$"""{"session":"{{session.SessionId}}","configId":"model","value":"small"}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+    }
 }

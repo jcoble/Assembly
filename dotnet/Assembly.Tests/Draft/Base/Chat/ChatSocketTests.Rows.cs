@@ -132,4 +132,18 @@ public sealed partial class ChatSocketTests
 
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"the answer is over 4 MB"}""", await ReadAsync(socket));
     }
+
+    // rows/page reads this machine's copy; only rows/tool asks the session's machine.
+    [Fact]
+    public async Task Rows_tool_on_a_machine_thats_down_is_unreachable_and_rows_page_still_answers()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Down = true;
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "page", $$"""{"session":"{{session.SessionId}}"}""");
+        Assert.StartsWith("""{"t":"result","id":2,""", await ReadAsync(socket));
+    }
 }
