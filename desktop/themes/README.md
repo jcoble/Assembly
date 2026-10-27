@@ -18,7 +18,7 @@ false.
 | dracula | dracula.json | Dracula | themeRegistry.ts DRACULA |
 | tokyo-night | tokyo-night.json | Tokyo Night | themeRegistry.ts TOKYO_NIGHT |
 | graphite | graphite.json | Graphite | themeRegistry.ts GRAPHITE |
-| amy, ayu-light, cobalt, rose-pine-dawn, tomorrow | `<id>.json` | Amy, Ayu Light, Cobalt, Rose Pine Dawn, Tomorrow | themeRegistry.ts THEMEMIRROR_THEMES: the Assembly shell with thememirror 2.0.1's syntax colours |
+| amy, ayu-light, cobalt, rose-pine-dawn, tomorrow | `<id>.json` | Amy, Ayu Light, Cobalt, Rose Pine Dawn, Tomorrow | themeRegistry.ts THEMEMIRROR_THEMES: the Assembly shell with thememirror 2.0.1's editor and syntax colours (three still empty, see below) |
 
 Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable blur.
 
@@ -112,13 +112,20 @@ Tokyo Night and Graphite take the base syntax colours the old editor used for al
 
 ## The five ThemeMirror entries
 
-Each is Assembly's file with its own `highlight.syntax` from thememirror 2.0.1. The kit has no theme inheritance, so
-Assembly's `colors` are copied into these five files; that is the one place the colours repeat.
+Each is Assembly's file with its own editor from thememirror 2.0.1: its syntax colours, and its editor background,
+active-line ground, text and line-number colours from the theme's `settings`. The kit has no theme inheritance, so
+Assembly's `colors` are copied into these files; that is the one place the colours repeat. In the old app each entry
+brought its own editor background, and without it their code reads at about 2-3:1 on our dark ground (Jesse,
+2026-10-27: own editor backgrounds, replacing the 10-26 "syntax colours only"). Not from thememirror: `hint` takes the
+theme's comment colour and the Markdown keys take its foreground, keyword and string, so they read on its own editor.
 
-The editor background stays Assembly's `surface`. In the old app these entries also replaced the editor background
-(Ayu Light's is #fcfcfc, a light editor in a dark shell), but the 2026-10-26 decision says they "change only the
-editor's syntax colours", and the editor uses the theme's panel colours (old commit 1a06d74e). That follows the
-decision; it's one key per file to change if Jesse wants the old light editors back.
+Amy and Cobalt are filled. Ayu Light, Rose Pine Dawn and Tomorrow are light editors and stay empty for now. Kit 0.8.1's
+code editor draws text and the current line's number in the app-wide `foreground` and other line numbers in
+`muted.foreground`, and never reads `highlight.editor.foreground` or the line-number keys (gpui-component
+input/input.rs:540-541, gpui-base input/base/element.rs:3117, 3125). On a white editor that's light gray on white, about 1.4:1. These three get
+filled once the code view draws editor text in the theme's editor colours; the values are ready from the same
+mapping. (The `editor.foreground` and line-number keys in Amy, Cobalt and the other files are unread for the same
+reason; on their dark editors the app-wide colours read fine.)
 
 ## Glass (assembly-glass.json)
 
