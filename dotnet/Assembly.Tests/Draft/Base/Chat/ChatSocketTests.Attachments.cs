@@ -202,8 +202,8 @@ public sealed partial class ChatSocketTests
         Assert.Empty(Directory.GetFiles(Staging));
     }
 
-    // A cancelled chunk never runs, but its upload goes in its turn, with no further call: a window that cancels and
-    // never drops isn't left at the cap.
+    // A cancelled chunk answers at once and never runs, but its upload goes in its turn, with no further call: a window
+    // that cancels and never drops isn't left at the cap.
     [Fact]
     public async Task A_chunk_cancelled_in_the_queue_drops_its_upload()
     {
@@ -217,16 +217,21 @@ public sealed partial class ChatSocketTests
         await _here.Reached.Task.WaitAsync(Wait);
         await ChunkAsync(socket, 3, uploads[0], 0, new byte[5]);
         await SendAsync(socket, """{"t":"cancel","id":3}""");
-        // Frames are read in order, so once this save answers, the cancel has landed.
-        await CallAsync(socket, 4, "preferences", "set", Save);
-        Assert.Equal([4], (await ReadAnswersAsync(socket, 1)).Keys);
+        Dictionary<long, string> cancelled;
+        try
+        {
+            cancelled = await ReadAnswersAsync(socket, 1);
+        }
+        finally
+        {
+            _here.Release();
+        }
+        Assert.Contains("\"code\":\"cancelled\"", cancelled[3]);
+        Assert.Equal([2], (await ReadAnswersAsync(socket, 1)).Keys);
 
-        _here.Release();
-        var answers = await ReadAnswersAsync(socket, 2);
-
-        Assert.Contains("\"code\":\"cancelled\"", answers[3]);
-        Assert.Equal(7, Directory.GetFiles(Staging).Length);
+        // A begin waits for the chunk's turn, so the upload has gone by then.
         await BeginAsync(socket, session.SessionId, "image/png", 10);
+        Assert.Equal(8, Directory.GetFiles(Staging).Length);
     }
 
     // Only what begin makes goes: a --home that points somewhere real loses nothing else.

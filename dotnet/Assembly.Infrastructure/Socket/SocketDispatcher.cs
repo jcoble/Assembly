@@ -226,7 +226,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             // A write joins its key's queue, or else its socket's, now, in arrival order; a read runs off the receive
             // loop, so one that blocks doesn't hold up the frames after it.
             var result = call.Writes
-                ? await connection.QueueWriteAsync(call.Order?.Invoke(args), () => call.RunAsync(args, context))
+                ? await connection.QueueWriteAsync(call.Order?.Invoke(args), () => call.RunAsync(args, context), token.Token)
                 : await Task.Run(() => call.RunAsync(args, context));
             var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
             return Bounded(answer, id);
