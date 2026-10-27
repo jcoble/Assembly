@@ -21,6 +21,7 @@ using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
+using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Clock;
 
 namespace Assembly.Desktop.Serve;
@@ -85,7 +86,8 @@ public sealed class DesktopBackend : IAsyncDisposable
         Uri? address = null;
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System)]), port, routes =>
+            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System),
+                new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));
