@@ -15,7 +15,8 @@ sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_clie
 detaches="(\.|::)detach[a-z_]*[[:space:]]*\("
 # Starting an OS thread: only the socket client, desktop/src/core/socket/, and the backend launcher,
 # desktop/src/core/backend/, may. A scoped thread (thread::scope) always joins, so it's fine anywhere.
-threads="${b}thread::(spawn|Builder)${e}|thread::\{([^}]*[^[:alnum:]_])?(spawn|Builder)${e}"
+# A grouped import split over lines (a line ending in "thread::{") counts too, since grep reads one line at a time.
+threads="${b}thread::(spawn|Builder)${e}|${b}thread::\{([^}]*[^[:alnum:]_])?(spawn|Builder)${e}|${b}thread::\{[[:space:]]*$"
 # A file that draws (implements Render or RenderOnce, or has a render function), and file reads in one.
 draws="${b}impl([^[:alnum:]_]|[^[:alnum:]_].*[^[:alnum:]_])(Render|RenderOnce)[[:space:]]+for${e}|${b}fn[[:space:]]+render${e}"
 files="${b}fs${e}|${b}File::"
@@ -68,6 +69,8 @@ catch|desktop/src/features/x/a.rs|std::thread::spawn(move || {});
 catch|desktop/src/core/x/a.rs|let t = thread::Builder::new().name("x".into()).spawn(f)?;
 catch|desktop/src/features/x/a.rs|use std::thread::{self, spawn as go};
 catch|desktop/src/features/x/a.rs|use std::thread::{spawn};
+catch|desktop/src/features/x/a.rs|use std::thread::{
+pass|desktop/src/features/x/a.rs|use nonthread::{spawn};
 pass|desktop/src/core/socket/a.rs|std::thread::spawn(move || {});
 pass|desktop/src/core/backend/a.rs|let t = thread::Builder::new().name("x".into()).spawn(f)?;
 pass|desktop/src/features/x/a.rs|let task = cx.background_executor().spawn(async {});

@@ -46,7 +46,8 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
 - `tungstenite`, `TcpStream`, `TcpListener`, `UdpSocket` or an HTTP client outside `src/core/socket/`;
 - `.detach()` (or `detach_and_log_err`) on a task or subscription anywhere: whatever starts one holds it;
 - starting an OS thread (`thread::spawn`, `thread::Builder`) outside `src/core/socket/` and `src/core/backend/` (the
-  backend launcher); `thread::scope` always joins, so it's fine anywhere;
+  backend launcher), including a grouped `thread::{` import split over lines; `thread::scope` always joins, so it's
+  fine anywhere;
 - file reads (`std::fs` in any form, `File::`) in a file that draws: one that implements `Render` or `RenderOnce` or
   has a `fn render`.
 
