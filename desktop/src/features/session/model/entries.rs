@@ -19,18 +19,19 @@ pub enum Entry {
         first: usize,
         ends_reply: bool,
     },
-    /// A live turn's "Working for" line.
+    /// A live turn's activity card: its tool calls, and its steps and time.
     Working,
 }
 
 impl Entry {
-    /// The list's rows. `open`: the folds the reader opened, by run id.
+    /// The list's rows. `open`: the folds the reader opened, by run id. `live_run`: the run going now, whose tool
+    /// calls draw in its activity card on the working line instead of as rows.
     pub fn all(
         items: &[Item],
         folds: &HashMap<String, Fold>,
         open: &HashSet<String>,
         loading: bool,
-        working: bool,
+        live_run: Option<&str>,
     ) -> Vec<Entry> {
         let mut list = Vec::new();
         if loading {
@@ -58,6 +59,9 @@ impl Entry {
                     continue;
                 }
             }
+            if in_card(item, live_run) {
+                continue;
+            }
             let draws = match &item.kind {
                 ItemKind::Error { message, code } => {
                     Notice::of_error(message, code.as_deref()).is_some()
@@ -68,7 +72,7 @@ impl Entry {
                 list.push(Entry::Item(at));
             }
         }
-        if working {
+        if live_run.is_some() {
             list.push(Entry::Working);
         }
         list
@@ -82,6 +86,22 @@ impl Entry {
             Entry::FoldHeading { run_id, .. } => format!("fold:{run_id}"),
             Entry::Working => "line:working".to_string(),
         }
+    }
+}
+
+/// The running turn's tool calls draw in its activity card, on the working line, instead of as rows.
+pub fn in_card(item: &Item, live_run: Option<&str>) -> bool {
+    matches!(item.kind, ItemKind::Tool { .. })
+        && live_run.is_some()
+        && item.run_id.as_deref() == live_run
+}
+
+/// The key of the entry an item draws in: its own, or the working line's for a step in the activity card.
+pub fn entry_key(item: &Item, live_run: Option<&str>) -> String {
+    if in_card(item, live_run) {
+        Entry::Working.key(&[])
+    } else {
+        item.key.clone()
     }
 }
 

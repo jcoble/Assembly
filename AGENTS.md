@@ -246,8 +246,9 @@ etc. Then have a code and spec review done, one Claude and one Sol 6.1."
 - A change the owner can see or use also gets a feature check: open that feature in the app with real-looking data
   (long names, many projects, large chats), use it as the task describes, and look for anything cut off, repeated or
   empty.
-- Window screenshots before and after go in the project's private files, not this repo (they show machine names
-  and paths). `scripts/check4.sh window <commit> <file>...` records their names in the summary.
+- Window screenshots before and after go to Google Drive with the `evidence` tool, never into this repo, and the PR
+  and its task link to them (docs/evidence.md). `scripts/check4.sh window <commit> <file>...` records their names in
+  the summary.
 - Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).
 - Real-window checks (the lag meter, memory) run on the Mac: pull the lane's branch into a Mac lane and run
   `shell/assembly.sh start --counters` there.
