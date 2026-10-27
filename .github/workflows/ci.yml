@@ -1,6 +1,7 @@
 # On every push and pull request: the backend builds with no warnings and its tests pass, the app checks, tests and
-# builds, the shell checks and tests, every scripts/*.test.sh passes, the app's guards and lint pass, and (on a pull
-# request) each of its own commits passes scripts/check-commit-msg.sh.
+# builds, the shell checks and tests, the window (desktop/) builds, tests and passes clippy, every scripts/*.test.sh
+# passes, the app's guards and lint pass, and (on a pull request) each of its own commits passes
+# scripts/check-commit-msg.sh.
 name: ci
 on:
   push:
@@ -52,6 +53,28 @@ jobs:
       - run: mkdir -p ../app/build backend
       - run: cargo check --locked
       - run: cargo test --locked
+  desktop:
+    # The GPUI window (desktop/README.md): builds, tests and passes clippy with warnings denied. Its guard runs in lint.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - name: Install GPUI's Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libxcb1-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
+      - run: cargo build --locked
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
   scripts:
     runs-on: ubuntu-latest
     steps:
