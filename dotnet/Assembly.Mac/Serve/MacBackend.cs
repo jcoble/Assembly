@@ -19,6 +19,7 @@ using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Topics;
 
 namespace Assembly.Mac.Serve;
 
@@ -55,7 +56,7 @@ public sealed class MacBackend : IAsyncDisposable
     {
         Directory.CreateDirectory(home);
         var database = Path.Combine(home, "assembly.db");
-        var db = AppDatabase.Open(database);
+        var db = AppDatabase.Open(database, TimeProvider.System, new Topics());
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System);
         var hub = new LiveHub(store);

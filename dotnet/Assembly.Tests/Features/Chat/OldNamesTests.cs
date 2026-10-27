@@ -103,7 +103,7 @@ public sealed class OldNamesTests : IDisposable
 
     private AppDatabase Open(out RowStore rows, out SessionStore sessions)
     {
-        var database = AppDatabase.Open(_db.Path);
+        var database = TestDatabase.Open(_db.Path);
         rows = RowStore.Open(database);
         sessions = SessionStore.Open(database, _time);
         return database;

@@ -17,7 +17,7 @@ public sealed class AppDatabaseTests : IDisposable
 
     public AppDatabaseTests()
     {
-        _db = AppDatabase.Open(_file.Path);
+        _db = TestDatabase.Open(_file.Path);
         _db.Writer.Write("test.schema", scope => scope.Execute("CREATE TABLE notes(id INTEGER PRIMARY KEY, text TEXT);"));
     }
 

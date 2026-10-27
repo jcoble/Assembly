@@ -7,6 +7,7 @@ using Assembly.Domain.Rows;
 using Assembly.Application.Features.Chat;
 using Assembly.Application.Common.Acp;
 using Assembly.Infrastructure.Transcript;
+using Assembly.Infrastructure.Topics;
 
 namespace Assembly.Remote.Replay;
 
@@ -28,7 +29,7 @@ public static class ReplayRun
         }
 
         var dbPath = args.Count == 3 ? args[2] : Path.Combine(Path.GetTempPath(), $"replay-{Guid.NewGuid():N}.db");
-        using var db = AppDatabase.Open(dbPath);
+        using var db = AppDatabase.Open(dbPath, TimeProvider.System, new Topics());
         var store = RowStore.Open(db);
         var converter = new RowConverter();
         var pushed = new List<StoredRow>();

@@ -28,7 +28,7 @@ public sealed class PreferencesRoutesTests : IAsyncLifetime
         builder.WebHost.UseUrls("http://127.0.0.1:0");
         var app = builder.Build();
         _database?.Dispose();
-        _database = AppDatabase.Open(_db.Path);
+        _database = TestDatabase.Open(_db.Path);
         PreferencesRoutes.Add(app, new FeatureContext(_database));
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();

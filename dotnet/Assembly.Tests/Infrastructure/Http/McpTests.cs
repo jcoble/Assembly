@@ -43,7 +43,7 @@ public sealed class McpTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
-        _database = AppDatabase.Open(_db.Path);
+        _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
         _sessionStore = SessionStore.Open(_database, TimeProvider.System);

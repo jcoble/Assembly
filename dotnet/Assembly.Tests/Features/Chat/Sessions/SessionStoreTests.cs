@@ -16,7 +16,7 @@ public sealed class SessionStoreTests : IDisposable
 
     public SessionStoreTests()
     {
-        _database = AppDatabase.Open(_db.Path);
+        _database = TestDatabase.Open(_db.Path);
         _sessionStore = SessionStore.Open(_database, _time);
     }
 
@@ -72,7 +72,7 @@ public sealed class SessionStoreTests : IDisposable
     [Fact]
     public void It_shares_a_database_file_with_the_rows()
     {
-        using var database = AppDatabase.Open(_db.Path);
+        using var database = TestDatabase.Open(_db.Path);
         var rows = RowStore.Open(database);
         var a = Create();
         var reopened = SessionStore.Open(database, _time);
@@ -107,7 +107,7 @@ public sealed class SessionStoreTests : IDisposable
             command.ExecuteNonQuery();
         }
 
-        using var sessionsDatabase = AppDatabase.Open(olderDb.Path);
+        using var sessionsDatabase = TestDatabase.Open(olderDb.Path);
         var sessionStore = SessionStore.Open(sessionsDatabase, _time);
         Assert.Equal(new SessionInfo("old", "claude", "r", "Old one", "acp-1", 2), sessionStore.Get("old"));
         Assert.Equal("workbox-test", sessionStore.Add("new", "claude", "r", "workbox-test").Machine);

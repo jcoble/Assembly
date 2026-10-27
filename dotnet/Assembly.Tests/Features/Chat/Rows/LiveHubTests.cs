@@ -16,7 +16,7 @@ public sealed class LiveHubTests : IDisposable
 
     public LiveHubTests()
     {
-        _database = AppDatabase.Open(_db.Path);
+        _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
     }
 
@@ -131,7 +131,7 @@ public sealed class LiveHubTests : IDisposable
     {
         // On the Mac, a remote session's rows arrive as copies that keep the box's seqs.
         using var boxDb = new TempDatabase();
-        using var boxDatabase = AppDatabase.Open(boxDb.Path);
+        using var boxDatabase = TestDatabase.Open(boxDb.Path);
         var box = RowStore.Open(boxDatabase);
         var rows = box.Commit("a", Batch("one", "two"));
         using var hub = new LiveHub(_store);

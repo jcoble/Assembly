@@ -24,7 +24,8 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
     `Common/Acp/V1/` is the one place that knows ACP's shapes and each provider's quirks.
   - `Features/<Feature>/`: everything one feature is: its records, its rules, its tables and its plain SQL. A
     feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase` and
-    writes through `IAtomicWriter`.
+    writes through `IAtomicWriter`. Each write is one transaction with its audit row, and the changes it publishes
+    (`IWriteScope.Publish`) go to `ITopics` only after it commits.
 - `Assembly.Infrastructure/`: references Application. SQLite and the one writer, starting agent processes and git,
   the local and remote machines, and the files and native calls behind a feature (`Infrastructure/<Feature>/`).
 

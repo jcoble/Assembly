@@ -18,7 +18,7 @@ public sealed class RunRecoveryTests : IDisposable
 
     public RunRecoveryTests()
     {
-        _database = AppDatabase.Open(_db.Path);
+        _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
     }
 
