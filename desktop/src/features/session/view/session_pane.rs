@@ -97,8 +97,11 @@ pub struct SessionPane {
     /// on the session, so a load for the session left behind stops.
     _rows: Option<Subscription>,
     _page: Option<Task<()>>,
-    /// The calls a row's buttons started, by what they're for, so a newer one of the same kind replaces the older.
-    _tasks: HashMap<String, Task<()>>,
+    /// The reads a row's buttons started (a tool's detail, an image), by what they're for, so a newer one of the same
+    /// kind replaces the older; they drop with the session.
+    _loads: HashMap<String, Task<()>>,
+    /// The writes they started (an answer, a Stop), kept the same way; these go on when the reader switches away.
+    _writes: HashMap<String, Task<()>>,
     /// The selected session, followed once the pane is registered.
     _selected: Option<Subscription>,
     /// The composer's events and the timeline's scrolling.
@@ -242,7 +245,8 @@ impl SessionPane {
             _rows: None,
             _selected: None,
             _page: None,
-            _tasks: HashMap::new(),
+            _loads: HashMap::new(),
+            _writes: HashMap::new(),
             _heard: heard,
         }
     }
@@ -254,10 +258,11 @@ impl SessionPane {
         if self.session.as_ref() == Some(&session) {
             return;
         }
-        // The old subscription and loads drop first, so nothing of the session left behind lands here.
+        // The old subscription and loads drop first, so nothing of the session left behind lands here. Its writes (an
+        // answer, a Stop) go on.
         self._rows = None;
         self._page = None;
-        self._tasks.clear();
+        self._loads.clear();
         self.view = SessionView::default();
         self.held = Some(Vec::new());
         self.open_folds.clear();
@@ -562,3 +567,6 @@ mod switch_tests;
 #[cfg(test)]
 #[path = "session_pane_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "session_pane_write_tests.rs"]
+mod write_tests;

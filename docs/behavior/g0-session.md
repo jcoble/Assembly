@@ -9,7 +9,7 @@ g0-session#4 A reply streams in place, its text coming in smoothly like typing, 
 g0-session#5 Sending a message shows it at once as pending, until the session's own copy of it arrives, and scrolls it to the top of the view with the reply writing below it.
 g0-session#6 "Jump to latest" goes to the newest message and keeps following while a turn writes; scrolling yourself stops following. Following never runs past the prompt.
 g0-session#7 Going back to the latest keeps the older messages already loaded.
-g0-session#8 Each session keeps its reading place and its unsent draft when you switch away and back while the app runs. The reading place changes only when you scroll.
+g0-session#8 Each session keeps its reading place and its unsent draft when you switch away and back while the app runs. The reading place changes only when you scroll. Known limit: the place comes back only when it's within the newest page of messages; a place further back opens at the newest messages instead.
 g0-session#9 A finished turn folds its work behind one "Worked for 42s · Edited 2 files, ran 3 commands" heading above its final reply; opening it keeps the heading where it was. A running turn never folds.
 g0-session#10 Under each turn: how long it worked, when it started, the model, tokens, cache and cost. "Stopped" when you stopped it (once, even if another turn's rows split it), "Failed" when it failed.
 g0-session#11 "Checkout changed · main@1a2b3c4 → feat@5d6e7f8" shows above a prompt when the run started on a different branch or commit.

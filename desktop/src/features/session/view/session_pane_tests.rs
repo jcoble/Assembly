@@ -326,3 +326,30 @@ fn each_session_keeps_its_reading_place_when_you_switch_away_and_back(cx: &mut T
     jump(&client, 30, cx);
     assert_eq!(top(&pane, cx), 5);
 }
+
+// Pins: g0-session#8
+#[gpui::test]
+fn a_reading_place_older_than_the_newest_page_opens_at_the_end_and_never_jumps_later(
+    cx: &mut TestAppContext,
+) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(users(1..=30), false, None)));
+    jump(&client, 30, cx);
+    let timeline = cx.update(|_, cx| pane.read(cx).timeline.clone());
+    cx.update(|_, cx| timeline.update(cx, |timeline, cx| timeline.scroll_to_row(5, cx)));
+    show(&pane, "s2", cx);
+    client.queue_answer(Ok(page(users(1..=3), false, None)));
+    jump(&client, 3, cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(users(11..=30), true, None)));
+    jump(&client, 30, cx);
+    let at_open = top(&pane, cx);
+    client.queue_answer(Ok(page(users(1..=10), false, None)));
+    pane.update(cx, |pane, cx| pane.load_older(cx));
+    cx.run_until_parked();
+    assert!(
+        top(&pane, cx) >= at_open,
+        "the older page that holds the old place doesn't scroll to it"
+    );
+}

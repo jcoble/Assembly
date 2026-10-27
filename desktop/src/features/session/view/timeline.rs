@@ -31,7 +31,7 @@ pub struct Timeline {
     follow: Follow,
     /// Each session's reading place, by session id: the key of the top row on screen when it was left.
     places: HashMap<String, String>,
-    /// The reading place to go back to once its row is in the entries.
+    /// The reading place to go back to when the session's first page lands, if its row is in it.
     restore: Option<String>,
     /// The top row on screen when the scroller last changed.
     top: usize,
@@ -81,7 +81,8 @@ impl Timeline {
     }
 
     /// Switches to another session's entries: keeps the reading place of the one it leaves, and goes back to the
-    /// one it left the new one at once that row is loaded, or the end. One left at its end goes back to the end.
+    /// one it left the new one at when the first page holds that row; otherwise, or when it was left at its end, it
+    /// goes to the end.
     pub fn set_session(
         &mut self,
         session: Option<String>,
@@ -149,12 +150,12 @@ impl Timeline {
                 scroller.remeasure_items(at..at + 1, cx);
             }
         });
-        if let Some(at) = self
-            .restore
-            .as_ref()
-            .and_then(|key| self.entries.iter().position(|(entry, _)| entry == key))
+        // The first page's rows are where the place can come back; one older than them opens at the end, and an older
+        // page that holds it later doesn't jump there.
+        let restore = self.restore.take_if(|_| !self.entries.is_empty());
+        if let Some(at) =
+            restore.and_then(|key| self.entries.iter().position(|(entry, _)| *entry == key))
         {
-            self.restore = None;
             self.scroller
                 .update(cx, |scroller, cx| scroller.scroll_to_item(at, cx));
         }

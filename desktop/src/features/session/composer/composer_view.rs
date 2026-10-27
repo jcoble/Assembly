@@ -1,15 +1,16 @@
-//! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line), the attached images, the
-//! agent's config (`config/get`, read again when a turn ends) and the "/" menu's state. Send is `send/send` with the
-//! draft and its "Attached image:" lines. (A pending prompt waits on the base lane echoing a client id on the user
-//! row.) While a turn runs, a send
-//! steers it and Send turns into Stop (`send/stop`). Dropped or pasted images attach; any other dropped file goes
-//! into the draft as its path. Each session's unsent draft lives here while the window runs. It draws, so it never
-//! reads a file: `upload_image` does. Replaces Composer.svelte.
+//! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line) and each session's unsent
+//! draft while the window runs. Send is `send/send` with the draft. While a turn runs, a send steers it and a Stop
+//! button beside the draft stops it (`send/stop` with the run id). It holds the attachments, the agent's config and
+//! the "/" menu's state for when those are drawn; nothing attaches images, draws the menus or draws the context ring
+//! yet. (A pending prompt waits on the base lane echoing a client id on the user row.) Replaces Composer.svelte.
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
 
@@ -103,6 +104,17 @@ impl Composer {
         }
     }
 
+    /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
+    fn stop(&mut self, cx: &mut Context<Self>) {
+        let Some(run) = self.running.clone() else {
+            return;
+        };
+        let call = self
+            .client
+            .call("send", "stop", json!({ "runId": run }), None, cx);
+        self._tasks.push(cx.spawn(async move |_, _| _ = call.await));
+    }
+
     /// Sends the draft once every attachment has uploaded.
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
@@ -166,8 +178,22 @@ const DRAFT_ROWS: usize = 10;
 impl EventEmitter<ComposerEvent> for Composer {}
 
 impl Render for Composer {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().w_full().child(Textarea::new(&self.draft))
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let stop = cx.listener(|composer, _, _, cx| composer.stop(cx));
+        h_flex()
+            .w_full()
+            .gap_2()
+            .items_end()
+            .child(div().flex_1().child(Textarea::new(&self.draft)))
+            .when(self.running.is_some(), |row| {
+                row.child(
+                    Button::new("composer:stop")
+                        .primary()
+                        .rounded(px(999.))
+                        .label("Stop")
+                        .on_click(stop),
+                )
+            })
     }
 }
 

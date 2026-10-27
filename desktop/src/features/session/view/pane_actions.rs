@@ -166,7 +166,7 @@ impl SessionPane {
             cx,
         );
         let task = format!("tool:{key}");
-        self._tasks.insert(
+        self._loads.insert(
             task,
             cx.spawn(async move |pane, cx| {
                 let answer = call.await;
@@ -264,12 +264,15 @@ impl SessionPane {
     /// One of the `send` feature's calls, `task` naming what it's for; a failure says why under the timeline.
     fn send(&mut self, task: String, method: &'static str, args: Value, cx: &mut Context<Self>) {
         let call = self.client.call("send", method, args, None, cx);
-        self._tasks.insert(
+        let session = self.session.clone();
+        self._writes.insert(
             task,
             cx.spawn(async move |pane, cx| {
                 let answer = call.await;
                 pane.update(cx, |pane, cx| match answer {
                     Ok(_) | Err(CallError::Aborted) => {}
+                    // Said only where it was sent from: the reader may have switched away since.
+                    Err(_) if pane.session != session => {}
                     Err(error) => pane.say_failed("That didn't go through", error, cx),
                 })
                 .ok();
@@ -301,7 +304,7 @@ impl SessionPane {
     ) {
         let client = self.client.clone();
         let task = format!("image:{name}");
-        self._tasks.insert(
+        self._loads.insert(
             task,
             cx.spawn_in(window, async move |pane, cx| {
                 let mut bytes: Vec<u8> = Vec::new();

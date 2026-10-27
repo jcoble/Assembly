@@ -135,3 +135,25 @@ fn each_session_keeps_its_unsent_draft(cx: &mut TestAppContext) {
     set("s1", &composer, cx);
     assert_eq!(draft(&composer, cx), "for one");
 }
+
+// Pins: g0-session#22
+#[gpui::test]
+fn stop_stops_the_running_turn_and_does_nothing_while_idle(cx: &mut TestAppContext) {
+    let (composer, client, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx);
+        composer.stop(cx);
+    });
+    cx.run_until_parked();
+    assert!(client.calls().is_empty(), "nothing to stop while idle");
+    client.queue_answer(Ok(json!({ "ok": true })));
+    composer.update(cx, |composer, cx| {
+        composer.set_running(Some("r7".into()), cx);
+        composer.stop(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        client.calls(),
+        [("send/stop".to_string(), json!({ "runId": "r7" }))]
+    );
+}
