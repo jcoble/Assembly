@@ -38,8 +38,10 @@ Rust tests live in a `tests.rs` or `*_tests.rs` file beside the code (`#[cfg(tes
 - One type per file, and no file over about 300 lines.
 - A timer or animation is a `Task` held by the view that started it, never detached, so closing the view stops it.
   App-wide subscriptions (window closed, app quit) are held in the root view's `_subscriptions: Vec<Subscription>`.
-- Anything that ticks on a schedule (elapsed or relative times, the meter) subscribes to the backend's `clock` topic.
+- Anything that ticks on a schedule (elapsed or relative times) subscribes to the backend's `clock` topic.
   Window timers are only for animations, frame waits and a debounce.
+- The one exception is the lag meter (`features/meter/`): its 100 ms stall tick and 5 s report timer run only while
+  `ASSEMBLY_METER` is set (Jesse, 2026-10-27).
 - The root module is named `core`, so in `main.rs` the `core` crate is `::core::`.
 
 ## The guard
@@ -47,6 +49,8 @@ Rust tests live in a `tests.rs` or `*_tests.rs` file beside the code (`#[cfg(tes
 `scripts/guard.sh` fails, with no allow lists, on:
 
 - `tungstenite`, `TcpStream`, `TcpListener`, `UdpSocket` or an HTTP client outside `src/core/socket/`;
+- a native view API (`gpui_webview`, Ghostty, `NSView`, `WKWebView`, `objc`, `cocoa`, `raw_window_handle`) outside
+  `src/core/native_views/`, the one module that shows, hides and places the terminal and browser views;
 - `.detach()` (or `detach_and_log_err`) on a task or subscription anywhere: whatever starts one holds it;
 - starting an OS thread (`thread::spawn`, `thread::Builder`) outside `src/core/socket/` and `src/core/backend/` (the
   backend launcher), including a grouped `thread::{` import split over lines; `thread::scope` always joins, so it's
