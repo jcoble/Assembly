@@ -13,9 +13,11 @@ same_code() { [ "$1" = "$commit" ] || { git cat-file -e "$1^{commit}" 2>/dev/nul
 
 last="no answer"
 end=$((SECONDS + deadline))
-# Each request gets at most the time left, so an answer after the deadline doesn't count.
-while [ "$SECONDS" -lt "$end" ]; do
-  seen=$(printf 'Authorization: Bearer %s\n' "$token" | curl -s --max-time $((end - SECONDS)) -H @- "$base/version" | jq -r '.commit // empty' 2>/dev/null || true)
+# Each request gets at most the time left, so an answer after the deadline doesn't count. It's worked out once and
+# must be above 0: curl takes --max-time 0 as no limit.
+while :; do
+  t=$((end - SECONDS)); [ "$t" -gt 0 ] || break
+  seen=$(printf 'Authorization: Bearer %s\n' "$token" | curl -s --max-time "$t" -H @- "$base/version" | jq -r '.commit // empty' 2>/dev/null || true)
   if [ -n "$seen" ]; then
     same_code "$seen" && { echo "$seen"; exit 0; }
     last="it answered with $seen"
