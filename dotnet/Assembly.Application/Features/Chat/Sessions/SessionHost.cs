@@ -242,25 +242,33 @@ public sealed partial class SessionHost : IPermissionPolicy
     }
 
     /// <summary>
-    /// Chooses <paramref name="value"/> for the session's config option <paramref name="configId"/>. Every ACP session the
-    /// session opens from now on gets it, and the session open now, if any, gets it at once.
+    /// Chooses <paramref name="value"/> for <paramref name="configId"/> in every ACP session the session opens from now on.
+    /// An open session gets it first, and it's stored only once that agent takes it: a cancel stores nothing, a refusal fails.
     /// </summary>
     public async Task SetConfigAsync(string configId, string value, CancellationToken cancellationToken)
     {
-        _sessionStore.SetConfigChoice(_sessionId, configId, value);
         OpenSession? session;
         lock (_gate)
             session = _turn?.Session ?? _kept?.Session;
         if (session is null)
+        {
+            _sessionStore.SetConfigChoice(_sessionId, configId, value);
             return;
+        }
         try
         {
             var set = await session.Adapter.Link.Client.SetConfigOptionAsync(session.AcpSessionId, configId, value, cancellationToken);
+            _sessionStore.SetConfigChoice(_sessionId, configId, value);
             _sessionStore.SetConfigOptions(_sessionId, set.ConfigOptions.GetRawText());
         }
-        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
+        catch (JsonRpcException error)
         {
-            // The session is ending or refused it; the choice is kept for the next one.
+            throw new CallFailed($"the agent didn't take {configId}={value}: {error.Message}");
+        }
+        catch (Exception error) when (error is IOException or ObjectDisposedException)
+        {
+            // The session is ending; the choice is kept for the next one.
+            _sessionStore.SetConfigChoice(_sessionId, configId, value);
             Console.Error.WriteLine($"session {_sessionId}: {configId}={value} wasn't set on the open session: {error.Message}");
         }
     }
