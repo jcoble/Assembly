@@ -63,6 +63,8 @@ These are the keys in assembly.json, matched to the design system's tokens by va
 | aqua | `base.cyan` |
 | add-bg, del-bg | highlight `created.background`, `deleted.background` |
 | (no role; the spike's picks) | `drop_target.background`, `scrollbar.*`, `selection.background`, `overlay`, `tab.background` |
+| aqua, lavender, mint, amber | `chart.2`, `chart.3`, `chart.4`, `chart.5` |
+| the same role as the key without `.light` | `base.*.light` |
 
 ## The four old themes (Houston, Dracula, Tokyo Night, Graphite)
 
@@ -92,6 +94,7 @@ Each role takes the old theme's colour from themeRegistry.ts, by the 2026-10-26 
 | add-bg, del-bg | `--color-good-bg`, `--color-bad-bg` |
 | `selection.background` | `--color-text-selection` |
 | `overlay` | `--color-scrim` |
+| `drop_target.background`, `scrollbar.*`, `tab.background` | the same as Assembly |
 
 Their editor syntax colours: Dracula takes thememirror's own Dracula syntax (codeMirrorTheme.ts:112). Houston,
 Tokyo Night and Graphite take the base syntax colours the old editor used for all of them (codeMirrorTheme.ts:8-20).
@@ -117,9 +120,9 @@ The window background is blurred (`WindowBackgroundAppearance::Blurred`) on macO
 - The layers stack (root, split frame, tab group), so the opacity on screen is higher than any one value. It's tuned
   on the Mac from screenshots.
 - The rule for other lanes: a view whose text has to stay readable paints its own opaque ground. The chat column
-  (g0-session) and code views paint `group_box.background` or highlight `editor.background`, which stay opaque here.
+  (g0-session) and code views paint `list.background` (surface) or highlight `editor.background`, which stay opaque here.
   `popover.background` stays opaque too.
-- The kit caps `list.active.background` at 20% and `selection.background` at 30% opacity (schema.rs:1025-1045), in every theme.
+- The kit caps `list.active.background` at 20% and `selection.background` at 30% opacity (schema.rs:1026-1056), in every theme.
 
 ## Left for other lanes
 

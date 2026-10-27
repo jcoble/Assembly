@@ -7,9 +7,10 @@ use gpui_kit::{App, Window};
 
 use super::theme_id::ThemeId;
 
-/// Hands `dir` to the kit's theme folder watch and, once the files have loaded, puts `id` in force and calls
-/// `on_ready`, where the window opens, so it never shows the kit's built-in light theme first.
-pub fn init(dir: PathBuf, id: ThemeId, cx: &mut App, on_ready: impl FnOnce(&mut App) + 'static) {
+/// Hands `dir` to the kit's theme folder watch and calls `on_ready` once the files have loaded (the kit calls it once).
+/// The window opens in `on_ready` and calls `set` inside its open call, so the first frame is already the theme in
+/// force, never the kit's built-in light one.
+pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
     todo!()
 }
 
