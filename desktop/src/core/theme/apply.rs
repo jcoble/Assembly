@@ -14,8 +14,8 @@ pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
     todo!()
 }
 
-/// Puts `id` in force: makes its file the kit's active theme and sets the window background to blurred for glass,
-/// opaque for the rest.
+/// Puts `id` in force: makes its file the kit's active theme, sets the window background to blurred for glass and
+/// opaque for the rest, and brings the kit's 280 ms slow step and move spring down to 180 ms.
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     todo!()
 }

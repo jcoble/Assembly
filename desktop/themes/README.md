@@ -28,7 +28,12 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
   `shadow` false. The fonts stay unset, which is the system face and system monospace.
 - The kit has only two radii. The design system's 4 px (filters, fields) and 5 px (list and tree rows) are set by the
   components that draw those.
-- Motion is the kit's own 120 and 180 ms (motion.rs), so no theme sets it.
+- Motion: the kit's fast and normal steps are already 120 and 180 ms, but its slow step and its move spring (which
+  tab indicators use) are 280 ms (motion.rs:28, 36; tab/tab_bar.rs:249). Theme files can't set motion, so `set`
+  brings those two down to 180 ms.
+- Kit 0.8.1 has no highlight keys for added, removed and changed lines (highlighter/registry.rs:318-349), so the
+  design system's `add-bg`, `del-bg`, `mint` and `amber` for diffs belong to the diff view that draws them, not to
+  these files.
 
 ## Kit key from design-system role
 
@@ -38,30 +43,29 @@ These are the keys in assembly.json, matched to the design system's tokens by va
 | --- | --- |
 | surface | `background`, `accordion.background`, `list.background`, `list.even.background`, `list.head.background`, `table.background`, `tab_bar.background`, `title_bar.background`, highlight `editor.background` |
 | rail | `sidebar.background`, `status_bar.background` |
-| field | `accent.background`, `list.hover.background`, `tab_bar.segmented.background`, `skeleton.background`, `description_list_label.background`, highlight `editor.active_line.background` |
+| field | `accent.background`, `list.hover.background`, `tab_bar.segmented.background`, `skeleton.background`, `description_list.label.background`, highlight `editor.active_line.background` |
 | raised | `group_box.background`, `popover.background` |
 | chip | `muted.background`, `secondary.background` |
 | selected | `list.active.background`, `list.active.border`, `tab.active.background`, `secondary.hover.background`, `sidebar.accent.background` |
 | selected-strong | `secondary.active.background`, `switch.background` |
 | line | `border`, `input.border`, `sidebar.border`, `title_bar.border`, `status_bar.border`, `window.border` |
 | line-soft | `table.row.border`, `chart.grid` |
-| ink | `accent.foreground`, `link.hover.foreground`, `primary.hover.background`, `sidebar.accent.foreground`, `tab.active.foreground`, `slider.thumb.background`, highlight `editor.active_line_number` |
+| ink | `accent.foreground`, `link.hover`, `primary.hover.background`, `sidebar.accent.foreground`, `tab.active.foreground`, `slider.thumb.background`, highlight `editor.active_line_number` |
 | ink-body | `foreground`, `group_box.foreground`, `popover.foreground`, `secondary.foreground`, highlight `editor.foreground` |
 | ink-2 | `primary.active.background` |
-| ink-muted | `muted.foreground`, `sidebar.foreground`, `table.head.foreground`, `description_list_label.foreground` |
+| ink-muted | `muted.foreground`, `sidebar.foreground`, `table.head.foreground`, `description_list.label.foreground` |
 | ink-faint | highlight `editor.line_number` |
 | ink-tab | `tab.foreground` |
 | primary | `primary.background`, `sidebar.primary.background` |
 | on-primary | `primary.foreground`, `sidebar.primary.foreground`, and the foreground of `danger`, `success`, `warning`, `info` |
-| accent | `caret`, `drag_border`, `link.foreground`, `link.active.foreground`, `progress_bar.background`, `slider.bar.background`, `chart.1` |
+| accent | `caret`, `drag.border`, `link`, `link.active`, `progress.bar.background`, `slider.background`, `chart.1` |
 | focus-line | `ring` |
 | red | `danger.background`, `base.red`, `chart.bearish`, highlight `error.border` |
-| mint | `success.background`, `base.green`, `chart.bullish`, highlight `created` |
-| amber | `warning.background`, `base.yellow`, highlight `modified` |
+| mint | `success.background`, `base.green`, `chart.bullish` |
+| amber | `warning.background`, `base.yellow` |
 | blue | `info.background`, `base.blue` |
 | lavender | `base.magenta`, highlight `hint` |
 | aqua | `base.cyan` |
-| add-bg, del-bg | highlight `created.background`, `deleted.background` |
 | (no role; the spike's picks) | `drop_target.background`, `scrollbar.*`, `selection.background`, `overlay`, `tab.background` |
 | aqua, lavender, mint, amber | `chart.2`, `chart.3`, `chart.4`, `chart.5` |
 | the same role as the key without `.light` | `base.*.light` |
@@ -91,7 +95,6 @@ Each role takes the old theme's colour from themeRegistry.ts, by the 2026-10-26 
 | focus-line | `--color-focus` |
 | mint, blue, amber, red | `--color-good`, `--color-live`, `--color-attention`, `--color-bad` |
 | lavender, aqua | the theme's terminal magenta and cyan (terminalPalettes.ts) |
-| add-bg, del-bg | `--color-good-bg`, `--color-bad-bg` |
 | `selection.background` | `--color-text-selection` |
 | `overlay` | `--color-scrim` |
 | `drop_target.background`, `scrollbar.*`, `tab.background` | the same as Assembly |
