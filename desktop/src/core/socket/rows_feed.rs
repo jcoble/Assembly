@@ -17,12 +17,23 @@ pub(super) enum RowStep {
 }
 
 impl RowsFeed {
-    pub fn step(&mut self, _seq: i64, _prev_seq: Option<i64>) -> RowStep {
-        todo!()
+    pub fn step(&mut self, seq: i64, prev_seq: Option<i64>) -> RowStep {
+        if self.last_seq.is_some_and(|last| seq <= last) {
+            return RowStep::Skip;
+        }
+        if prev_seq != self.last_seq {
+            return RowStep::Gap;
+        }
+        self.last_seq = Some(seq);
+        RowStep::Pass
     }
 
     /// A `state` arrived with `seq`: `None` when it's the `after` sent, else the jump to pass on.
-    pub fn state(&mut self, _seq: i64) -> Option<i64> {
-        todo!()
+    pub fn state(&mut self, seq: i64) -> Option<i64> {
+        if self.last_seq == Some(seq) {
+            return None;
+        }
+        self.last_seq = Some(seq);
+        Some(seq)
     }
 }
