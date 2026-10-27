@@ -64,9 +64,12 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         {
             CancellationTokenSource? stop = null;
             lock (_probes)
-                if (_probes.Values.Any(probe => !probe.IsCompleted))
+                // Not once disposed: the dispose cancels the source it took, which this would dispose under it.
+                if (!_disposed && _probes.Values.Any(probe => !probe.IsCompleted))
                     (stop, _stop) = (_stop, new CancellationTokenSource());
+            // Cancelled first, so a probe that links its token only now still sees it cancelled.
             stop?.Cancel();
+            stop?.Dispose();
             return;
         }
         lock (_probes)

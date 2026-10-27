@@ -23,6 +23,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     // Taken to remove a pending request, so a caller that gave up never sees its OnReply run after it returns.
     private readonly Lock _removing = new();
     private readonly CancellationTokenSource _stopping = new();
+    // The answers to the agent's requests still running, waited for as it's disposed.
+    private readonly BackgroundWork _answers = new(TimeProvider.System, Console.Error);
     private volatile Exception? _closedReason;
     private long _lastId;
 
@@ -127,7 +129,10 @@ public sealed class JsonRpcConnection : IAsyncDisposable
             var parameters = root.TryGetProperty("params", out var p) ? p.Clone() : default;
 
             if (hasMethod && hasId)
-                _ = AnswerAsync(id.Clone(), method.GetString() ?? "", parameters);
+            {
+                var (request, name) = (id.Clone(), method.GetString() ?? "");
+                _answers.Start("answer " + name, _ => AnswerAsync(request, name, parameters));
+            }
             else if (hasMethod)
                 _target.OnNotification(method.GetString() ?? "", parameters);
             else if (hasId && id.TryGetInt64(out var number))
@@ -234,6 +239,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stopping.Cancel();
+        // The read loop ends first, so no answer starts after the answers' stop has looked; the answers end on
+        // _stopping, which is disposed only after they have.
         try
         {
             await Completion.WaitAsync(TimeSpan.FromSeconds(5));
@@ -241,6 +248,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
         catch (TimeoutException)
         {
         }
+        await _answers.StopAsync(TimeSpan.FromSeconds(5));
         _stopping.Dispose();
     }
 }

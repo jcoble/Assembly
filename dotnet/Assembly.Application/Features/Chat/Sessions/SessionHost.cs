@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
@@ -29,6 +30,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     private readonly SessionOpener _opener;
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
+    private readonly BackgroundWork _work;
     private readonly RowConverter _converter = new();
     private readonly Lock _gate = new();
     // Held from a turn's open to its close, so a quick next send resumes only once the session is closed.
@@ -64,7 +66,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
-        Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
+        BackgroundWork work, Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
     {
         _sessionClosed = sessionClosed;
         _helpersWorking = helpersWorking ?? (() => false);
@@ -75,6 +77,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         _opener = opener;
         _time = time;
         _log = log;
+        _work = work;
         _subagents = new Subagents(sessionStore, hub);
     }
 
@@ -274,7 +277,7 @@ public sealed partial class SessionHost : IPermissionPolicy
 
         turn.Stopping.Cancel();
         if (session is not null)
-            _ = CancelQuietlyAsync(session);
+            _work.Start("cancel " + runId, stopping => CancelQuietlyAsync(session, stopping));
         return true;
     }
 
@@ -491,11 +494,11 @@ public sealed partial class SessionHost : IPermissionPolicy
 
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 
-    private static async Task CancelQuietlyAsync(OpenSession session)
+    private static async Task CancelQuietlyAsync(OpenSession session, CancellationToken stopping)
     {
         try
         {
-            await session.Adapter.Link.Client.CancelAsync(session.AcpSessionId, CancellationToken.None);
+            await session.Adapter.Link.Client.CancelAsync(session.AcpSessionId, stopping);
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException)
         {
