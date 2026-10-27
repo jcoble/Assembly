@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+futures-channel = "=0.3.34"
 gpui-kit = "=0.8.1"
 gpui-fps = "=0.8.1"
 serde = { version = "=1.0.229", features = ["derive"] }
