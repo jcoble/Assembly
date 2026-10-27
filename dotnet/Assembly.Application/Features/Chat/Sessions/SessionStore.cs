@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -57,7 +58,7 @@ public sealed class SessionStore
         _time = time;
     }
 
-    public static SessionStore Open(IAppDatabase db, TimeProvider time)
+    public static SessionStore Open(IAppDatabase db, TimeProvider time, SessionSummaries? summaries = null)
     {
         db.Writer.Write("sessions.schema", scope =>
         {
@@ -291,6 +292,11 @@ public sealed class SessionStore
             INSERT INTO agent_config(agent, options) VALUES ($agent, $options)
             ON CONFLICT(agent) DO UPDATE SET options = $options;
             """, ("$agent", agent), ("$options", options));
+
+    /// <summary>Publishes the session's list item again, for a change to its summary.</summary>
+    public void PublishSummary(string sessionId)
+    {
+    }
 
     /// <summary>Marks the session as just used, which puts it at the top of the list.</summary>
     public void Touch(string sessionId) =>

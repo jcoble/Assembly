@@ -15,16 +15,23 @@ public sealed class LiveHub : IDisposable
     private readonly RowStore _store;
     private readonly int _queueLimit;
     private readonly ITopics? _topics;
+    private readonly SessionSummaries? _summaries;
+    private readonly Action<string> _summaryChanged;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, List<LiveSubscription>> _subscribers = [];
 
     /// <param name="queueLimit">Rows a socket may fall behind before it's closed.</param>
     /// <param name="topics">Where each saved row is also published, on the <c>rows</c> topic under its session.</param>
-    public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null)
+    /// <param name="summaries">The sessions' summaries, which every saved row updates.</param>
+    /// <param name="summaryChanged">Told, under the hub's lock, the session whose summary a row changed.</param>
+    public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null, SessionSummaries? summaries = null,
+        Action<string>? summaryChanged = null)
     {
         _store = store;
         _queueLimit = queueLimit;
         _topics = topics;
+        _summaries = summaries;
+        _summaryChanged = summaryChanged ?? (_ => { });
     }
 
     /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
