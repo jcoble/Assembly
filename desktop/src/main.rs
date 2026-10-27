@@ -4,6 +4,7 @@
 mod core;
 mod features;
 
+use features::shell::frame::Frame;
 use gpui_kit::*;
 
 use crate::core::theme::{self, theme_id::ThemeId};
@@ -14,6 +15,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
+            features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
             // The window opens once the theme files have loaded, already in its theme.
             theme::init(cx, |cx| {
                 let options = WindowOptions {
@@ -23,9 +25,11 @@ fn main() {
                     }),
                     ..Default::default()
                 };
+                // The layout's read and write join the socket client when lane g0-socket lands. Until then the window
+                // opens the default layout and keeps changes for this run only.
                 gpui_kit::open_window(options, cx, |window, cx| {
                     theme::set(ThemeId::DEFAULT, window, cx);
-                    cx.new(|_| EmptyView)
+                    cx.new(|cx| Frame::new(Task::ready(None), Box::new(|_, _| {}), window, cx))
                 })
                 .expect("open the window");
                 cx.activate(true);
