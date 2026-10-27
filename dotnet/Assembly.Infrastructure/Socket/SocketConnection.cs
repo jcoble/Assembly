@@ -16,7 +16,7 @@ namespace Assembly.Infrastructure.Socket;
 internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
 {
     internal const int Protocol = 1;
-    private const int MaxFrame = 4 * 1024 * 1024;
+    internal const int MaxFrame = 4 * 1024 * 1024;
     private const long MaxWaiting = 16 * 1024 * 1024;
     private static long _last;
 
@@ -26,6 +26,9 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
     private long _waiting;
+    // Why the socket closes, once the receive loop ends; closed after the last answer is sent, since a socket can't
+    // send two things at once.
+    private (WebSocketCloseStatus Status, string Reason)? _closing;
 
     public string Id { get; } = $"socket-{Interlocked.Increment(ref _last)}";
 
@@ -57,7 +60,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
             _outbox.Writer.TryComplete();
             await sending;
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
-                await CloseAsync(WebSocketCloseStatus.NormalClosure, null);
+                await CloseAsync(_closing?.Status ?? WebSocketCloseStatus.NormalClosure, _closing?.Reason);
         }
     }
 
@@ -93,7 +96,9 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
             return false;
         }
 
-        if (Read(text) is not { T: "hello", Protocol: Protocol } hello)
+        if (_closing is { } closing)
+            await CloseAsync(closing.Status, closing.Reason);
+        else if (Read(text) is not { T: "hello", Protocol: Protocol } hello)
             await CloseAsync((WebSocketCloseStatus)4400, "expected a hello");
         else if (hello.Token is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(hello.Token), token))
             await CloseAsync((WebSocketCloseStatus)4401, "unauthorized");
@@ -125,7 +130,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
                     await running.CancelAsync();
                 return true;
             default:
-                await CloseAsync((WebSocketCloseStatus)4400, "not a frame this protocol has");
+                _closing = ((WebSocketCloseStatus)4400, "not a frame this protocol has");
                 return false;
         }
     }
@@ -185,7 +190,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls)
             frame.Advance(received.Count);
             if (frame.WrittenCount > MaxFrame)
             {
-                await CloseAsync(WebSocketCloseStatus.MessageTooBig, "a frame over 4 MB");
+                _closing = (WebSocketCloseStatus.MessageTooBig, "a frame over 4 MB");
                 return null;
             }
             if (received.EndOfMessage)

@@ -31,6 +31,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TimeProvider time, 
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
         {
+            // A write cancelled or out of time while it waited in the queue never runs.
+            call.Cancellation.ThrowIfCancellationRequested();
             var database = await handler((TArgs)value, call);
             return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
         }));
@@ -62,8 +64,13 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TimeProvider time, 
         var context = new CallContext(token.Token, connection.Id);
         try
         {
-            var result = call.Writes ? await connection.QueueWriteAsync(() => call.RunAsync(args, context)) : await call.RunAsync(args, context);
-            return Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
+            // A write joins its socket's queue now, in arrival order; a read runs off the receive loop, so one that
+            // blocks doesn't hold up the frames after it.
+            var result = call.Writes
+                ? await connection.QueueWriteAsync(() => call.RunAsync(args, context))
+                : await Task.Run(() => call.RunAsync(args, context));
+            var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
+            return answer.Length <= SocketConnection.MaxFrame ? answer : Error(id, "failed", $"{name}'s answer is over 4 MB");
         }
         catch (CallFailed error)
         {

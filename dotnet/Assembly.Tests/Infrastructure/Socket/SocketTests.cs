@@ -54,8 +54,9 @@ public sealed class SocketTests : IAsyncLifetime
         await CallAsync(socket, 1, "notes", "echo", """{"text":"hi"}""");
         await CallAsync(socket, 2, "notes", "missing", "{}");
 
-        Assert.Equal("""{"t":"result","id":1,"result":{"text":"hi!"}}""", await ReadAsync(socket));
-        Assert.Equal("not_found", Code(await ReadAsync(socket), id: 2));
+        var answers = await ReadByIdAsync(socket, 2);
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":"hi!"}}""", answers[0]);
+        Assert.Equal("not_found", Code(answers[1], id: 2));
     }
 
     [Fact]
@@ -130,11 +131,15 @@ public sealed class SocketTests : IAsyncLifetime
             return _ => note;
         });
         _calls.Write("notes", "second", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult<Func<IWriteScope, Note>>(_ => note));
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
         var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "notes", "wait", "{}");
         await CallAsync(socket, 2, "notes", "first", "{}");
         await CallAsync(socket, 3, "notes", "second", "{}");
+        // Frames are read in order, so once this answers, the second write is queued.
+        await CallAsync(socket, 4, "notes", "echo", "{}");
+        Assert.Equal("""{"t":"result","id":4,"result":{"text":""}}""", await ReadAsync(socket));
         await read.Started.Task.WaitAsync(Wait);
         await first.Task.WaitAsync(Wait);
         socket.Abort();
@@ -171,6 +176,68 @@ public sealed class SocketTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_read_that_blocks_doesnt_hold_up_the_socket()
+    {
+        using var gate = new ManualResetEventSlim();
+        _calls.Read("notes", "blocking", TestJson.Default.Note, TestJson.Default.Note, (note, _) =>
+        {
+            gate.Wait(Wait);
+            return Task.FromResult(note);
+        });
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "blocking", "{}");
+        await CallAsync(socket, 2, "notes", "echo", "{}");
+        var echo = await ReadAsync(socket);
+        gate.Set();
+
+        Assert.Equal("""{"t":"result","id":2,"result":{"text":""}}""", echo);
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":""}}""", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task A_write_cancelled_while_queued_never_runs()
+    {
+        var gate = new TaskCompletionSource();
+        var first = new TaskCompletionSource();
+        _calls.Write("notes", "first", TestJson.Default.Note, TestJson.Default.Note, async (note, _) =>
+        {
+            first.SetResult();
+            await gate.Task;
+            return _ => note;
+        });
+        _calls.Write("notes", "second", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult<Func<IWriteScope, Note>>(_ => note));
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "first", "{}");
+        await first.Task.WaitAsync(Wait);
+        await CallAsync(socket, 2, "notes", "second", "{}");
+        await SendAsync(socket, """{"t":"cancel","id":2}""");
+        // Frames are read in order, so once this answers, the cancel has been seen.
+        await CallAsync(socket, 3, "notes", "echo", "{}");
+        Assert.Equal("""{"t":"result","id":3,"result":{"text":""}}""", await ReadAsync(socket));
+        gate.SetResult();
+
+        var answers = await ReadByIdAsync(socket, 2);
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":""}}""", answers[0]);
+        Assert.Equal("cancelled", Code(answers[1], id: 2));
+        Assert.Equal(["notes/first"], _writer.Written);
+    }
+
+    [Fact]
+    public async Task An_answer_over_4_MB_answers_failed()
+    {
+        _calls.Read("notes", "big", TestJson.Default.Note, TestJson.Default.Note, (_, _) => Task.FromResult(new Note(new string('x', 4 * 1024 * 1024))));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "big", "{}");
+
+        Assert.Equal("failed", Code(await ReadAsync(socket), id: 1));
+    }
+
+    [Fact]
     public async Task A_handler_that_throws_answers_failed_and_logs_at_error()
     {
         _calls.Read<Note, Note>("notes", "boom", TestJson.Default.Note, TestJson.Default.Note, (_, _) => throw new InvalidOperationException("broke"));
@@ -180,10 +247,9 @@ public sealed class SocketTests : IAsyncLifetime
         await CallAsync(socket, 1, "notes", "boom", "{}");
         await CallAsync(socket, 2, "notes", "refuse", "{}");
 
-        var boom = await ReadAsync(socket);
-        var refuse = await ReadAsync(socket);
-        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"notes/boom failed"}""", boom);
-        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"no such note"}""", refuse);
+        var answers = await ReadByIdAsync(socket, 2);
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"notes/boom failed"}""", answers[0]);
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"no such note"}""", answers[1]);
         Assert.Contains(_log.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains("notes/boom"));
         Assert.DoesNotContain(_log.Entries, entry => entry.Level == LogLevel.Error && entry.Message.Contains("notes/refuse"));
     }
@@ -238,6 +304,15 @@ public sealed class SocketTests : IAsyncLifetime
         Assert.Equal(WebSocketMessageType.Text, received.MessageType);
         Assert.True(received.EndOfMessage);
         return Encoding.UTF8.GetString(buffer, 0, received.Count);
+    }
+
+    // The next answers, ordered by id: calls run at once, so their answers come in any order.
+    private static async Task<string[]> ReadByIdAsync(WebSocket socket, int count)
+    {
+        var answers = new List<string>();
+        for (var i = 0; i < count; i++)
+            answers.Add(await ReadAsync(socket));
+        return [.. answers.OrderBy(answer => JsonDocument.Parse(answer).RootElement.GetProperty("id").GetInt64())];
     }
 
     private static string Code(string frame, long id)

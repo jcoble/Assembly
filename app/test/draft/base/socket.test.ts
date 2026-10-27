@@ -113,3 +113,16 @@ test('a socket that never opens is tried once more, then the failure is told', a
   assert.equal(failures.length, 1);
   assert.match(failures[0]!, /^notes\/get failed/);
 });
+
+test('an open socket that closes is reopened once, and the failure is told if that fails', async () => {
+  const { call, failures } = await load();
+  void call('notes', 'get');
+  const socket = await welcome();
+  socket.closeNow(1006);
+  assert.equal(sockets.length, 2);
+  sockets[1]!.closeNow(1006);
+  await settle();
+  assert.equal(sockets.length, 2);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0]!, /couldn't reopen/);
+});

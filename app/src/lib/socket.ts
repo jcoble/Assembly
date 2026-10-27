@@ -4,7 +4,7 @@ import { BASE_WS, TOKEN } from './host/backend';
 // The page's one socket to the backend (plan 5.1): `hello` with the token, then `call` frames answered by `result` or
 // `error`, and `cancel` for a call nobody wants any more. The backend's side is
 // dotnet/Assembly.Infrastructure/Socket/. The socket opens on the first call; if it can't, it's tried once more and
-// the call fails. There are no timers here: the backend ends every call within 30 s.
+// the call fails. An open socket that closes is reopened once (reopen). There are no timers here: the backend ends every call within 30 s.
 
 const PROTOCOL = 1;
 
@@ -62,9 +62,20 @@ function open(): Promise<WebSocket> {
         connecting = current = undefined;
         for (const call of pending.values()) call.settle({ ok: false, why: 'aborted' });
         pending.clear();
+        reopen();
       },
       { once: true },
     );
+  });
+}
+
+// After an open socket closes: one try to open it again, and the failure told if that fails. B9 adds what comes after
+// (the shell's backend-ready, "Disconnected" and Reconnect; plan 5.10); until then the next call tries again.
+function reopen() {
+  connecting = open();
+  connecting.catch((e) => {
+    connecting = undefined;
+    report(`the socket closed and couldn't reopen: ${e instanceof Error ? e.message : e}`);
   });
 }
 
