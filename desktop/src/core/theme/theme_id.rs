@@ -11,10 +11,7 @@ pub enum ThemeId {
     TokyoNight,
     Graphite,
     Amy,
-    AyuLight,
     Cobalt,
-    RosePineDawn,
-    Tomorrow,
 }
 
 #[cfg_attr(
@@ -29,7 +26,7 @@ impl ThemeId {
     pub const DEFAULT: ThemeId = ThemeId::Assembly;
 
     /// Every theme, in the order a chooser lists them.
-    pub const ALL: [ThemeId; 11] = [
+    pub const ALL: [ThemeId; 8] = [
         ThemeId::Assembly,
         ThemeId::AssemblyGlass,
         ThemeId::Houston,
@@ -37,10 +34,7 @@ impl ThemeId {
         ThemeId::TokyoNight,
         ThemeId::Graphite,
         ThemeId::Amy,
-        ThemeId::AyuLight,
         ThemeId::Cobalt,
-        ThemeId::RosePineDawn,
-        ThemeId::Tomorrow,
     ];
 
     /// The theme a saved id means: an unknown id (such as the old "dark") gives `DEFAULT`.
@@ -61,10 +55,7 @@ impl ThemeId {
             ThemeId::TokyoNight => "tokyo-night",
             ThemeId::Graphite => "graphite",
             ThemeId::Amy => "amy",
-            ThemeId::AyuLight => "ayu-light",
             ThemeId::Cobalt => "cobalt",
-            ThemeId::RosePineDawn => "rose-pine-dawn",
-            ThemeId::Tomorrow => "tomorrow",
         }
     }
 
@@ -78,10 +69,7 @@ impl ThemeId {
             ThemeId::TokyoNight => "Tokyo Night",
             ThemeId::Graphite => "Graphite",
             ThemeId::Amy => "Amy",
-            ThemeId::AyuLight => "Ayu Light",
             ThemeId::Cobalt => "Cobalt",
-            ThemeId::RosePineDawn => "Rose Pine Dawn",
-            ThemeId::Tomorrow => "Tomorrow",
         }
     }
 
