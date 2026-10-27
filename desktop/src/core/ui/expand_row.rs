@@ -2,10 +2,11 @@
 //! 2026-10-27, look items 13 and 16). A click on the title grows the row to fit its body over 160 ms, with the rows
 //! below sliding down, while the body fades in from 40 ms to 160 ms; the title stays where it was. The open row is a
 //! lighter band with 8 px corners. A second click runs it in reverse, and the body is dropped once it has shrunk. A
-//! row open at its first render is drawn open, without motion. With Reduce Motion on, the kit's animations jump to
+//! row open at its first render is drawn open, without motion. A click during the motion turns the row back from
+//! where it is, taking as long as the way back. With Reduce Motion on, the kit's animations jump to
 //! the end, so rows switch open and shut at once. New: the old app used accordions.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::{ActiveTheme as _, v_flex};
@@ -29,8 +30,16 @@ pub struct ExpandRow {
     body_height: Pixels,
     /// Counts the clicks, so each one plays its motion from the start.
     turns: usize,
-    /// Held while a click's motion plays; the body is clipped to the growing height until it ends.
-    moving: Option<Task<()>>,
+    /// Set while a click's motion plays; the body is clipped to the growing height until it ends.
+    moving: Option<Motion>,
+}
+
+/// One click's motion, from how open the row was when it was clicked.
+struct Motion {
+    from: f32,
+    started: Instant,
+    /// Ends the motion once the row has got where it's going.
+    _done: Task<()>,
 }
 
 impl ExpandRow {
@@ -53,19 +62,60 @@ impl ExpandRow {
         self.open
     }
 
-    /// Opens a shut row or shuts an open one, with the motion.
+    /// How open the row is at `now`, from 0 (shut) to 1 (open), along the motion's time rather than its curve.
+    pub(super) fn openness(&self, now: Instant) -> f32 {
+        let to = self.target();
+        match &self.moving {
+            None => to,
+            Some(motion) => {
+                let took = now.saturating_duration_since(motion.started).as_secs_f32();
+                let needs = travel(motion.from, to).as_secs_f32();
+                let done = if needs > 0. {
+                    (took / needs).min(1.)
+                } else {
+                    1.
+                };
+                motion.from + (to - motion.from) * done
+            }
+        }
+    }
+
+    fn target(&self) -> f32 {
+        if self.open { 1. } else { 0. }
+    }
+
+    /// Opens a shut row or shuts an open one, with the motion, starting from where the row is now.
     pub fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        let from = self.openness(now);
         self.open = !self.open;
         self.turns += 1;
-        self.moving = Some(cx.spawn_in(window, async move |row, cx| {
-            cx.background_executor().timer(GROW).await;
+        let needs = travel(from, self.target());
+        let _done = cx.spawn_in(window, async move |row, cx| {
+            cx.background_executor().timer(needs).await;
             _ = row.update(cx, |row, cx| {
                 row.moving = None;
                 cx.notify();
             });
-        }));
+        });
+        self.moving = Some(Motion {
+            from,
+            started: now,
+            _done,
+        });
         cx.notify();
     }
+}
+
+/// How long the row takes to get from one openness to another: the whole grow time for the whole way.
+fn travel(from: f32, to: f32) -> Duration {
+    GROW.mul_f32((to - from).abs())
+}
+
+/// The body's opacity at an openness: 0 until 40 ms into the grow, then up to 1 by 160 ms.
+pub(super) fn fade(openness: f32) -> f32 {
+    let at = openness * GROW.as_secs_f32();
+    ((at - FADE_START.as_secs_f32()) / (GROW - FADE_START).as_secs_f32()).clamp(0., 1.)
 }
 
 impl Render for ExpandRow {
@@ -86,7 +136,7 @@ impl Render for ExpandRow {
                 })
                 .child((self.body)(window, cx))
         });
-        let (opening, full) = (self.open, self.body_height);
+        let (to, full) = (self.target(), self.body_height);
         let easing = cx.theme().motion_tokens().easing_enter.clone();
         v_flex()
             .when(shown, |row| {
@@ -99,26 +149,27 @@ impl Render for ExpandRow {
                     .on_click(cx.listener(|row, _, window, cx| row.toggle(window, cx)))
                     .child((self.title)(window, cx)),
             )
-            .when_some(body, |row, body| match self.moving {
+            .when_some(body, |row, body| match &self.moving {
                 None => row.child(body),
-                Some(_) => row.child(
-                    div()
-                        .overflow_hidden()
-                        .child(body)
-                        .with_animation(
-                            ("expand-row", self.turns),
-                            Animation::new(GROW)
-                                .with_easing(move |t| easing.sample(t).clamp(0., 1.)),
-                            move |clip, t| {
-                                // How far open the row is, so shrinking is growing run backwards.
-                                let open = if opening { t } else { 1. - t };
-                                let fade = (open * GROW.as_secs_f32() - FADE_START.as_secs_f32())
-                                    / (GROW - FADE_START).as_secs_f32();
-                                clip.h(full * open).opacity(fade.clamp(0., 1.))
-                            },
-                        )
-                        .into_any_element(),
-                ),
+                Some(motion) => {
+                    let from = motion.from;
+                    row.child(
+                        div()
+                            .overflow_hidden()
+                            .child(body)
+                            .with_animation(
+                                ("expand-row", self.turns),
+                                // Linear in time: the curve shapes the height only, and the fade keeps its timing.
+                                Animation::new(travel(from, to).max(Duration::from_millis(1))),
+                                move |clip, t| {
+                                    let open = from + (to - from) * t;
+                                    clip.h(full * easing.sample(open).clamp(0., 1.))
+                                        .opacity(fade(open))
+                                },
+                            )
+                            .into_any_element(),
+                    )
+                }
             })
     }
 }

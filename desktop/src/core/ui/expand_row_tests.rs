@@ -6,7 +6,7 @@ use gpui_kit::{
     ParentElement as _, Pixels, Styled as _, VisualTestContext, div, px,
 };
 
-use super::expand_row::{ExpandRow, GROW};
+use super::expand_row::{ExpandRow, GROW, fade};
 
 /// A row with a 28 px title and a 60 px body, drawn in a window.
 fn row(open: bool, cx: &mut TestAppContext) -> (Entity<ExpandRow>, &mut VisualTestContext) {
@@ -79,4 +79,32 @@ fn a_row_open_at_first_render_shows_its_body_under_the_title(cx: &mut TestAppCon
     let title = drawn("title", cx).expect("the title is drawn");
     let body = drawn("body", cx).expect("an open row draws its body without a click");
     assert_eq!(body.top(), title.bottom());
+}
+
+// Pins: g0-shape#10
+#[gpui::test]
+fn a_click_during_the_motion_turns_the_row_back_from_where_it_is(cx: &mut TestAppContext) {
+    let (row, cx) = row(false, cx);
+    click_title(cx);
+    cx.executor().advance_clock(GROW / 2);
+    let openness = |cx: &mut VisualTestContext| {
+        let now = cx.executor().now();
+        cx.update(|_, cx| row.read(cx).openness(now))
+    };
+    let halfway = openness(cx);
+    assert!(halfway > 0.4 && halfway < 0.6, "half open: {halfway}");
+    click_title(cx);
+    assert!((openness(cx) - halfway).abs() < 0.01, "no jump");
+    // Back to shut in the time it took to open this far.
+    cx.executor().advance_clock(GROW / 2);
+    assert_eq!(openness(cx), 0.);
+}
+
+// Pins: g0-shape#10
+#[test]
+fn the_body_fades_in_from_40_ms_to_160_ms() {
+    let at = |ms: f32| fade(ms / 160.);
+    assert_eq!(at(40.), 0.);
+    assert!((at(100.) - 0.5).abs() < 0.001);
+    assert_eq!(at(160.), 1.);
 }
