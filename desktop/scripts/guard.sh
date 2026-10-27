@@ -9,7 +9,9 @@ cd "$(git rev-parse --show-toplevel)"
 # A name that isn't part of a longer one: no identifier character before it (b) or after it (e).
 b='(^|[^[:alnum:]_])'
 e='([^[:alnum:]_]|$)'
-# Waits on time, timers and frame waits: only the clock, desktop/src/core/clock/, may.
+# Waits on time, timers and frame waits: only desktop/src/core/clock/ may. It holds exactly two things: the subscriber
+# to the backend's `clock` topic, and the one named debounce (none yet; the first save that needs one adds it there).
+# Nothing in it ticks on its own.
 timers="${b}Timer${e}|(\.|::)timer[[:space:]]*\(|${b}(request_animation_frame|on_next_frame|recv_timeout|park_timeout|with_timeout|block_with_timeout)${e}"
 # Sockets and HTTP: only the socket client, desktop/src/core/socket/, may.
 sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_client|HttpClient)${e}|${b}hyper::"

@@ -29,8 +29,11 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
 
 ## Layout
 
-- `src/core/`: what every feature shares. The socket client is `core/socket/` and the backend's clock is
-  `core/clock/`; with the state (one owner per fact), the theme and the registries, that's all of it.
+- `src/core/`: what every feature shares. The socket client is `core/socket/`, the only code that opens a socket.
+  The state (one owner per fact), the theme and the registries are the rest.
+- `src/core/clock/` holds exactly two things: the subscriber to the backend's `clock` topic, and the one named
+  debounce. There's no debounce yet; the first save that needs one adds it there. Nothing in it ticks on its own,
+  and it's the only code that may wait on time.
 - `src/features/<feature>/`: one folder per feature, which never uses another feature's folder.
 - One type per file, and no file over about 300 lines.
 - The root module is named `core`, so in `main.rs` the `core` crate is `::core::`.
