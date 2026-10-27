@@ -1,8 +1,13 @@
-//! `MotionSkin` owns the docks' opening motion: it wraps the kit's DockSkin and changes only how an open dock's content
-//! is drawn, fading it in and sliding it in from the dock's outer edge. Every other piece of the skin passes through,
-//! the drag edge and its save on release included. The dock's width still appears at once, and closing is instant: a
-//! width slide would need a change to the kit. With Reduce Motion on, the kit's animations jump to the end. New: the
-//! old app had no dock motion.
+//! `MotionSkin` owns how the docks sit on the window's grounds and how they open. It wraps the kit's DockSkin and
+//! changes three things:
+//! - an open dock's content fades in and slides in from the dock's outer edge. The dock's width still appears at once,
+//!   and closing is instant: a width slide would need a change to the kit. With Reduce Motion on, the kit's animations
+//!   jump to the end. New: the old app had no dock motion.
+//! - splits and tab groups paint no fill of their own, so the sessions column shows the rail and the rest shows the
+//!   work panel that Frame draws behind them (the design system's "a ground and one panel").
+//! - the sessions column carries the utility strip at its foot, as the old app did; there's no bottom bar.
+//!
+//! Every other piece of the skin passes through, the drag edge and its save on release included.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -10,16 +15,21 @@ use std::sync::Arc;
 use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{
-    BasePanelView, DockAreaRenderer, DockContext, DockPlacement, DockSkin, NodeId, PanelState,
-    TabGroupRenderer,
+    BasePanelView, DockAreaRenderer, DockContext, DockPlacement, DockSkin, DropIndicator, NodeId,
+    PanelState, TabGroupContext, TabGroupRenderer,
 };
+use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
-pub struct MotionSkin(pub Rc<DockSkin>);
+pub struct MotionSkin {
+    pub inner: Rc<DockSkin>,
+    /// Drawn at the foot of the sessions column.
+    pub foot: AnyView,
+}
 
 impl DockAreaRenderer for MotionSkin {
     fn frame(&self, window: &mut Window, cx: &mut App) -> Stateful<Div> {
-        self.0.frame(window, cx)
+        self.inner.frame(window, cx)
     }
 
     fn split_frame(
@@ -29,11 +39,13 @@ impl DockAreaRenderer for MotionSkin {
         window: &mut Window,
         cx: &mut App,
     ) -> Stateful<Div> {
-        self.0.split_frame(node, axis, window, cx)
+        self.inner
+            .split_frame(node, axis, window, cx)
+            .bg(transparent_black())
     }
 
     fn center_frame(&self, window: &mut Window, cx: &mut App) -> Stateful<Div> {
-        self.0.center_frame(window, cx)
+        self.inner.center_frame(window, cx)
     }
 
     fn render_split_handle(
@@ -42,7 +54,7 @@ impl DockAreaRenderer for MotionSkin {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<AnyElement> {
-        self.0.render_split_handle(handle, window, cx)
+        self.inner.render_split_handle(handle, window, cx)
     }
 
     fn render_dock(
@@ -52,6 +64,15 @@ impl DockAreaRenderer for MotionSkin {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        let content = if dock.placement() == DockPlacement::Left {
+            v_flex()
+                .size_full()
+                .child(div().flex_1().min_h_0().child(content))
+                .child(self.foot.clone())
+                .into_any_element()
+        } else {
+            content
+        };
         // A closed bottom dock still shows its tab bar, so only the side docks slide in: a closed side dock draws nothing.
         let content = match dock.placement() {
             DockPlacement::Left | DockPlacement::Right if dock.is_open() => {
@@ -59,7 +80,7 @@ impl DockAreaRenderer for MotionSkin {
             }
             _ => content,
         };
-        self.0.render_dock(dock, content, window, cx)
+        self.inner.render_dock(dock, content, window, cx)
     }
 
     fn build_placeholder(
@@ -68,11 +89,67 @@ impl DockAreaRenderer for MotionSkin {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Arc<dyn BasePanelView>> {
-        self.0.build_placeholder(state, window, cx)
+        self.inner.build_placeholder(state, window, cx)
     }
 
     fn tab_group_renderer(&self) -> Rc<dyn TabGroupRenderer> {
-        self.0.tab_group_renderer()
+        Rc::new(Unfilled(self.inner.tab_group_renderer()))
+    }
+}
+
+/// The kit's tab groups with their fill taken out (TabGroupSkin::frame paints `background`), so the ground behind
+/// shows. Everything else passes through.
+struct Unfilled(Rc<dyn TabGroupRenderer>);
+
+impl TabGroupRenderer for Unfilled {
+    fn frame(&self, group: &TabGroupContext, window: &mut Window, cx: &mut App) -> Stateful<Div> {
+        self.0.frame(group, window, cx).bg(transparent_black())
+    }
+
+    fn content_frame(
+        &self,
+        group: &TabGroupContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Stateful<Div> {
+        self.0.content_frame(group, window, cx)
+    }
+
+    fn render_tab_bar(
+        &self,
+        group: &TabGroupContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        self.0.render_tab_bar(group, window, cx)
+    }
+
+    fn render_active_panel(
+        &self,
+        panel: AnyView,
+        group: &TabGroupContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        self.0.render_active_panel(panel, group, window, cx)
+    }
+
+    fn render_drop_indicator(
+        &self,
+        indicator: DropIndicator,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        self.0.render_drop_indicator(indicator, window, cx)
+    }
+
+    fn render_empty(
+        &self,
+        group: &TabGroupContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        self.0.render_empty(group, window, cx)
     }
 }
 

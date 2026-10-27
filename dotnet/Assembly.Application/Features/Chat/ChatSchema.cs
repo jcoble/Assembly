@@ -78,6 +78,20 @@ internal static class Schema
         ORDER BY item_id DESC, seq DESC LIMIT 1;
         """;
 
+    // A real resend comes within seconds, or soon after a restart, so only the newest user rows can hold its clientId.
+    private const string ClientIdRows = "200";
+
+    /// <summary>
+    /// The run and text of the newest of the session's last <see cref="ClientIdRows"/> user rows sent with clientId
+    /// <c>$client</c>. A user row has no item, so rows_item finds the session's user rows and walks them newest first.
+    /// </summary>
+    public const string UserRowOfClient = $"""
+        SELECT run_id, json_extract(payload, '$.text') FROM (
+          SELECT run_id, payload, seq FROM rows INDEXED BY rows_item
+          WHERE session_id = $session AND item_id IS NULL AND kind = 'user' ORDER BY seq DESC LIMIT {ClientIdRows})
+        WHERE json_extract(payload, '$.clientId') = $client ORDER BY seq DESC LIMIT 1;
+        """;
+
     // The kinds a summary reads. SQLite uses a partial index only for a query that names its condition as the index
     // does, so the queries use this text as it is; INDEXED BY makes a query that drifts from it fail to prepare.
     private const string SummaryKinds = "kind IN ('turn', 'ask', 'task', 'subagent')";

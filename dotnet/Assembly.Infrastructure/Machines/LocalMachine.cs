@@ -23,8 +23,8 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Task.FromResult(sessionStore.Helper(parent, agent, title));
 
-    public Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken) =>
-        sessions.For(session.SessionId).SteerAsync(text, cancellationToken);
+    public Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken) =>
+        sessions.For(session.SessionId).SteerAsync(text, clientId, cancellationToken);
 
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.Stop(runId));
