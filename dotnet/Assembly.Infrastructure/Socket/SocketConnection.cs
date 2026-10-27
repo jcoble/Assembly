@@ -116,8 +116,11 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         return done.Task;
     }
 
+    // The write starts on the thread pool, never inline: off the order lock and the receive loop, so a handler's work
+    // before its first await holds up neither, as the socket's queue and reads already do.
     private static async Task<T> AfterAsync<T>(Task? before, Func<Task<T>> run)
     {
+        await Task.Yield();
         if (before is not null)
             await before.ContinueWith(_ => { }, TaskScheduler.Default);
         return await run();

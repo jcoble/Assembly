@@ -86,6 +86,10 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"one"}""");
         await _box.Reached.Task.WaitAsync(Wait);
         await CallAsync(socket, 3, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"two"}""");
+        // Frames are read in order, so once the save behind it answers, the second send has been queued; an abort
+        // sooner could land before the backend reads it.
+        await CallAsync(socket, 4, "preferences", "set", Save);
+        Assert.Equal([4], (await ReadAnswersAsync(socket, 1)).Keys);
         socket.Abort();
         socket.Dispose();
         await _here.Cancelled.Task.WaitAsync(Wait);
