@@ -21,7 +21,7 @@ g0-session#16 A permission or question from the agent shows as a card you answer
 g0-session#17 Background work shows its state and a Stop button while it runs; a subagent shows its title and state, has a Stop button while it runs, and opens its own session on click.
 g0-session#18 The agent's plan shows above the composer, with the step in progress marked.
 g0-session#19 A failed run says what went wrong in a sentence, not raw JSON; "The conversation is full" says what to do. A run you stopped shows no error.
-g0-session#20 A prompt from another session is labelled with that session (helper or session, agent, machine) and opens it on click; a helper's header links to its parent.
+g0-session#20 A prompt from another session is labelled with that session (its title, agent and machine) and opens it on click; a session another session started links to that session in its header, and takes prompts like any session.
 g0-session#21 A prompt longer than ten lines folds until opened. Each prompt and final reply has a copy button and its time ("Thursday 12:02 PM", or "Oct 17, 12:02 PM" past a week).
 g0-session#22 Enter sends, Shift-Enter adds a line. While a turn runs, sending steers it and Stop stops it.
 g0-session#23 A new session's first message sends.

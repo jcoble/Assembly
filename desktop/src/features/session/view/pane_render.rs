@@ -1,5 +1,5 @@
 //! The session pane as a dock panel, and its drawing: the header, the timeline, the plan card, the status line and the
-//! composer, top to bottom. The composer shows once the session is known to take prompts (a helper takes none).
+//! composer, top to bottom.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
@@ -87,8 +87,6 @@ impl Render for SessionPane {
                         }),
                 )
             })
-            .when(self.header.read(cx).takes_prompts(), |pane| {
-                pane.child(self.composer.clone())
-            })
+            .child(self.composer.clone())
     }
 }

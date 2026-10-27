@@ -1,6 +1,6 @@
-//! `Header` is the line above the timeline: the session's title, its agent and machine, and, for a helper, a link to
-//! its parent session (the open session intent, lane g0-host). It follows the `sessions` topic keyed on the open
-//! session, which also has helpers, though they aren't on the sessions list. Replaces SessionHeader.svelte.
+//! `Header` is the line above the timeline: the session's title, its agent and machine, and, for a session another
+//! session started, a link to the session that started it (the open session intent, lane g0-host). It follows the
+//! `sessions` topic keyed on the open session. Replaces SessionHeader.svelte.
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -46,14 +46,6 @@ impl Header {
                 }
             }
         }));
-    }
-
-    /// The session takes prompts once it's known not to be a helper: a helper takes none of its own, and until the
-    /// topic sends the session it isn't known, so the composer never shows on a helper even for a moment.
-    pub fn takes_prompts(&self) -> bool {
-        self.item
-            .as_ref()
-            .is_some_and(|item| item.parent_session_id.is_none())
     }
 }
 
