@@ -167,10 +167,19 @@ public sealed class DesktopBackend : IAsyncDisposable
 
     public Task WaitForShutdownAsync() => _app.WaitForShutdownAsync();
 
-    /// <summary>Stops it, as SIGTERM does, once <paramref name="input"/> ends.</summary>
-    public void StopAtEndOf(Stream input)
+    /// <summary>
+    /// Stops it, as SIGTERM does, once <paramref name="input"/> ends: the window's launcher holds this process's stdin
+    /// open for its whole life, so its quit or crash ends this backend too. The dispose cancels the read.
+    /// </summary>
+    public void StopAtEndOf(Stream input) => _work.Start("stdin", async stop =>
     {
-    }
+        var buffer = new byte[256];
+        // WaitAsync, as a console stream's read doesn't see the token.
+        while (await input.ReadAsync(buffer, stop).AsTask().WaitAsync(stop) > 0)
+        {
+        }
+        _app.Lifetime.StopApplication();
+    });
 
     public async ValueTask DisposeAsync()
     {

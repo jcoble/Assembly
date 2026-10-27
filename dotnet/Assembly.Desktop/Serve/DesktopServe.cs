@@ -34,6 +34,8 @@ public static class DesktopServe
         Console.WriteLine($"listening on {backend.Address}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");
+        if (options.ExitOnStdinClose)
+            backend.StopAtEndOf(Console.OpenStandardInput());
         await backend.WaitForShutdownAsync();
         return 0;
     }
