@@ -1,8 +1,9 @@
 //! The line under a turn and the checkout line, ported from app/test/turns.test.ts.
 
+use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
 
-use super::turn_line::{checkout_line, turn_line, worked_for};
+use super::turn_line::{checkout_line, message_time, turn_line, worked_for};
 use crate::features::session::rows::turn_stats::TurnStats;
 
 fn stats(over: Value) -> TurnStats {
@@ -78,5 +79,40 @@ fn the_checkout_line_shows_only_when_the_checkout_moved_between_turns() {
         )))
         .as_deref(),
         Some("Checkout changed · main@aaaaaaa → bbbbbbb")
+    );
+}
+
+fn local(day: u32, hour: u32, minute: u32) -> i64 {
+    Local
+        .with_ymd_and_hms(2026, 10, day, hour, minute, 0)
+        .unwrap()
+        .timestamp_millis()
+}
+
+// Pins: g0-session#10
+#[test]
+fn a_turn_with_a_start_time_shows_its_weekday_and_time_after_how_long_it_worked() {
+    let line = turn_line(
+        Some(&stats(
+            json!({ "startedAt": local(22, 12, 2), "model": null, "inputTokens": null, "outputTokens": null, "cacheHitPct": null, "costUsd": null }),
+        )),
+        None,
+        0,
+    );
+    assert_eq!(line, "Worked for 12s · Thu 12:02 PM");
+}
+
+// Pins: g0-session#21
+#[test]
+fn a_time_within_the_week_says_its_weekday_an_older_one_its_date() {
+    let at = local(22, 12, 2);
+    assert_eq!(message_time(at, at + 60_000), "Thursday 12:02 PM");
+    assert_eq!(
+        message_time(at, at + 8 * 24 * 3_600_000),
+        "Oct 22, 12:02 PM"
+    );
+    assert_eq!(
+        message_time(local(5, 9, 30), local(5, 10, 0)),
+        "Monday 9:30 AM"
     );
 }

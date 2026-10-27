@@ -50,6 +50,11 @@ pub fn checkout_line(stats: Option<&TurnStats>) -> Option<String> {
     ))
 }
 
+/// A prompt's or reply's time: "Thursday 12:02 PM" within the last 7 days, "Oct 17, 12:02 PM" before that.
+pub fn message_time(_at: i64, _now: i64) -> String {
+    todo!()
+}
+
 /// Assembly's "Worked for" duration: 9.5s, 42s, 3m 5s.
 pub fn worked_for(ms: i64) -> String {
     let ms = ms.max(0);
