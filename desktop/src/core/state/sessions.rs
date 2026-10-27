@@ -1,7 +1,9 @@
 //! `Sessions` owns the sessions list: the `sessions` topic's newest 200, newest first (`updatedAt`, then id, as the
 //! backend orders them), each change upserted in place, and older pages from `sessions/page`. The page cursor is kept
 //! apart from the list: it starts at the oldest of the topic's first state and moves only with each page's
-//! `nextBefore`, so an item that changes without moving (a rename) can't skip the sessions past it. The backend keeps helper sessions off the topic and the pages. Each item that arrives or
+//! `nextBefore`, so an item that changes without moving (a rename) can't skip the sessions past it. A reconnect's
+//! state that doesn't reach the newest held session (more than 200 changed meanwhile) replaces the list and starts
+//! the cursor again from its oldest. The backend keeps helper sessions off the topic and the pages. Each item that arrives or
 //! changes is emitted as a `SessionChange`, so the list can animate it.
 
 use gpui_kit::*;
@@ -24,7 +26,7 @@ pub struct Sessions {
     items: Vec<SessionItem>,
     /// Where the next older page starts, (`before`, `beforeId`); `None` when there's nothing older.
     older: Option<(i64, String)>,
-    /// The topic's first state has set `older`; a reconnect's state doesn't move it.
+    /// The topic's first state has set `older`; a reconnect's state moves it only past a gap.
     seeded: bool,
     /// Owns the `sessions` subscription; dropping it unsubscribes.
     _feed: Task<()>,
@@ -93,27 +95,51 @@ impl Sessions {
                 let first = !self.seeded;
                 self.seeded = true;
                 let full = items.len() >= NEWEST;
-                items.into_iter().for_each(|(_, item)| self.read(item, cx));
-                if first && full {
-                    let oldest = self.items.last();
-                    self.older = oldest.map(|item| (item.updated_at, item.session_id.clone()));
+                let state = items
+                    .into_iter()
+                    .filter_map(|(_, item)| read(item))
+                    .collect();
+                for change in add_state(&mut self.items, &mut self.older, first, state, full) {
+                    cx.emit(change);
                 }
             }
-            Update::Change { item, .. } => self.read(item, cx),
+            Update::Change { item, .. } => {
+                if let Some(item) = read(item) {
+                    cx.emit(upsert(&mut self.items, item));
+                }
+            }
         }
         cx.notify();
     }
+}
 
-    fn read(&mut self, item: Value, cx: &mut Context<Self>) {
-        match serde_json::from_value(item) {
-            Ok(item) => self.add(item, cx),
-            Err(error) => eprintln!("sessions: an item that doesn't read: {error}"),
-        }
-    }
+fn read(item: Value) -> Option<SessionItem> {
+    serde_json::from_value(item)
+        .inspect_err(|error| eprintln!("sessions: an item that doesn't read: {error}"))
+        .ok()
+}
 
-    fn add(&mut self, item: SessionItem, cx: &mut Context<Self>) {
-        cx.emit(upsert(&mut self.items, item));
+/// Adds the topic's state (`full` when it holds the topic's 200). The first sets where older pages start. A later
+/// one, after a reconnect, whose oldest is newer than the newest held session leaves a gap: the held list is
+/// replaced and the pages start again from the state's oldest. One that reaches the held list is merged.
+fn add_state(
+    items: &mut Vec<SessionItem>,
+    older: &mut Option<(i64, String)>,
+    first: bool,
+    state: Vec<SessionItem>,
+    full: bool,
+) -> Vec<SessionChange> {
+    let key = |item: &SessionItem| (item.updated_at, item.session_id.clone());
+    let oldest = state.iter().map(key).min();
+    let gap = !first
+        && matches!((&oldest, items.first()), (Some(oldest), Some(newest)) if *oldest > key(newest));
+    if gap {
+        items.clear();
     }
+    if first || gap {
+        *older = oldest.filter(|_| full);
+    }
+    state.into_iter().map(|item| upsert(items, item)).collect()
 }
 
 /// Adds a page's sessions. One already held is skipped: the held copy came from the topic, whose changes are sent
@@ -149,7 +175,7 @@ fn upsert(items: &mut Vec<SessionItem>, item: SessionItem) -> SessionChange {
 mod tests {
     use serde_json::json;
 
-    use super::{SessionChange, SessionItem, add_page, upsert};
+    use super::{SessionChange, SessionItem, add_page, add_state, upsert};
 
     fn session(id: &str, updated_at: i64) -> SessionItem {
         serde_json::from_value(json!({"sessionId": id, "agent": "claude", "repoUrl": "/r", "title": null,
@@ -180,6 +206,30 @@ mod tests {
         // A tie on time sorts by id, as the backend's pages do.
         upsert(&mut items, session("d", 20));
         assert_eq!(ids(&items), ["a", "b", "d", "c"]);
+    }
+
+    // More than the topic's 200 changed while disconnected: the reconnect's state doesn't reach the newest held
+    // session, so the list has a gap. It's replaced, and older pages start again from the state's oldest.
+    // Pins: g0-socket#7, g0-socket#10
+    #[test]
+    fn a_reconnect_state_past_the_held_list_replaces_it_and_restarts_the_pages() {
+        let mut items = vec![session("a", 10), session("b", 5)];
+        let mut older = Some((5, "b".to_owned()));
+        let state = vec![session("x", 30), session("y", 20)];
+        add_state(&mut items, &mut older, false, state, true);
+        assert_eq!(ids(&items), ["x", "y"]);
+        assert_eq!(older, Some((20, "y".to_owned())));
+    }
+
+    // Pins: g0-socket#7, g0-socket#10
+    #[test]
+    fn a_reconnect_state_that_reaches_the_held_list_is_merged_and_keeps_the_pages() {
+        let mut items = vec![session("a", 10), session("b", 5)];
+        let mut older = Some((1, "z".to_owned()));
+        let state = vec![session("x", 30), session("a", 10)];
+        add_state(&mut items, &mut older, false, state, true);
+        assert_eq!(ids(&items), ["x", "a", "b"]);
+        assert_eq!(older, Some((1, "z".to_owned())));
     }
 
     // Pins: g0-socket#10
