@@ -63,15 +63,6 @@ public sealed class DiagnosticsSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Activity_begin_and_end_hold_and_release_app_nap()
-    {
-        Assert.Equal("""{"t":"result","id":1,"result":{}}""", await CallAsync("activity.begin", "{}"));
-        Assert.Equal(1, _host.Activities);
-        Assert.Equal("""{"t":"result","id":1,"result":{}}""", await CallAsync("activity.end", "{}"));
-        Assert.Equal(0, _host.Activities);
-    }
-
-    [Fact]
     public async Task Drop_drops_every_subscription()
     {
         Assert.Equal("""{"t":"result","id":1,"result":{}}""", await CallAsync("drop", """{"ms":500}"""));
@@ -116,12 +107,10 @@ public sealed class DiagnosticsSocketTests : IAsyncLifetime
 
     private sealed class FakeHost : IDiagnosticsHost
     {
-        public int Activities { get; private set; }
         public List<(string Name, string Line)> Soak { get; } = [];
 
         public MemoryReading Memory() => new(null, null, null, null, 42, 1234);
-        public void BeginActivity() => Activities++;
-        public void EndActivity() => Activities--;
+        public void HoldActivity(bool held) { }
         public void AppendSoak(string name, string line) => Soak.Add((name, line));
     }
 }
