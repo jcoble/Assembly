@@ -131,6 +131,16 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_page_read_for_a_caller_who_has_gone_stops_with_nothing_read()
+    {
+        CommitFixture("acp/tools.jsonl");
+        using var gone = new CancellationTokenSource();
+        gone.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => _store.PageBefore("t", long.MaxValue, 100, gone.Token));
+    }
+
+    [Fact]
     public void A_page_shows_each_item_once_in_its_newest_form_in_the_order_items_started()
     {
         CommitFixture("acp/tools.jsonl");

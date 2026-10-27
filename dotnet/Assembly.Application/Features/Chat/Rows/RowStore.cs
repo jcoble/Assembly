@@ -135,7 +135,7 @@ public sealed class RowStore
     /// The newest <paramref name="limit"/> items that start below <paramref name="before"/>, each in its newest form.
     /// An item's rows never split across pages.
     /// </summary>
-    public RowPage PageBefore(string sessionId, long before, int limit)
+    public RowPage PageBefore(string sessionId, long before, int limit, CancellationToken cancel = default)
     {
         var picked = 0L;
         var rows = Query(Schema.PageBefore, reader =>

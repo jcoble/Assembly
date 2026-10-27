@@ -31,6 +31,16 @@ public sealed class SessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_list_read_for_a_caller_who_has_gone_stops_with_nothing_read()
+    {
+        Create();
+        using var gone = new CancellationTokenSource();
+        gone.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => _sessionStore.List(before: null, limit: 2, gone.Token));
+    }
+
+    [Fact]
     public void The_list_is_newest_first_and_pages_by_updated_at()
     {
         var a = Create();
