@@ -1433,6 +1433,53 @@ catalogue stays the reference.
     parent, ACP session, last activity). The summary fields above (state, active run, pending ask, needs attention,
     background work, online, unread) come in step 1c, after D4 and before the cut. They publish only when one of them
     changes, never once per row.
+  - **Step 1c shape (proposal, 2026-10-27; no code yet).** Every field comes from rows the desktop already stores,
+    so none needs a machine call. In the old app the same fields were worked out in the window from streamed events
+    (`ownedSessions.ts:18-46`, `WorktreeAgentRow.svelte:109-125`); here they move to the backend.
+
+    | Field (JSON) | Type | Value | Source today |
+    |---|---|---|---|
+    | `state` | `"idle" \| "running" \| "waiting" \| "failed"` | `waiting` if an ask is open, else `running` if a run is open, else `failed` if the newest turn row says `failed`, else `idle` | turn and ask rows; no query for an open ask yet |
+    | `activeRunId` | string or null | the run of the newest turn row if it says `started` | `RowStore.OpenRun` (`RowStore.cs:183`), `LiveHub.OpenRun` (`LiveHub.cs:108`) |
+    | `pendingAsk` | bool | the newest row of some ask item says `open` | none: a new `RowStore` query beside `RunningItems`, no schema change |
+    | `background` | int | task and subagent items whose newest row says `running` or `requires_action` | `RowStore.RunningItems(kind)` (`RowStore.cs:172`), for all sessions; needs a per-session form |
+    | `needsAttention` | bool | `pendingAsk`, or `unread` while not running (the old app's rule, `WorktreeAgentRow.svelte:118`, `sessionPresence.ts:115-127`) | derived from the others |
+    | `unread` | bool | the newest turn end (`finished`, `failed` or `cancelled`) comes after the last one the window marked read | **no source: needs storage**, see below |
+    | `online` | — | not a session field | **no source**: see below |
+
+    *When each changes, and the one place that publishes.* Every row the desktop stores goes through `LiveHub.Publish`
+    (`LiveHub.cs:31`) or, for a remote session's copied rows, `LiveHub.PublishCopy` (`LiveHub.cs:44`); both end in
+    `Push` (`LiveHub.cs:139`). Only four kinds can change a summary: `turn` (start, end), `ask` (open, answered,
+    cancelled), `task` and `subagent` (state changes). `Push` checks the saved rows' kinds first, a loop over the
+    batch with no query; a batch with none of the four does nothing more. For one that has one, the hub works the
+    session's summary out again (`OpenRun` plus the two new queries, all on `(session_id, seq)`), compares it with the
+    last one it sent, which it keeps in memory by session, and only if it differs publishes the sessions upsert, the
+    stored columns plus the summary, through `ITopics.Publish` as `Push` already does for rows (hub lock, then the
+    Topics lock: the order the code keeps). So a turn that streams a thousand delta, message and tool rows sends two
+    upserts (`running` at its start row, `idle` at its end row), plus two per ask it opens and answers and two per
+    background task; the deltas never reach the check. `SessionStore.Publish` (`SessionStore.cs:313`) stays the
+    publisher for stored-column changes (title, ACP session, `Touch` at `SessionHost.cs:115,153` and
+    `RemoteMachine.cs:199`) and includes the summary in its item, so both upserts carry the whole item.
+
+    *A remote session's summary is only as fresh as its copied rows.* `RemoteFollower` copies rows while a run is open
+    or a window watches the session (`RemoteFollower.cs:36`). A turn started from this desktop is followed to its end;
+    a background task that ends after its turn, or a turn started on the remote by something else, isn't seen until the
+    session is next followed. Fixing that (follow while `background > 0`, or a remote push of its summaries) is a
+    separate decision, not part of 1c.
+
+    *Unread needs storage.* The old app kept it in memory only (`sessionPresence.ts:52`): a session became unread when
+    a turn ended or an ask opened while it wasn't the one on screen, and read when it was opened
+    (`ConversationSurface.svelte:291-296`), and a restart forgot it all. To keep it on the backend, so every window
+    agrees and it survives a restart, it needs a new column, say `session_info.read_seq` (the seq the window last
+    marked read), and a `sessions/read {session, seq}` write. That's a schema change, so it stops here for the move
+    thread's OK. Without it, 1c ships the other fields and `needsAttention` is `pendingAsk` alone.
+
+    *Online is the machine's, not the session's.* The old app kept it per machine (`sessionRailStore.svelte.ts:20-59`).
+    Here nothing records it: a remote call that fails throws `MachineUnreachable` (`RemoteMachine.cs:220-230`), and
+    `machines/list` answers names only (`MachinesFeature.cs:32`). Putting it on each session would send an upsert for
+    every session on a machine when it drops. The proposal is to leave it off `SessionItem` and give `machines/list`
+    (later a small `machines` topic) a `reachable` flag that the tunnel and follower set; the window joins it by
+    `machine`. No field here needs a machine call.
   - **Config stays calls, without a topic for now.** A change the agent makes mid-turn (`config_option_update`,
     `available_commands_update`) only updates SessionStore's stored copy (`SessionHost.Background.cs:228-233`), with no
     row and nothing published, and `current_mode_update` is ignored (`UpdateReader.cs:33`). So nothing pushes it, and
