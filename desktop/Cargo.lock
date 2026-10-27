@@ -277,8 +277,10 @@ dependencies = [
 name = "assembly-desktop"
 version = "0.1.0"
 dependencies = [
+ "futures-channel",
  "gpui-fps",
  "gpui-kit",
+ "libc",
  "serde",
  "serde_json",
  "tungstenite",

@@ -1,53 +1,232 @@
 //! `Launcher` owns the backend child. It starts `Assembly.Desktop serve` with the lane's options, and one thread of
-//! its own reads the child's stdout and stderr with blocking reads (no timeout), appends every line to
-//! `<home>/backend.log` (as the old shell did), and on the ready line (`listening on <address>`,
-//! dotnet/Assembly.Desktop/Serve/DesktopServe.cs) reads the token file and calls the socket client's `reconnect()`
-//! (lane g0-socket). That thread owns the `Child` and reaps it when its output ends.
+//! its own reads the child's stdout with blocking reads (no timeout) and appends every line to `<home>/backend.log`,
+//! where the child's stderr goes too (as the old shell did). On the ready line (`listening on <address>`,
+//! dotnet/Assembly.Desktop/Serve/DesktopServe.cs) it reads the token file and hands the token to the window, which
+//! starts or reconnects the socket client (lane g0-socket). That thread owns the `Child` and reaps it when its
+//! output ends.
 //!
 //! - A child that was ready and exits is started again at once; the new one's ready line reconnects.
-//! - A child that exits before it was ever ready isn't started again: the window shows the failure and the log's
-//!   path, and the palette's "Restart backend" command starts one when none is running. There's no time limit on
-//!   the ready line (no timers): until it comes the window shows "starting backend".
+//! - A child that exits before it was ever ready isn't started again: the log says so, and the palette's "Restart
+//!   backend" command starts one when none is running. There's no time limit on the ready line (no timers).
 //! - On quit it sends the child SIGTERM and waits until the thread has reaped it; the backend finishes its queued
 //!   writes and bounds that wait itself (8 s, ApiServer.ShutdownTimeout). The wait is in the quit handler's body, not
 //!   a quit future, which GPUI cuts off after 200 ms.
 //!
 //! The token is never printed or logged.
 
-use std::sync::atomic::{AtomicBool, AtomicU32};
-use std::sync::mpsc::Receiver;
+use std::fs::{File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::thread::JoinHandle;
 
 use gpui_kit::*;
 
 use super::backend_config::BackendConfig;
-use super::backend_ready::BackendReady;
+
+/// Gets the token each time a backend is ready.
+type Ready = Arc<dyn Fn(String) + Send + Sync>;
 
 pub struct Launcher {
     config: Arc<BackendConfig>,
-    reconnect: Arc<dyn Fn(BackendReady) + Send + Sync>,
+    ready: Ready,
     /// The running child's process id, 0 when none runs. Quit signals it without taking any lock.
     pid: Arc<AtomicU32>,
     /// Set on quit, so the thread doesn't start another child.
     quitting: Arc<AtomicBool>,
-    /// Gets a message each time the thread reaps a child.
-    reaped: Receiver<()>,
+    thread: Option<JoinHandle<()>>,
 }
 
 impl Global for Launcher {}
 
 impl Launcher {
-    /// Starts the backend and its output thread, and sets the quit handler.
+    /// Starts the backend and its output thread, calls `on_ready` on the main thread with the port and token each
+    /// time a backend is ready, and stops the backend when the app quits.
     pub fn start(
-        _config: BackendConfig,
-        _reconnect: impl Fn(BackendReady) + Send + Sync + 'static,
-        _cx: &mut App,
-    ) -> Result<(), String> {
-        todo!()
+        config: BackendConfig,
+        on_ready: impl Fn(u16, String, &mut App) + 'static,
+        cx: &mut App,
+    ) {
+        let port = config.port;
+        let (sender, mut receiver) = futures_channel::mpsc::unbounded::<String>();
+        let launcher = Self::new(
+            config,
+            Arc::new(move |token| _ = sender.unbounded_send(token)),
+        );
+        cx.set_global(launcher);
+        cx.spawn(async move |cx| {
+            while let Ok(token) = receiver.recv().await {
+                cx.update(|cx| on_ready(port, token, cx));
+            }
+        })
+        .detach();
+        cx.on_app_quit(|cx| {
+            cx.global_mut::<Self>().stop();
+            async {}
+        })
+        .detach();
     }
 
-    /// Starts a backend when none is running (the palette's "Restart backend"); does nothing when one is.
-    pub fn restart(_cx: &mut App) {
-        todo!()
+    fn new(config: BackendConfig, ready: Ready) -> Self {
+        let mut launcher = Self {
+            config: Arc::new(config),
+            ready,
+            pid: Arc::new(AtomicU32::new(0)),
+            quitting: Arc::new(AtomicBool::new(false)),
+            thread: None,
+        };
+        launcher.restart_if_stopped();
+        launcher
+    }
+
+    /// Starts a backend when none is running; does nothing when one is. The palette's "Restart backend" calls it.
+    fn restart_if_stopped(&mut self) {
+        if self
+            .thread
+            .as_ref()
+            .is_some_and(|thread| !thread.is_finished())
+        {
+            return;
+        }
+        let (config, ready, pid, quitting) = (
+            self.config.clone(),
+            self.ready.clone(),
+            self.pid.clone(),
+            self.quitting.clone(),
+        );
+        self.thread = Some(
+            std::thread::Builder::new()
+                .name("backend".into())
+                .spawn(move || run(&config, &*ready, &pid, &quitting))
+                .expect("start the backend's thread"),
+        );
+    }
+
+    /// Sends the child SIGTERM and waits until it's reaped; no other child starts after.
+    fn stop(&mut self) {
+        self.quitting.store(true, Ordering::SeqCst);
+        let pid = self.pid.load(Ordering::SeqCst);
+        if pid != 0 {
+            terminate(pid);
+        }
+        if let Some(thread) = self.thread.take() {
+            _ = thread.join();
+        }
     }
 }
+
+/// The thread: starts children until one exits before it was ready, or the app quits.
+fn run(
+    config: &BackendConfig,
+    ready: &(dyn Fn(String) + Send + Sync),
+    pid: &AtomicU32,
+    quitting: &AtomicBool,
+) {
+    let log_path = config.home.join("backend.log");
+    let log = std::fs::create_dir_all(&config.home)
+        .and_then(|_| OpenOptions::new().create(true).append(true).open(&log_path));
+    let Ok(mut log) = log else {
+        eprintln!("the backend's log {} can't be opened", log_path.display());
+        return;
+    };
+    while !quitting.load(Ordering::SeqCst) {
+        let was_ready = run_child(config, &mut log, ready, pid, quitting);
+        if !was_ready && !quitting.load(Ordering::SeqCst) {
+            let line = format!(
+                "the backend stopped before it was ready; see {}",
+                log_path.display()
+            );
+            _ = writeln!(log, "{line}");
+            eprintln!("{line}");
+            return;
+        }
+    }
+}
+
+/// Runs one child to its end; true when it printed its ready line.
+fn run_child(
+    config: &BackendConfig,
+    log: &mut File,
+    ready: &(dyn Fn(String) + Send + Sync),
+    pid: &AtomicU32,
+    quitting: &AtomicBool,
+) -> bool {
+    let mut command = Command::new(&config.program);
+    command
+        .arg("serve")
+        .arg("--port")
+        .arg(config.port.to_string());
+    command
+        .arg("--home")
+        .arg(&config.home)
+        .arg("--token-file")
+        .arg(&config.token_file);
+    if let Some(remote) = &config.remote {
+        command
+            .arg("--remote")
+            .arg(remote)
+            .arg("--remote-port")
+            .arg(config.remote_port.to_string());
+        command
+            .arg("--remote-token-file")
+            .arg(&config.remote_token_file);
+    }
+    let stderr = match log.try_clone() {
+        Ok(file) => Stdio::from(file),
+        Err(_) => Stdio::null(),
+    };
+    let mut child = match command.stdout(Stdio::piped()).stderr(stderr).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            _ = writeln!(
+                log,
+                "the backend {} didn't start: {error}",
+                config.program.display()
+            );
+            return false;
+        }
+    };
+    pid.store(child.id(), Ordering::SeqCst);
+    // A quit that came while this child was starting found no pid to signal.
+    if quitting.load(Ordering::SeqCst) {
+        terminate(child.id());
+    }
+    let mut was_ready = false;
+    if let Some(stdout) = child.stdout.take() {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            _ = writeln!(log, "{line}");
+            if line.starts_with("listening on ") {
+                match read_token(config) {
+                    Ok(token) => {
+                        was_ready = true;
+                        ready(token);
+                    }
+                    Err(error) => _ = writeln!(log, "{error}"),
+                }
+            }
+        }
+    }
+    _ = child.wait();
+    pid.store(0, Ordering::SeqCst);
+    was_ready
+}
+
+fn terminate(pid: u32) {
+    // SAFETY: kill only sends a signal; the pid is the child's, and the thread clears it once reaped.
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+}
+
+/// The one `ASSEMBLY_TOKEN=<hex>` line the backend made on its first start (TokenFile.cs).
+fn read_token(config: &BackendConfig) -> Result<String, String> {
+    let file = &config.token_file;
+    let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix("ASSEMBLY_TOKEN="))
+        .map(str::to_owned)
+        .ok_or_else(|| format!("no ASSEMBLY_TOKEN in {}", file.display()))
+}
+
+#[cfg(test)]
+#[path = "launcher_tests.rs"]
+mod tests;
