@@ -1,8 +1,8 @@
 # Terminal host: shape notes
 
 Step W4 (Terminals) of `docs/plans/2026-10-26/implementation-plan.md`, from Sol's P22. Behavior list:
-`docs/behavior/terminal.md` (draft). This is step 1 of "files first, then code": every file exists with its
-signatures and comment, and the draft tests in `Assembly.Tests/Draft/Terminal/` fail until step 2 fills them in.
+`docs/behavior/terminal.md` (draft). Step 1 (files and red tests) is 523f338; step 2 fills them in, with the
+changes the pre-implementation check asked for (listed at the end).
 
 ## What the backend does, and what it doesn't
 
@@ -21,8 +21,8 @@ Assembly.Application/Features/Terminal/
   OutputRing.cs          the kept output: bytes with absolute offsets, 16 MB cap, trims to 12 MB
   IPtyStarter.cs         starts a process on a new PTY (implemented in Infrastructure)
   IPty.cs                one started PTY: read, write, resize, exit, dispose ends the process group
-  PtyRequest.cs  PtyExit.cs
-  TerminalInfo.cs  StartArgs.cs  WriteArgs.cs  ResizeArgs.cs  TerminalKey.cs  ReadArgs.cs  OutputPiece.cs
+  PtyRequest.cs
+  TerminalInfo.cs  StartArgs.cs  WriteArgs.cs  ResizeArgs.cs  TerminalKey.cs  ReadArgs.cs  OutputPiece.cs  OutputRow.cs  Empty.cs
   TerminalJson.cs        source-generated JSON, for AOT
 Assembly.Infrastructure/Terminal/
   UnixPtyStarter.cs      posix_openpt, then the child through /usr/bin/perl (see below)
@@ -34,15 +34,20 @@ Assembly.Infrastructure/Terminal/
 
 One approach, no new package and no native helper to ship:
 
-1. The backend opens the master with `posix_openpt(O_RDWR | O_NOCTTY)`, then `grantpt`, `unlockpt`, `ptsname`, and
-   marks it close-on-exec, so no other child inherits it. All of these are libc on macOS and Linux.
+1. The backend opens the master with `posix_openpt(O_RDWR | O_NOCTTY)` (with `O_CLOEXEC` on Linux, `FIOCLEX` after on
+   macOS), then `grantpt`, `unlockpt`, `ptsname`, sets the size with `TIOCSWINSZ`, and opens the slave itself
+   (close-on-exec), holding it until the process ends, so the master can't read end of file before perl opens it.
 2. The child goes through `/usr/bin/perl`, as `Agents/ProcessGroup.cs` already does for `setpgrp`: perl calls
    `setsid`, opens the slave by name, makes it the controlling terminal (`TIOCSCTTY`, whose number the backend passes
-   in for the platform), puts it on fds 0, 1 and 2, sets the size, and execs the shell. The pid stays the same, and
-   the shell leads its own session and process group, so job control and Ctrl-C work (terminal#2) and closing kills
-   the group (terminal#8).
-3. Resize is `TIOCSWINSZ` on the master. Exit comes from `Process.WaitForExitAsync`; a signal shows as 128 + n, which
-   `PtyExit` splits back out.
+   in for the platform), puts it on fds 0, 1 and 2, and execs the shell. The pid stays the same, and
+   the shell leads its own session and process group, so job control and Ctrl-C work (terminal#2). Closing uses
+   `ProcessGroup.Kill`, which also kills the groups of the jobs an interactive shell started (terminal#8).
+3. Resize is `TIOCSWINSZ` on the master. `ioctl` is variadic, and on Apple arm64 a variadic argument goes on the
+   stack, so there `PtyNative` passes six unused register arguments first. Exit is `Process.ExitCode`; a signal
+   shows as 128 + n, as .NET reports it, so the exit is one code.
+4. A thread of its own reads the master (a read blocks for the terminal's life) into a 4-slot channel, so a slow
+   reader holds the program up, not memory. Linux answers EIO once the last slave closes; that's end of output. The
+   thread owns the master and closes it when done, never under a blocked read.
 
 Forking from managed code isn't safe, and `posix_spawn` can't set a controlling terminal on macOS, which is why the
 child step is perl. The proof is `Draft/Terminal/UnixPtyTests.cs` passing on Linux (agent-workbox, Workbox Test) and
@@ -57,24 +62,32 @@ call) holds, so there's no binary frame.
 | Call | Args | Answers |
 | --- | --- | --- |
 | `terminal/start` | `cwd`, `shell?`, `command?`, `cols?`, `rows?`, `owner?` | `TerminalInfo` |
+| `terminal/list` | none | `TerminalInfo[]`, each with `exitCode` once it has ended |
 | `terminal/write` | `terminal`, `data` | `{}` |
 | `terminal/resize` | `terminal`, `cols`, `rows` | `{}` |
 | `terminal/read` | `terminal`, `offset` | `OutputPiece`: `offset`, `end`, `data` (at most 1 MB) |
 | `terminal/close` | `terminal` | `{}`; ok for one already closed |
 
-Topics:
-
-- `terminals`, no key: every terminal on this machine as `TerminalInfo`, upserted on start and on exit (with its exit
-  code or signal), removed on close. That's how the window sees which state each one is in (terminal#7).
-- `terminal`, keyed by terminal id, a rows topic (`ICallRegistry.Rows`): each read from the PTY goes out as one row,
+The topic, `terminal`, keyed by terminal id, a rows topic (`ICallRegistry.Rows`): each read from the PTY goes out as one row,
   `{"seq": <end offset>, "prevSeq": <start offset>, "data": <bytes>}`. Offsets count bytes since the terminal
   started. The sub's `after` is the last offset the window has; the state catches up from it in one row when it's in
   the ring and at most 1 MB behind, otherwise it answers the current end and the window reads the replay with
   `terminal/read`, 1 MB a call, starting no earlier than the last 4 MB (terminal#5). The state never holds more than
   1 MB, since it runs under the Topics lock.
 
-The exit is published on `terminals` only after the PTY reader has hit end of file, so the last output always goes
-out first (terminal#7).
+The exit is the last row, `{"seq": <end + 1>, "prevSeq": <end>, "exit": <code>}`, published only after the PTY has
+read end of file and the process has ended, so the last output always goes first (terminal#7). A state for an exited
+terminal ends with it too.
+
+Each read is appended under the terminal's lock and published after it lets go: the state runs under the Topics lock
+and then takes the terminal's, so publishing under it would take them the other way round. A row the state already
+holds is dropped by its seq (`SocketDispatcher.Rows`).
+
+Calls that aren't database writes are reads, and reads run side by side, so two writes could reach the PTY in the
+wrong order. The window keeps one `terminal/write` in flight per terminal and sends what's typed meanwhile in the
+next one.
+
+The folder check (terminal#1) is in `UnixPtyStarter`, since the core opens no files (`ArchitectureTests`).
 
 ## Ownership and the way out
 
@@ -87,19 +100,44 @@ out first (terminal#7).
 ## Environment and arguments
 
 `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=Assembly`, and `NO_COLOR` removed, as the old app did.
-The shell is `shell`, else `$SHELL`, else `/bin/sh`, always started with `-l` (every common shell takes it) so the
-terminal has the user's full PATH, plus `-c <command>` when there's a command. A blank command is no command.
+Also `CLICOLOR`, `CLICOLOR_FORCE`, `FORCE_COLOR=3` and `COLORFGBG=15;0`, as the old app set. The shell is `shell`,
+else `$SHELL`, else `/bin/sh`, always started with `-l` so the terminal has the user's full PATH, plus
+`-c <command>` when there's a command. A blank command is no command. The old app gave `-l` only to a list of shell
+names; with no lists, every shell gets it, and a shell that refuses `-l` fails to start.
 
 ## What waits for later steps
 
-- Remote (terminal#10): `TerminalFeature` registers on every machine (`MachineFeatureList`), so a remote host serves
-  the same calls. Reaching it from the desktop's window comes with C2's socket relay, which forwards a machine's calls
+- Remote (terminal#10): `TerminalFeature` is in the socket features of both hosts (`DesktopBackend.cs` and
+  `ServeRun.cs`), and each host disposes its `TerminalHost` when it stops. Until C2 it's proved against the Workbox
+  Test host's own socket. Reaching it from the desktop's window comes with C2's socket relay, which forwards a machine's calls
   and topics; nothing terminal-specific is needed there.
 - Agent tool terminals (ACP `terminal/*`) stay separate, as P22 says.
 - Closing a session's terminals when the session is deleted comes with that delete.
 - The window side (the Ghostty view and its socket calls) is the GPUI lane's.
 
+## Known risk: a flood of output
+
+Every PTY read is a row, and a socket closes past 16 MB queued (`SocketConnection.Send`). A `yes` flood to a slow
+or remote window could close the socket, chat included, again on each reconnect. The 4-slot channel slows the
+program only as fast as the backend publishes, not as fast as the window reads. Next in this lane: a socket-level
+flood test; if it closes the socket, rows carry only offsets and the window pulls bytes with `terminal/read`.
+`notes/terminal-later-backend.md` (outside the repo) maps the options.
+
 ## Open questions for Jesse
 
 - `ASSEMBLY_SESSION_ID` as the owner variable's name.
 - `/bin/sh` as the last fallback shell (the old app used `/bin/zsh`).
+- `-l` for every shell (no list of shell names), so an unusual shell that refuses it won't start.
+
+## What the pre-implementation check changed
+
+1. Lock order: publish after letting go of the terminal's lock (it was under it).
+2. No `terminals` list topic: a keyless topic can't remove yet (`SocketDispatcher.ChangeFrame` only upserts), so the
+   list is a call and the exit is the output topic's last row.
+3. One write in flight per terminal, in the wire contract.
+4. The folder check moved to `UnixPtyStarter`; its test to `UnixPtyTests`.
+5. Wired into `DesktopBackend.cs` and `ServeRun.cs`, not `MachineFeatureList` (HTTP only).
+6. PTY: EIO is end of output, a reader thread of its own, the master closed by that thread, the parent holds the
+   slave until exit, `ProcessGroup.Kill`, the group test runs an interactive shell, DllImport (no
+   `AllowUnsafeBlocks`), `ptsname` copied under a lock, Apple arm64 `ioctl`.
+7. Floods: recorded above as the next step, not fixed yet.

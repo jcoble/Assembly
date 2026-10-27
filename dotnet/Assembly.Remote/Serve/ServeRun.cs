@@ -1,3 +1,5 @@
+using Assembly.Application.Features.Terminal;
+using Assembly.Infrastructure.Terminal;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
@@ -48,7 +50,10 @@ public static class ServeRun
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics), options.Port,
+        // Disposed after the app, so the host's terminals close when it stops (terminal#8).
+        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System);
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
+            [new TerminalFeature(terminals)]), options.Port,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

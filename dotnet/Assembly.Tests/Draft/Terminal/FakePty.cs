@@ -7,7 +7,7 @@ namespace Assembly.Tests.Draft.Terminal;
 internal sealed class FakePty(PtyRequest request, int pid) : IPty
 {
     private readonly Channel<byte[]> _output = Channel.CreateUnbounded<byte[]>();
-    private readonly TaskCompletionSource<PtyExit> _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<int> _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public PtyRequest Request { get; } = request;
     public List<byte[]> Written { get; } = [];
@@ -15,12 +15,12 @@ internal sealed class FakePty(PtyRequest request, int pid) : IPty
     public bool Disposed { get; private set; }
 
     public int Pid { get; } = pid;
-    public Task<PtyExit> Exited => _exited.Task;
+    public Task<int> Exited => _exited.Task;
 
     public void Emit(params byte[] bytes) => _output.Writer.TryWrite(bytes);
 
     /// <summary>The program ends: its output closes, then its exit.</summary>
-    public void End(PtyExit exit)
+    public void End(int exit)
     {
         _output.Writer.TryComplete();
         _exited.TrySetResult(exit);
@@ -46,7 +46,7 @@ internal sealed class FakePty(PtyRequest request, int pid) : IPty
     public ValueTask DisposeAsync()
     {
         Disposed = true;
-        End(new PtyExit(null, 9));
+        End(137);
         return ValueTask.CompletedTask;
     }
 }

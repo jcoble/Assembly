@@ -22,7 +22,9 @@ using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
 using Assembly.Application.Features.Diagnostics;
+using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Clock;
+using Assembly.Infrastructure.Terminal;
 
 namespace Assembly.Desktop.Serve;
 
@@ -38,10 +40,12 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly RemoteMachine? _remote;
     private readonly RemoteOutbox? _outbox;
     private readonly WebApplication _app;
+    private readonly TerminalHost _terminals;
 
     private DesktopBackend(AppDatabase db, LiveHub hub, SessionRegistry sessions, RemoteMachine? remote, RemoteOutbox? outbox,
-        WebApplication app)
+        WebApplication app, TerminalHost terminals)
     {
+        _terminals = terminals;
         _remote = remote;
         _outbox = outbox;
         _db = db;
@@ -84,6 +88,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId).Where(id => sessionStore.Get(id)?.Machine == remote!.Name));
 
         Uri? address = null;
+        var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System);
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
         // the last socket.
@@ -91,7 +96,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines),
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
-                new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>
+                new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions), new TerminalFeature(terminals)]), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));
@@ -99,7 +104,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app);
+        var backend = new DesktopBackend(db, hub, sessions, remoteMachine, outbox, app, terminals);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -112,6 +117,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     {
         await _app.StopAsync();
         await _app.DisposeAsync();
+        await _terminals.DisposeAsync();
         if (_outbox is not null)
             await _outbox.DisposeAsync();
         await _sessions.DisposeAsync();

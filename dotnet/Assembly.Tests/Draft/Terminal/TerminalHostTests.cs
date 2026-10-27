@@ -37,15 +37,17 @@ public sealed class TerminalHostTests : IAsyncDisposable
         // Pins: terminal#7
         var terminal = _host.Start(new StartArgs(_folder));
         _pty.Started[0].Emit("bye"u8.ToArray());
-        _pty.Started[0].End(new PtyExit(3, null));
+        _pty.Started[0].End(3);
 
-        await _topics.WaitFor(p => p.Topic == TerminalFeature.ListTopic && p.Json.Contains("\"exit\":{"));
+        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"exit\":"));
 
         var published = _topics.Snapshot();
-        var lastRow = published.FindLastIndex(p => p.Topic == TerminalFeature.OutputTopic);
-        var exit = published.FindIndex(p => p.Topic == TerminalFeature.ListTopic && p.Json.Contains("\"exit\":{"));
+        var lastRow = published.FindLastIndex(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"data\":"));
+        var exit = published.FindIndex(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"exit\":"));
         Assert.True(lastRow >= 0 && lastRow < exit, "the exit went out before the last output");
-        Assert.Equal(new PtyExit(3, null), Assert.Single(_host.List()).Exit);
+        Assert.Equal(3, Assert.Single(_host.List()).ExitCode);
+        var exitRow = published[exit].Json;
+        Assert.Equal((4L, 3L), (Seq(exitRow), PrevSeq(exitRow)));
         Assert.Equal("bye"u8.ToArray(), _host.Read(terminal.Id, 0).Data);
     }
 
@@ -84,8 +86,8 @@ public sealed class TerminalHostTests : IAsyncDisposable
         Assert.Equal(first.Id, again.Id);
         Assert.Single(_pty.Started);
 
-        _pty.Started[0].End(new PtyExit(0, null));
-        await _topics.WaitFor(p => p.Topic == TerminalFeature.ListTopic && p.Json.Contains("\"exit\":{"));
+        _pty.Started[0].End(0);
+        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"exit\":"));
 
         var next = _host.Start(new StartArgs(_folder, Owner: "session-1"));
         Assert.NotEqual(first.Id, next.Id);
@@ -107,18 +109,6 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
-    public void A_folder_that_no_longer_exists_fails_with_its_path()
-    {
-        // Pins: terminal#1
-        var gone = Path.Combine(_folder, "gone");
-
-        var failed = Assert.Throws<CallFailed>(() => _host.Start(new StartArgs(gone)));
-
-        Assert.Contains(gone, failed.Message);
-        Assert.Empty(_pty.Started);
-    }
-
-    [Fact]
     public void It_runs_a_login_shell_or_one_command_in_it_and_a_blank_command_is_none()
     {
         // Pins: terminal#1
@@ -128,10 +118,11 @@ public sealed class TerminalHostTests : IAsyncDisposable
         var shell = _pty.Started[0].Request;
         Assert.Equal("/bin/bash", shell.FileName);
         Assert.Equal(["-l"], shell.Arguments);
-        Assert.Equal(Path.GetFullPath(_folder), shell.Cwd);
+        Assert.Equal(_folder, shell.Cwd);
         Assert.Equal("xterm-256color", shell.Environment["TERM"]);
         Assert.Equal("truecolor", shell.Environment["COLORTERM"]);
         Assert.Equal("session-1", shell.Environment["ASSEMBLY_SESSION_ID"]);
+        Assert.Equal("Assembly", shell.Environment["TERM_PROGRAM"]);
         Assert.True(shell.Environment.ContainsKey("NO_COLOR") && shell.Environment["NO_COLOR"] is null);
         Assert.Equal(["-l", "-c", "ls -la"], _pty.Started[1].Request.Arguments);
     }
@@ -164,8 +155,8 @@ public sealed class TerminalHostTests : IAsyncDisposable
         var terminal = _host.Start(new StartArgs(_folder));
 
         await _host.WriteAsync(terminal.Id, [0x03], CancellationToken.None);
-        _pty.Started[0].End(new PtyExit(null, 2));
-        await _topics.WaitFor(p => p.Topic == TerminalFeature.ListTopic && p.Json.Contains("\"exit\":{"));
+        _pty.Started[0].End(130);
+        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"exit\":"));
 
         Assert.Equal(new byte[] { 0x03 }, Assert.Single(_pty.Started[0].Written));
         await Assert.ThrowsAsync<CallFailed>(async () => await _host.WriteAsync(terminal.Id, [0x03], CancellationToken.None));

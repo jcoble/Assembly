@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Topics;
 
 namespace Assembly.Application.Features.Terminal;
@@ -11,27 +12,104 @@ internal sealed class TerminalHost : IAsyncDisposable
     public const int DefaultCols = 96;
     public const int DefaultRows = 28;
 
-    public TerminalHost(IPtyStarter pty, ITopics topics, TimeProvider time) => throw new NotImplementedException();
+    private readonly IPtyStarter _pty;
+    private readonly ITopics _topics;
+    private readonly TimeProvider _time;
+    private readonly Lock _lock = new();
+    private readonly Dictionary<string, RunningTerminal> _terminals = [];
+
+    public TerminalHost(IPtyStarter pty, ITopics topics, TimeProvider time)
+    {
+        _pty = pty;
+        _topics = topics;
+        _time = time;
+    }
 
     /// <summary>
     /// Starts a terminal in <see cref="StartArgs.Cwd"/>, or answers the owner's terminal while it still runs
     /// (terminal#9). Fails with the folder's path when it doesn't exist (terminal#1).
     /// </summary>
-    public TerminalInfo Start(StartArgs args) => throw new NotImplementedException();
+    public TerminalInfo Start(StartArgs args)
+    {
+        var owner = Blank(args.Owner);
+        var shell = Blank(args.Shell) ?? Blank(Environment.GetEnvironmentVariable("SHELL")) ?? "/bin/sh";
+        // A login shell, so the terminal has the user's whole PATH, as Terminal.app and the old app gave it.
+        string[] arguments = Blank(args.Command) is { } command ? ["-l", "-c", command] : ["-l"];
+        var cols = Math.Clamp(args.Cols ?? DefaultCols, 20, 300);
+        var rows = Math.Clamp(args.Rows ?? DefaultRows, 4, 100);
+        var environment = new Dictionary<string, string?>
+        {
+            ["TERM"] = "xterm-256color",
+            ["COLORTERM"] = "truecolor",
+            ["TERM_PROGRAM"] = "Assembly",
+            ["CLICOLOR"] = "1",
+            ["CLICOLOR_FORCE"] = "1",
+            ["FORCE_COLOR"] = "3",
+            ["COLORFGBG"] = "15;0",
+            ["NO_COLOR"] = null,
+        };
+        if (owner is not null)
+            environment["ASSEMBLY_SESSION_ID"] = owner;
+        var cwd = args.Cwd.Trim();
+        lock (_lock)
+        {
+            if (owner is not null && _terminals.Values.Select(terminal => terminal.Info).FirstOrDefault(info => info.Owner == owner && info.ExitCode is null) is { } running)
+                return running;
+            var pty = _pty.Start(new PtyRequest(shell, arguments, cwd, environment, cols, rows));
+            var info = new TerminalInfo($"term-{Guid.NewGuid():N}", cwd, shell, cols, rows, pty.Pid, owner, _time.GetUtcNow(), null);
+            _terminals[info.Id] = new RunningTerminal(info, pty, _topics);
+            return info;
+        }
+    }
 
-    public IReadOnlyList<TerminalInfo> List() => throw new NotImplementedException();
+    public IReadOnlyList<TerminalInfo> List()
+    {
+        lock (_lock)
+            return [.. _terminals.Values.Select(terminal => terminal.Info)];
+    }
 
     /// <summary>Fails for a terminal that's closed or whose process has ended.</summary>
-    public ValueTask WriteAsync(string terminal, byte[] data, CancellationToken cancellationToken) => throw new NotImplementedException();
+    public ValueTask WriteAsync(string terminal, byte[] data, CancellationToken cancellationToken) =>
+        Get(terminal).WriteAsync(data, cancellationToken);
 
-    public void Resize(string terminal, int cols, int rows) => throw new NotImplementedException();
+    public void Resize(string terminal, int cols, int rows) => Get(terminal).Resize(Math.Clamp(cols, 20, 300), Math.Clamp(rows, 4, 100));
 
-    public OutputPiece Read(string terminal, long offset) => throw new NotImplementedException();
+    public OutputPiece Read(string terminal, long offset) => Get(terminal).Read(offset);
 
-    public (long Seq, IReadOnlyList<string> Rows) State(string terminal, long? after) => throw new NotImplementedException();
+    /// <summary>Runs under the Topics lock: it takes the host's lock, then the terminal's, and never publishes.</summary>
+    public (long Seq, IReadOnlyList<string> Rows) State(string terminal, long? after)
+    {
+        lock (_lock)
+            return _terminals.TryGetValue(terminal, out var running) ? running.State(after) : (after ?? 0, []);
+    }
 
     /// <summary>Ends the terminal and lets go of its output; ok for one already closed.</summary>
-    public ValueTask CloseAsync(string terminal) => throw new NotImplementedException();
+    public async ValueTask CloseAsync(string terminal)
+    {
+        RunningTerminal? running;
+        lock (_lock)
+            _terminals.Remove(terminal, out running);
+        if (running is not null)
+            await running.DisposeAsync();
+    }
 
-    public ValueTask DisposeAsync() => throw new NotImplementedException();
+    public async ValueTask DisposeAsync()
+    {
+        List<RunningTerminal> all;
+        lock (_lock)
+        {
+            all = [.. _terminals.Values];
+            _terminals.Clear();
+        }
+        foreach (var running in all)
+            await running.DisposeAsync();
+    }
+
+    private RunningTerminal Get(string terminal)
+    {
+        lock (_lock)
+            return _terminals.TryGetValue(terminal, out var running) ? running : throw new CallFailed($"there's no terminal {terminal}");
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

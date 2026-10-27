@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Terminal;
 
@@ -43,7 +44,7 @@ public sealed class UnixPtyTests
         await pty.WriteAsync(new byte[] { 0x03 }, Cancel());
         var exit = await pty.Exited.WaitAsync(Cancel());
 
-        Assert.True(exit.Signal == 2 || exit.Code == 130, $"ended with {exit}");
+        Assert.Equal(130, exit);
     }
 
     [Fact]
@@ -51,8 +52,7 @@ public sealed class UnixPtyTests
     {
         // Pins: terminal#4
         await using var pty = Start("stty size; echo ready; read x; stty size", cols: 80, rows: 24);
-        await ReadUntilAsync(pty, "24 80");
-        await ReadUntilAsync(pty, "ready");
+        Assert.Contains("24 80", await ReadUntilAsync(pty, "ready"));
 
         pty.Resize(120, 40);
         await pty.WriteAsync("\n"u8.ToArray(), Cancel());
@@ -70,14 +70,15 @@ public sealed class UnixPtyTests
         var exit = await pty.Exited.WaitAsync(Cancel());
 
         Assert.Contains("done", output);
-        Assert.Equal(new PtyExit(7, null), exit);
+        Assert.Equal(7, exit);
     }
 
     [Fact]
     public async Task Disposing_ends_the_program_and_everything_it_started()
     {
         // Pins: terminal#8
-        var pty = Start("sleep 300 & echo \"child:$!\"; wait");
+        // An interactive shell puts each job in a process group of its own, which killing the shell's group alone misses.
+        var pty = Start("sleep 300 & echo \"child:$!\"; wait", interactive: true);
         var line = await ReadUntilAsync(pty, "child:");
         var child = int.Parse(line[(line.IndexOf("child:", StringComparison.Ordinal) + 6)..].Split('\r', '\n')[0]);
 
@@ -87,8 +88,20 @@ public sealed class UnixPtyTests
         await GoneAsync(pty.Pid);
     }
 
-    private static IPty Start(string script, int cols = 80, int rows = 24) =>
-        new UnixPtyStarter().Start(new PtyRequest("/bin/sh", ["-c", script], Path.GetTempPath(), NoEnvironment, cols, rows));
+    [Fact]
+    public void A_folder_that_no_longer_exists_fails_with_its_path()
+    {
+        // Pins: terminal#1
+        var gone = Path.Combine(Path.GetTempPath(), $"assembly-gone-{Guid.NewGuid():N}");
+
+        var failed = Assert.Throws<CallFailed>(() => new UnixPtyStarter().Start(new PtyRequest("/bin/sh", [], gone, NoEnvironment, 80, 24)));
+
+        Assert.Contains(gone, failed.Message);
+    }
+
+    private static IPty Start(string script, int cols = 80, int rows = 24, bool interactive = false) =>
+        new UnixPtyStarter().Start(new PtyRequest("/bin/sh", interactive ? ["-i", "-c", script] : ["-c", script], Path.GetTempPath(),
+            NoEnvironment, cols, rows));
 
     private static CancellationToken Cancel() => new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token;
 
