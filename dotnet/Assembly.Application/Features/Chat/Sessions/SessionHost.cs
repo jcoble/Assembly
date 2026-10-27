@@ -133,44 +133,47 @@ public sealed partial class SessionHost : IPermissionPolicy
     {
         if (clientId is null)
             return await SteerOnceAsync(text, null, cancellationToken);
-        while (true)
+        Task<string?> sending;
+        TaskCompletionSource<string?>? mine = null;
+        lock (_gate)
         {
-            Task<string?> sending;
-            TaskCompletionSource<string?>? mine = null;
-            lock (_gate)
+            if (_sending.TryGetValue(clientId, out var going))
             {
-                if (_sending.TryGetValue(clientId, out var going))
-                {
-                    SameText(clientId, going.Text, text);
-                    sending = going.Send;
-                }
-                else if (_hub.UserRowOfClient(_sessionId, clientId) is { } row)
-                {
-                    SameText(clientId, row.Text, text);
-                    return row.RunId;
-                }
-                else
-                {
-                    mine = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    _sending[clientId] = (text, sending = mine.Task);
-                }
+                SameText(clientId, going.Text, text);
+                sending = going.Send;
+                _log.WriteLine($"send {clientId}: joined in-flight send");
             }
+            else if (_hub.UserRowOfClient(_sessionId, clientId) is { } row)
+            {
+                SameText(clientId, row.Text, text);
+                return row.RunId;
+            }
+            else
+            {
+                mine = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _sending[clientId] = (text, sending = mine.Task);
+            }
+        }
 
-            if (mine is not null)
-                return await SendOnceAsync(text, clientId, mine, cancellationToken);
-            try
-            {
-                // Its own token: a retry that gives up doesn't cancel the send it waits on.
-                return await sending.WaitAsync(cancellationToken);
-            }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested)
-            {
-                // The send it waited on was cancelled or failed: look again, and send it here if it never landed.
-            }
+        if (mine is not null)
+            return await SendOnceAsync(text, clientId, mine, cancellationToken);
+        try
+        {
+            // Its own token: a retry that gives up doesn't cancel the send it waits on.
+            return await sending.WaitAsync(cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The send it joined failed, timed out or was cancelled, maybe after its request went out: it sends
+            // nothing more. A row says the message landed; otherwise it answers the same failure.
+            lock (_gate)
+                if (_hub.UserRowOfClient(_sessionId, clientId) is { } row)
+                    return row.RunId;
+            throw;
         }
     }
 
-    // The one send of a clientId in flight. It leaves the map before it answers, so a retry that wakes looks again.
+    // The one send of a clientId in flight. It leaves the map before it answers, so a later send looks at the rows.
     private async Task<string?> SendOnceAsync(string text, string clientId, TaskCompletionSource<string?> mine, CancellationToken cancellationToken)
     {
         try
@@ -222,11 +225,9 @@ public sealed partial class SessionHost : IPermissionPolicy
         switch (steered.Outcome)
         {
             case "injected":
+                // Taken, so it's saved on its turn even if that turn has just ended.
                 lock (_gate)
-                {
-                    if (_turn == turn)
-                        Apply(new TurnSteered(Now(), text, clientId));
-                }
+                    Apply(new TurnSteered(Now(), turn.RunId, text, clientId));
                 _sessionStore.Touch(_sessionId);
                 return turn.RunId;
             case "promptRequired":

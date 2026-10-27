@@ -79,10 +79,15 @@ public sealed class RowConverter
                     JsonSerializer.SerializeToElement(shown.Subagent, RowJsonContext.Rows.SubagentPayload), shown.At));
                 break;
             case TurnSteered steered:
-                // The agent's answer so far is finished; what follows answers the new message too.
-                CloseThinking(batch, steered.At);
-                CloseMessage(batch, steered.At);
-                Add(batch, null, RowKind.User, new UserPayload(steered.Text, MessageFrame.SenderOf(steered.Text), steered.ClientId), RowJsonContext.Rows.UserPayload, steered.At);
+                // The agent's answer so far is finished; what follows answers the new message too. A message taken
+                // just as its turn ended still goes on that turn, never on a newer one.
+                if (_turn?.RunId == steered.RunId)
+                {
+                    CloseThinking(batch, steered.At);
+                    CloseMessage(batch, steered.At);
+                }
+                batch.Rows.Add(new NewRow(steered.RunId, null, RowKind.User, JsonSerializer.SerializeToElement(
+                    new UserPayload(steered.Text, MessageFrame.SenderOf(steered.Text), steered.ClientId), RowJsonContext.Rows.UserPayload), steered.At));
                 break;
             case TextChunk chunk:
                 AddText(batch, chunk);
