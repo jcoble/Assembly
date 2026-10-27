@@ -37,7 +37,7 @@ fn figure(
 ) -> impl IntoElement {
     div().debug_selector(move || format!("{id}-button")).child(
         Popover::new(id)
-            .anchor(Anchor::BottomRight)
+            .anchor(Anchor::BottomLeft)
             .trigger(
                 Button::new(label)
                     .ghost()

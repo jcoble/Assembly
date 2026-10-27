@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::update::Update;
 
-use super::default_layout::CHAT;
+use super::default_layout::{CHAT, LAYOUT_VERSION};
 use super::layout_store::{LAYOUT_KEY, WriteLayout, read_saved_layout, saved_layout};
 
 use super::frame::Frame;
@@ -133,7 +133,7 @@ fn an_old_or_unreadable_layout_opens_the_default(cx: &mut TestAppContext) {
     let (fresh, _, cx) = open(None, cx);
     let default = dump(&fresh, cx);
     let mut old = default.clone();
-    old["version"] = json!(0);
+    old["version"] = json!(LAYOUT_VERSION - 1);
 
     for saved in [json!("{"), old] {
         let (frame, _, cx) = open(Some(saved), &mut cx.cx);

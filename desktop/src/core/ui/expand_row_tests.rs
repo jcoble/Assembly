@@ -75,10 +75,16 @@ fn the_title_stays_put_while_the_row_grows(cx: &mut TestAppContext) {
 // Pins: g0-shape#10
 #[gpui::test]
 fn a_row_open_at_first_render_shows_its_body_under_the_title(cx: &mut TestAppContext) {
-    let (_, cx) = row(true, cx);
+    let (row, cx) = row(true, cx);
     let title = drawn("title", cx).expect("the title is drawn");
     let body = drawn("body", cx).expect("an open row draws its body without a click");
     assert_eq!(body.top(), title.bottom());
+    let now = cx.executor().now();
+    assert_eq!(
+        cx.update(|_, cx| row.read(cx).openness(now)),
+        1.,
+        "fully open, with no motion"
+    );
 }
 
 // Pins: g0-shape#10

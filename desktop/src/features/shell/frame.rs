@@ -96,6 +96,16 @@ impl Render for Frame {
             .then(|| dock.dock_size(DockPlacement::Left))
             .flatten();
         let theme = cx.theme();
+        // The panel's box: from the sessions column's edge to `PANEL_GAP` short of the window's.
+        let panel = || {
+            div()
+                .absolute()
+                .top_0()
+                .left(sessions.unwrap_or(PANEL_GAP))
+                .right(PANEL_GAP)
+                .bottom(PANEL_GAP)
+                .rounded(PANEL_RADIUS)
+        };
         v_flex()
             .size_full()
             .bg(theme.sidebar)
@@ -105,18 +115,7 @@ impl Render for Frame {
                     .flex_1()
                     .min_h_0()
                     .relative()
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .left(sessions.unwrap_or(PANEL_GAP))
-                            .right(PANEL_GAP)
-                            .bottom(PANEL_GAP)
-                            .rounded(PANEL_RADIUS)
-                            .bg(theme.background)
-                            .border_1()
-                            .border_color(theme.border),
-                    )
+                    .child(panel().bg(theme.background))
                     .child(
                         div()
                             .size_full()
@@ -124,7 +123,9 @@ impl Render for Frame {
                             .pb(PANEL_GAP)
                             .when(sessions.is_none(), |area| area.pl(PANEL_GAP))
                             .child(self.dock.clone()),
-                    ),
+                    )
+                    // The ring goes over the panes, so a tab bar or a pane with its own fill doesn't hide it.
+                    .child(panel().border_1().border_color(theme.border)),
             )
     }
 }
