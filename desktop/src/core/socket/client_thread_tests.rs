@@ -273,6 +273,25 @@ fn a_backend_that_stops_reading_ends_the_connection_and_the_client_still_stops()
     );
 }
 
+// The window's case: dropping the GPUI task that awaits a call, before its answer, sends that call's cancel, so the
+// backend stops it (and answers "cancelled", which goes nowhere).
+// Pins: g0-socket#4
+#[gpui::test]
+fn dropping_the_task_awaiting_a_call_cancels_it(cx: &mut gpui::TestAppContext) {
+    let backend = backend();
+    let client = Client::start(backend.port);
+    let (id, answer) = client.call("slow", None);
+    let call = PendingCall::<Value>::new(id, client.events.clone(), answer);
+    let task = cx.executor().spawn(call);
+    cx.run_until_parked();
+    backend.next(); // hello
+    assert_eq!(backend.next()["method"], "slow");
+    // A dropped task's future is dropped when its executor next runs, as the app's does on its next tick.
+    drop(task);
+    cx.run_until_parked();
+    assert_eq!(backend.next(), json!({"t": "cancel", "id": id}));
+}
+
 // Pins: g0-socket#4
 #[test]
 fn dropping_a_pending_call_before_its_answer_cancels_it() {
