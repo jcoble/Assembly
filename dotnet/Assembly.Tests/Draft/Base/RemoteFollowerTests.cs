@@ -72,9 +72,10 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
             await Task.WhenAll(watches);
         }
 
-        await Until(() => _stub.LiveHits >= ids.Length);
-        await Task.Delay(300);
-        Assert.Equal(ids.Length, _stub.LiveHits);
+        // The other seven watches owe each session one more pass once its link settles, which may come at any time, so
+        // this counts followers at once, not links opened.
+        await Task.WhenAll(ids.Select(_stub.LiveSeenAsync)).WaitAsync(Wait);
+        Assert.Equal(1, _stub.MostLiveAtOnce);
     }
 
     [Fact]
