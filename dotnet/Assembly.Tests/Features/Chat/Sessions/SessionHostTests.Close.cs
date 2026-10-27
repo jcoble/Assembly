@@ -9,14 +9,14 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task A_close_that_never_answers_retires_its_adapter_and_the_next_turn_resumes_on_a_fresh_one()
     {
-        _host.Send("one");
+        var runId = _host.Send("one")!;
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
         await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
 
-        await TimeOutClose();
+        await TimeOutClose(runId);
         // No other session is on it, so it goes at once, not after the idle grace.
         await Until(() => first.Disposed);
 
@@ -43,7 +43,7 @@ public sealed partial class SessionHostTests
         Assert.True(_host.Stop(runId));
         await first.ReadAsync("session/close");
 
-        await TimeOutClose();
+        await TimeOutClose(runId);
         await Until(() => first.Disposed);
 
         _host.Send("three");
@@ -57,7 +57,7 @@ public sealed partial class SessionHostTests
     public async Task Another_session_on_a_retired_adapter_finishes_its_turn_and_the_timed_out_session_resumes_only_once_it_has_exited()
     {
         var other = Other();
-        _host.Send("one");
+        var runId = _host.Send("one")!;
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
@@ -67,7 +67,7 @@ public sealed partial class SessionHostTests
 
         await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
-        await TimeOutClose();
+        await TimeOutClose(runId);
         var second = new FakeLink();
         bool? launchedAfterExit = null;
         _launcher.Launch = _ =>
@@ -97,7 +97,7 @@ public sealed partial class SessionHostTests
     public async Task A_stopped_turn_ends_its_wait_for_the_retired_adapter()
     {
         var other = Other();
-        _host.Send("one");
+        var runId = _host.Send("one")!;
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
@@ -107,7 +107,7 @@ public sealed partial class SessionHostTests
 
         await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
-        await TimeOutClose();
+        await TimeOutClose(runId);
 
         // The other session keeps the retired adapter up, so the next open waits, until its turn is stopped.
         using var stop = new CancellationTokenSource();
@@ -187,13 +187,14 @@ public sealed partial class SessionHostTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    // Moves the clock past the close's limit until its turn has ended. Once is enough unless the limit's timer
-    // started after the test saw session/close, so it moves again on each check.
-    private Task TimeOutClose() =>
+    // Moves the clock past the close's limit until the run is logged as done, which is after its close. Once is enough
+    // unless the limit's timer started after the test saw session/close, so it moves again on each check. (The run is
+    // no longer active even before its close, so that can't be what it waits for.)
+    private Task TimeOutClose(string runId) =>
         Until(() =>
         {
             _time.Advance(SharedAdapter.CloseLimit);
-            return _host.ActiveRunId is null;
+            return _log.ToString().Contains($"run {runId}: ");
         });
 
     // A second session of the same agent, on the same shared adapter.
