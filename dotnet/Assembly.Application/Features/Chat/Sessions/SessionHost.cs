@@ -241,38 +241,6 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
     }
 
-    /// <summary>
-    /// Chooses <paramref name="value"/> for <paramref name="configId"/> in every ACP session the session opens from now on.
-    /// An open session gets it first, and it's stored only once that agent takes it: a cancel stores nothing, a refusal fails.
-    /// </summary>
-    public async Task SetConfigAsync(string configId, string value, CancellationToken cancellationToken)
-    {
-        OpenSession? session;
-        lock (_gate)
-            session = _turn?.Session ?? _kept?.Session;
-        if (session is null)
-        {
-            _sessionStore.SetConfigChoice(_sessionId, configId, value);
-            return;
-        }
-        try
-        {
-            var set = await session.Adapter.Link.Client.SetConfigOptionAsync(session.AcpSessionId, configId, value, cancellationToken);
-            _sessionStore.SetConfigChoice(_sessionId, configId, value);
-            _sessionStore.SetConfigOptions(_sessionId, set.ConfigOptions.GetRawText());
-        }
-        catch (JsonRpcException error)
-        {
-            throw new CallFailed($"the agent didn't take {configId}={value}: {error.Message}");
-        }
-        catch (Exception error) when (error is IOException or ObjectDisposedException)
-        {
-            // The session is ending; the choice is kept for the next one.
-            _sessionStore.SetConfigChoice(_sessionId, configId, value);
-            Console.Error.WriteLine($"session {_sessionId}: {configId}={value} wasn't set on the open session: {error.Message}");
-        }
-    }
-
     public async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken)
     {
         var options = request.Options.Select(option => new AskOption(option.OptionId, option.Name, option.Kind)).ToList();
@@ -483,6 +451,7 @@ public sealed partial class SessionHost : IPermissionPolicy
                 lock (_gate)
                 {
                     turn.Session = session;
+                    turn.Opened.TrySetResult();
                     Apply(new AgentStarted(Now(), session.Resumed, session.SavedCost, session.Model));
                 }
 
@@ -548,6 +517,7 @@ public sealed partial class SessionHost : IPermissionPolicy
                 // Even if saving the end failed, the session takes sends again.
                 sessionCost = _converter.SessionCost;
                 _turn = null;
+                turn.Opened.TrySetResult();
                 // Background work still going keeps the session, and with it the work, alive.
                 var working = _tasks.Count > 0 || _subagents.AnyRunning || _helpersWorking();
                 keep = session is not null && updates is not null && !lost && !_shuttingDown && (working || toolsOpen);
