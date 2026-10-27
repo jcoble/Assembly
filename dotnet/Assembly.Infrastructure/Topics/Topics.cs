@@ -13,11 +13,11 @@ public sealed class Topics : ITopics
     private readonly Lock _lock = new();
     private readonly List<Subscription> _subscriptions = [];
 
-    public void Publish(string topic, string? key, string json)
+    public void Publish(string topic, string? key, string json, bool keyedOnly = false)
     {
         lock (_lock)
             foreach (var subscription in _subscriptions)
-                if (subscription.Topic == topic && (subscription.Key is null || subscription.Key == key))
+                if (subscription.Topic == topic && (subscription.Key is null ? !keyedOnly : subscription.Key == key))
                     subscription.Change(key, json);
     }
 

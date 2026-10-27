@@ -426,6 +426,12 @@ public interface ICallRegistry
 5. For `Write` and `Save`, put the call on the connection's write queue, which runs one at a time in arrival order:
    a `Write`'s async part, then its database part inside `IAtomicWriter.Write`; a `Save` inside `IAtomicWriter.Write`
    (5.6, 5.9). So each call makes exactly one write. For `Read`, call it directly, concurrently.
+   A `Write` that waits on a machine names an order key instead (C1): its session for send, answer, stop task and
+   config set, its run's session for stop, and its machine for create. Writes with one key run in arrival order,
+   apart from the connection's queue and from other keys, so a machine that hangs holds up only its own key's writes;
+   database-only writes keep the connection's queue. A closing socket still runs every write it queued, on any queue.
+   The 30-second limit starts when the call arrives, so a write queued behind its own session's hung send can time
+   out without running.
 6. Answer `result`. A `CallFailed` answers `failed` with its message. A cancellation answers `cancelled`, or
    `timeout`. Anything else is logged at Error and answers `failed` with "feature/method failed". This keeps
    today's 500 handling (`FeatureCalls.cs`).
@@ -699,6 +705,11 @@ measures it again through the real `IAtomicWriter` and records the number.
   `aborted`, tries to reconnect once, and if that fails waits for the shell's `backend-ready` event before trying
   again. Once reconnected, it subscribes again with each subscription's last key and `after`. There are no timers
   in any of this.
+- **A send the socket dropped isn't sent again.** A `send/send` failed as `aborted` may have reached the machine, so
+  the window doesn't retry it. Once reconnected, the user row on the `rows` topic tells it whether the send landed.
+- **A `timeout` or `unreachable` on a call that reaches a machine is an unknown outcome.** For `send/send`,
+  `sessions/create` and `send/stop` it may or may not have happened, so the window doesn't assume either: it learns
+  the truth from the `rows` and `sessions` topics.
 - **`app/src/lib/<feature>/<feature>.svelte.ts`**, one per feature. It subscribes once, keeps a `$state` map, and
   applies each `change` to one item.
 - **`app/src/lib/host/backend.ts`**, the shell side. The shell (`shell/src/main.rs`) watches its backend child. When
@@ -1412,6 +1423,21 @@ catalogue stays the reference.
     resume catches up at most `RowsFeature.PageLimit` rows, and further behind, or a first open, starts from the
     session's last seq) and `rows/page`. `PageBefore`'s query fix and the reads on the caller's token are done too.
     `/live` and the HTTP chat routes stay until the cut.
+  - **Status (2026-10-27), the chat calls (step 1b):** the `sessions` topic (the newest `SessionsFeature.ListLimit`
+    sessions, with an upsert for every change, or one session by key), `sessions/page` and `sessions/create`, which
+    sends the new session before its answer; `send/send`, `send/stop`, `send/answer` and `send/stopTask`; `rows/page`
+    with `activeRunId` and the machine's watch; `rows/tool`, its output and diff cut at `RowsFeature.ToolCap` bytes
+    each with `truncated` and their full sizes; `config/get`, `config/set`, `machines/list` and `machines/agents`. A
+    machine that's down answers `unreachable` with its name. Attachments (D4) are their own PR next.
+  - **The sessions topic's item is only the stored columns for now** (`SessionItem`: agent, repo, title, machine,
+    parent, ACP session, last activity). The summary fields above (state, active run, pending ask, needs attention,
+    background work, online, unread) come in step 1c, after D4 and before the cut. They publish only when one of them
+    changes, never once per row.
+  - **Config stays calls, without a topic for now.** A change the agent makes mid-turn (`config_option_update`,
+    `available_commands_update`) only updates SessionStore's stored copy (`SessionHost.Background.cs:228-233`), with no
+    row and nothing published, and `current_mode_update` is ignored (`UpdateReader.cs:33`). So nothing pushes it, and
+    the page sees it on its next `config/get` (`Composer.svelte:61`). A cached `config` topic, its state the stored
+    copy and `config/set` still a call, comes later.
   - **The client's rules for the rows topic:** a state whose `seq` equals the `after` it sent means the rows that follow
     continue its copy, so it applies them. Any other `seq`, including one below its `after` (a copied or restored
     database), means it drops its copy and loads history through `rows/page` with `before` = that seq + 1, since `before`

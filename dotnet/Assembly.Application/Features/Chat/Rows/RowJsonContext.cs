@@ -20,6 +20,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(ContextPayload))]
 [JsonSerializable(typeof(SubagentPayload))]
 [JsonSerializable(typeof(RowsFeature.PageArgs))]
+[JsonSerializable(typeof(RowsFeature.ToolArgs))]
+[JsonSerializable(typeof(RowsFeature.ToolDetail))]
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class RowJsonContext : JsonSerializerContext
 {

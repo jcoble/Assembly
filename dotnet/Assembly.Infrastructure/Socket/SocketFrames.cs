@@ -19,8 +19,12 @@ internal sealed record ResultFrame(long Id, JsonElement Result)
     public string T => "result";
 }
 
-/// <summary><c>code</c> is <c>not_found</c>, <c>bad_args</c>, <c>failed</c>, <c>cancelled</c> or <c>timeout</c>.</summary>
-internal sealed record ErrorFrame(long Id, string Code, string Message)
+/// <summary>
+/// <c>code</c> is <c>not_found</c>, <c>bad_args</c>, <c>failed</c>, <c>cancelled</c>, <c>timeout</c> or <c>unreachable</c>,
+/// which names the machine that didn't answer.
+/// </summary>
+internal sealed record ErrorFrame(long Id, string Code, string Message,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null)
 {
     [JsonPropertyOrder(-1)]
     public string T => "error";

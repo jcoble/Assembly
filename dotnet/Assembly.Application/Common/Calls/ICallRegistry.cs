@@ -11,8 +11,11 @@ public interface ICallRegistry
 
     // The async part runs first, with the call's token, for anything outside the database (upload bytes, files,
     // hashing, another machine). The function it returns is the database part, run once inside IAtomicWriter.Write.
+    // Writes run in arrival order on their socket's queue. A write that waits on a machine names an order key instead
+    // (its session, say): writes with one key run in arrival order, and apart from the socket's queue and other keys, so
+    // a machine that hangs holds up only its own key's writes.
     void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler);
+        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null);
 
     // A save (5.9): `{feature}/set` with {key, value}, one write each, audited as "{feature}/set <key>", never with its
     // value. Its database part publishes the change on the topic named after its feature, which must be registered first.

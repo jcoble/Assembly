@@ -310,8 +310,9 @@ public sealed partial class SocketTests : IAsyncLifetime
     {
         using var socket = await OpenAsync();
 
-        // Each < is escaped to six bytes in the not_found message, so 1.5 MB in is 9 MB out.
-        await CallAsync(socket, 1, new string('<', 1_500_000), "missing", "{}");
+        // The call frame is exactly 4 MB, and its not_found message, with the name and a longer frame around it, is over.
+        const string around = """{"t":"call","id":1,"feature":"","method":"missing","args":{}}""";
+        await CallAsync(socket, 1, new string('x', SocketConnection.MaxFrame - around.Length), "missing", "{}");
 
         Assert.Equal("failed", Code(await ReadAsync(socket), id: 1));
     }

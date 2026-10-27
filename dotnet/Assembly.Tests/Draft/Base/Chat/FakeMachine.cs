@@ -80,7 +80,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         lock (Asked)
             Asked.Add(asked);
         if (Down)
-            throw new MachineUnreachable($"{name} is down");
+            throw new MachineUnreachable(name ?? "here", $"{name} is down");
         if (_held is { } held)
         {
             Reached.TrySetResult();

@@ -25,6 +25,9 @@ internal sealed class RowsFeature : IFeature
     /// </summary>
     public const int CatchUpBytes = 8 * 1024 * 1024;
 
+    /// <summary>The most bytes of a tool call's output, and of its diff, that <c>rows/tool</c> sends.</summary>
+    public const int ToolCap = 1024 * 1024;
+
     private readonly LiveHub _hub;
     private readonly RowStore _store;
     private readonly SessionStore _sessions;
@@ -56,12 +59,46 @@ internal sealed class RowsFeature : IFeature
             if (_sessions.Get(session) is { } info)
                 _machines.Named(info.Machine)?.Watch(info);
         });
+        // Opening a session's rows has its machine watch it, as GET /sessions/{id}/rows does.
         calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, (args, call) =>
-            Task.FromResult(PageJson(_hub.Page(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation))));
+        {
+            var page = _hub.Page(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
+            var session = _sessions.Get(args.Session);
+            var machine = session is null ? null : _machines.Named(session.Machine);
+            machine?.Watch(session!);
+            return Task.FromResult(PageJson(page, machine?.ActiveRun(session!)));
+        });
+        calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
+        {
+            var tool = _sessions.Get(args.Session) is { } session
+                ? await _machines.For(session).ToolCallAsync(session, args.Item, call.Cancellation)
+                : null;
+            if (tool is null)
+                throw new CallFailed("unknown tool call");
+            var (output, outputBytes) = Cut(tool.Output);
+            var (diff, diffBytes) = Cut(tool.Diff);
+            return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, output != tool.Output || diff != tool.Diff,
+                outputBytes, diffBytes);
+        });
     }
 
-    // {rows, hasBefore, before}, as GET /sessions/{id}/rows answers it.
-    private static JsonElement PageJson(RowPage page)
+    // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.
+    private static (string? Text, long Bytes) Cut(string? text)
+    {
+        if (text is null)
+            return (null, 0);
+        var size = Encoding.UTF8.GetByteCount(text);
+        if (size <= ToolCap)
+            return (text, size);
+        var bytes = Encoding.UTF8.GetBytes(text);
+        var end = ToolCap;
+        while ((bytes[end] & 0xC0) == 0x80)
+            end--;
+        return (Encoding.UTF8.GetString(bytes, 0, end), bytes.Length);
+    }
+
+    // {rows, hasBefore, before, activeRunId}, as GET /sessions/{id}/rows answers it.
+    private static JsonElement PageJson(RowPage page, string? activeRun)
     {
         using var buffer = new MemoryStream();
         using (var json = new Utf8JsonWriter(buffer, RowWire.Options))
@@ -76,6 +113,7 @@ internal sealed class RowsFeature : IFeature
                 json.WriteNumber("before", before);
             else
                 json.WriteNull("before");
+            json.WriteString("activeRunId", activeRun);
             json.WriteEndObject();
         }
         using var document = JsonDocument.Parse(buffer.ToArray());
@@ -84,4 +122,13 @@ internal sealed class RowsFeature : IFeature
 
     /// <summary><c>rows/page</c>'s args: the newest items that start below <c>before</c>.</summary>
     internal sealed record PageArgs([property: JsonRequired] string Session, long Before = long.MaxValue, int Limit = 50);
+
+    internal sealed record ToolArgs([property: JsonRequired] string Session, [property: JsonRequired] string Item);
+
+    /// <summary>
+    /// An opened tool row's detail. Its output and diff are cut at <see cref="ToolCap"/> bytes each, with
+    /// <c>truncated</c> set and the full sizes in <c>outputBytes</c> and <c>diffBytes</c>.
+    /// </summary>
+    internal sealed record ToolDetail(string? Summary, string? Input, string? Output, string? Diff, string? Path, bool Truncated,
+        long OutputBytes, long DiffBytes);
 }

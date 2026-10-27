@@ -183,7 +183,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
             return;
         var version = (await JsonAsync(HttpMethod.Get, "/version", null, cancellationToken)).GetProperty("formatVersion").GetInt32();
         if (version != RowStore.FormatVersion)
-            throw new MachineUnreachable($"{_name} stores rows in format {version}; this computer reads format {RowStore.FormatVersion}");
+            throw new MachineUnreachable(_name, $"{_name} stores rows in format {version}; this computer reads format {RowStore.FormatVersion}");
         _formatChecked = true;
     }
 
@@ -219,7 +219,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         }
         catch (Exception error) when (error is HttpRequestException || (error is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            throw new MachineUnreachable($"{_name} didn't answer: {error.Message}", error);
+            throw new MachineUnreachable(_name, $"{_name} didn't answer: {error.Message}", error);
         }
     }
 
@@ -227,7 +227,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     {
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
-            throw new MachineUnreachable($"{_name} answered {(int)response.StatusCode}: {body}");
+            throw new MachineUnreachable(_name, $"{_name} answered {(int)response.StatusCode}: {body}");
         using var json = JsonDocument.Parse(body);
         return json.RootElement.Clone();
     }

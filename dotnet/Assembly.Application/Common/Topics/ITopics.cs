@@ -6,7 +6,11 @@ namespace Assembly.Application.Common.Topics;
 /// </summary>
 public interface ITopics
 {
-    void Publish(string topic, string? key, string json);
+    /// <summary>
+    /// Sends the change to the topic's subscribers for its key and, unless <paramref name="keyedOnly"/>, to those with
+    /// no key: a change to an item the topic's keyless state leaves out goes only to its own subscribers.
+    /// </summary>
+    void Publish(string topic, string? key, string json, bool keyedOnly = false);
 
     /// <summary>Whether a publish on the topic under this key would reach anyone, so a publisher can skip building it.</summary>
     bool HasSubscribers(string topic, string key);

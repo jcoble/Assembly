@@ -1,10 +1,12 @@
 using System.Buffers;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Machines;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Socket;
@@ -34,7 +36,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             async (value, call) => JsonSerializer.SerializeToElement(await handler((TArgs)value, call), result)));
 
     public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler)
+        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null)
     {
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
@@ -45,7 +47,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             var database = await handler((TArgs)value, call);
             call.Cancellation.ThrowIfCancellationRequested();
             return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
-        }));
+        }, order is null ? null : value => order((TArgs)value)));
     }
 
     public void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save)
@@ -177,10 +179,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         var context = new CallContext(token.Token, connection.Id);
         try
         {
-            // A write joins its socket's queue now, in arrival order; a read runs off the receive loop, so one that
-            // blocks doesn't hold up the frames after it.
+            // A write joins its key's queue, or else its socket's, now, in arrival order; a read runs off the receive
+            // loop, so one that blocks doesn't hold up the frames after it.
             var result = call.Writes
-                ? await connection.QueueWriteAsync(() => call.RunAsync(args, context))
+                ? await connection.QueueWriteAsync(call.Order?.Invoke(args), () => call.RunAsync(args, context))
                 : await Task.Run(() => call.RunAsync(args, context));
             var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
             return Bounded(answer, id);
@@ -188,6 +190,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         catch (CallFailed error)
         {
             return Error(id, "failed", error.Message);
+        }
+        catch (MachineUnreachable error)
+        {
+            return Bounded(Frame(new ErrorFrame(id, "unreachable", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
         }
         catch (OperationCanceledException) when (limit.IsCancellationRequested)
         {
@@ -204,7 +210,19 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }
     }
 
-    internal static ReadOnlyMemory<byte> Frame<T>(T frame, JsonTypeInfo<T> type) => JsonSerializer.SerializeToUtf8Bytes(frame, type);
+    /// <summary>
+    /// Frames carry text as it is: escaped, an accent or apostrophe takes six bytes, so a big answer of such text would
+    /// pass the 4 MB frame limit. The frames are read as JSON, never put into HTML.
+    /// </summary>
+    private static readonly JsonWriterOptions Json = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    internal static ReadOnlyMemory<byte> Frame<T>(T frame, JsonTypeInfo<T> type)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var json = new Utf8JsonWriter(buffer, Json))
+            JsonSerializer.Serialize(json, frame, type);
+        return buffer.WrittenMemory;
+    }
 
     private static ReadOnlyMemory<byte> Error(long id, string code, string message) =>
         Bounded(Frame(new ErrorFrame(id, code, message), SocketJson.Default.ErrorFrame), id);
@@ -220,7 +238,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> StateFrame<TItem>(long sub, IReadOnlyList<TItem> items, JsonTypeInfo<TItem> type, Func<TItem, string> key)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "state");
@@ -252,7 +270,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> ChangeFrame(long sub, string? key, string item)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "change");
@@ -270,7 +288,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> RowsStateFrame(long sub, long seq)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "state");
@@ -303,7 +321,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> RowsFrame(long sub, string row)
     {
         var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer))
+        using (var json = new Utf8JsonWriter(buffer, Json))
         {
             json.WriteStartObject();
             json.WriteString("t", "rows");
@@ -321,5 +339,6 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         Func<long, InFrame, CallContext, (IReadOnlyList<ReadOnlyMemory<byte>> State, Func<string?, string, ReadOnlyMemory<byte>?> Change)> Open,
         Action<string, CallContext>? Opened = null);
 
-    private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync);
+    private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync,
+        Func<object, string?>? Order = null);
 }
