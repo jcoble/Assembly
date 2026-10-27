@@ -1,7 +1,10 @@
 //! The client against the real desktop backend (`RealBackend`): hello and refusal, calls, topics, the drop and
 //! reconnect. Each test starts its own backend. Pins the draft list in docs/behavior/g0-socket.md.
 
+use std::fs;
+use std::process::Command;
 use std::sync::mpsc::Receiver;
+use std::time::Duration;
 
 use serde_json::json;
 
@@ -10,7 +13,7 @@ use super::endpoint::Endpoint;
 use super::error_code::ErrorCode;
 use super::event::Event;
 use super::outcome::Outcome;
-use super::real_backend::RealBackend;
+use super::real_backend::{RealBackend, folder};
 use super::test_client::{DEADLINE, TestClient as Client, outcome, updates};
 use super::update::Update;
 
@@ -128,4 +131,26 @@ fn a_stopped_backend_is_disconnected_until_reconnect_to_the_new_one() {
         }
     }
     panic!("not Connected after Reconnect");
+}
+
+// A start that fails (here a stand-in that never prints its ready line) stops the child and removes its folder.
+#[test]
+fn a_backend_that_never_gets_ready_is_stopped_and_its_folder_removed() {
+    let backend = folder();
+    let pid_file = folder().join("pid");
+    let mut never_ready = Command::new("sh");
+    never_ready
+        .arg("-c")
+        .arg("echo $$ > \"$0\"; exec sleep 60")
+        .arg(&pid_file);
+    let started = RealBackend::spawn(never_ready, backend.clone(), Duration::from_secs(1));
+    assert!(started.is_err());
+    assert!(!backend.exists());
+    let pid = fs::read_to_string(&pid_file).expect("the stand-in's pid");
+    let alive = Command::new("kill")
+        .args(["-0", pid.trim()])
+        .status()
+        .expect("run kill");
+    assert!(!alive.success(), "the stand-in is still running");
+    let _ = fs::remove_dir_all(pid_file.parent().expect("its folder"));
 }
