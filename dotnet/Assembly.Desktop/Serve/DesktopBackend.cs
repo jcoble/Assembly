@@ -104,8 +104,11 @@ public sealed class DesktopBackend : IAsyncDisposable
         if (tunnel is not null && remote is not null)
             tunnel.Exited += () => status.Unreachable(remote.Name, "ssh tunnel exited");
         var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, sessionStore, hub, machines.Named(null)!, log);
-        // Turns a remote was running when the desktop stopped: catch up on them rather than mark them lost.
-        remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId).Where(id => sessionStore.Get(id)?.Machine == remote!.Name));
+        // Turns a remote was running when the desktop stopped: catch up on them rather than mark them lost. And remote
+        // helpers whose row here is still running, whose rows may not have been copied yet.
+        remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId)
+            .Concat(store.RunningItems(RowKind.Subagent).Select(row => row.Payload.GetProperty("sessionId").GetString()!))
+            .Where(id => sessionStore.Get(id)?.Machine == remote!.Name).Distinct());
 
         Uri? address = null;
         Action dropSockets = () => { };

@@ -26,7 +26,7 @@ fn main() {
             gpui_kit::open_window(options, cx, |window, cx| {
                 cx.new(|cx| Frame::new(Task::ready(None), Box::new(|_, _| {}), window, cx))
             })
-                .expect("open the window");
+            .expect("open the window");
             cx.activate(true);
         });
 }

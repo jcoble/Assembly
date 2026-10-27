@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Domain.Rows;
+using Assembly.Infrastructure.Socket;
 
 namespace Assembly.Tests.Draft.Base.Chat;
 
@@ -87,5 +89,79 @@ public sealed partial class ChatSocketTests
         socket.Dispose();
 
         await _box.Cancelled.Task.WaitAsync(Wait);
+    }
+
+    [Fact]
+    public async Task Rows_tool_that_runs_over_30_seconds_answers_timeout_and_cancels_the_machine()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Hold();
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
+        _time.Advance(SocketDispatcher.Limit);
+
+        await _box.Cancelled.Task.WaitAsync(Wait);
+        Assert.Equal("""{"t":"error","id":1,"code":"timeout","message":"rows/tool ran over 30 s"}""", await ReadAsync(socket));
+    }
+
+    // Only the output and diff are cut; a 5 MB input makes the answer too big to send.
+    [Fact]
+    public async Task Rows_tool_whose_answer_is_over_4_MB_answers_failed()
+    {
+        var session = _sessions.Create("claude", "repo");
+        _here.Tool = new StoredToolCall("cat", new string('a', 5 * Mb), null, null, null);
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
+
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"the answer is over 4 MB"}""", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task Rows_page_whose_answer_is_over_4_MB_answers_failed()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        var text = new string('a', Mb);
+        for (var i = 0; i < 5; i++)
+            Row(session, RowKind.Message, $"m{i}", $$"""{"text":"{{text}}"}""");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "page", $$"""{"session":"{{session}}"}""");
+
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"the answer is over 4 MB"}""", await ReadAsync(socket));
+    }
+
+    // rows/page reads this machine's copy; only rows/tool asks the session's machine.
+    [Fact]
+    public async Task Rows_tool_on_a_machine_thats_down_is_unreachable_and_rows_page_still_answers()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Down = true;
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
+        Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "page", $$"""{"session":"{{session.SessionId}}"}""");
+        Assert.StartsWith("""{"t":"result","id":2,""", await ReadAsync(socket));
+    }
+
+    // An unknown session's page is empty; a tool call of an unknown session or item fails.
+    [Fact]
+    public async Task Rows_page_and_tool_for_an_unknown_session_or_item()
+    {
+        var session = _sessions.Create("claude", "repo");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "page", """{"session":"nope"}""");
+        Assert.Equal("""{"t":"result","id":1,"result":{"rows":[],"hasBefore":false,"before":null,"activeRunId":null}}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "tool", """{"session":"nope","item":"t1"}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown tool call"}""", await ReadAsync(socket));
+        await CallAsync(socket, 3, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t9"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"unknown tool call"}""", await ReadAsync(socket));
+
+        Assert.Equal(["tool t9"], _here.Asked);
+        Assert.Empty(_box.Asked);
     }
 }

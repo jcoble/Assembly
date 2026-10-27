@@ -22,7 +22,10 @@ pub struct TopBar {
 impl TopBar {
     pub fn new(dock: Entity<DockArea>, cx: &mut Context<Self>) -> Self {
         let _subscription = cx.observe(&dock, |_, _, cx| cx.notify());
-        Self { dock, _subscription }
+        Self {
+            dock,
+            _subscription,
+        }
     }
 }
 
@@ -39,7 +42,13 @@ impl Render for TopBar {
                 .w(sessions.max(MIN_HOME_WIDTH))
                 .h_full()
                 .pl(px(80.))
-                .child(div().id("home").size(px(26.)).rounded_full().bg(cx.theme().primary)),
+                .child(
+                    div()
+                        .id("home")
+                        .size(px(26.))
+                        .rounded_full()
+                        .bg(cx.theme().primary),
+                ),
         )
     }
 }

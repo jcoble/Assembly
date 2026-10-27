@@ -55,7 +55,8 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _here = new FakeMachine(null, _sessions);
         _box = new FakeMachine("box", _sessions);
         var machines = new MachineSet(_here, _box);
-        var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
+        // On the fake clock, so a test can run a call past its 30 s limit.
+        var calls = new SocketDispatcher(_db.Writer, topics, _time, NullLogger.Instance);
         new SessionsFeature(_sessions, machines).Register(calls);
         new SendFeature(_sessions, machines, _hub).Register(calls);
         new RowsFeature(_hub, rows, _sessions, machines).Register(calls);

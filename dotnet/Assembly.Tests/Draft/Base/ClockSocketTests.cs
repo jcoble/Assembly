@@ -61,7 +61,7 @@ public sealed class ClockSocketTests : IAsyncLifetime
         _file.Dispose();
     }
 
-    // Pins: base#9
+    // The clock topic: a second subscriber gets one change a second, 180 over three minutes.
     [Fact]
     public async Task A_second_subscriber_gets_180_changes_over_three_minutes()
     {
