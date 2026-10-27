@@ -1115,7 +1115,10 @@ of the shell, check4, and the same grep. Not done until the window starts the re
   1. Latest-wins by key sends `cancel` for the older call.
   2. The owner's signal sends `cancel`.
   3. A close fails pending calls as `aborted`.
-  4. One reconnect, then the failure reported through `onFailure`.
+  4. One reconnect, then the failure reported through `onFailure`. Only the single reopen: waiting for
+     `backend-ready` after it fails is B9's.
+  5. A call cancelled after the backend finished it still comes back with its result, so a committed save is never
+     taken for a lost one (and on the backend, a `cancel` that comes while a write commits answers `result`).
 - **Proof:** the tests. check4 passes, plus a new scenario, `scripts/features/socket.sh`, a one-line `.sh` that runs
   `socket.ts` (node, since curl has no WebSocket on the Mac), which checks `hello`, `welcome` and a `not_found`
   answer on both machines, against `CHECK4_HOST_API`. `welcome.machine` is the host's name, and the scenario fails
@@ -1258,7 +1261,9 @@ group:
 - Reveal: streamed text shows as rows arrive, with nothing waiting on a frame.
 - `coverView`: a `ResizeObserver` callback runs it. This is a logic test of the function on fake measurements, not a
   test of the layout.
-- Reconnect: `socket.test.ts` (B4).
+- Reconnect, in `socket.test.ts` (B4 has the single reopen): after the one reopen fails, nothing tries again until
+  `backend-ready`; a `backend-ready` event opens the socket and subscribes again; "Disconnected" with its Reconnect
+  button shows meanwhile, and the button tries the socket again.
 
 **Proof:**
 
