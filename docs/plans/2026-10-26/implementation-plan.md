@@ -1059,7 +1059,7 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
   The Mac's NVMe fsync may be faster than the workbox's disk, which would make the catch-up cheaper; the Mac lag
   check will tell once Mac builds resume.
 - **Proof:** the tests, the measurement, check4.
-- **Size:** about 130 lines with tests.
+- **Size:** about 240 lines: the writer +85, `CheckpointTests.cs` about 145, the plan.
 
 ### B4. The socket: endpoint, frames, dispatcher, cancellation
 

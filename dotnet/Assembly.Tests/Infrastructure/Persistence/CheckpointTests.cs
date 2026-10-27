@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using Assembly.Application.Common.Database;
 using Assembly.Infrastructure.Persistence;
@@ -44,10 +43,12 @@ public sealed class CheckpointTests : IDisposable
     public void The_wal_rewinds_once_writes_pause()
     {
         Open();
-        Notes(150);
         var round = WalRound();
 
-        Assert.True(Until(() => WalRound() != round, gap: 20, TimeSpan.FromSeconds(1)));
+        NextCheckpoint();
+        Note();
+
+        Assert.NotEqual(round, WalRound());
     }
 
     [Theory]
@@ -80,7 +81,6 @@ public sealed class CheckpointTests : IDisposable
         Open();
         Notes(10);
         var round = WalRound();
-        var slowest = TimeSpan.Zero;
 
         using (var reader = new SqliteConnection($"Data Source={_file.Path};Pooling=False"))
         {
@@ -92,23 +92,15 @@ public sealed class CheckpointTests : IDisposable
                 read.ExecuteScalar();
             }
 
-            for (var i = 0; i < 300; i++)
-            {
-                var watch = Stopwatch.StartNew();
-                Note();
-                slowest = TimeSpan.FromTicks(Math.Max(slowest.Ticks, watch.Elapsed.Ticks));
-            }
-
-            Thread.Sleep(100);
+            // The commits go on while the snapshot is open; one that waited on the reader would time out and throw.
+            NextCheckpoint();
             Note();
             Assert.Equal(round, WalRound());
         }
 
-        // A commit that waited on the reader would take SQLite's busy timeout, seconds rather than milliseconds.
-        Assert.True(slowest < TimeSpan.FromMilliseconds(500), $"slowest commit {slowest.TotalMilliseconds} ms");
-        // With the reader gone, the next checkpoint (at most 100 commits away) copies everything.
-        Notes(100);
-        Assert.True(Until(() => WalRound() != round, gap: 20, TimeSpan.FromSeconds(1)));
+        NextCheckpoint();
+        Note();
+        Assert.NotEqual(round, WalRound());
     }
 
     private AtomicWriter Open(int walCap = AtomicWriter.WalCap)
@@ -127,18 +119,13 @@ public sealed class CheckpointTests : IDisposable
             Note();
     }
 
-    // Writes a note every gap milliseconds until done is true or the time runs out.
-    private bool Until(Func<bool> done, int gap, TimeSpan limit)
+    // Writes notes until the writer starts its next background checkpoint, then waits for it to finish.
+    private void NextCheckpoint()
     {
-        var watch = Stopwatch.StartNew();
-        while (watch.Elapsed < limit)
-        {
-            Thread.Sleep(gap);
+        var last = _writer!.Running;
+        while (_writer.Running == last)
             Note();
-            if (done())
-                return true;
-        }
-        return false;
+        Assert.True(_writer.Running!.Wait(TimeSpan.FromSeconds(30)));
     }
 
     // The WAL header's checkpoint sequence number, which SQLite bumps each time it rewinds the WAL.

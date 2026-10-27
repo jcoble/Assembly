@@ -14,7 +14,7 @@ namespace Assembly.Infrastructure.Persistence;
 /// pruned when the writer opens, and after a write once a day has passed, each prune its own transaction. SQLite's
 /// automatic checkpoint is off, because it runs inside the commit that crosses 1,000 WAL pages: every 100 commits the
 /// writer starts one passive checkpoint on its own connection instead, outside the lock. Past a cap on the WAL, a write
-/// first finishes the copy itself, under the lock.
+/// finishes the copy itself after its commit, under the lock.
 /// </summary>
 public sealed class AtomicWriter : IAtomicWriter, IDisposable
 {
@@ -90,6 +90,9 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
             return result;
         }
     }
+
+    // The background checkpoint, if one has started, for tests to wait on.
+    internal Task? Running => _checkpoint;
 
     public void Dispose()
     {
