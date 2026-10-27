@@ -4,5 +4,6 @@
 
 pub mod backend;
 pub mod commands;
+pub mod intents;
 pub mod native_views;
 pub mod window_root;
