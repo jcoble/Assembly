@@ -11,4 +11,6 @@ pub mod top_bar;
 pub mod utility_strip;
 
 #[cfg(test)]
+mod frame_limits_tests;
+#[cfg(test)]
 mod frame_tests;
