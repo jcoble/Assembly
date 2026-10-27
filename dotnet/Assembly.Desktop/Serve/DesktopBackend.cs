@@ -66,6 +66,9 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// <summary>Whether App Nap is held, while any turn runs.</summary>
     internal bool ActivityHeld => _diagnostics.ActivityHeld;
 
+    /// <summary>How many of its background works are still running.</summary>
+    internal int BackgroundRunning => _work.Running;
+
     /// <summary>
     /// Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there, and
     /// <paramref name="tunnel"/>'s exits mark it unreachable.
@@ -164,6 +167,20 @@ public sealed class DesktopBackend : IAsyncDisposable
     }
 
     public Task WaitForShutdownAsync() => _app.WaitForShutdownAsync();
+
+    /// <summary>
+    /// Stops it, as SIGTERM does, once <paramref name="input"/> ends: the window's launcher holds this process's stdin
+    /// open for its whole life, so its quit or crash ends this backend too. The dispose cancels the read.
+    /// </summary>
+    public void StopAtEndOf(Stream input) => _work.Start("stdin", async stop =>
+    {
+        var buffer = new byte[256];
+        // WaitAsync, as a console stream's read doesn't see the token.
+        while (await input.ReadAsync(buffer, stop).AsTask().WaitAsync(stop) > 0)
+        {
+        }
+        _app.Lifetime.StopApplication();
+    });
 
     public async ValueTask DisposeAsync()
     {
