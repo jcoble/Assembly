@@ -89,9 +89,10 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         var prompt = await agent.ReadAsync("session/prompt");
         using (var watching = await OpenLiveAsync(_desktop!, DesktopToken, sessionId, after: 0))
             await ApiTests.ReadRowsAsync(watching, 2);
-        Assert.True(_desktop!.ActivityHeld);
+        // The hub sends the rows before it applies their summary, which is what holds it.
+        await Until(() => _desktop!.ActivityHeld);
 
-        await _desktop.DisposeAsync();
+        await _desktop!.DisposeAsync();
         await StartDesktopAsync();
         Assert.True(_desktop.ActivityHeld);
 
