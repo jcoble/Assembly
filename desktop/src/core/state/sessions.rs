@@ -35,7 +35,8 @@ pub struct Sessions {
 
 impl EventEmitter<SessionChange> for Sessions {}
 
-struct GlobalSessions(Entity<Sessions>);
+/// Set once the socket client has started; observing it tells a view the list is there.
+pub(crate) struct GlobalSessions(Entity<Sessions>);
 
 impl Global for GlobalSessions {}
 

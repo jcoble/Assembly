@@ -10,8 +10,10 @@ use gpui_kit::*;
 
 use super::new_session_form::{Created, NewSessionForm};
 use super::session_row::SessionRow;
+use crate::core::socket::client::SocketClient;
+use crate::core::socket::connection_state::ConnectionState;
 use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::sessions::Sessions;
+use crate::core::state::sessions::{GlobalSessions, Sessions};
 
 /// Load the next older page when the last row drawn is this close to the end.
 const LOAD_OLDER_WITHIN: usize = 20;
@@ -24,6 +26,8 @@ pub struct SessionsPane {
     creating: Option<(Entity<NewSessionForm>, Subscription)>,
     list: UniformListScrollHandle,
     _heard: Vec<Subscription>,
+    /// The sessions list's and the socket's observers, once the backend's first ready line started them.
+    _backend: Vec<Subscription>,
 }
 
 impl SessionsPane {
@@ -36,20 +40,36 @@ impl SessionsPane {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let sessions = Sessions::try_global(cx);
-        let mut heard = vec![cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify())];
-        heard.extend(
-            sessions
-                .as_ref()
-                .map(|sessions| cx.observe(sessions, |_, _, cx| cx.notify())),
-        );
-        SessionsPane {
+        let heard = vec![
+            cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
+            cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
+        ];
+        let mut pane = SessionsPane {
             focus: cx.focus_handle(),
-            sessions,
+            sessions: None,
             creating: None,
             list: UniformListScrollHandle::new(),
             _heard: heard,
+            _backend: Vec::new(),
+        };
+        pane.follow_backend(cx);
+        pane
+    }
+
+    /// Takes the sessions list and the socket once the backend's first ready line has started them, so the column
+    /// shows them however late they come, and redraws as the connection's state changes.
+    fn follow_backend(&mut self, cx: &mut Context<Self>) {
+        self.sessions = Sessions::try_global(cx);
+        let socket = SocketClient::try_global(cx);
+        let mut backend: Vec<Subscription> = Vec::new();
+        if let Some(sessions) = &self.sessions {
+            backend.push(cx.observe(sessions, |_, _, cx| cx.notify()));
         }
+        if let Some(socket) = socket {
+            backend.push(cx.observe(&socket, |_, _, cx| cx.notify()));
+        }
+        self._backend = backend;
+        cx.notify();
     }
 
     fn toggle_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -62,6 +82,17 @@ impl SessionsPane {
             self.creating = Some((form, made));
         }
         cx.notify();
+    }
+}
+
+/// What an empty column says, from the connection's state (`None` before the backend's first ready line).
+pub fn empty_line(state: Option<&ConnectionState>) -> &'static str {
+    match state {
+        Some(ConnectionState::Connected { .. }) => "No sessions yet.",
+        Some(ConnectionState::Connecting) => "Connecting to the backend…",
+        None | Some(ConnectionState::Disconnected | ConnectionState::Refused { .. }) => {
+            "The backend isn't running."
+        }
     }
 }
 
@@ -94,6 +125,7 @@ impl Panel for SessionsPane {
 impl Render for SessionsPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
+        let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let count = self
             .sessions
             .as_ref()
@@ -153,22 +185,21 @@ impl Render for SessionsPane {
             .size_full()
             .child(header)
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
-            .map(|pane| match (&self.sessions, count) {
-                (None, _) => pane.child(
+            .map(|pane| {
+                if count > 0 {
+                    return pane.child(list);
+                }
+                pane.child(
                     div()
                         .px_3()
                         .text_sm()
                         .text_color(muted)
-                        .child("The backend isn't running."),
-                ),
-                (Some(_), 0) => pane.child(
-                    div()
-                        .px_3()
-                        .text_sm()
-                        .text_color(muted)
-                        .child("No sessions yet."),
-                ),
-                _ => pane.child(list),
+                        .child(empty_line(state.as_ref())),
+                )
             })
     }
 }
+
+#[cfg(test)]
+#[path = "sessions_pane_tests.rs"]
+mod tests;

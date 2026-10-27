@@ -277,3 +277,7 @@ impl Render for NewSessionForm {
 #[cfg(test)]
 #[path = "new_session_form_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "new_session_form_real_tests.rs"]
+mod real_tests;

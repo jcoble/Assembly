@@ -26,7 +26,7 @@ mod out_frame;
 pub mod outcome;
 pub mod pending_call;
 #[cfg(test)]
-mod real_backend;
+pub(crate) mod real_backend;
 #[cfg(test)]
 mod real_backend_tests;
 pub mod row;
