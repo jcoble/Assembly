@@ -76,11 +76,15 @@ fn read_token(file: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("no ASSEMBLY_TOKEN in {}", file.display()))
 }
 
-// SIGTERM, then up to 10 s for it to stop its sessions and its tunnel, then SIGKILL.
+// How long the backend gets after SIGTERM. Its own stop is bounded below this by ShutdownTimeout in
+// dotnet/Assembly.Infrastructure/Http/ApiServer.cs (scripts/shutdown-timing.test.sh checks it).
+const BACKEND_STOP_WAIT: Duration = Duration::from_secs(10);
+
+// SIGTERM, then up to BACKEND_STOP_WAIT for it to stop its sessions and its tunnel, then SIGKILL.
 fn stop_backend(mut child: Child) {
     unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(10) {
+    while started.elapsed() < BACKEND_STOP_WAIT {
         if let Ok(Some(_)) = child.try_wait() {
             return;
         }

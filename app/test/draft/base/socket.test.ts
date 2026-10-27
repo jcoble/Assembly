@@ -4,6 +4,7 @@ import { jsModule, libModule } from '../../runes.ts';
 
 type Outcome = { ok: true; result: unknown } | { ok: false; why: 'failed' | 'aborted' };
 type Socket = {
+  save: (feature: string, key: string, value: unknown) => Promise<Outcome>;
   call: (feature: string, method: string, args?: Record<string, unknown>, options?: { key?: string; signal?: AbortSignal }) => Promise<Outcome>;
   onFailure: (handler: (message: string) => void) => void;
   subscribe: <T>(topic: string, key: string | undefined, apply: { state: (items: T[]) => void; change: (item: T) => void }, signal?: AbortSignal) => void;
@@ -181,6 +182,9 @@ test('a superseded call reports nothing when the socket can\'t open', async () =
 
 type Setting = { key: string; value: string };
 
+// A setting as a state entry or a change frame carries it: its key, and the item.
+const entry = (key: string, value: string) => ({ key, item: { key, value } });
+
 test('subscribe applies state and change to a map, and its owner closing sends unsub', async () => {
   const { subscribe } = await load();
   const values = new Map<string, string>();
@@ -190,7 +194,6 @@ test('subscribe applies state and change to a map, and its owner closing sends u
     undefined,
     {
       state: (items) => {
-        values.clear();
         for (const item of items) values.set(item.key, item.value);
       },
       change: (item) => values.set(item.key, item.value),
@@ -199,14 +202,14 @@ test('subscribe applies state and change to a map, and its owner closing sends u
   );
   const socket = await welcome();
   assert.deepEqual(socket.sent.at(-1), { t: 'sub', id: 1, topic: 'settings' });
-  socket.receive({ t: 'state', sub: 1, items: [{ key: 'theme', value: 'dark' }] });
-  socket.receive({ t: 'change', sub: 1, op: 'upsert', item: { key: 'theme', value: 'light' } });
-  socket.receive({ t: 'change', sub: 1, op: 'upsert', item: { key: 'font', value: 'mono' } });
+  socket.receive({ t: 'state', sub: 1, items: [entry('theme', 'dark')] });
+  socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'light') });
+  socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('font', 'mono') });
   assert.deepEqual([...values], [['theme', 'light'], ['font', 'mono']]);
 
   owner.abort();
   assert.deepEqual(socket.sent.at(-1), { t: 'unsub', id: 1 });
-  socket.receive({ t: 'change', sub: 1, op: 'upsert', item: { key: 'theme', value: 'late' } });
+  socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'late') });
   assert.equal(values.get('theme'), 'light');
 });
 
@@ -222,6 +225,102 @@ test('a reopened socket subscribes again', async () => {
   reopened.receive({ t: 'welcome', protocol: 1, machine: 'test-machine' });
   await settle();
   assert.deepEqual(reopened.sent.at(-1), { t: 'sub', id: 1, topic: 'settings', key: 'theme' });
-  reopened.receive({ t: 'state', sub: 1, items: [{ key: 'theme', value: 'dark' }] });
+  reopened.receive({ t: 'state', sub: 1, items: [entry('theme', 'dark')] });
   assert.deepEqual(states, [[{ key: 'theme', value: 'dark' }]]);
+});
+
+// A window: a fresh socket.ts subscribed to settings with no key, as preferences are, and the values it shows.
+async function window() {
+  const page = await load();
+  const values = new Map<string, string>();
+  const shown: string[] = [];
+  const show = (item: Setting) => {
+    values.set(item.key, item.value);
+    shown.push(`${item.key}=${item.value}`);
+  };
+  page.subscribe<Setting>('settings', undefined, { state: (items) => items.forEach(show), change: show });
+  const socket = await welcome();
+  socket.receive({ t: 'state', sub: 1, items: [] });
+  return { ...page, socket, values, shown };
+}
+
+// The backend commits a save: the change to every window, and the saver's result after it.
+function commit(windows: { socket: FakeSocket }[], saver: { socket: FakeSocket }, id: number, key: string, value: string) {
+  for (const w of windows) w.socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry(key, value) });
+  saver.socket.receive({ t: 'result', id, result: null });
+}
+
+test('each save() sends exactly one call', async () => {
+  const a = await window();
+  void a.save('settings', 'theme', 'dark');
+  await settle();
+  assert.deepEqual(a.socket.sent.slice(2), [{ t: 'call', id: 2, feature: 'settings', method: 'set', args: { key: 'theme', value: 'dark' } }]);
+});
+
+test('two windows saving one key: commits A1, B1, A2 leave both on A2, and A1, A2, B1 leave both on B1', async () => {
+  for (const [order, last] of [[['A1', 'B1', 'A2'], 'A2'], [['A1', 'A2', 'B1'], 'B1']] as const) {
+    const a = await window();
+    const b = await window();
+    const ids: Record<string, number> = {};
+    for (const value of ['A1', 'A2']) void a.save('settings', 'theme', value);
+    void b.save('settings', 'theme', 'B1');
+    await settle();
+    ids.A1 = 2;
+    ids.A2 = 3;
+    ids.B1 = 2;
+    for (const value of order) commit([a, b], value.startsWith('A') ? a : b, ids[value]!, 'theme', value);
+    await settle();
+    assert.equal(a.values.get('theme'), last, `A after ${order}`);
+    assert.equal(b.values.get('theme'), last, `B after ${order}`);
+  }
+});
+
+test("a failed save, then a successful one, then another window's change: the window ends on the other window's value", async () => {
+  const a = await window();
+  const failed = a.save('settings', 'theme', 'bad');
+  await settle();
+  a.socket.receive({ t: 'error', id: 2, code: 'failed', message: 'refused' });
+  assert.deepEqual(await failed, { ok: false, why: 'failed' });
+  // Read back: subscribed again, and the committed value comes back as its state.
+  assert.deepEqual(a.socket.sent.slice(-2), [{ t: 'unsub', id: 1 }, { t: 'sub', id: 1, topic: 'settings' }]);
+  a.socket.receive({ t: 'state', sub: 1, items: [entry('theme', 'dark')] });
+  assert.equal(a.values.get('theme'), 'dark');
+
+  void a.save('settings', 'theme', 'light');
+  await settle();
+  commit([a], a, 3, 'theme', 'light');
+  a.socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'other') });
+  await settle();
+  assert.equal(a.values.get('theme'), 'other');
+});
+
+test("A1, B1, A2 with A2's answer right after its change: the window never shows B1 after A2", async () => {
+  const a = await window();
+  void a.save('settings', 'theme', 'A1');
+  void a.save('settings', 'theme', 'A2');
+  await settle();
+  commit([a], a, 2, 'theme', 'A1');
+  a.socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'B1') });
+  commit([a], a, 3, 'theme', 'A2');
+  await settle();
+  assert.equal(a.values.get('theme'), 'A2');
+  assert.ok(!a.shown.slice(a.shown.indexOf('theme=A2')).includes('theme=B1'), a.shown.join(', '));
+});
+
+test("a read-back's state doesn't overwrite a key with a save still in flight", async () => {
+  const a = await window();
+  void a.save('settings', 'font', 'mono');
+  const failed = a.save('settings', 'theme', 'bad');
+  await settle();
+  // font commits first; theme fails, and its read-back's state has both.
+  a.socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('font', 'mono') });
+  a.socket.receive({ t: 'error', id: 3, code: 'failed', message: 'refused' });
+  await failed;
+  a.socket.receive({ t: 'state', sub: 1, items: [entry('theme', 'dark'), entry('font', 'serif')] });
+  assert.equal(a.values.get('theme'), 'dark');
+  assert.equal(a.values.get('font'), undefined);
+  // font's answer: its newest held value, the state's, is applied. The state was read after font's commit.
+  a.socket.receive({ t: 'result', id: 2, result: null });
+  await settle();
+  assert.equal(a.values.get('font'), 'serif');
 });

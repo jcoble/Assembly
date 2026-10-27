@@ -39,10 +39,12 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 ## One socket
 
 The page talks to the backend over one WebSocket, `/socket`, through one file, `app/src/lib/socket.ts`. The backend's
-side is `Assembly.Infrastructure/Socket/`: a feature registers its calls and topics on `ICallRegistry`
+side is `Assembly.Infrastructure/Socket/`: a feature registers its calls, saves and topics on `ICallRegistry`
 (`Assembly.Application/Common/Calls/`), and `SocketDispatcher` runs every call the same way (plan 5.2). A write's
 changes reach subscribers through the host's one `Topics` (`Assembly.Infrastructure/Topics/`), which the writer
-publishes to after it commits (plan 5.7). The socket
+publishes to after it commits (plan 5.7). A save is one write per change, and its changes go out on the topic named
+after its feature, by key, which is how `socket.ts` holds a key while the window's own saves of it are in flight
+(plan 5.9). The socket
 exists from plan step B4, but features move onto it from B7; until then `app/src/lib/call.ts` and
 `Assembly.Infrastructure/Http/` are their HTTP path, and the `/live` socket carries the rows. The only other HTTP is
 `/mcp`, which the agents use.

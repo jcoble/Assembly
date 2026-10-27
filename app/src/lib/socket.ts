@@ -3,7 +3,7 @@ import { BASE_WS, TOKEN } from './host/backend';
 
 // The page's one socket to the backend (plan 5.1): `hello` with the token, then `call` frames answered by `result` or
 // `error`, `cancel` for a call nobody wants any more, and `sub`/`unsub` for a topic's `state` and `change` frames
-// (subscribe). The backend's side is
+// (subscribe), and `save` for a feature's settings. The backend's side is
 // dotnet/Assembly.Infrastructure/Socket/. The socket opens on the first call; if it can't, it's tried once more and
 // the call fails. An open socket that closes is reopened once (reopen). There are no timers here: the backend ends every call within 30 s.
 
@@ -17,8 +17,10 @@ export const onFailure = (handler: (message: string) => void) => (report = handl
 // 'aborted' (a newer call took its place, its owner closed, the socket closed) isn't an error and shows nothing.
 export type Outcome<T> = { ok: true; result: T } | { ok: false; why: 'failed' | 'aborted' };
 
-type Frame = { t: string; id?: number; result?: unknown; code?: string; message?: string; sub?: number; items?: unknown[]; item?: unknown };
+type Entry = { key: string; item: unknown };
+type Frame = { t: string; id?: number; result?: unknown; code?: string; message?: string; sub?: number; items?: Entry[]; key?: string; item?: unknown };
 type Pending = { name: string; settle: (outcome: Outcome<unknown>) => void };
+// state upserts its items (no topic removes yet; the first one that does makes state replace, keeping held keys).
 type Apply<T> = { state: (items: T[]) => void; change: (item: T) => void };
 type Subscription = { topic: string; key?: string; apply: Apply<unknown> };
 
@@ -28,6 +30,11 @@ let lastId = 0;
 const pending = new Map<number, Pending>();
 const running = new Map<string, number>();
 const subscriptions = new Map<number, Subscription>();
+// Per topic and key: this window's saves still waiting on their answer, and the newest value that arrived meanwhile.
+// Both start over when an open socket closes: the reopen's state is current.
+const saving = new Map<string, number>();
+const held = new Map<string, unknown>();
+let closes = 0;
 
 // The open socket, opening it (and once more if that fails) when there's none.
 function connect(): Promise<WebSocket> {
@@ -54,8 +61,8 @@ function open(): Promise<WebSocket> {
         for (const id of subscriptions.keys()) sendSub(socket, id);
         return resolve(socket);
       }
-      if (frame.t === 'state') return subscriptions.get(frame.sub!)?.apply.state(frame.items!);
-      if (frame.t === 'change') return subscriptions.get(frame.sub!)?.apply.change(frame.item);
+      if (frame.t === 'state') return deliver(frame.sub!, frame.items!, false);
+      if (frame.t === 'change') return deliver(frame.sub!, [{ key: frame.key!, item: frame.item }], true);
       const call = pending.get(frame.id!);
       if (!call) return failSub(frame);
       pending.delete(frame.id!);
@@ -69,6 +76,9 @@ function open(): Promise<WebSocket> {
       (event) => {
         if (!welcomed) return reject(new Error(`the socket closed (${(event as CloseEvent).code})`));
         connecting = current = undefined;
+        closes++;
+        saving.clear();
+        held.clear();
         for (const call of pending.values()) call.settle({ ok: false, why: 'aborted' });
         pending.clear();
         reopen();
@@ -137,6 +147,49 @@ function supersede(id: number) {
   cancel(id);
   pending.delete(id);
   call.settle({ ok: false, why: 'aborted' });
+}
+
+// A setting's save (plan 5.9): one call, `{feature}/set`, each time. The caller shows its own value first. Until its
+// answer, anything that arrives for the key is held, not shown; at the last answer the newest held value is shown, or,
+// after a failure with nothing held, the feature's topic is subscribed again to read the committed value back.
+export async function save(feature: string, key: string, value: unknown): Promise<Outcome<void>> {
+  const slot = `${feature}\n${key}`;
+  const at = closes;
+  saving.set(slot, (saving.get(slot) ?? 0) + 1);
+  const outcome = await call<void>(feature, 'set', { key, value });
+  if (at !== closes) return outcome;
+  const left = (saving.get(slot) ?? 1) - 1;
+  if (left > 0) saving.set(slot, left);
+  else {
+    saving.delete(slot);
+    if (held.has(slot)) {
+      const item = held.get(slot);
+      held.delete(slot);
+      for (const s of subscriptions.values()) if (gets(s, feature, key)) s.apply.change(item);
+    } else if (!outcome.ok && outcome.why === 'failed' && current) {
+      for (const [id, s] of subscriptions) {
+        if (!gets(s, feature, key)) continue;
+        current.send(JSON.stringify({ t: 'unsub', id }));
+        sendSub(current, id);
+      }
+    }
+  }
+  return outcome;
+}
+
+const gets = (s: Subscription, topic: string, key: string) => s.topic === topic && (s.key === undefined || s.key === key);
+
+// A state's entries or a change's, the same way: each held while its key has a save in flight, the rest applied.
+function deliver(sub: number, entries: Entry[], change: boolean) {
+  const subscription = subscriptions.get(sub);
+  if (!subscription) return;
+  const shown = entries.filter(({ key, item }) => {
+    const slot = `${subscription.topic}\n${key}`;
+    if (saving.has(slot)) held.set(slot, item);
+    return !saving.has(slot);
+  }).map(({ item }) => item);
+  if (!change) subscription.apply.state(shown);
+  else if (shown.length) subscription.apply.change(shown[0]);
 }
 
 // A topic's state, then each change to it (plan 5.7). With no key, every change on the topic; with a key, only that

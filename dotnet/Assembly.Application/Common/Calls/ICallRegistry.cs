@@ -3,7 +3,7 @@ using Assembly.Application.Common.Database;
 
 namespace Assembly.Application.Common.Calls;
 
-/// <summary>Where a feature lists its calls and topics (plan 5.2). B6 adds saves.</summary>
+/// <summary>Where a feature lists its calls, saves and topics (plan 5.2).</summary>
 public interface ICallRegistry
 {
     void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
@@ -14,7 +14,12 @@ public interface ICallRegistry
     void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler);
 
+    // A save (5.9): `{feature}/set` with {key, value}, one write each, audited as "{feature}/set <key>", never with its
+    // value. Its database part publishes the change on the topic named after its feature, which must be registered first.
+    void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save);
+
     // A topic's state for a new subscriber, with its key. Synchronous: Topics reads it under its lock, which can't span
-    // an await (5.7). Its token is the socket's closing.
-    void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<string?, CallContext, IReadOnlyList<TItem>> state);
+    // an await (5.7). Its token is the socket's closing. key gives each item's key, which its state frame carries, so the
+    // page can hold a key with a save in flight.
+    void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key, Func<string?, CallContext, IReadOnlyList<TItem>> state);
 }

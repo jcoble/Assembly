@@ -39,13 +39,21 @@ public sealed partial class SocketTests : IAsyncLifetime
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        _app.Map("/socket", new SocketEndpoint(Token, _calls, "test-machine", _time).HandleAsync);
+        var endpoint = new SocketEndpoint(Token, _calls, "test-machine", _time);
+        _app.Map("/socket", endpoint.HandleAsync);
+        // As ApiServer does.
+        _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _address = new Uri($"ws://{http.Authority}/socket");
     }
 
-    public async Task DisposeAsync() => await _app.DisposeAsync();
+    public async Task DisposeAsync()
+    {
+        await _app.DisposeAsync();
+        foreach (var disposable in _disposeAfter)
+            disposable.Dispose();
+    }
 
     [Fact]
     public async Task A_call_answers_its_result_and_an_unknown_one_not_found()
@@ -416,9 +424,11 @@ public sealed partial class SocketTests : IAsyncLifetime
         }
     }
 
-    // Runs each database part as it comes and notes the write, in order.
+    // Runs each database part as it comes and notes the write, in order: in a real writer once a test sets one.
     private sealed class FakeWriter : IAtomicWriter
     {
+        public IAtomicWriter? Real { get; set; }
+
         private readonly List<string> _written = [];
         private readonly List<(int Count, TaskCompletionSource Done)> _waiting = [];
 
@@ -435,7 +445,7 @@ public sealed partial class SocketTests : IAsyncLifetime
         {
             lock (_written)
             {
-                var result = write(null!);
+                var result = Real is { } real ? real.Write(what, write) : write(null!);
                 _written.Add(what);
                 foreach (var (count, done) in _waiting)
                     if (_written.Count >= count)
@@ -489,4 +499,5 @@ public sealed record Setting(string Key, string Value);
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(Note))]
 [JsonSerializable(typeof(Setting))]
+[JsonSerializable(typeof(string))]
 internal sealed partial class TestJson : JsonSerializerContext;

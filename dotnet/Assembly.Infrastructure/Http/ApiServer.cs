@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 using Assembly.Infrastructure.Mcp;
@@ -15,10 +16,16 @@ namespace Assembly.Infrastructure.Http;
 /// </summary>
 public static class ApiServer
 {
+    // How long stopping may take: it drains each socket's queued saves (plan 5.9). Below the shell's wait after SIGTERM,
+    // BACKEND_STOP_WAIT in shell/src/main.rs, so the backend finishes before the shell kills it
+    // (scripts/shutdown-timing.test.sh checks it).
+    public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(8);
+
     public static WebApplication Build(ApiServices services, int port, Action<WebApplication>? more = null)
     {
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
+        builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = ShutdownTimeout);
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, port));
 
         var app = builder.Build();

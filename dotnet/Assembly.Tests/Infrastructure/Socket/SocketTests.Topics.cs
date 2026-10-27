@@ -9,21 +9,33 @@ public sealed partial class SocketTests
     [Fact]
     public async Task Subscribing_sends_state_then_each_change_published_after_it()
     {
-        _calls.Topic("notes", TestJson.Default.Note, (_, _) => [new Note("a")]);
+        _calls.Topic("notes", TestJson.Default.Note, note => note.Text, (_, _) => [new Note("a")]);
         using var socket = await OpenAsync();
 
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"notes"}""");
-        Assert.Equal("""{"t":"state","sub":1,"items":[{"text":"a"}]}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"a","item":{"text":"a"}}]}""", await ReadAsync(socket));
         _topics.Publish("notes", "b", """{"text":"b"}""");
 
-        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"text":"b"}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","key":"b","item":{"text":"b"}}""", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task A_state_frame_carries_each_item_with_its_key()
+    {
+        _calls.Topic("settings", TestJson.Default.Setting, setting => setting.Key, (_, _) => [new Setting("theme", "dark"), new Setting("font", "mono")]);
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"settings"}""");
+
+        Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"theme","item":{"key":"theme","value":"dark"}},{"key":"font","item":{"key":"font","value":"mono"}}]}""",
+            await ReadAsync(socket));
     }
 
     [Fact]
     public async Task Unsubscribing_or_closing_the_socket_stops_changes()
     {
         CallContext? context = null;
-        _calls.Topic("notes", TestJson.Default.Note, (_, call) =>
+        _calls.Topic("notes", TestJson.Default.Note, note => note.Text, (_, call) =>
         {
             context = call;
             return [];
@@ -57,7 +69,7 @@ public sealed partial class SocketTests
     public async Task A_subscription_with_no_key_gets_every_change_and_one_with_a_key_only_its_own()
     {
         var keys = new List<string?>();
-        _calls.Topic("settings", TestJson.Default.Setting, (key, _) =>
+        _calls.Topic("settings", TestJson.Default.Setting, setting => setting.Key, (key, _) =>
         {
             keys.Add(key);
             return [];
@@ -73,9 +85,9 @@ public sealed partial class SocketTests
         _topics.Publish("settings", "font", """{"key":"font","value":"mono"}""");
 
         Assert.Equal([null, "theme"], keys);
-        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"key":"theme","value":"dark"}}""", await ReadAsync(socket));
-        Assert.Equal("""{"t":"change","sub":2,"op":"upsert","item":{"key":"theme","value":"dark"}}""", await ReadAsync(socket));
-        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"key":"font","value":"mono"}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","key":"theme","item":{"key":"theme","value":"dark"}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"change","sub":2,"op":"upsert","key":"theme","item":{"key":"theme","value":"dark"}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","key":"font","item":{"key":"font","value":"mono"}}""", await ReadAsync(socket));
         // Nothing else was queued before this answer: the keyed subscription didn't get the font change.
         await CallAsync(socket, 3, "notes", "echo", "{}");
         Assert.Equal("""{"t":"result","id":3,"result":{"text":""}}""", await ReadAsync(socket));
@@ -84,7 +96,7 @@ public sealed partial class SocketTests
     [Fact]
     public async Task A_state_over_4_MB_answers_failed_and_subscribes_nothing()
     {
-        _calls.Topic("notes", TestJson.Default.Note, (_, _) => [new Note(new string('x', 4 * 1024 * 1024))]);
+        _calls.Topic("notes", TestJson.Default.Note, note => note.Text, (_, _) => [new Note(new string('x', 4 * 1024 * 1024))]);
         using var socket = await OpenAsync();
 
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"notes"}""");
@@ -107,7 +119,7 @@ public sealed partial class SocketTests
     public async Task Subscribing_again_on_the_same_socket_or_after_a_reconnect_gives_the_current_state_not_a_replay()
     {
         var value = "a";
-        _calls.Topic("notes", TestJson.Default.Note, (_, _) => [new Note(value)]);
+        _calls.Topic("notes", TestJson.Default.Note, note => note.Text, (_, _) => [new Note(value)]);
         using var socket = await OpenAsync();
 
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"notes"}""");
@@ -120,11 +132,11 @@ public sealed partial class SocketTests
         }
         await SendAsync(socket, """{"t":"unsub","id":1}""");
         await SendAsync(socket, """{"t":"sub","id":2,"topic":"notes"}""");
-        Assert.Equal("""{"t":"state","sub":2,"items":[{"text":"c"}]}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"state","sub":2,"items":[{"key":"c","item":{"text":"c"}}]}""", await ReadAsync(socket));
 
         using var reconnected = await OpenAsync();
         await SendAsync(reconnected, """{"t":"sub","id":1,"topic":"notes"}""");
-        Assert.Equal("""{"t":"state","sub":1,"items":[{"text":"c"}]}""", await ReadAsync(reconnected));
+        Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"c","item":{"text":"c"}}]}""", await ReadAsync(reconnected));
     }
 
     // A write committed before the snapshot but published after it reaches the subscriber twice, once in its state
@@ -132,7 +144,7 @@ public sealed partial class SocketTests
     [Fact]
     public async Task A_duplicated_settings_upsert_leaves_the_same_value()
     {
-        _calls.Topic("settings", TestJson.Default.Setting, (_, _) => [new Setting("theme", "dark")]);
+        _calls.Topic("settings", TestJson.Default.Setting, setting => setting.Key, (_, _) => [new Setting("theme", "dark")]);
         using var socket = await OpenAsync();
 
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"settings"}""");
@@ -140,11 +152,10 @@ public sealed partial class SocketTests
         _topics.Publish("settings", "theme", """{"key":"theme","value":"dark"}""");
         var change = await ReadAsync(socket);
 
+        // State entries and a change apply the same way: by their key, to their item.
         var values = new Dictionary<string, string>();
-        foreach (var item in JsonDocument.Parse(state).RootElement.GetProperty("items").EnumerateArray())
-            values[item.GetProperty("key").GetString()!] = item.GetProperty("value").GetString()!;
-        var upsert = JsonDocument.Parse(change).RootElement.GetProperty("item");
-        values[upsert.GetProperty("key").GetString()!] = upsert.GetProperty("value").GetString()!;
+        foreach (var entry in JsonDocument.Parse(state).RootElement.GetProperty("items").EnumerateArray().Append(JsonDocument.Parse(change).RootElement))
+            values[entry.GetProperty("key").GetString()!] = entry.GetProperty("item").GetProperty("value").GetString()!;
         Assert.Equal(new Dictionary<string, string> { ["theme"] = "dark" }, values);
     }
 
@@ -156,7 +167,7 @@ public sealed partial class SocketTests
         var rows = new List<string> { "a" };
         var reading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var gate = new ManualResetEventSlim();
-        _calls.Topic("notes", TestJson.Default.Note, (_, _) =>
+        _calls.Topic("notes", TestJson.Default.Note, note => note.Text, (_, _) =>
         {
             var snapshot = rows.Select(text => new Note(text)).ToList();
             reading.SetResult();
@@ -177,8 +188,8 @@ public sealed partial class SocketTests
         await UntilAsync(() => publisher.ThreadState.HasFlag(ThreadState.WaitSleepJoin));
         gate.Set();
 
-        Assert.Equal("""{"t":"state","sub":1,"items":[{"text":"a"}]}""", await ReadAsync(socket));
-        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"text":"b"}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"a","item":{"text":"a"}}]}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"change","sub":1,"op":"upsert","key":"b","item":{"text":"b"}}""", await ReadAsync(socket));
         Assert.True(publisher.Join(Wait));
         await CallAsync(socket, 2, "notes", "echo", "{}");
         Assert.Equal("""{"t":"result","id":2,"result":{"text":""}}""", await ReadAsync(socket));

@@ -18,7 +18,7 @@ public sealed class Topics : ITopics
         lock (_lock)
             foreach (var subscription in _subscriptions)
                 if (subscription.Topic == topic && (subscription.Key is null || subscription.Key == key))
-                    subscription.Change(json);
+                    subscription.Change(key, json);
     }
 
     public bool HasSubscribers(string topic)
@@ -31,7 +31,7 @@ public sealed class Topics : ITopics
     /// Runs <paramref name="state"/>, which reads the state and queues it, then registers the subscription, both under
     /// the lock. With no key, it gets every change on the topic; with a key, only changes published with that key.
     /// </summary>
-    internal Subscription Subscribe(string topic, string? key, Action state, Action<string> change)
+    internal Subscription Subscribe(string topic, string? key, Action state, Action<string?, string> change)
     {
         lock (_lock)
         {
@@ -48,10 +48,10 @@ public sealed class Topics : ITopics
             _subscriptions.Remove(subscription);
     }
 
-    internal sealed class Subscription(string topic, string? key, Action<string> change)
+    internal sealed class Subscription(string topic, string? key, Action<string?, string> change)
     {
         public string Topic { get; } = topic;
         public string? Key { get; } = key;
-        public Action<string> Change { get; } = change;
+        public Action<string?, string> Change { get; } = change;
     }
 }
