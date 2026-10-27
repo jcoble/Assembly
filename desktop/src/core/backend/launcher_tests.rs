@@ -45,10 +45,19 @@ const WAIT_FOR_TERM: &str = "tail -f /dev/null & wait";
 
 fn launch(config: BackendConfig) -> (Launcher, Receiver<String>) {
     let (sender, receiver) = channel();
-    (
-        Launcher::new(config, Arc::new(move |token| sender.send(token).unwrap())),
-        receiver,
-    )
+    let ready = move |token: Option<String>| {
+        if let Some(token) = token {
+            sender.send(token).unwrap()
+        }
+    };
+    (Launcher::new(config, Arc::new(ready)), receiver)
+}
+
+/// Every call the launcher makes to the window: a token for each ready backend, `None` when it gives up.
+fn launch_noting_give_ups(config: BackendConfig) -> (Launcher, Receiver<Option<String>>) {
+    let (sender, receiver) = channel();
+    let ready = move |token: Option<String>| sender.send(token).unwrap();
+    (Launcher::new(config, Arc::new(ready)), receiver)
 }
 
 fn read(config: &BackendConfig, name: &str) -> String {
@@ -228,4 +237,22 @@ fn a_fresh_home_gets_an_empty_agents_file_and_a_written_one_is_kept() {
         std::fs::read_to_string(&agents).unwrap(),
         "[{\"id\":\"claude\"}]"
     );
+}
+
+// Pins: g0-shape#3
+#[test]
+fn a_launcher_that_gives_up_tells_the_window_once() {
+    let (mut launcher, calls) = launch_noting_give_ups(fake("gives-up", "exit 3"));
+    launcher.thread.take().unwrap().join().unwrap();
+    assert_eq!(calls.try_iter().collect::<Vec<_>>(), [None]);
+}
+
+// Pins: g0-shape#3
+#[test]
+fn quitting_is_not_giving_up() {
+    let script = format!("echo 'listening on http://127.0.0.1:18877/'\n{WAIT_FOR_TERM}");
+    let (mut launcher, calls) = launch_noting_give_ups(fake("quits", &script));
+    assert_eq!(calls.recv().unwrap(), Some(TOKEN.to_string()));
+    launcher.stop();
+    assert_eq!(calls.try_iter().count(), 0);
 }
