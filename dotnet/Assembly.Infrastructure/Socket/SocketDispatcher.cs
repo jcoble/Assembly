@@ -56,11 +56,20 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         {
             var (key, item) = ((string, TValue))args;
             call.Cancellation.ThrowIfCancellationRequested();
-            writer.Write($"{feature}/set {key}", scope =>
+            try
             {
-                save(key, item, scope);
-                return 0;
-            });
+                writer.Write($"{feature}/set {key}", scope =>
+                {
+                    save(key, item, scope);
+                    return 0;
+                });
+            }
+            catch (Exception error) when (error is not (CallFailed or OperationCanceledException))
+            {
+                // Its message could hold the value, which never goes into a log (some settings hold tokens).
+                log.LogError("{Save} failed with {Type}", $"{feature}/set {key}", error.GetType().Name);
+                throw new CallFailed($"{feature}/set {key} failed");
+            }
             return Task.FromResult(Null);
         }));
     }

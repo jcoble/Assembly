@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Application.Features.Chat.Attachments;
@@ -57,6 +59,13 @@ public sealed class ApiTests : IAsyncLifetime
         _base = new Uri(address);
         _http = new HttpClient { BaseAddress = _base };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+    }
+
+    [Fact]
+    public void The_host_stops_within_its_shutdown_timeout()
+    {
+        // scripts/shutdown-timing.test.sh checks the constant against the shell's wait; this checks the host uses it.
+        Assert.Equal(ApiServer.ShutdownTimeout, _app.Services.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout);
     }
 
     [Fact]

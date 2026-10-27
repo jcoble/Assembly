@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
@@ -81,12 +82,20 @@ public sealed partial class SocketTests
     public async Task Saves_still_in_the_write_queue_commit_before_the_backend_stops()
     {
         using var held = new ManualResetEventSlim();
-        using var database = Settings(before: () => held.Wait(Wait));
+        var writing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var database = Settings(before: () =>
+        {
+            writing.TrySetResult();
+            held.Wait(Wait);
+        });
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
         using var socket = await OpenAsync();
         await SaveAsync(socket, 1, "theme", "\"dark\"");
         await SaveAsync(socket, 2, "font", "\"mono\"");
-        // The first is in its write, the second queued behind it.
-        await UntilAsync(() => _saving);
+        // Frames are read in order, so once this answers, the second save is queued; the first is in its write.
+        await CallAsync(socket, 3, "notes", "echo", "{}");
+        Assert.Equal("""{"t":"result","id":3,"result":{"text":""}}""", await ReadAsync(socket));
+        await writing.Task.WaitAsync(Wait);
 
         var stopping = _app.StopAsync();
         Assert.False(stopping.IsCompleted);
@@ -106,7 +115,14 @@ public sealed partial class SocketTests
 
         await SaveAsync(socket, 1, "notion-token", $"\"{Marker}\"");
         await SaveAsync(socket, 2, "theme", $"\"refused {Marker}\"");
-        await ReadByIdAsync(socket, 2);
+        // Bad args: an object where the value is a string.
+        await SaveAsync(socket, 3, "theme", $$"""{"text":"{{Marker}}"}""");
+        await SaveAsync(socket, 4, "theme", $"\"crash {Marker}\"");
+        var answers = await ReadByIdAsync(socket, 4);
+        Assert.Equal("bad_args", Code(answers[2], id: 3));
+        Assert.Equal("failed", Code(answers[3], id: 4));
+        Assert.DoesNotContain(Marker, answers[3]);
+        Assert.Contains(_log.Entries, entry => entry.Level == LogLevel.Error);
 
         Assert.Equal(Marker, Value(database.Path, "notion-token"));
         Assert.DoesNotContain(Audit(database.Path), what => what.Contains(Marker));
@@ -120,10 +136,9 @@ public sealed partial class SocketTests
             _calls.Save("nowhere", TestJson.Default.String, (_, _, _) => { }));
     }
 
-    private bool _saving;
-
     // A settings table in a real writer, the settings topic, and its save: an upsert that publishes the setting. A value
-    // starting "refused" fails the save. before runs inside the write, first.
+    // starting "refused" fails the save; one starting "crash" throws an exception that holds it. before runs inside the
+    // write, first.
     private TempDatabase Settings(Action? before = null)
     {
         var database = new TempDatabase();
@@ -140,10 +155,11 @@ public sealed partial class SocketTests
         _calls.Topic("settings", TestJson.Default.Setting, setting => setting.Key, (_, _) => []);
         _calls.Save("settings", TestJson.Default.String, (key, value, scope) =>
         {
-            _saving = true;
             before?.Invoke();
             if (value.StartsWith("refused", StringComparison.Ordinal))
                 throw new CallFailed("refused");
+            if (value.StartsWith("crash", StringComparison.Ordinal))
+                throw new InvalidOperationException(value);
             scope.Execute("INSERT INTO settings(key, value) VALUES ($key, $value) ON CONFLICT(key) DO UPDATE SET value = $value",
                 new SqlArg("$key", key), new SqlArg("$value", value));
             scope.Publish("settings", key, new Setting(key, value), TestJson.Default.Setting);

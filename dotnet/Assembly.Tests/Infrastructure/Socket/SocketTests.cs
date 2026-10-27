@@ -487,7 +487,7 @@ public sealed partial class SocketTests : IAsyncLifetime
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             lock (_entries)
-                _entries.Add((logLevel, formatter(state, exception)));
+                _entries.Add((logLevel, $"{formatter(state, exception)} {exception}"));
         }
     }
 }

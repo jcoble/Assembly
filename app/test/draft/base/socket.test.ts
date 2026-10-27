@@ -244,10 +244,12 @@ async function window() {
   return { ...page, socket, values, shown };
 }
 
-// The backend commits a save: the change to every window, and the saver's result after it.
-function commit(windows: { socket: FakeSocket }[], saver: { socket: FakeSocket }, id: number, key: string, value: string) {
+// The backend commits a save: the change to every window, and the saver's result after it. Each frame is its own
+// task in a browser, so what a frame starts runs before the next one arrives.
+async function commit(windows: { socket: FakeSocket }[], saver: { socket: FakeSocket }, id: number, key: string, value: string) {
   for (const w of windows) w.socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry(key, value) });
   saver.socket.receive({ t: 'result', id, result: null });
+  await settle();
 }
 
 test('each save() sends exactly one call', async () => {
@@ -258,7 +260,12 @@ test('each save() sends exactly one call', async () => {
 });
 
 test('two windows saving one key: commits A1, B1, A2 leave both on A2, and A1, A2, B1 leave both on B1', async () => {
-  for (const [order, last] of [[['A1', 'B1', 'A2'], 'A2'], [['A1', 'A2', 'B1'], 'B1']] as const) {
+  // What each window shows: nothing for the key while its own saves are in flight, then the newest value.
+  const cases = [
+    { order: ['A1', 'B1', 'A2'], last: 'A2', showsA: ['theme=A2'], showsB: ['theme=B1', 'theme=A2'] },
+    { order: ['A1', 'A2', 'B1'], last: 'B1', showsA: ['theme=A2', 'theme=B1'], showsB: ['theme=B1'] },
+  ];
+  for (const { order, last, showsA, showsB } of cases) {
     const a = await window();
     const b = await window();
     const ids: Record<string, number> = {};
@@ -268,10 +275,12 @@ test('two windows saving one key: commits A1, B1, A2 leave both on A2, and A1, A
     ids.A1 = 2;
     ids.A2 = 3;
     ids.B1 = 2;
-    for (const value of order) commit([a, b], value.startsWith('A') ? a : b, ids[value]!, 'theme', value);
+    for (const value of order) await commit([a, b], value.startsWith('A') ? a : b, ids[value]!, 'theme', value);
     await settle();
     assert.equal(a.values.get('theme'), last, `A after ${order}`);
     assert.equal(b.values.get('theme'), last, `B after ${order}`);
+    assert.deepEqual(a.shown, showsA, `A shows after ${order}`);
+    assert.deepEqual(b.shown, showsB, `B shows after ${order}`);
   }
 });
 
@@ -288,7 +297,7 @@ test("a failed save, then a successful one, then another window's change: the wi
 
   void a.save('settings', 'theme', 'light');
   await settle();
-  commit([a], a, 3, 'theme', 'light');
+  await commit([a], a, 3, 'theme', 'light');
   a.socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'other') });
   await settle();
   assert.equal(a.values.get('theme'), 'other');
@@ -299,12 +308,13 @@ test("A1, B1, A2 with A2's answer right after its change: the window never shows
   void a.save('settings', 'theme', 'A1');
   void a.save('settings', 'theme', 'A2');
   await settle();
-  commit([a], a, 2, 'theme', 'A1');
+  await commit([a], a, 2, 'theme', 'A1');
   a.socket.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'B1') });
-  commit([a], a, 3, 'theme', 'A2');
+  await commit([a], a, 3, 'theme', 'A2');
   await settle();
   assert.equal(a.values.get('theme'), 'A2');
-  assert.ok(!a.shown.slice(a.shown.indexOf('theme=A2')).includes('theme=B1'), a.shown.join(', '));
+  // Held until A2's answer, so B1 never shows at all, before A2 or after it.
+  assert.deepEqual(a.shown, ['theme=A2']);
 });
 
 test("a read-back's state doesn't overwrite a key with a save still in flight", async () => {
@@ -323,4 +333,27 @@ test("a read-back's state doesn't overwrite a key with a save still in flight", 
   a.socket.receive({ t: 'result', id: 2, result: null });
   await settle();
   assert.equal(a.values.get('font'), 'serif');
+});
+
+test('a save sent before the socket closes stops counting with it, and one still waiting to connect is held on the reopened socket', async () => {
+  const a = await window();
+  const lost = a.save('settings', 'theme', 'before');
+  await settle();
+  a.socket.closeNow(1006);
+  assert.deepEqual(await lost, { ok: false, why: 'aborted' });
+  const later = a.save('settings', 'theme', 'later');
+  const reopened = sockets[1]!;
+  reopened.open();
+  reopened.receive({ t: 'welcome', protocol: 1, machine: 'test-machine' });
+  await settle();
+  // The reopen's state for the key is held: 'later' is still waiting on its answer.
+  reopened.receive({ t: 'state', sub: 1, items: [entry('theme', 'before')] });
+  assert.equal(a.values.get('theme'), undefined);
+  const sent = reopened.sent.find((frame) => frame.t === 'call')!;
+  await commit([{ socket: reopened }], { socket: reopened }, sent.id as number, 'theme', 'later');
+  assert.deepEqual(await later, { ok: true, result: null });
+  assert.deepEqual(a.shown, ['theme=later']);
+  // Nothing in flight now: another window's change shows at once.
+  reopened.receive({ t: 'change', sub: 1, op: 'upsert', ...entry('theme', 'other') });
+  assert.equal(a.values.get('theme'), 'other');
 });

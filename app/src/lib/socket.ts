@@ -31,10 +31,11 @@ const pending = new Map<number, Pending>();
 const running = new Map<string, number>();
 const subscriptions = new Map<number, Subscription>();
 // Per topic and key: this window's saves still waiting on their answer, and the newest value that arrived meanwhile.
-// Both start over when an open socket closes: the reopen's state is current.
+// A save sent on a socket that closes is answered 'aborted' then, so its count goes down with it; one still waiting
+// to connect stays counted and goes out on the reopened socket. Held values go with the socket: its reopen's state is
+// current.
 const saving = new Map<string, number>();
 const held = new Map<string, unknown>();
-let closes = 0;
 
 // The open socket, opening it (and once more if that fails) when there's none.
 function connect(): Promise<WebSocket> {
@@ -76,8 +77,6 @@ function open(): Promise<WebSocket> {
       (event) => {
         if (!welcomed) return reject(new Error(`the socket closed (${(event as CloseEvent).code})`));
         connecting = current = undefined;
-        closes++;
-        saving.clear();
         held.clear();
         for (const call of pending.values()) call.settle({ ok: false, why: 'aborted' });
         pending.clear();
@@ -154,27 +153,34 @@ function supersede(id: number) {
 // after a failure with nothing held, the feature's topic is subscribed again to read the committed value back.
 export async function save(feature: string, key: string, value: unknown): Promise<Outcome<void>> {
   const slot = `${feature}\n${key}`;
-  const at = closes;
   saving.set(slot, (saving.get(slot) ?? 0) + 1);
-  const outcome = await call<void>(feature, 'set', { key, value });
-  if (at !== closes) return outcome;
-  const left = (saving.get(slot) ?? 1) - 1;
-  if (left > 0) saving.set(slot, left);
-  else {
-    saving.delete(slot);
-    if (held.has(slot)) {
-      const item = held.get(slot);
-      held.delete(slot);
-      for (const s of subscriptions.values()) if (gets(s, feature, key)) s.apply.change(item);
-    } else if (!outcome.ok && outcome.why === 'failed' && current) {
-      for (const [id, s] of subscriptions) {
-        if (!gets(s, feature, key)) continue;
-        current.send(JSON.stringify({ t: 'unsub', id }));
-        sendSub(current, id);
-      }
+  let outcome: Outcome<void> = { ok: false, why: 'failed' };
+  try {
+    outcome = await call<void>(feature, 'set', { key, value });
+    return outcome;
+  } finally {
+    answered(feature, key, outcome);
+  }
+}
+
+// One of the key's saves is answered. At the last, the newest held value is shown, or, after a failure with nothing
+// held, the topic is subscribed again so its state brings back the committed value.
+function answered(feature: string, key: string, outcome: Outcome<void>) {
+  const slot = `${feature}\n${key}`;
+  const left = saving.get(slot)! - 1;
+  if (left > 0) return saving.set(slot, left);
+  saving.delete(slot);
+  if (held.has(slot)) {
+    const item = held.get(slot);
+    held.delete(slot);
+    for (const s of subscriptions.values()) if (gets(s, feature, key)) s.apply.change(item);
+  } else if (!outcome.ok && outcome.why === 'failed' && current) {
+    for (const [id, s] of subscriptions) {
+      if (!gets(s, feature, key)) continue;
+      current.send(JSON.stringify({ t: 'unsub', id }));
+      sendSub(current, id);
     }
   }
-  return outcome;
 }
 
 const gets = (s: Subscription, topic: string, key: string) => s.topic === topic && (s.key === undefined || s.key === key);
