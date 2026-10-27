@@ -39,10 +39,12 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
   (one shared backend clock), from CSS (an animation that ends), or from an event (`ResizeObserver`, a shell event). A
   timer in a row runs once per row, so on the session rail it fires thousands of times. If you think you need one,
   ask Jesse; there's no list to add yourself to.
-- In `desktop/`, anything that ticks on a schedule (an elapsed time, a relative time, the meter) subscribes to the
+- In `desktop/`, anything that ticks on a schedule (an elapsed time, a relative time) subscribes to the
   backend clock's topic: one shared clock, so no window thread is left running. The window's own timers are only for
   animations, frame waits and a debounce, and each is a Task held by its view, so it ends with the view. Jesse,
   2026-10-27: "The no -timer rule, take out, we aren't using a frontend like those other JS ones now." (12:33Z), then "Having one backend clock is prob goood practice anyways i'm thinking. You still wouldn't want threads open that never got closed of properly" (12:50Z).
+  The one exception is the lag meter (`desktop/src/features/meter/`): its 100 ms stall tick and 5 s report timer run
+  only while `ASSEMBLY_METER` is set (Jesse, 2026-10-27, 13:32Z).
 - No CSS `:has()`, and no Tailwind variant that starts with `has-` or contains `-has-`, which compile to it. Use a class or data attribute on the element
   that owns the state, a custom property inherited down, or a pseudo-class scoped to the element that has it.
 - One transport. The page talks to the backend over one WebSocket, through one file (`app/src/lib/socket.ts`, built

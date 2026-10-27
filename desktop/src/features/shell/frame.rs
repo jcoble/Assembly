@@ -14,6 +14,7 @@ use super::layout_store::{LayoutStore, WriteLayout};
 use super::motion_skin::MotionSkin;
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
+use crate::core::native_views::views::NativeViews;
 
 pub struct Frame {
     top_bar: Entity<TopBar>,
@@ -42,6 +43,11 @@ impl Frame {
         });
         let top_bar = cx.new(|cx| TopBar::new(dock.clone(), cx));
         let utility_strip = cx.new(|_| UtilityStrip);
+        // Any dock change (a layout change, zoom, a live edge drag, a resize) moves panes, so the terminal and
+        // browser views are placed afresh.
+        let docked = cx.observe_in(&dock, window, |_, _, window, cx| {
+            NativeViews::layout_changed(window, cx)
+        });
         let _load = cx.spawn_in(window, async move |this, cx| {
             let state = LayoutStore::layout_to_open(read.await);
             _ = this.update_in(cx, |frame, window, cx| {
@@ -64,7 +70,7 @@ impl Frame {
             utility_strip,
             layout: LayoutStore::new(write),
             _load,
-            _subscriptions: Vec::new(),
+            _subscriptions: vec![docked],
         }
     }
 
