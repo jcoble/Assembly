@@ -69,6 +69,7 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
     {
         _topic.Watched = true;
         await FollowPastSettledAsync();
+        Assert.False(_closed.Task.IsCompleted);
 
         _topic.Watched = false;
         _time.Advance(PastSettled);

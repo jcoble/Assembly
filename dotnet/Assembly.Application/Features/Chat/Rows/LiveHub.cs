@@ -59,7 +59,7 @@ public sealed class LiveHub : IDisposable
         }
     }
 
-    /// <summary>Raised, outside the hub's lock, when a session's last live socket goes.</summary>
+    /// <summary>Raised when a session's last live socket goes; sometimes under the hub's lock, so a handler only signals.</summary>
     public event Action<string>? Unwatched;
 
     /// <summary>Whether a live socket watches the session's rows; a rows sub on the socket doesn't count.</summary>
