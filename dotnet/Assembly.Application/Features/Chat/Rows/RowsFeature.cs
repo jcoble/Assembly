@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -23,13 +25,20 @@ internal sealed class RowsFeature : IFeature
     /// </summary>
     public const int CatchUpBytes = 8 * 1024 * 1024;
 
+    /// <summary>The most bytes of a tool call's output, and of its diff, that <c>rows/tool</c> sends.</summary>
+    public const int ToolCap = 1024 * 1024;
+
     private readonly LiveHub _hub;
     private readonly RowStore _store;
+    private readonly SessionStore _sessions;
+    private readonly MachineSet _machines;
 
-    public RowsFeature(LiveHub hub, RowStore store)
+    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines)
     {
         _hub = hub;
         _store = store;
+        _sessions = sessions;
+        _machines = machines;
     }
 
     public void Register(ICallRegistry calls)
@@ -72,4 +81,13 @@ internal sealed class RowsFeature : IFeature
 
     /// <summary><c>rows/page</c>'s args: the newest items that start below <c>before</c>.</summary>
     internal sealed record PageArgs([property: JsonRequired] string Session, long Before = long.MaxValue, int Limit = 50);
+
+    internal sealed record ToolArgs([property: JsonRequired] string Session, [property: JsonRequired] string Item);
+
+    /// <summary>
+    /// An opened tool row's detail. Its output and diff are cut at <see cref="ToolCap"/> bytes each, with
+    /// <c>truncated</c> set and the full sizes in <c>outputBytes</c> and <c>diffBytes</c>.
+    /// </summary>
+    internal sealed record ToolDetail(string? Summary, string? Input, string? Output, string? Diff, string? Path, bool Truncated,
+        long OutputBytes, long DiffBytes);
 }

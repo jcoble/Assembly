@@ -23,6 +23,12 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public bool Refuses { get; set; }
     public List<string> Asked { get; } = [];
     public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Set when a held call reaches the machine.</summary>
+    public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>The run <see cref="ActiveRun"/> answers.</summary>
+    public string? Running { get; set; }
     public StoredToolCall? Tool { get; set; }
     public SessionConfig Config { get; set; } = new("[]", new Dictionary<string, string>());
 
@@ -50,7 +56,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken) =>
         Remote($"stop task {taskId}", () => !Refuses, cancellationToken);
 
-    public string? ActiveRun(SessionInfo session) => null;
+    public string? ActiveRun(SessionInfo session) => Running;
 
     public Task<StoredToolCall?> ToolCallAsync(SessionInfo session, string itemId, CancellationToken cancellationToken) =>
         Remote($"tool {itemId}", () => Tool, cancellationToken);
@@ -77,6 +83,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
             throw new MachineUnreachable(name ?? "here", $"{name} is down");
         if (_held is { } held)
         {
+            Reached.TrySetResult();
             try
             {
                 await held.Task.WaitAsync(cancellationToken);

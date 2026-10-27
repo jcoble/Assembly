@@ -49,6 +49,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new SessionsFeature(_sessions, machines).Register(calls);
         new SendFeature(_sessions, machines, _hub).Register(calls);
+        new RowsFeature(_hub, rows, _sessions, machines).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -89,9 +90,16 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
 
     private static async Task<string> ReadAsync(WebSocket socket)
     {
+        using var message = new MemoryStream();
         var buffer = new byte[256 * 1024];
-        var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(Wait);
-        Assert.Equal(WebSocketMessageType.Text, received.MessageType);
-        return Encoding.UTF8.GetString(buffer, 0, received.Count);
+        WebSocketReceiveResult received;
+        do
+        {
+            received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(Wait);
+            Assert.Equal(WebSocketMessageType.Text, received.MessageType);
+            message.Write(buffer, 0, received.Count);
+        }
+        while (!received.EndOfMessage);
+        return Encoding.UTF8.GetString(message.ToArray());
     }
 }

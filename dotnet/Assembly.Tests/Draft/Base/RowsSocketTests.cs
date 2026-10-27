@@ -10,10 +10,13 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
+using Assembly.Tests.Draft.Base.Chat;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.Base;
@@ -42,7 +45,8 @@ public sealed class RowsSocketTests : IAsyncLifetime
         var store = _store = RowStore.Open(_db);
         _hub = new LiveHub(store, topics: topics);
         _calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        new RowsFeature(_hub, store).Register(_calls);
+        var sessions = SessionStore.Open(_db, TimeProvider.System);
+        new RowsFeature(_hub, store, sessions, new MachineSet(new FakeMachine(null, sessions))).Register(_calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
