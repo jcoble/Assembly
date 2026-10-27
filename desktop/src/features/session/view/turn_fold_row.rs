@@ -4,7 +4,9 @@
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
 
-use super::chevron::chevron;
+use std::time::Instant;
+
+use super::chevron::{chevron, turn};
 use super::session_action::{OnAction, SessionAction};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::turn_line::worked_for;
@@ -13,8 +15,8 @@ use crate::features::session::model::turn_line::worked_for;
 pub struct TurnFoldRow {
     pub fold: Fold,
     pub open: bool,
-    /// Toggled a moment ago: its chevron turns.
-    pub moving: bool,
+    /// When it was last opened or shut: its chevron turns from then.
+    pub toggled_at: Option<Instant>,
     pub on_action: OnAction,
 }
 
@@ -34,13 +36,7 @@ pub fn heading(fold: &Fold) -> String {
 impl RenderOnce for TurnFoldRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let run_id = self.fold.run_id.clone();
-        let chevron = chevron(
-            &format!("fold:{run_id}"),
-            self.open,
-            self.moving,
-            window,
-            cx,
-        );
+        let chevron = chevron(turn(self.open, self.toggled_at, window, cx));
         let on_action = self.on_action.clone();
         h_flex()
             .id(SharedString::from(format!("fold:{run_id}")))

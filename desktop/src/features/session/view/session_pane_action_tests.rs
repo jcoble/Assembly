@@ -80,7 +80,7 @@ fn an_opened_tool_call_reads_its_detail_once_and_again_when_its_state_changes(
         })
     };
     assert!(
-        kept(cx).moving(),
+        kept(cx).toggled_at.is_some(),
         "its chevron turns and its detail eases in"
     );
     assert!(kept(cx).open);
@@ -133,10 +133,6 @@ fn finished_turn() -> Vec<Value> {
     ]
 }
 
-fn entries_of(pane: &SessionPane, cx: &gpui_kit::App) -> Vec<Entry> {
-    pane.entries(cx)
-}
-
 fn entries(pane: &Entity<SessionPane>, cx: &mut VisualTestContext) -> Vec<Entry> {
     cx.update(|_, cx| pane.read(cx).entries(cx))
 }
@@ -174,8 +170,9 @@ fn a_finished_turns_fold_opens_and_closes_by_its_run(cx: &mut TestAppContext) {
     // Opened, its chevron turns and the work it shows fades in, as a new row does (g0-session#34).
     cx.update(|_, cx| {
         let pane = pane.read(cx);
-        assert!(pane.kept["fold:r1"].moving());
-        let fading = entries_of(pane, cx)
+        assert!(pane.kept["fold:r1"].toggled_at.is_some());
+        let fading = pane
+            .entries(cx)
             .iter()
             .filter_map(|entry| pane.fresh_key(entry))
             .collect::<Vec<_>>();

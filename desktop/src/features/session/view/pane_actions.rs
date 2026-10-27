@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use super::SessionPane;
+use super::{FADE_FOR, SessionPane};
 use crate::core::intents::open_session::OpenSession;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
@@ -39,6 +39,8 @@ impl SessionPane {
                 if !self.open_folds.remove(&run_id) {
                     // The work it shows fades in, as a new row does.
                     if let Some(fold) = self.folds.get(&run_id) {
+                        self.fresh
+                            .retain(|_, at| now.duration_since(*at) < FADE_FOR);
                         self.fresh
                             .extend(fold.work.iter().map(|key| (key.clone(), now)));
                     }

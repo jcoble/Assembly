@@ -1,29 +1,43 @@
-//! `chevron` is the turning arrow of a fold, a tool call or thinking: right while shut, down while open. Toggled a
-//! moment ago it turns with the theme's motion; drawn again later, after scrolling back, it's still.
+//! The ease of a fold, a tool call or thinking opening and shutting: `turn` is how far it is, timed from its toggle
+//! (`Kept::toggled_at`), and `chevron` the arrow it turns, right while shut, down while open. Timing from the toggle,
+//! not from when the row was drawn, a row drawn again after scrolling back is still, and draws no frames.
 
 use std::f32::consts::FRAC_PI_2;
+use std::time::{Duration, Instant};
 
-use gpui_kit::base::motion::{Presence, Transition};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::*;
 
-pub fn chevron(id: &str, open: bool, moving: bool, window: &mut Window, cx: &mut App) -> Icon {
-    let turned = shown(&format!("{id}:chevron"), open, moving, window, cx);
+/// How far open it is, 0 shut to 1 open, eased out over `duration` from the toggle, `elapsed` ago; `None` for one
+/// never toggled. The second value is whether it's still moving.
+pub fn progress(open: bool, elapsed: Option<Duration>, duration: Duration) -> (f32, bool) {
+    let end = if open { 1.0 } else { 0.0 };
+    let Some(elapsed) = elapsed.filter(|elapsed| *elapsed < duration) else {
+        return (end, false);
+    };
+    let t = elapsed.as_secs_f32() / duration.as_secs_f32();
+    let eased = 1.0 - (1.0 - t).powi(2);
+    (if open { eased } else { 1.0 - eased }, true)
+}
+
+/// `progress` at this frame, over the theme's normal duration; asks for the next frame while it moves. With Reduce
+/// Motion on it's at its end at once.
+pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &App) -> f32 {
+    let toggled_at = toggled_at.filter(|_| !cx.reduce_motion());
+    let duration = cx.theme().motion.duration_normal;
+    let (turned, moving) = progress(open, toggled_at.map(|at| at.elapsed()), duration);
+    if moving {
+        window.request_animation_frame();
+    }
+    turned
+}
+
+pub fn chevron(turned: f32) -> Icon {
     Icon::new(IconName::ChevronRight)
         .xsmall()
         .rotate(radians(turned * FRAC_PI_2))
 }
 
-/// How far in an opening body or chevron is, 0 to 1: eased while `moving`, else where `open` leaves it. The motion is
-/// sampled either way, so it's ready to ease from where it is on the next toggle.
-pub fn shown(id: &str, open: bool, moving: bool, window: &mut Window, cx: &mut App) -> f32 {
-    let duration = cx.theme().motion.duration_normal;
-    let sample = Presence::new(SharedString::from(id.to_string()), open)
-        .transition(Transition::new(duration))
-        .sample(window, cx);
-    match (moving, open) {
-        (true, _) => sample.progress,
-        (false, true) => 1.0,
-        (false, false) => 0.0,
-    }
-}
+#[cfg(test)]
+#[path = "chevron_tests.rs"]
+mod tests;
