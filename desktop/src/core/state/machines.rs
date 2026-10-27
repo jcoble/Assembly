@@ -1,6 +1,6 @@
 //! `Machines` owns the machines list, from the `machines` topic: each machine, whether it answered last time, and why
-//! not. The topic's state comes at subscribe and again after each reconnect, then each change as an upsert; the
-//! backend probes the remote machines while it has a subscriber.
+//! not. The topic's state, at subscribe and again after each reconnect, is the whole list and replaces it; each change
+//! after it is an upsert. The backend probes the remote machines while it has a subscriber.
 
 use gpui_kit::*;
 use serde_json::Value;
@@ -44,13 +44,19 @@ impl Machines {
 
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
-            Update::State(items) => items
-                .into_iter()
-                .for_each(|(key, item)| read(&mut self.machines, key, item)),
+            Update::State(items) => replace(&mut self.machines, items),
             Update::Change { key, item } => read(&mut self.machines, key, item),
         }
         cx.notify();
     }
+}
+
+/// The topic's state is the whole list, in its order.
+fn replace(machines: &mut Vec<(String, Machine)>, items: Vec<(String, Value)>) {
+    machines.clear();
+    items
+        .into_iter()
+        .for_each(|(key, item)| read(machines, key, item));
 }
 
 fn read(machines: &mut Vec<(String, Machine)>, key: String, item: Value) {
@@ -72,7 +78,7 @@ fn upsert(machines: &mut Vec<(String, Machine)>, key: String, machine: Machine) 
 mod tests {
     use serde_json::json;
 
-    use super::{Machine, upsert};
+    use super::{Machine, replace, upsert};
 
     fn machine(name: Option<&str>, reachable: bool) -> Machine {
         serde_json::from_value(
@@ -91,5 +97,19 @@ mod tests {
         let keys: Vec<&str> = machines.iter().map(|(key, _)| key.as_str()).collect();
         assert_eq!(keys, ["local", "box"]);
         assert!(machines[1].1.reachable);
+    }
+
+    // The state is the whole list: a machine the backend no longer has is gone after it (a reconnect's state).
+    // Pins: g0-socket#14
+    #[test]
+    fn a_state_replaces_the_list() {
+        let mut machines = vec![
+            ("local".into(), machine(None, true)),
+            ("box".into(), machine(Some("box"), true)),
+        ];
+        let local = json!({"name": null, "kind": "local", "reachable": true, "reason": null});
+        replace(&mut machines, vec![("local".into(), local)]);
+        let keys: Vec<&str> = machines.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(keys, ["local"]);
     }
 }
