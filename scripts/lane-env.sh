@@ -4,6 +4,11 @@
 root=$(git rev-parse --show-toplevel)
 LANE_NAME="" LANE_NUMBER=0
 [ -f "$root/.lane" ] && . "$root/.lane"
+# With no .lane a checkout gets main's ports, folders and Workbox Test host, so only main may have none.
+if [ ! -f "$root/.lane" ] && [ "$(git -C "$root" branch --show-current)" != main ]; then
+  echo "stop: $root has no .lane and isn't on main, so it would use main's ports, data and Workbox Test host; copy its lane's .lane in (scripts/lane.sh new writes one)" >&2
+  return 1
+fi
 suffix=${LANE_NAME:+-$LANE_NAME}
 MAC_PORT=$((18797 + LANE_NUMBER * 10))   # the Mac's backend
 DEV_PORT=$((1430 + LANE_NUMBER))         # vite dev

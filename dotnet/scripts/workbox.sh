@@ -23,6 +23,7 @@ cd "$(dirname "$0")/../.."
 . scripts/lane-env.sh
 mode=${1:?usage: dotnet/scripts/workbox.sh smoke|record|serve|stop|remove|kill-adapter|row-log [branch]}
 branch=${2:-$(git branch --show-current)}
+echo "lane ${LANE_NAME:-main}: box port $BOX_PORT, unit $BOX_UNIT, box data ~/$BOX_DATA" >&2
 case "$mode" in
   smoke|record|serve) ;;
   stop)
@@ -61,6 +62,15 @@ BOX
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
 esac
 commit=$(git rev-parse --verify "$branch^{commit}")
+# Main's host runs only what's on main: a clean checkout of origin/main as it is now.
+if [ "$mode" = serve ] && [ -z "$LANE_NAME" ]; then
+  git fetch -q origin main
+  main=$(git rev-parse origin/main)
+  if [ "$commit" != "$main" ] || [ "$(git rev-parse HEAD)" != "$main" ] || [ -n "$(git status --porcelain)" ]; then
+    echo "stop: $BOX_UNIT is main's host and runs only a clean checkout of origin/main ($main); this is $commit" >&2
+    exit 1
+  fi
+fi
 
 ssh workbox-test 'test -d ~/assembly.git || git init -q --bare ~/assembly.git'
 git push -q --force ssh://workbox-test/~/assembly.git "$commit:refs/heads/$branch"
