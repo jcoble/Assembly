@@ -1,6 +1,6 @@
 //! `ExpandRow` owns the one way a row or card reveals more: it grows in place (the design system's Motion, Jesse
 //! 2026-10-27, look items 13 and 16). A click on the title grows the row to fit its body over 160 ms, with the rows
-//! below sliding down, while the body fades in from 40 ms to 160 ms; the title stays where it was. The open row is a
+//! below sliding down, while the body fades in with it from 40 ms in; the title stays where it was. The open row is a
 //! lighter band with 8 px corners. A second click runs it in reverse, and the body is dropped once it has shrunk. A
 //! row open at its first render is drawn open, without motion. A click during the motion turns the row back from
 //! where it is, taking as long as the way back. With Reduce Motion on, the kit's animations jump to
@@ -13,10 +13,8 @@ use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-/// The design system's grow time: the row's height takes this long.
-pub const GROW: Duration = Duration::from_millis(160);
-/// When, into the grow, the body starts fading in. It's fully in at `GROW`, 120 ms later.
-const FADE_START: Duration = Duration::from_millis(40);
+use crate::core::theme::grow::{GROW, faded};
+
 /// The open row's band corners (the design system's `radius-sm`).
 const BAND_RADIUS: Pixels = px(8.);
 
@@ -112,12 +110,6 @@ fn travel(from: f32, to: f32) -> Duration {
     GROW.mul_f32((to - from).abs())
 }
 
-/// The body's opacity at an openness: 0 until 40 ms into the grow, then up to 1 by 160 ms.
-pub(super) fn fade(openness: f32) -> f32 {
-    let at = openness * GROW.as_secs_f32();
-    ((at - FADE_START.as_secs_f32()) / (GROW - FADE_START).as_secs_f32()).clamp(0., 1.)
-}
-
 impl Render for ExpandRow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let shown = self.open || self.moving.is_some();
@@ -139,9 +131,7 @@ impl Render for ExpandRow {
         let (to, full) = (self.target(), self.body_height);
         let easing = cx.theme().motion_tokens().easing_enter.clone();
         v_flex()
-            .when(shown, |row| {
-                row.bg(cx.theme().secondary).rounded(BAND_RADIUS)
-            })
+            .when(shown, |row| row.bg(cx.theme().accent).rounded(BAND_RADIUS))
             .child(
                 div()
                     .id("expand-row-title")
@@ -159,12 +149,12 @@ impl Render for ExpandRow {
                             .child(body)
                             .with_animation(
                                 ("expand-row", self.turns),
-                                // Linear in time: the curve shapes the height only, and the fade keeps its timing.
+                                // Linear in time, so a turn back starts from where the row is; the curve shapes the
+                                // height, and the fade follows the height.
                                 Animation::new(travel(from, to).max(Duration::from_millis(1))),
                                 move |clip, t| {
-                                    let open = from + (to - from) * t;
-                                    clip.h(full * easing.sample(open).clamp(0., 1.))
-                                        .opacity(fade(open))
+                                    let grown = easing.sample(from + (to - from) * t).clamp(0., 1.);
+                                    clip.h(full * grown).opacity(faded(grown))
                                 },
                             )
                             .into_any_element(),
