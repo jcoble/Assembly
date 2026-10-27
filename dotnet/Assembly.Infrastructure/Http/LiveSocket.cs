@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat;
 
@@ -29,7 +31,9 @@ internal static class LiveSocket
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
         using var live = hub.Subscribe(sessionId, after);
-        using var closing = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        // Stopping too: the hub's close at stopping misses a socket that subscribes after it.
+        var stopping = context.RequestServices.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
+        using var closing = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, stopping);
         var receiving = ReceiveUntilClosedAsync(socket, closing);
         try
         {
