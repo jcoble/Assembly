@@ -6,16 +6,77 @@ use crate::features::session::rows::turn_stats::TurnStats;
 
 /// The line under a turn. A live turn with no stats yet shows only its running time, from the backend clock's `now`
 /// (core/clock).
-pub fn turn_line(_stats: Option<&TurnStats>, _live_started_at: Option<i64>, _now: i64) -> String {
-    todo!()
+pub fn turn_line(stats: Option<&TurnStats>, live_started_at: Option<i64>, now: i64) -> String {
+    let started_at = stats.and_then(|stats| stats.started_at).or(live_started_at);
+    let running = stats.map_or(live_started_at.is_some(), |stats| stats.status == "running");
+    let head = match stats {
+        _ if running => format!(
+            "Working for {}",
+            worked_for(now - started_at.unwrap_or(now))
+        ),
+        Some(stats) if stats.status == "failed" => "Failed".to_string(),
+        Some(stats) if stats.status == "aborted" => "Stopped".to_string(),
+        Some(TurnStats {
+            duration_ms: Some(ms),
+            ..
+        }) => format!("Worked for {}", worked_for(*ms)),
+        _ => "Worked".to_string(),
+    };
+    let Some(stats) = stats else { return head };
+    let mut parts = vec![head];
+    parts.extend(stats.model.clone());
+    parts.extend(stats.input_tokens.map(|n| format!("{} in", count(n))));
+    parts.extend(stats.output_tokens.map(|n| format!("{} out", count(n))));
+    parts.extend(
+        stats
+            .cache_hit_pct
+            .map(|pct| format!("{}% cached", pct.round())),
+    );
+    parts.extend(stats.cost_usd.map(|usd| format!("${usd:.3}")));
+    parts.join(" · ")
 }
 
 /// "Checkout changed · main@1a2b3c4 → feat@5d6e7f8", or `None` when the run started where the last one left off.
-pub fn checkout_line(_stats: Option<&TurnStats>) -> Option<String> {
-    todo!()
+pub fn checkout_line(stats: Option<&TurnStats>) -> Option<String> {
+    let stats = stats?;
+    let (head, prev_head) = (stats.head.as_deref()?, stats.prev_head.as_deref()?);
+    if head == prev_head && stats.branch == stats.prev_branch {
+        return None;
+    }
+    let from = checkout(stats.prev_branch.as_deref(), prev_head);
+    Some(format!(
+        "Checkout changed · {from} → {}",
+        checkout(stats.branch.as_deref(), head)
+    ))
 }
 
 /// Assembly's "Worked for" duration: 9.5s, 42s, 3m 5s.
-pub fn worked_for(_ms: i64) -> String {
-    todo!()
+pub fn worked_for(ms: i64) -> String {
+    let ms = ms.max(0);
+    if ms < 10_000 {
+        return format!("{:.1}s", ms as f64 / 1000.0);
+    }
+    let seconds = (ms as f64 / 1000.0).round() as i64;
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    }
+}
+
+/// 340, or 12k and 1.2k past a thousand.
+fn count(n: i64) -> String {
+    if n < 1000 {
+        n.to_string()
+    } else {
+        format!("{}k", (n as f64 / 100.0).round() / 10.0)
+    }
+}
+
+fn checkout(branch: Option<&str>, head: &str) -> String {
+    let short: String = head.chars().take(7).collect();
+    match branch {
+        None | Some("HEAD") => short,
+        Some(branch) => format!("{branch}@{short}"),
+    }
 }
