@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Remote.Smoke;
@@ -51,6 +52,31 @@ public sealed class AcpClientTests
         await agent.ReplyAsync(request, """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[],"_meta":{"jetbrains":{"air":{"version":1,"capabilities":["sessionIndex","sessionRename"]}}}}""");
         Assert.True((await call.WaitAsync(Wait)).CanRenameSessions);
     }
+
+    [Fact]
+    public async Task The_resume_answer_is_queued_between_the_updates_sent_before_and_after_it()
+    {
+        var agent = new FakeAgent();
+        await using var client = Connect(agent);
+
+        var resuming = client.ResumeSessionAsync("s1", "/tmp", CancellationToken.None);
+        var request = await agent.ReadAsync();
+        // One write: the client reads the three lines at once, whatever its threads do after.
+        await agent.SendAsync(string.Join('\n',
+            Text("before"),
+            $$$"""{"jsonrpc":"2.0","id":{{{request.GetProperty("id").GetRawText()}}},"result":{}}""",
+            Text("after")));
+        await resuming.WaitAsync(Wait);
+
+        var queued = new List<SessionNotification>();
+        for (var i = 0; i < 3; i++)
+            queued.Add(await client.Updates.ReadAsync().AsTask().WaitAsync(Wait));
+        Assert.Equal(["agent_message_chunk", SessionNotification.ResumedKind, "agent_message_chunk"], queued.Select(update => update.Kind));
+        Assert.All(queued, update => Assert.Equal("s1", update.SessionId));
+    }
+
+    private static string Text(string text) =>
+        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":""" + JsonSerializer.Serialize(text) + "}}}}";
 
     [Fact]
     public async Task Prompt_answers_a_permission_request_and_streams_updates()

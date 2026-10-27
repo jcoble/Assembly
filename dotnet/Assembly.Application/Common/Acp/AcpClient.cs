@@ -64,6 +64,10 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
             cancellationToken);
 
     /// <summary>Reopens <paramref name="sessionId"/>. Only for an agent whose <see cref="InitializeResponse.CanResumeSessions"/> is true.</summary>
+    /// <remarks>
+    /// The answer queues <see cref="SessionNotification.Resumed"/> on <see cref="Updates"/> in pipe order, so a reader
+    /// can tell the session's updates sent before the answer from those sent after it.
+    /// </remarks>
     public Task<ResumeSessionResponse> ResumeSessionAsync(string sessionId, string cwd, CancellationToken cancellationToken,
         IReadOnlyList<JsonElement>? mcpServers = null) =>
         RequestAsync(
@@ -71,7 +75,8 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
             new ResumeSessionRequest(sessionId, cwd, mcpServers ?? []),
             AcpJsonContext.Default.ResumeSessionRequest,
             AcpJsonContext.Default.ResumeSessionResponse,
-            cancellationToken);
+            cancellationToken,
+            () => _updates.Writer.TryWrite(SessionNotification.Resumed(sessionId)));
 
     /// <summary>Ends <paramref name="sessionId"/> in the adapter. A later <see cref="ResumeSessionAsync"/> reopens it.</summary>
     public Task<CloseSessionResponse> CloseSessionAsync(string sessionId, CancellationToken cancellationToken) =>
@@ -218,9 +223,10 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
         TRequest request,
         JsonTypeInfo<TRequest> requestType,
         JsonTypeInfo<TResponse> responseType,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action? onReply = null)
     {
-        var result = await _rpc.RequestAsync(method, JsonSerializer.SerializeToElement(request, requestType), cancellationToken);
+        var result = await _rpc.RequestAsync(method, JsonSerializer.SerializeToElement(request, requestType), cancellationToken, onReply);
         return result.Deserialize(responseType)
             ?? throw new JsonRpcException(JsonRpcException.InternalError, $"{method} returned no result.");
     }

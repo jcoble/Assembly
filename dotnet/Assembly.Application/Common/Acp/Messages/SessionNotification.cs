@@ -14,4 +14,13 @@ public sealed record SessionNotification(string SessionId, JsonElement Update)
         Update.ValueKind == JsonValueKind.Object && Update.TryGetProperty("sessionUpdate", out var kind)
             ? kind.GetString() ?? ""
             : "";
+
+    /// <summary>
+    /// Never on the wire: the client queues it, in pipe order, as the agent's answer to <c>session/resume</c> arrives,
+    /// so every update before it in the queue came before the answer. Only <c>UpdateRouter</c> reads it.
+    /// </summary>
+    internal const string ResumedKind = "_resumed";
+
+    internal static SessionNotification Resumed(string sessionId) =>
+        new(sessionId, JsonDocument.Parse($"{{\"sessionUpdate\":\"{ResumedKind}\"}}").RootElement.Clone());
 }

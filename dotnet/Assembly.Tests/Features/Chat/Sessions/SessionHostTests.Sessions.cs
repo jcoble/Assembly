@@ -36,10 +36,12 @@ public sealed partial class SessionHostTests
         await Kinds(4);
         await Until(() => _host.ActiveRunId is null);
 
-        await agent.TextAsync("late", messageId: "late");
-        await Task.Delay(200); // for the client to read it
+        // The same ACP session is resumed, so the closed turn's late update shares its id with the next turn's. It
+        // arrives after the resume request, before the answer.
         _host.Send("two");
-        await agent.OpenAsync();
+        var resume = await agent.ReadAsync("session/resume");
+        await agent.TextAsync("late", messageId: "late");
+        await agent.ReplyAsync(resume, "{}");
         var second = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("fresh", messageId: "fresh");
         await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
@@ -47,6 +49,65 @@ public sealed partial class SessionHostTests
         var rows = await Rows(6);
         Assert.Equal(["user", "turn", "delta", "message", "stats", "turn"], rows.Select(row => row.Kind));
         Assert.All(rows.Where(row => row.ItemId is not null), row => Assert.Equal("fresh", row.ItemId));
+    }
+
+    [Fact]
+    public async Task An_update_sent_right_after_the_resume_answer_reaches_the_next_turn()
+    {
+        _host.Send("one");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        await Kinds(4);
+        await Until(() => _host.ActiveRunId is null);
+
+        // The resumed session's own update, sent the moment it answers, as claude-agent-acp sends its commands. This
+        // can't force the client's threads into the losing order; AcpClientTests pins the order itself.
+        _host.Send("two");
+        var resume = await agent.ReadAsync("session/resume");
+        await agent.ReplyThenTextAsync(resume, "{}", "early", "early");
+        var second = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
+
+        var rows = await Rows(6);
+        Assert.Contains(rows, row => row.ItemId == "early");
+    }
+
+    [Fact]
+    public async Task A_resume_stopped_before_its_session_is_ready_is_closed_and_its_updates_never_reach_a_turn()
+    {
+        _host.Send("one");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        await Kinds(4);
+        await Until(() => _host.ActiveRunId is null);
+        await _host.SetConfigAsync("mode", "plan", CancellationToken.None);
+
+        // The resume succeeds, then the turn is stopped while the session's choices are still being applied.
+        var runId = _host.Send("two")!;
+        var resume = await agent.ReadAsync("session/resume");
+        await agent.ReplyAsync(resume, $$"""{"configOptions":{{Options("opus", "low")}}}""");
+        await agent.ReadAsync("session/set_config_option");
+        Assert.True(_host.Stop(runId));
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
+        await agent.TextAsync("stray", messageId: "stray");
+        await Until(() => _host.ActiveRunId is null);
+
+        _host.Send("three");
+        var third = await agent.ReadAsync("session/resume");
+        await agent.ReplyAsync(third, $$"""{"configOptions":{{Options("opus", "low", "plan")}}}""");
+        var thirdPrompt = await agent.ReadAsync("session/prompt");
+        await agent.TextAsync("fresh", messageId: "fresh");
+        await agent.ReplyAsync(thirdPrompt, """{"stopReason":"end_turn"}""");
+
+        var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        Assert.Contains(rows, row => row.ItemId == "fresh");
+        Assert.DoesNotContain(rows, row => row.ItemId == "stray");
     }
 
     [Fact]

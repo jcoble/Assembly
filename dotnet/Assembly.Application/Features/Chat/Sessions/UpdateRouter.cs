@@ -7,7 +7,9 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// <summary>
 /// Splits one adapter's <c>session/update</c> stream by session, since every session's ACP session shares the adapter.
 /// Updates for a session nobody has asked for yet wait in its own queue. Updates for a session that was closed and
-/// not reopened are dropped, so they never reach its next turn. <see cref="Flush"/> moves what has arrived so far,
+/// not resumed are dropped, so they never reach its next turn. A session resumed on the same ACP id is open again from
+/// the client's <see cref="SessionNotification.Resumed"/> marker on, which sits in pipe order where the agent's answer
+/// came, so what the agent sent before its answer is still dropped and what it sent after is kept. <see cref="Flush"/> moves what has arrived so far,
 /// so a turn's end can take every update the agent sent before its answer. A subagent's child session, once its
 /// parent announces it (<c>subagent_update</c>), is read with its parent: its updates go to the parent's queue.
 /// </summary>
@@ -44,20 +46,14 @@ internal sealed class UpdateRouter
                 if (update.Kind == "subagent_update" && update.Update.TryGetProperty("sessionId", out var child)
                     && child.GetString() is { Length: > 0 } childId && childId != target)
                     _parents[childId] = target;
-                if (_closedAcpSessions.Contains(target))
+                if (update.Kind == SessionNotification.ResumedKind)
+                    _closedAcpSessions.Remove(target);
+                else if (_closedAcpSessions.Contains(target))
                     Console.Error.WriteLine($"session {update.SessionId}: dropped a {update.Kind} that came after it was closed");
                 else
                     Queue(target).Writer.TryWrite(update);
             }
         }
-    }
-
-    /// <summary>A closed session is being reopened: its updates are wanted again.</summary>
-    public void Reopen(string acpSessionId)
-    {
-        Flush();
-        lock (_gate)
-            _closedAcpSessions.Remove(acpSessionId);
     }
 
     /// <summary>The session is closed: its queue completes, and goes.</summary>

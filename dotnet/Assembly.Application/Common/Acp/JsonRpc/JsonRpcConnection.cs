@@ -18,7 +18,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     private readonly IJsonRpcTarget _target;
     private readonly TranscriptLog _transcript;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
-    private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> _pending = new();
+    // Each request's reply, and what to run on the reader thread as a success reply arrives (see RequestAsync).
+    private readonly ConcurrentDictionary<long, (TaskCompletionSource<JsonElement> Reply, Action? OnReply)> _pending = new();
     private readonly CancellationTokenSource _stopping = new();
     private volatile Exception? _closedReason;
     private long _lastId;
@@ -35,11 +36,16 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     /// <summary>Completes when the read loop has ended and every pending request has failed.</summary>
     public Task Completion { get; }
 
-    public async Task<JsonElement> RequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken)
+    /// <summary>
+    /// Sends a request and waits for its reply. <paramref name="onReply"/>, if given, runs on the reader thread as a
+    /// success reply arrives, before any later line is read, so it falls in pipe order with the notifications around
+    /// it. It must not block or throw. A reply that comes after the caller gave up runs nothing.
+    /// </summary>
+    public async Task<JsonElement> RequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken, Action? onReply = null)
     {
         var id = Interlocked.Increment(ref _lastId);
         var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending[id] = reply;
+        _pending[id] = (reply, onReply);
         try
         {
             if (_closedReason is { } closed)
@@ -93,7 +99,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
         }
 
         _closedReason = reason;
-        foreach (var reply in _pending.Values)
+        foreach (var (reply, _) in _pending.Values)
             reply.TrySetException(new IOException("The connection closed before the agent answered.", reason));
         _target.OnClosed(reason);
     }
@@ -121,8 +127,12 @@ public sealed class JsonRpcConnection : IAsyncDisposable
                 _ = AnswerAsync(id.Clone(), method.GetString() ?? "", parameters);
             else if (hasMethod)
                 _target.OnNotification(method.GetString() ?? "", parameters);
-            else if (hasId && id.TryGetInt64(out var number) && _pending.TryGetValue(number, out var reply))
-                Settle(reply, root);
+            else if (hasId && id.TryGetInt64(out var number) && _pending.TryGetValue(number, out var pending))
+            {
+                if (!root.TryGetProperty("error", out _))
+                    pending.OnReply?.Invoke();
+                Settle(pending.Reply, root);
+            }
         }
     }
 
