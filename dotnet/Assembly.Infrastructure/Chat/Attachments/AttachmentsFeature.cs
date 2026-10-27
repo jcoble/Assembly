@@ -58,8 +58,8 @@ internal sealed class AttachmentsFeature : IFeature
             var type = ImageType.ForContentType(args.Mime) ?? throw new CallFailed("expected a png, jpeg, gif or webp image");
             if (args.Size is < 1 or > AttachmentStore.MaxBytes)
                 throw new CallFailed("images must be 1 byte to 20 MB");
-            // Opened in the database part, which runs only once the call can't be cancelled any more: a begin answered
-            // cancelled or timeout leaves no upload the window can't name.
+            // Opened in the database part, past the last cancel check; if the write still answers an error, failed drops it,
+            // so a begin that doesn't answer its id leaves no upload the window can't name.
             return Task.FromResult<Func<IWriteScope, Begun>>(_ =>
             {
                 var id = Guid.NewGuid().ToString();
@@ -68,21 +68,20 @@ internal sealed class AttachmentsFeature : IFeature
                 {
                     if (_uploads.Values.Count(upload => upload.Connection == call.Connection) >= MaxOpen)
                         throw new CallFailed($"at most {MaxOpen} uploads are open at once; commit or drop one");
-                    _uploads[id] = new Upload(call.Connection, session, type, args.Size, path);
+                    _uploads[id] = new Upload(call, session, type, args.Size, path);
                 }
-                try
-                {
-                    Directory.CreateDirectory(_staging);
-                    File.Create(path).Dispose();
-                }
-                catch
-                {
-                    DropIfOpen(id, call.Connection);
-                    throw;
-                }
+                Directory.CreateDirectory(_staging);
+                File.Create(path).Dispose();
                 return new Begun(id);
             });
-        }, args => SendFeature.OrderOf(args.Session));
+        }, args => SendFeature.OrderOf(args.Session), (_, call) =>
+        {
+            Upload? opened;
+            lock (_gate)
+                opened = _uploads.Values.FirstOrDefault(upload => ReferenceEquals(upload.Opener, call));
+            if (opened is not null)
+                Drop(opened);
+        });
         calls.Write(Feature, "chunk", AttachmentsJson.Default.ChunkArgs, AttachmentsJson.Default.Received, async (args, call) =>
         {
             var upload = Find(args.Upload, call.Connection);
@@ -185,10 +184,13 @@ internal sealed class AttachmentsFeature : IFeature
         File.Delete(upload.Path);
     }
 
-    private sealed class Upload(string connection, SessionInfo session, ImageType type, long size, string path)
+    private sealed class Upload(CallContext opener, SessionInfo session, ImageType type, long size, string path)
     {
         public string Id => System.IO.Path.GetFileName(path);
-        public string Connection => connection;
+
+        /// <summary>The begin that opened it.</summary>
+        public CallContext Opener => opener;
+        public string Connection => opener.Connection;
         public SessionInfo Session => session;
         public ImageType Type => type;
         public long Size => size;

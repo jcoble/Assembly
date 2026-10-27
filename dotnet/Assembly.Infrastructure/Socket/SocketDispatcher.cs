@@ -52,7 +52,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 call.Cancellation.ThrowIfCancellationRequested();
                 return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
             }
-            catch (OperationCanceledException) when (call.Cancellation.IsCancellationRequested && failed is not null)
+            catch when (failed is not null)
             {
                 failed((TArgs)value, call);
                 throw;

@@ -13,8 +13,9 @@ public interface ICallRegistry
     // hashing, another machine). The function it returns is the database part, run once inside IAtomicWriter.Write.
     // Writes run in arrival order on their socket's queue. A write that waits on a machine names an order key instead
     // (its session, say): writes with one key run in arrival order, and apart from the socket's queue and other keys, so
-    // a machine that hangs holds up only its own key's writes. cancelled runs in the write's turn when it answers
-    // cancelled or timeout, whether or not its handler ran, so a feature can let go of what the call would have finished.
+    // a machine that hangs holds up only its own key's writes. failed runs in the write's turn when it answers anything
+    // but its result (an error, cancelled or timeout), whether or not its handler ran, so a feature can let go of what
+    // the call opened or would have finished.
     void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
         Action<TArgs, CallContext>? failed = null);

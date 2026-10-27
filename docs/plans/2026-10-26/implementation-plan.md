@@ -162,8 +162,10 @@ so a drop runs after the chunks sent before it. Staging files live in `<home>/st
 declared size; a start deletes only the files there named by a Guid, as begin names them, never the folder or anything
 else in it. An upload belongs to the socket that began it, and a socket has at most 8 open, so a ninth `begin` fails
 until one commits or drops. A failed chunk or commit drops the upload with its file, and so does a socket's close, once
-every write it queued has run (the `Closed` hook). A chunk or commit cancelled or out of time never runs its handler, but
-drops its upload in its own turn, after the writes ahead of it, through the `cancelled` callback a write can name.
+every write it queued has run (the `Closed` hook). A write can name a `failed` callback, which runs in its turn
+whenever it answers anything but its result: a chunk or commit cancelled or out of time never runs its handler, but
+drops its upload in its own turn, after the writes ahead of it, and a begin that answers an error drops the upload it
+opened.
 `POST` and `GET .../attachments` stay until the cut.
 
 ## 2. Where Jesse's comments went
