@@ -1,4 +1,4 @@
-//! `Machine` is one machine from `machines/list` (dotnet/Assembly.Application/Common/Machines/MachineStatus.cs,
+//! `Machine` is one machine from the `machines` topic (dotnet/Assembly.Application/Common/Machines/MachineStatus.cs,
 //! `MachineItem`): whether it answered last time, and why not.
 
 use serde::Deserialize;

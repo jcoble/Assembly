@@ -7,8 +7,11 @@ Before the first launch, open `$ASSEMBLY_BACKEND_DIR/lane.json` (shell/assembly.
 is the lane's own folder, never `~/assembly-dotnet` or `~/.local/share/assembly`, and that `port` and `tokenFile`
 are the lane's too. The launcher starts the backend with exactly those.
 
-1. The window opens, the backend starts (`backend ready on port …` in the output), and quitting stops it: no
-   `Assembly.Desktop` left running. The token appears nowhere in the output or backend.log.
+1. The window opens and the backend starts: `<home>/backend.log` gets a `listening on …` line. Then check both
+   ways of leaving, each from a fresh launch: Cmd-Q, and closing the window with its red close button. Each time the
+   app exits and no `Assembly.Desktop` is left running (`pgrep -fl Assembly.Desktop`). On Linux under Xvfb,
+   `xdotool windowclose` left the app and its backend running, which may only be how xdotool closes a window; the
+   close button on the Mac is the real check. The token appears nowhere in the output or backend.log.
 2. Kill the backend from outside: a new one starts at once. Take its port first so it can't start: backend.log says
    so once, and the palette's "Restart backend" starts it after the port is free.
 3. Cmd-K opens the palette (the tests in features/palette cover the keys; here, its look) with its slide-in; typing filters; Enter on "Restart backend" runs it and closes the

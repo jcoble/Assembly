@@ -18,6 +18,9 @@ public interface IMachine
     /// <summary>The agents a new session on this machine can run, as (id, name).</summary>
     Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken);
 
+    /// <summary>Asks whether the machine answers, recording what it finds; this machine always does.</summary>
+    Task ProbeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
     Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken);
 
     /// <summary>A helper session under <paramref name="parent"/>, which may be on another machine, in its repo.</summary>
