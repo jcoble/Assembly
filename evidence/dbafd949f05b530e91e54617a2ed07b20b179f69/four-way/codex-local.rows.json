@@ -1,0 +1,127 @@
+[
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 1,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793088143828,
+    "firstSeq": 1
+  },
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 2,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793088143828,
+    "firstSeq": 2
+  },
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 5,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": "rs_09c27e63f9c10c28016ae05a9385448191a219523a344ed6a0:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Executing hostname command**",
+      "done": true
+    },
+    "createdAt": 1793088148705,
+    "firstSeq": 3
+  },
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 7,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": "exec-2eceea66-cb2d-47c1-aad8-e210d9769250",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793088148709,
+    "firstSeq": 6
+  },
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 10,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": "context:7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "kind": "context",
+    "payload": {
+      "used": 25958,
+      "size": 258400
+    },
+    "createdAt": 1793088149586,
+    "firstSeq": 8
+  },
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 11,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": "msg_09c27e63f9c10c28016ae05a9576c88191b449643ce4509eac",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "agent-workbox\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793088149595,
+    "firstSeq": 11
+  },
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 12,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+      "status": "completed",
+      "startedAt": 1793088143828,
+      "durationMs": 5767,
+      "firstTokenMs": 5677,
+      "model": "5.6 Luna",
+      "inputTokens": 26143,
+      "outputTokens": 120,
+      "cacheHitPct": 49.5,
+      "toolCalls": 1,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793088149595,
+    "firstSeq": 12
+  },
+  {
+    "sessionId": "d729278a-e4ae-4494-9330-ff395fb47d76",
+    "seq": 13,
+    "runId": "7bf9ee6d-7127-42bf-8c35-cd97eb80ee21",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793088149595,
+    "firstSeq": 13
+  }
+]

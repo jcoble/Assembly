@@ -85,6 +85,8 @@ public sealed class DesktopBackend : IAsyncDisposable
 
         Uri? address = null;
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
+        // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
+        // the last socket.
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System),
                 new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>

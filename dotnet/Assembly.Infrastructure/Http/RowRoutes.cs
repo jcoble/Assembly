@@ -24,7 +24,7 @@ internal sealed class RowRoutes(LiveHub hub, SessionStore sessionStore, MachineS
     {
         var sessionId = RequestValues.Route(context, "id");
         var limit = (int)Math.Clamp(RequestValues.QueryLong(context, "limit") ?? 50, 1, 500);
-        var page = hub.Page(sessionId, RequestValues.QueryLong(context, "before") ?? long.MaxValue, limit);
+        var page = hub.Page(sessionId, RequestValues.QueryLong(context, "before") ?? long.MaxValue, limit, context.RequestAborted);
         var session = sessionStore.Get(sessionId);
         var machine = session is null ? null : machines.Named(session.Machine);
         machine?.Watch(session!);
