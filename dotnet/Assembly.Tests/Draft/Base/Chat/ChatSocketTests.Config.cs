@@ -115,4 +115,31 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 3, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal("""{"t":"error","id":3,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
     }
+
+    [Fact]
+    public async Task Config_set_fails_for_an_unknown_session()
+    {
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "config", "set", """{"session":"nope","configId":"model","value":"small"}""");
+
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
+        Assert.Empty(_here.Asked);
+        Assert.Empty(_box.Asked);
+    }
+
+    [Fact]
+    public async Task A_cancel_aborts_config_set_on_the_machine()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Hold();
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "config", "set", $$"""{"session":"{{session.SessionId}}","configId":"model","value":"small"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
+        await SendAsync(socket, """{"t":"cancel","id":1}""");
+
+        await _box.Cancelled.Task.WaitAsync(Wait);
+        Assert.Equal("""{"t":"error","id":1,"code":"cancelled","message":"config/set was cancelled"}""", await ReadAsync(socket));
+    }
 }

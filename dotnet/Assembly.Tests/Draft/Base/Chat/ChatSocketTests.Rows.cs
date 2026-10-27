@@ -146,4 +146,22 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "rows", "page", $$"""{"session":"{{session.SessionId}}"}""");
         Assert.StartsWith("""{"t":"result","id":2,""", await ReadAsync(socket));
     }
+
+    // An unknown session's page is empty; a tool call of an unknown session or item fails.
+    [Fact]
+    public async Task Rows_page_and_tool_for_an_unknown_session_or_item()
+    {
+        var session = _sessions.Create("claude", "repo");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "page", """{"session":"nope"}""");
+        Assert.Equal("""{"t":"result","id":1,"result":{"rows":[],"hasBefore":false,"before":null,"activeRunId":null}}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "tool", """{"session":"nope","item":"t1"}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown tool call"}""", await ReadAsync(socket));
+        await CallAsync(socket, 3, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t9"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"unknown tool call"}""", await ReadAsync(socket));
+
+        Assert.Equal(["tool t9"], _here.Asked);
+        Assert.Empty(_box.Asked);
+    }
 }
