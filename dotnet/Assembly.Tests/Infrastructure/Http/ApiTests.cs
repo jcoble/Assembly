@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Application.Features.Chat.Attachments;
@@ -36,6 +37,7 @@ public sealed class ApiTests : IAsyncLifetime
     private readonly TempDatabase _db = new();
     private readonly string _work = Directory.CreateTempSubdirectory("assembly-api-").FullName;
     private readonly FakeLauncher _launcher = new();
+    private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
     private AppDatabase _database = null!;
     private RowStore _store = null!;
     private LiveHub _hub = null!;
@@ -50,7 +52,7 @@ public sealed class ApiTests : IAsyncLifetime
         _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _sessionStore = SessionStore.Open(_database, TimeProvider.System);
+        _sessionStore = SessionStore.Open(_database, _time);
         _sessions = new SessionRegistry(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null, new BackgroundWork(TimeProvider.System, TextWriter.Null));
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));
@@ -139,6 +141,7 @@ public sealed class ApiTests : IAsyncLifetime
     public async Task Sessions_are_created_and_listed_newest_first()
     {
         var first = await CreateSessionAsync();
+        _time.Advance(TimeSpan.FromMilliseconds(10));
         var second = await CreateSessionAsync();
         Assert.Equal(HttpStatusCode.BadRequest, (await PostJsonAsync("/sessions", """{"agent":"gemini","repoUrl":"x"}""")).StatusCode);
 
