@@ -1149,6 +1149,9 @@ of the shell, check4, and the same grep. Not done until the window starts the re
   - Keys: a subscription with no key gets every change on its topic; one with a key gets only changes published with
     that key.
   - B5 sends only `upsert`. `remove` comes with the first feature that deletes, since `Publish` has no op yet.
+  - Topics are whole-value only until C1 adds `seq` to the frames. Without `seq`, a row committed before the snapshot
+    and published after it arrives twice: harmless for a whole-value upsert, but it would duplicate an appended row.
+    So C1's `seq` test gates any append topic going live.
   - Page: `socket.ts` gains `subscribe`, and subscribes again after a reopen.
   - The backend clock (5.8) isn't in B5: nothing in B5 or B6 shows a time. It comes with its first user, the turn
     clock in B9.
@@ -1174,16 +1177,34 @@ of the shell, check4, and the same grep. Not done until the window starts the re
 
 Both closes wait on the agent's `session/close` answer with no limit: the normal one
 (`SessionHost.Background.cs:112`) and the one after a failed resume (`SessionOpener.CloseQuietlyAsync`). An adapter
-that stays connected but never answers holds up `Forget` and the adapter's release, so a stopped turn isn't really
-stopped (Sol's review of the late-update fix, finding 3).
+that stays connected but never answers holds up the adapter's release and the next turn, and on the normal close
+`Forget` too, so a stopped turn isn't really stopped (Sol's review of the late-update fix, finding 3). On the resume
+path `Forget` has already run, so only the release and the next turn are held up.
 
-- **Files:** `SessionHost.Background.cs` and `SessionOpener.cs`; the limit is one constant both use.
-- **Failing tests first:** a fake adapter that never answers `session/close`. On the backend's `TimeProvider`
-  (`FakeTimeProvider` in the tests), never a page timer:
-  1. After a normal close times out, the session is forgotten, the adapter released, and the next turn starts.
-  2. The same after a resume that fails or is stopped.
+- **The limit:** `SharedAdapter.CloseLimit`, 5 s on the backend's `TimeProvider`, and one `SharedAdapter.CloseAsync`
+  both closes use.
+- **A close that times out retires its adapter.** Killing the shared adapter would end other sessions, and releasing
+  it as it is would let the late close land after the next turn's resume of the same ACP session. So the retired
+  adapter serves only the sessions already on it, and is stopped when the last of them is released (at once when
+  there are none, without the idle grace). The next open starts a fresh adapter. Stopping it ends the process: its
+  grace is bounded, and then its own group is killed by pid (`AgentProcess.DisposeAsync`).
+- **The timed-out session's next open waits for the retired process to exit,** so two processes never have the same
+  ACP session open. Claude Code has no guard against that across processes (claude-agent-acp checks only its own
+  sessions, `acp-agent.js:1570-1582`), and Codex refuses the second writer with an error (`codex-acp` `index.js:30718-30725`),
+  so the wait also keeps a Codex turn from failing. The Claude adapter is shared too, so the wait can last until
+  every other session on the retired adapter is released. That's rare, since a close has to time out first, and
+  the turn's own stop ends the wait. B9 shows this state on the page.
+- **Files:** `SharedAdapter.cs`, `SessionHost.Background.cs` and `SessionOpener.cs`.
+- **Failing tests first:** a fake adapter that never answers `session/close`, with `FakeTimeProvider`, never a page
+  timer:
+  1. After a normal close times out, the next turn's resume reaches a second adapter, and the first, with no other
+     session, is stopped at once.
+  2. The same after a resume that's stopped.
+  3. Another session on the retired adapter finishes its turn, the retired adapter stops once it's released, and
+     only then does the timed-out session's resume reach the fresh adapter.
+  4. Stopping a turn that waits for its retired adapter ends the wait.
 - **Proof:** the tests, and check4.
-- **Size:** about 60 lines with tests.
+- **Size:** about 250 lines with tests.
 
 ### B6. Saves as each change happens
 
@@ -1270,7 +1291,8 @@ group:
    and the Reconnect button, built together;
 2. the reveal (row 6);
 3. `coverView` (row 7);
-4. the turn clock (row 8), with `Clock/BackendClock.cs` (5.8), `second` only;
+4. the turn clock (row 8), with `Clock/BackendClock.cs` (5.8), `second` only. A turn that waits for its retired
+   adapter to stop (B5b) shows "waiting for the previous turn to stop" when B9 builds session states;
 5. the Composer microtask (row 12);
 6. lag, counters and soak, as Jesse decided in D2 (rows 2 to 4). From `debug.svelte.ts`, only the helpers that count
    timers and frame callbacks move to `app/measure/`; `counters`, `measures` and the lifecycle functions stay (section

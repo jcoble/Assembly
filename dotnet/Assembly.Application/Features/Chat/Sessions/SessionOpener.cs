@@ -14,7 +14,7 @@ internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, s
 /// is titled from its first message when the agent takes a title, so it doesn't spend a model call making one. Every
 /// ACP session gets the session's chosen config values (model, effort, mode…) that its agent offers, in the agent's order
 /// (a model's effort levels can depend on the model). The session holds its place on the adapter until
-/// <see cref="SharedAdapter.ReleaseAsync"/>. <paramref name="mcpServers"/> gives a session's ACP session the MCP servers it joins.
+/// <see cref="SharedAdapter.ReleaseAsync"/>; its next open waits for an adapter retired by its timed-out close to exit. <paramref name="mcpServers"/> gives a session's ACP session the MCP servers it joins.
 /// </summary>
 public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
     Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
@@ -27,6 +27,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
         var folder = await launcher.CheckoutAsync(session, stages, cancellationToken);
         var adapter = adapters(session.Agent);
+        await adapter.ClosedAsync(session.AcpSessionId, cancellationToken);
         var running = await adapter.GetAsync(stages, cancellationToken);
         try
         {
@@ -34,7 +35,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         }
         catch
         {
-            await adapter.ReleaseAsync();
+            await adapter.ReleaseAsync(running);
             throw;
         }
     }
@@ -65,7 +66,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
                 // Stopped or failed after the resume was sent: the agent may have the session open, so it's closed there
                 // too, and anything it sends for it from now on is dropped.
                 running.Updates.Forget(previous);
-                await CloseQuietlyAsync(running, previous);
+                await CloseQuietlyAsync(adapter, running, previous);
                 throw;
             }
         }
@@ -89,13 +90,13 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen);
     }
 
-    private static async Task CloseQuietlyAsync(RunningAdapter running, string acpSessionId)
+    private static async Task CloseQuietlyAsync(SharedAdapter adapter, RunningAdapter running, string acpSessionId)
     {
         try
         {
-            await running.Link.Client.CloseSessionAsync(acpSessionId, CancellationToken.None);
+            await adapter.CloseAsync(running, acpSessionId);
         }
-        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
+        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException or TimeoutException)
         {
             Console.Error.WriteLine($"session {acpSessionId} didn't close after a failed resume: {error.Message}");
         }

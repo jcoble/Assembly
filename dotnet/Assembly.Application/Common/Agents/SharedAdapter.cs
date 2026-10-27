@@ -11,12 +11,19 @@ internal sealed record RunningAdapter(IAgentLink Link, InitializeResponse Init, 
 /// The one adapter process an agent's sessions share on this machine (and so one Codex app-server for every Codex
 /// session). The first send starts and initializes it; a send after it has exited starts a new one. Each session's
 /// turn opens its session on it and closes it when the turn ends. Once its last session closes, it stays up for
-/// <see cref="IdleGrace"/>, so a conversation's next turn finds it warm, and then stops.
+/// <see cref="IdleGrace"/>, so a conversation's next turn finds it warm, and then stops. A close that doesn't answer
+/// within <see cref="CloseLimit"/> retires the adapter: it serves only the sessions already on it and stops when the
+/// last of them is released, and the next send starts a new one. The timed-out session's next open waits for the
+/// retired process to exit, so two processes never have the same ACP session open (Claude Code doesn't guard against
+/// it; Codex refuses the second writer).
 /// </summary>
 public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeProvider time) : IAsyncDisposable
 {
     /// <summary>How long an adapter with no open session stays up.</summary>
     public static readonly TimeSpan IdleGrace = TimeSpan.FromSeconds(60);
+
+    /// <summary>How long a session's close is given before its adapter is retired.</summary>
+    public static readonly TimeSpan CloseLimit = TimeSpan.FromSeconds(5);
 
     private static readonly Implementation ClientInfo = new("assembly-backend", "0.1.0");
 
@@ -24,6 +31,10 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     private RunningAdapter? _running;
     private int _sessions;
     private CancellationTokenSource? _idle;
+    // Each retired adapter, with the sessions still on it.
+    private readonly Dictionary<RunningAdapter, int> _retired = [];
+    // Each ACP session whose close timed out, with its retired adapter's exit.
+    private readonly Dictionary<string, Task> _closing = [];
 
     /// <summary>The running adapter, started if need be, for one more session; <see cref="ReleaseAsync"/> gives it back.</summary>
     internal async Task<RunningAdapter> GetAsync(StageTimes stages, CancellationToken cancellationToken)
@@ -60,12 +71,24 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         }
     }
 
-    /// <summary>A session from <see cref="GetAsync"/> is closed (or never opened). The last one starts the idle grace.</summary>
-    internal async Task ReleaseAsync()
+    /// <summary>
+    /// A session from <see cref="GetAsync"/> is closed (or never opened). The last one starts the idle grace, or, on a
+    /// retired adapter, stops it.
+    /// </summary>
+    internal async Task ReleaseAsync(RunningAdapter running)
     {
+        var stop = false;
         await _gate.WaitAsync();
         try
         {
+            if (_retired.TryGetValue(running, out var left))
+            {
+                if (left > 1)
+                    _retired[running] = left - 1;
+                else
+                    stop = _retired.Remove(running);
+                return;
+            }
             if (--_sessions > 0)
                 return;
             _idle = new CancellationTokenSource();
@@ -74,7 +97,60 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         finally
         {
             _gate.Release();
+            // Outside the gate: a stuck process takes its grace to end, and other sessions shouldn't wait on it.
+            if (stop)
+                await running.Link.DisposeAsync();
         }
+    }
+
+    /// <summary>
+    /// Closes an ACP session. One that doesn't answer within <see cref="CloseLimit"/> retires its adapter and throws
+    /// <see cref="TimeoutException"/>.
+    /// </summary>
+    internal async Task CloseAsync(RunningAdapter running, string acpSessionId)
+    {
+        try
+        {
+            await running.Link.Client.CloseSessionAsync(acpSessionId, CancellationToken.None).WaitAsync(CloseLimit, time);
+        }
+        catch (TimeoutException)
+        {
+            await _gate.WaitAsync();
+            try
+            {
+                if (_running == running)
+                {
+                    _running = null;
+                    _retired[running] = _sessions;
+                    _sessions = 0;
+                }
+                _closing[acpSessionId] = running.Link.Exited;
+            }
+            finally
+            {
+                _gate.Release();
+            }
+            throw;
+        }
+    }
+
+    /// <summary>Waits until no retired adapter can still have <paramref name="acpSessionId"/> open.</summary>
+    internal async Task ClosedAsync(string? acpSessionId, CancellationToken cancellationToken)
+    {
+        Task? exited;
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            if (acpSessionId is null || !_closing.TryGetValue(acpSessionId, out exited))
+                return;
+            if (exited.IsCompleted)
+                _closing.Remove(acpSessionId);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+        await exited.WaitAsync(cancellationToken);
     }
 
     private async Task StopWhenIdleAsync(CancellationToken reopened)
@@ -106,7 +182,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
             await running.Link.DisposeAsync();
     }
 
-    /// <summary>Ends the adapter, and with it every session still open on it.</summary>
+    /// <summary>Ends the adapter and any retired ones, and with them every session still open on them.</summary>
     public async ValueTask DisposeAsync()
     {
         await _gate.WaitAsync();
@@ -114,6 +190,9 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         {
             _idle?.Cancel();
             await StopAsync();
+            foreach (var retired in _retired.Keys)
+                await retired.Link.DisposeAsync();
+            _retired.Clear();
         }
         finally
         {
