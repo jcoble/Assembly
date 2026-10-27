@@ -28,5 +28,9 @@ pub mod pending_call;
 pub mod row;
 pub mod row_update;
 mod rows_feed;
+#[cfg(test)]
+mod rows_tests;
+#[cfg(test)]
+mod test_client;
 pub mod topic_subscription;
 pub mod update;

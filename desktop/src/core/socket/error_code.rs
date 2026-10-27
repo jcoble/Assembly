@@ -14,3 +14,18 @@ pub enum ErrorCode {
         machine: String,
     },
 }
+
+impl ErrorCode {
+    /// An `error` frame's code; one this client doesn't know is `Failed`.
+    pub fn from_wire(code: &str, machine: Option<String>) -> Self {
+        match code {
+            "not_found" => ErrorCode::NotFound,
+            "bad_args" => ErrorCode::BadArgs,
+            "timeout" => ErrorCode::Timeout,
+            "unreachable" => ErrorCode::Unreachable {
+                machine: machine.unwrap_or_default(),
+            },
+            _ => ErrorCode::Failed,
+        }
+    }
+}
