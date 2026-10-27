@@ -226,6 +226,34 @@ public sealed class SocketTests : IAsyncLifetime
         Assert.Equal(["notes/first"], _writer.Written);
     }
 
+    // A save the page cancels once it's committing still answers result, so the page never takes a committed save for
+    // a lost one.
+    [Fact]
+    public async Task A_cancel_that_comes_while_a_write_commits_answers_result()
+    {
+        using var release = new ManualResetEventSlim();
+        var committing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _calls.Write("notes", "save", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult<Func<IWriteScope, Note>>(_ =>
+        {
+            committing.SetResult();
+            release.Wait(Wait);
+            return note;
+        }));
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "notes", "save", """{"text":"kept"}""");
+        await committing.Task.WaitAsync(Wait);
+        await SendAsync(socket, """{"t":"cancel","id":1}""");
+        // Frames are read in order, so once this answers, the cancel has been seen.
+        await CallAsync(socket, 2, "notes", "echo", "{}");
+        Assert.Equal("""{"t":"result","id":2,"result":{"text":""}}""", await ReadAsync(socket));
+        release.Set();
+
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":"kept"}}""", await ReadAsync(socket));
+        Assert.Equal(["notes/save"], _writer.Written);
+    }
+
     [Fact]
     public async Task Writes_out_of_time_answer_timeout_and_commit_nothing()
     {

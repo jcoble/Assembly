@@ -73,6 +73,7 @@ test('a newer call with the same key sends cancel for the older one, quietly', a
     { t: 'cancel', id: 1 },
     { t: 'call', id: 2, feature: 'notes', method: 'get', args: {} },
   ]);
+  socket.receive({ t: 'error', id: 1, code: 'cancelled', message: 'notes/get was cancelled' });
   assert.deepEqual(await older, { ok: false, why: 'aborted' });
   socket.receive({ t: 'result', id: 2, result: { text: 'hi' } });
   assert.deepEqual(await newer, { ok: true, result: { text: 'hi' } });
@@ -87,7 +88,20 @@ test('the owner closing sends cancel, quietly', async () => {
   const socket = await welcome();
   owner.abort();
   assert.deepEqual(socket.sent.at(-1), { t: 'cancel', id: 1 });
+  socket.receive({ t: 'error', id: 1, code: 'cancelled', message: 'notes/get was cancelled' });
   assert.deepEqual(await pending, { ok: false, why: 'aborted' });
+  assert.deepEqual(failures, []);
+});
+
+test('a call cancelled after the backend finished it still comes back with its result', async () => {
+  const { call, failures } = await load();
+  const owner = new AbortController();
+  const pending = call('notes', 'save', { text: 'kept' }, { signal: owner.signal });
+  const socket = await welcome();
+  owner.abort();
+  assert.deepEqual(socket.sent.at(-1), { t: 'cancel', id: 1 });
+  socket.receive({ t: 'result', id: 1, result: { text: 'kept' } });
+  assert.deepEqual(await pending, { ok: true, result: { text: 'kept' } });
   assert.deepEqual(failures, []);
 });
 

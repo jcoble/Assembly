@@ -16,7 +16,7 @@ export const onFailure = (handler: (message: string) => void) => (report = handl
 // 'aborted' (a newer call took its place, its owner closed, the socket closed) isn't an error and shows nothing.
 export type Outcome<T> = { ok: true; result: T } | { ok: false; why: 'failed' | 'aborted' };
 
-type Frame = { t: string; id?: number; result?: unknown; message?: string };
+type Frame = { t: string; id?: number; result?: unknown; code?: string; message?: string };
 type Pending = { name: string; settle: (outcome: Outcome<unknown>) => void };
 
 let connecting: Promise<WebSocket> | undefined;
@@ -52,6 +52,7 @@ function open(): Promise<WebSocket> {
       if (!call) return;
       pending.delete(frame.id!);
       if (frame.t === 'result') return call.settle({ ok: true, result: frame.result });
+      if (frame.code === 'cancelled') return call.settle({ ok: false, why: 'aborted' });
       report(`${call.name} failed: ${frame.message}`);
       call.settle({ ok: false, why: 'failed' });
     });
@@ -80,7 +81,8 @@ function reopen() {
 }
 
 // One of a feature's calls. With `key`, a newer call for the same key cancels the one still running, so a fast switch
-// never waits on a stale load; `signal` (its owner closing) cancels it too.
+// never waits on a stale load; `signal` (its owner closing) cancels it too. A cancelled call comes back 'aborted'
+// once the backend answers `cancelled`.
 export async function call<T>(feature: string, method: string, args: Record<string, unknown> = {}, { key, signal }: { key?: string; signal?: AbortSignal } = {}): Promise<Outcome<T>> {
   const name = `${feature}/${method}`;
   const mine = new AbortController();
@@ -111,11 +113,8 @@ export async function call<T>(feature: string, method: string, args: Record<stri
   }
 }
 
-// Tells the backend to stop a call, and answers it as aborted now rather than waiting for its `cancelled`.
+// Tells the backend to stop a call. The call still settles on the backend's answer: `cancelled`, or its result if it
+// had already finished, so a write that committed is never taken for a lost one.
 function cancel(id: number) {
-  const call = pending.get(id);
-  if (!call) return;
-  pending.delete(id);
-  current?.send(JSON.stringify({ t: 'cancel', id }));
-  call.settle({ ok: false, why: 'aborted' });
+  if (pending.has(id)) current?.send(JSON.stringify({ t: 'cancel', id }));
 }
