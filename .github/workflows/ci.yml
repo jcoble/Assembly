@@ -57,8 +57,9 @@ jobs:
         with:
           path: ~/.apt-archives
           key: apt-shell-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-shell-${{ runner.os }}-
       - name: Install Linux build dependencies
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           mkdir -p ~/.apt-archives/partial
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
@@ -94,8 +95,9 @@ jobs:
         with:
           path: ~/.apt-archives
           key: apt-desktop-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: apt-desktop-${{ runner.os }}-
       - name: Install GPUI's Linux build dependencies
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: |
           mkdir -p ~/.apt-archives/partial
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
