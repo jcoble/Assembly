@@ -4,6 +4,7 @@
 mod core;
 mod features;
 
+use features::shell::frame::Frame;
 use gpui_kit::*;
 
 fn main() {
@@ -12,6 +13,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
+            features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Assembly".into()),
@@ -19,7 +21,11 @@ fn main() {
                 }),
                 ..Default::default()
             };
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| EmptyView))
+            // The layout's read and write join the socket client when lane g0-socket lands. Until then the window
+            // opens the default layout and keeps changes for this run only.
+            gpui_kit::open_window(options, cx, |window, cx| {
+                cx.new(|cx| Frame::new(Task::ready(None), Box::new(|_, _| {}), window, cx))
+            })
                 .expect("open the window");
             cx.activate(true);
         });
