@@ -1,13 +1,14 @@
 //! Tests for growing a row in place (docs/behavior/g0-shape.md).
 
 use gpui::TestAppContext;
+use gpui_kit::base::animation::cubic_bezier;
 use gpui_kit::{
     AnyElement, Bounds, Entity, InteractiveElement as _, IntoElement, Modifiers,
     ParentElement as _, Pixels, Styled as _, VisualTestContext, div, px,
 };
 
-use super::expand_row::{ExpandRow, fade};
-use crate::core::theme::grow::GROW;
+use super::expand_row::ExpandRow;
+use crate::core::theme::grow::{GROW, faded};
 
 /// A row with a 28 px title and a 60 px body, drawn in a window.
 fn row(open: bool, cx: &mut TestAppContext) -> (Entity<ExpandRow>, &mut VisualTestContext) {
@@ -109,9 +110,12 @@ fn a_click_during_the_motion_turns_the_row_back_from_where_it_is(cx: &mut TestAp
 
 // Pins: g0-shape#10
 #[test]
-fn the_body_fades_in_from_40_ms_to_160_ms() {
-    let at = |ms: f32| fade(ms / 160.);
-    assert_eq!(at(40.), 0.);
-    assert!((at(100.) - 0.5).abs() < 0.001);
-    assert_eq!(at(160.), 1.);
+fn the_body_fades_with_the_height_from_40_ms_in() {
+    let grown_at = |ms: f32| cubic_bezier(0.16, 1., 0.3, 1.)(ms / 160.);
+    assert_eq!(faded(grown_at(20.)), 0.);
+    assert!(faded(grown_at(40.)).abs() < 0.001);
+    // Following the height, it's further in than halfway at 100 ms, where a fade timed from 40 ms to 160 ms is.
+    let mid = faded(grown_at(100.));
+    assert!(mid > 0.5 && mid < 1., "fading in with the height: {mid}");
+    assert_eq!(faded(1.), 1.);
 }
