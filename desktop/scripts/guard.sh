@@ -10,14 +10,14 @@ cd "$(git rev-parse --show-toplevel)"
 b='(^|[^[:alnum:]_])'
 e='([^[:alnum:]_]|$)'
 # Waits on time, timers and frame waits: only the clock, desktop/src/core/clock/, may.
-timers="${b}Timer${e}|\.timer[[:space:]]*\(|${b}(request_animation_frame|on_next_frame|recv_timeout|park_timeout)${e}"
+timers="${b}Timer${e}|(\.|::)timer[[:space:]]*\(|${b}(request_animation_frame|on_next_frame|recv_timeout|park_timeout|with_timeout|block_with_timeout)${e}"
 # Sockets and HTTP: only the socket client, desktop/src/core/socket/, may.
 sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_client|HttpClient)${e}|${b}hyper::"
 # Sleeping, anywhere.
-sleeps="${b}sleep[[:space:]]*\(|${b}thread::sleep${e}"
+sleeps="${b}sleep${e}"
 # A file that draws (implements Render or RenderOnce, or has a render function), and file reads in one.
 draws="${b}impl([^[:alnum:]_]|[^[:alnum:]_].*[^[:alnum:]_])(Render|RenderOnce)[[:space:]]+for${e}|${b}fn[[:space:]]+render${e}"
-files="${b}std::fs${e}|${b}fs::|${b}File::"
+files="${b}fs${e}|${b}File::"
 
 # match FILE PATTERN WHY: every line of FILE that matches, skipping comment lines, as "LINE: text  (WHY)".
 match() {
@@ -49,10 +49,13 @@ while IFS='|' read -r expect path code; do
 done <<'PROBE'
 catch|desktop/src/features/x/a.rs|cx.background_executor().timer(Duration::from_secs(1)).await;
 catch|desktop/src/features/x/a.rs|use gpui::Timer;
+catch|desktop/src/features/x/a.rs|BackgroundExecutor::timer(&executor, d).await;
 catch|desktop/src/features/x/a.rs|Timer::after(Duration::from_millis(5)).await;
 catch|desktop/src/features/x/a.rs|window.on_next_frame(move |_, _| {});
 catch|desktop/src/features/x/a.rs|window.request_animation_frame();
 catch|desktop/src/core/socket/a.rs|let msg = rx.recv_timeout(Duration::from_secs(1));
+catch|desktop/src/features/x/a.rs|let r = fut.with_timeout(Duration::from_secs(1), cx.background_executor()).await;
+catch|desktop/src/features/x/a.rs|cx.background_executor().block_with_timeout(d, fut);
 pass|desktop/src/core/clock/a.rs|Timer::after(Duration::from_millis(5)).await;
 pass|desktop/src/features/x/a.rs|struct TimerView;
 pass|desktop/src/features/x/a.rs|let timer_label = clock.read(cx).label();
@@ -68,10 +71,12 @@ pass|desktop/src/features/x/a.rs|let link = hyperlink(text);
 catch|desktop/src/core/clock/a.rs|std::thread::sleep(Duration::from_secs(1));
 catch|desktop/src/core/socket/a.rs|use std::thread::sleep;
 catch|desktop/src/features/x/a.rs|sleep(RECONNECT_AFTER);
+catch|desktop/src/features/x/a.rs|use std::thread::{Builder, sleep as wait};
 pass|desktop/src/features/x/a.rs|host.prevent_sleep(true);
 catch|desktop/src/features/x/a.rs|impl Render for A {} fn f() { std::fs::read("x"); }
 catch|desktop/src/features/x/a.rs|impl<T> gpui::RenderOnce for A<T> {} fn f() { let f = File::open("x"); }
 catch|desktop/src/features/x/a.rs|fn render(&mut self) { let s = fs::read_to_string("x"); }
+catch|desktop/src/features/x/a.rs|use std::{env, fs as disk}; fn render(&mut self) {}
 pass|desktop/src/features/x/a.rs|fn load() { std::fs::read("x"); }
 pass|desktop/src/features/x/a.rs|impl Render for A {} fn f() { let p = prefs::theme(); }
 pass|desktop/src/features/x/a.rs|impl Render for A {} fn f() { cx.dispatch(OpenFile::new(path)); }

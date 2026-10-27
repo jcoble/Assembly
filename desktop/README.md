@@ -39,11 +39,11 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
 
 `scripts/guard.sh` fails, with no allow lists, on:
 
-- timers, `Timer`, `.timer(`, frame waits (`on_next_frame`, `request_animation_frame`) and other waits on time
-  (`recv_timeout`, `park_timeout`) outside `src/core/clock/`;
+- timers (`Timer`, `.timer(`, `::timer(`), frame waits (`on_next_frame`, `request_animation_frame`) and other waits
+  on time (`recv_timeout`, `park_timeout`, `with_timeout`, `block_with_timeout`) outside `src/core/clock/`;
 - `tungstenite`, `TcpStream`, `TcpListener`, `UdpSocket` or an HTTP client outside `src/core/socket/`;
-- sleeping (`std::thread::sleep` or any `sleep(`) anywhere;
-- file reads (`std::fs`, `fs::`, `File::`) in a file that draws: one that implements `Render` or `RenderOnce` or
+- sleeping (`std::thread::sleep`, or `sleep` imported or called any other way) anywhere;
+- file reads (`std::fs` in any form, `File::`) in a file that draws: one that implements `Render` or `RenderOnce` or
   has a `fn render`.
 
 Its probe lines test every rule, and the names a rule must not catch, each time it runs.
