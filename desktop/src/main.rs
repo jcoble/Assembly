@@ -17,7 +17,7 @@ fn main() {
             gpui_kit::init(cx);
             features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
             // The window opens once the theme files have loaded, already in its theme.
-            theme::init(cx, |cx| {
+            theme::init(theme::THEMES_DIR.into(), cx, |cx| {
                 let options = WindowOptions {
                     titlebar: Some(TitlebarOptions {
                         title: Some("Assembly".into()),

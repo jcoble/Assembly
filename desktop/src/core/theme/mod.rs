@@ -4,4 +4,4 @@
 pub mod apply;
 pub mod theme_id;
 
-pub use apply::{init, set};
+pub use apply::{THEMES_DIR, init, set};
