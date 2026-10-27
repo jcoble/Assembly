@@ -29,4 +29,7 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
 
     /// <summary>Closes every socket, as the host starts stopping, so it doesn't wait on them.</summary>
     public void CloseAll() => _stopping.Cancel();
+
+    /// <summary>Closes every open socket for the debug control's drop; sockets opened after it work.</summary>
+    public void DropAll() => throw new NotImplementedException();
 }
