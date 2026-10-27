@@ -28,7 +28,16 @@ pub enum FollowStep {
 }
 
 impl Follow {
-    pub fn on(&mut self, _event: FollowEvent) -> FollowStep {
-        todo!()
+    pub fn on(&mut self, event: FollowEvent) -> FollowStep {
+        match event {
+            FollowEvent::Send => self.pending_send = true,
+            FollowEvent::UserItem(key) if self.pending_send => {
+                self.pending_send = false;
+                return FollowStep::ShowAtTop(key);
+            }
+            FollowEvent::UserItem(_) => {}
+            FollowEvent::ReaderInput => self.pending_send = false,
+        }
+        FollowStep::None
     }
 }
