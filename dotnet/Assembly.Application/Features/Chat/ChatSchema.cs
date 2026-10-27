@@ -55,6 +55,27 @@ internal static class Schema
         """;
 
     /// <summary>
+    /// Every session's newest turn row and the newest row of each of its asks, tasks and subagents, in session and seq
+    /// order (<see cref="SessionSummaries"/>).
+    /// </summary>
+    public const string SummaryRows = $"""
+        SELECT session_id, seq, run_id, item_id, kind, payload, created_at FROM rows WHERE (session_id, seq) IN (
+          SELECT session_id, MAX(seq) FROM rows WHERE {SummaryKinds}
+          GROUP BY session_id, kind, CASE WHEN kind = 'turn' THEN NULL ELSE item_id END)
+        ORDER BY session_id, seq;
+        """;
+
+    /// <summary>The seq of the session's newest turn row that ended a turn; null if none did.</summary>
+    public const string LastTurnEnd = $"""
+        SELECT MAX(seq) FROM rows WHERE session_id = $session AND {SummaryKinds} AND kind = 'turn'
+          AND json_extract(payload, '$.state') IN ('finished', 'failed', 'cancelled');
+        """;
+
+    // The kinds a summary reads. SQLite uses a partial index only for a query that names its condition as the index
+    // does, so the queries use this text as it is.
+    private const string SummaryKinds = "kind IN ('turn', 'ask', 'task', 'subagent')";
+
+    /// <summary>
     /// One page, in one statement, reading only the page's own items. <c>picked</c> is the newest <c>$limit + 1</c>
     /// items below <c>$before</c>: walking the session back from <c>$before</c>, each item's first row (or a row with
     /// no item, which is its own). <c>shown</c> is each picked item's newest row of each kind, leaving out a message's

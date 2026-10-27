@@ -183,25 +183,11 @@ public sealed class RowStore
     /// For <see cref="SessionSummaries"/>, every session's newest turn row and the newest row of each of its asks, tasks
     /// and subagents, in session and seq order.
     /// </summary>
-    public IReadOnlyList<StoredRow> SummaryRows() =>
-        Query(
-            $"""
-            SELECT {Columns} FROM rows WHERE (session_id, seq) IN (
-              SELECT session_id, MAX(seq) FROM rows WHERE kind IN ('turn', 'ask', 'task', 'subagent')
-              GROUP BY session_id, kind, CASE WHEN kind = 'turn' THEN NULL ELSE item_id END)
-            ORDER BY session_id, seq;
-            """,
-            reader => ReadRow(reader));
+    public IReadOnlyList<StoredRow> SummaryRows() => Query(Schema.SummaryRows, reader => ReadRow(reader));
 
-    /// <summary>For <see cref="SessionSummaries"/>, each session's newest seq of a turn row that ended a turn.</summary>
-    public IReadOnlyList<(string SessionId, long Seq)> TurnEnds() =>
-        Query(
-            """
-            SELECT session_id, MAX(seq) FROM rows
-            WHERE kind = 'turn' AND json_extract(payload, '$.state') IN ('finished', 'failed', 'cancelled')
-            GROUP BY session_id;
-            """,
-            reader => (reader.Text(0), reader.Long(1)));
+    /// <summary>For <see cref="SessionSummaries"/>, the seq of the session's newest turn row that ended a turn, or 0.</summary>
+    public long LastTurnEnd(string sessionId) =>
+        Query(Schema.LastTurnEnd, reader => reader.IsNull(0) ? 0 : reader.Long(0), new SqlArg("$session", sessionId)).Single();
 
     /// <summary>The run of the session's newest turn row if that row says <c>started</c>, else null.</summary>
     public string? OpenRun(string sessionId) =>

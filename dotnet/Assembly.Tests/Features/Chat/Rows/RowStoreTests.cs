@@ -132,6 +132,18 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
+    public void The_summary_reads_take_the_summary_index_not_the_whole_table()
+    {
+        // SQLite takes a partial index only when the query names its condition as the index does: if the two drift
+        // apart, or SQLite words its plans differently, this goes red.
+        var rows = _database.Query("EXPLAIN QUERY PLAN " + Schema.SummaryRows, row => row.Text(3), CancellationToken.None);
+        var end = _database.Query("EXPLAIN QUERY PLAN " + Schema.LastTurnEnd, row => row.Text(3), CancellationToken.None, new SqlArg("$session", "t"));
+
+        Assert.Contains(rows, step => step == "SCAN rows USING COVERING INDEX rows_summary");
+        Assert.Contains(end, step => step == "SEARCH rows USING INDEX rows_summary (session_id=? AND kind=?)");
+    }
+
+    [Fact]
     public void A_page_reads_only_its_own_items_rows_not_the_whole_session()
     {
         // Every search of rows names more than the session: by seq below the page, or by one item.

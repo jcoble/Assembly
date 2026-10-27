@@ -17,7 +17,8 @@ public sealed class SessionSummariesTests : IDisposable
         using var db = TestDatabase.Open(_file.Path);
         var store = RowStore.Open(db);
         // A finished turn then a running one, with an open ask and work left; a failed one with a task done; one with
-        // nothing but chat; one cancelled with a subagent waiting; and one with no rows.
+        // nothing but chat; one cancelled with a subagent waiting; one whose newest turn row is neither a start nor an
+        // end, after an ended turn; and one with no rows.
         Commit(store, "a", ("r1", null, RowKind.Turn, "started"), ("r1", null, RowKind.Turn, "finished"), ("r2", null, RowKind.Turn, "started"),
             ("r2", "q1", RowKind.Ask, "open"), ("r2", "q2", RowKind.Ask, "open"), ("r2", "q2", RowKind.Ask, "answered"),
             ("r2", "t1", RowKind.Task, "running"), ("r2", "t2", RowKind.Task, "requires_action"));
@@ -26,12 +27,15 @@ public sealed class SessionSummariesTests : IDisposable
         Commit(store, "c", ("r1", "m1", RowKind.Message, null), ("r1", null, RowKind.User, null));
         Commit(store, "d", ("r1", null, RowKind.Turn, "started"), ("r1", "s1", RowKind.Subagent, "running"), ("r1", "s1", RowKind.Subagent, "requires_action"),
             ("r1", null, RowKind.Turn, "cancelled"));
+        Commit(store, "e", ("r1", null, RowKind.Turn, "started"), ("r1", null, RowKind.Turn, "finished"), ("r2", null, RowKind.Turn, "started"),
+            ("r2", null, RowKind.Turn, "steered"));
 
         var summaries = SessionSummaries.Load(store);
 
-        foreach (var session in new[] { "a", "b", "c", "d", "none" })
+        foreach (var session in new[] { "a", "b", "c", "d", "e", "none" })
             Assert.Equal(Expected(db, session), summaries.Get(session));
         Assert.Equal(new SessionSummary("r2", "started", 2, true, 2), summaries.Get("a"));
+        Assert.Equal(new SessionSummary(null, "steered", 2, false, 0), summaries.Get("e"));
     }
 
     // Set ASSEMBLY_SUMMARY_DB to a database to check it too; the test works on a copy.

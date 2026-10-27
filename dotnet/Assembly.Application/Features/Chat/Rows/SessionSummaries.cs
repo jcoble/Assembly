@@ -18,9 +18,10 @@ public sealed record SessionSummary(string? RunId, string? TurnState, long EndSe
 }
 
 /// <summary>
-/// Each session's <see cref="SessionSummary"/>, kept in memory: filled once at the start from one grouped query, then
-/// changed by <see cref="LiveHub"/> as it saves each row, under its lock. Readers get the current snapshot, swapped
-/// whole on each change, so a reader under another lock (the sessions topic's state, under the Topics lock) takes none.
+/// Each session's <see cref="SessionSummary"/>, kept in memory: filled once at the start from one grouped query, plus
+/// a look back for each session whose newest turn row didn't end a turn, then changed by <see cref="LiveHub"/> as it
+/// saves each row, under its lock. Readers get the current snapshot, swapped whole on each change, so a reader under
+/// another lock (the sessions topic's state, under the Topics lock) takes none.
 /// </summary>
 public sealed class SessionSummaries
 {
@@ -37,8 +38,10 @@ public sealed class SessionSummaries
         var summaries = new SessionSummaries();
         foreach (var row in store.SummaryRows())
             summaries.Track(row);
-        foreach (var (sessionId, seq) in store.TurnEnds())
-            summaries.TrackerOf(sessionId).EndSeq = seq;
+        // A newest turn row that ended a turn gave its seq; any other looks back for the turn before it that ended.
+        foreach (var (sessionId, tracker) in summaries._trackers)
+            if (tracker.TurnState is not null && !Ends(tracker.TurnState))
+                tracker.EndSeq = store.LastTurnEnd(sessionId);
         summaries._current = summaries._trackers.ToImmutableDictionary(entry => entry.Key, entry => entry.Value.Summary());
         return summaries;
     }
@@ -66,6 +69,8 @@ public sealed class SessionSummaries
     // Deltas, messages, tools and the rest never change a summary.
     private static bool Counts(StoredRow row) => row.Kind is RowKind.Turn or RowKind.Ask or RowKind.Task or RowKind.Subagent;
 
+    private static bool Ends(string? turnState) => turnState is "finished" or "failed" or "cancelled";
+
     private void Track(StoredRow row)
     {
         var tracker = TrackerOf(row.SessionId);
@@ -75,7 +80,7 @@ public sealed class SessionSummaries
             case RowKind.Turn:
                 tracker.RunId = state == "started" ? row.RunId : null;
                 tracker.TurnState = state;
-                if (state is "finished" or "failed" or "cancelled")
+                if (Ends(state))
                     tracker.EndSeq = row.Seq;
                 break;
             case RowKind.Ask when state == "open":
