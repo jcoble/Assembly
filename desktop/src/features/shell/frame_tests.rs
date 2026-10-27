@@ -385,6 +385,21 @@ fn the_usage_popover_is_built_only_once_it_opens(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: g0-shape#9
+#[gpui::test]
+fn folding_the_sessions_column_hides_the_strip(cx: &mut TestAppContext) {
+    let (frame, _, cx) = open(None, cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("usage-button").is_some());
+    cx.update(|window, cx| {
+        frame.read(cx).dock().clone().update(cx, |dock, cx| {
+            dock.toggle_dock(DockPlacement::Left, window, cx);
+        })
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("usage-button").is_none());
+}
+
 // Pins: g0-shape#3
 #[test]
 fn the_saved_layout_is_the_layout_preference_in_the_first_state() {
