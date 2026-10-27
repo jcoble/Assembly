@@ -31,7 +31,7 @@ pub struct AskOption {
     pub kind: String,
 }
 
-/// The form's fields in the JSON's order, which is the form's order (read by hand in step 2: serde's maps sort).
+/// The form's fields in the JSON's order, which is the form's order (serde_json keeps it: `preserve_order`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AskSchema {
     pub properties: Vec<(String, AskField)>,
@@ -39,12 +39,38 @@ pub struct AskSchema {
 }
 
 impl AskSchema {
-    pub fn of(_schema: &Value) -> Option<AskSchema> {
-        todo!()
+    /// `None` for a form with no fields; a field it can't read is a plain text field.
+    pub fn of(schema: &Value) -> Option<AskSchema> {
+        let properties: Vec<(String, AskField)> = schema
+            .get("properties")?
+            .as_object()?
+            .iter()
+            .map(|(name, field)| {
+                (
+                    name.clone(),
+                    serde_json::from_value(field.clone()).unwrap_or_default(),
+                )
+            })
+            .collect();
+        let required = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .map(|names| {
+                names
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        (!properties.is_empty()).then_some(AskSchema {
+            properties,
+            required,
+        })
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskField {
     #[serde(rename = "type")]
