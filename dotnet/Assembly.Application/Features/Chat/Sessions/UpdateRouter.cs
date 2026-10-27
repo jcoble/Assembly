@@ -56,11 +56,13 @@ internal sealed class UpdateRouter
         }
     }
 
-    /// <summary>The session is closed: its queue completes, and goes.</summary>
+    /// <summary>The session is closed: its queue completes, and goes. What arrived before it is read first, so a resume
+    /// answer that came before the close can't open the session again after it.</summary>
     public void Forget(string acpSessionId)
     {
         lock (_gate)
         {
+            Flush();
             _closedAcpSessions.Add(acpSessionId);
             if (_acpSessions.Remove(acpSessionId, out var queue))
                 queue.Writer.TryComplete();

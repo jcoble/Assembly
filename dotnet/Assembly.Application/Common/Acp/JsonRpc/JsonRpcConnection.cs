@@ -20,6 +20,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     // Each request's reply, and what to run on the reader thread as a success reply arrives (see RequestAsync).
     private readonly ConcurrentDictionary<long, (TaskCompletionSource<JsonElement> Reply, Action? OnReply)> _pending = new();
+    // Taken to remove a pending request, so a caller that gave up never sees its OnReply run after it returns.
+    private readonly Lock _removing = new();
     private readonly CancellationTokenSource _stopping = new();
     private volatile Exception? _closedReason;
     private long _lastId;
@@ -63,7 +65,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
         }
         finally
         {
-            _pending.TryRemove(id, out _);
+            lock (_removing)
+                _pending.TryRemove(id, out _);
         }
     }
 
@@ -127,10 +130,16 @@ public sealed class JsonRpcConnection : IAsyncDisposable
                 _ = AnswerAsync(id.Clone(), method.GetString() ?? "", parameters);
             else if (hasMethod)
                 _target.OnNotification(method.GetString() ?? "", parameters);
-            else if (hasId && id.TryGetInt64(out var number) && _pending.TryGetValue(number, out var pending))
+            else if (hasId && id.TryGetInt64(out var number))
             {
-                if (!root.TryGetProperty("error", out _))
-                    pending.OnReply?.Invoke();
+                (TaskCompletionSource<JsonElement> Reply, Action? OnReply) pending;
+                lock (_removing)
+                {
+                    if (!_pending.TryRemove(number, out pending))
+                        return;
+                    if (!root.TryGetProperty("error", out _))
+                        pending.OnReply?.Invoke();
+                }
                 Settle(pending.Reply, root);
             }
         }
