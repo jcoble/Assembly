@@ -34,6 +34,9 @@ pub struct Timeline {
     /// The top row on screen when the scroller last changed.
     top: usize,
     _scrolled: Subscription,
+    /// How many times the entries were worked out again, for tests.
+    #[cfg(test)]
+    pub builds: usize,
 }
 
 /// What the timeline tells the pane.
@@ -70,6 +73,8 @@ impl Timeline {
             restore: None,
             top: 0,
             _scrolled: scrolled,
+            #[cfg(test)]
+            builds: 0,
         }
     }
 
@@ -126,6 +131,10 @@ impl Timeline {
             .zip(entries[start..].iter().rev())
             .take_while(|(a, b)| same(a, b))
             .count();
+        #[cfg(test)]
+        {
+            self.builds += 1;
+        }
         let removed = start..old.len() - end;
         let added = entries.len() - start - end;
         let remeasure = changed.and_then(|key| entries.iter().position(|(entry, _)| entry == key));
@@ -148,6 +157,15 @@ impl Timeline {
                 .update(cx, |scroller, cx| scroller.scroll_to_item(at, cx));
         }
         cx.notify();
+    }
+
+    /// Measures and draws one row again, by its key, leaving the entries as they are.
+    pub fn redraw_row(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(at) = self.entries.iter().position(|(entry, _)| entry == key) {
+            self.scroller
+                .update(cx, |scroller, cx| scroller.remeasure_items(at..at + 1, cx));
+            cx.notify();
+        }
     }
 
     /// Tells the timeline what happened, for the one scroll the list doesn't make itself.

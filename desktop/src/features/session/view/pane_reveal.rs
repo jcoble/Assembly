@@ -41,7 +41,7 @@ impl SessionPane {
     }
 
     /// One frame of the reveal: steps it by the time since the last, and rests once it has caught up.
-    pub(super) fn reveal_frame(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn reveal_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.frame_asked = false;
         let Some(reveal) = &mut self.reveal else {
             return;
@@ -65,8 +65,12 @@ impl SessionPane {
         reveal.shown = Reveal::step(reveal.shown, target, dt);
         if reveal.shown >= target {
             self.reveal = None;
+        } else {
+            self.frame_asked = true;
+            cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
         }
-        self.refresh(Change::Updated(at), cx);
+        // Only the streaming row draws again; the timeline's entries stay as they are.
+        self.redraw(at, cx);
     }
 
     /// The blocks a reply draws: cut to what the reveal shows while it's revealing.

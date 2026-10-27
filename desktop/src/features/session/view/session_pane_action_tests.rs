@@ -283,7 +283,7 @@ fn a_backend_restart_mid_turn_does_not_leave_working_on(cx: &mut TestAppContext)
 
 // Pins: g0-session#1
 #[gpui::test]
-fn live_rows_wait_through_a_failed_first_page_for_the_next_one(cx: &mut TestAppContext) {
+fn a_failed_first_page_keeps_live_rows_waiting_until_try_again_loads_it(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
     show(&pane, "s1", cx);
     client.queue_answer(Err(
@@ -296,7 +296,14 @@ fn live_rows_wait_through_a_failed_first_page_for_the_next_one(cx: &mut TestAppC
         "nothing shows without its history"
     );
     client.queue_answer(Ok(page(vec![user(1, "first")], false, None)));
-    jump(&client, 1, cx);
+    act(&pane, SessionAction::RetryPage, cx);
+    assert_eq!(
+        client
+            .calls()
+            .last()
+            .map(|(call, args)| (call.clone(), args["before"].clone())),
+        Some(("rows/page".to_string(), json!(2)))
+    );
     live(&client, user(3, "last"), cx);
     let texts: Vec<String> = cx.update(|_, cx| {
         pane.read(cx)
@@ -306,7 +313,7 @@ fn live_rows_wait_through_a_failed_first_page_for_the_next_one(cx: &mut TestAppC
             .map(|item| item.key.clone())
             .collect()
     });
-    assert_eq!(texts, ["seq:1", "seq:3"]);
+    assert_eq!(texts, ["seq:1", "seq:2", "seq:3"]);
 }
 
 // Pins: g0-session#16

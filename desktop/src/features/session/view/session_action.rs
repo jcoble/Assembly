@@ -13,6 +13,8 @@ pub enum SessionAction {
     /// Open or close a tool call, thinking or a long prompt, by item key; opening a tool call reads its detail
     /// (`rows/tool`).
     Toggle { key: String },
+    /// Load the first page again after it failed.
+    RetryPage,
     /// Open or close the plan's list of steps.
     TogglePlan,
     /// Show an open tool call's whole diff, by item key.

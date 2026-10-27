@@ -67,3 +67,29 @@ fn a_final_row_with_more_text_still_comes_in_smoothly(cx: &mut TestAppContext) {
     let started = reveal(&pane, cx).expect("the rest reveals");
     assert_eq!(started.shown, 3);
 }
+
+fn builds(pane: &Entity<SessionPane>, cx: &mut VisualTestContext) -> usize {
+    cx.update(|_, cx| pane.read(cx).timeline.read(cx).builds)
+}
+
+// Pins: g0-session#4
+#[gpui::test]
+fn a_streaming_reply_redraws_only_its_row(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(1, "go")], false, Some("r1"))));
+    jump(&client, 1, cx);
+    live(&client, message(2, 0, &["Hello"]), cx);
+    let start = builds(&pane, cx);
+    live(&client, message(3, 0, &["Hello there"]), cx);
+    live(&client, message(4, 0, &["Hello there, and more"]), cx);
+    pane.update_in(cx, |pane, window, cx| {
+        pane.revealed_at = Instant::now() - Duration::from_millis(16);
+        pane.reveal_frame(window, cx);
+    });
+    assert_eq!(
+        builds(&pane, cx),
+        start,
+        "neither the deltas nor a frame work the entries out again"
+    );
+}

@@ -43,6 +43,12 @@ impl SessionPane {
                     self.read_detail_if_stale(at, cx);
                 }
             }
+            SessionAction::RetryPage => {
+                if let Some(before) = self.retry_first {
+                    self.status = SharedString::default();
+                    self.load_page(before, true, cx);
+                }
+            }
             SessionAction::TogglePlan => {
                 self.plan_open = !self.plan_open;
                 cx.notify();

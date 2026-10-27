@@ -6,8 +6,9 @@
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
 use gpui_kit::base::motion::{Presence, Transition};
-use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
+use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -19,7 +20,7 @@ use serde_json::{Value, json};
 
 use super::ask_card::AskForm;
 use super::plan_card::PlanCard;
-use super::session_action::OnAction;
+use super::session_action::{OnAction, SessionAction};
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::features::session::client::session_client::{
     CallError, RowUpdate, RowsSink, SessionClient,
@@ -83,6 +84,8 @@ pub struct SessionPane {
     loading: bool,
     /// The `before` of the last older page that failed: it isn't asked for again by itself, so a failure can't loop.
     failed_before: Option<i64>,
+    /// The `before` of a first page that failed, which Try again loads.
+    retry_first: Option<i64>,
     /// Why the last load failed; empty when there's nothing to say.
     status: SharedString,
     /// The rows subscription and every load this session started; replaced on open, dropped on close. Each call keys
@@ -172,6 +175,7 @@ impl SessionPane {
             held: None,
             loading: false,
             failed_before: None,
+            retry_first: None,
             status: SharedString::default(),
             _rows: None,
             _page: None,
@@ -204,8 +208,9 @@ impl SessionPane {
             self.known_run,
             self.loading,
             self.failed_before,
+            self.retry_first,
             self.status,
-        ) = (None, false, None, SharedString::default());
+        ) = (None, false, None, None, SharedString::default());
         let pane = cx.weak_entity();
         let sink: RowsSink = Box::new(move |event, cx| {
             pane.update(cx, |pane, cx| pane.on_rows(event, cx)).ok();
@@ -243,7 +248,7 @@ impl SessionPane {
                 self.held = Some(Vec::new());
                 self.reveal = None;
                 self.reading.clear();
-                (self.loading, self.failed_before) = (false, None);
+                (self.loading, self.failed_before, self.retry_first) = (false, None, None);
                 self.timeline.update(cx, |timeline, cx| {
                     timeline.set_entries(Vec::new(), None, cx)
                 });
@@ -278,8 +283,20 @@ impl SessionPane {
         if let Change::Appended | Change::Updated(_) = change {
             self.reveal_from(change, before);
         }
-        // The entries take the new item first, so the timeline can find it to scroll to.
-        self.refresh(change, cx);
+        match change {
+            // A reply, tool or card changing in place in a run that isn't folded changes no entry: only its row
+            // draws again, so a streaming reply never rebuilds the timeline.
+            Change::Updated(at)
+                if self.view.items[at]
+                    .run_id
+                    .as_ref()
+                    .is_none_or(|run| !self.folds.contains_key(run)) =>
+            {
+                self.redraw(at, cx)
+            }
+            // The entries take the new item first, so the timeline can find it to scroll to.
+            _ => self.refresh(change, cx),
+        }
         if let Change::Updated(at) = change {
             self.read_detail_if_stale(at, cx);
         }
@@ -295,7 +312,7 @@ impl SessionPane {
     }
 
     /// Loads the page below `before`; `first` on open, when the page also says the run going now.
-    fn load_page(&mut self, before: i64, first: bool, cx: &mut Context<Self>) {
+    pub(super) fn load_page(&mut self, before: i64, first: bool, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -337,9 +354,11 @@ impl SessionPane {
             ) => format!("Couldn't load the session: {message}").into(),
         };
         let Ok(page) = page else {
-            // A failed first page keeps the live rows waiting for the next `Jump`'s page; an older one isn't asked for
-            // again by itself.
-            if !first {
+            // A failed first page keeps the live rows waiting for Try again or the next `Jump`'s page; an older one
+            // isn't asked for again by itself.
+            if first {
+                self.retry_first = Some(before);
+            } else {
                 self.failed_before = Some(before);
             }
             self.refresh(Change::Nothing, cx);
@@ -347,6 +366,7 @@ impl SessionPane {
         };
         self.failed_before = None;
         if first {
+            self.retry_first = None;
             // What the backend says runs now, so a run that ended while the socket was away stops counting.
             self.known_run = page.active_run_id;
         }
@@ -357,6 +377,13 @@ impl SessionPane {
             }
         }
         self.refresh(Change::Nothing, cx);
+    }
+
+    /// Draws the item at `at` again, measured again, with the entries as they are.
+    fn redraw(&mut self, at: usize, cx: &mut Context<Self>) {
+        let key = &self.view.items[at].key;
+        self.timeline
+            .update(cx, |timeline, cx| timeline.redraw_row(key, cx));
     }
 
     /// Works the timeline's entries out again from the view, and tells the composer the run going now.
@@ -494,13 +521,26 @@ impl Render for SessionPane {
                 },
             )
             .when(!self.status.is_empty(), |pane| {
+                let on_action = self.on_action.clone();
                 pane.child(
-                    div()
+                    h_flex()
                         .px_4()
                         .py_1()
+                        .gap_2()
                         .text_sm()
                         .text_color(cx.theme().danger)
-                        .child(self.status.clone()),
+                        .child(self.status.clone())
+                        .when(self.retry_first.is_some(), |line| {
+                            line.child(
+                                Button::new("retry-page")
+                                    .ghost()
+                                    .compact()
+                                    .label("Try again")
+                                    .on_click(move |_, window, cx| {
+                                        on_action(SessionAction::RetryPage, window, cx)
+                                    }),
+                            )
+                        }),
                 )
             })
             .child(self.composer.clone())
