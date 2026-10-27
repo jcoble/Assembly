@@ -135,26 +135,33 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
         using var limit = new CancellationTokenSource(SocketDispatcher.Limit, time);
         try
         {
-            runId = await machines.For(session).SendAsync(session, text, clientId, limit.Token);
-        }
-        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed or OperationCanceledException)
-        {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
-            return;
-        }
+            try
+            {
+                runId = await machines.For(session).SendAsync(session, text, clientId, limit.Token);
+            }
+            catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed or OperationCanceledException)
+            {
+                await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
+                return;
+            }
 
-        if (runId is null)
-        {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status409Conflict, "the running turn can't take a message yet");
-            return;
-        }
+            if (runId is null)
+            {
+                await JsonReply.ErrorAsync(context, StatusCodes.Status409Conflict, "the running turn can't take a message yet");
+                return;
+            }
 
-        await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json =>
+            await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json =>
+            {
+                json.WriteStartObject();
+                json.WriteString("runId", runId);
+                json.WriteEndObject();
+            });
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
-            json.WriteStartObject();
-            json.WriteString("runId", runId);
-            json.WriteEndObject();
-        });
+            // The caller went away while the send ran on: there's no one to answer.
+        }
     }
 
     private async Task StopAsync(HttpContext context)
