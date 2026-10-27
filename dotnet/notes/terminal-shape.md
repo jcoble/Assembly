@@ -116,6 +116,10 @@ names; with no lists, every shell gets it, and a shell that refuses `-l` fails t
 - Agent tool terminals (ACP `terminal/*`) stay separate, as P22 says.
 - Closing a session's terminals when the session is deleted comes with that delete.
 - The window side (the Ghostty view and its socket calls) is the GPUI lane's.
+- Light themes (Rosé Pine Dawn, Ayu Light, later Assembly Light; coordinator, 2026-10-27): the terminal palette is
+  read from the theme in the window, never hard-coded, with a light palette for each light theme. The backend's one
+  part is `COLORFGBG=15;0`, which tells programs the background is dark: it should come from the window's theme
+  (`0;15` for a light one), say as a `terminal/start` argument, when the light themes land.
 
 ## Known risk: a flood of output
 

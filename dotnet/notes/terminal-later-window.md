@@ -27,6 +27,9 @@ Research, 2026-10-27. `old/` = mac-command-bar `2089290:tauri-svelte-preview/src
   buffers), and the backend keeps the terminal and its output until the session is switched back to, when a new
   view subscribes with `after` and replays (terminal#5). Nothing about the terminal stays in the window while its
   session isn't shown.
+- Light themes are coming (Rosé Pine Dawn, Ayu Light, later Assembly Light): Ghostty's palette, foreground,
+  background and cursor are read from the theme, never hard-coded, with a light palette for each light theme. The
+  start call should also pass the theme's dark or light, since the backend sets `COLORFGBG` for programs that read it.
 
 - Start with `{cwd, cols, rows, owner}`; use the answered size (`F/TerminalHost.cs:80-81`).
 - Subscribe `terminal` with `after` = last byte offset held. The state frame's seq is where live rows continue (`lane/dotnet/Assembly.Infrastructure/Socket/SocketDispatcher.cs:100-105`). If the gap was over 1 MB or trimmed, seq is the end and no row comes (`F/RunningTerminal.cs:228`): call `terminal/read` from `after` (raised to the last 4 MB, `F/OutputRing.cs:334`) until `end` reaches that seq.
