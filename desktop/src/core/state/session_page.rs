@@ -9,4 +9,5 @@ use super::session_item::SessionItem;
 pub struct SessionPage {
     pub sessions: Vec<SessionItem>,
     pub next_before: Option<i64>,
+    pub next_before_id: Option<String>,
 }
