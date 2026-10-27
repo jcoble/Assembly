@@ -10,6 +10,7 @@ use super::SessionPane;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::{CallError, RowsEvent};
 use crate::features::session::composer::composer_view::ComposerEvent;
+use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::row::Row;
 
 fn open(cx: &mut TestAppContext) -> (Entity<SessionPane>, FakeClient, &mut VisualTestContext) {
@@ -130,6 +131,7 @@ fn a_new_session_with_no_rows_is_ready_empty_and_a_sent_run_shows_working(cx: &m
     cx.update(|_, cx| {
         composer.update(cx, |_, cx| {
             cx.emit(ComposerEvent::Sent {
+                session: "s1".into(),
                 run_id: "r1".into(),
             })
         })
@@ -211,4 +213,109 @@ fn a_page_that_fails_says_why_and_an_aborted_one_says_nothing(cx: &mut TestAppCo
     client.queue_answer(Err(CallError::Aborted));
     jump(&client, 3, cx);
     assert_eq!(cx.update(|_, cx| pane.read(cx).status.clone()), "");
+}
+
+fn message(seq: i64, from: usize, texts: &[&str]) -> Value {
+    let blocks: Vec<Value> = texts
+        .iter()
+        .map(|text| json!({ "kind": "paragraph", "parts": [{ "kind": "text", "value": text }] }))
+        .collect();
+    row(
+        seq,
+        "delta",
+        Some("m1"),
+        json!({ "from": from, "text": texts.concat(), "blocks": blocks }),
+    )
+}
+
+fn users(seqs: std::ops::RangeInclusive<i64>) -> Vec<Value> {
+    seqs.map(|seq| user(seq, "hi")).collect()
+}
+
+fn top(pane: &Entity<SessionPane>, cx: &mut VisualTestContext) -> usize {
+    cx.update(|_, cx| pane.read(cx).timeline.read(cx).top_row(cx))
+}
+
+// Pins: g0-session#4
+#[gpui::test]
+fn rows_that_arrive_before_the_first_page_wait_for_it(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![message(5, 0, &["a", "b"])], false, None)));
+    let delta: Row = serde_json::from_value(message(6, 2, &["c"])).unwrap();
+    cx.update(|_, cx| {
+        client.push(RowsEvent::Jump { seq: 5 }, cx);
+        client.push(RowsEvent::Row(Box::new(delta)), cx);
+    });
+    cx.run_until_parked();
+    let blocks = cx.update(|_, cx| match &pane.read(cx).view.items[0].kind {
+        ItemKind::Message { blocks, .. } => blocks.len(),
+        _ => 0,
+    });
+    assert_eq!(blocks, 3, "the page's first two blocks and the live third");
+}
+
+// Pins: g0-session#2
+#[gpui::test]
+fn a_failed_older_page_is_not_asked_for_again_by_itself(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(10, "ten")], true, None)));
+    jump(&client, 10, cx);
+    client.queue_answer(Err(CallError::Timeout("slow".into())));
+    pane.update(cx, |pane, cx| pane.load_older(cx));
+    cx.run_until_parked();
+    pane.update(cx, |pane, cx| pane.load_older(cx));
+    cx.run_until_parked();
+    assert_eq!(client.calls().len(), 2, "the first page and one older page");
+}
+
+// Pins: g0-session#5
+#[gpui::test]
+fn a_sent_prompt_goes_to_the_top_once_it_arrives(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(users(1..=30), false, None)));
+    jump(&client, 30, cx);
+    let composer = cx.update(|_, cx| pane.read(cx).composer.clone());
+    cx.update(|_, cx| {
+        composer.update(cx, |_, cx| {
+            cx.emit(ComposerEvent::Sending { text: "hi".into() })
+        })
+    });
+    live(&client, user(31, "hi"), cx);
+    assert_eq!(top(&pane, cx), 30);
+}
+
+// Pins: g0-session#22
+#[gpui::test]
+fn a_send_answered_after_switching_sessions_leaves_the_new_one_alone(cx: &mut TestAppContext) {
+    let (pane, _, cx) = open(cx);
+    show(&pane, "s2", cx);
+    let composer = cx.update(|_, cx| pane.read(cx).composer.clone());
+    let sent = ComposerEvent::Sent {
+        session: "s1".into(),
+        run_id: "r1".into(),
+    };
+    cx.update(|_, cx| composer.update(cx, |_, cx| cx.emit(sent)));
+    cx.run_until_parked();
+    assert_eq!(cx.update(|_, cx| pane.read(cx).known_run.clone()), None);
+}
+
+// Pins: g0-session#8
+#[gpui::test]
+fn each_session_keeps_its_reading_place_when_you_switch_away_and_back(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(users(1..=30), false, None)));
+    jump(&client, 30, cx);
+    let timeline = cx.update(|_, cx| pane.read(cx).timeline.clone());
+    cx.update(|_, cx| timeline.update(cx, |timeline, cx| timeline.scroll_to_row(5, cx)));
+    show(&pane, "s2", cx);
+    client.queue_answer(Ok(page(users(1..=3), false, None)));
+    jump(&client, 3, cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(users(1..=30), false, None)));
+    jump(&client, 30, cx);
+    assert_eq!(top(&pane, cx), 5);
 }

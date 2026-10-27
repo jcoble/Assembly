@@ -25,7 +25,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Composer>, FakeClient, Events, &mut 
         cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
             seen.borrow_mut().push(match event {
                 ComposerEvent::Sending { text } => format!("sending {text}"),
-                ComposerEvent::Sent { run_id } => format!("sent {run_id}"),
+                ComposerEvent::Sent { session, run_id } => format!("sent {session} {run_id}"),
             })
         })
     });
@@ -63,7 +63,7 @@ fn a_send_goes_out_for_the_session_clears_the_draft_and_says_its_run(cx: &mut Te
         )]
     );
     assert_eq!(draft(&composer, cx), "");
-    assert_eq!(*events.borrow(), ["sending hello", "sent r7"]);
+    assert_eq!(*events.borrow(), ["sending hello", "sent s1 r7"]);
 }
 
 // Pins: g0-session#22
@@ -75,8 +75,44 @@ fn an_empty_draft_sends_nothing_and_a_failed_send_puts_the_draft_back(cx: &mut T
     });
     type_and_send(&composer, "  ", cx);
     assert!(client.calls().is_empty());
-    type_and_send(&composer, "hello", cx);
-    assert_eq!(draft(&composer, cx), "hello");
+    composer.update_in(cx, |composer, window, cx| {
+        composer
+            .draft
+            .update(cx, |draft, cx| draft.set_value("hello", window, cx));
+        composer.send(window, cx);
+    });
+    assert_eq!(
+        draft(&composer, cx),
+        "",
+        "the draft clears as the prompt goes out"
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        draft(&composer, cx),
+        "hello",
+        "and comes back when it didn't"
+    );
+}
+
+// Pins: g0-session#8, g0-session#22
+#[gpui::test]
+fn a_send_that_fails_after_switching_sessions_goes_back_to_its_own_draft(cx: &mut TestAppContext) {
+    let (composer, _, (events, _heard), cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx);
+        composer
+            .draft
+            .update(cx, |draft, cx| draft.set_value("for one", window, cx));
+        composer.send(window, cx);
+        composer.set_session(Some("s2".into()), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(draft(&composer, cx), "");
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx)
+    });
+    assert_eq!(draft(&composer, cx), "for one");
+    assert_eq!(*events.borrow(), ["sending for one"]);
 }
 
 // Pins: g0-session#8

@@ -37,8 +37,8 @@ pub struct Composer {
 pub enum ComposerEvent {
     /// A send went out with this text: the timeline puts its prompt at the top once it arrives.
     Sending { text: String },
-    /// It answered its run id.
-    Sent { run_id: String },
+    /// It answered its run id, for the session it was sent to.
+    Sent { session: String, run_id: String },
 }
 
 impl Composer {
@@ -135,6 +135,7 @@ impl Composer {
                         Ok(answer) => {
                             if let Some(run_id) = answer["runId"].as_str() {
                                 cx.emit(ComposerEvent::Sent {
+                                    session: String::new(),
                                     run_id: run_id.to_string(),
                                 });
                             }

@@ -69,7 +69,7 @@ impl SessionPane {
                 ComposerEvent::Sending { .. } => pane
                     .timeline
                     .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx)),
-                ComposerEvent::Sent { run_id } => {
+                ComposerEvent::Sent { run_id, .. } => {
                     pane.known_run = Some(run_id.clone());
                     pane.refresh(Change::Nothing, cx);
                 }

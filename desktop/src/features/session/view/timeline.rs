@@ -154,6 +154,19 @@ impl Timeline {
         }
     }
 
+    /// The top row on screen, for tests.
+    #[cfg(test)]
+    pub fn top_row(&self, cx: &App) -> usize {
+        self.scroller.read(cx).logical_scroll_top().item_ix
+    }
+
+    /// Scrolls as the reader would, for tests.
+    #[cfg(test)]
+    pub fn scroll_to_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        self.scroller
+            .update(cx, |scroller, cx| scroller.scroll_to_item(row, cx));
+    }
+
     pub fn open_folds(&self) -> &HashSet<String> {
         &self.open_folds
     }
