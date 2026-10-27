@@ -27,7 +27,7 @@ internal sealed class DiagnosticsFeature : IFeature
         calls.Read("diagnostics", "drop", empty, empty, (_, _) => Done(_dropSubscriptions));
         calls.Read("diagnostics", "soak.append", DiagnosticsJson.Default.SoakLine, empty, (soak, _) =>
         {
-            if (soak.Name.Length == 0 || soak.Name.Contains('/') || soak.Name.Contains('\\'))
+            if (soak.Name is not { Length: > 0 } name || name.Contains('/') || name.Contains('\\') || soak.Line is null)
                 throw new CallFailed("soak.append needs { name, line } with a plain file name");
             return Done(() => _host.AppendSoak(soak.Name, soak.Line));
         });
