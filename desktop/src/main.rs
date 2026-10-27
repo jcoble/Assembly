@@ -75,7 +75,6 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
             Launcher::start(
                 config,
                 move |port, token, cx| {
-                    println!("backend ready on port {port}");
                     let endpoint = Endpoint { port, token };
                     match socket.get() {
                         Some(client) => client.read(cx).reconnect(endpoint),

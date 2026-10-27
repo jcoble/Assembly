@@ -394,12 +394,12 @@ fn the_saved_layout_is_the_layout_preference_in_the_first_state() {
     assert_eq!(saved_layout(None), None);
 }
 
-/// Counts how many of the saves still being written were given up.
-struct GivenUp(Rc<Cell<usize>>);
+/// Records which of the saves still being written were given up, by their order.
+struct GivenUp(usize, Rc<RefCell<Vec<usize>>>);
 
 impl Drop for GivenUp {
     fn drop(&mut self) {
-        self.0.set(self.0.get() + 1);
+        self.1.borrow_mut().push(self.0);
     }
 }
 
@@ -410,11 +410,11 @@ fn a_newer_save_replaces_one_still_being_written(cx: &mut TestAppContext) {
         gpui_kit::init(cx);
         PlaceholderPane::register_all(cx);
     });
-    let given_up = Rc::new(Cell::new(0));
-    let counter = given_up.clone();
+    let given_up = Rc::new(RefCell::new(Vec::new()));
+    let (record, saves) = (given_up.clone(), Cell::new(0));
     // A backend that never answers a save.
     let write: WriteLayout = Box::new(move |_, cx| {
-        let pending = GivenUp(counter.clone());
+        let pending = GivenUp(saves.replace(saves.get() + 1), record.clone());
         cx.spawn(async move |_| {
             let _pending = pending;
             std::future::pending::<()>().await
@@ -432,8 +432,8 @@ fn a_newer_save_replaces_one_still_being_written(cx: &mut TestAppContext) {
         cx.run_until_parked();
     }
     assert_eq!(
-        given_up.get(),
-        1,
+        *given_up.borrow(),
+        [0],
         "the first save was given up for the second"
     );
 }
