@@ -1,8 +1,10 @@
 //! `Connection` is one open socket: connected, `hello` sent with the token and protocol, and its `welcome` read. Then
 //! the socket goes to its reader thread, which blocks on it and sends each frame to the client thread, then `Closed`
 //! when a read fails; a frame that doesn't parse ends it the same way. The client thread writes through a second
-//! `WebSocket` on a clone of the stream (tungstenite's read and send both take `&mut`). The backend sends no pings,
-//! so the reader never writes, except a close reply at the end. Dropping the connection shuts the stream down, which
+//! `WebSocket` on a clone of the stream (tungstenite's read and send both take `&mut`). Only the client thread
+//! writes: the reader's `WebSocket` sits on a stream whose writes are dropped, so tungstenite's own pong and close
+//! replies never reach the wire, and a ping goes to the client thread as `Event::Ping` for it to answer. (The
+//! backend sends no pings today.) Dropping the connection shuts the stream down, which
 //! ends its reader.
 
 use std::net::TcpStream;

@@ -123,3 +123,18 @@ The behavior list is docs/behavior/g0-socket.md.
   reconnect, rows gaps and jumps), which needs no .NET; and a few real-backend tests. CI's `desktop` job has no
   .NET, so the real-backend layer needs a `ci.yml` change, which goes to the move thread first. It must fail, not
   skip, when the backend is missing.
+
+## The spike thread's review of the plan (2026-10-27)
+
+- Two threads are fine as long as only the writer writes. The reader's `WebSocket` sits on a stream that drops
+  writes, so tungstenite's automatic pong and close replies never hit the wire. Pings go from the reader to the
+  client thread (`Event::Ping`), and the client thread answers them. Test: a fake server sends a ping in the middle
+  of a burst of frames, and every frame and the pong arrive intact. The PR explains why.
+- `send/send` gets a `clientId` the window makes, echoed on the user row. The prompt stays pending until that row
+  arrives. This is a base-lane backend change, through the move thread. It answers open question 11.
+- A machines topic is coming (`{name, kind, host, reachable, reason}`). Until then, the reachability stopgap built
+  from `unreachable` errors stays inside the `Machines` entity.
+- `SessionItem` ignores unknown fields already (serde's default). Add PR #24's six summary fields when #24 merges.
+- `Tick` carries `received: Instant` for the meter. The clock's hold and release design is confirmed.
+- .NET in the desktop CI job: the spike thread says yes, and the tests fail rather than skip. The move thread
+  decides.

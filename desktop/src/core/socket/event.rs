@@ -43,6 +43,11 @@ pub(super) enum Event {
         connection: u64,
         frame: InFrame,
     },
+    /// A ping the reader got: the client thread, the only writer, answers it.
+    Ping {
+        connection: u64,
+        payload: Vec<u8>,
+    },
     Closed {
         connection: u64,
     },
