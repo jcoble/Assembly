@@ -1508,8 +1508,8 @@ catalogue stays the reference.
       byte over the limit is refused; cancelling midway leaves nothing linked.
   - **Proof:** check4 with `rows.sh`, `sessions.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
     the chat used in the window on the Mac.
-  - **The cut, its shape (plan only, no code yet; 2026-10-27).** The window is now the GPUI one, which only speaks
-    `/socket`. Paths are under `dotnet/`, lines as of e8e361e.
+  - **The cut, its shape (plan only, no code yet; 2026-10-27).** The window is now the GPUI one. Paths are under
+    `dotnet/`, lines as of e8e361e.
     - **What changes from the bullets above.** The desktop and the remote serve the same routes from one
       `ApiServer` (`Infrastructure/Http/ApiServer.cs:37-59`), and the desktop's remote client calls most of the chat
       routes on the remote. So the cut can't delete `/live` and every chat route together, as the bullet above says.
@@ -1558,7 +1558,11 @@ catalogue stays the reference.
         - `DesktopBackendTests.cs:199-200`;
         - `RemoteMachineTests.cs:45`, `:74`, `:216` and `:253`;
         - the attachment reads in `ApiTests.cs`.
-      - **Nothing on the window side:** the GPUI window has no HTTP client.
+      - **The GPUI window's socket client.** Today's GPUI spike (`assembly-gpui-spike/app/src`) still uses HTTP with
+        a bearer header and `/live` (`backend/wire.rs:8-32`, `backend/live.rs`): the session list, the rows page,
+        send, tool detail and `/live`. The real GPUI app (G0, in `desktop/`) gets its `/socket` client from the
+        g0-socket lane. The cut's deletions wait for that client and the session view running on it, which matches
+        Jesse's card answer below.
     - **What breaks in `app/`** (paused, not removed). Each of these calls a route that's deleted:
       - in `app/src/lib/api.ts`: `listSessions` (`:44`), `listMachines` (`:77`), `fetchAttachment` (`:85`),
         `rowsPage` (`:90`) and `dropLink` (`:115`, also used by `soak.ts:239`);
