@@ -125,18 +125,18 @@ program only as fast as the backend publishes, not as fast as the window reads. 
 flood test; if it closes the socket, rows carry only offsets and the window pulls bytes with `terminal/read`.
 `notes/terminal-later-backend.md` (outside the repo) maps the options.
 
-## Known limit: a job left running
+## A job left running
 
-The exit row waits until nothing holds the terminal. Under bash, `sleep 1000 &` then `exit` leaves the job holding
-it, since bash doesn't hang up its jobs, so the window shows the shell as running until the job ends (zsh hangs
-them up). Closing the terminal kills that job's group too.
+When the shell ends, the backend hangs up (SIGHUP) every process left in its session, as a terminal app does when its
+window closes, so the output ends and the exit row goes out (terminal#7). A job that ignores the hangup and still holds
+the terminal keeps the output open until it ends or the terminal is closed; `nohup` lets go of the terminal.
 
-## Open questions for Jesse
+## Decisions (coordinator's calls, 2026-10-27, under Jesse's "make good choices yourself")
 
-- `ASSEMBLY_SESSION_ID` as the owner variable's name.
-- `/bin/sh` as the last fallback shell (the old app used `/bin/zsh`).
-- Whether the exit should go out when the shell ends, even while a job it left holds the terminal.
-- `-l` for every shell (no list of shell names), so an unusual shell that refuses it won't start.
+- The owner's variable is `ASSEMBLY_SESSION_ID`.
+- The shell falls back to `$SHELL`, then `/bin/sh` (on a Mac `$SHELL` is already zsh).
+- `-l` for every shell, with no list of shell names.
+- The exit shows when the shell process ends, even if a job still holds the terminal (see above).
 
 ## What the pre-implementation check changed
 

@@ -108,7 +108,11 @@ internal sealed class UnixPty : IPty
     {
         await _process.WaitForExitAsync();
         var code = _process.ExitCode;
-        // Now the master reads end of file once whatever the program left running lets go of the terminal too.
+        // The shell's end is the terminal's end, as when a terminal app's window closes: what it left running in its
+        // session is hung up, and with the backend's slave closed the master reads end of file. A job that ignores the
+        // hangup and still holds the terminal (nohup lets go of it) keeps the output open until it ends or is closed.
+        foreach (var pid in InSession(Pid))
+            _ = PtyNative.kill(pid, 1);
         CloseSlave();
         return code;
     }
