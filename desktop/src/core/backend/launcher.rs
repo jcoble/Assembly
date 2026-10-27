@@ -7,7 +7,9 @@
 //!
 //! - A child that was ready and exits is started again at once; the new one's ready line reconnects.
 //! - A child that exits before it was ever ready isn't started again: the log says so, and the palette's "Restart
-//!   backend" command starts one when none is running. There's no time limit on the ready line (no timers).
+//!   backend" command starts one when none is running.
+//! - A child that prints no ready line within `ready_limit` (60 s; a hung remote tunnel, say) is stopped, and the
+//!   log says why.
 //! - On quit it sends the child SIGTERM and waits until the thread has reaped it; the backend finishes its queued
 //!   writes and bounds that wait itself (8 s, ApiServer.ShutdownTimeout). The wait is in the quit handler's body, not
 //!   a quit future, which GPUI cuts off after 200 ms.
@@ -22,6 +24,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -217,22 +220,44 @@ fn run_child(
             terminate(*pid);
         }
     }
+    let child_id = child.id();
     let mut was_ready = false;
-    if let Some(stdout) = child.stdout.take() {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            _ = writeln!(log, "{line}");
-            if line.starts_with("listening on ") {
-                match read_token(config) {
-                    Ok(token) => {
-                        was_ready = true;
-                        ready(token);
+    let late = std::thread::scope(|scope| {
+        // Stops a child that prints no ready line in time, such as one whose remote tunnel hangs.
+        let (seen, watch) = mpsc::channel::<()>();
+        let watchdog = scope.spawn(move || {
+            let late = watch.recv_timeout(config.ready_limit) == Err(RecvTimeoutError::Timeout);
+            if late && *pid.lock().unwrap() == child_id {
+                terminate(child_id);
+            }
+            late
+        });
+        if let Some(stdout) = child.stdout.take() {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                _ = writeln!(log, "{line}");
+                if line.starts_with("listening on ") {
+                    match read_token(config) {
+                        Ok(token) => {
+                            was_ready = true;
+                            _ = seen.send(());
+                            ready(token);
+                        }
+                        Err(error) => _ = writeln!(log, "{error}"),
                     }
-                    Err(error) => _ = writeln!(log, "{error}"),
                 }
             }
         }
+        drop(seen);
+        watchdog.join().unwrap_or(false)
+    });
+    if late {
+        _ = writeln!(
+            log,
+            "the backend printed no ready line within {:?}, so it was stopped",
+            config.ready_limit
+        );
     }
-    wait_for_exit(child.id());
+    wait_for_exit(child_id);
     *pid.lock().unwrap() = 0;
     _ = child.wait();
     was_ready

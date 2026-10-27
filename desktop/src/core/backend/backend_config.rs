@@ -4,6 +4,7 @@
 //! names a remote machine (such as `workbox-test`) to pass as `--remote`.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -17,6 +18,8 @@ pub struct BackendConfig {
     pub remote: Option<String>,
     pub remote_port: u16,
     pub remote_token_file: PathBuf,
+    /// How long a backend gets to print its ready line before it's stopped.
+    pub ready_limit: Duration,
 }
 
 impl BackendConfig {
@@ -48,6 +51,7 @@ impl BackendConfig {
             remote,
             remote_port: port("remotePort")?,
             remote_token_file: path("remoteTokenFile")?,
+            ready_limit: Duration::from_secs(60),
         })
     }
 }
