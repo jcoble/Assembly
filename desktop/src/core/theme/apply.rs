@@ -8,7 +8,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use gpui_kit::base::Spring;
-use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+use gpui_kit::component::{Theme, ThemeRegistry};
 use gpui_kit::{App, Window, WindowBackgroundAppearance};
 
 use super::fade;
@@ -37,8 +37,8 @@ pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
 /// Puts `id` in force: makes its file the kit's active theme, sets the window background to blurred for glass and
 /// opaque for the rest, brings the kit's 280 ms slow step and move spring down to 180 ms, and starts the fade from
 /// the old theme (fade.rs). Off macOS there's no blur, so glass gives Assembly. A theme whose file didn't load leaves
-/// the theme in force as it is. Every theme file is dark, so this fills `dark_theme` and asks for dark mode; a light
-/// file would need `light_theme` and `ThemeMode::Light`.
+/// the theme in force as it is. The mode follows the file: the kit's `apply_config` puts a dark file in `dark_theme`
+/// and a light one in `light_theme`, and switches to its mode (schema.rs:1064-1103).
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     let id = if id.is_glass() && !cfg!(target_os = "macos") {
         ThemeId::Assembly
@@ -54,16 +54,16 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     };
     let before = Theme::global(cx);
     let (old_name, old_ground) = (before.theme_name().clone(), before.background);
+    // Applying the file inside the update leaves its colours as applied: the kit reloads over an update only when the
+    // mode changed to a theme the update didn't install (theme/mod.rs:310-327).
     Theme::update(cx, |theme| {
-        theme.dark_theme = config;
+        theme.apply_config(&config);
         theme.motion.duration_slow = MOTION_CEILING;
         // The kit's own spring_move, with the shorter response.
         theme.motion.spring_move = Spring::new(MOTION_CEILING)
             .with_damping(0.85)
             .with_epsilon(0.1);
     });
-    // Loads the dark theme just swapped in; one update alone doesn't reload it (theme/mod.rs:288-327).
-    Theme::change(ThemeMode::Dark, Some(window), cx);
     // A fade only between two of our themes with different grounds: not at the window's first `set` (from the kit's
     // default), not when the theme in force is set again, and not to a ThemeMirror entry, whose ground is Assembly's.
     let from_ours = ThemeId::ALL
@@ -214,6 +214,44 @@ mod tests {
         window.update(|_, cx| {
             assert_eq!(Theme::global(cx).theme_name().as_ref(), "Houston");
             assert!(cx.try_global::<LastSwitch>().is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn a_light_theme_puts_the_window_in_light_mode(cx: &mut TestAppContext) {
+        load_themes(cx);
+        let window = cx.add_empty_window();
+        for (id, dark) in [
+            (ThemeId::Houston, true),
+            (ThemeId::RosePineDawn, false),
+            (ThemeId::AyuLight, false),
+            (ThemeId::Houston, true),
+        ] {
+            window.update(|window, cx| set(id, window, cx));
+            window.update(|_, cx| {
+                let theme = Theme::global(cx);
+                assert_eq!(theme.theme_name().as_ref(), id.theme_name());
+                assert_eq!(theme.is_dark(), dark, "{}", id.theme_name());
+            });
+        }
+        assert_motion_within_180_ms(cx);
+    }
+
+    #[gpui::test]
+    fn a_reload_keeps_a_light_theme_in_force(cx: &mut TestAppContext) {
+        load_themes(cx);
+        set_in_new_window(ThemeId::RosePineDawn, cx);
+        // An unwatched copy, as in the reload test above: the same reload and re-apply of the theme in force.
+        let copy = copy_of_themes("light-reload");
+        cx.update(|cx| ThemeRegistry::watch_dir(copy, cx, |_| {}).expect("reload the copy"));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let theme = Theme::global(cx);
+            assert_eq!(
+                theme.theme_name().as_ref(),
+                ThemeId::RosePineDawn.theme_name()
+            );
+            assert!(!theme.is_dark());
         });
     }
 

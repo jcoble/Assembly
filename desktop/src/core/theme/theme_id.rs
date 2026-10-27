@@ -12,6 +12,8 @@ pub enum ThemeId {
     Graphite,
     Amy,
     Cobalt,
+    RosePineDawn,
+    AyuLight,
 }
 
 #[cfg_attr(
@@ -26,7 +28,7 @@ impl ThemeId {
     pub const DEFAULT: ThemeId = ThemeId::Assembly;
 
     /// Every theme, in the order a chooser lists them.
-    pub const ALL: [ThemeId; 8] = [
+    pub const ALL: [ThemeId; 10] = [
         ThemeId::Assembly,
         ThemeId::AssemblyGlass,
         ThemeId::Houston,
@@ -35,6 +37,8 @@ impl ThemeId {
         ThemeId::Graphite,
         ThemeId::Amy,
         ThemeId::Cobalt,
+        ThemeId::RosePineDawn,
+        ThemeId::AyuLight,
     ];
 
     /// The theme a saved id means: an unknown id (such as the old "dark") gives `DEFAULT`.
@@ -56,6 +60,8 @@ impl ThemeId {
             ThemeId::Graphite => "graphite",
             ThemeId::Amy => "amy",
             ThemeId::Cobalt => "cobalt",
+            ThemeId::RosePineDawn => "rose-pine-dawn",
+            ThemeId::AyuLight => "ayu-light",
         }
     }
 
@@ -70,6 +76,8 @@ impl ThemeId {
             ThemeId::Graphite => "Graphite",
             ThemeId::Amy => "Amy",
             ThemeId::Cobalt => "Cobalt",
+            ThemeId::RosePineDawn => "Rosé Pine Dawn",
+            ThemeId::AyuLight => "Ayu Light",
         }
     }
 
@@ -133,8 +141,14 @@ mod tests {
             assert_eq!(theme.name.as_ref(), id.theme_name(), "{}", path.display());
             // A file marked default is skipped when the kit reloads the folder (registry.rs:274-287).
             assert!(!theme.is_default, "{} says is_default", path.display());
-            // Every theme is dark, so picking one never switches mode.
-            assert_eq!(theme.mode, ThemeMode::Dark, "{}", path.display());
+            // The mode follows the theme: the light ones are the full light themes.
+            let light = matches!(id, ThemeId::RosePineDawn | ThemeId::AyuLight);
+            let mode = if light {
+                ThemeMode::Light
+            } else {
+                ThemeMode::Dark
+            };
+            assert_eq!(theme.mode, mode, "{}", path.display());
             assert!(
                 names.insert(id.theme_name()),
                 "two ids share the name {}",

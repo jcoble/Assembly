@@ -2,7 +2,8 @@
 
 Each file here is one gpui-kit theme (gpui-component 0.8.1's `ThemeSet` with one theme in it). The setting is one
 theme id, the file's stem; `src/core/theme/theme_id.rs` lists the ids, and an id that isn't one of them gives
-`assembly`. There is no light/dark toggle: every theme is `mode: dark`, so picking one never switches mode.
+`assembly`. There is no light/dark toggle: the mode follows the theme picked (`mode` in its file), so the light themes
+put the window in light mode and the rest in dark.
 
 The kit watches this folder and re-reads a changed file, then re-applies the theme in force. That works only while
 no file says `is_default: true` (the kit skips a reloaded default theme, registry.rs:274-287), so every file says
@@ -19,6 +20,8 @@ false.
 | tokyo-night | tokyo-night.json | Tokyo Night | themeRegistry.ts TOKYO_NIGHT |
 | graphite | graphite.json | Graphite | themeRegistry.ts GRAPHITE |
 | amy, cobalt | `<id>.json` | Amy, Cobalt | themeRegistry.ts THEMEMIRROR_THEMES: the Assembly shell with thememirror 2.0.1's editor and syntax colours |
+| rose-pine-dawn | rose-pine-dawn.json | Rosé Pine Dawn | New, a full light theme: @rose-pine/palette 4.0.1 `dawn`, with thememirror 2.0.1's syntax |
+| ayu-light | ayu-light.json | Ayu Light | New, a full light theme: ayu 9.1.0 `light`, with thememirror 2.0.1's syntax |
 
 Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable blur.
 
@@ -120,11 +123,43 @@ brought its own editor background, and without it their code reads at about 2-3:
 theme's comment colour and the Markdown keys take its foreground, keyword and string, so they read on its own editor.
 
 The old app's other three entries, Ayu Light, Rose Pine Dawn and Tomorrow, were light editors in the dark shell and
-aren't ported (Jesse, 2026-10-27). Kit 0.8.1's code editor draws text and the current line's number in the app-wide
-`foreground` and other line numbers in `muted.foreground`, and never reads `highlight.editor.foreground` or the
-line-number keys (gpui-component input/input.rs:540-541, gpui-base input/base/element.rs:3117, 3125), so on a white
-editor in a dark shell its text is light gray on white. (The `editor.foreground` and line-number keys in the files
-here are unread for the same reason; on their dark editors the app-wide colours read fine.)
+aren't ported that way (Jesse, 2026-10-27); Ayu Light and Rosé Pine Dawn come back as full light themes, below. Kit
+0.8.1's code editor draws text and the current line's number in the app-wide `foreground` and other line numbers in
+`muted.foreground`, and never reads `highlight.editor.foreground` or the line-number keys (gpui-component
+input/input.rs:540-541, gpui-base input/base/element.rs:3117, 3125), so on a white editor in a dark shell its text is
+light gray on white. (The `editor.foreground` and line-number keys in the files here are unread for the same reason; on
+their dark editors the app-wide colours read fine.)
+
+## The light themes (Rosé Pine Dawn, Ayu Light)
+
+Jesse, 2026-10-27: "we do need some light themes". Each is a whole light window, not a light editor in the dark
+shell, so the kit's code editor, which draws text in the app-wide `foreground`, reads (see above). Every kit key takes
+its role from the table above, and each role takes the upstream palette's colour:
+
+| Role | Rosé Pine Dawn | Ayu Light |
+| --- | --- | --- |
+| surface (also the editor) | base | editor.bg (surface.lift) |
+| rail | surface | ui.bg (surface.base) |
+| field | overlay | ui.selection.normal |
+| raised | surface | ui.popup.bg (surface.over) |
+| chip | overlay | surface.sunk |
+| selected | highlightMed alpha (the kit caps `list.active.background` at 20%, so an opaque pick draws fainter than hover) | ui.selection.active |
+| selected-strong | highlightHigh | ui.line at 0x33 (no upstream colour) |
+| line, line-soft | highlightMed, highlightLow | ui.line, editor.line |
+| ink, ink-body, primary | text | editor.fg |
+| ink-2, ink-muted, ink-tab | subtle | ui.fg |
+| ink-faint | muted | editor.lineNumber.active |
+| on-primary | base | surface.over |
+| accent, focus-line (at 0x59) | pine | common.accent.tint |
+| red, mint, amber, blue, lavender, aqua | love, pine, gold, foam, iris, rose (Rosé Pine's terminal colours) | common.error, vcs.added, yellow l4, blue l2, purple l2, teal l3 |
+
+Not by role: `selection.background` is the accent at 0x4c for Rosé Pine and editor.selection.active for Ayu;
+`scrollbar.thumb.*` is the ink at 0x24 and 0x3d; `overlay` is black at 0x33. Ayu's accent is a fill colour (upstream
+gives it its own `on` colour) and reads at 2.2:1 as text, so Ayu's `link` and `link.active` take its blue l1.
+The syntax colours are thememirror 2.0.1's, as the old app showed them (the Rosé Pine Dawn and Ayu Light columns of
+the old values table), and the editor's active line and line numbers come from the palette (highlightLow and muted;
+editor.line and editor.lineNumber.normal). Upstream's own contrast stays as it is: Ayu Light's syntax colours read at
+about 2:1, and both themes' warning fill takes light text at about 2:1.
 
 ## Glass (assembly-glass.json)
 
