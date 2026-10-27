@@ -74,16 +74,21 @@ public sealed partial class ChatSocketTests
     public async Task A_socket_that_closes_still_runs_the_sends_it_queued()
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        var local = _sessions.Create("claude", "repo");
         _box.Hold();
+        _here.Hold();
         var socket = await OpenAsync();
 
-        await CallAsync(socket, 1, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"one"}""");
+        // A read is cancelled by its socket closing, and a closing socket cancels in the reverse order the calls came,
+        // so once this one, sent first, is cancelled, the backend has seen the close and would have cancelled the sends.
+        await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{local.SessionId}}","item":"t1"}""");
+        await _here.Reached.Task.WaitAsync(Wait);
+        await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"one"}""");
         await _box.Reached.Task.WaitAsync(Wait);
-        await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"two"}""");
-        await CallAsync(socket, 3, "preferences", "set", Save);
-        await ReadAnswersAsync(socket, 1);
+        await CallAsync(socket, 3, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"two"}""");
         socket.Abort();
         socket.Dispose();
+        await _here.Cancelled.Task.WaitAsync(Wait);
         _box.Release();
 
         Assert.True(SpinWait.SpinUntil(() => { lock (_box.Asked) return _box.Asked.Count == 2; }, Wait));
