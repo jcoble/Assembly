@@ -145,6 +145,9 @@ public sealed class LiveHub : IDisposable
 
     private void Push(string sessionId, IReadOnlyList<StoredRow> rows)
     {
+        // Only a row that changes the session's summary sends its list item again, never one per row.
+        if (_summaries?.Apply(sessionId, rows) == true)
+            _summaryChanged(sessionId);
         // Deltas are the hottest path: a session nobody watches on rows isn't serialized.
         if (_topics is not null && _topics.HasSubscribers(RowsFeature.Topic, sessionId))
             foreach (var row in rows)

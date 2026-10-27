@@ -54,7 +54,15 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             }
             catch when (failed is not null)
             {
-                failed((TArgs)value, call);
+                // Its own failure is logged, so the answer stays the call's.
+                try
+                {
+                    failed((TArgs)value, call);
+                }
+                catch (Exception error)
+                {
+                    log.LogError(error, "{Call}'s failed callback threw", name);
+                }
                 throw;
             }
         }, order is null ? null : value => order((TArgs)value)));

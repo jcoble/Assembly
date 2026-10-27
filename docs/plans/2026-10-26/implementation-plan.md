@@ -1445,10 +1445,19 @@ catalogue stays the reference.
     with `activeRunId` and the machine's watch; `rows/tool`, its output and diff cut at `RowsFeature.ToolCap` bytes
     each with `truncated` and their full sizes; `config/get`, `config/set`, `machines/list` and `machines/agents`. A
     machine that's down answers `unreachable` with its name. Attachments (D4) are their own PR next.
-  - **The sessions topic's item is only the stored columns for now** (`SessionItem`: agent, repo, title, machine,
+  - **The sessions topic's item was only the stored columns until step 1c** (`SessionItem`: agent, repo, title, machine,
     parent, ACP session, last activity). The summary fields above (state, active run, pending ask, needs attention,
     background work, online, unread) come in step 1c, after D4 and before the cut. They publish only when one of them
     changes, never once per row.
+  - **Status (2026-10-27), step 1c: built, backend only.** Each sessions item carries `state`, `activeRunId`,
+    `pendingAsk`, `background`, `needsAttention` and `unread` (`SessionItem.cs`), from `SessionSummaries`
+    (`Rows/SessionSummaries.cs`): filled at the start from one grouped query (`RowStore.SummaryRows` and `TurnEnds`,
+    about 21 ms on the 40k copy) before run recovery, then changed by the hub's `Push` under its lock, which swaps in a
+    new immutable snapshot that readers take with no lock. Only a change to a summary sends the item again, through
+    the writer like every other item change (`SessionStore.PublishSummary`), so a thousand-row turn sends two.
+    `read_seq` is added and backfilled to each session's last row in one write; `sessions/read {session, seq}` is an
+    unkeyed write that ignores a seq at or below it. A write's `failed` callback that throws is logged and the call
+    keeps its own error.
   - **Step 1c shape (proposal, 2026-10-27; no code yet).** Every field comes from rows the desktop already stores,
     so none needs a machine call. In the old app the same fields were worked out in the window from streamed events
     (`ownedSessions.ts:18-46`, `WorktreeAgentRow.svelte:109-125`); here they move to the backend.
