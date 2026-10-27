@@ -45,6 +45,8 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
 - timers (`Timer`, `.timer(`, `::timer(`), frame waits (`on_next_frame`, `request_animation_frame`) and other waits
   on time (`recv_timeout`, `park_timeout`, `with_timeout`, `block_with_timeout`) outside `src/core/clock/`;
 - `tungstenite`, `TcpStream`, `TcpListener`, `UdpSocket` or an HTTP client outside `src/core/socket/`;
+- a native view API (`gpui_webview`, Ghostty, `NSView`, `WKWebView`, `objc`, `cocoa`, `raw_window_handle`) outside
+  `src/core/native_views/`, the one module that shows, hides and places the terminal and browser views;
 - sleeping (`std::thread::sleep`, or `sleep` imported or called any other way) anywhere;
 - file reads (`std::fs` in any form, `File::`) in a file that draws: one that implements `Render` or `RenderOnce` or
   has a `fn render`.

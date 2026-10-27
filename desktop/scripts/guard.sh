@@ -15,6 +15,9 @@ e='([^[:alnum:]_]|$)'
 timers="${b}Timer${e}|(\.|::)timer[[:space:]]*\(|${b}(request_animation_frame|on_next_frame|recv_timeout|park_timeout|with_timeout|block_with_timeout)${e}"
 # Sockets and HTTP: only the socket client, desktop/src/core/socket/, may.
 sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_client|HttpClient)${e}|${b}hyper::"
+# Native views (the terminal's Ghostty view, the browser's WKWebView, any NSView): only desktop/src/core/native_views/
+# may, so one module shows, hides and places them all.
+natives="${b}(gpui_webview|ghostty|libghostty|NSView|WKWebView|objc|objc2|cocoa|raw_window_handle)${e}|${b}(ghostty|objc2)_[[:alnum:]_]+"
 # Sleeping, anywhere.
 sleeps="${b}sleep${e}"
 # A file that draws (implements Render or RenderOnce, or has a render function), and file reads in one.
@@ -32,6 +35,7 @@ hits() {
   {
     [[ $path == desktop/src/core/clock/* ]] || match "$file" "$timers" "timers and frame waits only in core/clock/"
     [[ $path == desktop/src/core/socket/* ]] || match "$file" "$sockets" "sockets and HTTP only in core/socket/"
+    [[ $path == desktop/src/core/native_views/* ]] || match "$file" "$natives" "native views only in core/native_views/"
     match "$file" "$sleeps" "no sleeping"
     [ -z "$(match "$file" "$draws" .)" ] || match "$file" "$files" "no file reads in a file that draws"
   } | sed "s|^|$path:|"
@@ -70,6 +74,12 @@ catch|desktop/src/features/x/a.rs|use hyper::Client;
 pass|desktop/src/core/socket/a.rs|let (socket, _) = tungstenite::client(request, stream)?;
 pass|desktop/src/core/socket/a.rs|let stream = std::net::TcpStream::connect(addr)?;
 pass|desktop/src/features/x/a.rs|let link = hyperlink(text);
+catch|desktop/src/features/browser/a.rs|use gpui_webview::WebView;
+catch|desktop/src/features/terminal/a.rs|let surface = ghostty_sys::surface_new(app);
+catch|desktop/src/features/x/a.rs|let view: id = msg_send![class!(NSView), alloc];
+catch|desktop/src/core/x/a.rs|use raw_window_handle::HasWindowHandle;
+pass|desktop/src/core/native_views/a.rs|use gpui_webview::WebView;
+pass|desktop/src/features/terminal/a.rs|NativeViews::set_front(id, true, window, cx);
 catch|desktop/src/core/clock/a.rs|std::thread::sleep(Duration::from_secs(1));
 catch|desktop/src/core/socket/a.rs|use std::thread::sleep;
 catch|desktop/src/features/x/a.rs|sleep(RECONNECT_AFTER);

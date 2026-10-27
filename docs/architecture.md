@@ -12,7 +12,8 @@ here updates this file in the same commit. Every other commit says `Architecture
 - `app/`: the page (SvelteKit). Code is one folder per feature, `app/src/lib/<feature>/`. Only `app/src/lib/host/`
   talks to Tauri or adds window, document or media-query listeners.
 - `desktop/`: the window in Rust on GPUI Kit, which replaces `shell/` and `app/` in G0 of the GPUI switch plan. A
-  small `src/core/` (the one socket client in `core/socket/`, the one clock in `core/clock/`) and one folder per
+  small `src/core/` (the one socket client in `core/socket/`, the one clock in `core/clock/`, the one owner of
+  native views in `core/native_views/`, the backend launcher in `core/backend/`) and one folder per
   feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that.
 - `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
 
