@@ -26,7 +26,7 @@ internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machin
     private Task ListAsync(HttpContext context)
     {
         var limit = (int)Math.Clamp(RequestValues.QueryLong(context, "limit") ?? 50, 1, 200);
-        var page = sessionStore.List(RequestValues.QueryLong(context, "before"), limit);
+        var page = sessionStore.List(RequestValues.QueryLong(context, "before"), limit, context.RequestAborted);
         return JsonReply.WriteAsync(context, StatusCodes.Status200OK, json =>
         {
             json.WriteStartObject();

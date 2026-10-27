@@ -214,11 +214,11 @@ public sealed class SessionStore
         Query($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ("$id", sessionId)).FirstOrDefault();
 
     /// <summary>The <paramref name="limit"/> most recently used sessions below <paramref name="before"/>; subagents' sessions are opened from their parent.</summary>
-    public SessionPage List(long? before, int limit)
+    public SessionPage List(long? before, int limit, CancellationToken cancel = default)
     {
-        var sessions = Query(
+        var sessions = _db.Query(
             $"SELECT {Columns} FROM session_info WHERE updated_at < $before AND parent_session_id IS NULL ORDER BY updated_at DESC LIMIT $limit;",
-            ("$before", before ?? long.MaxValue), ("$limit", limit));
+            ReadSession, cancel, Args([("$before", before ?? long.MaxValue), ("$limit", limit)]));
         return new SessionPage(sessions, sessions.Count == limit ? sessions[^1].UpdatedAt : null);
     }
 

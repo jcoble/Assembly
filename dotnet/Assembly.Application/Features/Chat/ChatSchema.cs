@@ -55,29 +55,37 @@ internal static class Schema
         """;
 
     /// <summary>
-    /// One page, in one statement. <c>shown</c> is each item's newest row of each kind, leaving out a message's
-    /// deltas once it has its final row; <c>first_seq</c> is where the item sits. <c>picked</c> is the newest
-    /// <c>$limit + 1</c> items below <c>$before</c>. For a delta, column 8 is all its item's delta text, so the
-    /// page can draw a message that's still streaming. Column 9 is how many items were picked.
+    /// One page, in one statement, reading only the page's own items. <c>picked</c> is the newest <c>$limit + 1</c>
+    /// items below <c>$before</c>: walking the session back from <c>$before</c>, each item's first row (or a row with
+    /// no item, which is its own). <c>shown</c> is each picked item's newest row of each kind, leaving out a message's
+    /// deltas once it has its final row; <c>first_seq</c> is where the item sits. <c>CROSS JOIN</c> keeps
+    /// <c>picked</c> outside, so SQLite reads its items rather than the whole session. For a delta, column 8 is all
+    /// its item's delta text, so the page can draw a message that's still streaming. Column 9 is how many items were
+    /// picked.
     /// </summary>
     public const string PageBefore = """
-        WITH shown AS MATERIALIZED (
-          SELECT r.session_id, r.seq, r.run_id, r.item_id, r.kind, r.payload, r.created_at,
-            COALESCE((SELECT MIN(f.seq) FROM rows f INDEXED BY rows_item
-                      WHERE f.session_id = r.session_id AND f.item_id = r.item_id), r.seq) AS first_seq
-          FROM rows r
-          WHERE r.session_id = $session
-            AND NOT (r.kind = 'delta' AND EXISTS (SELECT 1 FROM rows m WHERE m.session_id = r.session_id
+        WITH picked AS (
+          SELECT r.seq AS first_seq, r.item_id FROM rows r
+          WHERE r.session_id = $session AND r.seq < $before
+            AND (r.item_id IS NULL OR NOT EXISTS (SELECT 1 FROM rows f INDEXED BY rows_item
+                 WHERE f.session_id = r.session_id AND f.item_id = r.item_id AND f.seq < r.seq))
+          ORDER BY r.seq DESC LIMIT $limit + 1),
+        shown AS (
+          SELECT r.session_id, r.seq, r.run_id, r.item_id, r.kind, r.payload, r.created_at, p.first_seq
+          FROM picked p CROSS JOIN rows r ON r.session_id = $session AND r.item_id = p.item_id
+          WHERE NOT (r.kind = 'delta' AND EXISTS (SELECT 1 FROM rows m WHERE m.session_id = r.session_id
                      AND m.item_id = r.item_id AND m.kind = 'message'))
             AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id
-                            AND l.kind = r.kind AND l.seq > r.seq)),
-        picked AS (SELECT DISTINCT first_seq FROM shown WHERE first_seq < $before ORDER BY first_seq DESC LIMIT $limit + 1)
+                            AND l.kind = r.kind AND l.seq > r.seq)
+          UNION ALL
+          SELECT r.session_id, r.seq, r.run_id, r.item_id, r.kind, r.payload, r.created_at, p.first_seq
+          FROM picked p CROSS JOIN rows r ON r.session_id = $session AND r.seq = p.first_seq
+          WHERE p.item_id IS NULL)
         SELECT p.session_id, p.seq, p.run_id, p.item_id, p.kind, p.payload, p.created_at, p.first_seq,
           CASE WHEN p.kind = 'delta' THEN (SELECT group_concat(json_extract(d.payload, '$.text'), '' ORDER BY d.seq)
                                            FROM rows d WHERE d.session_id = p.session_id AND d.item_id = p.item_id AND d.kind = 'delta') END,
           (SELECT COUNT(*) FROM picked)
         FROM shown p
-        WHERE p.first_seq IN picked
         ORDER BY p.first_seq, p.seq;
         """;
 }
