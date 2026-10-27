@@ -1,6 +1,6 @@
 //! `ToolRow` draws a tool call: its mark (running, done or failed), title, summary and line counts, and, opened, its
 //! command, output tail and diff from `rows/tool`. The detail is read when it opens and again only when the call's
-//! state changes (an edit's diff once the edit finishes). A long diff shows its first lines until shown in full.
+//! state changes (an edit's diff once the edit finishes). A long diff shows its first lines until shown in full. Opening and closing ease, as folds do.
 //! Replaces chat/Tool.svelte and chat/tools/tool.ts.
 
 use gpui_kit::*;

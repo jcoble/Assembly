@@ -1,5 +1,5 @@
 //! `TurnFoldRow` is a finished turn's heading: "Worked for 42s · Edited 2 files, ran 3 commands", opening and closing
-//! the work it folds. A stopped turn ends with "Stopped", once. Replaces chat/TurnFold.svelte.
+//! the work it folds, with its chevron and the work easing open and shut. A stopped turn ends with "Stopped", once. Replaces chat/TurnFold.svelte.
 
 use gpui_kit::*;
 

@@ -1,6 +1,7 @@
 //! `ItemRow` draws one entry of the timeline by its kind: a prompt, a reply with its meta line, thinking, a tool, an
 //! ask, a task, a subagent, a fold's heading, a note, an error notice, or a kind it doesn't know by
-//! name. An empty item draws nothing, so no blank rows. Replaces TimelineItem.svelte and the spike's item_view.rs.
+//! name. An empty item draws nothing, so no blank rows.
+//! A row new since the view opened fades in once, on the theme's shared timing (`cx.theme().motion`). Replaces TimelineItem.svelte and the spike's item_view.rs.
 
 use gpui_kit::*;
 

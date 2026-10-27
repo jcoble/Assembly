@@ -1,5 +1,5 @@
 //! `PlanCard` draws the agent's newest plan above the composer: each step with its status, the one in progress
-//! marked. Replaces chat/tools/Plan.svelte.
+//! marked; a step's checkmark appears as it completes. Replaces chat/tools/Plan.svelte.
 
 use gpui_kit::*;
 

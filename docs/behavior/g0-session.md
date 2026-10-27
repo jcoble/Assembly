@@ -35,3 +35,4 @@ g0-session#30 The sessions column lists every session, newest first, and loads m
 g0-session#31 A new session is started from the sessions column by picking its agent, machine and folder, and opens ready for its first message.
 g0-session#32 The composer draws no spellcheck underlines.
 g0-session#33 Dragging in the space beside the messages doesn't select the text above it.
+g0-session#34 Small animations wherever they help: a new row fades in; a fold, tool call or thinking eases open and shut with its chevron turning; a plan step's checkmark appears; Send turns into Stop while a turn runs; an upload's chip shows its progress. Each is short, ends by itself, never delays what a click does, and becomes a plain fade with Reduce Motion on.

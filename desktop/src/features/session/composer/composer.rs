@@ -1,8 +1,8 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line), the attached images, the
 //! agent's config (`config/get`, read again when a turn ends) and the "/" menu's state. Send is `send/send` with the
 //! draft, its "Attached image:" lines and a client id made here, which the session's user row echoes: until it does,
-//! the timeline shows the prompt as pending. While a turn runs, a send steers it and Stop (`send/stop`) shows beside
-//! it. Dropped or pasted images attach; any other dropped file
+//! the timeline shows the prompt as pending. While a turn runs, a send steers it and Send turns into Stop
+//! (`send/stop`). Dropped or pasted images attach; any other dropped file
 //! goes into the draft as its path. The draft lives here while the window runs. It draws, so it never reads a file: `Upload` does. Replaces Composer.svelte.
 
 use std::rc::Rc;
