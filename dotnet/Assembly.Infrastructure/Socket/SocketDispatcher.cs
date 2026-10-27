@@ -29,6 +29,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private readonly Dictionary<string, Call> _calls = [];
     // Each topic, by name.
     private readonly Dictionary<string, TopicFrames> _topics = [];
+    private readonly List<Action<string>> _closedHooks = [];
 
     public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<TResult>> handler) =>
@@ -149,8 +150,22 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
 
     internal void Unsubscribe(TopicSet.Subscription subscription) => topics.Unsubscribe(subscription);
 
-    public void Closed(Action<string> connection)
+    public void Closed(Action<string> connection) => _closedHooks.Add(connection);
+
+    /// <summary>Runs every <see cref="Closed"/> hook for a socket that closed, once its writes have all run.</summary>
+    internal void ConnectionClosed(string connection)
     {
+        foreach (var hook in _closedHooks)
+        {
+            try
+            {
+                hook(connection);
+            }
+            catch (Exception error)
+            {
+                log.LogError(error, "a close hook failed on {Connection}", connection);
+            }
+        }
     }
 
     /// <summary>Runs one <c>call</c> frame to its answer. <paramref name="cancelled"/> is its <c>cancel</c>.</summary>
