@@ -13,7 +13,7 @@
       "radius.lg": 8,
       "shadow": false,
       "colors": {
-        "background": "#18181b8c",
+        "background": "#18181bb8",
         "foreground": "#d4d4dc",
         "border": "#ececf01f",
         "accent.background": "#1f1f24",
@@ -75,7 +75,7 @@
         "tab.foreground": "#e4e4eab2",
         "tab.active.background": "#26262b",
         "tab.active.foreground": "#e4e4ea",
-        "tab_bar.background": "#00000000",
+        "tab_bar.background": "#18181b8c",
         "tab_bar.segmented.background": "#1f1f24",
         "table.background": "#18181b",
         "table.head.foreground": "#9b9ba6",
