@@ -24,6 +24,8 @@ let current: WebSocket | undefined;
 let lastId = 0;
 const pending = new Map<number, Pending>();
 const running = new Map<string, number>();
+// Calls still waiting for the socket to open, so a newer call for the same key can stop the wait.
+const waiting = new Map<number, AbortController>();
 
 // The open socket, opening it (and once more if that fails) when there's none.
 function connect(): Promise<WebSocket> {
@@ -94,14 +96,19 @@ export async function call<T>(feature: string, method: string, args: Record<stri
   }
   const id = key ? running.get(key)! : ++lastId;
   const abort = () => mine.abort();
+  if (signal?.aborted) abort();
   signal?.addEventListener('abort', abort, { once: true });
   try {
     let socket: WebSocket;
+    waiting.set(id, mine);
     try {
-      socket = await connect();
+      socket = await unlessAborted(connect(), mine.signal);
     } catch (e) {
+      if (mine.signal.aborted) return { ok: false, why: 'aborted' };
       report(`${name} failed: ${e instanceof Error ? e.message : e}`);
       return { ok: false, why: 'failed' };
+    } finally {
+      waiting.delete(id);
     }
     if (mine.signal.aborted || signal?.aborted || (key && running.get(key) !== id)) return { ok: false, why: 'aborted' };
     const outcome = new Promise<Outcome<unknown>>((settle) => pending.set(id, { name, settle }));
@@ -114,6 +121,16 @@ export async function call<T>(feature: string, method: string, args: Record<stri
   }
 }
 
+// The socket, unless the call is aborted first: then the call stops waiting at once, and the socket still opens for
+// the other calls waiting on it.
+function unlessAborted(socket: Promise<WebSocket>, signal: AbortSignal): Promise<WebSocket> {
+  return new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    if (signal.aborted) reject(signal.reason);
+    socket.then(resolve, reject);
+  });
+}
+
 // Tells the backend to stop a call. The call still settles on the backend's answer: `cancelled`, or its result if it
 // had already finished, so a write that committed is never taken for a lost one.
 function cancel(id: number) {
@@ -121,10 +138,10 @@ function cancel(id: number) {
 }
 
 // A newer call took this one's key: tell the backend, and answer 'aborted' now, so a stale result can't land after
-// the newer one. Keys are for loads.
+// the newer one. A call still waiting for the socket stops waiting and is never sent. Keys are for loads.
 function supersede(id: number) {
   const call = pending.get(id);
-  if (!call) return;
+  if (!call) return waiting.get(id)?.abort();
   cancel(id);
   pending.delete(id);
   call.settle({ ok: false, why: 'aborted' });
