@@ -22,6 +22,10 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
     private readonly Channel<SessionNotification> _updates =
         Channel.CreateUnbounded<SessionNotification>(new UnboundedChannelOptions { SingleWriter = true });
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningTurns = new();
+    // Each native child session the agent announced (subagent_update): the session it asks under and, while it's at
+    // work, what settles its asks. It going idle, its parent's turn being cancelled, or its parent's session closing do.
+    private readonly Dictionary<string, (string Parent, CancellationTokenSource? Working)> _children = [];
+    private readonly Lock _childrenGate = new();
     private readonly JsonRpcConnection _rpc;
 
     public AcpClient(Stream fromAgent, Stream toAgent, IPermissionPolicy permissions, TranscriptLog transcript)
@@ -36,10 +40,14 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
     /// </summary>
     public void SetSessionPolicy(string sessionId, IPermissionPolicy? policy)
     {
-        if (policy is null)
-            _sessionPolicies.TryRemove(sessionId, out _);
-        else
+        if (policy is not null)
+        {
             _sessionPolicies[sessionId] = policy;
+            return;
+        }
+
+        _sessionPolicies.TryRemove(sessionId, out _);
+        StopChildren(sessionId, forget: true);
     }
 
     /// <summary>Every <c>session/update</c>, in arrival order. Completes when the agent's output closes.</summary>
@@ -162,6 +170,7 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
                 // The turn ended while we were cancelling it.
             }
         }
+        StopChildren(sessionId, forget: false);
 
         var notification = JsonSerializer.SerializeToElement(
             new CancelNotification(sessionId), AcpJsonContext.Default.CancelNotification);
@@ -191,16 +200,30 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
         }
     }
 
-    // Only a running turn's session is asked; a cancel of the turn, or the agent going, settles the ask as cancelled.
+    // Only a running turn's session is asked, or a child at work, under its parent's session; a cancel of the turn, the
+    // child's work ending, or the agent going settles the ask as cancelled.
     private async Task<T> AskAsync<T>(string sessionId, T cancelled, Func<IPermissionPolicy, CancellationToken, Task<T>> ask, CancellationToken connectionClosing)
     {
-        if (!_runningTurns.TryGetValue(sessionId, out var turn))
-            return cancelled;
-
         try
         {
-            using var either = CancellationTokenSource.CreateLinkedTokenSource(connectionClosing, turn.Token);
-            return await ask(_sessionPolicies.GetValueOrDefault(sessionId) ?? _permissions, either.Token);
+            var asking = sessionId;
+            CancellationToken ends;
+            lock (_childrenGate)
+            {
+                if (_children.TryGetValue(sessionId, out var child))
+                {
+                    if (child.Working is null)
+                        return cancelled;
+                    (asking, ends) = (child.Parent, child.Working.Token);
+                }
+                else if (_runningTurns.TryGetValue(sessionId, out var turn))
+                    ends = turn.Token;
+                else
+                    return cancelled;
+            }
+
+            using var either = CancellationTokenSource.CreateLinkedTokenSource(connectionClosing, ends);
+            return await ask(_sessionPolicies.GetValueOrDefault(asking) ?? _permissions, either.Token);
         }
         catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
         {
@@ -212,11 +235,62 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
     {
         if (method != AcpMethods.SessionUpdate)
             return;
-        if (parameters.Deserialize(AcpJsonContext.Default.SessionNotification) is { } update)
-            _updates.Writer.TryWrite(update);
+        if (parameters.Deserialize(AcpJsonContext.Default.SessionNotification) is not { } update)
+            return;
+        // Read here, in the agent's order, so a child's ask that follows its announcement always finds its parent.
+        if (update.Kind == "subagent_update")
+            Announced(update);
+        _updates.Writer.TryWrite(update);
     }
 
-    void IJsonRpcTarget.OnClosed(Exception reason) => _updates.Writer.TryComplete();
+    private void Announced(SessionNotification update)
+    {
+        if (!update.Update.TryGetProperty("sessionId", out var id) || id.GetString() is not { Length: > 0 } childId || childId == update.SessionId)
+            return;
+        // An update that names no state (a new title, say) leaves a child as it was; a new child is at work.
+        var state = update.Update.TryGetProperty("state", out var work) && work.ValueKind == JsonValueKind.Object
+                    && work.TryGetProperty("state", out var named) ? named.GetString() : null;
+        CancellationTokenSource? ended = null;
+        lock (_childrenGate)
+        {
+            var parent = _children.TryGetValue(update.SessionId, out var grandparent) ? grandparent.Parent : update.SessionId;
+            if (_children.TryGetValue(childId, out var known) && state is null)
+                return;
+            if (state == "idle")
+                (ended, _children[childId]) = (known.Working, (parent, null));
+            else
+                _children[childId] = (parent, known.Working ?? new CancellationTokenSource());
+        }
+        ended?.Cancel();
+    }
+
+    // Settles the open asks of the children under sessionId, or of the child sessionId itself, or of every child when
+    // it's null; a closed session's children go.
+    private void StopChildren(string? sessionId, bool forget)
+    {
+        List<CancellationTokenSource> ended = [];
+        lock (_childrenGate)
+        {
+            foreach (var (childId, child) in _children.Where(pair => sessionId is null || pair.Value.Parent == sessionId || pair.Key == sessionId).ToList())
+            {
+                if (child.Working is not null)
+                    ended.Add(child.Working);
+                if (forget)
+                    _children.Remove(childId);
+                else
+                    _children[childId] = (child.Parent, null);
+            }
+        }
+        foreach (var working in ended)
+            working.Cancel();
+    }
+
+    void IJsonRpcTarget.OnClosed(Exception reason)
+    {
+        _updates.Writer.TryComplete();
+        // No turn ends to settle a child's ask after its parent's turn: the agent going does it here.
+        StopChildren(null, forget: true);
+    }
 
     private async Task<TResponse> RequestAsync<TRequest, TResponse>(
         string method,

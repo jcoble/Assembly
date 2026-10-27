@@ -21,7 +21,8 @@
 //!   of their own, so they aren't hit. In its own group the backend doesn't get the terminal's Ctrl-C; it goes when
 //!   its stdin closes.
 //!
-//! - The child's stdin is a pipe held until it exits, so it sees end of file if the window dies without quitting.
+//! - The child's stdin is a pipe held until it exits, and it runs with `--exit-on-stdin-close`, so a window that dies
+//!   without quitting (a crash, a force quit) still stops it, which frees its home folder's lock and its port.
 //! - Dropping the launcher stops the child the same way, so nothing outlives the window.
 //!
 //! A home with no `agents.json` gets an empty one, so a window launched straight on a fresh home still starts its
@@ -217,17 +218,22 @@ fn run(
     // The backend won't start without its agents file. shell/assembly.sh writes the real one (agents-file.sh, which
     // needs node and pnpm); a window launched on a fresh home gets an empty list, so its backend starts with no agents.
     let agents = config.home.join("agents.json");
-    if !agents.exists() {
-        match std::fs::write(&agents, "[]\n") {
-            Ok(()) => {
-                _ = writeln!(
-                    log,
-                    "{} was missing, so the backend starts with no agents; dotnet/scripts/agents-file.sh writes the real one",
-                    agents.display()
-                )
-            }
-            Err(error) => _ = writeln!(log, "{}: {error}", agents.display()),
+    // create_new leaves a file that's there (or appears meanwhile) as it is.
+    let created = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&agents)
+        .and_then(|mut file| file.write_all(b"[]\n"));
+    match created {
+        Ok(()) => {
+            _ = writeln!(
+                log,
+                "{} was missing, so the backend starts with no agents; dotnet/scripts/agents-file.sh writes the real one",
+                agents.display()
+            )
         }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => _ = writeln!(log, "{}: {error}", agents.display()),
     }
     let mut quick_exits = 0;
     while !quitting.load(Ordering::SeqCst) {
@@ -276,7 +282,8 @@ fn run_child(
         .arg("--home")
         .arg(&config.home)
         .arg("--token-file")
-        .arg(&config.token_file);
+        .arg(&config.token_file)
+        .arg("--exit-on-stdin-close");
     if let Some(remote) = &config.remote {
         command
             .arg("--remote")

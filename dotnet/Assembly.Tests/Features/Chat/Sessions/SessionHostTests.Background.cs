@@ -311,6 +311,30 @@ public sealed partial class SessionHostTests
         Assert.Equal("cancelled", _store.RowsAfter(child.SessionId, 0).Last(row => row.Kind == "turn").Payload.GetProperty("state").GetString());
     }
 
+    [Fact]
+    public async Task A_subagent_s_permission_is_a_card_in_its_parent_s_session_even_after_the_parent_s_turn_ended()
+    {
+        _host.Send("count the lines in the background");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.UpdateAsync(ChildAnnounced);
+        await agent.UpdateAsync(ChildPrompt, "child1");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await Until(() => _log.ToString().Contains("kept open"));
+
+        await agent.RequestAsync(7, "session/request_permission",
+            """{"sessionId":"child1","toolCall":{"toolCallId":"t9","title":"wc -l notes.txt"},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]}""");
+        var card = await RowsUntil(row => row.Kind == "ask");
+
+        Assert.Equal("general-purpose: wc -l notes.txt", card[^1].Payload.GetProperty("title").GetString());
+        Assert.True(_host.Answer(card[^1].ItemId!["ask:".Length..], JsonDocument.Parse("""{"optionId":"yes"}""").RootElement));
+        Assert.Equal("yes", (await agent.ResultAsync()).GetProperty("outcome").GetProperty("optionId").GetString());
+
+        await agent.UpdateAsync("""{"sessionUpdate":"subagent_update","sessionId":"child1","state":{"state":"idle","stopReason":"end_turn"}}""");
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
+    }
+
     private async Task<(FakeLink Agent, string RunId)> StartClaudeBackgroundAsync()
     {
         var runId = _host.Send("start it")!;
