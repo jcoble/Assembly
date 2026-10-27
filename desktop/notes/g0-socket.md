@@ -9,8 +9,8 @@ the commit that adds this file. Step 2 brings the logic, test first, against a r
 - Threads (a change from the brief's "one background thread", reviewed and kept): one thread can't block on both a
   socket and a channel without a timeout or a poll loop, which the rules forbid. So one client thread blocks on one `Event` channel with no timeout; each open connection has a reader thread
   that blocks on the socket. The writer is a second tungstenite `WebSocket` on a clone of the stream. The backend
-  sends no pings (no KeepAlive in ApiServer.cs), so the reader never writes except a close reply. Frames and closes
-  carry a connection number so a dropped connection's late events are ignored. Dropping a connection shuts the
+  sends no pings (no KeepAlive in ApiServer.cs), so the reader never writes except a close reply. There's one reader at
+  a time (a connection is dropped only after its reader's `Closed`), so events need no connection number. Dropping a connection shuts the
   stream down, which ends its reader.
 - Calls and subscriptions share one id counter: an `error` with a sub's id drops that subscription and ends its
   updates. A re-subscribe on the same socket sends `unsub` first (the backend answers "already open" otherwise).
@@ -138,3 +138,16 @@ The behavior list is docs/behavior/g0-socket.md.
 - `Tick` carries `received: Instant` for the meter. The clock's hold and release design is confirmed.
 - .NET in the desktop CI job: the spike thread says yes, and the tests fail rather than skip. The move thread
   decides.
+
+
+## Review of the client logic (Claude and Sol 6.1, 2026-10-27)
+
+- Fixed: opening (connect, handshake, welcome) is bounded at 5 s, so a backend that takes the connection but never
+  welcomes it can't hold the client thread and every call waiting on it. The bound is lifted after the welcome.
+- Fixed: a frame this client can't read ends the connection as `Broken`, which goes `Disconnected` with no reopen,
+  since a reopen would get the same frame again and loop.
+- Kept: a keyed call that arrives while the socket is opening is sent and then cancelled once a newer one with its
+  key is handled, where the page never sends it. Opening on the same machine takes milliseconds, and both settle
+  correctly; a queue of calls waiting to connect isn't worth it.
+- For the move thread with the .NET CI change: a missed event hangs a test rather than failing it, so the desktop
+  job wants a `timeout-minutes`.

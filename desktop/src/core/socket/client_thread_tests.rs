@@ -215,3 +215,17 @@ fn dropping_a_pending_call_before_its_answer_cancels_it() {
     assert_eq!(backend.next()["method"], "slow");
     assert_eq!(backend.next(), json!({"t": "cancel", "id": id}));
 }
+
+// A frame this client can't read would come back on every reopen: it stops at Disconnected instead of looping.
+#[test]
+fn a_frame_that_does_not_read_is_disconnected_with_no_reopen() {
+    let backend = FakeBackend::start(|frame| {
+        hello(frame).unwrap_or_else(|| vec![Reply::Frame(json!({"t": "surprise"}))])
+    });
+    let mut client = Client::start(backend.port);
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    let (_, waiting) = client.call("echo", None);
+    assert!(matches!(outcome(waiting), Outcome::Aborted));
+    assert_eq!(client.state(), ConnectionState::Disconnected);
+}

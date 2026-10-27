@@ -43,5 +43,8 @@ pub(super) enum Event {
     Ping(Vec<u8>),
     /// The open connection's reader ended. There's one reader at a time: a new connection opens only after this.
     Closed,
+    /// The reader got a frame this client can't read and ended. Reopening would get the same frame again, so the
+    /// client goes `Disconnected` until `Reconnect`.
+    Broken,
     Reconnect(Endpoint),
 }
