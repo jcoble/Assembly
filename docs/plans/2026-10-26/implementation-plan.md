@@ -1162,6 +1162,8 @@ of the shell, check4, and the same grep. Not done until the window starts the re
   6. A duplicated settings upsert leaves the same value (5.7), at the Topics level: the snapshot already holds a
      committed value, then `Publish` delivers the same upsert as a `change`; applying `state` then `change` leaves
      one value. The rows half (a row at or below the snapshot's seq is dropped) is tested in C1, with the rows topic.
+  7. A write published while a subscriber's state is being read comes once, after the state: its publish waits on
+     the Topics lock (a race test with no hook in production code).
 
   On the page (`socket.test.ts`): a `subscribe` test applies `state` and `change` to a map; a reopen sends `sub`
   again; and a call superseded by its key reports nothing when the socket can't open (from the review of f092092).

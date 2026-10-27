@@ -160,7 +160,9 @@ public sealed partial class SocketTests
         {
             var snapshot = rows.Select(text => new Note(text)).ToList();
             reading.SetResult();
-            gate.Wait(Wait);
+            // A gate that never opens fails the subscribe, rather than letting the read go on unwatched.
+            if (!gate.Wait(Wait))
+                throw new TimeoutException("the test never opened the gate");
             return snapshot;
         });
         _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
@@ -170,14 +172,14 @@ public sealed partial class SocketTests
         await reading.Task.WaitAsync(Wait);
         // The write commits after the read began, then publishes on its own thread, which blocks on the Topics lock.
         rows.Add("b");
-        var publisher = new Thread(() => _topics.Publish("notes", "b", """{"text":"b"}"""));
+        var publisher = new Thread(() => _topics.Publish("notes", "b", """{"text":"b"}""")) { IsBackground = true };
         publisher.Start();
         await UntilAsync(() => publisher.ThreadState.HasFlag(ThreadState.WaitSleepJoin));
         gate.Set();
 
         Assert.Equal("""{"t":"state","sub":1,"items":[{"text":"a"}]}""", await ReadAsync(socket));
         Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"text":"b"}}""", await ReadAsync(socket));
-        publisher.Join(Wait);
+        Assert.True(publisher.Join(Wait));
         await CallAsync(socket, 2, "notes", "echo", "{}");
         Assert.Equal("""{"t":"result","id":2,"result":{"text":""}}""", await ReadAsync(socket));
     }
