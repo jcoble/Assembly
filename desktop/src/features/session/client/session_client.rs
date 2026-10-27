@@ -11,15 +11,18 @@ use crate::features::session::rows::row::Row;
 pub trait SessionClient: 'static {
     /// Subscribes to a session's rows: `after` is the last seq held, `None` on a first open. Events arrive on the
     /// main thread until the subscription drops.
-    fn subscribe_rows(&self, session: &str, after: Option<i64>, sink: Box<dyn FnMut(RowsEvent, &mut App)>) -> Subscription;
+    fn subscribe_rows(&self, session: &str, after: Option<i64>, sink: RowsSink) -> Subscription;
 
     /// One call, by feature and method (rows/page, rows/tool, send/send, attachments/begin, …). With `key`, a newer
     /// call with the same key answers this one `Aborted` and cancels it, so a fast switch never waits on a stale load.
     fn call(&self, feature: &str, method: &str, args: Value, key: Option<&str>) -> Task<Result<Value, CallError>>;
 }
 
+/// Where a rows subscription's events go, on the main thread.
+pub type RowsSink = Box<dyn FnMut(RowsEvent, &mut App)>;
+
 pub enum RowsEvent {
-    Row(Row),
+    Row(Box<Row>),
     /// The rows before `seq` weren't sent (a first open, or one too far behind): drop what's held and load the page
     /// below `seq + 1`.
     Jump { seq: i64 },

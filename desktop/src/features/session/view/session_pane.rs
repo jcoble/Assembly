@@ -11,7 +11,7 @@ use gpui_kit::*;
 use super::session_action::SessionAction;
 use super::timeline::Timeline;
 use crate::features::session::client::session_client::{RowsEvent, SessionClient};
-use crate::features::session::composer::composer::Composer;
+use crate::features::session::composer::composer_view::Composer;
 use crate::features::session::model::session_view::SessionView;
 
 pub struct SessionPane {

@@ -11,4 +11,6 @@ pub mod markdown_text;
 pub mod notices;
 pub mod reveal;
 pub mod session_view;
+#[cfg(test)]
+mod session_view_tests;
 pub mod turn_line;

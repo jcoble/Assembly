@@ -6,6 +6,9 @@ use std::rc::Rc;
 
 use gpui_kit::*;
 
+/// Takes (config id, value).
+pub type OnSelect = Rc<dyn Fn(&str, &str, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 pub struct ConfigMenu {
     pub config_id: String,
@@ -14,7 +17,7 @@ pub struct ConfigMenu {
     pub choices: Vec<(String, SharedString)>,
     pub current: String,
     /// The composer's handler, which sends `config/set` for (config id, value).
-    pub on_select: Rc<dyn Fn(&str, &str, &mut Window, &mut App)>,
+    pub on_select: OnSelect,
 }
 
 impl RenderOnce for ConfigMenu {

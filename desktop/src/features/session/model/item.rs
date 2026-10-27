@@ -26,7 +26,8 @@ pub enum ItemKind {
     Error { message: String, code: Option<String> },
     Ask { ask_id: String, ask: AskPayload },
     Task { task_id: String, task: TaskPayload },
-    Subagent { subagent: SubagentPayload },
+    /// `acp_session_id`: the subagent's ACP session, from its item id; Stop sends it as the task.
+    Subagent { acp_session_id: String, subagent: SubagentPayload },
     /// A run the agent started itself, with its reason standing in for a prompt.
     Note { text: String },
     Stats { stats: TurnStats },

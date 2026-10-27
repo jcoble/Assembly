@@ -3,7 +3,7 @@
 
 pub mod agent_config;
 pub mod attachment;
-pub mod composer;
+pub mod composer_view;
 pub mod config_menu;
 pub mod context_meter;
 pub mod slash_menu;

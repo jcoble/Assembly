@@ -10,7 +10,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 use serde_json::Value;
 
-use super::session_client::{CallError, RowsEvent, SessionClient};
+use super::session_client::{CallError, RowsEvent, RowsSink, SessionClient};
 
 #[derive(Clone, Default)]
 pub struct FakeClient {
@@ -23,7 +23,7 @@ struct FakeState {
     /// Every call made, as ("feature/method", args).
     calls: Vec<(String, Value)>,
     cancels: usize,
-    sink: Option<Box<dyn FnMut(RowsEvent, &mut App)>>,
+    sink: Option<RowsSink>,
 }
 
 impl FakeClient {
@@ -46,7 +46,7 @@ impl FakeClient {
 }
 
 impl SessionClient for FakeClient {
-    fn subscribe_rows(&self, _session: &str, _after: Option<i64>, _sink: Box<dyn FnMut(RowsEvent, &mut App)>) -> Subscription {
+    fn subscribe_rows(&self, _session: &str, _after: Option<i64>, _sink: RowsSink) -> Subscription {
         todo!()
     }
 
