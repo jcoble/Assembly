@@ -17,37 +17,12 @@ pub struct SessionRow {
     pub selected: bool,
 }
 
-/// The session's title, or its repo or folder when it has none yet ("owner/repo" for a GitHub URL).
-pub fn title(item: &SessionItem) -> String {
-    match item
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-    {
-        Some(title) => title.to_string(),
-        None => item
-            .repo_url
-            .strip_prefix("https://github.com/")
-            .unwrap_or(&item.repo_url)
-            .to_string(),
-    }
-}
-
-/// Its agent, and its machine when it isn't this computer.
-pub fn place(item: &SessionItem) -> String {
-    match &item.machine {
-        Some(machine) if !machine.is_empty() => format!("{} · {machine}", item.agent),
-        _ => item.agent.clone(),
-    }
-}
-
 impl SessionRow {
     pub fn of(item: &SessionItem, selected: bool) -> SessionRow {
         SessionRow {
             session_id: item.session_id.clone(),
-            title: title(item).into(),
-            place: place(item).into(),
+            title: item.title().into(),
+            place: item.place().into(),
             selected,
         }
     }
@@ -81,7 +56,3 @@ impl RenderOnce for SessionRow {
             )
     }
 }
-
-#[cfg(test)]
-#[path = "session_row_tests.rs"]
-mod tests;
