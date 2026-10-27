@@ -4,10 +4,9 @@
 //! check. The backend's side is dotnet/Assembly.Infrastructure/Socket/.
 //!
 //! One client thread owns the connection, the calls waiting on an answer and the subscriptions. It blocks on one
-//! channel of `Event`s with no timeout: the window's requests, each frame the reader thread read, and the socket
-//! closing. When an open socket drops it tries once at once; if that fails it waits for `reconnect`, which the
-//! launcher sends on the backend's ready line or after restarting it, and the Reconnect button sends too. There's no
-//! backoff loop, timer or sleep.
+//! channel of `Event`s: the window's requests, each frame the reader thread read, and the socket
+//! closing. When an open socket drops it tries once at once; if that fails it tries again after a short wait that
+//! doubles up to 5 s, or at once on `reconnect`, which the launcher sends on the backend's ready line.
 
 pub mod call_failure;
 pub mod client;

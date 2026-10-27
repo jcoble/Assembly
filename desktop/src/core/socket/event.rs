@@ -1,4 +1,4 @@
-//! `Event` is everything the client thread waits on, on one channel with no timeout: the window's requests, the
+//! `Event` is everything the client thread waits on, on one channel: the window's requests, the
 //! reader thread's frames, the socket closing, and `Reconnect`.
 
 use futures_channel::mpsc::UnboundedSender;
@@ -43,8 +43,8 @@ pub(super) enum Event {
     Ping(Vec<u8>),
     /// The open connection's reader ended. There's one reader at a time: a new connection opens only after this.
     Closed,
-    /// The reader got a frame this client can't read and ended. Reopening would get the same frame again, so the
-    /// client goes `Disconnected` until `Reconnect`.
+    /// The reader got a frame this client can't read and ended. Reopening at once would get the same frame again, so
+    /// the client goes `Disconnected` and tries again only after the wait.
     Broken,
     Reconnect(Endpoint),
 }
