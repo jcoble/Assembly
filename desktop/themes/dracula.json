@@ -1,0 +1,13 @@
+{
+  "$schema": "https://github.com/longbridge/gpui-kit/raw/refs/heads/main/.theme-schema.json",
+  "name": "Dracula",
+  "author": "Assembly (ported from mac-command-bar)",
+  "themes": [
+    {
+      "is_default": false,
+      "name": "Dracula",
+      "mode": "dark",
+      "colors": {}
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://github.com/longbridge/gpui-kit/raw/refs/heads/main/.theme-schema.json",
+  "name": "Assembly Glass",
+  "author": "Assembly",
+  "themes": [
+    {
+      "is_default": false,
+      "name": "Assembly Glass",
+      "mode": "dark",
+      "colors": {}
+    }
+  ]
+}
