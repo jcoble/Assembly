@@ -2,5 +2,4 @@
 //! ready line is the socket client's only reconnect signal.
 
 pub mod backend_config;
-pub mod backend_ready;
 pub mod launcher;
