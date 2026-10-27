@@ -224,6 +224,10 @@ fn upsert(items: &mut Vec<SessionItem>, item: SessionItem) -> SessionChange {
 }
 
 #[cfg(test)]
+#[path = "sessions_load_tests.rs"]
+mod load_tests;
+
+#[cfg(test)]
 mod tests {
     use gpui_kit::Task;
     use serde_json::json;
