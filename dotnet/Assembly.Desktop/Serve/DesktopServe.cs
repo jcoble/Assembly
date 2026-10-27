@@ -17,6 +17,11 @@ public static class DesktopServe
             Console.Error.WriteLine(DesktopOptions.Usage);
             return 2;
         }
+        if (options.Remote == "local")
+        {
+            Console.Error.WriteLine("a remote can't be named local, the key for this computer");
+            return 2;
+        }
 
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
