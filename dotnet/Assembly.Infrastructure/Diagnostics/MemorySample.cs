@@ -24,6 +24,8 @@ internal static class MemorySample
         return new MemoryReading(appPid, Rss(appPid), webPid, Rss(webPid), backend, Rss(backend));
     }
 
+    internal static MemoryReading Reading(int backend, int? appPid, int? webPid, Func<int, long?> rss) => throw new NotImplementedException();
+
     public static void Write(Utf8JsonWriter writer)
     {
         var reading = Read();
