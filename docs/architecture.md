@@ -44,9 +44,10 @@ side is `Assembly.Infrastructure/Socket/`: a feature registers its calls, saves 
 changes reach subscribers through the host's one `Topics` (`Assembly.Infrastructure/Topics/`), which the writer
 publishes to after it commits (plan 5.7). A save is one write per change, and its changes go out on the topic named
 after its feature, by key, which is how `socket.ts` holds a key while the window's own saves of it are in flight
-(plan 5.9). The socket
-exists from plan step B4, but features move onto it from B7; until then `app/src/lib/call.ts` and
-`Assembly.Infrastructure/Http/` are their HTTP path, and the `/live` socket carries the rows. The only other HTTP is
+(plan 5.9). A host hands its features to `ApiServer` in `ApiServices.Features`, which registers them on the socket;
+the desktop's first is preferences (B7). The socket exists from plan step B4, and features move onto it from B7; the
+page still uses `app/src/lib/call.ts` and `Assembly.Infrastructure/Http/`, their HTTP path, until its own switch, and
+the `/live` socket carries the rows. The only other HTTP is
 `/mcp`, which the agents use.
 
 ## Where a new feature goes

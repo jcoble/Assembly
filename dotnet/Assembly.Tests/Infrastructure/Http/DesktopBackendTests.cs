@@ -55,6 +55,29 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task The_socket_serves_the_desktops_preferences()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+
+        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"preferences","method":"set","args":{"key":"theme","value":"dark"}}""");
+
+        Assert.Equal("""{"t":"result","id":1,"result":null}""", await ReadTextAsync(socket));
+    }
+
+    private static Task SendTextAsync(WebSocket socket, string text) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+    private static async Task<string> ReadTextAsync(WebSocket socket)
+    {
+        var buffer = new byte[64 * 1024];
+        var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        return Encoding.UTF8.GetString(buffer, 0, received.Count);
+    }
+
+    [Fact]
     public async Task Version_names_the_commit_built_and_a_session_names_its_agent_session()
     {
         var sessionId = await CreateSessionAsync();

@@ -20,6 +20,7 @@ using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Topics;
+using Assembly.Application.Features.Preferences;
 
 namespace Assembly.Desktop.Serve;
 
@@ -82,7 +83,8 @@ public sealed class DesktopBackend : IAsyncDisposable
 
         Uri? address = null;
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
-        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics), port, routes =>
+        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
+            [new PreferencesFeature(db)]), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));
