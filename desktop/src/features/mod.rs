@@ -2,4 +2,5 @@
 //! `PlaceholderPane::register_all` runs before any feature registers its panes, because the kit's registry keeps the
 //! last registration for a name. Pane names come from core/pane_names.rs.
 
+pub mod meter;
 pub mod palette;

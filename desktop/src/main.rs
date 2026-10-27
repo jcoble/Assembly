@@ -21,6 +21,7 @@ fn main() {
             gpui_kit::init(cx);
             start_backend(cx);
             PaletteView::init(cx);
+            features::meter::start_if_on(cx);
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Assembly".into()),
