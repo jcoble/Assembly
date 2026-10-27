@@ -1402,7 +1402,8 @@ catalogue stays the reference.
     `/live` and the HTTP chat routes stay until the cut.
   - **The client's rules for the rows topic:** a state whose `seq` equals the `after` it sent means the rows that follow
     continue its copy, so it applies them. Any other `seq`, including one below its `after` (a copied or restored
-    database), means it drops its copy and loads history through `rows/page` before that seq. A `rows/page` answer that
+    database), means it drops its copy and loads history through `rows/page` with `before` = that seq + 1, since `before`
+    is exclusive and the topic sends nothing at or below that seq. A `rows/page` answer that
     fails for being over 4 MB means it asks again with a smaller `limit`.
   - **Next, its own PR right after, before the cut:** every chat route the window calls moves onto the socket: the
     sessions list, send, cancel, tool detail, ask answers, run rows, and anything else under `/sessions`, with bytes
