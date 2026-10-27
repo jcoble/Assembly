@@ -78,6 +78,16 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_start_that_arrives_after_the_host_stopped_fails_and_leaves_nothing_running()
+    {
+        // Pins: terminal#8
+        await _host.DisposeAsync();
+
+        Assert.Throws<CallFailed>(() => _host.Start(new StartArgs(_folder)));
+        Assert.All(_pty.Started, pty => Assert.True(pty.Disposed));
+    }
+
+    [Fact]
     public async Task A_session_asking_again_gets_its_running_terminal_and_a_new_one_once_that_has_ended()
     {
         // Pins: terminal#9

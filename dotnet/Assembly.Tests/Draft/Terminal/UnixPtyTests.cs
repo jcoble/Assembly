@@ -99,6 +99,21 @@ public sealed class UnixPtyTests
         Assert.Contains(gone, failed.Message);
     }
 
+    [Fact]
+    public async Task Closing_after_the_shell_has_exited_ends_the_jobs_it_left()
+    {
+        // Pins: terminal#8
+        // The job outlives the shell in a group of its own, under init, and still holds the terminal.
+        var pty = Start("sleep 300 & echo \"child:$!\"", interactive: true);
+        var line = await ReadUntilAsync(pty, "child:");
+        var child = int.Parse(line[(line.IndexOf("child:", StringComparison.Ordinal) + 6)..].Split('\r', '\n')[0]);
+        await pty.Exited.WaitAsync(Cancel());
+
+        await pty.DisposeAsync();
+
+        await GoneAsync(child);
+    }
+
     private static IPty Start(string script, int cols = 80, int rows = 24, bool interactive = false) =>
         new UnixPtyStarter().Start(new PtyRequest("/bin/sh", interactive ? ["-i", "-c", script] : ["-c", script], Path.GetTempPath(),
             NoEnvironment, cols, rows));

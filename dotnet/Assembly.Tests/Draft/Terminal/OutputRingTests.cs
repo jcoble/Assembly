@@ -39,16 +39,32 @@ public sealed class OutputRingTests
     }
 
     [Fact]
-    public void A_read_starts_no_earlier_than_the_last_4_MB()
+    public void A_replay_read_page_by_page_misses_nothing_kept_while_output_keeps_coming()
     {
         // Pins: terminal#5
         var ring = new OutputRing();
         AppendPattern(ring, 0, 6 * Mb);
+        var from = ring.End - OutputRing.Replay;
 
-        var piece = ring.Read(0);
+        var first = ring.Read(from);
+        AppendPattern(ring, ring.End, 2 * Mb);
+        var second = ring.Read(first.Offset + first.Data.Length);
 
-        Assert.Equal(ring.End - OutputRing.Replay, piece.Offset);
-        Assert.Equal(Pattern(piece.Offset, piece.Data.Length), piece.Data);
+        Assert.Equal(from, first.Offset);
+        Assert.Equal(first.Offset + first.Data.Length, second.Offset);
+        Assert.Equal(Pattern(second.Offset, second.Data.Length), second.Data);
+    }
+
+    [Fact]
+    public void A_read_from_before_the_oldest_kept_starts_at_the_oldest_kept()
+    {
+        // Pins: terminal#6
+        var ring = new OutputRing();
+        long total = 0;
+        while (total <= OutputRing.Cap)
+            total += AppendPattern(ring, total, Mb);
+
+        Assert.Equal(ring.Start, ring.Read(0).Offset);
     }
 
     [Fact]
