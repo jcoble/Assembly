@@ -65,8 +65,23 @@ public sealed class DesktopBackend : IAsyncDisposable
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null)
     {
         Directory.CreateDirectory(home);
-        // Before the database opens, so a second backend on this home writes nothing into the live one's.
+        // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
+        // the start fails, so the home isn't left locked.
         var homeLock = HomeLock.Take(home);
+        try
+        {
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote);
+        }
+        catch
+        {
+            homeLock.Dispose();
+            throw;
+        }
+    }
+
+    private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
+        RemoteConfig? remote)
+    {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
