@@ -17,8 +17,8 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use gpui_kit::*;
@@ -31,8 +31,9 @@ type Ready = Arc<dyn Fn(String) + Send + Sync>;
 pub struct Launcher {
     config: Arc<BackendConfig>,
     ready: Ready,
-    /// The running child's process id, 0 when none runs. Quit signals it without taking any lock.
-    pid: Arc<AtomicU32>,
+    /// The running child's process id, 0 when none runs. The thread clears it, under this lock, before it reaps the
+    /// child, so a pid read under the lock always names our child (an exited child keeps its pid until reaped).
+    pid: Arc<Mutex<u32>>,
     /// Set on quit, so the thread doesn't start another child.
     quitting: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -72,7 +73,7 @@ impl Launcher {
         let mut launcher = Self {
             config: Arc::new(config),
             ready,
-            pid: Arc::new(AtomicU32::new(0)),
+            pid: Arc::new(Mutex::new(0)),
             quitting: Arc::new(AtomicBool::new(false)),
             thread: None,
         };
@@ -106,10 +107,11 @@ impl Launcher {
     /// Sends the child SIGTERM and waits until it's reaped; no other child starts after.
     fn stop(&mut self) {
         self.quitting.store(true, Ordering::SeqCst);
-        let pid = self.pid.load(Ordering::SeqCst);
-        if pid != 0 {
-            terminate(pid);
+        let pid = self.pid.lock().unwrap();
+        if *pid != 0 {
+            terminate(*pid);
         }
+        drop(pid);
         if let Some(thread) = self.thread.take() {
             _ = thread.join();
         }
@@ -120,7 +122,7 @@ impl Launcher {
 fn run(
     config: &BackendConfig,
     ready: &(dyn Fn(String) + Send + Sync),
-    pid: &AtomicU32,
+    pid: &Mutex<u32>,
     quitting: &AtomicBool,
 ) {
     let log_path = config.home.join("backend.log");
@@ -149,7 +151,7 @@ fn run_child(
     config: &BackendConfig,
     log: &mut File,
     ready: &(dyn Fn(String) + Send + Sync),
-    pid: &AtomicU32,
+    pid: &Mutex<u32>,
     quitting: &AtomicBool,
 ) -> bool {
     let mut command = Command::new(&config.program);
@@ -187,10 +189,13 @@ fn run_child(
             return false;
         }
     };
-    pid.store(child.id(), Ordering::SeqCst);
-    // A quit that came while this child was starting found no pid to signal.
-    if quitting.load(Ordering::SeqCst) {
-        terminate(child.id());
+    {
+        let mut pid = pid.lock().unwrap();
+        *pid = child.id();
+        // A quit that came while this child was starting found no pid to signal.
+        if quitting.load(Ordering::SeqCst) {
+            terminate(*pid);
+        }
     }
     let mut was_ready = false;
     if let Some(stdout) = child.stdout.take() {
@@ -207,14 +212,31 @@ fn run_child(
             }
         }
     }
+    wait_for_exit(child.id());
+    *pid.lock().unwrap() = 0;
     _ = child.wait();
-    pid.store(0, Ordering::SeqCst);
     was_ready
 }
 
 fn terminate(pid: u32) {
-    // SAFETY: kill only sends a signal; the pid is the child's, and the thread clears it once reaped.
+    // SAFETY: kill only sends a signal, and the pid is our unreaped child's (see `Launcher::pid`).
     unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+}
+
+/// Blocks until the child exits, without reaping it, so its pid stays ours until `Child::wait`.
+fn wait_for_exit(pid: u32) {
+    // SAFETY: waitid only writes the zeroed siginfo it's given.
+    unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        while libc::waitid(
+            libc::P_PID,
+            pid as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOWAIT,
+        ) == -1
+            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+        {}
+    }
 }
 
 /// The one `ASSEMBLY_TOKEN=<hex>` line the backend made on its first start (TokenFile.cs).

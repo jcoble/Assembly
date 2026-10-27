@@ -5,8 +5,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 
-use std::sync::atomic::Ordering;
-
 use super::{BackendConfig, Launcher};
 
 const TOKEN: &str = "0123456789abcdef";
@@ -18,7 +16,7 @@ fn fake(name: &str, script: &str) -> BackendConfig {
     std::fs::create_dir_all(&dir).unwrap();
     let program = dir.join("Assembly.Desktop");
     let body = format!(
-        "#!/usr/bin/env bash\nDIR={dir}\nn=$(cat $DIR/runs 2>/dev/null || echo 0); n=$((n+1)); echo $n > $DIR/runs\n{script}\n",
+        "#!/usr/bin/env bash\nDIR={dir}\nn=$(cat $DIR/runs 2>/dev/null || echo 0); n=$((n+1)); echo $n > $DIR/runs\ntrap 'echo stopped > $DIR/stopped; kill $! 2>/dev/null; exit 0' TERM\n{script}\n",
         dir = dir.display()
     );
     std::fs::write(&program, body).unwrap();
@@ -39,9 +37,8 @@ fn fake(name: &str, script: &str) -> BackendConfig {
     }
 }
 
-/// Waits for SIGTERM with no wait on time: a child that never exits, and a trap that ends both.
-const WAIT_FOR_TERM: &str =
-    "trap 'echo stopped > $DIR/stopped; kill $!; exit 0' TERM\ntail -f /dev/null & wait";
+/// Waits for SIGTERM (its trap is set before the script prints anything) with no wait on time.
+const WAIT_FOR_TERM: &str = "tail -f /dev/null & wait";
 
 fn launch(config: BackendConfig) -> (Launcher, Receiver<String>) {
     let (sender, receiver) = channel();
@@ -68,7 +65,7 @@ fn the_ready_line_hands_over_the_token_and_quit_stops_the_backend() {
     let home = launcher.config.home.clone();
     assert_eq!(read(&launcher.config, "stopped"), "stopped\n");
     assert_eq!(read(&launcher.config, "runs"), "1\n");
-    assert_eq!(launcher.pid.load(Ordering::SeqCst), 0);
+    assert_eq!(*launcher.pid.lock().unwrap(), 0);
     let log = std::fs::read_to_string(home.join("backend.log")).unwrap();
     assert!(
         log.contains("starting") && log.contains("listening on"),
