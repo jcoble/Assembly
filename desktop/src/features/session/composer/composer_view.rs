@@ -1,7 +1,7 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line), the attached images, the
 //! agent's config (`config/get`, read again when a turn ends) and the "/" menu's state. Send is `send/send` with the
-//! draft, its "Attached image:" lines and a client id made here; the timeline shows the prompt as pending until a
-//! user row echoes that id (the base lane is adding it to send/send and the user row). While a turn runs, a send
+//! draft and its "Attached image:" lines. (A pending prompt waits on the base lane echoing a client id on the user
+//! row.) While a turn runs, a send
 //! steers it and Send turns into Stop (`send/stop`). Dropped or pasted images attach; any other dropped file goes
 //! into the draft as its path. Each session's unsent draft lives here while the window runs. It draws, so it never
 //! reads a file: `upload_image` does. Replaces Composer.svelte.
@@ -33,10 +33,10 @@ pub struct Composer {
 
 /// What the composer tells the session pane.
 pub enum ComposerEvent {
-    /// A send went out with this client id: the timeline shows it pending and scrolls to it.
-    Sending { client_id: String, text: String },
+    /// A send went out with this text: the timeline puts its prompt at the top once it arrives.
+    Sending { text: String },
     /// It answered its run id.
-    Sent { client_id: String, run_id: String },
+    Sent { run_id: String },
 }
 
 impl Composer {
@@ -75,3 +75,7 @@ impl Render for Composer {
         div()
     }
 }
+
+#[cfg(test)]
+#[path = "composer_view_tests.rs"]
+mod tests;

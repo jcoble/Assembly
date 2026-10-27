@@ -45,7 +45,7 @@ impl SessionPane {
     /// Shows a session: subscribes to its rows first, then, on the `Jump` that says its seq, loads the page below
     /// `seq + 1`, so the page and the live rows never overlap. A session with no rows yet (a new one) is ready at
     /// once, empty, so its first message sends.
-    pub fn open(&mut self, _session: String, _cx: &mut Context<Self>) {
+    pub fn open(&mut self, _session: String, _window: &mut Window, _cx: &mut Context<Self>) {
         todo!()
     }
 
@@ -99,3 +99,7 @@ impl Render for SessionPane {
         div()
     }
 }
+
+#[cfg(test)]
+#[path = "session_pane_tests.rs"]
+mod tests;

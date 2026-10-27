@@ -22,41 +22,73 @@ struct FakeState {
     answers: VecDeque<Result<Value, CallError>>,
     /// Every call made, as ("feature/method", args).
     calls: Vec<(String, Value)>,
+    /// Every rows subscription, as (session, after).
+    subscribed: Vec<(String, Option<i64>)>,
     cancels: usize,
     sink: Option<RowsSink>,
 }
 
 impl FakeClient {
-    pub fn queue_answer(&self, _answer: Result<Value, CallError>) {
-        todo!()
+    /// The next call's answer; a call with none queued fails.
+    pub fn queue_answer(&self, answer: Result<Value, CallError>) {
+        self.state.borrow_mut().answers.push_back(answer);
     }
 
     /// Delivers a rows event to the open subscription, as the socket would.
-    pub fn push(&self, _event: RowsEvent, _cx: &mut App) {
-        todo!()
+    pub fn push(&self, event: RowsEvent, cx: &mut App) {
+        let (sink, cancels) = {
+            let mut state = self.state.borrow_mut();
+            (state.sink.take(), state.cancels)
+        };
+        let Some(mut sink) = sink else { return };
+        sink(event, cx);
+        // Unless the subscription dropped or another took its place while it ran, it's still open.
+        let mut state = self.state.borrow_mut();
+        if state.cancels == cancels && state.sink.is_none() {
+            state.sink = Some(sink);
+        }
     }
 
     pub fn calls(&self) -> Vec<(String, Value)> {
-        todo!()
+        self.state.borrow().calls.clone()
     }
 
+    pub fn subscribed(&self) -> Vec<(String, Option<i64>)> {
+        self.state.borrow().subscribed.clone()
+    }
+
+    /// How many rows subscriptions were dropped.
     pub fn cancels(&self) -> usize {
-        todo!()
+        self.state.borrow().cancels
     }
 }
 
 impl SessionClient for FakeClient {
-    fn subscribe_rows(&self, _session: &str, _after: Option<i64>, _sink: RowsSink) -> Subscription {
-        todo!()
+    fn subscribe_rows(&self, session: &str, after: Option<i64>, sink: RowsSink) -> Subscription {
+        let mut state = self.state.borrow_mut();
+        state.subscribed.push((session.to_string(), after));
+        state.sink = Some(sink);
+        let state = self.state.clone();
+        Subscription::new(move || {
+            let mut state = state.borrow_mut();
+            state.cancels += 1;
+            state.sink = None;
+        })
     }
 
     fn call(
         &self,
-        _feature: &str,
-        _method: &str,
-        _args: Value,
+        feature: &str,
+        method: &str,
+        args: Value,
         _key: Option<&str>,
     ) -> Task<Result<Value, CallError>> {
-        todo!()
+        let mut state = self.state.borrow_mut();
+        state.calls.push((format!("{feature}/{method}"), args));
+        let answer = state
+            .answers
+            .pop_front()
+            .unwrap_or_else(|| Err(CallError::Failed("no answer queued".into())));
+        Task::ready(answer)
     }
 }
