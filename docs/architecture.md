@@ -7,11 +7,11 @@ here updates this file in the same commit. Every other commit says `Architecture
 
 ## The pieces
 
-- `shell/`: the Tauri window (Rust). It starts the Mac's backend and hands the page its port and token
+- `shell/`: the Tauri window (Rust). It starts the desktop backend and hands the page its port and token
   (`window.__ASSEMBLY__`).
 - `app/`: the page (SvelteKit). Code is one folder per feature, `app/src/lib/<feature>/`. Only `app/src/lib/host/`
   talks to Tauri or adds window, document or media-query listeners.
-- `dotnet/`: the backend (.NET). The same backend runs on the Mac and, headless, on every remote machine.
+- `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
 
 ## The backend: a core in layers, the rest by feature
 
@@ -31,7 +31,7 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
 
 ## The hosts
 
-- `Assembly.Mac/`: the Mac's backend, started by the shell.
+- `Assembly.Desktop/`: the desktop backend, started by the shell.
 - `Assembly.Remote/`: the backend on a machine that runs agents (`serve`), plus its test benches.
 
 A host's `Program.cs` only reads its arguments, registers the layers and maps its endpoints.

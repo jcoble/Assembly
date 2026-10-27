@@ -10,7 +10,7 @@ public sealed class RowWireTests
     [Fact]
     public void A_row_read_back_from_its_wire_json_is_the_same_row()
     {
-        // The Mac reads the box's rows off the wire and saves them as they are.
+        // The desktop reads the box's rows off the wire and saves them as they are.
         var payload = JsonDocument.Parse("""{"name":"Bash","state":"completed","summary":"ls \"x\"","hasDetail":true}""").RootElement;
         var row = new StoredRow("session-1", 7, "run-1", "t1", RowKind.Tool, payload, 1_792_000_000_000, PrevSeq: 4);
         var noIds = new StoredRow("session-1", 8, null, null, RowKind.Turn, JsonDocument.Parse("""{"state":"started"}""").RootElement, 5);

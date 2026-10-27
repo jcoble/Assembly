@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Preferences: a saved value comes back, a later save keeps the keys it doesn't name, and an unknown call is a 404.
-# The Mac serves preferences and Workbox Test doesn't, so a Workbox Test case only says so. It uses two fixed keys and
+# The desktop serves preferences and Workbox Test doesn't, so a Workbox Test case only says so. It uses two fixed keys and
 # puts back what they held (null when they held nothing, since there's no delete call).
 set -euo pipefail
 if [ "$CHECK4_MACHINE" != local ]; then
-  echo "ok skipped on $CHECK4_MACHINE: Mac-only"
+  echo "ok skipped on $CHECK4_MACHINE: desktop-only"
   exit 0
 fi
 call() { # call METHOD JSON -> the answer's body, then its status on the last line

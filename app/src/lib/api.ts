@@ -4,7 +4,7 @@ import { counters } from './debug.svelte';
 import type { Row, ToolDetail } from './rows/store';
 import type { SlashCommand } from './composer/slashMenu';
 
-// The Mac's .NET backend (dotnet/Assembly.Mac), which serves every route. One token.
+// The desktop's .NET backend (dotnet/Assembly.Desktop), which serves every route. One token.
 export { BASE, BASE_WS };
 
 // `parentSessionId` is set on a subagent's session: the session whose agent runs it.

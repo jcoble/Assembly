@@ -8,7 +8,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Assembly.Application" />
     <InternalsVisibleTo Include="Assembly.Infrastructure" />
-    <InternalsVisibleTo Include="Assembly.Mac" />
+    <InternalsVisibleTo Include="Assembly.Desktop" />
     <InternalsVisibleTo Include="Assembly.Remote" />
     <InternalsVisibleTo Include="Assembly.Tests" />
   </ItemGroup>

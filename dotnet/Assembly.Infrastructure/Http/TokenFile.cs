@@ -4,8 +4,8 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// The API token, kept in a file only this user can read, as one <c>ASSEMBLY_TOKEN=&lt;hex&gt;</c> line. The Mac's app reads
-/// its backend's file, and the Mac's backend reads a remote machine's over ssh. Made on first start.
+/// The API token, kept in a file only this user can read, as one <c>ASSEMBLY_TOKEN=&lt;hex&gt;</c> line. The desktop's app reads
+/// its backend's file, and the desktop backend reads a remote machine's over ssh. Made on first start.
 /// </summary>
 public static class TokenFile
 {

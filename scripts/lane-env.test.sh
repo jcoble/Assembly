@@ -16,7 +16,7 @@ failed=0
 # values it resolved when given.
 expect() {
   local out got
-  out=$(cd "$repo" && bash -ec '. scripts/lane-env.sh; echo "$MAC_PORT $BOX_PORT $BOX_UNIT $DATA $BOX_DATA"' 2>/dev/null)
+  out=$(cd "$repo" && bash -ec '. scripts/lane-env.sh; echo "$DESKTOP_PORT $BOX_PORT $BOX_UNIT $DATA $BOX_DATA"' 2>/dev/null)
   got=$?
   if [ "$got" = "$1" ] && { [ -z "${3:-}" ] || [ "$out" = "$3" ]; }; then echo "ok   $2"
   else echo "FAIL $2: exit $got, wanted $1; values '$out'"; failed=1; fi

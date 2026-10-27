@@ -28,7 +28,7 @@ Features never call `fetch`, make an abort signal or start a timer to talk to th
   debounce on their own.
 
 Calls go over HTTP (`POST /<feature>/<method>`); pushes such as `/events` and `/live` go over WebSockets. Only
-`call.ts` and the backend's `FeatureCalls.cs` know the transport. The Mac's own `/page` calls (memory, thumbnails,
+`call.ts` and the backend's `FeatureCalls.cs` know the transport. The desktop's own `/page` calls (memory, thumbnails,
 the soak) still go through `host/pageCall.ts` until they move to features.
 
 Not proven in the app yet: that WKWebView fires `pagehide` or `visibilitychange` when the app quits, so the close

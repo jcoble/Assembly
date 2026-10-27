@@ -9,10 +9,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 base=${1:-origin/main} head=${2:-HEAD}
-# Assembly.Engine was split into Domain, Application and Infrastructure in B2c; it stays so the commits before that
-# still count as code.
-code=(dotnet/Assembly.Domain dotnet/Assembly.Application dotnet/Assembly.Infrastructure dotnet/Assembly.Mac
-  dotnet/Assembly.Remote dotnet/Assembly.Engine app/src shell/src
+# Assembly.Engine was split into Domain, Application and Infrastructure in B2c, and Assembly.Mac renamed
+# Assembly.Desktop in B2e; both stay so the commits before that still count as code.
+code=(dotnet/Assembly.Domain dotnet/Assembly.Application dotnet/Assembly.Infrastructure dotnet/Assembly.Desktop
+  dotnet/Assembly.Remote dotnet/Assembly.Engine dotnet/Assembly.Mac app/src shell/src
   dotnet/Directory.Build.props dotnet/Directory.Packages.props app/package.json app/pnpm-lock.yaml
   shell/Cargo.toml shell/Cargo.lock)
 not_code=(dotnet/Assembly.Tests)

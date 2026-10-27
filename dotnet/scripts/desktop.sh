@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Runs the Mac's backend (dotnet/Assembly.Mac) on 127.0.0.1:18797, from this checkout.
-#   dotnet/scripts/mac.sh serve          publishes Assembly.Mac to ~/assembly-dotnet/mac/bin/<commit>, installs the
+# Runs the desktop backend (dotnet/Assembly.Desktop) on 127.0.0.1:18797, from this checkout.
+#   dotnet/scripts/desktop.sh serve          publishes Assembly.Desktop to ~/assembly-dotnet/mac/bin/<commit>, installs the
 #                                        adapters under ~/assembly-dotnet/adapters (agents-file.sh) and makes the
 #                                        ~/assembly-dotnet/fixtures/notes-repo test repo if they're missing, then
 #                                        starts the backend in the background; its log is ~/assembly-dotnet/mac/backend.log
-#   dotnet/scripts/mac.sh stop           stops it, by the pid in ~/assembly-dotnet/mac/backend.pid
-#   AOT=1 dotnet/scripts/mac.sh serve    the same, from a Native AOT build
-#   dotnet/scripts/mac.sh kill-adapter   the lost-run check: SIGKILLs the backend's adapter, found as its child
+#   dotnet/scripts/desktop.sh stop           stops it, by the pid in ~/assembly-dotnet/mac/backend.pid
+#   AOT=1 dotnet/scripts/desktop.sh serve    the same, from a Native AOT build
+#   dotnet/scripts/desktop.sh kill-adapter   the lost-run check: SIGKILLs the backend's adapter, found as its child
 #                                        process by pid, never by name
-# The adapters run with this Mac's own Claude and Codex logins. The token is in ~/.config/assembly-dotnet/env, made on first start.
+# The adapters run with this computer's own Claude and Codex logins. The token is in ~/.config/assembly-dotnet/env, made on first start.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-mode=${1:?usage: dotnet/scripts/mac.sh serve|stop|kill-adapter}
+mode=${1:?usage: dotnet/scripts/desktop.sh serve|stop|kill-adapter}
 home=~/assembly-dotnet/mac
 pidfile=$home/backend.pid
 running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
@@ -59,13 +59,13 @@ fi
 commit=$(git rev-parse HEAD)
 if [ "${AOT:-}" = 1 ]; then
   bin=$home/bin-aot/$commit
-  dotnet publish -v q --nologo -c Release -r osx-arm64 -p:PublishAot=true -o "$bin" dotnet/Assembly.Mac
+  dotnet publish -v q --nologo -c Release -r osx-arm64 -p:PublishAot=true -o "$bin" dotnet/Assembly.Desktop
 else
   bin=$home/bin/$commit
-  dotnet publish -v q --nologo -c Release -o "$bin" dotnet/Assembly.Mac
+  dotnet publish -v q --nologo -c Release -o "$bin" dotnet/Assembly.Desktop
 fi
 mkdir -p "$home"
-nohup "$bin/Assembly.Mac" serve --port 18797 --home "$home" >> "$home/backend.log" 2>&1 &
+nohup "$bin/Assembly.Desktop" serve --port 18797 --home "$home" >> "$home/backend.log" 2>&1 &
 echo $! > "$pidfile"
 for _ in $(seq 50); do nc -z 127.0.0.1 18797 >/dev/null 2>&1 && break; sleep 0.2; done
 nc -z 127.0.0.1 18797 >/dev/null 2>&1 || { echo "the backend didn't open 18797; see $home/backend.log" >&2; tail -5 "$home/backend.log" >&2; exit 1; }

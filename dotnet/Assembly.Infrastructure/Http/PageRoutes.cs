@@ -8,7 +8,7 @@ using Assembly.Infrastructure.Diagnostics;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// The page's calls to the Mac it runs on (app/src/lib/host/call.ts): <c>POST /page/:method</c> with the params as
+/// The page's calls to the desktop it runs on (app/src/lib/host/call.ts): <c>POST /page/:method</c> with the params as
 /// the body answers <c>{result}</c>, or 400 <c>{error}</c>; an unknown method is 404. The shell's native jobs (the
 /// picker, dropped paths, links, notifications, the clipboard) aren't here.
 /// </summary>

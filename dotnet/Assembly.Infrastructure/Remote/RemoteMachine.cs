@@ -17,7 +17,7 @@ namespace Assembly.Infrastructure.Remote;
 /// <summary>
 /// A machine whose agent runs elsewhere, reached at <paramref name="address"/> with its own token: a Assembly.Remote
 /// serve on the same engine, which converts and stores its own rows. Creating, sending, stopping, tool details and
-/// attachments are its routes; its rows are copied into the Mac's store (<see cref="RemoteFollower"/>), which the
+/// attachments are its routes; its rows are copied into the desktop's store (<see cref="RemoteFollower"/>), which the
 /// webview reads like any other session's.
 /// </summary>
 internal sealed class RemoteMachine : IMachine, IAsyncDisposable
@@ -169,21 +169,21 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
 
-    /// <summary>Follows the remote sessions whose copied rows show a turn still running, as after a Mac restart mid-turn.</summary>
+    /// <summary>Follows the remote sessions whose copied rows show a turn still running, as after a desktop restart mid-turn.</summary>
     public void WatchRunning(IEnumerable<string> sessionIds)
     {
         foreach (var sessionId in sessionIds)
             _follower.Watch(sessionId);
     }
 
-    // The remote's rows are copied as they are, so it must write the format this Mac reads.
+    // The remote's rows are copied as they are, so it must write the format this computer reads.
     private async Task CheckFormatAsync(CancellationToken cancellationToken)
     {
         if (_formatChecked)
             return;
         var version = (await JsonAsync(HttpMethod.Get, "/version", null, cancellationToken)).GetProperty("formatVersion").GetInt32();
         if (version != RowStore.FormatVersion)
-            throw new MachineUnreachable($"{_name} stores rows in format {version}; this Mac reads format {RowStore.FormatVersion}");
+            throw new MachineUnreachable($"{_name} stores rows in format {version}; this computer reads format {RowStore.FormatVersion}");
         _formatChecked = true;
     }
 

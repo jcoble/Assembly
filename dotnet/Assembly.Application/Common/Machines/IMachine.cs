@@ -7,7 +7,7 @@ using Assembly.Domain.Sessions;
 namespace Assembly.Application.Common.Machines;
 
 /// <summary>
-/// Where a session's agent runs: this machine, or a remote one this Mac copies the rows from. The routes ask the
+/// Where a session's agent runs: this machine, or a remote one this computer copies the rows from. The routes ask the
 /// session's machine to create, send and stop, and for anything a remote session hasn't copied yet.
 /// </summary>
 public interface IMachine

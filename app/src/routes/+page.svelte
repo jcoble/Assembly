@@ -20,7 +20,7 @@
   let openId = $state<string | null>(null);
   const backend = { state: token ? 'up' : 'down' };
   let repoUrl = $state('');
-  // '' is this Mac.
+  // '' is this computer.
   let machines = $state<string[]>([]);
   let machine = $state('');
   let agents = $state<Agent[]>([]);
@@ -172,7 +172,7 @@
       </select>
       {#if machines.length}
         <select bind:value={machine} aria-label="Machine">
-          <option value="">This Mac</option>
+          <option value="">This computer</option>
           {#each machines as name (name)}<option value={name}>{name}</option>{/each}
         </select>
       {/if}

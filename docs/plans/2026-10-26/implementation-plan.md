@@ -969,6 +969,27 @@ thread (a Claude project thread that approves locked files), and the provider's 
 `acp_session_id` / `AcpSessionId` so it isn't confused with Assembly's session id. The one-time rename names the
 old tables, columns and folder it renames. **Proof:** the same grep finds no other Assembly chat named "thread".
 
+### B2e. Rename the Mac host to Desktop (after B3b and the late-update fix, before B4)
+
+Jesse, 2026-10-27 00:50: the app will run on Mac, Windows and Linux, so the backend next to the window isn't named
+Mac. Names only, no behaviour change. Renamed:
+- the project `dotnet/Assembly.Mac` to `Assembly.Desktop`, its namespace, `MacBackend`, `MacOptions`, `MacServe`
+  and `MacFeatureList`, the solution, project references, `InternalsVisibleTo`, `ArchitectureTests`, and the tests
+  (`DesktopBackendTests`, the remote tests' locals);
+- the published binary the shell starts (`shell/src/main.rs`), `shell/assembly.sh`, `dotnet/scripts/mac.sh` to
+  `desktop.sh`, and `MAC_PORT` to `DESKTOP_PORT` in `scripts/lane-env.sh`, `lane.sh`, `check4.sh` and `assembly.sh`;
+- comments and docs where "the Mac" meant the machine with the window: "the desktop" or "this computer";
+- visible text: the machine picker's "This Mac" is "This computer"; the attachment note says "your computer"; and
+  `RemoteOutbox`'s errors say "The desktop app stopped before it could deliver the message." and "There's no such
+  session on this computer."
+
+`scripts/check-evidence.sh` lists both `dotnet/Assembly.Desktop` and `dotnet/Assembly.Mac`, so older commits still
+count. Kept: what really is macOS (`[MacFact]`, ImageIO thumbnails, App Nap, `mem.sh`, the osx-arm64 targets, the
+bundle), the real-window checks on Jesse's Mac, mac-command-bar, and the decision records. The data folders keep
+their name, `~/assembly-dotnet/mac` and each lane's `DATA/mac`, so no data moves. Later, the desktop's data moves to
+each OS's own app-data folder, once, when Windows and Linux builds start. **Proof:** the tests, a Linux `cargo check`
+of the shell, check4, and the same grep. Not done until the window starts the renamed backend on the Mac.
+
 ### B3. One write path: `IAtomicWriter` and the audit
 
 - **Files:**

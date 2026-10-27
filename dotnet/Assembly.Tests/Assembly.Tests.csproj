@@ -21,7 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Assembly.Infrastructure\Assembly.Infrastructure.csproj" />
-    <ProjectReference Include="..\Assembly.Mac\Assembly.Mac.csproj" />
+    <ProjectReference Include="..\Assembly.Desktop\Assembly.Desktop.csproj" />
     <ProjectReference Include="..\Assembly.Remote\Assembly.Remote.csproj" />
   </ItemGroup>
 

@@ -2,7 +2,7 @@
   <Project Path="Assembly.Domain/Assembly.Domain.csproj" />
   <Project Path="Assembly.Application/Assembly.Application.csproj" />
   <Project Path="Assembly.Infrastructure/Assembly.Infrastructure.csproj" />
-  <Project Path="Assembly.Mac/Assembly.Mac.csproj" />
+  <Project Path="Assembly.Desktop/Assembly.Desktop.csproj" />
   <Project Path="Assembly.Remote/Assembly.Remote.csproj" />
   <Project Path="Assembly.Tests/Assembly.Tests.csproj" />
 </Solution>

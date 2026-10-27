@@ -24,7 +24,7 @@
   }: {
     token: string;
     sessionId: string;
-    // The machine the session runs on; null for this Mac.
+    // The machine the session runs on; null for this computer.
     machine: string | null;
     signal: AbortSignal;
     busy: boolean;
@@ -225,14 +225,14 @@
   }
 
   // Dropped images attach. Anything else goes into the draft as its path, which only means something to an agent
-  // on this Mac.
+  // on this computer.
   function dropped(paths: string[]) {
     const images = paths.filter((path) => IMAGE.test(path));
     attachPaths(images);
     const others = paths.filter((path) => !IMAGE.test(path));
     if (!others.length) return;
     if (machine) {
-      note = `These files are on your Mac; this session runs on ${machine}.`;
+      note = `These files are on your computer; this session runs on ${machine}.`;
       return;
     }
     const caret = input?.selectionStart ?? draft.length;

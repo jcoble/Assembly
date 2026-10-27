@@ -1,7 +1,7 @@
 # Assembly — rules for agents
 
 Assembly is a desktop workbench for coding agents: chat sessions beside an editor, terminal, Git and a browser, on the
-user's own provider subscriptions. It runs Claude Code and Codex (Antigravity is kept and comes later) on this Mac and on remote machines. The UI is
+user's own provider subscriptions. It runs Claude Code and Codex (Antigravity is kept and comes later) on this computer and on remote machines. The UI is
 SvelteKit in `app/`, inside a Tauri shell in `shell/`; the backend is .NET in `dotnet/`, and the same backend runs
 headless on remote machines.
 
@@ -148,7 +148,7 @@ doesn't. Before calling work done, name which of these you covered:
 - Each feature lives in `dotnet/Assembly.Application/Features/<Feature>/`, and its outside systems (files, processes,
   native calls) in `dotnet/Assembly.Infrastructure/<Feature>/`: small classes, one class per file. Until step B7, its
   routes class is in `Assembly.Infrastructure/Http/`, listed in `MachineFeatureList.cs` when every machine serves it or
-  `MacFeatureList.cs` when only the Mac's window needs it. `ArchitectureTests` checks the layers.
+  `DesktopFeatureList.cs` when only the desktop's window needs it. `ArchitectureTests` checks the layers.
 - Anything that streams or changes goes to the page over the socket, as a named topic. Never make the page poll.
 - Work nobody wants any more stops, in the page and here. `call()` makes each request's abort signal, and a newer
   call with the same key aborts the older one. A handler passes its `cancellationToken` to everything it awaits: the
@@ -225,7 +225,7 @@ etc. Then have a code and spec review done, one Claude and one Sol 6.1."
 
 ## Checking a feature
 
-- Check every feature with both Claude Code and Codex, on the Mac and on Workbox Test: `scripts/check4.sh`, with this
+- Check every feature with both Claude Code and Codex, on the desktop and on Workbox Test: `scripts/check4.sh`, with this
   commit's backend running locally and its host deployed (`dotnet/scripts/workbox.sh serve`). It writes
   `evidence/<commit>/four-way/`; commit that folder with the feature.
 - The plain check proves turns run, not that the feature works. A feature's lane writes its scenario,
