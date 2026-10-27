@@ -13,7 +13,7 @@ internal sealed class MachinesFeature : IFeature
 
     private readonly MachineSet _machines;
 
-    public MachinesFeature(MachineSet machines) => _machines = machines;
+    public MachinesFeature(MachineSet machines, MachineStatus status) => _machines = machines;
 
     public void Register(ICallRegistry calls)
     {

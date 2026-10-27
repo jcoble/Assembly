@@ -31,7 +31,8 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     private bool _formatChecked;
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
-    public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, Action<string>? turnEnded = null)
+    public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
+        Action<string>? turnEnded = null)
     {
         _turnEnded = turnEnded ?? (_ => { });
         _name = name;
