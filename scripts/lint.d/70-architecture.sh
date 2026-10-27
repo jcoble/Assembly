@@ -11,7 +11,8 @@ if [ -n "${LINT_STAGED_ONLY:-}" ] && ! git diff --cached --name-only | grep -qE 
 fi
 command -v dotnet >/dev/null || { echo "architecture: no dotnet on PATH; refusing" >&2; exit 2; }
 export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
-out=$(dotnet test dotnet/Assembly.Tests --filter "FullyQualifiedName~Assembly.Tests.Architecture" -v q --nologo 2>&1) && {
+# TreatNoTestsAsError: a filter that matches nothing fails, where VSTest would otherwise pass with nothing run.
+out=$(dotnet test dotnet/Assembly.Tests --filter "FullyQualifiedName~Assembly.Tests.Architecture" -v q --nologo -- RunConfiguration.TreatNoTestsAsError=true 2>&1) && {
   echo "architecture: every architecture test passes"
   exit 0
 }
