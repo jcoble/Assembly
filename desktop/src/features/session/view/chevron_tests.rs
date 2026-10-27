@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use super::{progress, toggled};
+use gpui::TestAppContext;
+
+use super::{progress, toggled, turn};
 
 const EASE: Duration = Duration::from_millis(200);
 
@@ -45,4 +47,22 @@ fn a_reversal_turns_back_from_where_it_is() {
     assert!((back - was).abs() < 1e-3, "{was} then {back}");
     assert_eq!(toggled(false, Some(now - EASE * 2), now, EASE), now);
     assert_eq!(toggled(true, None, now, EASE), now);
+}
+
+// With Reduce Motion on, a toggle a moment ago is already at its end.
+// Pins: g0-session#34
+#[gpui::test]
+fn reduce_motion_puts_a_toggle_at_its_end(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let window = cx.add_empty_window();
+    let just = Some(Instant::now());
+    window.update(|window, cx| {
+        assert!(
+            turn(true, just, window, cx) < 0.5,
+            "it eases with motion on"
+        );
+        cx.set_reduce_motion(true);
+        assert_eq!(turn(true, just, window, cx), 1.0);
+        assert_eq!(turn(false, just, window, cx), 0.0);
+    });
 }

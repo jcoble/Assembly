@@ -53,7 +53,13 @@ impl RenderOnce for SessionRow {
                 h_flex()
                     .gap_2()
                     .when(self.working, |line| {
-                        line.child(div().size(px(6.)).rounded_full().bg(theme.primary))
+                        line.child(
+                            div()
+                                .flex_none()
+                                .size(px(6.))
+                                .rounded_full()
+                                .bg(theme.primary),
+                        )
                     })
                     .child(div().text_sm().truncate().child(self.title)),
             )
