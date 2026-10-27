@@ -1,0 +1,115 @@
+[
+  {
+    "sessionId": "7ac9736d-b50f-48d0-a798-d8d94357984e",
+    "seq": 1,
+    "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793059897204,
+    "firstSeq": 1
+  },
+  {
+    "sessionId": "7ac9736d-b50f-48d0-a798-d8d94357984e",
+    "seq": 2,
+    "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793059897204,
+    "firstSeq": 2
+  },
+  {
+    "sessionId": "7ac9736d-b50f-48d0-a798-d8d94357984e",
+    "seq": 11,
+    "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "itemId": "context:04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "kind": "context",
+    "payload": {
+      "used": 43209,
+      "size": 1000000
+    },
+    "createdAt": 1793059908129,
+    "firstSeq": 3
+  },
+  {
+    "sessionId": "7ac9736d-b50f-48d0-a798-d8d94357984e",
+    "seq": 7,
+    "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "itemId": "toolu_01965BUvap249aF4pjxFi3r6",
+    "kind": "tool",
+    "payload": {
+      "name": "Bash",
+      "state": "completed",
+      "summary": "hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793059901145,
+    "firstSeq": 4
+  },
+  {
+    "sessionId": "7ac9736d-b50f-48d0-a798-d8d94357984e",
+    "seq": 12,
+    "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "itemId": "msg_011CgRmodWJM2D7JDPA7xVPq",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "agent-workbox\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793059908131,
+    "firstSeq": 12
+  },
+  {
+    "sessionId": "7ac9736d-b50f-48d0-a798-d8d94357984e",
+    "seq": 13,
+    "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+      "status": "completed",
+      "startedAt": 1793059897204,
+      "durationMs": 10927,
+      "firstTokenMs": 7272,
+      "model": "claude-opus-5-5",
+      "inputTokens": 4,
+      "outputTokens": 92,
+      "cacheHitPct": 64.2,
+      "costUsd": 0.2602,
+      "toolCalls": 1,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793059908131,
+    "firstSeq": 13
+  },
+  {
+    "sessionId": "7ac9736d-b50f-48d0-a798-d8d94357984e",
+    "seq": 14,
+    "runId": "04c01a53-e9b2-47aa-91f9-a12a9109b664",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793059908131,
+    "firstSeq": 14
+  }
+]
