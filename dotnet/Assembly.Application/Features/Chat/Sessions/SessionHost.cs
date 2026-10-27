@@ -162,13 +162,15 @@ public sealed partial class SessionHost : IPermissionPolicy
             // Its own token: a retry that gives up doesn't cancel the send it waits on.
             return await sending.WaitAsync(cancellationToken);
         }
-        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
             // The send it joined failed, timed out or was cancelled, maybe after its request went out: it sends
-            // nothing more. A row says the message landed; otherwise it answers the same failure.
+            // nothing more. A row says the message landed; otherwise it answers that failure.
             lock (_gate)
                 if (_hub.UserRowOfClient(_sessionId, clientId) is { } row)
                     return row.RunId;
+            if (error is OperationCanceledException)
+                throw new CallFailed("this message's first send was cut off; it may have reached the agent");
             throw;
         }
     }

@@ -64,7 +64,8 @@ send's run id back. That holds across a socket reconnect, a backend restart, and
 - `UserPayload` has `string? ClientId = null` (`Assembly.Domain/Rows/UserPayload.cs:7`). Rows are written with
   `WhenWritingNull`, the same way `From` is left out, so old rows don't change. No schema change and no FormatVersion
   bump.
-- The lookup is `Schema.UserRowOfClient` (`Assembly.Application/Features/Chat/ChatSchema.cs:81-89`), read through
+- The lookup is `Schema.UserRowOfClient` (`Assembly.Application/Features/Chat/ChatSchema.cs:81-93`; bounded in the PR
+  review round, item D), read through
   `RowStore.UserRowOfClient` (`RowStore.cs:201-204`) and `LiveHub.UserRowOfClient` (`LiveHub.cs:135-139`):
   `SELECT run_id, json_extract(payload, '$.text') FROM rows INDEXED BY rows_item WHERE session_id = $session AND item_id IS NULL AND kind = 'user' AND json_extract(payload, '$.clientId') = $client ORDER BY seq DESC LIMIT 1`.
   It also reads the row's text, for the text check in change 5.
@@ -100,10 +101,9 @@ send's run id back. That holds across a socket reconnect, a backend restart, and
    running turn may already be a newer one. RowConverter puts the row on that run, and closes the open message and
    thinking only when that run is the one still running (`RowConverter.cs:81-91`).
 2. A retry that joined a send which then failed, timed out or was cancelled sends nothing. It looks at the rows once:
-   a row with the clientId answers that row's run id; otherwise it answers the same failure (`SessionHost.cs:165-173`).
-   Only a send that arrives after the map entry is gone does the row lookup and then a fresh send. On the socket,
-   when the first send was cut off at its 30 s limit, the retry's reply is `failed` "send/send failed", since the
-   failure it passes on is the first send's cancel.
+   a row with the clientId answers that row's run id; otherwise it answers the same failure (`SessionHost.cs:165-175`;
+   a cut-off is reworded in the PR review round, item B).
+   Only a send that arrives after the map entry is gone does the row lookup and then a fresh send.
 3. A resend with other text through the desktop to a remote reaches the socket as `failed` with the message
    `workbox-test answered 502: {"error":"clientId already used for another message"}`. It contains the same words as
    a local send, so it was left as it is; `RemoteMachineTests.A_resend_through_the_desktop_with_other_text_fails_with_the_remotes_words`
@@ -111,11 +111,34 @@ send's run id back. That holds across a socket reconnect, a backend restart, and
 4. The tests prove the wait path: the "while held" part of the steer test and the cut-off test wait for the host's
    `joined in-flight send` line, on a test log that signals when a line is written (no sleeps, no polling).
 
+## PR review round
+
+- A. The remote's send route no longer cancels a send when the desktop's request drops (a tunnel blip, the Mac
+  asleep). Like a write on the socket (plan 5.9, `SocketDispatcher.cs:219-222`), it runs on a token bounded by the
+  socket's call limit, `SocketDispatcher.Limit` (30 s), on the backend's TimeProvider, and not linked to
+  `RequestAborted` (`RunRoutes.cs:133-140`; ApiServer passes `TimeProvider.System`). A steer that reached the agent
+  waits for its answer and writes its row, so the window's retry through the desktop answers that run, and the agent
+  is steered once. A send that runs past the limit answers 502 with the cancel's message.
+- B. A retry that joined a send which was then cut off, with no row written, fails with `failed` "this message's
+  first send was cut off; it may have reached the agent" (`SessionHost.cs:172-173`) instead of rethrowing the cancel,
+  which the socket answered "send/send failed" and logged as an error. Other failures still rethrow.
+- C. A JSON null clientId on the remote route counts as no clientId, as on the socket (`RunRoutes.cs:112-113`).
+- D. The lookup reads only the session's newest 200 user rows (`ChatSchema.cs:81-93`, the constant `ClientIdRows`):
+  a real resend comes within seconds, or soon after a restart. Every window send carries a clientId, so nearly every
+  lookup is a miss, and it runs under SessionHost's lock and LiveHub's, which every session's publishes share. The
+  plan is still one search of rows_item with no temporary sort. On a fresh copy of the 40k test database (user rows
+  given no item, as the converter writes them), a miss on `big-session-40k` (5,000 user rows) takes about 0.1 to
+  0.4 ms of CPU, under 1 ms; the unbounded query, timed on the same copy, takes about 5 ms (5 to 7 ms before).
+
 ## Known limits
 
 - A send cut off at 30 s after its request went out may be steered twice if it's sent again after the failure: the
-  map entry is gone and no row was written, so the new send goes ahead.
+  map entry is gone and no row was written, so the new send goes ahead. Since item A this applies only to the 30 s
+  limit itself, not to a dropped desktop request, which was the commonest way a remote send got cut off.
+- A clientId older than the session's newest 200 user rows isn't found, so a resend that late starts a new send.
 - A late "injected" that arrives after the cut-off writes no row: the cut-off send has stopped listening for it.
 - A remote on an older build ignores clientId.
 - Through the desktop, a remote's refusal of a resend with other text keeps the remote's words, but inside the
   desktop's "workbox-test answered 502: {...}" wrapper, so the words are not exactly a local send's.
+- A steer the agent injects late, after a new turn has already started, gets its row tagged with the old run but
+  placed after the new turn's rows.

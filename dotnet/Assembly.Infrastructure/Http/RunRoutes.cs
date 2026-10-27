@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -8,6 +9,7 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 
 using Assembly.Infrastructure.Mcp;
+using Assembly.Infrastructure.Socket;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
@@ -16,7 +18,7 @@ namespace Assembly.Infrastructure.Http;
 /// <c>POST /sessions/:id/tasks/:task/stop</c> stops background work, on whichever machine runs the session's agent. An
 /// ask that is no longer open, an answer that doesn't fit it, or a task that can't be stopped is a 409.
 /// </summary>
-internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineSet machines)
+internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineSet machines, TimeProvider time)
 {
     public void Map(IEndpointRouteBuilder routes)
     {
@@ -107,7 +109,8 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
         }
 
         var clientId = JsonReply.String(body, "clientId");
-        if (body.TryGetProperty("clientId", out _) && SendFeature.ClientIdError(clientId) is { } bad)
+        // A null clientId is none, as on the socket.
+        if (body.TryGetProperty("clientId", out var given) && given.ValueKind != JsonValueKind.Null && SendFeature.ClientIdError(clientId) is { } bad)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, bad);
             return;
@@ -127,11 +130,14 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
         }
 
         string? runId;
+        // Like a write on the socket (plan 5.9), a send isn't cancelled by its caller going away: a steer that may
+        // have reached the agent runs on to its answer, so it's saved. It's bounded by the socket's call limit.
+        using var limit = new CancellationTokenSource(SocketDispatcher.Limit, time);
         try
         {
-            runId = await machines.For(session).SendAsync(session, text, clientId, context.RequestAborted);
+            runId = await machines.For(session).SendAsync(session, text, clientId, limit.Token);
         }
-        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed or OperationCanceledException)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;
