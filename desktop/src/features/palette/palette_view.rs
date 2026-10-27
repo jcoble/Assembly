@@ -17,7 +17,8 @@ pub struct PaletteView {
     state: Entity<CommandState>,
 }
 
-/// The palette that's up. Only its dialog holds the view, so this stops upgrading once the dialog is gone.
+/// The palette that's up. Cleared as its dialog starts closing, not when the fade ends, so a Cmd-K during the fade
+/// opens a new palette instead of closing whatever dialog is under it.
 struct OpenPalette(WeakEntity<PaletteView>);
 
 impl Global for OpenPalette {}
@@ -47,7 +48,7 @@ impl PaletteView {
             .try_global::<OpenPalette>()
             .is_some_and(|open| open.0.upgrade().is_some())
         {
-            window.close_dialog(cx);
+            Self::close(window, cx);
             return;
         }
         let state = cx.new(|cx| CommandState::new(window, cx));
@@ -61,8 +62,21 @@ impl PaletteView {
             if first_draw.replace(false) {
                 state.update(cx, |state, cx| state.focus(window, cx));
             }
-            dialog.close_button(false).child(view.clone())
+            // Escape and a click outside close the dialog without asking the palette.
+            dialog
+                .close_button(false)
+                .child(view.clone())
+                .on_close(|_, _, cx| Self::closing(cx))
         });
+    }
+
+    fn close(window: &mut Window, cx: &mut App) {
+        Self::closing(cx);
+        window.close_dialog(cx);
+    }
+
+    fn closing(cx: &mut App) {
+        cx.set_global(OpenPalette(WeakEntity::new_invalid()));
     }
 }
 
@@ -71,7 +85,7 @@ impl Render for PaletteView {
         Command::new(&self.state)
             .placeholder("Type a command")
             .items(CommandRegistry::items(cx))
-            .on_confirm(|_, window, cx| window.close_dialog(cx))
+            .on_confirm(|_, window, cx| Self::close(window, cx))
     }
 }
 
