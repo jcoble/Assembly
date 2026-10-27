@@ -4,23 +4,22 @@ using Assembly.Application.Common.Acp.V1;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
-/// A session's subagents that the agent runs as child sessions (the subagents RFD). Each child has a thread of its
+/// A session's subagents that the agent runs as child sessions (the subagents RFD). Each child has a session of its
 /// own, with its own rows: each prompt its parent gives it starts a run there, and the parent saying it's idle ends
-/// that run. The parent's thread gets a row for each child, which <see cref="SessionHost"/> applies. Used under the
+/// that run. The parent's session gets a row for each child, which <see cref="SessionHost"/> applies. Used under the
 /// host's lock.
 /// </summary>
-internal sealed class Subagents(ThreadStore threads, LiveHub hub)
+internal sealed class Subagents(SessionStore sessionStore, LiveHub hub)
 {
-    private sealed class Child(ThreadInfo thread, SubagentPayload shown)
+    private sealed class Child(SessionInfo session, SubagentPayload shown)
     {
-        public ThreadInfo Thread { get; } = thread;
+        public SessionInfo Session { get; } = session;
         public RowConverter Converter { get; } = new();
         public SubagentPayload Shown { get; set; } = shown;
         public string? RunId { get; set; }
@@ -30,7 +29,7 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
 
     private readonly Dictionary<string, Child> _children = [];
 
-    public bool Has(string sessionId) => _children.ContainsKey(sessionId);
+    public bool Has(string acpSessionId) => _children.ContainsKey(acpSessionId);
 
     /// <summary>Children still at work: they keep their parent's session open.</summary>
     public bool AnyRunning => _children.Values.Any(child => child.Shown.State != "idle");
@@ -38,14 +37,14 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
     /// <summary>The child sessions that can be stopped now.</summary>
     public IEnumerable<string> Stoppable => _children.Where(pair => pair.Value.Shown.CanStop).Select(pair => pair.Key);
 
-    /// <summary>The parent's word on a child: its row in the parent's thread, as it stands now.</summary>
-    public SubagentShown Changed(ThreadInfo parent, SubagentChanged change)
+    /// <summary>The parent's word on a child: its row in the parent's session, as it stands now.</summary>
+    public SubagentShown Changed(SessionInfo parent, SubagentChanged change)
     {
-        if (!_children.TryGetValue(change.SessionId, out var child))
+        if (!_children.TryGetValue(change.AcpSessionId, out var child))
         {
             var title = change.Title ?? change.Description ?? "Subagent";
-            var thread = threads.Child(parent, change.SessionId, title);
-            child = _children[change.SessionId] = new Child(thread, new SubagentPayload(thread.ThreadId, title, change.Description,
+            var session = sessionStore.Child(parent, change.AcpSessionId, title);
+            child = _children[change.AcpSessionId] = new Child(session, new SubagentPayload(session.SessionId, title, change.Description,
                 "running", null, null, false, null));
         }
         return Update(child, change);
@@ -66,11 +65,11 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
         if (state == "idle")
             EndRun(child, change.At, change.Error is { } error ? new TurnFailed(change.At, error, "subagent_error")
                 : new TurnEnded(change.At, change.StopReason == "cancelled" ? "cancelled" : "end_turn", null));
-        return new SubagentShown(change.At, change.SessionId, child.Shown);
+        return new SubagentShown(change.At, change.AcpSessionId, child.Shown);
     }
 
     /// <summary>
-    /// One of a child's own updates, into its thread. A prompt from the parent starts a run; when it names one of the
+    /// One of a child's own updates, into its session. A prompt from the parent starts a run; when it names one of the
     /// parent's tool calls (<paramref name="parentKnowsTool"/>), the parent's row is nested under it, and comes back.
     /// </summary>
     public SubagentShown? Apply(SessionNotification update, long at, Func<string, bool> parentKnowsTool)
@@ -128,5 +127,5 @@ internal sealed class Subagents(ThreadStore threads, LiveHub hub)
         child.RunId = null;
     }
 
-    private void Publish(Child child, AgentEvent agentEvent) => hub.Publish(child.Thread.ThreadId, child.Converter.Apply(agentEvent));
+    private void Publish(Child child, AgentEvent agentEvent) => hub.Publish(child.Session.SessionId, child.Converter.Apply(agentEvent));
 }

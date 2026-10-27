@@ -8,7 +8,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// the reader should hold before this row. Finished messages' deltas are deleted, so it isn't always <c>Seq - 1</c>.
 /// </summary>
 public sealed record StoredRow(
-    string ThreadId,
+    string SessionId,
     long Seq,
     string? RunId,
     string? ItemId,

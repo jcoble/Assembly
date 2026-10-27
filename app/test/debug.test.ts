@@ -70,7 +70,7 @@ test('a TrackedWebSocket opened inside an effect does not make the effect rerun 
   assert.deepEqual(run(), { runs: 1, sockets: 1 });
 });
 
-test('the chats counter holds at one open conversation across thread switches', async () => {
+test('the chats counter holds at one open conversation across session switches', async () => {
   const { Window } = await import('happy-dom');
   const { compile } = await import('svelte/compiler');
   const debugUrl = libModule('debug.svelte.ts');
@@ -82,7 +82,7 @@ test('the chats counter holds at one open conversation across thread switches', 
       .replaceAll("from 'svelte'", `from '${svelteUrl}'`);
     return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
   };
-  // A conversation counts itself as Conversation.svelte does; the page keys it by thread.
+  // A conversation counts itself as Conversation.svelte does; the page keys it by session.
   const chat = component(
     `<script>import { onDestroy } from 'svelte'; import { chatOpened, chatClosed } from '${debugUrl}'; let { id } = $props(); chatOpened(); onDestroy(chatClosed);</script><p>{id}</p>`,
     'Chat.svelte',
@@ -117,7 +117,7 @@ test('the chats counter holds at one open conversation across thread switches', 
   }
 });
 
-test('the timers counter holds at one pending delay across thread switches', async () => {
+test('the timers counter holds at one pending delay across session switches', async () => {
   const { Window } = await import('happy-dom');
   const { compile } = await import('svelte/compiler');
   const debugUrl = libModule('debug.svelte.ts');

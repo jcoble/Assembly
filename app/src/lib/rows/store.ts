@@ -1,7 +1,7 @@
 // The relay's rows (plan "Row contract") and their fold into what the
 // conversation shows. The conversation keeps one View in $state and feeds it
 // rows; nothing here parses text. Plain functions, so tests run them in node.
-import type { TurnStats } from '../thread/turns';
+import type { TurnStats } from '../session/turns';
 
 // Assembly's SafeInlinePart / SafeMarkdownBlock, as serde writes them
 // (src-tauri/src/agent_conversation/safe_markdown.rs:5-69 there). The relay
@@ -61,10 +61,10 @@ export type AskField = {
 };
 // Background work: a backgrounded command or other task the agent runs past its turn.
 export type TaskPayload = { name: string; state: 'running' | 'completed' | 'failed' | 'stopped'; canStop: boolean; toolCallId?: string };
-// A subagent the agent runs as a child session, with a thread of its own (`threadId`), nested under the
+// A subagent the agent runs as a child session, with a session of its own (`sessionId`), nested under the
 // tool call that started it (`toolCallId`) when known.
 export type SubagentPayload = {
-  threadId: string;
+  sessionId: string;
   title: string;
   description?: string;
   state: 'running' | 'requires_action' | 'idle';
@@ -75,14 +75,14 @@ export type SubagentPayload = {
 };
 export type PlanItem = { text: string; status: 'pending' | 'in_progress' | 'completed' };
 export type RunError = { message: string; code: string | null };
-// GET /threads/:id/tools/:itemId
+// GET /sessions/:id/tools/:itemId
 // `input` is the call's arguments as JSON text.
 export type ToolDetail = { summary: string; input: string | null; output: string | null; diff: string | null; path: string | null };
 
 type Payloads = {
   // `reason` says why a run the agent started itself started.
   turn: { state: TurnState; reason?: string };
-  // `from`: the thread of the session that sent it, when it's a message from another session.
+  // `from`: the session that sent it, when it's a message from another session.
   user: { text: string; from?: string };
   // `text` is only this delta's new raw text; the UI draws `blocks`.
   delta: { from: number; text: string; blocks: SafeMarkdownBlock[] };
@@ -102,7 +102,7 @@ type Payloads = {
 };
 export type Row = {
   [K in keyof Payloads]: {
-    threadId: string;
+    sessionId: string;
     seq: number;
     runId: string | null;
     itemId: string | null;
@@ -129,7 +129,7 @@ export type Item =
   | (Base & { kind: 'error'; error: RunError })
   | (Base & { kind: 'ask'; askId: string; ask: AskPayload })
   | (Base & { kind: 'task'; taskId: string; task: TaskPayload })
-  | (Base & { kind: 'subagent'; sessionId: string; subagent: SubagentPayload })
+  | (Base & { kind: 'subagent'; acpSessionId: string; subagent: SubagentPayload })
   | (Base & { kind: 'note'; text: string })
   | (Base & { kind: 'stats'; stats: TurnStats })
   | (Base & { kind: 'compaction'; trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number })
@@ -247,7 +247,7 @@ export function applyRow(view: View, row: Row): void {
         item.subagent = row.payload;
         return;
       }
-      view.items.push({ key, runId, kind: 'subagent', sessionId: (row.itemId ?? '').replace(/^subagent:/, ''), subagent: row.payload });
+      view.items.push({ key, runId, kind: 'subagent', acpSessionId: (row.itemId ?? '').replace(/^subagent:/, ''), subagent: row.payload });
       return;
     default:
       // A kind this build does not know: shown by name, so nothing silently disappears.

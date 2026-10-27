@@ -11,7 +11,7 @@ export const counters = $state({ sockets: 0, chats: 0, fetches: 0, timers: 0, fr
 export const measures = $state({ measured: 0, moved: 0 });
 
 // Open conversations, kept in a plain number and copied to the counter. A
-// thread switch makes the next conversation inside the switch's batch, so
+// session switch makes the next conversation inside the switch's batch, so
 // `counters.chats++` there was lost when the old one's `--` ran at commit.
 let chats = 0;
 export const chatOpened = () => untrack(() => (counters.chats = ++chats));

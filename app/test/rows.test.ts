@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { activeRun, applyRow, emptyView, liveStep, prependPage, renderedChars, runStartedAt, type Row, type View } from '../src/lib/rows/store.ts';
-import { pickAnchor, restoredScrollTop, viewUncovered } from '../src/lib/thread/scroll.ts';
+import { pickAnchor, restoredScrollTop, viewUncovered } from '../src/lib/session/scroll.ts';
 import { compactionLabel } from '../src/lib/chat/notices.ts';
 
 const fixture = (name: string): Row[] => JSON.parse(readFileSync(new URL(`fixtures/${name}`, import.meta.url), 'utf8')).rows;
@@ -81,7 +81,7 @@ test('a page in newest form, then live rows, folds to the same items as every ro
     'user:u1', 'message:m1', 'seq:9',
     'user:u2', 'thinking:th1', 'tool:tool1', 'tool:tool2', 'tool:tool3', 'tool:tool4', 'message:m2', 'seq:25', 'seq:27',
   ]);
-  // The whole thread read as one page folds the same way.
+  // The whole session read as one page folds the same way.
   assert.deepEqual(prependPage(emptyView(), newestForm(all), false).items, everyRow.items);
 });
 
@@ -99,10 +99,10 @@ test('a page read mid-message holds it as one delta from 0, and live deltas cont
 test('a page places items by their first seq, as live rows do', () => {
   // Tool A starts, message B streams and ends, then A completes.
   const rows: Row[] = [
-    { threadId: 't', seq: 1, runId: 'r', itemId: 'A', kind: 'tool', payload: { name: 'Bash', state: 'started', summary: 'a', hasDetail: false }, createdAt: 0 },
-    { threadId: 't', seq: 2, runId: 'r', itemId: 'B', kind: 'delta', payload: { from: 0, text: 'b', blocks: [] }, createdAt: 0 },
-    { threadId: 't', seq: 3, runId: 'r', itemId: 'B', kind: 'message', payload: { blocks: [] }, createdAt: 0 },
-    { threadId: 't', seq: 4, runId: 'r', itemId: 'A', kind: 'tool', payload: { name: 'Bash', state: 'completed', summary: 'a', hasDetail: true }, createdAt: 0 },
+    { sessionId: 't', seq: 1, runId: 'r', itemId: 'A', kind: 'tool', payload: { name: 'Bash', state: 'started', summary: 'a', hasDetail: false }, createdAt: 0 },
+    { sessionId: 't', seq: 2, runId: 'r', itemId: 'B', kind: 'delta', payload: { from: 0, text: 'b', blocks: [] }, createdAt: 0 },
+    { sessionId: 't', seq: 3, runId: 'r', itemId: 'B', kind: 'message', payload: { blocks: [] }, createdAt: 0 },
+    { sessionId: 't', seq: 4, runId: 'r', itemId: 'A', kind: 'tool', payload: { name: 'Bash', state: 'completed', summary: 'a', hasDetail: true }, createdAt: 0 },
   ];
   assert.deepEqual(keys(live(emptyView(), rows)), ['tool:A', 'message:B']);
   const page = newestForm(rows);
@@ -136,7 +136,7 @@ test('a sent run that ended stays ended when a run the agent continues by itself
   // As recorded: a prompt that leaves a background command running ends its run (r1); the command
   // finishing starts a run of the agent's own (r2), which ends too. Nothing is running.
   const stats = (runId: string) => ({ runId, status: 'completed', startedAt: 0, durationMs: 1, firstTokenMs: 1, model: 'claude-opus-5-5', inputTokens: 4, outputTokens: 121, cacheHitPct: 94.9, costUsd: 0.05, toolCalls: 1, branch: null, head: null, prevBranch: null, prevHead: null });
-  const row = (seq: number, runId: string, kind: string, payload: unknown, itemId: string | null = null) => ({ threadId: 't', seq, runId, itemId, kind, payload, createdAt: seq }) as Row;
+  const row = (seq: number, runId: string, kind: string, payload: unknown, itemId: string | null = null) => ({ sessionId: 't', seq, runId, itemId, kind, payload, createdAt: seq }) as Row;
   const view = live(emptyView(), [
     row(1, 'r1', 'user', { text: 'Run it in the background, then reply "started".' }),
     row(2, 'r1', 'turn', { state: 'started' }),
@@ -151,7 +151,7 @@ test('a sent run that ended stays ended when a run the agent continues by itself
 });
 
 test('a running turn counts from its turn row, so reopening it mid-turn keeps its time', () => {
-  const started: Row = { threadId: 't', seq: 7, runId: 'r2', itemId: null, kind: 'turn', payload: { state: 'started' }, createdAt: 1_000 };
+  const started: Row = { sessionId: 't', seq: 7, runId: 'r2', itemId: null, kind: 'turn', payload: { state: 'started' }, createdAt: 1_000 };
   const view = prependPage(emptyView(), [started], false, 0);
   assert.equal(runStartedAt(view, 'r2'), 1_000);
   // A run just sent has no turn row yet; neither does an ended one.
@@ -238,8 +238,8 @@ test('a compaction row becomes a compaction item, drawn with its token counts', 
 
 test('a task row stays one item as its state changes, in the run it started in', () => {
   const rows: Row[] = [
-    { threadId: 't', seq: 1, runId: 'r1', itemId: 'task:b1', kind: 'task', payload: { name: 'Background command', state: 'running', canStop: false, toolCallId: 't1' }, createdAt: 0 },
-    { threadId: 't', seq: 2, runId: 'r1', itemId: 'task:b1', kind: 'task', payload: { name: 'Background command', state: 'completed', canStop: false, toolCallId: 't1' }, createdAt: 0 },
+    { sessionId: 't', seq: 1, runId: 'r1', itemId: 'task:b1', kind: 'task', payload: { name: 'Background command', state: 'running', canStop: false, toolCallId: 't1' }, createdAt: 0 },
+    { sessionId: 't', seq: 2, runId: 'r1', itemId: 'task:b1', kind: 'task', payload: { name: 'Background command', state: 'completed', canStop: false, toolCallId: 't1' }, createdAt: 0 },
   ];
   const view = live(emptyView(), rows);
   assert.deepEqual(keys(view), ['task:task:b1']);
@@ -251,22 +251,22 @@ test('a task row stays one item as its state changes, in the run it started in',
 
 test('a subagent row stays one item, keyed by its child session, as its parent reports on it', () => {
   const rows: Row[] = [
-    { threadId: 't', seq: 1, runId: 'r1', itemId: 'subagent:s2', kind: 'subagent', payload: { threadId: 'c1', title: 'Explore', state: 'running', canStop: true }, createdAt: 0 },
-    { threadId: 't', seq: 2, runId: 'r1', itemId: 'subagent:s2', kind: 'subagent', payload: { threadId: 'c1', title: 'Explore', state: 'idle', stopReason: 'end_turn', canStop: false, toolCallId: 't1' }, createdAt: 0 },
+    { sessionId: 't', seq: 1, runId: 'r1', itemId: 'subagent:s2', kind: 'subagent', payload: { sessionId: 'c1', title: 'Explore', state: 'running', canStop: true }, createdAt: 0 },
+    { sessionId: 't', seq: 2, runId: 'r1', itemId: 'subagent:s2', kind: 'subagent', payload: { sessionId: 'c1', title: 'Explore', state: 'idle', stopReason: 'end_turn', canStop: false, toolCallId: 't1' }, createdAt: 0 },
   ];
   const view = live(emptyView(), rows);
   assert.deepEqual(keys(view), ['subagent:subagent:s2']);
   const subagent = view.items[0]!;
   if (subagent.kind !== 'subagent') throw new Error('not a subagent');
-  assert.equal(subagent.sessionId, 's2');
+  assert.equal(subagent.acpSessionId, 's2');
   assert.equal(subagent.subagent.state, 'idle');
   assert.equal(subagent.subagent.toolCallId, 't1');
 });
 
 test('a run the agent started itself shows its reason where a prompt would be', () => {
   const rows: Row[] = [
-    { threadId: 't', seq: 1, runId: 'r2', itemId: null, kind: 'turn', payload: { state: 'started', reason: 'Continued after a background task finished' }, createdAt: 0 },
-    { threadId: 't', seq: 2, runId: 'r2', itemId: null, kind: 'turn', payload: { state: 'finished' }, createdAt: 0 },
+    { sessionId: 't', seq: 1, runId: 'r2', itemId: null, kind: 'turn', payload: { state: 'started', reason: 'Continued after a background task finished' }, createdAt: 0 },
+    { sessionId: 't', seq: 2, runId: 'r2', itemId: null, kind: 'turn', payload: { state: 'finished' }, createdAt: 0 },
   ];
   const view = live(emptyView(), rows);
   assert.deepEqual(view.items.map((item) => (item.kind === 'note' ? item.text : item.kind)), ['Continued after a background task finished']);
@@ -276,8 +276,8 @@ test('a run the agent started itself shows its reason where a prompt would be', 
 test('an ask row opens a card that its settled row updates in place', () => {
   const options = [{ optionId: 'allow', name: 'Allow', kind: 'allow_once' }];
   const rows: Row[] = [
-    { threadId: 't', seq: 1, runId: 'r', itemId: 'ask:7', kind: 'ask', payload: { kind: 'permission', state: 'open', title: 'Run ls', options }, createdAt: 0 },
-    { threadId: 't', seq: 2, runId: 'r', itemId: 'ask:7', kind: 'ask', payload: { kind: 'permission', state: 'answered', title: 'Run ls', options, answer: { optionId: 'allow' } }, createdAt: 0 },
+    { sessionId: 't', seq: 1, runId: 'r', itemId: 'ask:7', kind: 'ask', payload: { kind: 'permission', state: 'open', title: 'Run ls', options }, createdAt: 0 },
+    { sessionId: 't', seq: 2, runId: 'r', itemId: 'ask:7', kind: 'ask', payload: { kind: 'permission', state: 'answered', title: 'Run ls', options, answer: { optionId: 'allow' } }, createdAt: 0 },
   ];
   const view = live(emptyView(), rows);
   assert.deepEqual(keys(view), ['ask:ask:7']);
@@ -288,7 +288,7 @@ test('an ask row opens a card that its settled row updates in place', () => {
 });
 
 test('the newest context report wins, live or paged, and draws no item', () => {
-  const context = (seq: number, used: number): Row => ({ threadId: 't', seq, runId: `run-${seq}`, itemId: `context:run-${seq}`, kind: 'context', payload: { used, size: 1_000 }, createdAt: seq });
+  const context = (seq: number, used: number): Row => ({ sessionId: 't', seq, runId: `run-${seq}`, itemId: `context:run-${seq}`, kind: 'context', payload: { used, size: 1_000 }, createdAt: seq });
   const view = emptyView();
   applyRow(view, context(5, 100));
   applyRow(view, context(9, 300));

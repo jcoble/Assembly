@@ -74,10 +74,10 @@ internal sealed class PageRoutes(string token, string soakResults, Func<Uri> bac
                     writer.WriteNumber("size", original.Length);
                     writer.WriteEndObject();
                 };
-            // { threadId, path } -> { path } where the agent runs; the file goes from here, so it never crosses into
+            // { sessionId, path } -> { path } where the agent runs; the file goes from here, so it never crosses into
             // the page.
             case "attachment.upload_path":
-                var uploaded = await UploadAsync(String(parameters, "threadId"), String(parameters, "path"));
+                var uploaded = await UploadAsync(String(parameters, "sessionId"), String(parameters, "path"));
                 return writer =>
                 {
                     writer.WritePropertyName("result");
@@ -93,13 +93,13 @@ internal sealed class PageRoutes(string token, string soakResults, Func<Uri> bac
 
     private static void Null(Utf8JsonWriter writer) => writer.WriteNull("result");
 
-    // POST /threads/:id/attachments on this backend, which sends it on to the thread's machine.
-    private async Task<string> UploadAsync(string threadId, string path)
+    // POST /sessions/:id/attachments on this backend, which sends it on to the session's machine.
+    private async Task<string> UploadAsync(string sessionId, string path)
     {
-        if (threadId.Length == 0 || !threadId.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
-            throw new InvalidOperationException("bad thread id");
+        if (sessionId.Length == 0 || !sessionId.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
+            throw new InvalidOperationException("bad session id");
         var (bytes, mime) = ImageFile.Read(path);
-        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(backend(), $"threads/{threadId}/attachments"));
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(backend(), $"sessions/{sessionId}/attachments"));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = new ByteArrayContent(bytes);
         request.Content.Headers.ContentType = new MediaTypeHeaderValue(mime);

@@ -1,11 +1,11 @@
 using System.Text.Json;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
 /// <summary>The Assembly MCP server's tools: listed as <c>tools/list</c> describes them, and called by name.</summary>
-public sealed class HelperToolList(ThreadStore threads, IReadOnlyList<HelperTool> tools)
+public sealed class HelperToolList(SessionStore sessionStore, IReadOnlyList<HelperTool> tools)
 {
     public void WriteTools(Utf8JsonWriter json)
     {
@@ -42,8 +42,8 @@ public sealed class HelperToolList(ThreadStore threads, IReadOnlyList<HelperTool
     /// <summary>Runs a tool for the agent of <paramref name="callerId"/>.</summary>
     public Task<ToolResult> CallAsync(string callerId, string name, JsonElement arguments, CancellationToken cancellationToken)
     {
-        if (threads.Get(callerId) is not { } caller)
-            return Task.FromResult(ToolResult.Error("Your session's thread no longer exists."));
+        if (sessionStore.Get(callerId) is not { } caller)
+            return Task.FromResult(ToolResult.Error("Your session no longer exists."));
         return tools.FirstOrDefault(tool => tool.Name == name) is { } found
             ? found.CallAsync(caller, arguments, cancellationToken)
             : Task.FromResult(ToolResult.Error($"There is no tool named {name}."));

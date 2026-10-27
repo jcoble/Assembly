@@ -1,12 +1,12 @@
 using System.Text.Json;
 
-namespace Assembly.Domain.Threads;
+namespace Assembly.Domain.Sessions;
 
 /// <summary>
-/// A thread's session config: the options its agent reported (raw JSON, null before its first session), the values
+/// A session's config: the options its agent reported (raw JSON, null before its first session), the values
 /// chosen, and the agent's slash commands (ACP <c>availableCommands</c>, raw JSON, null before it sent any).
 /// </summary>
-public sealed record ThreadConfig(string? Options, IReadOnlyDictionary<string, string> Choices, string? Commands = null)
+public sealed record SessionConfig(string? Options, IReadOnlyDictionary<string, string> Choices, string? Commands = null)
 {
     public static IReadOnlyDictionary<string, string> ReadChoices(string json)
     {

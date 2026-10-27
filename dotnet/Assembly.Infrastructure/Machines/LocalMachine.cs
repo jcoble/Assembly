@@ -4,62 +4,61 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Machines;
 namespace Assembly.Infrastructure.Machines;
 
-/// <summary>Threads whose agent runs here: their sessions, rows and attachments are all on this machine.</summary>
-public sealed class LocalMachine(LiveHub hub, ThreadStore threads, SessionRegistry sessions, AttachmentStore attachments) : IMachine
+/// <summary>Sessions whose agent runs here: their ACP sessions, rows and attachments are all on this machine.</summary>
+public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, SessionRegistry sessions, AttachmentStore attachments) : IMachine
 {
     public string? Name => null;
 
     public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<(string Id, string Name)>>(sessions.Agents.Select(agent => (agent.Id, agent.Name)).ToList());
 
-    public Task<ThreadInfo> CreateThreadAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
-        Task.FromResult(threads.Create(agent, repoUrl));
+    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
+        Task.FromResult(sessionStore.Create(agent, repoUrl));
 
-    public Task<ThreadInfo> CreateHelperAsync(ThreadInfo parent, string agent, string title, CancellationToken cancellationToken) =>
-        Task.FromResult(threads.Helper(parent, agent, title));
+    public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
+        Task.FromResult(sessionStore.Helper(parent, agent, title));
 
-    public Task<string?> SendAsync(ThreadInfo thread, string text, CancellationToken cancellationToken) =>
-        sessions.For(thread.ThreadId).SteerAsync(text, cancellationToken);
+    public Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken) =>
+        sessions.For(session.SessionId).SteerAsync(text, cancellationToken);
 
-    public Task<bool> StopAsync(ThreadInfo thread, string runId, CancellationToken cancellationToken) =>
+    public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.Stop(runId));
 
-    // A helper session's row in its parent's thread stops by the helper's thread id.
-    public Task<bool> StopTaskAsync(ThreadInfo thread, string taskId, CancellationToken cancellationToken) =>
-        threads.Get(taskId) is { Helper: true } helper && helper.ParentThreadId == thread.ThreadId
+    // A helper session's row in its parent's session stops by the helper's session id.
+    public Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken) =>
+        sessionStore.Get(taskId) is { Helper: true } helper && helper.ParentSessionId == session.SessionId
             ? Task.FromResult(sessions.ActiveRun(taskId) is { } run && sessions.Stop(run))
-            : sessions.For(thread.ThreadId).StopTaskAsync(taskId, cancellationToken);
+            : sessions.For(session.SessionId).StopTaskAsync(taskId, cancellationToken);
 
-    public string? ActiveRun(ThreadInfo thread) => sessions.ActiveRun(thread.ThreadId);
+    public string? ActiveRun(SessionInfo session) => sessions.ActiveRun(session.SessionId);
 
-    public Task<StoredToolCall?> ToolCallAsync(ThreadInfo thread, string itemId, CancellationToken cancellationToken) =>
-        Task.FromResult(hub.ToolCall(thread.ThreadId, itemId));
+    public Task<StoredToolCall?> ToolCallAsync(SessionInfo session, string itemId, CancellationToken cancellationToken) =>
+        Task.FromResult(hub.ToolCall(session.SessionId, itemId));
 
-    public Task<string> SaveAttachmentAsync(ThreadInfo thread, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
-        attachments.SaveAsync(thread.ThreadId, type, bytes, cancellationToken);
+    public Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
+        attachments.SaveAsync(session.SessionId, type, bytes, cancellationToken);
 
-    public Task<ThreadConfig> ConfigAsync(ThreadInfo thread, CancellationToken cancellationToken)
+    public Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken)
     {
-        var config = threads.Config(thread.ThreadId);
-        return Task.FromResult(config.Options is null ? config with { Options = threads.AgentConfig(thread.Agent) } : config);
+        var config = sessionStore.Config(session.SessionId);
+        return Task.FromResult(config.Options is null ? config with { Options = sessionStore.AgentConfig(session.Agent) } : config);
     }
 
-    public async Task<ThreadConfig> SetConfigAsync(ThreadInfo thread, string configId, string value, CancellationToken cancellationToken)
+    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken)
     {
-        await sessions.For(thread.ThreadId).SetConfigAsync(configId, value, cancellationToken);
-        return await ConfigAsync(thread, cancellationToken);
+        await sessions.For(session.SessionId).SetConfigAsync(configId, value, cancellationToken);
+        return await ConfigAsync(session, cancellationToken);
     }
 
-    public Task<bool> AnswerAsync(ThreadInfo thread, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken) =>
-        Task.FromResult(sessions.For(thread.ThreadId).Answer(askId, answer));
+    public Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken) =>
+        Task.FromResult(sessions.For(session.SessionId).Answer(askId, answer));
 
-    public void Watch(ThreadInfo thread)
+    public void Watch(SessionInfo session)
     {
     }
 }

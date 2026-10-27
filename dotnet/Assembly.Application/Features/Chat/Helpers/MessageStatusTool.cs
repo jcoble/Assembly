@@ -2,13 +2,12 @@ using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
 /// <summary><c>message_status</c>: how a message the caller sent stands, waiting up to 30 seconds for an answer.</summary>
-public sealed class MessageStatusTool(ThreadStore threads, SessionRegistry sessions, LiveHub hub) : HelperTool
+public sealed class MessageStatusTool(SessionStore sessionStore, SessionRegistry sessions, LiveHub hub) : HelperTool
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
     private static readonly ToolResult Working = ToolResult.Json(json => json.WriteString("state", "working"));
@@ -22,7 +21,7 @@ public sealed class MessageStatusTool(ThreadStore threads, SessionRegistry sessi
     public override (string Name, string Description, bool Required)[] Parameters =>
         [("messageId", "The messageId start_session or send_message returned.", true)];
 
-    public override async Task<ToolResult> CallAsync(ThreadInfo caller, JsonElement arguments, CancellationToken cancellationToken)
+    public override async Task<ToolResult> CallAsync(SessionInfo caller, JsonElement arguments, CancellationToken cancellationToken)
     {
         var messageId = Argument(arguments, "messageId");
         var deadline = DateTimeOffset.UtcNow + Wait;
@@ -35,9 +34,9 @@ public sealed class MessageStatusTool(ThreadStore threads, SessionRegistry sessi
         return status;
     }
 
-    private ToolResult Status(ThreadInfo caller, string? messageId)
+    private ToolResult Status(SessionInfo caller, string? messageId)
     {
-        if (messageId is null || threads.Message(messageId) is not { } message || message.From != caller.ThreadId)
+        if (messageId is null || sessionStore.Message(messageId) is not { } message || message.From != caller.SessionId)
             return ToolResult.Error("No message of yours has that id.");
         // Answered from the other machine it went to.
         if (message.State is { } state)

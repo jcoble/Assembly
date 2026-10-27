@@ -10,7 +10,7 @@
   import Tool from '../chat/Tool.svelte';
   import Fallback from '../chat/Fallback.svelte';
   import Compaction from '../chat/Compaction.svelte';
-  import { THREAD_OPEN } from '../chat/tools/tool';
+  import { SESSION_OPEN } from '../chat/tools/tool';
   import Ask from '../chat/Ask.svelte';
   import Task from '../chat/Task.svelte';
   import Subagent from '../chat/Subagent.svelte';
@@ -42,7 +42,7 @@
     plain: string | null;
     blocks: SafeMarkdownBlock[] | undefined;
   } = $props();
-  const openThread = getContext<(threadId: string) => void>(THREAD_OPEN);
+  const openSession = getContext<(sessionId: string) => void>(SESSION_OPEN);
   // Memory bisect only (Conversation.svelte's ?plain=): a message's words as plain text.
   const words = (x: unknown): string =>
     typeof x !== 'object' || !x
@@ -55,7 +55,7 @@
 {#if item.kind === 'user'}
   {@const moved = item.runId ? checkoutLine(stats[item.runId]) : null}
   {#if moved}<div class="mark checkout">{moved}</div>{/if}
-  <Message role="user" sender={item.from ? { label: senders[item.from] ?? 'Another session', open: () => openThread(item.from!) } : null}>{#if plain === 'prompts'}<p>{item.text}</p>{:else}<SentText text={item.text} images={plain !== 'images'} {kept} />{/if}</Message>
+  <Message role="user" sender={item.from ? { label: senders[item.from] ?? 'Another session', open: () => openSession(item.from!) } : null}>{#if plain === 'prompts'}<p>{item.text}</p>{:else}<SentText text={item.text} images={plain !== 'images'} {kept} />{/if}</Message>
 {:else if item.kind === 'stats'}
   <div class="mark turn">{turnLine(item.stats, null, now)}</div>
 {:else if item.kind === 'note'}
@@ -74,7 +74,7 @@
     {:else if item.kind === 'tool'}<Tool itemId={item.itemId} tool={item.tool} {kept} />
     {:else if item.kind === 'ask'}<Ask askId={item.askId} ask={item.ask} />
     {:else if item.kind === 'task'}<Task taskId={item.taskId} task={item.task} />
-    {:else if item.kind === 'subagent'}<Subagent sessionId={item.sessionId} subagent={item.subagent} />
+    {:else if item.kind === 'subagent'}<Subagent acpSessionId={item.acpSessionId} subagent={item.subagent} />
     {:else}<Fallback type={item.type} />{/if}
   </Message>
 {/if}

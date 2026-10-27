@@ -3,7 +3,7 @@
   import { Kept } from '../rows/kept.svelte';
   import type { ToolDetail, ToolPayload } from '../rows/store';
   import { commandOf, foldOutput, TOOL_DETAIL } from './tools/tool';
-  import { DIFF_FOLD, DIFF_SHOWN, toolTitle } from '../thread/fold';
+  import { DIFF_FOLD, DIFF_SHOWN, toolTitle } from '../session/fold';
   // `kept` holds what must survive the row being drawn again (rows/kept.svelte.ts).
   let { itemId, tool, kept = new Kept() }: { itemId: string; tool: ToolPayload; kept?: Kept } = $props();
 

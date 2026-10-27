@@ -131,7 +131,7 @@ folder per feature, with no repository and plain SQL. Section 4 has the layout.
 
 ### D4. Bytes over the socket
 
-One path means attachments go over the socket too. Today, `POST /threads/{id}/attachments` and
+One path means attachments go over the socket too. Today, `POST /sessions/{id}/attachments` and
 `GET .../attachments/{name}` are the only binary HTTP calls. A 20 MB image, the size the composer and the backend
 allow today (`attachments.ts:34`, `AttachmentStore.cs:12`), is about 26.7 MB as base64. That doesn't fit the 4 MB frame limit in 5.1, so the image has to be split up, or the limit
 changed. The options:
@@ -272,7 +272,7 @@ dotnet/
   Directory.Packages.props       one version per package
   .editorconfig                  today's, CA2016 an error
   Assembly.Domain/               references nothing
-    Events/  Rows/  Threads/  Markdown/
+    Events/  Rows/  Sessions/  Markdown/
   Assembly.Application/          references Domain only: no Microsoft.Data.Sqlite, no ASP.NET Core
     Common/
       Database/                  IAppDatabase, IWriteScope, IAtomicWriter, IRow, SqlArg
@@ -283,7 +283,7 @@ dotnet/
       Agents/                    IAgentLauncher, IAgentLink, AgentDescriptor, SharedAdapter
       Acp/                       the ACP protocol over streams: messages, V1, JSON-RPC, AcpClient
     Features/
-      Chat/                      ChatFeature.cs, ChatSchema.cs, and Threads/ Rows/ Sessions/ Helpers/ Attachments/
+      Chat/                      ChatFeature.cs, ChatSchema.cs, and Rows/ Sessions/ Helpers/ Attachments/
       Preferences/               step B7
       Diagnostics/               step B8
     DependencyInjection.cs       AddApplication(), AddMachineFeatures(), AddMacFeatures()
@@ -308,7 +308,7 @@ no OK for them.
 
 | Place | Holds | Doesn't hold |
 | --- | --- | --- |
-| Domain | Only the records and rules that several features share: agent events, row kinds and payloads, `ThreadInfo` and its config records, and the markdown block records (`Safe*`), which the row payloads hold. Time comes in as an argument. | A record only one feature uses (that stays in the feature), I/O, JSON parsing or a serializer context (B3 moves today's to chat), SQL, packages. |
+| Domain | Only the records and rules that several features share: agent events, row kinds and payloads, `SessionInfo` and its config records, and the markdown block records (`Safe*`), which the row payloads hold. Time comes in as an argument. | A record only one feature uses (that stays in the feature), I/O, JSON parsing or a serializer context (B3 moves today's to chat), SQL, packages. |
 | Application `Common/` | The shared contracts every feature uses: the database and writer, calls, topics, the clock, machines and agent launching. Also the ACP protocol code, which only speaks JSON-RPC over the streams it's given: it starts no process and touches no files, and the chat sessions are built on its records. | Implementations that start processes, open SQLite or serve HTTP. |
 | Application `Features/<Feature>/` | Everything one feature is: its `<Feature>Feature.cs` (calls and topics), its records, its rules, its tables (`<Feature>Schema.cs`), and its plain SQL, written straight against `IAppDatabase` for reads and `IWriteScope` for writes. | A repository, a class per table, or another feature's types. |
 | Infrastructure | The implementations of `Common/` and the outside systems: the SQLite connection and the writer with its audit, the socket and dispatcher, topics, the clock, starting agent processes and git, local and remote machines (SSH tunnel, follower, outbox), the provider transcript readers, `/mcp`, and today's HTTP routes until they're deleted. | Feature rules or feature SQL. |
@@ -323,12 +323,12 @@ two features need the same thing, it moves to the core (a record to Domain, a co
 `ArchitectureTests` checks it (step B2). Infrastructure may use Application's types, since it references
 Application: the machine links write chat's rows, for example.
 
-**Why chat is one feature.** Threads, rows, sessions, helpers and attachments call each other all the time today
-(the helper tools use `ThreadStore` and `SessionRegistry`; a send carries attachments). Split into five features,
+**Why chat is one feature.** Sessions, rows, helpers and attachments call each other all the time today
+(the helper tools use `SessionStore` and `SessionRegistry`; a send carries attachments). Split into four features,
 each would reach into the others. As one `Chat` feature with five subfolders, each under 30 files, they don't.
 
 **No repository under another name.** Each feature reads with its own SQL through `IAppDatabase` and writes through
-`IAtomicWriter`, in its own folder, and only its own feature uses it. `RowStore` and `ThreadStore` stay as they are:
+`IAtomicWriter`, in its own folder, and only its own feature uses it. `RowStore` and `SessionStore` stay as they are:
 plain SQL in chat's folder, not a class per table.
 
 ### The page mirrors it
@@ -339,7 +339,7 @@ plain SQL in chat's folder, not a class per table.
   core and its own files, never another feature's folder (`ArchitectureTests` checks this too).
 - The page's core is `lib/socket.ts`, `lib/host/`, `lib/components/` (from the registry), `lib/time/` and
   `lib/utils.ts`.
-- Chat's page folders today (`chat/`, `composer/`, `rows/`, `thread/`, and `Conversation.svelte`) move under
+- Chat's page folders today (`chat/`, `composer/`, `rows/`, `session/`, and `Conversation.svelte`) move under
   `lib/chat/` in step C1, when chat moves onto the socket. `call.ts` goes in B7, `api.ts` in C1, and `lag.svelte.ts`,
   `soak.ts` and only the helpers in `debug.svelte.ts` that count timers and frame callbacks move to `app/measure/`
   in B9 (D2). The production counters (`counters`, and `measures`, which `Conversation.svelte` increments and the
@@ -352,7 +352,7 @@ delete:
 
 | Today | Goes to |
 | --- | --- |
-| `Assembly.Domain/Rows/RowJsonContext` and `ThreadConfig`'s JSON parsing | `Assembly.Application/Features/Chat/`, in B3; Domain keeps the records |
+| `Assembly.Domain/Rows/RowJsonContext` and `SessionConfig.ReadChoices` (its JSON parsing) | `Assembly.Application/Features/Chat/`, in B3; Domain keeps the records |
 | `Assembly.Infrastructure/Http/FeatureCalls`, `FeatureContext`, `CallFailed`, `MachineFeatureList`, `MacFeatureList` | Deleted in B7, replaced by `Socket/` and `Application/DependencyInjection.cs` |
 | `Assembly.Infrastructure/Http/PreferencesRoutes`, `Assembly.Application/Features/Preferences/PreferenceStore` | Deleted in B7 |
 | `Assembly.Infrastructure/Http/PageRoutes`, `DebugRoutes` | Deleted in B8 |
@@ -533,7 +533,7 @@ Dapper and no other new package.
 that file uses that one. The writer keeps one long-lived write connection behind one lock, held for the whole write.
 A plain lock is right, because the body can't await. Reads outside a write never use the write connection: each read
 takes a pooled read connection of its own, so a slow read never holds up another. That was measured (step B2a): with
-one shared read connection, a thread list would wait behind a 200 ms page read, where today it takes about 90 µs.
+one shared read connection, a session list would wait behind a 200 ms page read, where today it takes about 90 µs.
 
 `Infrastructure/Persistence/AtomicWriter.cs` handles every write the same way:
 
@@ -549,7 +549,7 @@ process work happens inside `Write` either: it's done first, in the handler's as
 holds the write lock.
 
 The writer handles every write, not just calls. Chat's row writes (today's `RowStore` `Commit` and `Copy`) run
-through `IAtomicWriter` too, and so do its thread writes (today's `ThreadStore`), since only the writer hands out a
+through `IAtomicWriter` too, and so do its session writes (today's `SessionStore`), since only the writer hands out a
 write connection. Each row
 batch gets one audit row, not one per row. Every write is audited, rows included, with no carve-out.
 
@@ -721,11 +721,11 @@ socket, the change happens in that phase instead.
 | `debug.svelte.ts:105` | `debounce` | Deleted (section 7, row 1). |
 | `composer/Composer.svelte:61` | `$effect` reading config | An `async` function the effect calls, with the effect's signal. Phase C1 changes it to a `config` subscription. |
 | `composer/Composer.svelte:123` | `onDestroy` unlisten | `await` in an `async` cleanup. |
-| `Conversation.svelte:93-95` | Agent-name `listAgents` chain | `async` function with a `try`. In phase C1, the name comes from the threads topic summary. |
+| `Conversation.svelte:93-95` | Agent-name `listAgents` chain | `async` function with a `try`. In phase C1, the name comes from the sessions topic summary. |
 | `Conversation.svelte:106` | Sender labels (`Promise.all`) | `async` function with a `try`. |
 | `Conversation.svelte:265` | `nextFrame` | Deleted (section 7, row 6). |
 | `Conversation.svelte:459` | `$effect` before `coverView` | Deleted (section 7, row 7). |
-| `routes/+page.svelte:31,48` | `listAgents`, `openThread` | `async` functions with a `try`. |
+| `routes/+page.svelte:31,48` | `listAgents`, `openSession` | `async` functions with a `try`. |
 | `routes/+page.svelte:140` | `logCounters().catch` | Moves with D2. |
 | `soak.ts:247,251,357` | The soak | Moves out (section 7, row 4). |
 | `call.ts:27,85,86,99` | `send`, `saveNow`, `saveAll` | Deleted with `call.ts` (step B7). |
@@ -869,9 +869,8 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
   - **Why then, and not inside the base:** moving the chat routes onto the socket before B11 would put all of
     phases C1 and C2 into the base. That would roughly double the base, and delay Jesse's review of the pattern it's meant
     to show.
-- **`scripts/lint.sh` on main is still the stub,** so no `lint.d` check runs anywhere today. Step B10a, before B11,
-  replaces it with a `lint.sh` that runs every `lint.d` script. The lane writes it, and the move thread reads it and
-  posts its OK line, since `lint.sh` is locked (section 9.3).
+- **`scripts/lint.sh` already runs every `lint.d` script** (step B10a, done early in the checks PR, #6, with the
+  move thread's OK line), in the pre-commit hook and in CI on every push and pull request.
 - New checks, all run by `scripts/lint.sh`:
   - `50-dotnet-format.sh`: `dotnet format --verify-no-changes`.
   - `60-svelte-check.sh`: `svelte-check`, with zero errors.
@@ -882,7 +881,7 @@ Timers inside the packages themselves (`bits-ui`'s tooltip delay, `Collapsible`'
 
 | Step | Change | OK by |
 | --- | --- | --- |
-| B10a | Replace `scripts/lint.sh` with the version that runs `lint.d`, which the lane writes | `by:move-thread` |
+| B10a | Replace `scripts/lint.sh` with the version that runs `lint.d`, which the lane writes (done in #6) | `by:move-thread` |
 | B10 | Change `app/scripts/guards.sh` | `by:jesse` (his 18:11 message on 26 October asks for it) |
 | B10 | Delete `app/scripts/guards-allowed.txt` | `by:jesse` |
 | B10 | Drop `guards-allowed.txt`'s line from `scripts/locked-paths.txt` | `by:jesse` |
@@ -932,15 +931,18 @@ files in `app/src`, 10 in `app/test`, 103 in `dotnet`, 9 in `scripts` and 4 in `
 - files and folders: `Domain/Threads/`, `Features/Chat/Threads/` and its tests, `Infrastructure/Http/ThreadRoutes.cs`,
   and `app/src/lib/thread/`;
 - SQLite: the `threads`, `thread_info`, `thread_config` and `thread_commands` tables, every `thread_id` and
-  `parent_thread_id` column, and `helper_messages.from_thread` and `to_thread`. How existing databases keep their
-  sessions through the rename is Jesse's call, made before this step changes them;
+  `parent_thread_id` column, and `helper_messages.from_thread` and `to_thread`. Existing databases keep their
+  sessions (Jesse, 2026-10-26 23:12): when a store opens one, a single step renames its old tables, columns and the
+  `thread_info_updated` index, once, before the tables are created;
+- the checkouts folder: `<home>/threads` becomes `<home>/sessions`, moved once at start when only the old one exists
+  (both existing: both are left and the log says so). Saved agent sessions still resume after the move;
 - log lines (`thread {id}: ...` in `SessionHost`), the check4 variable `CHECK4_THREAD`, and the docs' text.
 
 Kept, because they aren't Assembly's chats: .NET's threading names (`System.Threading` and the rest), Rust's
 `std::thread`, Codex's own `threadStatus` field (`Acp/V1/CodexThreadStatus.cs` reads what Codex sends), the move
 thread (a Claude project thread that approves locked files), and the provider's own session id, which stays
-`acp_session_id` / `AcpSessionId` so it isn't confused with Assembly's session id. **Proof:** the same grep finds
-no Assembly chat named "thread".
+`acp_session_id` / `AcpSessionId` so it isn't confused with Assembly's session id. The one-time rename names the
+old tables, columns and folder it renames. **Proof:** the same grep finds no other Assembly chat named "thread".
 
 ### B3. One write path: `IAtomicWriter` and the audit
 
@@ -951,9 +953,9 @@ no Assembly chat named "thread".
     queue, and one `if (result is Task)` check that throws and rolls back before the commit (5.6). The audit row
     records `what` and the time; B4 adds the connection id as one more column. The per-connection write queue comes
     with the socket in B4. New: `Persistence/AuditSchema.cs`.
-  - Chat: `RowStore` and `ThreadStore` stay plain SQL in their feature. B3 only changes the writer and the publish
+  - Chat: `RowStore` and `SessionStore` stay plain SQL in their feature. B3 only changes the writer and the publish
     wiring.
-  - Domain: the JSON context (`Domain/Rows/RowJsonContext.cs`) and `ThreadConfig`'s parsing move to
+  - Domain: the JSON context (`Domain/Rows/RowJsonContext.cs`) and `SessionConfig.ReadChoices` (its parsing) move to
     `Application/Features/Chat/`. Domain keeps the records.
 - **Failing tests first,** in `Assembly.Tests/Infrastructure/Persistence/AtomicWriterTests.cs`, on a real temporary
   SQLite file:
@@ -973,7 +975,7 @@ no Assembly chat named "thread".
   9. A backlog over the cap clears over the following writes: with 12,000 expired rows, the first write's prune
      deletes 5,000, the second write's 5,000 and the third write's 2,000; a fourth write the same day doesn't prune.
   10. An async lambda passed to `Write` throws, and the write rolls back: nothing is committed.
-- **Also:** chat's row and thread writes move onto `IAtomicWriter` (5.6), and `scripts/lint.d/45-no-select-star.sh`
+- **Also:** chat's row and session writes move onto `IAtomicWriter` (5.6), and `scripts/lint.d/45-no-select-star.sh`
   fails on `SELECT *` under `dotnet/` (rows are read by column position).
 - **Measure:** a 20-row batch with its audit row, through the real writer, on agent-workbox, with the median and
   99th percentile recorded beside the scratch numbers in 5.6, so chat doesn't slow.
@@ -1161,7 +1163,7 @@ group:
 - **Proof:** `guards.sh` passes on the tree after B9, and fails on each probe.
 - **Size:** about 120 lines.
 
-### B10a. Turn on `scripts/lint.sh`
+### B10a. Turn on `scripts/lint.sh` (done early, in the checks PR, #6)
 
 - **Files:** `scripts/lint.sh`, replaced with a version that runs every `scripts/lint.d` script, written by the lane.
   It's locked, so the move thread reads it and posts its OK line (section 9.3).
@@ -1188,9 +1190,9 @@ catalogue stays the reference.
 
 ### C. Chat on the socket
 
-- **C1. Threads, rows, sends and config** (Sol P03, P07, P12, P14).
+- **C1. Sessions, rows, sends and config** (Sol P03, P07, P12, P14).
   - **Files:**
-    - `Features/Chat/Threads/ThreadsFeature.cs`, with its topic: one summary per thread (state, active run, pending
+    - `Features/Chat/Sessions/SessionsFeature.cs`, with its topic: one summary per session (state, active run, pending
       ask, needs attention, background work, title, machine, online, project, last activity, unread);
     - `Features/Chat/Rows/RowsFeature.cs`, the `rows` topic with `after`;
     - `Features/Chat/Sessions/SendFeature.cs` (send, stop, answer, stop task), and
@@ -1199,12 +1201,12 @@ catalogue stays the reference.
   - **First, the page's layout rule, after B9 and B10.** B10 deletes the guard's allowlist and B9 removes the waits,
     so chat's page folders can move without changing what the guard's per-row zone (`lib/chat/`) means. In this
     order: `ArchitectureTests` gets back `No_page_feature_imports_another` (no file under `app/src/lib/<feature>/`
-    imports another feature's folder; written first, failing); then `composer/`, `rows/`, `thread/` and `Conversation.svelte` move under `app/src/lib/chat/`
+    imports another feature's folder; written first, failing); then `composer/`, `rows/`, `session/` and `Conversation.svelte` move under `app/src/lib/chat/`
     as renames with import-path edits, and the test passes. B2b had it, and B2c took it out: today those folders
     import each other.
-  - **Named item: the page read on thread switch.** `PageBefore` takes about 200 ms for 50 items on a 40,000-row
-    thread (197 to 205 ms median, 294 ms p99, measured on agent-workbox before B2a). That's very likely the "slow
-    frames only on thread switch" from the Mac lag run. Run `EXPLAIN QUERY PLAN` on it, then add an index or change
+  - **Named item: the page read on session switch.** `PageBefore` takes about 200 ms for 50 items on a 40,000-row
+    session (197 to 205 ms median, 294 ms p99, measured on agent-workbox before B2a). That's very likely the "slow
+    frames only on session switch" from the Mac lag run. Run `EXPLAIN QUERY PLAN` on it, then add an index or change
     the query so a page loads in single-digit milliseconds, with before and after numbers.
   - **Reads take the call's token.** Since B2a every store read passes `CancellationToken.None`, because the
     signatures didn't change, so no load in the backend can be cancelled yet. When the chat reads move onto the socket,
@@ -1216,25 +1218,25 @@ catalogue stays the reference.
     `RemoteMachine` and `RemoteFollower`, so doing it in C1 would pull all of C2 into C1.
   - **The last commit** adds the guard's `fetch(` and `WebSocket` ban (9.1), with its self-test probes (`fetch` in
     `socket.ts` itself, a `WebSocket` outside `socket.ts`). It needs Jesse's OK line (section 9.3).
-  - **check4's own calls** (`/version`, POST `/threads`, send, rows, `GET /threads/{id}`; `scripts/check4.sh:71-134`)
+  - **check4's own calls** (`/version`, POST `/sessions`, send, rows, `GET /sessions/{id}`; `scripts/check4.sh:71-134`)
     go over the socket in the step that removes those routes: the calls to the local backend in C1, and the two to
-    the Workbox Test host (`/version`, `GET /threads/{id}`) in C2.
+    the Workbox Test host (`/version`, `GET /sessions/{id}`) in C2.
     Proof: check4 on that step's head, before and after.
   - **Tests:**
-    - base#8: a thread made while the page is subscribed arrives as an upsert;
-    - base#9: a thread on Workbox Test and one on the Mac show the same Mode menu, the same Model menu and the same
+    - base#8: a session made while the page is subscribed arrives as an upsert;
+    - base#9: a session on Workbox Test and one on the Mac show the same Mode menu, the same Model menu and the same
       agent name, with the menus from a host started with an empty home;
     - pending runs, apart from base#9: the pending run is shown during the gap before the copied row arrives (the
       failing test is written before the fix);
     - the rows-topic catch-up and `prevSeq` tests that exist today, moved;
     - attachments as chunked calls (D4): a 20 MB image, the limit, arrives in about 20 calls and commits once; one
       byte over the limit is refused; cancelling midway leaves nothing linked.
-  - **Proof:** check4 with `rows.sh`, `threads.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
+  - **Proof:** check4 with `rows.sh`, `sessions.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
     the chat used in the window on the Mac.
 - **C2. One socket per remote machine** (Sol P11, P13).
   - **Files:** `Infrastructure/Remote/RemoteMachine.cs` becomes a socket client of the remote's `/socket`, and
-    `RemoteFollower.cs` becomes one subscription per thread on that socket. The remote's threads topic is relayed,
-    which brings threads made on the remote into the list (base#11, Jesse's call). `RemoteOutbox.cs` polling becomes
+    `RemoteFollower.cs` becomes one subscription per session on that socket. The remote's sessions topic is relayed,
+    which brings sessions made on the remote into the list (base#11, Jesse's call). `RemoteOutbox.cs` polling becomes
     a subscription.
   - **Deleted:** the chat HTTP routes the remote client called, and `LiveSocket.cs`. The last commit adds
     `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions (section 9.2).
@@ -1242,7 +1244,7 @@ catalogue stays the reference.
     and adding or removing machines while running. Retries run on the backend clock. Their tests stay in `Draft/`
     until Jesse corrects the base list.
   - **Tests:**
-    - a relayed upsert for an unknown remote thread shows in the list;
+    - a relayed upsert for an unknown remote session shows in the list;
     - a disconnect marks the machine offline;
     - a reconnect catches up without duplicates.
   - **Proof:** check4 on Workbox Test, before and after on this step's head.
@@ -1504,7 +1506,7 @@ Each P phase has the same shape as the W phases.
   scrim and the selection colour keep the old values. Jesse can change them.
 - **The packages for the checks** (prettier, knip), which wait for Jesse's OK. Tailwind and shadcn-svelte are in
   (91a01e6).
-- **base#11** ("Threads made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to
+- **base#11** ("Sessions made on a remote machine show in the Mac's list too") is Jesse's product call. It's added to
   `docs/behavior/base.md` in phase C2, as a draft line. That file isn't in `scripts/locked-paths.txt`, so it needs no
   OK.
 - **Typing and then quitting right away** keeps the value, because each keystroke was already sent (5.9). That still

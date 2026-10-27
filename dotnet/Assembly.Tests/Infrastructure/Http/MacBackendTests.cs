@@ -7,7 +7,6 @@ using System.Text.Json;
 using Assembly.Mac.Serve;
 using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Http;
-using Assembly.Tests.Infrastructure.Http;
 using Assembly.Tests.Features.Chat.Sessions;
 
 using Assembly.Tests.Features.Diagnostics;
@@ -34,51 +33,51 @@ public sealed class MacBackendTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_local_thread_runs_a_turn_through_the_mac_backend()
+    public async Task A_local_session_runs_a_turn_through_the_mac_backend()
     {
-        var threadId = await CreateThreadAsync();
-        var runId = await SendAsync(threadId);
+        var sessionId = await CreateSessionAsync();
+        var runId = await SendAsync(sessionId);
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("Hello");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
 
-        using var socket = await OpenLiveAsync(threadId, after: 0);
+        using var socket = await OpenLiveAsync(sessionId, after: 0);
         var rows = await ApiTests.ReadUntilTurnEndsAsync(socket);
         Assert.Equal(["user", "turn"], rows.Take(2).Select(row => row.GetProperty("kind").GetString()));
         ApiTests.AssertCaughtUpFrom(2, rows[2..]);
         Assert.Equal(runId, rows[^1].GetProperty("runId").GetString());
-        Assert.Equal(JsonValueKind.Null, (await GetJsonAsync($"/threads/{threadId}")).GetProperty("machine").ValueKind);
+        Assert.Equal(JsonValueKind.Null, (await GetJsonAsync($"/sessions/{sessionId}")).GetProperty("machine").ValueKind);
         Assert.True(File.Exists(Path.Combine(_home, "assembly.db")));
         await agent.CloseAsync();
-        await Until(() => _log.ToString().Contains($"thread {threadId} run {runId}: initialize "));
+        await Until(() => _log.ToString().Contains($"session {sessionId} run {runId}: initialize "));
     }
 
     [Fact]
-    public async Task Version_names_the_commit_built_and_a_thread_names_its_agent_session()
+    public async Task Version_names_the_commit_built_and_a_session_names_its_agent_session()
     {
-        var threadId = await CreateThreadAsync();
-        await SendAsync(threadId);
+        var sessionId = await CreateSessionAsync();
+        await SendAsync(sessionId);
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
 
         Assert.Matches("^[0-9a-f]{40}$", (await GetJsonAsync("/version")).GetProperty("commit").GetString());
-        await Until(() => GetJsonAsync($"/threads/{threadId}").Result.GetProperty("acpSessionId").ValueKind == JsonValueKind.String);
+        await Until(() => GetJsonAsync($"/sessions/{sessionId}").Result.GetProperty("acpSessionId").ValueKind == JsonValueKind.String);
         await agent.CloseAsync();
     }
 
     [Fact]
     public async Task Debug_drop_closes_the_webviews_sockets_and_a_reopened_one_gets_what_it_missed()
     {
-        var threadId = await CreateThreadAsync();
-        await SendAsync(threadId);
+        var sessionId = await CreateSessionAsync();
+        await SendAsync(sessionId);
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        using var first = await OpenLiveAsync(threadId, after: 0);
+        using var first = await OpenLiveAsync(sessionId, after: 0);
         Assert.Equal([1L, 2L], (await ApiTests.ReadRowsAsync(first, 2)).Select(row => row.GetProperty("seq").GetInt64()));
 
         using var anonymous = new HttpClient { BaseAddress = _backend.Address };
@@ -88,15 +87,15 @@ public sealed class MacBackendTests : IAsyncLifetime
 
         await agent.TextAsync("Hello");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        using var second = await OpenLiveAsync(threadId, after: 2);
+        using var second = await OpenLiveAsync(sessionId, after: 2);
         ApiTests.AssertCaughtUpFrom(2, await ApiTests.ReadUntilTurnEndsAsync(second));
     }
 
     [Fact]
     public async Task Stopping_closes_the_webviews_sockets_first_so_it_stops_quickly()
     {
-        var threadId = await CreateThreadAsync();
-        using var socket = await OpenLiveAsync(threadId, after: 0);
+        var sessionId = await CreateSessionAsync();
+        using var socket = await OpenLiveAsync(sessionId, after: 0);
 
         var clock = Stopwatch.StartNew();
         await DisposeBackendAsync();
@@ -107,13 +106,13 @@ public sealed class MacBackendTests : IAsyncLifetime
     [Fact]
     public async Task The_page_uploads_an_image_by_its_path_and_appends_soak_lines_and_an_unknown_call_is_404()
     {
-        var threadId = await CreateThreadAsync();
+        var sessionId = await CreateSessionAsync();
         var image = Path.Combine(_home, "shot.png");
         await File.WriteAllBytesAsync(image, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
 
-        var uploaded = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { threadId, path = image })));
+        var uploaded = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { sessionId, path = image })));
         var soak = await _http.PostAsync("/page/soak.append", Json("""{"name":"run.csv","line":"a,b"}"""));
-        var notAnImage = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { threadId, path = _home })));
+        var notAnImage = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { sessionId, path = _home })));
         var unknown = await _http.PostAsync("/page/token.get", null);
 
         var result = JsonDocument.Parse(await uploaded.Content.ReadAsStringAsync()).RootElement;
@@ -125,16 +124,16 @@ public sealed class MacBackendTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 
-    private async Task<string> CreateThreadAsync()
+    private async Task<string> CreateSessionAsync()
     {
-        var created = await _http.PostAsync("/threads", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
+        var created = await _http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
-        return JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
+        return JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
     }
 
-    private async Task<string> SendAsync(string threadId)
+    private async Task<string> SendAsync(string sessionId)
     {
-        var sent = await _http.PostAsync($"/threads/{threadId}/send", Json("""{"text":"hi"}"""));
+        var sent = await _http.PostAsync($"/sessions/{sessionId}/send", Json("""{"text":"hi"}"""));
         Assert.Equal(HttpStatusCode.OK, sent.StatusCode);
         return JsonDocument.Parse(await sent.Content.ReadAsStringAsync()).RootElement.GetProperty("runId").GetString()!;
     }
@@ -148,10 +147,10 @@ public sealed class MacBackendTests : IAsyncLifetime
 
     private static StringContent Json(string json) => new(json, Encoding.UTF8, "application/json");
 
-    private async Task<ClientWebSocket> OpenLiveAsync(string threadId, long after)
+    private async Task<ClientWebSocket> OpenLiveAsync(string sessionId, long after)
     {
         var socket = new ClientWebSocket();
-        var uri = new Uri($"ws://{_backend.Address.Authority}/live?thread={threadId}&after={after}&token={Token}");
+        var uri = new Uri($"ws://{_backend.Address.Authority}/live?session={sessionId}&after={after}&token={Token}");
         await socket.ConnectAsync(uri, CancellationToken.None);
         return socket;
     }

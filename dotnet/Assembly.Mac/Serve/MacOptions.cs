@@ -6,7 +6,7 @@ namespace Assembly.Mac.Serve;
 
 /// <summary>
 /// <c>serve [--port N] [--home DIR] [--token-file FILE] [--agents FILE] [--remote SSH-HOST] [--remote-port N]
-/// [--remote-token-file PATH]</c>. The home folder holds the database, the threads' checkouts and their attachments;
+/// [--remote-token-file PATH]</c>. The home folder holds the database, the sessions' checkouts and their attachments;
 /// the agents file (<c>HOME/agents.json</c> unless given) lists the agents this Mac runs (<see cref="AgentDescriptor"/>).
 /// <c>--remote</c> adds a machine running <c>Assembly.Remote serve</c> on its <c>--remote-port</c>, reached over ssh,
 /// with its token in <c>--remote-token-file</c> (relative to its home folder).
@@ -17,7 +17,7 @@ public sealed record MacOptions(int Port, string Home, string TokenFile, string 
     public const string Usage =
         "usage: Assembly.Mac serve [--port 18797] [--home ~/assembly-dotnet/mac] [--token-file ~/.config/assembly-dotnet/env] [--agents HOME/agents.json] [--remote workbox-test] [--remote-port 9797] [--remote-token-file .config/assembly-dotnet/env]";
 
-    public string Checkouts => Path.Combine(Home, "threads");
+    public string Checkouts => Path.Combine(Home, "sessions");
 
     public static MacOptions? Parse(IReadOnlyList<string> args)
     {

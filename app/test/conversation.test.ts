@@ -37,7 +37,7 @@ test('Conversation runs its whole script before its template, reading nothing be
     // A child component draws nothing; the conversation's first page never lands.
     component: dataUrl('export default function () {}'),
     './api': dataUrl(
-      ['rowsPage', 'sendText', 'stopRun', 'toolDetail', 'fetchAttachment', 'listAgents', 'answerAsk', 'stopTask', 'getThread'].map((n) => `export const ${n} = () => new Promise(() => {});`).join('\n'),
+      ['rowsPage', 'sendText', 'stopRun', 'toolDetail', 'fetchAttachment', 'listAgents', 'answerAsk', 'stopTask', 'getSession'].map((n) => `export const ${n} = () => new Promise(() => {});`).join('\n'),
     ),
     './rows/client': dataUrl('export const openLive = () => {};'),
     './host/pageCall': dataUrl('export const pageCall = () => new Promise(() => {});'),
@@ -55,7 +55,7 @@ test('Conversation runs its whole script before its template, reading nothing be
   g.document = new Proxy({}, { get: () => { throw TEMPLATE; } });
   let thrown: unknown;
   try {
-    const props = { thread: { threadId: 't-1', repoUrl: 'https://github.com/o/r', agent: 'claude' }, token: 'x', onclose() {} };
+    const props = { session: { sessionId: 't-1', repoUrl: 'https://github.com/o/r', agent: 'claude' }, token: 'x', onclose() {} };
     effect_root(() => {
       try {
         Conversation({}, props);

@@ -2,23 +2,22 @@ using System.Text.Json;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
 /// <summary>
 /// <c>start_session</c>: starts a helper session of any agent, here or on a machine this one reaches, under the
-/// caller's thread, on its prompt.
+/// caller's session, on its prompt.
 /// </summary>
-public sealed class StartSessionTool(ThreadStore threads, SessionRegistry sessions, HelperDelivery delivery, HelperRow row, HelperLimits limits)
+public sealed class StartSessionTool(SessionStore sessionStore, SessionRegistry sessions, HelperDelivery delivery, HelperRow row, HelperLimits limits)
     : HelperTool
 {
     public override string Name => "start_session";
 
     public override string Description =>
         "Starts a helper session: another agent session that works on the prompt you give it, in your working folder " +
-        "(on another machine, in its own copy of your repo). Returns its threadId and the messageId of the prompt; " +
+        "(on another machine, in its own copy of your repo). Returns its sessionId and the messageId of the prompt; " +
         "read its answer with message_status. A helper can't start helpers.";
 
     public override (string Name, string Description, bool Required)[] Parameters =>
@@ -26,24 +25,24 @@ public sealed class StartSessionTool(ThreadStore threads, SessionRegistry sessio
          ("agent", $"Which agent runs it: here, one of {string.Join(", ", sessions.Agents.Select(agent => agent.Id))}. Defaults to yours.", false),
          ("machine", $"Where it runs: one of {string.Join(", ", delivery.Names)}. Defaults to here.", false)];
 
-    public override async Task<ToolResult> CallAsync(ThreadInfo caller, JsonElement arguments, CancellationToken cancellationToken)
+    public override async Task<ToolResult> CallAsync(SessionInfo caller, JsonElement arguments, CancellationToken cancellationToken)
     {
         var prompt = Argument(arguments, "prompt");
         var agent = Argument(arguments, "agent") ?? caller.Agent;
         var machineName = Argument(arguments, "machine");
         if (string.IsNullOrWhiteSpace(prompt))
             return ToolResult.Error("start_session needs a prompt.");
-        if (caller.ParentThreadId is not null)
+        if (caller.ParentSessionId is not null)
             return ToolResult.Error("A helper session can't start helpers of its own.");
         if (delivery.Named(machineName) is not { } machine)
             return ToolResult.Error($"There is no machine {machineName}. Machines: {string.Join(", ", delivery.Names)}.");
         // Another machine checks the agent itself.
         if (machine.Name is null && sessions.Agents.All(known => known.Id != agent))
             return ToolResult.Error($"There is no agent {agent} here. Agents: {string.Join(", ", sessions.Agents.Select(known => known.Id))}.");
-        if (threads.Helpers(caller.ThreadId).Count(helper => sessions.Working(helper.ThreadId)) >= limits.UnfinishedHelpers)
+        if (sessionStore.Helpers(caller.SessionId).Count(helper => sessions.Working(helper.SessionId)) >= limits.UnfinishedHelpers)
             return ToolResult.Error($"You already have {limits.UnfinishedHelpers} helpers at work; wait for one to finish.");
 
-        ThreadInfo helper;
+        SessionInfo helper;
         try
         {
             helper = await machine.CreateHelperAsync(caller, agent, SessionOpener.Title(prompt) ?? "Helper", cancellationToken);
@@ -52,8 +51,8 @@ public sealed class StartSessionTool(ThreadStore threads, SessionRegistry sessio
         {
             return ToolResult.Error(error.Message);
         }
-        var message = threads.AddMessage(caller.ThreadId, helper.ThreadId, prompt);
-        var text = $"You're a helper session, started by another agent's session (thread {caller.ThreadId}, \"{caller.Title}\"). " +
+        var message = sessionStore.AddMessage(caller.SessionId, helper.SessionId, prompt);
+        var text = $"You're a helper session, started by another agent's session (session {caller.SessionId}, \"{caller.Title}\"). " +
                    "Do the task below; your answer goes back to it. You can message it with the Assembly MCP server's send_message tool.\n\n" + prompt;
         string? runId;
         try
@@ -62,20 +61,20 @@ public sealed class StartSessionTool(ThreadStore threads, SessionRegistry sessio
         }
         catch (MachineUnreachable error)
         {
-            threads.SetMessageFailed(message.MessageId, error.Message);
+            sessionStore.SetMessageFailed(message.MessageId, error.Message);
             return ToolResult.Error(error.Message);
         }
         if (runId is null)
         {
-            threads.SetMessageFailed(message.MessageId, "The helper's session couldn't take the prompt.");
+            sessionStore.SetMessageFailed(message.MessageId, "The helper's session couldn't take the prompt.");
             return ToolResult.Error("The helper's session couldn't take the prompt; try again.");
         }
-        threads.SetMessageRun(message.MessageId, runId);
-        sessions.TrackHelper(helper.ThreadId, caller.ThreadId, runId);
+        sessionStore.SetMessageRun(message.MessageId, runId);
+        sessions.TrackHelper(helper.SessionId, caller.SessionId, runId);
         row.Show(helper, "running");
         return ToolResult.Json(json =>
         {
-            json.WriteString("threadId", helper.ThreadId);
+            json.WriteString("sessionId", helper.SessionId);
             json.WriteString("messageId", message.MessageId);
         });
     }

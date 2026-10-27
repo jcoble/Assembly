@@ -6,8 +6,7 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Features.Chat.Sessions;
 
@@ -21,11 +20,11 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     private readonly AppDatabase _database;
     private readonly RowStore _store;
     private readonly LiveHub _hub;
-    private readonly ThreadStore _threads;
+    private readonly SessionStore _sessionStore;
     private readonly FakeLauncher _launcher = new();
     private readonly SharedAdapter _adapter;
     private readonly SessionOpener _opener;
-    private readonly ThreadInfo _thread;
+    private readonly SessionInfo _session;
     private readonly SessionHost _host;
     private readonly LiveSubscription _live;
     private readonly StringWriter _log = new();
@@ -35,12 +34,12 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         _database = AppDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _threads = ThreadStore.Open(_database, _time);
-        _thread = _threads.Create("claude", "https://github.com/o/r");
+        _sessionStore = SessionStore.Open(_database, _time);
+        _session = _sessionStore.Create("claude", "https://github.com/o/r");
         _adapter = new SharedAdapter(_launcher, "claude", _time);
-        _opener = new SessionOpener(_threads, _launcher, _ => _adapter);
-        _host = new SessionHost(_thread.ThreadId, _hub, _threads, _opener, _time, _log);
-        _live = _hub.Subscribe(_thread.ThreadId, after: 0);
+        _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
+        _host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log);
+        _live = _hub.Subscribe(_session.SessionId, after: 0);
     }
 
     [Fact]
@@ -54,7 +53,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var agent = await _launcher.NextAsync();
         var open = await agent.StartAsync();
         Assert.Equal("session/new", open.GetProperty("method").GetString());
-        Assert.Equal("/work/thread", open.GetProperty("params").GetProperty("cwd").GetString());
+        Assert.Equal("/work/session", open.GetProperty("params").GetProperty("cwd").GetString());
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.Equal("hi", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
 
@@ -67,11 +66,11 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         Assert.Equal("finished", end[2].Payload.GetProperty("state").GetString());
         Assert.All(end, row => Assert.Equal(runId, row.RunId));
         Assert.Null(_host.ActiveRunId);
-        Assert.Equal(FakeLink.SessionId, _threads.Get(_thread.ThreadId)!.AcpSessionId);
+        Assert.Equal(FakeLink.AcpSessionId, _sessionStore.Get(_session.SessionId)!.AcpSessionId);
         // The message row replaced its delta.
-        Assert.Equal(["user", "turn", "message", "stats", "turn"], _store.RowsAfter(_thread.ThreadId, 0).Select(row => row.Kind));
+        Assert.Equal(["user", "turn", "message", "stats", "turn"], _store.RowsAfter(_session.SessionId, 0).Select(row => row.Kind));
         // Once the turn has ended, its session is closed on the adapter.
-        Assert.Equal(FakeLink.SessionId, await agent.CloseAsync());
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
     }
 
     [Fact]
@@ -90,7 +89,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         // The clock is frozen, so every stage is 0 ms in; the fake launcher marks no clone or adapter start.
         // The line is written from the turn's own task, text first, then the newline.
         await Until(() => _log.ToString().EndsWith(Environment.NewLine, StringComparison.Ordinal));
-        Assert.Equal($"thread {_thread.ThreadId} run {runId}: initialize 0 ms, session new 0 ms, first update 0 ms, answer 0 ms, session close 0 ms{Environment.NewLine}", _log.ToString());
+        Assert.Equal($"session {_session.SessionId} run {runId}: initialize 0 ms, session new 0 ms, first update 0 ms, answer 0 ms, session close 0 ms{Environment.NewLine}", _log.ToString());
     }
 
     [Fact]
@@ -166,14 +165,14 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
 
-        await Until(() => _threads.Get(_thread.ThreadId)?.Title == title);
+        await Until(() => _sessionStore.Get(_session.SessionId)?.Title == title);
     }
 
     [Fact]
     public async Task A_helper_keeps_its_task_as_its_title_whatever_its_framed_prompt_says()
     {
-        var helper = _threads.Helper(_thread, "codex", "Count the lines");
-        var host = new SessionHost(helper.ThreadId, _hub, _threads, _opener, _time, _log);
+        var helper = _sessionStore.Helper(_session, "codex", "Count the lines");
+        var host = new SessionHost(helper.SessionId, _hub, _sessionStore, _opener, _time, _log);
         host.Send("You're a helper session, started by another agent's session.\n\nCount the lines");
         var agent = await _launcher.NextAsync();
         await agent.StartAsync(canRename: true);
@@ -186,18 +185,18 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
 
-        Assert.Equal("Count the lines", _threads.Get(helper.ThreadId)!.Title);
+        Assert.Equal("Count the lines", _sessionStore.Get(helper.SessionId)!.Title);
     }
 
     [Fact]
-    public async Task A_new_session_titles_its_thread_from_the_first_message_on_any_agent()
+    public async Task A_new_session_titles_its_session_from_the_first_message_on_any_agent()
     {
         _host.Send("Explain the build script\nin detail");
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
 
         var prompt = await agent.ReadAsync("session/prompt");
-        Assert.Equal("Explain the build script", _threads.Get(_thread.ThreadId)?.Title);
+        Assert.Equal("Explain the build script", _sessionStore.Get(_session.SessionId)?.Title);
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
@@ -211,12 +210,12 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         """.ReplaceLineEndings("");
 
     [Fact]
-    public async Task A_session_gets_the_thread_s_chosen_config_in_the_agent_s_order_and_names_its_model()
+    public async Task A_session_gets_the_session_s_chosen_config_in_the_agent_s_order_and_names_its_model()
     {
-        _threads.SetConfigChoice(_thread.ThreadId, "effort", "high");
-        _threads.SetConfigChoice(_thread.ThreadId, "model", "haiku");
-        _threads.SetConfigChoice(_thread.ThreadId, "mode", "default"); // already so: not sent
-        _threads.SetConfigChoice(_thread.ThreadId, "gone", "x"); // not offered: not sent
+        _sessionStore.SetConfigChoice(_session.SessionId, "effort", "high");
+        _sessionStore.SetConfigChoice(_session.SessionId, "model", "haiku");
+        _sessionStore.SetConfigChoice(_session.SessionId, "mode", "default"); // already so: not sent
+        _sessionStore.SetConfigChoice(_session.SessionId, "gone", "x"); // not offered: not sent
 
         _host.Send("hi");
         var agent = await _launcher.NextAsync();
@@ -233,9 +232,9 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         var stats = (await Rows(4)).Single(row => row.Kind == "stats");
         Assert.Equal("Haiku 5.5", stats.Payload.GetProperty("model").GetString());
-        var saved = JsonDocument.Parse(_threads.Config(_thread.ThreadId).Options!).RootElement;
+        var saved = JsonDocument.Parse(_sessionStore.Config(_session.SessionId).Options!).RootElement;
         Assert.Equal("high", saved[2].GetProperty("currentValue").GetString());
-        Assert.Contains("\"currentValue\":\"low\"", _threads.AgentConfig("claude")); // what a new session starts with
+        Assert.Contains("\"currentValue\":\"low\"", _sessionStore.AgentConfig("claude")); // what a new session starts with
         await agent.CloseAsync();
     }
 
@@ -252,11 +251,11 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         Assert.Equal("plan", set.GetProperty("params").GetProperty("value").GetString());
         await agent.ReplyAsync(set, $$"""{"configOptions":{{Options("opus", "low", "plan")}}}""");
         await choosing.WaitAsync(Wait);
-        Assert.Equal("plan", _threads.Config(_thread.ThreadId).Choices["mode"]);
+        Assert.Equal("plan", _sessionStore.Config(_session.SessionId).Choices["mode"]);
 
         // The agent leaves plan mode itself.
         await agent.UpdateAsync($$"""{"sessionUpdate":"config_option_update","configOptions":{{Options("opus", "low")}}}""");
-        await Until(() => _threads.Config(_thread.ThreadId).Options?.Contains("\"currentValue\":\"default\"") == true);
+        await Until(() => _sessionStore.Config(_session.SessionId).Options?.Contains("\"currentValue\":\"default\"") == true);
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }

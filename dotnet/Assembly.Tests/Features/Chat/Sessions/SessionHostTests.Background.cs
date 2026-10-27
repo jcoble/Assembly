@@ -6,8 +6,7 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Features.Chat.Sessions;
 
@@ -40,7 +39,7 @@ public sealed partial class SessionHostTests
         Assert.Equal("finished", end[4].Payload.GetProperty("state").GetString());
         Assert.Equal(selfRun, end[4].RunId);
         Assert.Null(_host.ActiveRunId);
-        Assert.Equal(FakeLink.SessionId, await agent.CloseAsync());
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
     }
 
     [Fact]
@@ -51,7 +50,7 @@ public sealed partial class SessionHostTests
         agent.Crash();
         var task = (await RowsUntil(row => row.Kind == "task"))[^1];
         Assert.Equal((runId, "stopped"), (task.RunId, task.Payload.GetProperty("state").GetString()));
-        // The thread takes sends again, on a new adapter.
+        // The session takes sends again, on a new adapter.
         Assert.NotNull(_host.Send("again"));
         await (await _launcher.NextAsync()).StartAsync();
     }
@@ -232,7 +231,7 @@ public sealed partial class SessionHostTests
         """{"sessionUpdate":"session_message","messageId":"task1","content":[{"type":"text","text":"Count the lines of notes.txt"}]}""";
 
     [Fact]
-    public async Task A_subagent_is_a_thread_of_its_own_nested_under_the_tool_call_that_started_it()
+    public async Task A_subagent_is_a_session_of_its_own_nested_under_the_tool_call_that_started_it()
     {
         var runId = _host.Send("count the lines")!;
         var agent = await _launcher.NextAsync();
@@ -256,15 +255,15 @@ public sealed partial class SessionHostTests
         Assert.False(subagent[^1].Payload.GetProperty("canStop").GetBoolean());
         Assert.True(subagent[0].Payload.GetProperty("canStop").GetBoolean());
 
-        // Its thread is the parent's child, kept out of the list, with its prompt, its reply, and its end.
-        var child = _threads.Get(subagent[0].Payload.GetProperty("threadId").GetString()!)!;
-        Assert.Equal((_thread.ThreadId, "child1", "general-purpose"), (child.ParentThreadId, child.AcpSessionId, child.Title));
-        Assert.DoesNotContain(_threads.List(null, 50).Threads, thread => thread.ThreadId == child.ThreadId);
-        var childRows = _store.RowsAfter(child.ThreadId, 0);
+        // Its session is the parent's child, kept out of the list, with its prompt, its reply, and its end.
+        var child = _sessionStore.Get(subagent[0].Payload.GetProperty("sessionId").GetString()!)!;
+        Assert.Equal((_session.SessionId, "child1", "general-purpose"), (child.ParentSessionId, child.AcpSessionId, child.Title));
+        Assert.DoesNotContain(_sessionStore.List(null, 50).Sessions, session => session.SessionId == child.SessionId);
+        var childRows = _store.RowsAfter(child.SessionId, 0);
         Assert.Equal("Count the lines of notes.txt", childRows.First(row => row.Kind == "user").Payload.GetProperty("text").GetString());
         Assert.Contains(childRows, row => row.Kind == "message");
         Assert.Equal("finished", childRows.Last(row => row.Kind == "turn").Payload.GetProperty("state").GetString());
-        Assert.DoesNotContain(_store.RowsAfter(_thread.ThreadId, 0), row => row.Kind is "message" or "delta" && row.ItemId == "c1");
+        Assert.DoesNotContain(_store.RowsAfter(_session.SessionId, 0), row => row.Kind is "message" or "delta" && row.ItemId == "c1");
     }
 
     [Fact]
@@ -283,7 +282,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
 
-        var child = rows.First(row => row.Kind == "subagent").Payload.GetProperty("threadId").GetString()!;
+        var child = rows.First(row => row.Kind == "subagent").Payload.GetProperty("sessionId").GetString()!;
         var childRows = _store.RowsAfter(child, 0);
         Assert.DoesNotContain(childRows, row => row.Kind == "tool");
         Assert.Contains("notes.txt has 3 lines.", childRows.Last(row => row.Kind == "message").Payload.GetRawText());
@@ -307,9 +306,9 @@ public sealed partial class SessionHostTests
         Assert.True(await stopping);
 
         await agent.UpdateAsync("""{"sessionUpdate":"subagent_update","sessionId":"child1","state":{"state":"idle","stopReason":"cancelled"}}""");
-        Assert.Equal(FakeLink.SessionId, await agent.CloseAsync());
-        var child = _threads.Get(_store.RowsAfter(_thread.ThreadId, 0).Last(row => row.Kind == "subagent").Payload.GetProperty("threadId").GetString()!)!;
-        Assert.Equal("cancelled", _store.RowsAfter(child.ThreadId, 0).Last(row => row.Kind == "turn").Payload.GetProperty("state").GetString());
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
+        var child = _sessionStore.Get(_store.RowsAfter(_session.SessionId, 0).Last(row => row.Kind == "subagent").Payload.GetProperty("sessionId").GetString()!)!;
+        Assert.Equal("cancelled", _store.RowsAfter(child.SessionId, 0).Last(row => row.Kind == "turn").Payload.GetProperty("state").GetString());
     }
 
     private async Task<(FakeLink Agent, string RunId)> StartClaudeBackgroundAsync()

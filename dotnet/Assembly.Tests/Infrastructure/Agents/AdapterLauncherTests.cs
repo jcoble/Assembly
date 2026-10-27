@@ -2,8 +2,7 @@ using System.Diagnostics;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Agents;
 
@@ -19,8 +18,8 @@ public sealed class AdapterLauncherTests : IDisposable
         Git(repo, "init", "--quiet");
         Git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "start");
         var launcher = new AdapterLauncher([], Path.Combine(_work, "checkouts"), new UnclaimedPermissions());
-        var parent = new ThreadInfo("parent", "claude", repo, null, null, 0);
-        var helper = parent with { ThreadId = "helper", Agent = "codex", ParentThreadId = "parent", Helper = true };
+        var parent = new SessionInfo("parent", "claude", repo, null, null, 0);
+        var helper = parent with { SessionId = "helper", Agent = "codex", ParentSessionId = "parent", Helper = true };
 
         var parentFolder = await launcher.CheckoutAsync(parent, new StageTimes(TimeProvider.System), CancellationToken.None);
         File.WriteAllText(Path.Combine(parentFolder, "notes.md"), "draft");
@@ -28,6 +27,34 @@ public sealed class AdapterLauncherTests : IDisposable
 
         Assert.Equal(parentFolder, helperFolder);
         Assert.True(File.Exists(Path.Combine(helperFolder, "notes.md")));
+    }
+
+    [Fact]
+    public void The_old_checkouts_folder_moves_to_sessions_once()
+    {
+        File.WriteAllText(Path.Combine(Directory.CreateDirectory(Path.Combine(_work, "threads", "s1")).FullName, "a.txt"), "kept");
+        var log = new StringWriter();
+
+        AdapterLauncher.MoveOldCheckouts(_work, Path.Combine(_work, "sessions"), log);
+        AdapterLauncher.MoveOldCheckouts(_work, Path.Combine(_work, "sessions"), log);
+
+        Assert.Equal("kept", File.ReadAllText(Path.Combine(_work, "sessions", "s1", "a.txt")));
+        Assert.False(Directory.Exists(Path.Combine(_work, "threads")));
+        Assert.Single(log.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    [Fact]
+    public void When_both_folders_exist_both_are_left_as_they_are()
+    {
+        Directory.CreateDirectory(Path.Combine(_work, "threads", "old"));
+        Directory.CreateDirectory(Path.Combine(_work, "sessions", "new"));
+        var log = new StringWriter();
+
+        AdapterLauncher.MoveOldCheckouts(_work, Path.Combine(_work, "sessions"), log);
+
+        Assert.True(Directory.Exists(Path.Combine(_work, "threads", "old")));
+        Assert.False(Directory.Exists(Path.Combine(_work, "sessions", "old")));
+        Assert.Contains("both", log.ToString());
     }
 
     private static void Git(string folder, params string[] arguments)

@@ -12,7 +12,7 @@ dotnet/Assembly.Infrastructure/Mcp/McpRoutes.cs
 dotnet/Assembly.Infrastructure/Http/OutboxRoutes.cs
 dotnet/Assembly.Infrastructure/Http/RowRoutes.cs
 dotnet/Assembly.Infrastructure/Http/RunRoutes.cs
-dotnet/Assembly.Infrastructure/Http/ThreadRoutes.cs
+dotnet/Assembly.Infrastructure/Http/SessionRoutes.cs
 dotnet/Assembly.Infrastructure/Http/DebugRoutes.cs
 dotnet/Assembly.Infrastructure/Http/PageRoutes.cs'
 all=$(git grep -nE '\.Map(Get|Post|Put|Delete|Patch|Methods|Fallback|Group)\(|\.Map\("/' -- 'dotnet/Assembly.Domain/*.cs' 'dotnet/Assembly.Application/*.cs' 'dotnet/Assembly.Infrastructure/*.cs' 'dotnet/Assembly.Mac/*.cs' 'dotnet/Assembly.Remote/*.cs')

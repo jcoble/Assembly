@@ -1,8 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
@@ -16,19 +15,19 @@ public sealed class ListSessionsTool(SessionRegistry sessions, Reachability reac
 
     public override (string Name, string Description, bool Required)[] Parameters => [];
 
-    public override Task<ToolResult> CallAsync(ThreadInfo caller, JsonElement arguments, CancellationToken cancellationToken) =>
+    public override Task<ToolResult> CallAsync(SessionInfo caller, JsonElement arguments, CancellationToken cancellationToken) =>
         Task.FromResult(ToolResult.Json(json =>
         {
             json.WriteStartArray("sessions");
-            foreach (var (thread, relation) in reach.Of(caller))
+            foreach (var (session, relation) in reach.Of(caller))
             {
                 json.WriteStartObject();
-                json.WriteString("threadId", thread.ThreadId);
-                json.WriteString("title", thread.Title);
-                json.WriteString("agent", thread.Agent);
-                json.WriteString("machine", thread.Machine ?? "here");
+                json.WriteString("sessionId", session.SessionId);
+                json.WriteString("title", session.Title);
+                json.WriteString("agent", session.Agent);
+                json.WriteString("machine", session.Machine ?? "here");
                 json.WriteString("relation", relation);
-                json.WriteString("state", sessions.Working(thread.ThreadId) ? "working" : sessions.IsOpen(thread.ThreadId) ? "open" : "idle");
+                json.WriteString("state", sessions.Working(session.SessionId) ? "working" : sessions.IsOpen(session.SessionId) ? "open" : "idle");
                 json.WriteEndObject();
             }
             json.WriteEndArray();

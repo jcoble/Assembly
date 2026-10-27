@@ -18,8 +18,7 @@ using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 using Assembly.Tests.Features.Chat.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Http;
@@ -35,7 +34,7 @@ public sealed class McpTests : IAsyncLifetime
     private AppDatabase _database = null!;
     private RowStore _store = null!;
     private LiveHub _hub = null!;
-    private ThreadStore _threads = null!;
+    private SessionStore _sessionStore = null!;
     private SessionRegistry _sessions = null!;
     private WebApplication _app = null!;
     private HttpClient _http = null!;
@@ -47,12 +46,12 @@ public sealed class McpTests : IAsyncLifetime
         _database = AppDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _threads = ThreadStore.Open(_database, TimeProvider.System);
-        _sessions = new SessionRegistry(_hub, _threads, _launcher, TimeProvider.System, TextWriter.Null, new HelperLimits(UnfinishedHelpers: 2, MessagesPerPair: 1));
+        _sessionStore = SessionStore.Open(_database, TimeProvider.System);
+        _sessions = new SessionRegistry(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null, new HelperLimits(UnfinishedHelpers: 2, MessagesPerPair: 1));
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
-        var machines = new MachineSet(new LocalMachine(_hub, _threads, _sessions, attachments));
+        var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));
         _sessions.Helpers.Delivery.Machines = machines;
-        _app = ApiServer.Build(new ApiServices(_hub, _threads, machines, attachments, Token, _sessions.Helpers), port: 0);
+        _app = ApiServer.Build(new ApiServices(_hub, _sessionStore, machines, attachments, Token, _sessions.Helpers), port: 0);
         await _app.StartAsync();
         _base = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _sessions.Helpers.Tokens.Url = new Uri(_base, "/mcp").ToString();
@@ -63,10 +62,10 @@ public sealed class McpTests : IAsyncLifetime
     [Fact]
     public async Task A_session_starts_a_helper_reads_its_answer_and_stays_open_while_it_works()
     {
-        var parent = _threads.Create("claude", "https://github.com/o/r");
-        _sessions.For(parent.ThreadId).Send("delegate it");
+        var parent = _sessionStore.Create("claude", "https://github.com/o/r");
+        _sessions.For(parent.SessionId).Send("delegate it");
         var agent = await _launcher.NextAsync();
-        var parentToken = SessionToken(await agent.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await agent.ReadAsync("session/prompt");
 
         // Only a session's own token opens the server; the API's doesn't.
@@ -77,14 +76,14 @@ public sealed class McpTests : IAsyncLifetime
         Assert.Equal(["start_session", "send_message", "message_status", "list_sessions"], tools);
 
         var started = await CallAsync(parentToken, "start_session", new { prompt = "Count the lines in notes.txt.", agent = "codex" });
-        var helperId = started.GetProperty("threadId").GetString()!;
+        var helperId = started.GetProperty("sessionId").GetString()!;
         var messageId = started.GetProperty("messageId").GetString()!;
-        var helper = _threads.Get(helperId)!;
-        Assert.Equal((parent.ThreadId, true, "codex"), (helper.ParentThreadId, helper.Helper, helper.Agent));
+        var helper = _sessionStore.Get(helperId)!;
+        Assert.Equal((parent.SessionId, true, "codex"), (helper.ParentSessionId, helper.Helper, helper.Agent));
 
         // The helper is a session of its own, on its agent's adapter, with a token of its own.
         var helperAgent = await _launcher.NextAsync();
-        var helperToken = SessionToken(await helperAgent.StartAsync(sessionId: "acp-helper"));
+        var helperToken = SessionToken(await helperAgent.StartAsync(acpSessionId: "acp-helper"));
         Assert.NotEqual(parentToken, helperToken);
         var helperPrompt = await helperAgent.ReadAsync("session/prompt");
         Assert.Contains("Count the lines in notes.txt.", helperPrompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
@@ -107,46 +106,46 @@ public sealed class McpTests : IAsyncLifetime
         // A closed session's token stops working.
         Assert.Equal(HttpStatusCode.Unauthorized, (await McpAsync(parentToken, "tools/list", "{}")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await McpAsync(helperToken, "tools/list", "{}")).StatusCode);
-        var rows = _store.RowsAfter(parent.ThreadId, 0).Where(row => row.ItemId == $"subagent:{helperId}").ToList();
+        var rows = _store.RowsAfter(parent.SessionId, 0).Where(row => row.ItemId == $"subagent:{helperId}").ToList();
         Assert.Equal(["running", "idle"], rows.Select(row => row.Payload.GetProperty("state").GetString()));
     }
 
     [Fact]
     public async Task Helpers_have_limits_at_work_and_between_any_two_sessions()
     {
-        var parent = _threads.Create("claude", "https://github.com/o/r");
-        _sessions.For(parent.ThreadId).Send("delegate twice");
+        var parent = _sessionStore.Create("claude", "https://github.com/o/r");
+        _sessions.For(parent.SessionId).Send("delegate twice");
         var agent = await _launcher.NextAsync();
-        var parentToken = SessionToken(await agent.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
         await agent.ReadAsync("session/prompt");
 
-        var first = (await CallAsync(parentToken, "start_session", new { prompt = "one" })).GetProperty("threadId").GetString()!;
+        var first = (await CallAsync(parentToken, "start_session", new { prompt = "one" })).GetProperty("sessionId").GetString()!;
         var firstToken = SessionToken(await agent.OpenAsync("acp-one"));
         var firstPrompt = await agent.ReadAsync("session/prompt");
-        var second = (await CallAsync(parentToken, "start_session", new { prompt = "two" })).GetProperty("threadId").GetString()!;
+        var second = (await CallAsync(parentToken, "start_session", new { prompt = "two" })).GetProperty("sessionId").GetString()!;
         await agent.OpenAsync("acp-two");
         var secondPrompt = await agent.ReadAsync("session/prompt");
         Assert.True((await CallResultAsync(parentToken, "start_session", new { prompt = "three" })).GetProperty("isError").GetBoolean());
 
         // A helper reaches its parent and its sibling.
         var listed = (await CallAsync(firstToken, "list_sessions", new { })).GetProperty("sessions").EnumerateArray()
-            .Select(entry => (entry.GetProperty("threadId").GetString(), entry.GetProperty("relation").GetString()));
-        Assert.Contains((parent.ThreadId, "parent"), listed);
+            .Select(entry => (entry.GetProperty("sessionId").GetString(), entry.GetProperty("relation").GetString()));
+        Assert.Contains((parent.SessionId, "parent"), listed);
         Assert.Contains((second, "sibling"), listed);
 
         // The second finishes; the first may message it once.
         await agent.ReplyAsync(secondPrompt, """{"stopReason":"end_turn"}""");
         Assert.Equal("acp-two", await agent.CloseAsync());
-        var sent = await CallAsync(firstToken, "send_message", new { threadId = second, text = "What did you find?" });
+        var sent = await CallAsync(firstToken, "send_message", new { sessionId = second, text = "What did you find?" });
         Assert.True(sent.TryGetProperty("messageId", out _));
         await agent.OpenAsync("acp-two");
         var delivered = await agent.ReadAsync("session/prompt");
         Assert.Contains("What did you find?", delivered.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        // Its row in the receiving thread says who sent it, so the page doesn't show it as the person's.
+        // Its row in the receiving session says who sent it, so the page doesn't show it as the person's.
         Assert.Equal(first, _store.RowsAfter(second, 0).Last(row => row.Kind == "user").Payload.GetProperty("from").GetString());
-        Assert.True((await CallResultAsync(firstToken, "send_message", new { threadId = second, text = "again" })).GetProperty("isError").GetBoolean());
+        Assert.True((await CallResultAsync(firstToken, "send_message", new { sessionId = second, text = "again" })).GetProperty("isError").GetBoolean());
         // The limit holds between any two sessions: the parent's prompt was its one message to the helper.
-        Assert.True((await CallResultAsync(parentToken, "send_message", new { threadId = second, text = "and you?" })).GetProperty("isError").GetBoolean());
+        Assert.True((await CallResultAsync(parentToken, "send_message", new { sessionId = second, text = "and you?" })).GetProperty("isError").GetBoolean());
         await agent.ReplyAsync(delivered, """{"stopReason":"end_turn"}""");
         await agent.ReplyAsync(firstPrompt, """{"stopReason":"end_turn"}""");
     }

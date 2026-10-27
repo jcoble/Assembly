@@ -1,10 +1,10 @@
 using Assembly.Application.Common.Machines;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Helpers;
 
-/// <summary>Where helpers start and messages go: the thread's machine, this one or a remote one this machine reaches.</summary>
+/// <summary>Where helpers start and messages go: the session's machine, this one or a remote one this machine reaches.</summary>
 public sealed class HelperDelivery
 {
     /// <summary>The machines, once they're set up; they need the sessions, which need this.</summary>
@@ -17,7 +17,7 @@ public sealed class HelperDelivery
 
     public IEnumerable<string> Names => ["here", .. Set.Remotes.Select(machine => machine.Name!)];
 
-    /// <summary>Starts a turn on the thread, or sends into the running one; null if it can't take the text.</summary>
-    public Task<string?> SendAsync(ThreadInfo thread, string text, CancellationToken cancellationToken) =>
-        Set.For(thread).SendAsync(thread, text, cancellationToken);
+    /// <summary>Starts a turn on the session, or sends into the running one; null if it can't take the text.</summary>
+    public Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken) =>
+        Set.For(session).SendAsync(session, text, cancellationToken);
 }

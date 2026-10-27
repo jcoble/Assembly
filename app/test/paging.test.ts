@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PREFETCH_PX, pickAnchor, restoredScrollTop, shouldLoadOlder } from '../src/lib/thread/scroll.ts';
+import { PREFETCH_PX, pickAnchor, restoredScrollTop, shouldLoadOlder } from '../src/lib/session/scroll.ts';
 
 // Rows laid out top to bottom, as offsets from the viewport's top for a scroller at `scrollTop`.
 function layout(heights: number[], scrollTop: number, ids: string[]) {

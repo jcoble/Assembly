@@ -1,22 +1,22 @@
-// Heavy soak (?soak=1), 15 minutes. Thread A, the seeded thread with a long
-// history, stays open across turns. Every SWITCH_EVERY-th turn runs on thread B
+// Heavy soak (?soak=1), 15 minutes. Session A, the seeded session with a long
+// history, stays open across turns. Every SWITCH_EVERY-th turn runs on session B
 // instead: A closes (releasing everything), B opens for one turn and closes,
 // then A reopens. After every turn a scroll pass goes to the top through real
 // scroll events, so the conversation's own prefetch loads every older page,
 // then back to the bottom. The live sockets drop mid-stream on every 3rd turn.
-// Light (?soak=light&a=<thread>&b=<thread>): the same loop on two existing
-// threads, 20 minutes, with a short sleep/echo prompt about every 2 minutes,
+// Light (?soak=light&a=<session>&b=<session>): the same loop on two existing
+// sessions, 20 minutes, with a short sleep/echo prompt about every 2 minutes,
 // so model use stays small; the scroll passes still render A's whole history.
-// Scroll (?soak=scroll&a=<thread>&b=<thread>): A stays open with no turns;
+// Scroll (?soak=scroll&a=<session>&b=<session>): A stays open with no turns;
 // every 30 s, 20 times, a pass goes to the top at fast-wheel speed (a `top` row
 // once every older page is in) and back (a `bottom` row). Every 4th pass turns
 // back down halfway while a page is in flight, then carries on up; every 5th
 // switches to B while a page is in flight and comes back. Then one `idle` row
 // after 2 minutes.
-// Switch (?soak=switch&a=<thread>&b=<thread>): three cycles of a short turn on
+// Switch (?soak=switch&a=<session>&b=<session>): three cycles of a short turn on
 // A with switches during it: to B and back, then three quick switches, then the
 // turn settles and A closes. The listener columns are the point.
-// Seed (?soak=seed): turns on a new thread A only, with no drops or scrolling,
+// Seed (?soak=seed): turns on a new session A only, with no drops or scrolling,
 // until A renders more than SEED_CHARS characters or SEED_TURNS turns ran. Its
 // `turn` rows are the progress.
 // Every 10 s, and at each turn, close and switch, one CSV row goes to
@@ -44,8 +44,8 @@ const SEED_CHARS = 150_000;
 const SEED_TURNS = 60;
 const SCROLL_STEP_MS = 250;
 const SCROLL_LIMIT_MS = 2 * 60_000;
-// Thread A (seeded) works on SEED_REPO; each soak's thread B is new, on SOAK_REPO.
-// The soak takes the newest SEED_REPO thread as A.
+// Session A (seeded) works on SEED_REPO; each soak's session B is new, on SOAK_REPO.
+// The soak takes the newest SEED_REPO session as A.
 export const SEED_REPO = 'https://github.com/octocat/Spoon-Knife';
 export const SOAK_REPO = 'https://github.com/octocat/Hello-World';
 // Long, tool-heavy and markdown-rich, so every row kind appears.
@@ -102,11 +102,11 @@ export type SoakHooks = {
   light: boolean;
   scroll: boolean;
   switching: boolean;
-  threadA: string;
+  sessionA: string;
   // Unused when seeding.
-  threadB: string | null;
-  // Opens the thread's conversation and resolves with its chat client.
-  open(threadId: string): Promise<SoakChat>;
+  sessionB: string | null;
+  // Opens the session's conversation and resolves with its chat client.
+  open(sessionId: string): Promise<SoakChat>;
   // Closes the open conversation (its onDestroy closes the live socket).
   close(): void;
   signal: AbortSignal;
@@ -160,7 +160,7 @@ export function countListeners() {
   };
 }
 
-export async function runSoak({ token, seed, light, scroll, switching, threadA, threadB, open, close, signal }: SoakHooks): Promise<void> {
+export async function runSoak({ token, seed, light, scroll, switching, sessionA, sessionB, open, close, signal }: SoakHooks): Promise<void> {
   const file = `${seed ? 'seed' : light ? 'light' : scroll ? 'scroll' : switching ? 'switch' : 'soak'}-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
   const started = Date.now();
   let turns = 0;
@@ -168,7 +168,7 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
   let stuck = 0;
   let drops = 0;
   let current: SoakChat | null = null;
-  let openThread: string | null = null;
+  let openSession: string | null = null;
   let scrolling = false;
   // True while the sampler waits in its own delay(); that one timer is left
   // out of the timers column so its baseline is 0.
@@ -219,9 +219,9 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
   // release; its chars and rows are the conversation just closed.
   async function closeOpen() {
     const snap = snapshot(current);
-    const note = `closed ${openThread?.slice(0, 8)} after turn ${turns}`;
+    const note = `closed ${openSession?.slice(0, 8)} after turn ${turns}`;
     current = null;
-    openThread = null;
+    openSession = null;
     close();
     await delay(CLOSE_WAIT_MS, signal);
     await row('close', note, snap);
@@ -338,31 +338,31 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
   }
   if (switching) {
     countListeners();
-    const show = async (threadId: string) => {
-      if (openThread) await closeOpen();
-      current = await open(threadId);
-      openThread = threadId;
+    const show = async (sessionId: string) => {
+      if (openSession) await closeOpen();
+      current = await open(sessionId);
+      openSession = sessionId;
     };
-    const flip = async (threadId: string) => {
+    const flip = async (sessionId: string) => {
       close();
-      current = await open(threadId);
-      openThread = threadId;
+      current = await open(sessionId);
+      openSession = sessionId;
       await delay(300, signal);
     };
     try {
       for (let cycle = 1; cycle <= 3 && !signal.aborted; cycle++) {
-        await show(threadA);
+        await show(sessionA);
         await delay(CLOSE_WAIT_MS, signal);
         await row('open', `cycle ${cycle}`);
         void current!.sendMessage(LIGHT_PROMPT).catch(() => undefined);
         turns++;
         await delay(3000, signal);
-        await show(threadB!);
+        await show(sessionB!);
         await delay(3000, signal);
-        await show(threadA);
+        await show(sessionA);
         for (let i = 0; i < 3; i++) {
-          await flip(threadB!);
-          await flip(threadA);
+          await flip(sessionB!);
+          await flip(sessionA);
         }
         await row('switched', `cycle ${cycle}, A open mid-turn`);
         await delay(30_000, signal);
@@ -383,8 +383,8 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
   if (scroll) {
     countListeners();
     try {
-      current = await open(threadA);
-      openThread = threadA;
+      current = await open(sessionA);
+      openSession = sessionA;
       await delay(CLOSE_WAIT_MS, signal);
       await row('opened');
       for (let pass = 1; pass <= SCROLL_PASSES && !signal.aborted; pass++) {
@@ -392,15 +392,15 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
         let note = `pass ${pass}`;
         scrolling = true;
         try {
-          if (pass % 5 === 0 && threadB) {
+          if (pass % 5 === 0 && sessionB) {
             // Leave while a page is in flight, then come back and go up again.
             await wheelUp(async () => {
               note += ', switched to B mid-load';
               close();
-              current = await open(threadB);
+              current = await open(sessionB);
               await delay(CLOSE_WAIT_MS, signal);
               close();
-              current = await open(threadA);
+              current = await open(sessionA);
               await delay(CLOSE_WAIT_MS, signal);
             });
             await wheelUp();
@@ -441,13 +441,13 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
   try {
     while (more() && !signal.aborted) {
       const turnNo = turns + 1;
-      const threadId = !seed && turnNo % SWITCH_EVERY === 0 ? threadB! : threadA;
-      if (openThread !== threadId) {
-        const back = threadId === threadA && openThread !== null;
-        if (openThread === threadA) await row('away', `A before switch-away, turn ${turnNo} on B`);
-        if (openThread) await closeOpen();
-        current = await open(threadId);
-        openThread = threadId;
+      const sessionId = !seed && turnNo % SWITCH_EVERY === 0 ? sessionB! : sessionA;
+      if (openSession !== sessionId) {
+        const back = sessionId === sessionA && openSession !== null;
+        if (openSession === sessionA) await row('away', `A before switch-away, turn ${turnNo} on B`);
+        if (openSession) await closeOpen();
+        current = await open(sessionId);
+        openSession = sessionId;
         if (back) {
           await delay(CLOSE_WAIT_MS, signal);
           await row('back', `A after switch-back, before turn ${turnNo}`);
@@ -464,7 +464,7 @@ export async function runSoak({ token, seed, light, scroll, switching, threadA, 
           note = `${note} turn ${turnNo} ${failed}`.trim();
         }
       }
-      await row('turn', note || `turn ${turnNo} on ${threadId.slice(0, 8)}`);
+      await row('turn', note || `turn ${turnNo} on ${sessionId.slice(0, 8)}`);
       if (light) await delay(Math.max(0, turnStarted + LIGHT_TURN_EVERY_MS - Date.now()), signal);
     }
     if (current) await closeOpen();
@@ -482,7 +482,7 @@ export async function logCounters(open: () => SoakChat | undefined, openId: () =
   countListeners();
   startLagMeter();
   const file = `counters-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
-  await pageCall('soak.append', { name: file, line: 'time,thread,mounted_rows,dom_rows,tracked_rows,rendered_rows,loaded_rows,fetches,sockets,chats,timers,scroll_top,tauri_listeners,scroll_listeners,live_scroll_listeners,jank_50,jank_100,worst_5s,worst_run,key_worst,key_median' });
+  await pageCall('soak.append', { name: file, line: 'time,session,mounted_rows,dom_rows,tracked_rows,rendered_rows,loaded_rows,fetches,sockets,chats,timers,scroll_top,tauri_listeners,scroll_listeners,live_scroll_listeners,jank_50,jank_100,worst_5s,worst_run,key_worst,key_median' });
   for (;;) {
     const chat = open();
     const fields = [new Date().toISOString(), openId() ?? '', counters.rows, chat?.domRows() ?? 0, chat?.trackedRows() ?? 0,

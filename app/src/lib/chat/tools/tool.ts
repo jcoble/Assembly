@@ -3,8 +3,8 @@ export const TOOL_DETAIL = Symbol('tool-detail');
 // Answers an ask card: (askId, answer) => the POST.
 export const ASK_ANSWER = Symbol('ask-answer');
 export const TASK_STOP = Symbol('task-stop');
-// Opens another thread by id (a subagent's, or its parent).
-export const THREAD_OPEN = Symbol('thread-open');
+// Opens another session by id (a subagent's, or its parent).
+export const SESSION_OPEN = Symbol('session-open');
 
 // Bash's command, from the call's arguments (the detail's `input` JSON).
 export function commandOf(name: string, input: string | null): string | null {

@@ -11,19 +11,19 @@ const RECONNECT_MS = 1000;
 // it; it is counted in the debug sockets until its close event.
 export function openLive(opts: {
   token: string;
-  threadId: string;
+  sessionId: string;
   after: number;
   signal: AbortSignal;
   onRow: (row: Row) => void;
 }): void {
-  const { token, threadId, signal, onRow } = opts;
+  const { token, sessionId, signal, onRow } = opts;
   if (signal.aborted) return;
   let watermark = opts.after;
   let socket: WebSocket | null = null;
 
   const connect = () => {
     const ws = new TrackedWebSocket(
-      `${BASE_WS}/live?thread=${encodeURIComponent(threadId)}&after=${watermark}&token=${encodeURIComponent(token)}`,
+      `${BASE_WS}/live?session=${encodeURIComponent(sessionId)}&after=${watermark}&token=${encodeURIComponent(token)}`,
     );
     socket = ws;
     ws.onmessage = (event) => {

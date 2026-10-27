@@ -22,7 +22,7 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
-    public void Seqs_count_up_from_one_per_thread_with_no_gaps()
+    public void Seqs_count_up_from_one_per_session_with_no_gaps()
     {
         Assert.Equal([1L, 2L], _store.Commit("a", Batch("x", "y")).Select(row => row.Seq));
         Assert.Equal([3L], _store.Commit("a", Batch("z")).Select(row => row.Seq));
@@ -92,8 +92,8 @@ public sealed class RowStoreTests : IDisposable
         db.Open();
         using var command = db.CreateCommand();
         command.CommandText = $$"""
-            INSERT INTO rows(thread_id, seq, run_id, item_id, kind, payload, created_at) VALUES ('a', 3, 'run-1', 'm', 'message', '{"blocks":[]}', 1);
-            UPDATE threads SET next_seq = 4 WHERE thread_id = 'a';
+            INSERT INTO rows(session_id, seq, run_id, item_id, kind, payload, created_at) VALUES ('a', 3, 'run-1', 'm', 'message', '{"blocks":[]}', 1);
+            UPDATE sessions SET next_seq = 4 WHERE session_id = 'a';
             PRAGMA user_version = {{version}};
             """;
         command.ExecuteNonQuery();
@@ -193,7 +193,7 @@ public sealed class RowStoreTests : IDisposable
     [Fact]
     public void A_copied_row_keeps_its_seq_and_only_the_next_one_is_taken()
     {
-        // The Mac copies a remote thread's rows as the box numbered them, so "rows after N" means the same on both.
+        // The Mac copies a remote session's rows as the box numbered them, so "rows after N" means the same on both.
         var box = _store.Commit("a", Batch("x", "y", "z"));
         using var macDb = new TempDatabase();
         using var macDatabase = AppDatabase.Open(macDb.Path);
@@ -251,18 +251,18 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
-    public void A_threads_open_run_and_a_runs_thread_come_from_the_turn_rows()
+    public void A_sessions_open_run_and_a_runs_session_come_from_the_turn_rows()
     {
         _store.Commit("a", Turn("run-1", "started"));
         Assert.Equal("run-1", _store.OpenRun("a"));
         Assert.False(_store.RunEnded("a", "run-1"));
-        Assert.Equal("a", _store.ThreadOfRun("run-1"));
+        Assert.Equal("a", _store.SessionOfRun("run-1"));
 
         _store.Commit("a", Turn("run-1", "finished"));
         Assert.Null(_store.OpenRun("a"));
         Assert.True(_store.RunEnded("a", "run-1"));
         Assert.Null(_store.OpenRun("b"));
-        Assert.Null(_store.ThreadOfRun("nope"));
+        Assert.Null(_store.SessionOfRun("nope"));
     }
 
     private void CommitFixture(string name) => CommitEvents(FixtureReplay.Events(name));
@@ -313,7 +313,7 @@ public sealed class RowStoreTests : IDisposable
     private static JsonElement Payload(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
     private static string Json(StoredRow row) =>
-        $"{row.ThreadId}|{row.Seq}|{row.RunId}|{row.ItemId}|{row.Kind}|{row.CreatedAt}|{row.FirstSeq}|{row.PrevSeq}|{row.Payload.GetRawText()}";
+        $"{row.SessionId}|{row.Seq}|{row.RunId}|{row.ItemId}|{row.Kind}|{row.CreatedAt}|{row.FirstSeq}|{row.PrevSeq}|{row.Payload.GetRawText()}";
 
     public void Dispose()
     {

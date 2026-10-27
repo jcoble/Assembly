@@ -11,14 +11,13 @@ using Assembly.Infrastructure.Machines;
 using Assembly.Domain.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Domain.Sessions;
 
 namespace Assembly.Remote.Serve;
 
 /// <summary>
 /// Runs the remote host: the row store and sessions list, the live hub, the sessions, and the API a Mac copies the
-/// rows through, until Ctrl+C. Every thread here runs here.
+/// rows through, until Ctrl+C. Every session here runs here.
 /// </summary>
 public static class ServeRun
 {
@@ -34,19 +33,20 @@ public static class ServeRun
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         using var db = AppDatabase.Open(options.Database);
         var store = RowStore.Open(db);
-        var threads = ThreadStore.Open(db, TimeProvider.System);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System);
         using var hub = new LiveHub(store);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
+        AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
-        await using var sessions = new SessionRegistry(hub, threads, launcher, TimeProvider.System, Console.Out);
+        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out);
         var attachments = new AttachmentStore(options.Attachments);
 
-        var machines = new MachineSet(new LocalMachine(hub, threads, sessions, attachments));
+        var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, threads, machines, attachments, token, sessions.Helpers), options.Port,
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers), options.Port,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

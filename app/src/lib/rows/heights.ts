@@ -10,7 +10,7 @@
 // merge saved, so rows land where they did.
 import { errorNotice } from '../chat/notices.ts';
 import { splitAttachments } from '../composer/attachments.ts';
-import { MESSAGE_FOLD_LINES } from '../thread/fold.ts';
+import { MESSAGE_FOLD_LINES } from '../session/fold.ts';
 import type { Item, SafeInlinePart, SafeMarkdownBlock } from './store.ts';
 
 export type Box = { h: number; top: number; bottom: number };

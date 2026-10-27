@@ -11,7 +11,7 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 /// <summary>A scripted agent behind the real ACP client. The test plays the agent's side.</summary>
 internal sealed class FakeLink : IAgentLink
 {
-    public const string SessionId = "acp-1";
+    public const string AcpSessionId = "acp-1";
 
     private readonly FakeAgent _agent = new();
     private readonly TaskCompletionSource _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -26,7 +26,7 @@ internal sealed class FakeLink : IAgentLink
 
     /// <summary>Answers <c>initialize</c>, then <see cref="OpenAsync"/>.</summary>
     public async Task<JsonElement> StartAsync(
-        bool canResume = true, string sessionId = SessionId, bool canSteer = true, bool canRename = false, string? configOptions = null)
+        bool canResume = true, string acpSessionId = AcpSessionId, bool canSteer = true, bool canRename = false, string? configOptions = null)
     {
         var initialize = await ReadAsync("initialize");
         var sessions = canResume ? ""","sessionCapabilities":{"resume":{},"close":{}}""" : "";
@@ -34,20 +34,20 @@ internal sealed class FakeLink : IAgentLink
         var rename = canRename ? "\"jetbrains\":{\"air\":{\"version\":1,\"capabilities\":[\"sessionRename\"]}}" : "";
         var meta = string.Join(',', new[] { steering, rename }.Where(part => part.Length > 0));
         await _agent.ReplyAsync(initialize, $$$"""{"protocolVersion":1,"agentCapabilities":{"loadSession":true{{{sessions}}}},"authMethods":[],"_meta":{{{{meta}}}}}""");
-        return await OpenAsync(sessionId, configOptions);
+        return await OpenAsync(acpSessionId, configOptions);
     }
 
     /// <summary>
-    /// Answers the next <c>session/new</c> (with <paramref name="sessionId"/>) or <c>session/resume</c>, with
+    /// Answers the next <c>session/new</c> (with <paramref name="acpSessionId"/>) or <c>session/resume</c>, with
     /// <paramref name="configOptions"/> if given, and returns the request.
     /// </summary>
-    public async Task<JsonElement> OpenAsync(string sessionId = SessionId, string? configOptions = null)
+    public async Task<JsonElement> OpenAsync(string acpSessionId = AcpSessionId, string? configOptions = null)
     {
         var open = await _agent.ReadAsync();
         var method = open.GetProperty("method").GetString();
         Assert.Contains(method, new[] { "session/new", "session/resume" });
         var options = configOptions is null ? "" : $""","configOptions":{configOptions}""";
-        await _agent.ReplyAsync(open, method == "session/new" ? $$"""{"sessionId":"{{sessionId}}"{{options}}}""" : $$"""{{{options.TrimStart(',')}}}""");
+        await _agent.ReplyAsync(open, method == "session/new" ? $$"""{"sessionId":"{{acpSessionId}}"{{options}}}""" : $$"""{{{options.TrimStart(',')}}}""");
         return open;
     }
 
@@ -66,11 +66,11 @@ internal sealed class FakeLink : IAgentLink
         return message;
     }
 
-    public Task UpdateAsync(string updateJson, string sessionId = SessionId) =>
-        _agent.SendAsync($$$"""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"{{{sessionId}}}","update":{{{updateJson}}}}}""");
+    public Task UpdateAsync(string updateJson, string acpSessionId = AcpSessionId) =>
+        _agent.SendAsync($$$"""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"{{{acpSessionId}}}","update":{{{updateJson}}}}}""");
 
-    public Task TextAsync(string text, string messageId = "m1", string sessionId = SessionId) =>
-        UpdateAsync($$$"""{"sessionUpdate":"agent_message_chunk","messageId":"{{{messageId}}}","content":{"type":"text","text":{{{JsonSerializer.Serialize(text)}}}}}""", sessionId);
+    public Task TextAsync(string text, string messageId = "m1", string acpSessionId = AcpSessionId) =>
+        UpdateAsync($$$"""{"sessionUpdate":"agent_message_chunk","messageId":"{{{messageId}}}","content":{"type":"text","text":{{{JsonSerializer.Serialize(text)}}}}}""", acpSessionId);
 
     public Task ReplyAsync(JsonElement request, string resultJson) => _agent.ReplyAsync(request, resultJson);
 

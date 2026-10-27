@@ -6,10 +6,10 @@ namespace Assembly.Application.Features.Chat.Helpers;
 /// <summary>How a run that took a message ended: answered or failed, its last reply, and its error if any.</summary>
 public sealed record RunAnswer(string State, string Reply, string? Error)
 {
-    /// <summary>The run's answer from the thread's rows here, or null while it hasn't ended.</summary>
-    public static RunAnswer? Of(LiveHub hub, string threadId, string runId)
+    /// <summary>The run's answer from the session's rows here, or null while it hasn't ended.</summary>
+    public static RunAnswer? Of(LiveHub hub, string sessionId, string runId)
     {
-        var rows = hub.RunRows(threadId, runId);
+        var rows = hub.RunRows(sessionId, runId);
         var end = rows.LastOrDefault(row => row.Kind == RowKind.Turn);
         if (end is null || end.Payload.GetProperty("state").GetString() == "started")
             return null;

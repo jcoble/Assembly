@@ -13,8 +13,8 @@ namespace Assembly.Infrastructure.Http;
 /// <summary>
 /// <c>GET /version</c>: the row format, which a Mac checks before it copies a remote machine's rows, and the commit
 /// this backend was built from (scripts/check4.sh checks it).
-/// <c>GET /machines</c>: the remote machines a new thread can run on, besides this one.
-/// <c>GET /agents?machine=</c>: the agents a new thread on that machine (this one when left out) can run.
+/// <c>GET /machines</c>: the remote machines a new session can run on, besides this one.
+/// <c>GET /agents?machine=</c>: the agents a new session on that machine (this one when left out) can run.
 /// </summary>
 internal sealed class InfoRoutes(MachineSet machines)
 {

@@ -9,7 +9,7 @@ using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// <c>WS /live?thread=T&amp;after=N</c>: the rows after N, then each row as it's committed, as <c>{type:"row", row}</c>.
+/// <c>WS /live?session=T&amp;after=N</c>: the rows after N, then each row as it's committed, as <c>{type:"row", row}</c>.
 /// A quiet socket gets <c>{type:"ping"}</c> every 30 s. A socket that falls behind is closed, and the webview
 /// reopens it from the last row it applied.
 /// </summary>
@@ -20,15 +20,15 @@ internal static class LiveSocket
 
     public static async Task HandleAsync(HttpContext context, LiveHub hub)
     {
-        var threadId = context.Request.Query["thread"].ToString();
-        if (!context.WebSockets.IsWebSocketRequest || threadId.Length == 0 || RequestValues.QueryLong(context, "after") is not { } after)
+        var sessionId = context.Request.Query["session"].ToString();
+        if (!context.WebSockets.IsWebSocketRequest || sessionId.Length == 0 || RequestValues.QueryLong(context, "after") is not { } after)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "expected a WebSocket with ?thread and ?after");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "expected a WebSocket with ?session and ?after");
             return;
         }
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
-        using var live = hub.Subscribe(threadId, after);
+        using var live = hub.Subscribe(sessionId, after);
         using var closing = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         var receiving = ReceiveUntilClosedAsync(socket, closing);
         try

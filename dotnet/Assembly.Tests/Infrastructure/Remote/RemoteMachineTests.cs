@@ -40,39 +40,39 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         _mac = await MacBackend.StartAsync(_macHome, MacToken, port: 0, _macLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken));
 
     [Fact]
-    public async Task A_thread_made_on_the_remote_runs_its_turn_there_and_its_rows_are_copied_here()
+    public async Task A_session_made_on_the_remote_runs_its_turn_there_and_its_rows_are_copied_here()
     {
         Assert.Equal([Box], (await GetJsonAsync(_mac!, MacToken, "/machines")).GetProperty("machines").EnumerateArray().Select(m => m.GetString()));
-        var threadId = await CreateThreadAsync();
-        Assert.Equal(Box, (await GetJsonAsync(_mac!, MacToken, $"/threads/{threadId}")).GetProperty("machine").GetString());
-        Assert.Equal(JsonValueKind.Null, (await GetJsonAsync(_box, BoxToken, $"/threads/{threadId}")).GetProperty("machine").ValueKind);
+        var sessionId = await CreateSessionAsync();
+        Assert.Equal(Box, (await GetJsonAsync(_mac!, MacToken, $"/sessions/{sessionId}")).GetProperty("machine").GetString());
+        Assert.Equal(JsonValueKind.Null, (await GetJsonAsync(_box, BoxToken, $"/sessions/{sessionId}")).GetProperty("machine").ValueKind);
 
-        using var mac = await OpenLiveAsync(_mac!, MacToken, threadId, after: 0);
-        var runId = await SendAsync(threadId);
+        using var mac = await OpenLiveAsync(_mac!, MacToken, sessionId, after: 0);
+        var runId = await SendAsync(sessionId);
         await RunTurnOnBoxAsync();
 
         var streamed = await ApiTests.ReadUntilTurnEndsAsync(mac);
         Assert.Equal(runId, streamed[^1].GetProperty("runId").GetString());
 
         // Stored the same on both, the finished message's deltas deleted on each.
-        using var box = await OpenLiveAsync(_box, BoxToken, threadId, after: 0);
-        using var reopened = await OpenLiveAsync(_mac!, MacToken, threadId, after: 0);
+        using var box = await OpenLiveAsync(_box, BoxToken, sessionId, after: 0);
+        using var reopened = await OpenLiveAsync(_mac!, MacToken, sessionId, after: 0);
         Assert.Equal(Shape(await ApiTests.ReadUntilTurnEndsAsync(box)), Shape(await ApiTests.ReadUntilTurnEndsAsync(reopened)));
         Assert.Equal(0, _macLauncher.Launches);
     }
 
     [Fact]
-    public async Task Opening_a_thread_catches_up_on_a_turn_that_ran_while_nobody_watched()
+    public async Task Opening_a_session_catches_up_on_a_turn_that_ran_while_nobody_watched()
     {
-        var threadId = await CreateThreadAsync();
+        var sessionId = await CreateSessionAsync();
         using var http = Client(_box, BoxToken);
-        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync($"/threads/{threadId}/send", Json("""{"text":"hi"}"""))).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync($"/sessions/{sessionId}/send", Json("""{"text":"hi"}"""))).StatusCode);
         await RunTurnOnBoxAsync();
-        using var box = await OpenLiveAsync(_box, BoxToken, threadId, after: 0);
+        using var box = await OpenLiveAsync(_box, BoxToken, sessionId, after: 0);
         var ran = Shape(await ApiTests.ReadUntilTurnEndsAsync(box));
 
-        await GetJsonAsync(_mac!, MacToken, $"/threads/{threadId}/rows");
-        using var mac = await OpenLiveAsync(_mac!, MacToken, threadId, after: 0);
+        await GetJsonAsync(_mac!, MacToken, $"/sessions/{sessionId}/rows");
+        using var mac = await OpenLiveAsync(_mac!, MacToken, sessionId, after: 0);
 
         Assert.Equal(ran, Shape(await ApiTests.ReadUntilTurnEndsAsync(mac)));
     }
@@ -80,10 +80,10 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     [Fact]
     public async Task A_mac_restarted_mid_turn_catches_up_instead_of_marking_the_turn_lost()
     {
-        var threadId = await CreateThreadAsync();
-        using (var watching = await OpenLiveAsync(_mac!, MacToken, threadId, after: 0))
+        var sessionId = await CreateSessionAsync();
+        using (var watching = await OpenLiveAsync(_mac!, MacToken, sessionId, after: 0))
         {
-            await SendAsync(threadId);
+            await SendAsync(sessionId);
             var agent = await _boxLauncher.NextAsync();
             await agent.StartAsync();
             var prompt = await agent.ReadAsync("session/prompt");
@@ -96,7 +96,7 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         }
 
         await StartMacAsync();
-        using var mac = await OpenLiveAsync(_mac!, MacToken, threadId, after: 0);
+        using var mac = await OpenLiveAsync(_mac!, MacToken, sessionId, after: 0);
         var rows = await ApiTests.ReadUntilTurnEndsAsync(mac);
 
         Assert.DoesNotContain(rows, row => row.GetProperty("kind").GetString() == "error");
@@ -116,7 +116,7 @@ public sealed class RemoteMachineTests : IAsyncLifetime
             new RemoteConfig(Box, address, BoxToken));
 
         using var http = Client(mac, MacToken);
-        var created = await http.PostAsync("/threads", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
+        var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
 
         Assert.Equal(HttpStatusCode.BadGateway, created.StatusCode);
         Assert.Contains("format 99", await created.Content.ReadAsStringAsync());
@@ -125,9 +125,9 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     [Fact]
     public async Task A_helper_of_another_agent_on_the_remote_keeps_its_agent_here()
     {
-        var threadId = await CreateThreadAsync();
-        using var mac = await OpenLiveAsync(_mac!, MacToken, threadId, after: 0);
-        await SendAsync(threadId);
+        var sessionId = await CreateSessionAsync();
+        using var mac = await OpenLiveAsync(_mac!, MacToken, sessionId, after: 0);
+        await SendAsync(sessionId);
         var agent = await _boxLauncher.NextAsync();
         var open = await agent.StartAsync();
         await agent.ReadAsync("session/prompt");
@@ -138,41 +138,41 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         var call = """{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"start_session","arguments":{"prompt":"Count the lines.","agent":"codex"}}}""";
         var answer = JsonDocument.Parse(await (await http.PostAsync("/mcp", Json(call))).Content.ReadAsStringAsync()).RootElement;
         var helperId = JsonDocument.Parse(answer.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!)
-            .RootElement.GetProperty("threadId").GetString()!;
+            .RootElement.GetProperty("sessionId").GetString()!;
 
         while ((await ApiTests.ReadRowsAsync(mac, 1))[0].GetProperty("kind").GetString() != "subagent")
         {
         }
-        var helper = await GetJsonAsync(_mac!, MacToken, $"/threads/{helperId}");
-        Assert.Equal(("codex", threadId), (helper.GetProperty("agent").GetString(), helper.GetProperty("parentThreadId").GetString()));
+        var helper = await GetJsonAsync(_mac!, MacToken, $"/sessions/{helperId}");
+        Assert.Equal(("codex", sessionId), (helper.GetProperty("agent").GetString(), helper.GetProperty("parentSessionId").GetString()));
     }
 
     [Fact]
     public async Task A_mac_session_starts_a_helper_on_the_remote_and_each_messages_the_other_once()
     {
         using var http = Client(_mac!, MacToken);
-        var created = await http.PostAsync("/threads", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
-        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
+        var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
+        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
         await SendAsync(parent);
         var mac = await _macLauncher.NextAsync();
-        var parentToken = SessionToken(await mac.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await mac.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await mac.ReadAsync("session/prompt");
 
         var started = await ToolAsync(_mac!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box });
-        var helperId = started.GetProperty("threadId").GetString()!;
+        var helperId = started.GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
-        var helperToken = SessionToken(await box.StartAsync(sessionId: "acp-helper"));
+        var helperToken = SessionToken(await box.StartAsync(acpSessionId: "acp-helper"));
         var helperPrompt = await box.ReadAsync("session/prompt");
         Assert.Contains("Count the lines.", helperPrompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        Assert.Equal(parent, (await GetJsonAsync(_box, BoxToken, $"/threads/{helperId}")).GetProperty("parentThreadId").GetString());
-        var copy = await GetJsonAsync(_mac!, MacToken, $"/threads/{helperId}");
+        Assert.Equal(parent, (await GetJsonAsync(_box, BoxToken, $"/sessions/{helperId}")).GetProperty("parentSessionId").GetString());
+        var copy = await GetJsonAsync(_mac!, MacToken, $"/sessions/{helperId}");
         Assert.Equal((Box, "codex"), (copy.GetProperty("machine").GetString(), copy.GetProperty("agent").GetString()));
 
         // The parent's turn ends; its session stays open while its helper works on the box.
         await mac.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
 
         // The helper asks its parent: queued on the box, picked up by the Mac, and delivered once.
-        var asked = (await ToolAsync(_box, helperToken, "send_message", new { threadId = parent, text = "Which file?" })).GetProperty("messageId").GetString()!;
+        var asked = (await ToolAsync(_box, helperToken, "send_message", new { sessionId = parent, text = "Which file?" })).GetProperty("messageId").GetString()!;
         var question = await mac.ReadAsync("session/prompt");
         Assert.Contains("Which file?", question.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
         // As if the Mac stopped before telling the box: the box lists it again, and the Mac only tells it again.
@@ -201,19 +201,19 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     public async Task A_message_left_queued_after_its_helper_ended_is_still_delivered_and_says_how_long_it_waited()
     {
         using var http = Client(_mac!, MacToken);
-        var created = await http.PostAsync("/threads", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
-        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
+        var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
+        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
         await SendAsync(parent);
         var mac = await _macLauncher.NextAsync();
-        var parentToken = SessionToken(await mac.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await mac.StartAsync(acpSessionId: "acp-parent"));
         var parentPrompt = await mac.ReadAsync("session/prompt");
         var helperId = (await ToolAsync(_mac!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box }))
-            .GetProperty("threadId").GetString()!;
+            .GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
-        await box.StartAsync(sessionId: "acp-helper");
+        await box.StartAsync(acpSessionId: "acp-helper");
         await box.ReplyAsync(await box.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
         await mac.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
-        await Until(async () => (await GetJsonAsync(_mac!, MacToken, $"/threads/{parent}/rows")).GetProperty("rows").EnumerateArray()
+        await Until(async () => (await GetJsonAsync(_mac!, MacToken, $"/sessions/{parent}/rows")).GetProperty("rows").EnumerateArray()
             .Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
         await mac.CloseAsync();
 
@@ -230,27 +230,27 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     public async Task Stop_on_a_remote_helper_s_row_stops_its_run_there_and_the_row_ends_stopped()
     {
         using var http = Client(_mac!, MacToken);
-        var created = await http.PostAsync("/threads", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
-        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
+        var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
+        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
         await SendAsync(parent);
         var mac = await _macLauncher.NextAsync();
-        var parentToken = SessionToken(await mac.StartAsync(sessionId: "acp-parent"));
+        var parentToken = SessionToken(await mac.StartAsync(acpSessionId: "acp-parent"));
         await mac.ReadAsync("session/prompt");
         var helperId = (await ToolAsync(_mac!, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex", machine = Box }))
-            .GetProperty("threadId").GetString()!;
+            .GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
-        await box.StartAsync(sessionId: "acp-helper");
+        await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
 
         // The row's Stop: refused until the helper's run has been copied here, then it reaches the box.
-        await Until(async () => (await http.PostAsync($"/threads/{parent}/tasks/{helperId}/stop", null)).StatusCode == HttpStatusCode.OK);
+        await Until(async () => (await http.PostAsync($"/sessions/{parent}/tasks/{helperId}/stop", null)).StatusCode == HttpStatusCode.OK);
         var cancel = await box.ReadAsync("session/cancel");
         Assert.Equal("acp-helper", cancel.GetProperty("params").GetProperty("sessionId").GetString());
         await box.ReplyAsync(helperPrompt, """{"stopReason":"cancelled"}""");
 
         await Until(async () =>
         {
-            var rows = (await GetJsonAsync(_mac!, MacToken, $"/threads/{parent}/rows")).GetProperty("rows").EnumerateArray()
+            var rows = (await GetJsonAsync(_mac!, MacToken, $"/sessions/{parent}/rows")).GetProperty("rows").EnumerateArray()
                 .Where(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}").ToList();
             return rows.Count > 0 && rows[^1].GetProperty("payload") is var row
                 && row.GetProperty("state").GetString() == "idle" && row.TryGetProperty("stopReason", out var reason) && reason.GetString() == "cancelled";
@@ -284,7 +284,7 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         using var db = new SqliteConnection($"Data Source={database};Pooling=False");
         db.Open();
         using var command = db.CreateCommand();
-        command.CommandText = "INSERT INTO helper_messages(message_id, from_thread, to_thread, text, created_at) VALUES ($id, $from, $to, $text, $at);";
+        command.CommandText = "INSERT INTO helper_messages(message_id, from_session, to_session, text, created_at) VALUES ($id, $from, $to, $text, $at);";
         command.Parameters.AddWithValue("$id", messageId);
         command.Parameters.AddWithValue("$from", from);
         command.Parameters.AddWithValue("$to", to);
@@ -325,18 +325,18 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     private static List<(long, string?)> Shape(List<JsonElement> rows) =>
         rows.Select(row => (row.GetProperty("seq").GetInt64(), row.GetProperty("kind").GetString())).ToList();
 
-    private async Task<string> CreateThreadAsync()
+    private async Task<string> CreateSessionAsync()
     {
         using var http = Client(_mac!, MacToken);
-        var created = await http.PostAsync("/threads", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
+        var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
-        return JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("threadId").GetString()!;
+        return JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
     }
 
-    private async Task<string> SendAsync(string threadId)
+    private async Task<string> SendAsync(string sessionId)
     {
         using var http = Client(_mac!, MacToken);
-        var sent = await http.PostAsync($"/threads/{threadId}/send", Json("""{"text":"hi"}"""));
+        var sent = await http.PostAsync($"/sessions/{sessionId}/send", Json("""{"text":"hi"}"""));
         Assert.Equal(HttpStatusCode.OK, sent.StatusCode);
         return JsonDocument.Parse(await sent.Content.ReadAsStringAsync()).RootElement.GetProperty("runId").GetString()!;
     }
@@ -356,10 +356,10 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         return http;
     }
 
-    private static async Task<ClientWebSocket> OpenLiveAsync(MacBackend backend, string token, string threadId, long after)
+    private static async Task<ClientWebSocket> OpenLiveAsync(MacBackend backend, string token, string sessionId, long after)
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{backend.Address.Authority}/live?thread={threadId}&after={after}&token={token}"), CancellationToken.None);
+        await socket.ConnectAsync(new Uri($"ws://{backend.Address.Authority}/live?session={sessionId}&after={after}&token={token}"), CancellationToken.None);
         return socket;
     }
 

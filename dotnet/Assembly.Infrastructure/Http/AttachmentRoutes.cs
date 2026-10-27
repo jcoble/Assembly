@@ -5,29 +5,29 @@ using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
-using Assembly.Application.Features.Chat.Threads;
-using Assembly.Domain.Threads;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Sessions;
 
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// <c>POST /threads/:id/attachments</c> takes one image's raw bytes, stores it where the thread's agent runs, and answers
-/// with its path there; <c>GET /threads/:id/attachments/:name</c> reads this machine's copy back for the preview.
+/// <c>POST /sessions/:id/attachments</c> takes one image's raw bytes, stores it where the session's agent runs, and answers
+/// with its path there; <c>GET /sessions/:id/attachments/:name</c> reads this machine's copy back for the preview.
 /// </summary>
-internal sealed class AttachmentRoutes(ThreadStore threads, MachineSet machines, AttachmentStore attachments)
+internal sealed class AttachmentRoutes(SessionStore sessionStore, MachineSet machines, AttachmentStore attachments)
 {
     public void Map(IEndpointRouteBuilder routes)
     {
-        routes.MapPost("/threads/{id}/attachments", SaveAsync);
-        routes.MapGet("/threads/{id}/attachments/{name}", ReadAsync);
+        routes.MapPost("/sessions/{id}/attachments", SaveAsync);
+        routes.MapGet("/sessions/{id}/attachments/{name}", ReadAsync);
     }
 
     private async Task SaveAsync(HttpContext context)
     {
-        if (threads.Get(RequestValues.Route(context, "id")) is not { } thread)
+        if (sessionStore.Get(RequestValues.Route(context, "id")) is not { } session)
         {
-            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown thread");
+            await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown session");
             return;
         }
 
@@ -53,7 +53,7 @@ internal sealed class AttachmentRoutes(ThreadStore threads, MachineSet machines,
         string path;
         try
         {
-            path = await machines.For(thread).SaveAttachmentAsync(thread, type, bytes.Value, context.RequestAborted);
+            path = await machines.For(session).SaveAttachmentAsync(session, type, bytes.Value, context.RequestAborted);
         }
         catch (MachineUnreachable error)
         {
@@ -71,7 +71,7 @@ internal sealed class AttachmentRoutes(ThreadStore threads, MachineSet machines,
 
     private async Task ReadAsync(HttpContext context)
     {
-        var threadId = RequestValues.Route(context, "id");
+        var sessionId = RequestValues.Route(context, "id");
         var name = RequestValues.Route(context, "name");
         if (AttachmentStore.TypeOfName(name) is not { } type)
         {
@@ -79,8 +79,8 @@ internal sealed class AttachmentRoutes(ThreadStore threads, MachineSet machines,
             return;
         }
 
-        var path = attachments.PathOf(threadId, name);
-        if (threads.Get(threadId) is null || !File.Exists(path))
+        var path = attachments.PathOf(sessionId, name);
+        if (sessionStore.Get(sessionId) is null || !File.Exists(path))
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "no such attachment");
             return;

@@ -67,8 +67,7 @@ or carve-outs anywhere, and nobody adds one: a rule either holds for every file 
 
 - Session: one of Assembly's chats, the word ACP uses. Never name anything about them "thread": code, routes, files,
   tables or text. Jesse, 2026-10-26: "make sure to call them sessions instead of threads... the ACP adapter and
-  everything else that we've been using calls them sessions." Today's code still says thread; step B2d of the plan
-  renames it.
+  everything else that we've been using calls them sessions."
 - You: the agent reading this. Jesse or the owner: who you are working for.
 - User: a person using Assembly. Provider: Claude Code and Codex today; Antigravity is kept and comes later.
 - Adapter: the provider's ACP process Assembly launches. It is disposable: once a turn and everything it started are

@@ -1,5 +1,4 @@
 using System.Threading.Channels;
-using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
 using Assembly.Application.Features.Chat;
 
@@ -24,15 +23,15 @@ public sealed class LiveHub : IDisposable
         _queueLimit = queueLimit;
     }
 
-    /// <summary>Commits the batch, then queues its saved rows for the thread's sockets. Returns them as saved.</summary>
-    public IReadOnlyList<StoredRow> Publish(string threadId, RowBatch batch)
+    /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
+    public IReadOnlyList<StoredRow> Publish(string sessionId, RowBatch batch)
     {
         if (batch.IsEmpty)
             return [];
         lock (_gate)
         {
-            var saved = _store.Commit(threadId, batch);
-            Push(threadId, saved);
+            var saved = _store.Commit(sessionId, batch);
+            Push(sessionId, saved);
             return saved;
         }
     }
@@ -44,79 +43,79 @@ public sealed class LiveHub : IDisposable
         {
             if (!_store.Copy(row))
                 return false;
-            Push(row.ThreadId, [row]);
+            Push(row.SessionId, [row]);
             return true;
         }
     }
 
-    /// <summary>Whether a webview has the thread's live socket open.</summary>
-    public bool HasSubscribers(string threadId)
+    /// <summary>Whether a webview has the session's live socket open.</summary>
+    public bool HasSubscribers(string sessionId)
     {
         lock (_gate)
-            return _subscribers.TryGetValue(threadId, out var subscribers) && subscribers.Count > 0;
+            return _subscribers.TryGetValue(sessionId, out var subscribers) && subscribers.Count > 0;
     }
 
-    /// <summary>The rows after <paramref name="after"/>, and from then on every new row of the thread.</summary>
-    public LiveSubscription Subscribe(string threadId, long after)
+    /// <summary>The rows after <paramref name="after"/>, and from then on every new row of the session.</summary>
+    public LiveSubscription Subscribe(string sessionId, long after)
     {
         var queue = Channel.CreateBounded<StoredRow>(new BoundedChannelOptions(_queueLimit) { SingleReader = true, SingleWriter = true });
         lock (_gate)
         {
-            var subscription = new LiveSubscription(threadId, _store.RowsAfter(threadId, after), queue, subscriber => Close(subscriber, null));
-            if (!_subscribers.TryGetValue(threadId, out var subscribers))
-                _subscribers[threadId] = subscribers = [];
+            var subscription = new LiveSubscription(sessionId, _store.RowsAfter(sessionId, after), queue, subscriber => Close(subscriber, null));
+            if (!_subscribers.TryGetValue(sessionId, out var subscribers))
+                _subscribers[sessionId] = subscribers = [];
             subscribers.Add(subscription);
             return subscription;
         }
     }
 
-    public RowPage Page(string threadId, long before, int limit)
+    public RowPage Page(string sessionId, long before, int limit)
     {
         lock (_gate)
-            return _store.PageBefore(threadId, before, limit);
+            return _store.PageBefore(sessionId, before, limit);
     }
 
-    public StoredToolCall? ToolCall(string threadId, string itemId)
+    public StoredToolCall? ToolCall(string sessionId, string itemId)
     {
         lock (_gate)
-            return _store.ToolCall(threadId, itemId);
+            return _store.ToolCall(sessionId, itemId);
     }
 
-    public void SaveToolDetail(string threadId, ToolDetail detail)
+    public void SaveToolDetail(string sessionId, ToolDetail detail)
     {
         lock (_gate)
-            _store.SaveToolDetail(threadId, detail);
+            _store.SaveToolDetail(sessionId, detail);
     }
 
     /// <summary>The rows of one run, oldest first.</summary>
-    public IReadOnlyList<StoredRow> RunRows(string threadId, string runId)
+    public IReadOnlyList<StoredRow> RunRows(string sessionId, string runId)
     {
         lock (_gate)
-            return _store.RunRows(threadId, runId);
+            return _store.RunRows(sessionId, runId);
     }
 
-    public long LastSeq(string threadId)
+    public long LastSeq(string sessionId)
     {
         lock (_gate)
-            return _store.LastSeq(threadId);
+            return _store.LastSeq(sessionId);
     }
 
-    public string? OpenRun(string threadId)
+    public string? OpenRun(string sessionId)
     {
         lock (_gate)
-            return _store.OpenRun(threadId);
+            return _store.OpenRun(sessionId);
     }
 
-    public bool RunEnded(string threadId, string runId)
+    public bool RunEnded(string sessionId, string runId)
     {
         lock (_gate)
-            return _store.RunEnded(threadId, runId);
+            return _store.RunEnded(sessionId, runId);
     }
 
-    public string? ThreadOfRun(string runId)
+    public string? SessionOfRun(string runId)
     {
         lock (_gate)
-            return _store.ThreadOfRun(runId);
+            return _store.SessionOfRun(runId);
     }
 
     /// <summary>Ends every subscription; their sockets close, and the webview reopens them from its watermark.</summary>
@@ -132,9 +131,9 @@ public sealed class LiveHub : IDisposable
     /// <summary>Ends every subscription. The store belongs to the caller.</summary>
     public void Dispose() => CloseSubscriptions();
 
-    private void Push(string threadId, IReadOnlyList<StoredRow> rows)
+    private void Push(string sessionId, IReadOnlyList<StoredRow> rows)
     {
-        if (!_subscribers.TryGetValue(threadId, out var subscribers))
+        if (!_subscribers.TryGetValue(sessionId, out var subscribers))
             return;
         foreach (var subscriber in subscribers.ToList())
         {
@@ -148,8 +147,8 @@ public sealed class LiveHub : IDisposable
         lock (_gate)
         {
             subscriber.Queue.Writer.TryComplete(reason);
-            if (_subscribers.TryGetValue(subscriber.ThreadId, out var subscribers) && subscribers.Remove(subscriber) && subscribers.Count == 0)
-                _subscribers.Remove(subscriber.ThreadId);
+            if (_subscribers.TryGetValue(subscriber.SessionId, out var subscribers) && subscribers.Remove(subscriber) && subscribers.Count == 0)
+                _subscribers.Remove(subscriber.SessionId);
         }
     }
 }

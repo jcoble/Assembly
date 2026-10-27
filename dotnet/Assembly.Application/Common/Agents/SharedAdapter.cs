@@ -8,8 +8,8 @@ namespace Assembly.Application.Common.Agents;
 internal sealed record RunningAdapter(IAgentLink Link, InitializeResponse Init, UpdateRouter Updates);
 
 /// <summary>
-/// The one adapter process an agent's threads share on this machine (and so one Codex app-server for every Codex
-/// thread). The first send starts and initializes it; a send after it has exited starts a new one. Each thread's
+/// The one adapter process an agent's sessions share on this machine (and so one Codex app-server for every Codex
+/// session). The first send starts and initializes it; a send after it has exited starts a new one. Each session's
 /// turn opens its session on it and closes it when the turn ends. Once its last session closes, it stays up for
 /// <see cref="IdleGrace"/>, so a conversation's next turn finds it warm, and then stops.
 /// </summary>

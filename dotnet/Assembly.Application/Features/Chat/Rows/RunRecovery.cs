@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
-using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
 using Assembly.Domain.Rows;
@@ -19,31 +18,31 @@ public static class RunRecovery
     public const string Code = "backend_stopped";
 
     /// <summary>
-    /// Closes every turn the backend's last run left running, so no thread looks busy forever. Returns how many. Only
-    /// threads whose agent <paramref name="runsHere"/>: a remote thread's turn is the remote machine's to close, and
+    /// Closes every turn the backend's last run left running, so no session looks busy forever. Returns how many. Only
+    /// sessions whose agent <paramref name="runsHere"/>: a remote session's turn is the remote machine's to close, and
     /// its rows arrive by copy.
     /// </summary>
     public static int CloseUnfinished(RowStore store, LiveHub hub, long at, Func<string, bool> runsHere)
     {
-        var runs = store.UnfinishedRuns().Where(run => runsHere(run.ThreadId)).ToList();
-        foreach (var (threadId, runId) in runs)
-            hub.Publish(threadId, Close(store.RunRows(threadId, runId), at));
+        var runs = store.UnfinishedRuns().Where(run => runsHere(run.SessionId)).ToList();
+        foreach (var (sessionId, runId) in runs)
+            hub.Publish(sessionId, Close(store.RunRows(sessionId, runId), at));
         // A session kept open for background work outlives its run, so its tasks are closed on their own.
-        foreach (var task in store.RunningItems(RowKind.Task).Where(task => runsHere(task.ThreadId)))
+        foreach (var task in store.RunningItems(RowKind.Task).Where(task => runsHere(task.SessionId)))
         {
             var batch = new RowBatch();
             var payload = task.Payload.Deserialize(RowJsonContext.Rows.TaskPayload)!;
             Add(batch, task.RunId, task.ItemId, RowKind.Task, payload with { State = "stopped" }, RowJsonContext.Rows.TaskPayload, at);
-            hub.Publish(task.ThreadId, batch);
+            hub.Publish(task.SessionId, batch);
         }
-        // And so are subagents: each child's own thread had its run closed above.
-        foreach (var subagent in store.RunningItems(RowKind.Subagent).Where(subagent => runsHere(subagent.ThreadId)))
+        // And so are subagents: each child's own session had its run closed above.
+        foreach (var subagent in store.RunningItems(RowKind.Subagent).Where(subagent => runsHere(subagent.SessionId)))
         {
             var batch = new RowBatch();
             var payload = subagent.Payload.Deserialize(RowJsonContext.Rows.SubagentPayload)!;
             Add(batch, subagent.RunId, subagent.ItemId, RowKind.Subagent,
                 payload with { State = "idle", StopReason = "cancelled", CanStop = false }, RowJsonContext.Rows.SubagentPayload, at);
-            hub.Publish(subagent.ThreadId, batch);
+            hub.Publish(subagent.SessionId, batch);
         }
         return runs.Count;
     }
