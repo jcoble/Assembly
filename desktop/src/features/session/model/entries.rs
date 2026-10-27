@@ -13,7 +13,11 @@ pub enum Entry {
     /// The item at this index.
     Item(usize),
     /// A fold's heading, at the index of the first item it hides; `ends_reply` when, closed, it ends the reply.
-    FoldHeading { run_id: String, first: usize, ends_reply: bool },
+    FoldHeading {
+        run_id: String,
+        first: usize,
+        ends_reply: bool,
+    },
     /// A live turn's "Working for" line.
     Working,
 }

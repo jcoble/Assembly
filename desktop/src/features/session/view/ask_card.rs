@@ -11,7 +11,8 @@ use crate::features::session::rows::ask::AskPayload;
 #[derive(IntoElement)]
 pub struct AskCard {
     pub ask_id: String,
-    pub ask: AskPayload,    pub on_action: OnAction,
+    pub ask: AskPayload,
+    pub on_action: OnAction,
 }
 
 impl RenderOnce for AskCard {

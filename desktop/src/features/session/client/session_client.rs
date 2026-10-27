@@ -15,7 +15,13 @@ pub trait SessionClient: 'static {
 
     /// One call, by feature and method (rows/page, rows/tool, send/send, attachments/begin, …). With `key`, a newer
     /// call with the same key answers this one `Aborted` and cancels it, so a fast switch never waits on a stale load.
-    fn call(&self, feature: &str, method: &str, args: Value, key: Option<&str>) -> Task<Result<Value, CallError>>;
+    fn call(
+        &self,
+        feature: &str,
+        method: &str,
+        args: Value,
+        key: Option<&str>,
+    ) -> Task<Result<Value, CallError>>;
 }
 
 /// Where a rows subscription's events go, on the main thread.
@@ -25,7 +31,9 @@ pub enum RowsEvent {
     Row(Box<Row>),
     /// The rows before `seq` weren't sent (a first open, or one too far behind): drop what's held and load the page
     /// below `seq + 1`.
-    Jump { seq: i64 },
+    Jump {
+        seq: i64,
+    },
 }
 
 /// Why a call has no result: the backend's error codes (SocketFrames.cs), with its message, or `Aborted` (a newer

@@ -21,7 +21,11 @@ pub struct Fold {
 
 impl Fold {
     /// Each finished run's fold, by run id. A run is finished once its stats are in and it isn't the one running.
-    pub fn all(_items: &[Item], _stats: &HashMap<String, TurnStats>, _active_run: Option<&str>) -> HashMap<String, Fold> {
+    pub fn all(
+        _items: &[Item],
+        _stats: &HashMap<String, TurnStats>,
+        _active_run: Option<&str>,
+    ) -> HashMap<String, Fold> {
         todo!()
     }
 

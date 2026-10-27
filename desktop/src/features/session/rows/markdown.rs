@@ -6,12 +6,29 @@ use serde::Deserialize;
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Block {
-    Paragraph { parts: Vec<Inline> },
-    Heading { level: u8, parts: Vec<Inline> },
-    Code { language: String, value: String, complete: bool },
-    Quote { blocks: Vec<Block> },
-    List { ordered: bool, items: Vec<ListItem> },
-    Table { headers: Vec<Vec<Inline>>, rows: Vec<Vec<Vec<Inline>>> },
+    Paragraph {
+        parts: Vec<Inline>,
+    },
+    Heading {
+        level: u8,
+        parts: Vec<Inline>,
+    },
+    Code {
+        language: String,
+        value: String,
+        complete: bool,
+    },
+    Quote {
+        blocks: Vec<Block>,
+    },
+    List {
+        ordered: bool,
+        items: Vec<ListItem>,
+    },
+    Table {
+        headers: Vec<Vec<Inline>>,
+        rows: Vec<Vec<Vec<Inline>>>,
+    },
     Rule,
 }
 

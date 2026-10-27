@@ -50,7 +50,13 @@ impl SessionClient for FakeClient {
         todo!()
     }
 
-    fn call(&self, _feature: &str, _method: &str, _args: Value, _key: Option<&str>) -> Task<Result<Value, CallError>> {
+    fn call(
+        &self,
+        _feature: &str,
+        _method: &str,
+        _args: Value,
+        _key: Option<&str>,
+    ) -> Task<Result<Value, CallError>> {
         todo!()
     }
 }

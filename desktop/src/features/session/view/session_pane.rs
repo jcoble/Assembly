@@ -34,7 +34,11 @@ pub struct SessionPane {
 }
 
 impl SessionPane {
-    pub fn new(_client: std::rc::Rc<dyn SessionClient>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        _client: std::rc::Rc<dyn SessionClient>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
         todo!()
     }
 

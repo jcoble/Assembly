@@ -5,8 +5,8 @@
 
 use gpui_kit::*;
 
-use crate::features::session::model::item::Item;
 use super::session_action::OnAction;
+use crate::features::session::model::item::Item;
 use crate::features::session::model::kept::Kept;
 
 #[derive(IntoElement)]

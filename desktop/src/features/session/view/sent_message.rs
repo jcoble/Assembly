@@ -16,7 +16,8 @@ pub struct SentMessage {
     pub sender: Option<(SharedString, String)>,
     /// The attached images its lines name, as (path, name); a click reads one and opens it full size.
     pub images: Vec<(String, String)>,
-    pub open: bool,    pub on_action: OnAction,
+    pub open: bool,
+    pub on_action: OnAction,
 }
 
 impl RenderOnce for SentMessage {

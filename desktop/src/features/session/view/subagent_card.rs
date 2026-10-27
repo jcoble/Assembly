@@ -10,7 +10,8 @@ use crate::features::session::rows::subagent::SubagentPayload;
 
 #[derive(IntoElement)]
 pub struct SubagentCard {
-    pub subagent: SubagentPayload,    pub on_action: OnAction,
+    pub subagent: SubagentPayload,
+    pub on_action: OnAction,
 }
 
 impl RenderOnce for SubagentCard {

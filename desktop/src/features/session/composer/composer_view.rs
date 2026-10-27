@@ -40,12 +40,21 @@ pub enum ComposerEvent {
 }
 
 impl Composer {
-    pub fn new(_client: Rc<dyn SessionClient>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        _client: Rc<dyn SessionClient>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
         todo!()
     }
 
     /// Points the composer at a session: keeps the draft it leaves and puts back the one it left there.
-    pub fn set_session(&mut self, _session: Option<String>, _window: &mut Window, _cx: &mut Context<Self>) {
+    pub fn set_session(
+        &mut self,
+        _session: Option<String>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
         todo!()
     }
 

@@ -31,31 +31,62 @@ pub struct Row {
     pub prev_seq: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+/// Read as `{kind, payload}`, so each variant's name is its kind.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "kind", content = "payload", rename_all = "camelCase")]
 pub enum RowBody {
     /// `reason`: why a run the agent started itself started.
-    Turn { state: TurnState, reason: Option<String> },
+    Turn {
+        state: TurnState,
+        reason: Option<String>,
+    },
     /// `from`: the session that sent it, when it's a message from another session.
-    User { text: String, from: Option<String> },
+    User {
+        text: String,
+        from: Option<String>,
+    },
     /// `text` is only this delta's new raw text; the view draws `blocks` from block `from` on.
-    Delta { from: usize, text: String, blocks: Vec<Block> },
-    Message { blocks: Vec<Block> },
-    Thinking { text: String, done: bool },
+    Delta {
+        from: usize,
+        text: String,
+        blocks: Vec<Block>,
+    },
+    Message {
+        blocks: Vec<Block>,
+    },
+    Thinking {
+        text: String,
+        done: bool,
+    },
     Tool(ToolPayload),
-    Plan { items: Vec<PlanItem> },
+    Plan {
+        items: Vec<PlanItem>,
+    },
     Stats(TurnStats),
-    Error { message: String, code: Option<String> },
+    Error {
+        message: String,
+        code: Option<String>,
+    },
     Ask(AskPayload),
     Task(TaskPayload),
     Subagent(SubagentPayload),
     /// How full the agent's context window is, in tokens: one item per run.
-    Context { used: i64, size: i64 },
-    Other { kind: String },
+    Context {
+        used: i64,
+        size: i64,
+    },
+    #[serde(skip)]
+    Other {
+        kind: String,
+    },
 }
 
 impl RowBody {
-    pub fn of(_row: &Row) -> RowBody {
-        todo!()
+    pub fn of(row: &Row) -> RowBody {
+        let tagged = serde_json::json!({ "kind": row.kind, "payload": row.payload });
+        serde_json::from_value(tagged).unwrap_or_else(|_| RowBody::Other {
+            kind: row.kind.clone(),
+        })
     }
 }
 

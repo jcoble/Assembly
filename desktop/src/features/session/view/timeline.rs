@@ -42,7 +42,12 @@ impl Timeline {
 
     /// Switches to another session's entries: keeps the reading place of the one it leaves, and goes back to the
     /// one it left the new one at, or the end.
-    pub fn set_session(&mut self, _session: Option<String>, _entries: Vec<Entry>, _cx: &mut Context<Self>) {
+    pub fn set_session(
+        &mut self,
+        _session: Option<String>,
+        _entries: Vec<Entry>,
+        _cx: &mut Context<Self>,
+    ) {
         todo!()
     }
 

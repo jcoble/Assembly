@@ -10,7 +10,8 @@ use crate::features::session::model::fold::Fold;
 #[derive(IntoElement)]
 pub struct TurnFoldRow {
     pub fold: Fold,
-    pub open: bool,    pub on_action: OnAction,
+    pub open: bool,
+    pub on_action: OnAction,
 }
 
 impl RenderOnce for TurnFoldRow {

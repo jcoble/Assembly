@@ -14,7 +14,9 @@ pub struct Attachment {
 pub enum AttachmentState {
     Uploading,
     /// Saved where the session's agent runs, at this path.
-    Saved { path: String },
+    Saved {
+        path: String,
+    },
     Failed(SharedString),
 }
 

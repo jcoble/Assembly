@@ -20,7 +20,8 @@ pub const OUTPUT_TAIL: usize = 200;
 pub struct ToolRow {
     pub item_id: String,
     pub tool: ToolPayload,
-    pub kept: Kept,    pub on_action: OnAction,
+    pub kept: Kept,
+    pub on_action: OnAction,
 }
 
 impl RenderOnce for ToolRow {

@@ -11,7 +11,8 @@ pub struct Header {
     pub title: SharedString,
     /// "Claude Code on Workbox Test", or the agent alone on this computer.
     pub place: SharedString,
-    pub parent_session: Option<String>,    pub on_action: OnAction,
+    pub parent_session: Option<String>,
+    pub on_action: OnAction,
 }
 
 impl RenderOnce for Header {
