@@ -17,12 +17,13 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::ask_row::AskForm;
-use super::grow::{GROW, faded, grow, toggled, turn};
+use super::grow::{grow, toggled, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::intents::open_session::OpenSession;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::theme::grow::{GROW, faded};
 use crate::features::session::client::session_client::{
     CallError, RowUpdate, RowsSink, SessionClient,
 };

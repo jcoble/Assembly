@@ -10,13 +10,14 @@ use serde_json::{Value, json};
 
 use super::SessionPane;
 use crate::core::intents::open_session::OpenSession;
+use crate::core::theme::grow::GROW;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::ToolDetail;
 use crate::features::session::view::ask_row::AskForm;
-use crate::features::session::view::grow::{GROW, toggled};
+use crate::features::session::view::grow::toggled;
 use crate::features::session::view::lightbox::open_lightbox;
 use crate::features::session::view::session_action::SessionAction;
 

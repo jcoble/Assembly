@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::h_flex;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
@@ -180,6 +180,7 @@ impl EventEmitter<ComposerEvent> for Composer {}
 impl Render for Composer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stop = cx.listener(|composer, _, _, cx| composer.stop(cx));
+        let pill = cx.theme().radius_full();
         h_flex()
             .w_full()
             .gap_2()
@@ -189,7 +190,7 @@ impl Render for Composer {
                 row.child(
                     Button::new("composer:stop")
                         .primary()
-                        .rounded(px(999.))
+                        .rounded(pill)
                         .label("Stop")
                         .on_click(stop),
                 )

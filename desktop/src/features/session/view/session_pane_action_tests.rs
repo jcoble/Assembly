@@ -9,10 +9,10 @@ use std::time::Instant;
 
 use super::SessionPane;
 use super::tests::{jump, live, open, page, row, show, user};
+use crate::core::theme::grow::GROW;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::rows::tool::ToolState;
-use crate::features::session::view::grow::GROW;
 use crate::features::session::view::session_action::SessionAction;
 
 fn tool(seq: i64, state: &str) -> Value {

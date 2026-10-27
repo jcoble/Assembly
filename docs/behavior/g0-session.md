@@ -25,11 +25,11 @@ g0-session#20 A prompt from another session is labelled with that session (its t
 g0-session#21 A prompt longer than ten lines folds until opened. Each prompt and final reply has a copy button and its time ("Thursday 12:02 PM", or "Oct 17, 12:02 PM" past a week).
 g0-session#22 Enter sends, Shift-Enter adds a line. While a turn runs, sending steers it and Stop stops it.
 g0-session#23 A new session's first message sends.
-g0-session#24 Images attach by drop, paste or picker (png, jpeg, gif or webp, up to 20 MB) and show as chips you can remove; send waits until each has uploaded. Other dropped files go into the draft as their paths.
-g0-session#25 Attached images show on the sent message and open full size; a click or Esc closes it.
-g0-session#26 Typing "/" lists the agent's own commands (names starting with what you typed first); a pick fills the draft and selects its hint.
-g0-session#27 The agent's own menus (model, effort, mode) sit in the composer, open upward, and show the agent's current value after each turn.
-g0-session#28 A ring in the composer shows how much of the context window is left, warm at a quarter left and hot at a tenth.
+g0-session#24 Images attach by drop, paste or picker (png, jpeg, gif or webp, up to 20 MB) and show as chips you can remove; send waits until each has uploaded. Other dropped files go into the draft as their paths. Not built yet.
+g0-session#25 Attached images show on the sent message and open full size; a click or Esc closes it. Partly built: a sent message's images open full size, but nothing here attaches images yet.
+g0-session#26 Typing "/" lists the agent's own commands (names starting with what you typed first); a pick fills the draft and selects its hint. Not built yet.
+g0-session#27 The agent's own menus (model, effort, mode) sit in the composer, open upward, and show the agent's current value after each turn. Not built yet.
+g0-session#28 A ring in the composer shows how much of the context window is left, warm at a quarter left and hot at a tenth. Not built yet.
 g0-session#29 A remote session opens its saved messages while its machine is unreachable, and says it's offline; a backend restart in the middle of a turn doesn't leave "Working" on.
 g0-session#30 The sessions column lists every session, newest first, and loads more as you scroll; picking one opens it. A working session gets a still dot once the list knows which are working.
 g0-session#31 A new session is started from the sessions column by picking its agent, machine and folder, and opens ready for its first message.

@@ -15,8 +15,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Map, Value, json};
 
-use super::grow::{band, faded, grow, turn};
+use super::grow::{band, grow, turn};
 use super::session_action::{OnAction, SessionAction};
+use crate::core::theme::grow::faded;
 use crate::features::session::rows::ask::{AskInput, AskPayload, AskSchema};
 
 #[derive(IntoElement)]
@@ -201,7 +202,7 @@ impl AskRow {
             let action = Rc::new(action);
             Button::new(SharedString::from(format!("ask:{ask_id}:{id}")))
                 .compact()
-                .rounded(px(999.))
+                .rounded(theme.radius_full())
                 .label(label)
                 .on_click(move |_, window, cx| on_action(action.as_ref().clone(), window, cx))
         };
@@ -248,7 +249,7 @@ impl AskRow {
                                     on_action(submit.clone(), window, cx);
                                 }
                             })
-                            .child(Input::new(input).h(px(26.)).rounded(px(999.)))
+                            .child(Input::new(input).h(px(26.)).rounded(theme.radius_full()))
                     }
                     None => div(),
                 },
