@@ -25,7 +25,7 @@ namespace Assembly.Tests.Draft.Base.Chat;
 public sealed partial class ChatSocketTests
 {
     private readonly FakeLauncher _launcher = new();
-    private readonly WatchedLog _log = new();
+    private readonly SharedLog _log = new();
     // What the real socket's calls log.
     private readonly SocketTests.FakeLog _calls = new();
     private BackgroundWork? _work;
@@ -69,56 +69,5 @@ public sealed partial class ChatSocketTests
         await _real.DisposeAsync();
         await _registry!.DisposeAsync();
         await _work!.DisposeAsync();
-    }
-
-    /// <summary>The real machine's log, which a test can wait on for a line, with no polling.</summary>
-    private sealed class WatchedLog : TextWriter
-    {
-        private readonly StringBuilder _text = new();
-        private readonly List<(string Text, TaskCompletionSource Seen)> _waits = [];
-
-        public override Encoding Encoding => Encoding.UTF8;
-
-        public override void Write(char value)
-        {
-            lock (_text)
-                _text.Append(value);
-        }
-
-        public override void Write(string? value)
-        {
-            lock (_text)
-                _text.Append(value);
-        }
-
-        public override void WriteLine(string? value)
-        {
-            lock (_text)
-            {
-                _text.Append(value).Append(CoreNewLine);
-                foreach (var wait in _waits.Where(wait => value?.Contains(wait.Text, StringComparison.Ordinal) == true))
-                    wait.Seen.TrySetResult();
-            }
-        }
-
-        /// <summary>Done once a line with <paramref name="text"/> has been written; fails after the tests' wait.</summary>
-        public Task WrittenAsync(string text)
-        {
-            var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            lock (_text)
-            {
-                if (_text.ToString().Contains(text, StringComparison.Ordinal))
-                    seen.SetResult();
-                else
-                    _waits.Add((text, seen));
-            }
-            return seen.Task.WaitAsync(Wait);
-        }
-
-        public override string ToString()
-        {
-            lock (_text)
-                return _text.ToString();
-        }
     }
 }

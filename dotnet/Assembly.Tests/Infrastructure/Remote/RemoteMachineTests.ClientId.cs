@@ -99,7 +99,7 @@ public sealed partial class RemoteMachineTests
 
         // The window retries through the desktop; it joins the remote's send, which the agent then takes.
         await SendTextAsync(socket, $$$"""{"t":"call","id":2,"feature":"send","method":"send","args":{"session":"{{{sessionId}}}","text":"also this","clientId":"c18"}}""");
-        await Until(() => _log.ToString().Contains("send c18: joined in-flight send", StringComparison.Ordinal));
+        await _log.WrittenAsync("send c18: joined in-flight send");
         await agent.ReplyAsync(steer, """{"outcome":"injected"}""");
         Assert.Equal($$$"""{"t":"result","id":2,"result":{"runId":"{{{runId}}}"}}""", await ReadTextAsync(socket));
 
