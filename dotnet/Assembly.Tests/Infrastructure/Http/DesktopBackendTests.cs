@@ -11,6 +11,7 @@ using Assembly.Tests.Features.Chat.Sessions;
 
 using Assembly.Tests.Features.Diagnostics;
 using Assembly.Tests.Infrastructure.Remote;
+using Assembly.Tests.Infrastructure.Socket;
 namespace Assembly.Tests.Infrastructure.Http;
 
 /// <summary>Assembly.Desktop's backend on a free port, with a scripted agent behind it.</summary>
@@ -54,6 +55,24 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await Until(() => _log.ToString().Contains($"session {sessionId} run {runId}: initialize "));
     }
 
+    // App Nap is held while a turn runs, by the backend from its rows, with no window calls.
+    [Fact]
+    public async Task A_running_turn_holds_app_nap_until_it_ends()
+    {
+        var sessionId = await CreateSessionAsync();
+        Assert.False(_backend.ActivityHeld);
+        await SendAsync(sessionId);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.True(_backend.ActivityHeld);
+
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+
+        await Until(() => !_backend.ActivityHeld);
+        await agent.CloseAsync();
+    }
+
     [Fact]
     public async Task The_socket_serves_the_desktops_preferences()
     {
@@ -94,16 +113,25 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_socket_serves_the_desktops_diagnostics()
+    // The desktop's drop ends every open socket, the caller's too, so the window's reconnect can be tried.
+    public async Task The_desktops_drop_ends_every_open_socket()
     {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+        using var other = await OpenSocketAsync();
+        using var socket = await OpenSocketAsync();
 
         await SendTextAsync(socket, """{"t":"call","id":1,"feature":"diagnostics","method":"drop","args":{}}""");
 
-        Assert.Equal("""{"t":"result","id":1,"result":{}}""", await ReadTextAsync(socket));
+        await SocketTests.AssertEndsAsync(other);
+        await SocketTests.AssertEndsAsync(socket);
+    }
+
+    private async Task<ClientWebSocket> OpenSocketAsync()
+    {
+        var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+        return socket;
     }
 
     [Fact]

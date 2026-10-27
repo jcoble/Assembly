@@ -48,6 +48,9 @@ public sealed class SessionSummaries
 
     public SessionSummary Get(string sessionId) => _current.GetValueOrDefault(sessionId) ?? SessionSummary.None;
 
+    /// <summary>Whether any session has a run open: what holds App Nap.</summary>
+    public bool AnyRunOpen => _current.Values.Any(summary => summary.RunId is not null);
+
     /// <summary>Takes in the session's newly saved rows. True if its summary changed. Only under the hub's lock.</summary>
     internal bool Apply(string sessionId, IReadOnlyList<StoredRow> rows)
     {
