@@ -1,9 +1,8 @@
 //! `CommandRegistry` owns the palette's command list: each command's label and action, in the order features added
-//! them. A second command with a label already listed is dropped, so the first owner keeps it. The palette builds the
-//! kit's command items from it each time it draws (the kit's items don't expose their label or action, so the
-//! registry keeps both), and the kit shows each action's key binding beside it. Replaces the old app's
-//! palette/commandRegistry.ts.
-
+//! them. A second command with a label already listed is left out, with a line on stderr, so the first owner keeps
+//! it. The palette builds the kit's command items from it each time it draws (the kit's items don't expose their label
+//! or action, so the registry keeps both), and the kit shows each action's key binding beside it. Replaces the old
+//! app's palette/commandRegistry.ts.
 use gpui_kit::component::command::CommandItem;
 use gpui_kit::*;
 
@@ -25,7 +24,11 @@ impl CommandRegistry {
     }
 
     fn push(&mut self, label: SharedString, action: Box<dyn Action>) {
-        if !self.commands.iter().any(|(listed, _)| *listed == label) {
+        if self.commands.iter().any(|(listed, _)| *listed == label) {
+            eprintln!(
+                "the command \"{label}\" is already in the palette, so the second one is left out"
+            );
+        } else {
             self.commands.push((label, action));
         }
     }
