@@ -240,14 +240,16 @@ internal sealed class RemoteFollower(
                 if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
                     await turnEnded(sessionId);
                 if (!Needed(sessionId))
-                {
-                    await done.CancelAsync();
                     return;
-                }
             }
         }
         catch (OperationCanceledException)
         {
+        }
+        finally
+        {
+            // Also when turnEnded throws, so the read isn't left waiting on a quiet link; the throw comes out of the follow.
+            await done.CancelAsync();
         }
     }
 
