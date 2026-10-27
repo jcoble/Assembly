@@ -1,6 +1,5 @@
 //! `PlaceholderPane` owns an empty pane for one name, until the lane that owns the pane registers its real one under
-//! the same name (the kit's registry keeps the last registration). It draws nothing, so nothing is mounted while
-//! hidden. Replaces PanelPlaceholder.svelte.
+//! the same name. It draws nothing, so nothing is mounted while hidden. Replaces PanelPlaceholder.svelte.
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent};
 use gpui_kit::*;
@@ -15,7 +14,8 @@ impl PlaceholderPane {
         todo!()
     }
 
-    /// Registers a placeholder under each of the default layout's pane names, so a saved layout loads.
+    /// Registers a placeholder under each of the default layout's pane names. It runs once at app start, before any
+    /// feature registers its real pane, because the kit's registry keeps the last registration for a name.
     pub fn register_all(_cx: &mut App) {
         todo!()
     }
@@ -40,7 +40,12 @@ impl BasePanel for PlaceholderPane {
     }
 }
 
-impl Panel for PlaceholderPane {}
+impl Panel for PlaceholderPane {
+    /// The tab shows the pane's name.
+    fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        self.name
+    }
+}
 
 impl Render for PlaceholderPane {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {

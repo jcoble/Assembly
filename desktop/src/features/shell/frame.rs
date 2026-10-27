@@ -14,12 +14,15 @@ pub struct Frame {
     dock: Entity<DockArea>,
     utility_strip: Entity<UtilityStrip>,
     layout: LayoutStore,
+    /// The saved layout being read; dropped once it's applied.
+    loading: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl Frame {
-    /// Registers the placeholder panes, builds the DockArea, loads the saved layout (or the default one), and only
-    /// then subscribes to layout changes, so a launch doesn't write the layout straight back.
+    /// Builds the DockArea and loads the saved layout, or the default one when there's none, through
+    /// `DockArea::load` either way. Only then does it subscribe to layout changes, so a launch doesn't write the
+    /// layout straight back.
     pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         todo!()
     }
