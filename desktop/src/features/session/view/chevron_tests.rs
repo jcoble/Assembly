@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use super::progress;
+use super::{progress, toggled};
 
 const EASE: Duration = Duration::from_millis(200);
 
@@ -28,4 +28,21 @@ fn a_toggle_eases_to_its_end_then_stays_still() {
         "done: no more frames"
     );
     assert_eq!(progress(false, Some(EASE * 3), EASE), (0.0, false));
+}
+
+// Shut while it's still opening, it turns back from where it is; a toggle after an ease ended starts fresh.
+// Pins: g0-session#34
+#[test]
+fn a_reversal_turns_back_from_where_it_is() {
+    let now = Instant::now();
+    let opened = now - EASE / 4;
+    let (was, _) = progress(true, Some(EASE / 4), EASE);
+    let shut = toggled(false, Some(opened), now, EASE);
+    let (from, moving) = progress(false, Some(now - shut), EASE);
+    assert!(moving && (from - was).abs() < 1e-3, "{was} then {from}");
+    let reopened = toggled(true, Some(shut), now, EASE);
+    let (back, _) = progress(true, Some(now - reopened), EASE);
+    assert!((back - was).abs() < 1e-3, "{was} then {back}");
+    assert_eq!(toggled(false, Some(now - EASE * 2), now, EASE), now);
+    assert_eq!(toggled(true, None, now, EASE), now);
 }

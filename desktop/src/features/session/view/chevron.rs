@@ -20,6 +20,18 @@ pub fn progress(open: bool, elapsed: Option<Duration>, duration: Duration) -> (f
     (if open { eased } else { 1.0 - eased }, true)
 }
 
+/// When a toggle to `open` at `now` counts as started, `last` being the one before: at `now`, unless that one is still
+/// easing, when it's set back so the ease turns around from where it is instead of jumping to the far end.
+pub fn toggled(open: bool, last: Option<Instant>, now: Instant, duration: Duration) -> Instant {
+    let (at, moving) = progress(!open, last.map(|last| now.duration_since(last)), duration);
+    if !moving {
+        return now;
+    }
+    // How far toward its new end it already is, and the time into the ease that is.
+    let covered = if open { at } else { 1.0 - at };
+    now - duration.mul_f32(1.0 - (1.0 - covered).sqrt())
+}
+
 /// `progress` at this frame, over the theme's normal duration; asks for the next frame while it moves. With Reduce
 /// Motion on it's at its end at once.
 pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &App) -> f32 {
