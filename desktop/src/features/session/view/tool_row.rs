@@ -7,6 +7,7 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::chevron::{chevron, shown};
 use super::session_action::{OnAction, SessionAction};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::kept::Kept;
@@ -55,7 +56,7 @@ pub fn output_tail(output: &str) -> &str {
 }
 
 impl RenderOnce for ToolRow {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
         let mark = match self.tool.state {
@@ -64,6 +65,13 @@ impl RenderOnce for ToolRow {
             ToolState::Failed => "✗",
         };
         let open = self.kept.open && self.tool.has_detail;
+        let moving = self.kept.moving();
+        let turn = self
+            .tool
+            .has_detail
+            .then(|| chevron(&self.key, open, moving, window, cx));
+        let shown = shown(&format!("{}:body", self.key), open, moving, window, cx);
+        let theme = cx.theme();
         let (key, on_action) = (self.key.clone(), self.on_action.clone());
         let line = h_flex()
             .id(SharedString::from(format!("{}:line", self.key)))
@@ -75,6 +83,7 @@ impl RenderOnce for ToolRow {
                     on_action(SessionAction::Toggle { key: key.clone() }, window, cx)
                 })
             })
+            .children(turn)
             .child(mark)
             .child(
                 div()
@@ -100,7 +109,7 @@ impl RenderOnce for ToolRow {
             .detail
             .as_ref()
             .filter(|_| open)
-            .map(|(_, detail)| self.detail(detail, cx));
+            .map(|(_, detail)| self.detail(detail, cx).opacity(shown));
         v_flex().w_full().gap_1().child(line).children(detail)
     }
 }

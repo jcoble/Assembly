@@ -1,6 +1,7 @@
 //! The session pane's actions: what a row's button or link asks for, and reading an open tool call's detail.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -30,14 +31,24 @@ impl SessionPane {
         };
         match action {
             SessionAction::ToggleFold { run_id } => {
+                let now = Instant::now();
+                self.kept
+                    .entry(format!("fold:{run_id}"))
+                    .or_default()
+                    .toggled_at = Some(now);
                 if !self.open_folds.remove(&run_id) {
+                    // The work it shows fades in, as a new row does.
+                    if let Some(fold) = self.folds.get(&run_id) {
+                        self.fresh
+                            .extend(fold.work.iter().map(|key| (key.clone(), now)));
+                    }
                     self.open_folds.insert(run_id);
                 }
                 self.refresh(Change::Nothing, cx);
             }
             SessionAction::Toggle { key } => {
                 let kept = self.kept.entry(key.clone()).or_default();
-                kept.open = !kept.open;
+                (kept.open, kept.toggled_at) = (!kept.open, Some(Instant::now()));
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {
                     self.refresh(Change::Updated(at), cx);
                     self.read_detail_if_stale(at, cx);

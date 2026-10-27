@@ -55,7 +55,7 @@ fn calls_after(client: &FakeClient, skip: usize) -> Vec<(String, Value)> {
     client.calls().into_iter().skip(skip).collect()
 }
 
-// Pins: g0-session#14, g0-session#15
+// Pins: g0-session#14, g0-session#15, g0-session#34
 #[gpui::test]
 fn an_opened_tool_call_reads_its_detail_once_and_again_when_its_state_changes(
     cx: &mut TestAppContext,
@@ -79,6 +79,10 @@ fn an_opened_tool_call_reads_its_detail_once_and_again_when_its_state_changes(
                 .unwrap_or_default()
         })
     };
+    assert!(
+        kept(cx).moving(),
+        "its chevron turns and its detail eases in"
+    );
     assert!(kept(cx).open);
     assert_eq!(
         kept(cx).detail.map(|(state, _)| state),
@@ -129,11 +133,15 @@ fn finished_turn() -> Vec<Value> {
     ]
 }
 
+fn entries_of(pane: &SessionPane, cx: &gpui_kit::App) -> Vec<Entry> {
+    pane.entries(cx)
+}
+
 fn entries(pane: &Entity<SessionPane>, cx: &mut VisualTestContext) -> Vec<Entry> {
     cx.update(|_, cx| pane.read(cx).entries(cx))
 }
 
-// Pins: g0-session#9
+// Pins: g0-session#9, g0-session#34
 #[gpui::test]
 fn a_finished_turns_fold_opens_and_closes_by_its_run(cx: &mut TestAppContext) {
     let (pane, _client, cx) = open(cx);
@@ -163,6 +171,16 @@ fn a_finished_turns_fold_opens_and_closes_by_its_run(cx: &mut TestAppContext) {
         cx,
     );
     assert!(tool_shown(&entries(&pane, cx), &pane, cx));
+    // Opened, its chevron turns and the work it shows fades in, as a new row does (g0-session#34).
+    cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert!(pane.kept["fold:r1"].moving());
+        let fading = entries_of(pane, cx)
+            .iter()
+            .filter_map(|entry| pane.fresh_key(entry))
+            .collect::<Vec<_>>();
+        assert_eq!(fading, ["tool:t1"]);
+    });
     act(
         &pane,
         SessionAction::ToggleFold {

@@ -6,6 +6,7 @@ use gpui_kit::*;
 use super::SessionPane;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::item::{Item, ItemKind};
+use crate::features::session::model::kept::Kept;
 use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::turn_line::{checkout_line, turn_line};
 use crate::features::session::view::ask_card::AskForm;
@@ -52,6 +53,10 @@ impl SessionPane {
                     .child(TurnFoldRow {
                         fold: fold.clone(),
                         open: self.open_folds.contains(run_id),
+                        moving: self
+                            .kept
+                            .get(&format!("fold:{run_id}"))
+                            .is_some_and(Kept::moving),
                         on_action: on_action.clone(),
                     })
                     .into_any_element(),
