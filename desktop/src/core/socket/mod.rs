@@ -12,11 +12,15 @@
 pub mod call_failure;
 pub mod client;
 mod client_thread;
+#[cfg(test)]
+mod client_thread_tests;
 mod connection;
 pub mod connection_state;
 pub mod endpoint;
 pub mod error_code;
 mod event;
+#[cfg(test)]
+mod fake_backend;
 mod in_frame;
 mod out_frame;
 pub mod outcome;
