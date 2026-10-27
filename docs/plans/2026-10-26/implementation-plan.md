@@ -1119,6 +1119,21 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
 - **Proof:** the tests, and check4.
 - **Size:** 300 to 400 lines with tests.
 
+### B5b. A time limit on `session/close`
+
+Both closes wait on the agent's `session/close` answer with no limit: the normal one
+(`SessionHost.Background.cs:112`) and the one after a failed resume (`SessionOpener.CloseQuietlyAsync`). An adapter
+that stays connected but never answers holds up `Forget` and the adapter's release, so a stopped turn isn't really
+stopped (Sol's review of the late-update fix, finding 3).
+
+- **Files:** `SessionHost.Background.cs` and `SessionOpener.cs`; the limit is one constant both use.
+- **Failing tests first:** a fake adapter that never answers `session/close`. On the backend's `TimeProvider`
+  (`FakeTimeProvider` in the tests), never a page timer:
+  1. After a normal close times out, the session is forgotten, the adapter released, and the next turn starts.
+  2. The same after a resume that fails or is stopped.
+- **Proof:** the tests, and check4.
+- **Size:** about 60 lines with tests.
+
 ### B6. Saves as each change happens
 
 - **Files:**
