@@ -35,8 +35,9 @@ public static class RunRecovery
             Add(batch, task.RunId, task.ItemId, RowKind.Task, payload with { State = "stopped" }, RowJsonContext.Rows.TaskPayload, at);
             hub.Publish(task.SessionId, batch);
         }
-        // And so are subagents: each child's own session had its run closed above.
-        foreach (var subagent in store.RunningItems(RowKind.Subagent).Where(subagent => runsHere(subagent.SessionId)))
+        // And so are subagents: each child's own session that runs here had its run closed above.
+        foreach (var subagent in store.RunningItems(RowKind.Subagent)
+            .Where(subagent => runsHere(subagent.SessionId) && runsHere(subagent.Payload.GetProperty("sessionId").GetString()!)))
         {
             var batch = new RowBatch();
             var payload = subagent.Payload.Deserialize(RowJsonContext.Rows.SubagentPayload)!;
