@@ -27,6 +27,9 @@ folding the sessions column hides them too. Each opens a popover anchored to it,
 (fa39c659, 36abf71a, a56526ec). Nothing in the strip polls.
 g0-shape#10 A row or card reveals more by growing in place, never as an accordion (Jesse 2026-10-27, look items 13
 and 16). A click on its title grows it to fit its body, the title stays where it was, and a second click shrinks it
-back; the body stays until the row has shrunk, then goes. A row that's open when it first shows is drawn open.
+back; the body stays until the row has shrunk, then goes. A row that's open when it first shows is drawn open. A body
+whose height changes while the row is open grows or shrinks to it the same way. Every row that grows in place uses
+this one row (Jesse 2026-10-27, "many list items from diff places get the same behavior always"): its owner hears each
+click and each frame's height, can open or shut it itself, and can draw the band and the body from its own state.
 g0-shape#11 The sessions column can be dragged from 220 to 560 px wide and the drawer from 240 to 640 px (the approved
 look); a dragged edge stops at the limit, and the drag still saves once, when it ends.

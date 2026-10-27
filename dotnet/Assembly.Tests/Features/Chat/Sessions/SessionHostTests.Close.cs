@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
@@ -39,8 +40,9 @@ public sealed partial class SessionHostTests
         await Until(() => _host.ActiveRunId is null);
 
         var runId = _host.Send("two")!;
-        await first.ReadAsync("session/resume");
+        var held = await first.ReadAsync("session/resume");
         Assert.True(_host.Stop(runId));
+        await first.ReplyAsync(held, "{}");
         await first.ReadAsync("session/close");
 
         await TimeOutClose(runId);
@@ -122,6 +124,81 @@ public sealed partial class SessionHostTests
         await Until(() => first.Disposed);
         await _adapter.ClosedAsync(FakeLink.AcpSessionId, CancellationToken.None);
         await other.StopForShutdownAsync();
+    }
+
+    // Neither adapter honours a request's cancel, so a session/new stopped after it went out is still opened there.
+    [Fact]
+    public async Task A_new_session_stopped_before_its_answer_is_closed_once_the_late_answer_arrives()
+    {
+        var runId = _host.Send("one")!;
+        await Kinds(2);
+        var agent = await _launcher.NextAsync();
+        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        var open = await agent.ReadAsync("session/new");
+
+        Assert.True(_host.Stop(runId));
+        await agent.ReplyAsync(open, """{"sessionId":"acp-late"}""");
+
+        Assert.Equal("acp-late", await agent.CloseAsync());
+        Assert.Equal("cancelled", (await Rows(2))[1].Payload.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task A_new_session_stopped_while_it_is_being_named_is_closed()
+    {
+        var runId = _host.Send("one")!;
+        await Kinds(2);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(canRename: true);
+        await agent.ReadAsync("_session/rename");
+
+        Assert.True(_host.Stop(runId));
+
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
+        Assert.Equal("cancelled", (await Rows(2))[1].Payload.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task A_resume_stopped_before_its_answer_is_closed_once_the_late_answer_arrives()
+    {
+        var (agent, resume) = await StoppedResumeAsync();
+
+        await agent.ReplyAsync(resume, "{}");
+
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
+        Assert.Equal("cancelled", (await Rows(2))[1].Payload.GetProperty("state").GetString());
+    }
+
+    // The agent couldn't resume it, so nothing is loaded there to close, and the stop isn't held up by a close.
+    [Fact]
+    public async Task A_resume_stopped_before_its_answer_that_answers_with_an_error_is_not_closed()
+    {
+        var (agent, resume) = await StoppedResumeAsync();
+
+        await agent.ReplyErrorAsync(resume, -32603, "Resource not found");
+
+        Assert.Equal("cancelled", (await Rows(2))[1].Payload.GetProperty("state").GetString());
+        _host.Send("three");
+        await agent.ReadAsync("session/resume");
+    }
+
+    // A second turn's resume, held by the agent, and that turn stopped.
+    private async Task<(FakeLink Agent, JsonElement Resume)> StoppedResumeAsync()
+    {
+        _host.Send("one");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        await Kinds(4);
+        await Until(() => _host.ActiveRunId is null);
+
+        var runId = _host.Send("two")!;
+        await Kinds(2);
+        var resume = await agent.ReadAsync("session/resume");
+        Assert.True(_host.Stop(runId));
+        return (agent, resume);
     }
 
     // An update pump that never ends holds the adapter's dispose only up to the close limit, and is logged.
