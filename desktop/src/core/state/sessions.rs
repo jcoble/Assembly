@@ -1,6 +1,7 @@
 //! `Sessions` owns the sessions list: the `sessions` topic's newest 200, newest first (`updatedAt`, then id, as the
-//! backend orders them), each change upserted in place, and older pages from `sessions/page` with the oldest item's
-//! (`before`, `beforeId`). The backend keeps helper sessions off the topic and the pages. Each item that arrives or
+//! backend orders them), each change upserted in place, and older pages from `sessions/page`. The page cursor is kept
+//! apart from the list: it starts at the oldest of the topic's first state and moves only with each page's
+//! `nextBefore`, so an item that changes without moving (a rename) can't skip the sessions past it. The backend keeps helper sessions off the topic and the pages. Each item that arrives or
 //! changes is emitted as a `SessionChange`, so the list can animate it.
 
 use gpui_kit::*;
@@ -21,8 +22,10 @@ const PAGE: usize = 50;
 pub struct Sessions {
     /// Newest first.
     items: Vec<SessionItem>,
-    /// Older sessions may exist past the last item.
-    more: bool,
+    /// Where the next older page starts, (`before`, `beforeId`); `None` when there's nothing older.
+    older: Option<(i64, String)>,
+    /// The topic's first state has set `older`; a reconnect's state doesn't move it.
+    seeded: bool,
     /// Owns the `sessions` subscription; dropping it unsubscribes.
     _feed: Task<()>,
     loading_older: Option<Task<()>>,
@@ -46,7 +49,8 @@ impl Sessions {
         });
         Self {
             items: Vec::new(),
-            more: false,
+            older: None,
+            seeded: false,
             _feed: feed,
             loading_older: None,
         }
@@ -58,14 +62,13 @@ impl Sessions {
 
     /// Loads the next older page, once at a time; nothing when there are no more.
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
-        let Some(oldest) = self.items.last() else {
+        let Some((before, before_id)) = &self.older else {
             return;
         };
-        if !self.more || self.loading_older.is_some() {
+        if self.loading_older.is_some() {
             return;
         }
-        let args =
-            json!({"before": oldest.updated_at, "beforeId": oldest.session_id, "limit": PAGE});
+        let args = json!({"before": before, "beforeId": before_id, "limit": PAGE});
         let page = SocketClient::global(cx)
             .read(cx)
             .call::<SessionPage>(TOPIC, "page", args, None);
@@ -74,10 +77,10 @@ impl Sessions {
             let _ = this.update(cx, |sessions, cx| {
                 sessions.loading_older = None;
                 if let Outcome::Ok(page) = outcome {
-                    sessions.more = page.next_before.is_some();
-                    page.sessions
-                        .into_iter()
-                        .for_each(|item| sessions.add(item, cx));
+                    sessions.older = page.next_before.zip(page.next_before_id);
+                    for change in add_page(&mut sessions.items, page.sessions) {
+                        cx.emit(change);
+                    }
                     cx.notify();
                 }
             });
@@ -87,8 +90,14 @@ impl Sessions {
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
             Update::State(items) => {
-                self.more = items.len() >= NEWEST;
+                let first = !self.seeded;
+                self.seeded = true;
+                let full = items.len() >= NEWEST;
                 items.into_iter().for_each(|(_, item)| self.read(item, cx));
+                if first && full {
+                    let oldest = self.items.last();
+                    self.older = oldest.map(|item| (item.updated_at, item.session_id.clone()));
+                }
             }
             Update::Change { item, .. } => self.read(item, cx),
         }
@@ -105,6 +114,14 @@ impl Sessions {
     fn add(&mut self, item: SessionItem, cx: &mut Context<Self>) {
         cx.emit(upsert(&mut self.items, item));
     }
+}
+
+/// Adds a page's sessions. One already held is skipped: the held copy came from the topic, whose changes are sent
+/// inside their write, so it's at least as new as the page, which may have been read before that write.
+fn add_page(items: &mut Vec<SessionItem>, page: Vec<SessionItem>) -> Vec<SessionChange> {
+    let held = |item: &SessionItem| items.iter().any(|held| held.session_id == item.session_id);
+    let fresh: Vec<SessionItem> = page.into_iter().filter(|item| !held(item)).collect();
+    fresh.into_iter().map(|item| upsert(items, item)).collect()
 }
 
 /// Puts `item` in its place in the newest-first list, replacing the one with its id.
@@ -132,7 +149,7 @@ fn upsert(items: &mut Vec<SessionItem>, item: SessionItem) -> SessionChange {
 mod tests {
     use serde_json::json;
 
-    use super::{SessionChange, SessionItem, upsert};
+    use super::{SessionChange, SessionItem, add_page, upsert};
 
     fn session(id: &str, updated_at: i64) -> SessionItem {
         serde_json::from_value(json!({"sessionId": id, "agent": "claude", "repoUrl": "/r", "title": null,
@@ -163,5 +180,15 @@ mod tests {
         // A tie on time sorts by id, as the backend's pages do.
         upsert(&mut items, session("d", 20));
         assert_eq!(ids(&items), ["a", "b", "d", "c"]);
+    }
+
+    // Pins: g0-socket#10
+    #[test]
+    fn a_page_never_replaces_a_session_already_held() {
+        let mut items = vec![session("a", 50), session("b", 10)];
+        let changes = add_page(&mut items, vec![session("b", 5), session("c", 4)]);
+        assert_eq!(changes, [SessionChange::Added("c".into())]);
+        assert_eq!(ids(&items), ["a", "b", "c"]);
+        assert_eq!(items[1].updated_at, 10);
     }
 }
