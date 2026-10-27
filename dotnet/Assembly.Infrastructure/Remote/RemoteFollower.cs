@@ -16,7 +16,7 @@ namespace Assembly.Infrastructure.Remote;
 /// reconnects from the last seq when the link drops or a row doesn't follow the one before it.
 /// </summary>
 internal sealed class RemoteFollower(
-    Uri address, string token, LiveHub hub, Func<CancellationToken, Task> checkFormat, Func<string, Task> turnEnded,
+    Uri address, string token, LiveHub hub, Func<CancellationToken, Task> checkFormat, Action linked, Func<string, Task> turnEnded,
     Action<string, StoredRow> subagentCopied, TextWriter log) : IAsyncDisposable
 {
     // How long a socket may stay quiet, with nobody watching and no turn running, before it counts as caught up.
@@ -133,6 +133,8 @@ internal sealed class RemoteFollower(
         var live = new UriBuilder(address) { Scheme = address.Scheme == "https" ? "wss" : "ws", Path = "/live", Query = $"session={Uri.EscapeDataString(sessionId)}&after={hub.LastSeq(sessionId)}" };
         await socket.ConnectAsync(live.Uri, stopping);
         Interlocked.Increment(ref _links);
+        // The format was checked before the connect, so an open link shows the remote is there.
+        linked();
 
         using var done = CancellationTokenSource.CreateLinkedTokenSource(stopping);
         var lastFrame = DateTime.UtcNow;

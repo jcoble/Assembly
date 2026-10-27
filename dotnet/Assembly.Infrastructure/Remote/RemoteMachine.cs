@@ -43,7 +43,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status = status;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, RefreshAsync, AddSubagentSession, log);
+        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, () => _status.Reachable(_name), RefreshAsync, AddSubagentSession, log);
     }
 
     public string? Name => _name;
@@ -185,12 +185,16 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     /// <summary>
     /// Reads the remote's row format again, so a remote upgraded in place is seen, unless an open follower link already
-    /// shows it's there. Once it answers, the sessions the follower gave up on while it was unreachable are followed again.
+    /// shows it's there. Either way, the sessions the follower gave up on while it was unreachable are followed again.
     /// </summary>
     public async Task ProbeAsync(CancellationToken cancellationToken)
     {
         if (_follower.Linked)
+        {
+            _status.Reachable(_name);
+            _follower.Resume();
             return;
+        }
         _formatChecked = false;
         await CheckFormatAsync(cancellationToken);
         _follower.Resume();
