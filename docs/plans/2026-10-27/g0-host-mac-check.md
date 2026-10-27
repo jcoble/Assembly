@@ -3,10 +3,14 @@
 Run through "Spike a GPUI session view", with the lane's own backend folder (`ASSEMBLY_BACKEND_DIR`) and
 `ASSEMBLY_METER=<csv>` on. Never the base lane's ports, folders or data.
 
+Before the first launch, open `$ASSEMBLY_BACKEND_DIR/lane.json` (shell/assembly.sh writes it) and check that `home`
+is the lane's own folder, never `~/assembly-dotnet` or `~/.local/share/assembly`, and that `port` and `tokenFile`
+are the lane's too. The launcher starts the backend with exactly those.
+
 1. The window opens, the backend starts (`backend ready on port …` in the output), and quitting stops it: no
    `Assembly.Desktop` left running. The token appears nowhere in the output or backend.log.
-2. Kill the backend from outside: a new one starts at once. Take its port first so it can't start: the log says so
-   once, and the palette's "Restart backend" starts it after the port is free.
+2. Kill the backend from outside: a new one starts at once. Take its port first so it can't start: backend.log says
+   so once, and the palette's "Restart backend" starts it after the port is free.
 3. Cmd-K opens the palette (the tests in features/palette cover the keys; here, its look) with its slide-in; typing filters; Enter on "Restart backend" runs it and closes the
    palette; Escape clears the query, then closes; Cmd-K again closes it; a click outside closes it.
 4. Once a terminal or browser pane exists (g0-shape, the terminal and browser lanes): the palette, a dialog (and

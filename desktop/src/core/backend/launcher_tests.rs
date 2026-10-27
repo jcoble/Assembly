@@ -106,6 +106,24 @@ fn a_backend_that_exits_before_it_was_ready_is_not_started_again_until_asked() {
 }
 
 #[test]
+fn a_backend_that_stops_soon_after_ready_three_times_in_a_row_is_not_started_again_until_asked() {
+    let config = fake(
+        "flapping",
+        "echo 'listening on http://127.0.0.1:18877/'\nexit 1",
+    );
+    let (mut launcher, ready) = launch(config);
+    launcher.thread.take().unwrap().join().unwrap();
+    assert_eq!(ready.try_iter().count(), 3);
+    assert_eq!(read(&launcher.config, "runs"), "3\n");
+    let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
+    assert!(log.contains("3 times in a row"), "{log}");
+
+    launcher.restart_if_stopped();
+    launcher.thread.take().unwrap().join().unwrap();
+    assert_eq!(read(&launcher.config, "runs"), "6\n");
+}
+
+#[test]
 fn the_token_never_reaches_the_log() {
     let script = format!("echo 'listening on http://127.0.0.1:18877/'\n{WAIT_FOR_TERM}");
     let (mut launcher, ready) = launch(fake("secret", &script));

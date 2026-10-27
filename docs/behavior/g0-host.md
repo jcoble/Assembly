@@ -10,8 +10,9 @@ g0-host) and notes/gpui-g0/look-and-behavior-carryovers.md section 1, with the o
 
 g0-host#1 Launching the app opens one window and starts its own backend. Quitting the window stops that backend.
 g0-host#2 When the backend stops on its own, the app starts a new one at once and reconnects when it's up, with no
-waiting loop. A backend that stops before it was ever ready isn't restarted again and again: the app says it failed,
-with where its log is, and the palette's "Restart backend" starts it again. Until the backend is up the window says
+waiting loop. A backend that stops before it was ever ready, or stops within 30 seconds of being ready three times in
+a row, isn't restarted again and again: the app says it failed, with where its log is, and the palette's "Restart
+backend" starts it again. Until the backend is up the window says
 it's starting.
 g0-host#16 Everything the backend prints goes to backend.log in its data folder.
 g0-host#3 The backend's token never appears in the app's output or logs.
