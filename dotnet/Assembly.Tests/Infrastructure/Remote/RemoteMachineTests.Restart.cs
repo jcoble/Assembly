@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using Assembly.Tests.Features.Chat.Sessions;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -85,6 +87,41 @@ public sealed partial class RemoteMachineTests
         // The follower gives up; only Resume or the stop button ends the row.
         await Until(() => _log.ToString().Contains($"remote session {helperId}: {Box} answered 500"));
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
+    }
+
+    [Fact]
+    public async Task A_remote_helper_shown_running_shows_idle_after_a_restart_whose_first_link_drops()
+    {
+        var (parent, helperId, _) = await RemoteHelperIdleAsync();
+
+        await _desktop!.DisposeAsync();
+        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
+        // The first /live fails as a dropped link would; the next one opens and has nothing newer.
+        var links = 0;
+        await using var flaky = await StubAsync(app =>
+        {
+            app.UseWebSockets();
+            app.Map("/live", async (HttpContext context) =>
+            {
+                if (Interlocked.Increment(ref links) == 1)
+                {
+                    context.Response.StatusCode = 500;
+                    return;
+                }
+                using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                try
+                {
+                    await Task.Delay(Timeout.Infinite, context.RequestAborted);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            });
+        });
+        _desktop = await DesktopOnAsync(flaky, _desktopHome);
+
+        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        Assert.True(links >= 2);
     }
 
     // A remote helper started by a parent here, whose first turn has ended and whose row here shows idle.
