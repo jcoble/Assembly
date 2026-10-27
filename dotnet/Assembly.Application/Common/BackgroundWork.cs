@@ -18,12 +18,13 @@ public sealed class BackgroundWork(TimeProvider time, TextWriter log) : IAsyncDi
     /// <summary>Runs <paramref name="work"/> with the stop token, and holds it until it ends.</summary>
     public void Start(string name, Func<CancellationToken, Task> work)
     {
-        // Held before the work runs, so a stop during its first, synchronous part still waits for it.
+        // Held before the work runs, so a stop during its first, synchronous part still waits for it. That part still
+        // runs here, inline, so works started in order begin in order (a socket's answers rely on it).
         var start = new Task<Task>(() => RunAsync(name, work));
         var task = start.Unwrap();
         _tasks[task] = name;
         task.ContinueWith(ended => _tasks.TryRemove(ended, out _), TaskScheduler.Default);
-        start.Start(TaskScheduler.Default);
+        start.RunSynchronously(TaskScheduler.Default);
     }
 
     /// <summary>

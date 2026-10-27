@@ -102,15 +102,15 @@ public sealed class BackgroundWorkTests
     public async Task A_start_after_the_stop_gets_a_cancelled_token_and_a_second_stop_waits_for_it()
     {
         Assert.Equal(0, await _work.StopAsync(Deadline).WaitAsync(Wait));
-        var cancelled = new TaskCompletionSource<bool>();
+        var cancelled = false;
         var release = new TaskCompletionSource();
         _work.Start("after", async token =>
         {
-            cancelled.SetResult(token.IsCancellationRequested);
+            cancelled = token.IsCancellationRequested;
             await release.Task;
         });
 
-        Assert.True(await cancelled.Task.WaitAsync(Wait));
+        Assert.True(cancelled);
         Assert.Equal(1, _work.Running);
         var stopping = _work.StopAsync(Deadline);
         Assert.False(stopping.IsCompleted);
