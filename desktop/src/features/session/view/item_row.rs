@@ -7,7 +7,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::ask_card::{AskCard, AskForm};
-use super::grow::{chevron, faded, grow, turn};
+use super::grow::{band, chevron, faded, grow, turn};
 use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
 use super::sent_message::SentMessage;
@@ -90,8 +90,8 @@ impl RenderOnce for ItemRow {
                 let toggled_at = self.kept.toggled_at;
                 let turned = turn(open, toggled_at, window, cx);
                 let faded = faded(open, toggled_at, cx);
-                v_flex()
-                    .gap_1()
+                let column = v_flex().gap_1();
+                band(column, turned.0, cx)
                     .text_sm()
                     .text_color(muted)
                     .child(

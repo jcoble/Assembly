@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use gpui::TestAppContext;
 
-use super::{faded, progress, toggled, turn};
+use super::{FADE, FADE_AFTER, GROW, ease, faded, progress, toggled, turn};
 
 const EASE: Duration = Duration::from_millis(200);
 
@@ -20,7 +20,7 @@ fn a_toggle_eases_to_its_end_then_stays_still() {
     let (half_open, moving) = progress(true, Some(EASE / 2), EASE);
     assert!(
         moving && half_open > 0.5 && half_open < 1.0,
-        "eased out: {half_open}"
+        "most of the way by half time: {half_open}"
     );
     let (half_shut, _) = progress(false, Some(EASE / 2), EASE);
     assert!((half_open + half_shut - 1.0).abs() < 1e-6);
@@ -62,5 +62,39 @@ fn reduce_motion_puts_a_toggle_at_its_end(cx: &mut TestAppContext) {
         assert_eq!(turn(true, just, window, cx), (1.0, false));
         assert_eq!(faded(true, just, cx), 1.0);
         assert_eq!(turn(false, just, window, cx), (0.0, false));
+    });
+}
+
+// The design system's cubic-bezier(0.16, 1, 0.3, 1): quick at first, settling at the end, never past it.
+// Pins: g0-session#34
+#[test]
+fn the_grow_curve_is_quick_then_settles() {
+    assert_eq!((ease(0.0), ease(1.0)), (0.0, 1.0));
+    assert!(ease(0.25) > 0.75, "{}", ease(0.25));
+    let steps: Vec<f32> = (0..=20).map(|at| ease(at as f32 / 20.0)).collect();
+    assert!(
+        steps
+            .windows(2)
+            .all(|pair| pair[0] <= pair[1] && pair[1] <= 1.0)
+    );
+}
+
+// Opening, the content stays hidden for the first 40 ms and is in by 160 ms; shutting runs it back, out by 120 ms.
+// Pins: g0-session#34
+#[gpui::test]
+fn the_content_fades_in_from_forty_ms_into_the_grow(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let ago = |elapsed: Duration| Some(Instant::now() - elapsed);
+        assert_eq!(faded(true, ago(FADE_AFTER / 2), cx), 0.0);
+        let midway = faded(true, ago(FADE_AFTER + FADE / 2), cx);
+        assert!(midway > 0.0 && midway < 1.0, "{midway}");
+        assert_eq!(faded(true, ago(GROW), cx), 1.0);
+        assert!(faded(false, ago(FADE / 2), cx) < 1.0);
+        assert_eq!(faded(false, ago(FADE), cx), 0.0);
+        assert_eq!(
+            faded(true, None, cx),
+            1.0,
+            "already open when drawn: shown, no fade"
+        );
     });
 }

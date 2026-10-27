@@ -1,22 +1,31 @@
-//! Things that open underneath grow in place (look direction #16): a tool call's detail, thinking's text and a fold's
-//! work ease their height from 0 to what they hold over `GROW` (ease-out), their content fades in over `FADE`, and
-//! the rows below slide down as the virtual list measures the row again each frame; shutting runs it back. A chevron
-//! turns with it. It's timed from the toggle (`Kept::toggled_at`), not from when the row was drawn, so a row drawn
-//! again after scrolling back is still and draws no frames. Under Reduce Motion it's at its end at once.
+//! Things that open underneath grow in place (look direction #13, #16): a tool call's detail, thinking's text and a
+//! fold's work ease their height from 0 to what they hold over `GROW` on the design system's curve, their content
+//! fades in over `FADE` from `FADE_AFTER` in, and the rows below slide down as the virtual list measures the row again
+//! each frame; shutting runs it back. A chevron turns with it, and an open row sits on a lighter band. It's timed from
+//! the toggle (`Kept::toggled_at`), not from when the row was drawn, so a row already open when drawn, or drawn again
+//! after scrolling back, is still and draws no frames: only a click moves it. Under Reduce Motion it's at its end at
+//! once.
 
 use std::f32::consts::FRAC_PI_2;
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::{Icon, IconName, Sizable as _};
+use gpui_kit::base::animation::cubic_bezier;
+use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 /// How long a row takes to grow open or shut, and a new row to fade in: the one pace of the session view's motion.
 pub const GROW: Duration = Duration::from_millis(160);
-/// How long what a growing row holds takes to fade in.
+/// How long what a growing row holds takes to fade in, and how far into the grow it starts.
 pub const FADE: Duration = Duration::from_millis(120);
+pub const FADE_AFTER: Duration = Duration::from_millis(40);
 
-/// How far open it is, 0 shut to 1 open, eased out over `duration` from the toggle, `elapsed` ago; `None` for one
+/// The design system's grow curve, `cubic-bezier(0.16, 1, 0.3, 1)`: from 0 to 1 as `t` goes from 0 to 1.
+pub fn ease(t: f32) -> f32 {
+    cubic_bezier(0.16, 1.0, 0.3, 1.0)(t)
+}
+
+/// How far open it is, 0 shut to 1 open, eased over `duration` from the toggle, `elapsed` ago; `None` for one
 /// never toggled. The second value is whether it's still moving.
 pub fn progress(open: bool, elapsed: Option<Duration>, duration: Duration) -> (f32, bool) {
     let end = if open { 1.0 } else { 0.0 };
@@ -24,7 +33,7 @@ pub fn progress(open: bool, elapsed: Option<Duration>, duration: Duration) -> (f
         return (end, false);
     };
     let t = elapsed.as_secs_f32() / duration.as_secs_f32();
-    let eased = 1.0 - (1.0 - t).powi(2);
+    let eased = ease(t);
     (if open { eased } else { 1.0 - eased }, true)
 }
 
@@ -37,7 +46,16 @@ pub fn toggled(open: bool, last: Option<Instant>, now: Instant, duration: Durati
     }
     // How far toward its new end it already is, and the time into the ease that is.
     let covered = if open { at } else { 1.0 - at };
-    now - duration.mul_f32(1.0 - (1.0 - covered).sqrt())
+    let (mut low, mut high) = (0.0, 1.0);
+    for _ in 0..32 {
+        let mid = (low + high) / 2.0;
+        if ease(mid) < covered {
+            low = mid;
+        } else {
+            high = mid;
+        }
+    }
+    now - duration.mul_f32(low)
 }
 
 /// How far it has grown at this frame, over `GROW`, and whether it's still moving; asks for the next frame while it
@@ -51,10 +69,27 @@ pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &A
     (grown, moving)
 }
 
-/// How far a growing row's content has faded in, over `FADE`: it fades out as it shuts.
+/// How far a growing row's content has faded in: over `FADE` from `FADE_AFTER` into the grow, and shutting, the same
+/// run back, out over the first `FADE`.
 pub fn faded(open: bool, toggled_at: Option<Instant>, cx: &App) -> f32 {
     let toggled_at = toggled_at.filter(|_| !cx.reduce_motion());
-    progress(open, toggled_at.map(|at| at.elapsed()), FADE).0
+    let elapsed = toggled_at.map(|at| at.elapsed());
+    let elapsed = elapsed.map(|elapsed| match open {
+        true => elapsed.saturating_sub(FADE_AFTER),
+        false => elapsed,
+    });
+    progress(open, elapsed, FADE).0
+}
+
+/// An open row's lighter band (the design system's `raised`), coming in as it grows: `row` keeps its place, the band
+/// reaching past it on both sides.
+pub fn band(row: Div, grown: f32, cx: &App) -> Div {
+    let theme = cx.theme();
+    row.px_2()
+        .py_1()
+        .mx(px(-8.))
+        .rounded(theme.radius_lg)
+        .when(grown > 0., |row| row.bg(theme.group_box.opacity(grown)))
 }
 
 /// `body` growing in place: while it moves, cut to `grown` of the height it was last measured at (0 before the first
