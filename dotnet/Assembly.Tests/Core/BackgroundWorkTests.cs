@@ -77,19 +77,40 @@ public sealed class BackgroundWorkTests
         Assert.Equal(0, await stopping.WaitAsync(Wait));
     }
 
+    // Held before its work runs, so a stop that comes while the work's first part is still running waits for it.
+    [Fact]
+    public async Task A_stop_during_a_starts_first_part_waits_for_it()
+    {
+        using var entered = new ManualResetEventSlim();
+        using var gate = new ManualResetEventSlim();
+        var starting = Task.Run(() => _work.Start("slow start", _ =>
+        {
+            entered.Set();
+            gate.Wait(CancellationToken.None);
+            return Task.CompletedTask;
+        }));
+        Assert.True(entered.Wait(Wait));
+
+        var stopping = _work.StopAsync(Deadline);
+        Assert.NotSame(stopping, await Task.WhenAny(stopping, Task.Delay(200)));
+        gate.Set();
+        await starting.WaitAsync(Wait);
+        Assert.Equal(0, await stopping.WaitAsync(Wait));
+    }
+
     [Fact]
     public async Task A_start_after_the_stop_gets_a_cancelled_token_and_a_second_stop_waits_for_it()
     {
         Assert.Equal(0, await _work.StopAsync(Deadline).WaitAsync(Wait));
-        var cancelled = false;
+        var cancelled = new TaskCompletionSource<bool>();
         var release = new TaskCompletionSource();
         _work.Start("after", async token =>
         {
-            cancelled = token.IsCancellationRequested;
+            cancelled.SetResult(token.IsCancellationRequested);
             await release.Task;
         });
 
-        Assert.True(cancelled);
+        Assert.True(await cancelled.Task.WaitAsync(Wait));
         Assert.Equal(1, _work.Running);
         var stopping = _work.StopAsync(Deadline);
         Assert.False(stopping.IsCompleted);

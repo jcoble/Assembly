@@ -18,10 +18,12 @@ public sealed class BackgroundWork(TimeProvider time, TextWriter log) : IAsyncDi
     /// <summary>Runs <paramref name="work"/> with the stop token, and holds it until it ends.</summary>
     public void Start(string name, Func<CancellationToken, Task> work)
     {
-        var task = RunAsync(name, work);
+        // Held before the work runs, so a stop during its first, synchronous part still waits for it.
+        var start = new Task<Task>(() => RunAsync(name, work));
+        var task = start.Unwrap();
         _tasks[task] = name;
-        // Added first, so one that has already ended is still removed.
         task.ContinueWith(ended => _tasks.TryRemove(ended, out _), TaskScheduler.Default);
+        start.Start(TaskScheduler.Default);
     }
 
     /// <summary>
