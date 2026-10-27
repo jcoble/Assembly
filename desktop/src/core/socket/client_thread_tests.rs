@@ -16,6 +16,7 @@ use super::error_code::ErrorCode;
 use super::event::Event;
 use super::fake_backend::{FakeBackend, Reply, hello};
 use super::outcome::Outcome;
+use super::pending_call::PendingCall;
 use super::test_client::{TestClient as Client, backend, connected, endpoint, error, outcome};
 use super::update::Update;
 
@@ -201,4 +202,16 @@ fn a_failed_reopen_is_disconnected_until_reconnect_and_calls_fail_at_once() {
         .unwrap();
     assert_eq!(client.state(), ConnectionState::Connecting);
     assert_eq!(client.state(), connected());
+}
+
+// Pins: g0-socket#4
+#[test]
+fn dropping_a_pending_call_before_its_answer_cancels_it() {
+    let backend = backend();
+    let client = Client::start(backend.port);
+    let (id, answer) = client.call("slow", None);
+    drop(PendingCall::<Value>::new(id, client.events.clone(), answer));
+    backend.next(); // hello
+    assert_eq!(backend.next()["method"], "slow");
+    assert_eq!(backend.next(), json!({"t": "cancel", "id": id}));
 }
