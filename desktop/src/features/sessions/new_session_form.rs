@@ -28,6 +28,8 @@ pub struct NewSessionForm {
     /// and Start session waits for the create.
     loading: bool,
     starting: bool,
+    /// The connection dropped the last agents load, so the next machines change (a reconnect) loads them again.
+    retry_agents: bool,
     _load: Option<Task<()>>,
     _create: Option<Task<()>>,
     _machines: Option<Subscription>,
@@ -78,7 +80,7 @@ impl NewSessionForm {
         // An agents load the connection dropped is made again once the machines list changes (after a reconnect).
         let machines = Machines::try_global(cx).map(|machines| {
             cx.observe(&machines, |form: &mut Self, _, cx| {
-                if form.agents.is_empty() && !form.loading {
+                if form.retry_agents && !form.loading {
                     form.load_agents(cx);
                 }
                 cx.notify();
@@ -92,6 +94,7 @@ impl NewSessionForm {
             error: SharedString::default(),
             loading: false,
             starting: false,
+            retry_agents: false,
             _load: None,
             _create: None,
             _machines: machines,
@@ -120,7 +123,7 @@ impl NewSessionForm {
             socket
                 .read(cx)
                 .call::<AgentList>("machines", "agents", args, Some("machines/agents"));
-        self.loading = true;
+        (self.loading, self.retry_agents) = (true, false);
         self._load = Some(cx.spawn(async move |form, cx| {
             let outcome = call.await;
             form.update(cx, |form, cx| {
@@ -139,6 +142,7 @@ impl NewSessionForm {
                         form.error = format!("Couldn't list the agents: {}", failure.message).into()
                     }
                     Outcome::Aborted => {
+                        form.retry_agents = true;
                         form.error =
                             "The connection dropped; the agents load again once it's back.".into()
                     }
@@ -161,6 +165,8 @@ impl NewSessionForm {
             return;
         };
         let Some(socket) = SocketClient::try_global(cx) else {
+            self.error = "The backend isn't running.".into();
+            cx.notify();
             return;
         };
         let call = socket

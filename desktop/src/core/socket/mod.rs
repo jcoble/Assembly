@@ -36,5 +36,7 @@ mod rows_feed;
 mod rows_tests;
 #[cfg(test)]
 mod test_client;
+#[cfg(test)]
+pub(crate) mod test_wait;
 pub mod topic_subscription;
 pub mod update;

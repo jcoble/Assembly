@@ -1,5 +1,8 @@
 //! The sessions column follows the backend: a column opened before the backend's first ready line takes the sessions
-//! list once it starts, and what an empty column says follows the connection.
+//! list once it starts, it redraws when the connection drops, and what an empty column says follows the connection.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
@@ -8,6 +11,7 @@ use super::{SessionsPane, empty_line};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::real_backend::RealBackend;
+use crate::core::socket::test_wait::until;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::Sessions;
 
@@ -35,7 +39,7 @@ fn an_empty_column_says_what_the_connection_is_doing() {
 
 // Pins: g0-session#30
 #[gpui::test]
-async fn a_column_opened_before_the_backend_was_ready_takes_its_sessions(cx: &mut TestAppContext) {
+async fn a_column_opened_before_the_backend_was_ready_follows_it(cx: &mut TestAppContext) {
     let Some(backend) = RealBackend::start() else {
         return;
     };
@@ -44,20 +48,38 @@ async fn a_column_opened_before_the_backend_was_ready_takes_its_sessions(cx: &mu
     cx.update(SelectedSession::init);
     let (pane, cx) = cx.add_window_view(|_, cx| SessionsPane::new(cx));
     pane.read_with(cx, |pane, _| assert!(pane.sessions.is_none()));
-    let (states, mut changes) = unbounded();
-    let _heard = cx.update(|_, cx| {
+    let (changed, mut changes) = unbounded();
+    let tell = changed.clone();
+    let (socket, _heard) = cx.update(|_, cx| {
         let socket = SocketClient::start(backend.endpoint(), cx);
         Sessions::start(cx);
-        cx.subscribe(&socket, move |_, state: &ConnectionState, _| {
-            _ = states.unbounded_send(state.clone())
-        })
+        let heard = cx.observe(&socket, move |_, _| _ = tell.unbounded_send(()));
+        (socket, heard)
     });
     pane.read_with(cx, |pane, _| assert!(pane.sessions.is_some()));
-    while let Ok(state) = changes.recv().await {
-        if matches!(state, ConnectionState::Connected { .. }) {
-            break;
-        }
-    }
-    let state = cx.update(|_, cx| SocketClient::global(cx).read(cx).state().clone());
-    assert_eq!(empty_line(Some(&state)), "No sessions yet.");
+    let state =
+        |cx: &mut gpui_kit::VisualTestContext| cx.update(|_, cx| socket.read(cx).state().clone());
+    until("connected", &mut changes, &changed, || {
+        matches!(state(cx), ConnectionState::Connected { .. })
+    })
+    .await;
+    // Only the pane's own observer tells it the connection dropped.
+    let (redrawn, mut redraws) = unbounded();
+    let (drawn, tell) = (Rc::new(Cell::new(false)), redrawn.clone());
+    let marked = drawn.clone();
+    let _drawn = cx.update(|_, cx| {
+        cx.observe(&pane, move |_, _| {
+            marked.set(true);
+            _ = tell.unbounded_send(());
+        })
+    });
+    drop(backend);
+    until(
+        "the pane redraws for the drop",
+        &mut redraws,
+        &redrawn,
+        || drawn.get() && !matches!(state(cx), ConnectionState::Connected { .. }),
+    )
+    .await;
+    assert_ne!(empty_line(Some(&state(cx))), "No sessions yet.");
 }
