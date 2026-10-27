@@ -17,7 +17,7 @@ using Assembly.Tests.Features.Diagnostics;
 namespace Assembly.Tests.Infrastructure.Remote;
 
 /// <summary>A desktop backend with a remote machine: a second backend on the same engine stands in for Workbox Test.</summary>
-public sealed class RemoteMachineTests : IAsyncLifetime
+public sealed partial class RemoteMachineTests : IAsyncLifetime
 {
     private const string DesktopToken = "desktop-token";
     private const string BoxToken = "box-token";
