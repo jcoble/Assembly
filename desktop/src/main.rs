@@ -12,6 +12,8 @@ use crate::core::theme::{self, theme_id::ThemeId};
 fn main() {
     // On macOS GPUI's default keeps the app running with no window open.
     gpui_kit::application()
+        // The kit's icons, such as the dock toggles; without them every icon draws blank.
+        .with_assets(gpui_kit::assets::Assets)
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
