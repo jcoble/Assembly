@@ -89,6 +89,16 @@ impl TestClient {
         method: &str,
         key: Option<&str>,
     ) -> (u64, oneshot::Receiver<Outcome<Value>>) {
+        self.call_with(feature, method, json!({}), key)
+    }
+
+    pub fn call_with(
+        &self,
+        feature: &str,
+        method: &str,
+        args: Value,
+        key: Option<&str>,
+    ) -> (u64, oneshot::Receiver<Outcome<Value>>) {
         let (answer, outcome) = oneshot::channel();
         let id = self.id();
         let (feature, method, key) = (feature.into(), method.into(), key.map(Into::into));
@@ -97,7 +107,7 @@ impl TestClient {
                 id,
                 feature,
                 method,
-                args: json!({}),
+                args,
                 key,
                 answer,
             })
@@ -128,12 +138,16 @@ impl TestClient {
     }
 
     pub fn rows(&self, after: Option<i64>) -> UnboundedReceiver<RowUpdate> {
+        self.rows_of("s1", after)
+    }
+
+    pub fn rows_of(&self, session: &str, after: Option<i64>) -> UnboundedReceiver<RowUpdate> {
         let (rows, receiver) = unbounded();
         let id = self.id();
         self.events
             .send(Event::SubscribeRows {
                 id,
-                session_id: "s1".into(),
+                session_id: session.into(),
                 after,
                 rows,
             })
@@ -185,7 +199,7 @@ pub(super) fn outcome(receiver: oneshot::Receiver<Outcome<Value>>) -> Outcome<Va
 }
 
 /// Hands a subscription's updates on to a channel the test can wait on with a deadline.
-pub(super) fn updates(mut receiver: UnboundedReceiver<Update>) -> Receiver<Update> {
+pub(super) fn updates<T: Send + 'static>(mut receiver: UnboundedReceiver<T>) -> Receiver<T> {
     let (forward, updates) = mpsc::channel();
     thread::spawn(move || {
         while let Ok(update) = block_on(receiver.recv()) {

@@ -28,6 +28,8 @@ pub mod pending_call;
 #[cfg(test)]
 mod real_backend;
 #[cfg(test)]
+mod real_backend_cancel_tests;
+#[cfg(test)]
 mod real_backend_tests;
 pub mod row;
 pub mod row_update;

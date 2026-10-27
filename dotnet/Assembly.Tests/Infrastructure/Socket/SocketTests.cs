@@ -207,8 +207,9 @@ public sealed partial class SocketTests : IAsyncLifetime
         Assert.Equal("""{"t":"result","id":1,"result":{"text":""}}""", await ReadAsync(socket));
     }
 
+    // The cancel is answered while the write ahead of it still runs, not once it ends.
     [Fact]
-    public async Task A_write_cancelled_while_queued_never_runs()
+    public async Task A_write_cancelled_while_queued_answers_cancelled_at_once_and_never_runs()
     {
         var gate = new TaskCompletionSource();
         var first = new TaskCompletionSource();
@@ -226,14 +227,20 @@ public sealed partial class SocketTests : IAsyncLifetime
         await first.Task.WaitAsync(Wait);
         await CallAsync(socket, 2, "notes", "second", "{}");
         await SendAsync(socket, """{"t":"cancel","id":2}""");
-        // Frames are read in order, so once this answers, the cancel has been seen.
         await CallAsync(socket, 3, "notes", "echo", "{}");
-        Assert.Equal("""{"t":"result","id":3,"result":{"text":""}}""", await ReadAsync(socket));
-        gate.SetResult();
+        string[] answers;
+        try
+        {
+            answers = await ReadByIdAsync(socket, 2);
+        }
+        finally
+        {
+            gate.SetResult();
+        }
 
-        var answers = await ReadByIdAsync(socket, 2);
-        Assert.Equal("""{"t":"result","id":1,"result":{"text":""}}""", answers[0]);
-        Assert.Equal("cancelled", Code(answers[1], id: 2));
+        Assert.Equal("cancelled", Code(answers[0], id: 2));
+        Assert.Equal("""{"t":"result","id":3,"result":{"text":""}}""", answers[1]);
+        Assert.Equal("""{"t":"result","id":1,"result":{"text":""}}""", await ReadAsync(socket));
         Assert.Equal(["notes/first"], _writer.Written);
     }
 
