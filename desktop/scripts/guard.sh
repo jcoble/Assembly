@@ -11,6 +11,9 @@ b='(^|[^[:alnum:]_])'
 e='([^[:alnum:]_]|$)'
 # Sockets and HTTP: only the socket client, desktop/src/core/socket/, may.
 sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_client|HttpClient)${e}|${b}hyper::"
+# Native views (the terminal's Ghostty view, the browser's WKWebView, any NSView): only desktop/src/core/native_views/
+# may, so one module shows, hides and places them all.
+natives="${b}(gpui_webview|ghostty|libghostty|NSView|WKWebView|objc|objc2|cocoa|raw_window_handle)${e}|${b}(ghostty|objc2)_[[:alnum:]_]+"
 # Detaching a task or subscription: whatever starts one holds it, so dropping the holder stops it.
 detaches="(\.|::)detach[a-z_]*[[:space:]]*\("
 # Starting an OS thread: only the socket client, desktop/src/core/socket/, and the backend launcher,
@@ -31,6 +34,7 @@ hits() {
   local path=$1 file=${2:-$1}
   {
     [[ $path == desktop/src/core/socket/* ]] || match "$file" "$sockets" "sockets and HTTP only in core/socket/"
+    [[ $path == desktop/src/core/native_views/* ]] || match "$file" "$natives" "native views only in core/native_views/"
     match "$file" "$detaches" "no detached tasks or subscriptions; hold them"
     [[ $path == desktop/src/core/socket/* || $path == desktop/src/core/backend/* ]] \
       || match "$file" "$threads" "threads only in core/socket/ and core/backend/"
@@ -58,6 +62,12 @@ catch|desktop/src/features/x/a.rs|use hyper::Client;
 pass|desktop/src/core/socket/a.rs|let (socket, _) = tungstenite::client(request, stream)?;
 pass|desktop/src/core/socket/a.rs|let stream = std::net::TcpStream::connect(addr)?;
 pass|desktop/src/features/x/a.rs|let link = hyperlink(text);
+catch|desktop/src/features/browser/a.rs|use gpui_webview::WebView;
+catch|desktop/src/features/terminal/a.rs|let surface = ghostty_sys::surface_new(app);
+catch|desktop/src/features/x/a.rs|let view: id = msg_send![class!(NSView), alloc];
+catch|desktop/src/core/x/a.rs|use raw_window_handle::HasWindowHandle;
+pass|desktop/src/core/native_views/a.rs|use gpui_webview::WebView;
+pass|desktop/src/features/terminal/a.rs|NativeViews::close(id, cx);
 catch|desktop/src/features/x/a.rs|cx.spawn(async move |_, _| {}).detach();
 catch|desktop/src/features/x/a.rs|        .detach();
 catch|desktop/src/features/x/a.rs|cx.observe(&model, |_, _, _| {}).detach();
