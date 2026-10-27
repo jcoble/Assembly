@@ -51,28 +51,46 @@ public sealed class CheckpointTests : IDisposable
         Assert.NotEqual(round, WalRound());
     }
 
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    public void Steady_writes_rewind_again_and_again_once_past_the_cap(int gap)
+    [Fact]
+    public void Past_the_cap_a_commit_copies_the_wal_so_the_next_one_rewinds_again_and_again()
     {
         Open(walCap: 300);
-        var round = WalRound();
-        var rewinds = 0;
 
-        for (var i = 0; i < 3_000; i++)
+        // A reader's snapshot keeps the background checkpoints from copying the WAL, which is what steady writes do,
+        // without depending on the disk's speed. Each one is waited for, so the writer always sees how it ended. Once
+        // one ends with the WAL past the cap, every commit copies the WAL itself instead of starting another, so 150
+        // commits with no new checkpoint means the cap has taken over. Then the reader lets go, and with no checkpoint
+        // running only the cap can copy the WAL: the first commit does, and the second starts with every frame copied
+        // and rewinds it. Without the cap a checkpoint starts every 100 commits and nothing copies the WAL.
+        for (var time = 0; time < 2; time++)
         {
-            Note();
-            if (gap > 0)
-                Thread.Sleep(gap);
-            if (WalRound() != round)
-                (rewinds, round) = (rewinds + 1, WalRound());
-        }
+            using (var reader = new SqliteConnection($"Data Source={_file.Path};Pooling=False"))
+            {
+                reader.Open();
+                using var snapshot = reader.BeginTransaction(deferred: true);
+                using (var read = reader.CreateCommand())
+                {
+                    read.CommandText = "SELECT COUNT(*) FROM notes;";
+                    read.ExecuteScalar();
+                }
+                var since = 0;
+                for (var notes = 0; since < 150; notes++, since++)
+                {
+                    Assert.True(notes < 5_000, "the cap never took over from the background checkpoints");
+                    var checkpoint = _writer!.Running;
+                    Settle();
+                    Note();
+                    if (_writer.Running != checkpoint)
+                        since = 0;
+                }
+            }
 
-        // Without the cap these writes never pause long enough for a rewind, and the WAL passes 6,000 pages. The peak
-        // with it, the cap plus what one background checkpoint's passes let in, depends on the disk's fsync, so it's
-        // in the plan's measurement rather than here.
-        Assert.True(rewinds >= 2, $"{rewinds} rewinds");
+            var round = WalRound();
+            Note();
+            Assert.Equal(round, WalRound());
+            Note();
+            Assert.NotEqual(round, WalRound());
+        }
     }
 
     [Fact]
@@ -126,6 +144,13 @@ public sealed class CheckpointTests : IDisposable
         while (_writer.Running == last)
             Note();
         Assert.True(_writer.Running!.Wait(TimeSpan.FromSeconds(30)));
+    }
+
+    // Waits for a background checkpoint still running, so the next commit sees how it ended.
+    private void Settle()
+    {
+        if (_writer!.Running is { IsCompleted: false } running)
+            Assert.True(running.Wait(TimeSpan.FromSeconds(30)));
     }
 
     // The WAL header's checkpoint sequence number, which SQLite bumps each time it rewinds the WAL.
