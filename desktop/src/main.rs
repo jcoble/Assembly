@@ -55,7 +55,8 @@ fn main() {
 /// missing. Returns the window layout's read and write, over the backend's preferences.
 fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
     let socket = Rc::new(OnceCell::<Entity<SocketClient>>::new());
-    // Answered with the client on the first ready line; dropped unanswered when there's no backend.
+    // Answered with the client on the first ready line; dropped unanswered when there's no backend or the launcher gives
+    // up before one is ready, so the window opens the default layout instead of waiting.
     let (connected, client) = oneshot::channel();
     let backend = std::env::var_os("ASSEMBLY_BACKEND_DIR")
         .map(PathBuf::from)
@@ -71,7 +72,8 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
         .and_then(|dir| BackendConfig::read(&dir, remote))
     {
         Ok(config) => {
-            let (socket, connected) = (socket.clone(), Cell::new(Some(connected)));
+            let (socket, connected) = (socket.clone(), Rc::new(Cell::new(Some(connected))));
+            let gave_up = connected.clone();
             Launcher::start(
                 config,
                 move |port, token, cx| {
@@ -87,6 +89,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                         }
                     }
                 },
+                move |_| drop(gave_up.take()),
                 cx,
             )
         }

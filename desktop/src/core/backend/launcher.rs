@@ -38,8 +38,9 @@ use crate::core::commands::command_registry::CommandRegistry;
 
 actions!(backend, [RestartBackend]);
 
-/// Gets the token each time a backend is ready.
-type Ready = Arc<dyn Fn(String) + Send + Sync>;
+/// Gets the token each time a backend is ready, and `None` when the launcher gives up (it starts no other backend until
+/// "Restart backend").
+type Ready = Arc<dyn Fn(Option<String>) + Send + Sync>;
 
 pub struct Launcher {
     config: Arc<BackendConfig>,
@@ -66,21 +67,26 @@ impl Drop for Launcher {
 
 impl Launcher {
     /// Starts the backend and its output thread, calls `on_ready` on the main thread with the port and token each
-    /// time a backend is ready, and stops the backend when the app quits.
+    /// time a backend is ready, and `on_gave_up` each time the launcher gives up, and stops the backend when the app
+    /// quits.
     pub fn start(
         config: BackendConfig,
         on_ready: impl Fn(u16, String, &mut App) + 'static,
+        on_gave_up: impl Fn(&mut App) + 'static,
         cx: &mut App,
     ) {
         let port = config.port;
-        let (sender, mut receiver) = futures_channel::mpsc::unbounded::<String>();
+        let (sender, mut receiver) = futures_channel::mpsc::unbounded::<Option<String>>();
         let mut launcher = Self::new(
             config,
             Arc::new(move |token| _ = sender.unbounded_send(token)),
         );
         launcher._ready_loop = Some(cx.spawn(async move |cx| {
             while let Ok(token) = receiver.recv().await {
-                cx.update(|cx| on_ready(port, token, cx));
+                cx.update(|cx| match token {
+                    Some(token) => on_ready(port, token, cx),
+                    None => on_gave_up(cx),
+                });
             }
         }));
         launcher._quit = Some(cx.on_app_quit(|cx| {
@@ -124,7 +130,12 @@ impl Launcher {
         self.thread = Some(
             std::thread::Builder::new()
                 .name("backend".into())
-                .spawn(move || run(&config, &*ready, &pid, &quitting))
+                .spawn(move || {
+                    run(&config, &*ready, &pid, &quitting);
+                    if !quitting.load(Ordering::SeqCst) {
+                        ready(None);
+                    }
+                })
                 .expect("start the backend's thread"),
         );
     }
@@ -151,7 +162,7 @@ const QUICK_EXITS: u32 = 3;
 /// app quits.
 fn run(
     config: &BackendConfig,
-    ready: &(dyn Fn(String) + Send + Sync),
+    ready: &(dyn Fn(Option<String>) + Send + Sync),
     pid: &Mutex<u32>,
     quitting: &AtomicBool,
 ) {
@@ -196,7 +207,7 @@ fn run(
 fn run_child(
     config: &BackendConfig,
     log: &mut File,
-    ready: &(dyn Fn(String) + Send + Sync),
+    ready: &(dyn Fn(Option<String>) + Send + Sync),
     pid: &Mutex<u32>,
     quitting: &AtomicBool,
 ) -> Option<Instant> {
@@ -268,7 +279,7 @@ fn run_child(
                         Ok(token) => {
                             ready_at = Some(Instant::now());
                             _ = seen.send(());
-                            ready(token);
+                            ready(Some(token));
                         }
                         Err(error) => _ = writeln!(log, "{error}"),
                     }
