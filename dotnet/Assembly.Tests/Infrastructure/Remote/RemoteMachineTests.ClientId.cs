@@ -62,6 +62,24 @@ public sealed partial class RemoteMachineTests
     }
 
     [Fact]
+    public async Task A_resend_through_the_desktop_with_other_text_fails_with_the_remotes_words()
+    {
+        var sessionId = await CreateSessionAsync();
+        using var socket = await OpenSocketAsync(_desktop!);
+        RunOf(await CallSendAsync(socket, 1, sessionId, "hi", "c16"));
+        var agent = await _boxLauncher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+
+        var failed = await CallSendAsync(socket, 2, sessionId, "bye", "c16");
+
+        Assert.StartsWith("""{"t":"error","id":2,"code":"failed",""", failed);
+        Assert.Contains("clientId already used for another message", failed);
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+    }
+
+    [Fact]
     public async Task The_remote_send_route_refuses_a_bad_clientId()
     {
         var sessionId = await CreateSessionAsync();

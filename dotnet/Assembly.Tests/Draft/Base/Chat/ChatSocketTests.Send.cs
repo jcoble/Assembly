@@ -155,6 +155,7 @@ public sealed partial class ChatSocketTests
         var held = await agent.ReadAsync("_session/steering");
         using var reconnected = await OpenRealAsync();
         await CallAsync(reconnected, 1, "send", "send", Args(session.SessionId, "and this", "c4"));
+        await _log.WrittenAsync("send c4: joined in-flight send");
         await agent.ReplyAsync(held, Injected);
         Assert.Equal(Result(4, runId), await ReadAsync(socket));
         Assert.Equal(Result(1, runId), await ReadAsync(reconnected));
@@ -185,7 +186,7 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task A_retry_waits_on_its_own_token_and_sends_the_message_itself_when_the_first_is_cut_off()
+    public async Task A_retry_waits_on_its_own_token_and_answers_the_first_ones_failure_when_it_is_cut_off()
     {
         var session = _sessions.Create("claude", "repo");
         using var socket = await OpenRealAsync();
@@ -196,23 +197,56 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "send", "send", Args(session.SessionId, "also this", "c7"));
         var held = await agent.ReadAsync("_session/steering");
         await CallAsync(retry, 1, "send", "send", Args(session.SessionId, "also this", "c7"));
+        await _log.WrittenAsync("send c7: joined in-flight send");
         await SendAsync(retry, """{"t":"cancel","id":1}""");
         Assert.Contains("\"code\":\"cancelled\"", await ReadAsync(retry));
         await agent.ReplyAsync(held, Injected);
         Assert.Equal(Result(2, runId), await ReadAsync(socket));
 
-        // The first is cut off by its 30 s limit while the retry waits: the retry sends the message itself.
+        // The first is cut off by its 30 s limit after its request went out, while the retry waits on it: with no row,
+        // the retry answers the same failure and sends nothing.
         await CallAsync(socket, 3, "send", "send", Args(session.SessionId, "and this", "c8"));
         await agent.ReadAsync("_session/steering");
         _time.Advance(TimeSpan.FromSeconds(20));
         await CallAsync(retry, 2, "send", "send", Args(session.SessionId, "and this", "c8"));
+        await _log.WrittenAsync("send c8: joined in-flight send");
         _time.Advance(TimeSpan.FromSeconds(10));
         Assert.Contains("\"code\":\"timeout\"", await ReadAsync(socket));
-        await agent.ReplyAsync(await agent.ReadAsync("_session/steering"), Injected);
-        Assert.Equal(Result(2, runId), await ReadAsync(retry));
+        Assert.Contains("\"code\":\"failed\"", await ReadAsync(retry));
 
+        // The next thing the agent hears is the turn's close: c8 was a steering request once.
         await EndTurnAsync(agent, prompt);
-        Assert.Equal((1, 1), (UserRows(session.SessionId, "c7"), UserRows(session.SessionId, "c8")));
+        Assert.Equal((1, 0), (UserRows(session.SessionId, "c7"), UserRows(session.SessionId, "c8")));
+    }
+
+    [Fact]
+    public async Task A_steer_the_agent_takes_just_after_its_turn_ended_lands_on_that_turn_once()
+    {
+        var session = _sessions.Create("claude", "repo");
+        using var socket = await OpenRealAsync();
+        var (runId, agent, prompt) = await RunningTurnAsync(socket, session.SessionId);
+
+        await CallAsync(socket, 2, "send", "send", Args(session.SessionId, "also this", "c14"));
+        var steer = await agent.ReadAsync("_session/steering");
+        // The turn ends, and only then does the agent say it took the message.
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        var close = await agent.ReadAsync("session/close");
+        await agent.ReplyAsync(steer, Injected);
+        Assert.Equal(Result(2, runId), await ReadAsync(socket));
+        await agent.ReplyAsync(close, "{}");
+
+        await CallAsync(socket, 3, "send", "send", Args(session.SessionId, "also this", "c14"));
+        Assert.Equal(Result(3, runId), await ReadAsync(socket));
+        Assert.Equal(runId, Assert.Single(_rows.RowsAfter(session.SessionId, 0), row => ClientId(row) == "c14").RunId);
+
+        // The next thing the agent hears is the next message's turn: c14 was a steering request once, and never sent again.
+        await CallAsync(socket, 4, "send", "send", Args(session.SessionId, "next", "c15"));
+        var next = RunOf(await ReadAsync(socket));
+        await agent.OpenAsync();
+        var second = await agent.ReadAsync("session/prompt");
+        Assert.Equal("next", second.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        await EndTurnAsync(agent, second);
+        Assert.NotEqual(runId, next);
     }
 
     [Fact]
