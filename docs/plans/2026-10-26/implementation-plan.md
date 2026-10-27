@@ -1467,19 +1467,66 @@ catalogue stays the reference.
     session is next followed. Fixing that (follow while `background > 0`, or a remote push of its summaries) is a
     separate decision, not part of 1c.
 
-    *Unread needs storage.* The old app kept it in memory only (`sessionPresence.ts:52`): a session became unread when
-    a turn ended or an ask opened while it wasn't the one on screen, and read when it was opened
-    (`ConversationSurface.svelte:291-296`), and a restart forgot it all. To keep it on the backend, so every window
-    agrees and it survives a restart, it needs a new column, say `session_info.read_seq` (the seq the window last
-    marked read), and a `sessions/read {session, seq}` write. That's a schema change, so it stops here for the move
-    thread's OK. Without it, 1c ships the other fields and `needsAttention` is `pendingAsk` alone.
+    *The spike thread passed this shape (2026-10-27)* from the window's side: the four states, the in-memory diff (two
+    upserts a turn) and no machine calls.
+
+    *Unread, if the move thread OKs the column.* Only a turn's end sets it: `unread` is true when the seq of the
+    newest turn row that ended (`finished`, `failed` or `cancelled`) is above the session's `read_seq`; deltas and the
+    user's own rows never set it. While a session is on screen, the window calls `sessions/read {session, seq}` with
+    the newest seq it has shown: a write with no order key and nothing outside the database, which raises `read_seq`
+    and publishes the item, and ignores a seq at or below `read_seq`, so it's idempotent. The old app kept unread in
+    memory only (`sessionPresence.ts:52`), lost on a restart. If the move thread doesn't OK it, 1c ships without
+    unread and `needsAttention` is `pendingAsk` alone.
+
+    *The migration, proposed.*
+    - DDL: `ALTER TABLE session_info ADD COLUMN read_seq INTEGER NOT NULL DEFAULT 0;`. It goes in
+      `SessionStore.Open`'s schema write (`SessionStore.cs:60-82`), behind a `Missing(HasReadSeq)` check like the
+      `machine`, `helper` and other added columns there, so it runs once and is safe to run again.
+    - Existing rows: in the same write, `UPDATE session_info SET read_seq = COALESCE((SELECT MAX(seq) FROM rows WHERE
+      rows.session_id = session_info.session_id), 0);`. Every existing session starts read: otherwise the first start
+      after the upgrade marks every old session that ever finished a turn (hundreds on Jesse's 9797 data) unread, which
+      is noise, not news. `rows` exists by then: `RowStore.Open` runs before `SessionStore.Open`
+      (`DesktopBackend.cs:67-68`). A session made after the upgrade starts at 0, so its first finished turn is unread
+      until the window shows it.
+    - No `FormatVersion` bump. `RowStore.FormatVersion` (`RowStore.cs:18`) is the rows' format, which two machines
+      compare before copying rows (`RemoteMachine.cs:185`); this changes no row. `session_info` is each machine's
+      own, and the read marker lives on the desktop that shows the session (a remote session's item is in the
+      desktop's `session_info` too), so the desktop and the remote needn't deploy together. An older build reading the
+      file ignores the column, since every query names its columns. Jesse's 9797 data gets the column and the backfill
+      on its next start, all its sessions read.
 
     *Online is the machine's, not the session's.* The old app kept it per machine (`sessionRailStore.svelte.ts:20-59`).
     Here nothing records it: a remote call that fails throws `MachineUnreachable` (`RemoteMachine.cs:220-230`), and
-    `machines/list` answers names only (`MachinesFeature.cs:32`). Putting it on each session would send an upsert for
-    every session on a machine when it drops. The proposal is to leave it off `SessionItem` and give `machines/list`
-    (later a small `machines` topic) a `reachable` flag that the tunnel and follower set; the window joins it by
-    `machine`. No field here needs a machine call.
+    `machines/list` answers names only (`MachinesFeature.cs:32`). On each session it would send an upsert for every
+    session on a machine when it drops. So it stays off `SessionItem`: `machines/list` gets a `reachable` flag that
+    the tunnel and follower set, and the window joins it on the machine name (the spike thread agreed). Until the
+    machines topic below exists, the window learns a machine dropped only from an `unreachable` error. No field here
+    needs a machine call.
+
+    *Timing, measured on a copy of the 40k database* (387 sessions, 46,978 rows, one session of 40,033; the newest 200
+    sessions include it; 20 runs each). The three proposed per-session queries for the newest 200 take a median of
+    10.1 ms, worst 11.3 ms; the 40k session alone is 6.4 ms of that, because no index starts `(session_id, kind)`, so
+    the ask and background checks walk all its rows. One grouped query for the 200 takes 14.8 ms (worst 15.2). With an
+    index on `(session_id, kind, seq)`, added to a second copy only to measure, the per-session way drops to 2.7 ms
+    (worst 3.0) and the 40k session to 0.01 ms; the grouped query to 8.3 ms. Either way it's more than a few ms under
+    the Topics lock, so the sessions state never queries: it reads an in-memory summary by session.
+
+    *The in-memory summary.* The hub keeps each session's summary in a dictionary. To be correct from the first
+    subscriber:
+    - It's filled once when the hub is made, before `RunRecovery.CloseUnfinished` (`DesktopBackend.cs:69-70`) and
+      before the socket serves, from one grouped query over every session (any can move to the top), not the newest 200.
+      Recovery then closes open runs, asks and tasks through `hub.Publish` (`RunRecovery.cs:29,36,45`), so its rows
+      update the dictionary like any others.
+    - From then on every stored row reaches it: `Publish` and `PublishCopy` both end in `Push` under the hub lock, which
+      updates the entry before publishing, so no commit lands between a read and its update.
+    - A session with no rows has no entry and reads as idle with nothing pending. It holds a few fields per session,
+      under 100 bytes each.
+
+    *Also for 1c's PR* (the move thread, 2026-10-27): if a write's `failed` callback throws, its exception replaces
+    the call's real error. The dispatcher wraps the call to `failed` in a try/catch that logs and rethrows the original,
+    with a red test first.
+  - **Next after 1c: a `machines` topic.** Each machine by name with `reachable`, set by the tunnel and the follower,
+    so the window sees a machine drop without waiting for an `unreachable` error. `machines/list` stays for the names.
   - **Config stays calls, without a topic for now.** A change the agent makes mid-turn (`config_option_update`,
     `available_commands_update`) only updates SessionStore's stored copy (`SessionHost.Background.cs:228-233`), with no
     row and nothing published, and `current_mode_update` is ignored (`UpdateReader.cs:33`). So nothing pushes it, and
