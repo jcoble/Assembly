@@ -453,6 +453,11 @@ fn an_ask_answered_while_shown_shrinks_and_one_drawn_answered_is_still(cx: &mut 
     assert!(!is_open(2, cx), "drawn answered: shut");
     live(&client, ask(4, "ask:a1", "answered"), cx);
     assert!(!is_open(1, cx), "the answered one shrinks shut");
+    // Opened again by hand, it stays open as more rows come.
+    let key = cx.update(|_, cx| pane.read(cx).view.items[1].key.clone());
+    click(&pane, &key, cx);
+    live(&client, user(5, "next"), cx);
+    assert!(is_open(1, cx), "a settled ask opened by hand stays open");
     client.queue_answer(Ok(json!({ "ok": true })));
     let calls = client.calls().len();
     let answer = json!({ "optionId": "allow" });
@@ -469,4 +474,30 @@ fn an_ask_answered_while_shown_shrinks_and_one_drawn_answered_is_still(cx: &mut 
         calls,
         "an answered ask answers nothing more"
     );
+}
+
+// The socket dropped while a question was open, and it was answered meanwhile: the page loaded after the reconnect
+// says so, and the card shuts as it would have live.
+// Pins: g0-session#16, g0-session#29
+#[gpui::test]
+fn an_ask_answered_while_disconnected_shuts_once_the_page_reloads(cx: &mut TestAppContext) {
+    let ask = |seq: i64, state: &str| {
+        let payload =
+            json!({ "kind": "permission", "state": state, "options": [], "answer": null });
+        row(seq, "ask", Some("ask:a1"), payload)
+    };
+    let (pane, client, cx) = opened(vec![user(1, "go"), ask(2, "open")], cx);
+    let key = cx.update(|_, cx| pane.read(cx).view.items[1].key.clone());
+    let is_open = |cx: &mut VisualTestContext| {
+        let row = expand_row(&pane, &key, cx);
+        cx.update(|_, cx| row.read(cx).is_open())
+    };
+    assert!(is_open(cx));
+    client.queue_answer(Ok(page(
+        vec![user(1, "go"), ask(3, "answered")],
+        false,
+        None,
+    )));
+    jump(&client, 3, cx);
+    assert!(!is_open(cx), "the reloaded page's answer shuts it");
 }

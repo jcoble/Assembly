@@ -69,6 +69,31 @@ pub fn outcome(ask: &AskPayload) -> String {
     }
 }
 
+/// What a question asked, for its settled card: each field's label, its hint, and its choices joined ("" for text).
+pub fn asked(ask: &AskPayload) -> Vec<(String, Option<String>, String)> {
+    let fields = ask.schema.as_ref().and_then(AskSchema::of);
+    fields
+        .map(|fields| fields.properties)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, field)| {
+            let choices = match field.input() {
+                AskInput::One(choices) | AskInput::Many(choices) => choices
+                    .iter()
+                    .map(|choice| choice.title.clone().unwrap_or(choice.value.clone()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                AskInput::Text => String::new(),
+            };
+            (
+                field.title.clone().unwrap_or(name),
+                field.description.clone(),
+                choices,
+            )
+        })
+        .collect()
+}
+
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Null | Value::Bool(false) => false,
@@ -179,7 +204,7 @@ impl AskRow {
         )
     }
 
-    /// The message and what answers it, under the title; a settled one's message only.
+    /// The message and what answers it, under the title; a settled one's message and fields, with nothing to answer.
     pub fn controls(&self, cx: &App) -> Div {
         let theme = cx.theme();
         let ask_id = self.ask_id.clone();
@@ -209,7 +234,15 @@ impl AskRow {
                         .child(message),
                 )
             });
+        // Settled, it shows what it asked (each field and its choices) with nothing to answer.
         if self.ask.state != "open" {
+            for (label, hint, choices) in asked(&self.ask) {
+                let value = div()
+                    .flex_1()
+                    .text_color(theme.muted_foreground)
+                    .child(choices);
+                column = column.child(inline_field(label, hint, value, cx));
+            }
             return column;
         }
         let Some(form) = &self.form else {

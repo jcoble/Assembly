@@ -89,6 +89,15 @@ impl SessionPane {
                 row
             }
         };
+        // A question answered since it was last drawn open shrinks shut, whether the answer came live or on a page
+        // loaded after a reconnect; one opened again by hand after that stays open.
+        if let ItemKind::Ask { ask, .. } = &item.kind {
+            if ask.state == "open" {
+                self.open_asks.insert(item.key.clone());
+            } else if self.open_asks.remove(&item.key) {
+                row.update(cx, |row, cx| row.set_open(false, true, cx));
+            }
+        }
         Some(row.into_any_element())
     }
 
@@ -111,13 +120,6 @@ impl SessionPane {
                     self.read_detail_if_stale(at, cx);
                 }
             }
-        }
-    }
-
-    /// Shuts a question answered while it was shown, growing in place backward.
-    pub(super) fn settle_ask(&mut self, key: &str, cx: &mut Context<Self>) {
-        if let Some((row, _)) = self.expands.get(key) {
-            row.update(cx, |row, cx| row.set_open(false, true, cx));
         }
     }
 }

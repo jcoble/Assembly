@@ -77,6 +77,8 @@ pub struct SessionPane {
     reading: HashMap<String, ToolState>,
     /// Each tool call, thinking and question's row that opens in place, by item key, and what the pane hears from it.
     expands: HashMap<String, (Entity<ExpandRow>, Subscription)>,
+    /// The questions last drawn open, by item key: one answered since shuts the next time it's drawn.
+    open_asks: HashSet<String>,
     /// The folds growing open or shut (`fold:<run>`), and whether their next frame is asked for.
     growing: HashSet<String>,
     grow_asked: bool,
@@ -202,6 +204,7 @@ impl SessionPane {
             live_since: None,
             reading: HashMap::new(),
             expands: HashMap::new(),
+            open_asks: HashSet::new(),
             growing: HashSet::new(),
             grow_asked: false,
             _clock: None,
@@ -239,6 +242,7 @@ impl SessionPane {
         self.forms.clear();
         self.reading.clear();
         self.expands.clear();
+        self.open_asks.clear();
         self.growing.clear();
         self.reveal = None;
         self.plan_open = false;
@@ -313,17 +317,7 @@ impl SessionPane {
                 ItemKind::Message { blocks, .. } if item.key == key => Some(Reveal::chars(blocks)),
                 _ => None,
             });
-        // An ask that was open when its answer arrives shrinks from now.
-        let asked = self.view.items.iter().any(|item| {
-            item.key == key
-                && matches!(&item.kind, ItemKind::Ask { ask, .. } if ask.state == "open")
-        });
         let change = self.view.apply(row);
-        if let (true, Change::Updated(at)) = (asked, change)
-            && matches!(&self.view.items[at].kind, ItemKind::Ask { ask, .. } if ask.state != "open")
-        {
-            self.settle_ask(&key, cx);
-        }
         if let (Change::Appended, Some(item)) = (change, self.view.items.last()) {
             let now = Instant::now();
             self.fresh
