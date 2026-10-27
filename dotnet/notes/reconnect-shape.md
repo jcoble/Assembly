@@ -16,7 +16,8 @@ seq gets only what came after (no duplicates). What's missing is a way to make t
 reconnect can be tested end to end and from the soak.
 
 - `diagnostics/drop` ends every `/socket` connection too, not only the `/live` row subscriptions. The caller's
-  socket is among them, so its answer doesn't arrive; the window treats the end as any other drop.
+  socket is among them, so its answer may not arrive; the window treats the end as any other drop. A drop also
+  cancels a read the receive loop is busy with (a sub's state), and a socket being accepted as it happens.
 - `SocketEndpoint` gets `DropAll()`: it cancels a drop token every open socket is linked to (beside the stopping one,
   which stays as it is, so a drop during shutdown can't undo it) and puts a fresh one in its place, so sockets opened
   after the drop work. The old source isn't disposed: a socket accepted mid-swap may still read its token.

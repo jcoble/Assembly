@@ -28,13 +28,11 @@ internal sealed class TurnActivity
         {
             if (held == _held)
                 return;
-            _held = held;
-            if (!OperatingSystem.IsMacOS())
-                return;
-            if (held)
+            if (OperatingSystem.IsMacOS() && held)
                 Begin();
-            else
+            else if (OperatingSystem.IsMacOS())
                 End();
+            _held = held;
         }
     }
 

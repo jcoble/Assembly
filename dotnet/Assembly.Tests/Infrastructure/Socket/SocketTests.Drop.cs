@@ -32,13 +32,38 @@ public sealed partial class SocketTests
         Assert.Equal("""{"t":"result","id":1,"result":{"text":"after"}}""", await ReadAsync(socket));
     }
 
-    // A close frame or a reset: either way the socket is over.
+    // A drop while a sub's state is loading on the receive loop cancels the load, rather than waiting for it.
+    [Fact]
+    public async Task Drop_cancels_a_subs_state_while_it_loads()
+    {
+        var loading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _calls.Topic("notes", TestJson.Default.Note, note => note.Text, (_, call) =>
+        {
+            loading.SetResult();
+            cancelled.SetResult(call.Cancellation.WaitHandle.WaitOne(Wait));
+            call.Cancellation.ThrowIfCancellationRequested();
+            return [];
+        });
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"notes"}""");
+        await loading.Task.WaitAsync(Wait);
+
+        _endpoint.DropAll();
+
+        Assert.True(await cancelled.Task.WaitAsync(Wait));
+        await AssertEndsAsync(socket);
+    }
+
+    // A close frame or a reset, after any frames already on their way: either way the socket is over.
     internal static async Task AssertEndsAsync(WebSocket socket)
     {
+        using var limit = new CancellationTokenSource(Wait);
         try
         {
-            var received = await socket.ReceiveAsync(new ArraySegment<byte>(new byte[1024]), CancellationToken.None).WaitAsync(Wait);
-            Assert.Equal(WebSocketMessageType.Close, received.MessageType);
+            while ((await socket.ReceiveAsync(new ArraySegment<byte>(new byte[64 * 1024]), limit.Token)).MessageType != WebSocketMessageType.Close)
+            {
+            }
         }
         catch (WebSocketException)
         {

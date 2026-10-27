@@ -16,7 +16,6 @@ internal sealed class PageRoutes(string token, string soakResults, Func<Uri> bac
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
-
     public void Map(IEndpointRouteBuilder routes) => routes.MapPost("/page/{method}", CallAsync);
 
     private async Task CallAsync(HttpContext context)

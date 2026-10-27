@@ -24,8 +24,9 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
             return;
         }
 
-        using var socket = await context.WebSockets.AcceptWebSocketAsync();
+        // Linked before the accept, so a drop while it's accepted still ends it.
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, _stopping.Token, Volatile.Read(ref _drop).Token);
+        using var socket = await context.WebSockets.AcceptWebSocketAsync();
         await new SocketConnection(socket, calls, time).RunAsync(_token, machine, stopping.Token);
     }
 
