@@ -62,6 +62,7 @@ public sealed partial class SocketTests
             keys.Add(key);
             return [];
         });
+        _calls.Read("notes", "echo", TestJson.Default.Note, TestJson.Default.Note, (note, _) => Task.FromResult(note));
         using var socket = await OpenAsync();
 
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"settings"}""");
@@ -75,6 +76,21 @@ public sealed partial class SocketTests
         Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"key":"theme","value":"dark"}}""", await ReadAsync(socket));
         Assert.Equal("""{"t":"change","sub":2,"op":"upsert","item":{"key":"theme","value":"dark"}}""", await ReadAsync(socket));
         Assert.Equal("""{"t":"change","sub":1,"op":"upsert","item":{"key":"font","value":"mono"}}""", await ReadAsync(socket));
+        // Nothing else was queued before this answer: the keyed subscription didn't get the font change.
+        await CallAsync(socket, 3, "notes", "echo", "{}");
+        Assert.Equal("""{"t":"result","id":3,"result":{"text":""}}""", await ReadAsync(socket));
+    }
+
+    [Fact]
+    public async Task A_state_over_4_MB_answers_failed_and_subscribes_nothing()
+    {
+        _calls.Topic("notes", TestJson.Default.Note, (_, _) => [new Note(new string('x', 4 * 1024 * 1024))]);
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"notes"}""");
+
+        Assert.Equal("failed", Code(await ReadAsync(socket), id: 1));
+        Assert.False(_topics.HasSubscribers("notes"));
     }
 
     [Fact]

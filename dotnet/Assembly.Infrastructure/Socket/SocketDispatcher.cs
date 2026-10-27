@@ -62,8 +62,19 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         var context = new CallContext(connection.Closed, connection.Id);
         try
         {
-            return topics.Subscribe(frame.Topic!, frame.Key, () => connection.Send(Bounded(state(id, frame.Key, context), id)),
-                json => connection.Send(ChangeFrame(id, json)));
+            return topics.Subscribe(frame.Topic!, frame.Key, () =>
+            {
+                var snapshot = state(id, frame.Key, context);
+                // Thrown inside the lock, so a state that can't go out subscribes nothing.
+                if (snapshot.Length > SocketConnection.MaxFrame)
+                    throw new CallFailed($"{frame.Topic}'s state is over 4 MB");
+                connection.Send(snapshot);
+            }, json => connection.Send(ChangeFrame(id, json)));
+        }
+        catch (CallFailed error)
+        {
+            connection.Send(Error(id, "failed", error.Message));
+            return null;
         }
         catch (OperationCanceledException) when (connection.Closed.IsCancellationRequested)
         {
@@ -137,7 +148,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static ReadOnlyMemory<byte> Error(long id, string code, string message) =>
         Bounded(Frame(new ErrorFrame(id, code, message), SocketJson.Default.ErrorFrame), id);
 
-    // No frame goes out over 4 MB (plan 5.1): an answer or a state over it answers a short failed instead.
+    // No frame goes out over 4 MB (plan 5.1): an answer over it answers a short failed instead.
     private static ReadOnlyMemory<byte> Bounded(ReadOnlyMemory<byte> frame, long id) =>
         frame.Length <= SocketConnection.MaxFrame
             ? frame
