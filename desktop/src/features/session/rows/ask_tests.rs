@@ -58,3 +58,37 @@ fn a_form_with_no_fields_is_none_and_a_field_it_cannot_read_is_a_plain_text_fiel
     assert_eq!(form.properties[0].1.kind, None);
     assert!(form.required.is_empty());
 }
+
+// Pins: g0-session#16
+#[test]
+fn each_field_answers_by_its_choices_or_as_text() {
+    use super::ask::AskInput;
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "zone": { "type": "string", "enum": ["east", "west"] },
+            "tags": { "type": "array", "items": { "anyOf": [{ "const": "a", "title": "A" }] } },
+            "colour": { "type": "string", "oneOf": [{ "const": "red", "title": "Red" }] },
+            "note": { "type": "string" },
+        },
+    });
+    let form = AskSchema::of(&schema).unwrap();
+    let inputs: Vec<AskInput> = form
+        .properties
+        .iter()
+        .map(|(_, field)| field.input())
+        .collect();
+    let values = |input: &AskInput| match input {
+        AskInput::One(choices) | AskInput::Many(choices) => choices
+            .iter()
+            .map(|choice| choice.value.clone())
+            .collect::<Vec<_>>(),
+        AskInput::Text => vec![],
+    };
+    assert!(matches!(inputs[0], AskInput::One(_)));
+    assert_eq!(values(&inputs[0]), ["east", "west"]);
+    assert!(matches!(inputs[1], AskInput::Many(_)));
+    assert_eq!(values(&inputs[1]), ["a"]);
+    assert!(matches!(inputs[2], AskInput::One(_)));
+    assert_eq!(inputs[3], AskInput::Text);
+}

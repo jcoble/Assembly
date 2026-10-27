@@ -84,6 +84,46 @@ pub struct AskField {
     pub items: Option<AskItems>,
 }
 
+/// How a form field is answered.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AskInput {
+    /// One of these.
+    One(Vec<AskChoice>),
+    /// Any of these.
+    Many(Vec<AskChoice>),
+    Text,
+}
+
+impl AskField {
+    /// A multi-select's choices for an array, else its one-of or enum choices, else text, as the web form reads them.
+    pub fn input(&self) -> AskInput {
+        let listed = |values: &Option<Vec<String>>| {
+            values.as_ref().map(|values| {
+                values
+                    .iter()
+                    .map(|value| AskChoice {
+                        value: value.clone(),
+                        title: None,
+                        description: None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+        };
+        if self.kind.as_deref() == Some("array")
+            && let Some(choices) = self
+                .items
+                .as_ref()
+                .and_then(|items| items.any_of.clone().or_else(|| listed(&items.choices)))
+        {
+            return AskInput::Many(choices);
+        }
+        match self.one_of.clone().or_else(|| listed(&self.choices)) {
+            Some(choices) => AskInput::One(choices),
+            None => AskInput::Text,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AskItems {

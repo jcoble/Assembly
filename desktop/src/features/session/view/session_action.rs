@@ -6,6 +6,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 use serde_json::Value;
 
+#[derive(Clone)]
 pub enum SessionAction {
     /// Open or close a finished turn's fold, by its run id.
     ToggleFold { run_id: String },
@@ -16,6 +17,16 @@ pub enum SessionAction {
     TogglePlan,
     /// Show an open tool call's whole diff, by item key.
     ShowAllDiff { key: String },
+    /// Pick a choice in an open question's form: the field's one choice, or one more of many (picked again, it's
+    /// taken off).
+    Pick {
+        ask_id: String,
+        field: String,
+        value: String,
+        many: bool,
+    },
+    /// Send an open question's form as it's filled in.
+    SubmitAsk { ask_id: String },
     /// `send/answer`: the option's `{ optionId }` or the form's `{ action, content }`.
     Answer { ask_id: String, answer: Value },
     /// `send/stopTask`: a task, or a subagent by its session id.

@@ -251,3 +251,110 @@ fn the_working_line_counts_by_the_backend_clock_only_while_a_turn_runs(cx: &mut 
     );
     assert!(!client.ticking(), "nothing ticks once the turn is over");
 }
+
+// Pins: g0-session#12
+#[gpui::test]
+fn a_run_whose_start_is_not_loaded_counts_from_when_it_was_first_seen(cx: &mut TestAppContext) {
+    let (pane, client, cx) = opened(vec![user(1, "go")], cx);
+    let since = cx.update(|_, cx| pane.read(cx).live_since.clone());
+    let (run, at) = since.expect("the page's active run is going");
+    assert_eq!(run, "r1");
+    live(&client, user(2, "more"), cx);
+    assert_eq!(
+        cx.update(|_, cx| pane.read(cx).live_since.clone()),
+        Some(("r1".to_string(), at)),
+        "it doesn't restart on each refresh"
+    );
+}
+
+// Pins: g0-session#29
+#[gpui::test]
+fn a_backend_restart_mid_turn_does_not_leave_working_on(cx: &mut TestAppContext) {
+    let (pane, client, cx) = opened(vec![user(1, "go")], cx);
+    assert!(client.ticking());
+    client.queue_answer(Ok(page(vec![user(1, "go")], false, None)));
+    jump(&client, 1, cx);
+    assert!(!client.ticking(), "the new page says nothing runs");
+    assert!(
+        !cx.update(|_, cx| pane.read(cx).entries(cx))
+            .contains(&Entry::Working)
+    );
+}
+
+// Pins: g0-session#1
+#[gpui::test]
+fn live_rows_wait_through_a_failed_first_page_for_the_next_one(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Err(
+        crate::features::session::client::session_client::CallError::Failed("boom".into()),
+    ));
+    jump(&client, 1, cx);
+    live(&client, user(2, "later"), cx);
+    assert!(
+        cx.update(|_, cx| pane.read(cx).view.items.is_empty()),
+        "nothing shows without its history"
+    );
+    client.queue_answer(Ok(page(vec![user(1, "first")], false, None)));
+    jump(&client, 1, cx);
+    live(&client, user(3, "last"), cx);
+    let texts: Vec<String> = cx.update(|_, cx| {
+        pane.read(cx)
+            .view
+            .items
+            .iter()
+            .map(|item| item.key.clone())
+            .collect()
+    });
+    assert_eq!(texts, ["seq:1", "seq:3"]);
+}
+
+// Pins: g0-session#16
+#[gpui::test]
+fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
+    let schema = json!({ "type": "object", "properties": {
+        "zone": { "type": "string", "enum": ["east", "west"] },
+        "tags": { "type": "array", "items": { "enum": ["a", "b"] } },
+        "note": { "type": "string" },
+    } });
+    let ask = row(
+        2,
+        "ask",
+        Some("ask:a1"),
+        json!({ "kind": "question", "state": "open", "schema": schema }),
+    );
+    let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
+    pane.update_in(cx, |pane, window, cx| {
+        pane.make_form(&Entry::Item(1), window, cx)
+    });
+    let pick = |field: &str, value: &str, many: bool| SessionAction::Pick {
+        ask_id: "a1".into(),
+        field: field.into(),
+        value: value.into(),
+        many,
+    };
+    for action in [
+        pick("zone", "east", false),
+        pick("zone", "west", false),
+        pick("tags", "a", true),
+        pick("tags", "b", true),
+        pick("tags", "a", true),
+    ] {
+        act(&pane, action, cx);
+    }
+    client.queue_answer(Ok(json!({ "ok": true })));
+    act(
+        &pane,
+        SessionAction::SubmitAsk {
+            ask_id: "a1".into(),
+        },
+        cx,
+    );
+    assert_eq!(
+        calls_after(&client, 1),
+        [(
+            "send/answer".to_string(),
+            json!({ "session": "s1", "ask": "a1", "answer": { "action": "accept", "content": { "zone": "west", "tags": ["b"] } } })
+        )]
+    );
+}

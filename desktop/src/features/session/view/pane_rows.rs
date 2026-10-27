@@ -8,6 +8,7 @@ use crate::features::session::model::entries::Entry;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::turn_line::{checkout_line, turn_line};
+use crate::features::session::view::ask_card::AskForm;
 use crate::features::session::view::item_row::ItemRow;
 use crate::features::session::view::session_action::OnAction;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
@@ -34,6 +35,10 @@ impl SessionPane {
                     session: self.session.clone().unwrap_or_default().into(),
                     copy: self.copy_text(item),
                     checkout: self.checkout(item),
+                    form: match &item.kind {
+                        ItemKind::Ask { ask_id, .. } => self.forms.get(ask_id).cloned(),
+                        _ => None,
+                    },
                     now,
                     on_action: on_action.clone(),
                 }
@@ -53,14 +58,25 @@ impl SessionPane {
                 None => div().into_any_element(),
             },
             Entry::Working => {
-                let active = self.view.active_run(self.known_run.as_deref());
-                let started = active
-                    .as_deref()
-                    .and_then(|run| self.view.run_started_at(run))
-                    .or(Some(now));
-                let stats = active.as_deref().and_then(|run| self.view.stats.get(run));
-                line(turn_line(stats, started, now), muted)
+                let (run, since) = self.live_since.clone().unzip();
+                let stats = run.and_then(|run| self.view.stats.get(&run));
+                line(turn_line(stats, since.or(Some(now)), now), muted)
             }
+        }
+    }
+
+    /// Makes an open question's form the first time its card is drawn: its text fields need the window.
+    pub(super) fn make_form(&mut self, entry: &Entry, window: &mut Window, cx: &mut App) {
+        let Entry::Item(at) = entry else { return };
+        let Some(ItemKind::Ask { ask_id, ask }) = self.view.items.get(*at).map(|item| &item.kind)
+        else {
+            return;
+        };
+        if ask.state != "open" || self.forms.contains_key(ask_id) {
+            return;
+        }
+        if let Some(form) = AskForm::of(ask, window, cx) {
+            self.forms.insert(ask_id.clone(), form);
         }
     }
 

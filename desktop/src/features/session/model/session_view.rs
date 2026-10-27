@@ -258,7 +258,7 @@ impl SessionView {
 }
 
 /// A row's item key: a row with no item is its own, by seq; deltas share their message's.
-fn key_of(row: &Row) -> String {
+pub fn key_of(row: &Row) -> String {
     match &row.item_id {
         None => format!("seq:{}", row.seq),
         Some(item) => format!(

@@ -6,7 +6,7 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::ask_card::AskCard;
+use super::ask_card::{AskCard, AskForm};
 use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
 use super::sent_message::SentMessage;
@@ -30,6 +30,8 @@ pub struct ItemRow {
     pub copy: Option<SharedString>,
     /// "Checkout changed · main@1a2b3c4 → feat@5d6e7f8" above a prompt whose run started elsewhere.
     pub checkout: Option<String>,
+    /// An open question's form.
+    pub form: Option<AskForm>,
     pub now: i64,
     pub on_action: OnAction,
 }
@@ -133,6 +135,7 @@ impl RenderOnce for ItemRow {
             ItemKind::Ask { ask_id, ask } => AskCard {
                 ask_id,
                 ask,
+                form: self.form,
                 on_action: self.on_action.clone(),
             }
             .into_any_element(),

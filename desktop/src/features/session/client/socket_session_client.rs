@@ -22,9 +22,11 @@ impl SessionClient for SocketSessionClient {
         mut sink: RowsSink,
         cx: &App,
     ) -> Subscription {
-        let mut rows = SocketClient::global(cx)
-            .read(cx)
-            .subscribe_rows(session, after);
+        // Before the backend's first ready line there's no socket yet, and so no rows.
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return Subscription::new(|| {});
+        };
+        let mut rows = socket.read(cx).subscribe_rows(session, after);
         // The task owns the topic subscription, so dropping it unsubscribes.
         let task = cx.spawn(async move |cx| {
             while let Ok(update) = rows.updates.recv().await {
@@ -42,9 +44,10 @@ impl SessionClient for SocketSessionClient {
         key: Option<&str>,
         cx: &App,
     ) -> Task<Result<Value, CallError>> {
-        let call = SocketClient::global(cx)
-            .read(cx)
-            .call::<Value>(feature, method, args, key);
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return Task::ready(Err(CallError::Failed("The backend isn't running.".into())));
+        };
+        let call = socket.read(cx).call::<Value>(feature, method, args, key);
         cx.foreground_executor().spawn(async move {
             match call.await {
                 Outcome::Ok(result) => Ok(result),
@@ -55,6 +58,9 @@ impl SessionClient for SocketSessionClient {
     }
 
     fn clock(&self, mut sink: ClockSink, cx: &mut App) -> Subscription {
+        if SocketClient::try_global(cx).is_none() {
+            return Subscription::new(|| {});
+        }
         let clock = cx.new(|cx| {
             let mut clock = BackendClock::new();
             clock.hold(cx);

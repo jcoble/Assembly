@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
+use super::ask_card::AskForm;
 use super::plan_card::PlanCard;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
@@ -32,10 +33,10 @@ use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::model::reveal::Reveal;
-use crate::features::session::model::session_view::SessionView;
-use crate::features::session::rows::markdown::Block;
+use crate::features::session::model::session_view::{SessionView, key_of};
 use crate::features::session::rows::row::Row;
 use crate::features::session::rows::row_page::RowPage;
+use crate::features::session::rows::tool::ToolState;
 
 pub struct SessionPane {
     client: Rc<dyn SessionClient>,
@@ -52,6 +53,8 @@ pub struct SessionPane {
     plan_open: bool,
     /// When each row that arrived live since the session opened came in, by item key, so it fades in once.
     fresh: HashMap<String, Instant>,
+    /// Each open question's form, by ask id, made when its card is first drawn.
+    forms: HashMap<String, AskForm>,
     /// What each item keeps while off screen, by item key.
     kept: HashMap<String, Kept>,
     /// What each row's buttons call: this pane's `on_action`.
@@ -66,6 +69,11 @@ pub struct SessionPane {
     frame_asked: bool,
     /// The backend clock's last second while a turn runs, which the "Working for" line counts by.
     now: Option<i64>,
+    /// The run going now and when it started: its turn row's time, or when the pane first saw it, as the web does,
+    /// when that row isn't loaded.
+    live_since: Option<(String, i64)>,
+    /// Tool calls whose detail is being read, by item key, with the state it's read for.
+    reading: HashMap<String, ToolState>,
     /// The clock's ticks, only while a turn runs.
     _clock: Option<Subscription>,
     /// Live rows that came before the first page, applied once it lands: a delta needs the blocks the page has.
@@ -80,7 +88,9 @@ pub struct SessionPane {
     /// The rows subscription and every load this session started; replaced on open, dropped on close. Each call keys
     /// on the session, so a load for the session left behind stops.
     _rows: Option<Subscription>,
-    _tasks: Vec<Task<()>>,
+    _page: Option<Task<()>>,
+    /// The calls a row's buttons started, by what they're for, so a newer one of the same kind replaces the older.
+    _tasks: HashMap<String, Task<()>>,
     /// The composer's events and the timeline's scrolling.
     _heard: [Subscription; 2],
 }
@@ -107,6 +117,7 @@ impl SessionPane {
             let Some(pane) = pane.upgrade() else {
                 return div().into_any_element();
             };
+            pane.update(cx, |pane, cx| pane.make_form(entry, window, cx));
             let (row, fresh) = {
                 let pane = pane.read(cx);
                 (pane.row(entry, &pane.on_action, cx), pane.fresh_key(entry))
@@ -146,6 +157,7 @@ impl SessionPane {
             open_folds: HashSet::new(),
             kept: HashMap::new(),
             fresh: HashMap::new(),
+            forms: HashMap::new(),
             plan_open: false,
             on_action,
             timeline,
@@ -154,13 +166,16 @@ impl SessionPane {
             revealed_at: Instant::now(),
             frame_asked: false,
             now: None,
+            live_since: None,
+            reading: HashMap::new(),
             _clock: None,
             held: None,
             loading: false,
             failed_before: None,
             status: SharedString::default(),
             _rows: None,
-            _tasks: Vec::new(),
+            _page: None,
+            _tasks: HashMap::new(),
             _heard: heard,
         }
     }
@@ -174,13 +189,17 @@ impl SessionPane {
         }
         // The old subscription and loads drop first, so nothing of the session left behind lands here.
         self._rows = None;
+        self._page = None;
         self._tasks.clear();
         self.view = SessionView::default();
         self.held = Some(Vec::new());
         self.open_folds.clear();
         self.kept.clear();
         self.fresh.clear();
+        self.forms.clear();
+        self.reading.clear();
         self.reveal = None;
+        self.plan_open = false;
         (
             self.known_run,
             self.loading,
@@ -219,10 +238,11 @@ impl SessionPane {
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
         match event {
             RowUpdate::Jump { seq } => {
-                self._tasks.clear();
+                self._page = None;
                 self.view = SessionView::default();
                 self.held = Some(Vec::new());
                 self.reveal = None;
+                self.reading.clear();
                 (self.loading, self.failed_before) = (false, None);
                 self.timeline.update(cx, |timeline, cx| {
                     timeline.set_entries(Vec::new(), None, cx)
@@ -237,18 +257,15 @@ impl SessionPane {
     }
 
     fn apply_live(&mut self, row: &Row, cx: &mut Context<Self>) {
-        // What the streaming reply showed before this row, so the reveal goes on from there.
+        // What the row's reply showed before it, so the reveal goes on from there.
+        let key = key_of(row);
         let before = self
             .view
             .items
             .iter()
             .rev()
             .find_map(|item| match &item.kind {
-                ItemKind::Message {
-                    blocks,
-                    done: false,
-                    ..
-                } => Some((item.key.clone(), Reveal::chars(blocks))),
+                ItemKind::Message { blocks, .. } if item.key == key => Some(Reveal::chars(blocks)),
                 _ => None,
             });
         let change = self.view.apply(row);
@@ -290,7 +307,7 @@ impl SessionPane {
             Some(&format!("rows/page:{session}")),
             cx,
         );
-        self._tasks.push(cx.spawn(async move |pane, cx| {
+        self._page = Some(cx.spawn(async move |pane, cx| {
             let answer = call.await;
             pane.update(cx, |pane, cx| pane.on_page(answer, before, first, cx))
                 .ok();
@@ -319,13 +336,21 @@ impl SessionPane {
                 | CallError::Timeout(message),
             ) => format!("Couldn't load the session: {message}").into(),
         };
-        self.failed_before = page.is_err().then_some(before);
-        if let Ok(page) = page {
-            if first && self.known_run.is_none() {
-                self.known_run = page.active_run_id;
+        let Ok(page) = page else {
+            // A failed first page keeps the live rows waiting for the next `Jump`'s page; an older one isn't asked for
+            // again by itself.
+            if !first {
+                self.failed_before = Some(before);
             }
-            self.view.prepend_page(page.rows, page.has_before);
+            self.refresh(Change::Nothing, cx);
+            return;
+        };
+        self.failed_before = None;
+        if first {
+            // What the backend says runs now, so a run that ended while the socket was away stops counting.
+            self.known_run = page.active_run_id;
         }
+        self.view.prepend_page(page.rows, page.has_before);
         if first {
             for row in self.held.take().unwrap_or_default() {
                 self.view.apply(&row);
@@ -352,6 +377,13 @@ impl SessionPane {
                 .collect();
             timeline.set_entries(keyed, changed.as_deref(), cx);
         });
+        if self.live_since.as_ref().map(|(run, _)| run) != active.as_ref() {
+            self.live_since = active.clone().map(|run| {
+                let at = self.view.run_started_at(&run);
+                let since = at.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                (run, since)
+            });
+        }
         match (active.is_some(), self._clock.is_some()) {
             (true, false) => {
                 let pane = cx.weak_entity();
@@ -372,71 +404,6 @@ impl SessionPane {
         cx.notify();
     }
 
-    /// Starts the reveal on a reply that's still streaming, from what it showed before (`before`), unless it's
-    /// already revealing.
-    fn reveal_from(&mut self, change: Change, before: Option<(String, usize)>) {
-        let at = match change {
-            Change::Updated(at) => at,
-            _ => self.view.items.len() - 1,
-        };
-        let item = &self.view.items[at];
-        let ItemKind::Message { done: false, .. } = item.kind else {
-            return;
-        };
-        if self
-            .reveal
-            .as_ref()
-            .is_some_and(|reveal| reveal.key == item.key)
-        {
-            return;
-        }
-        let shown = before
-            .filter(|(key, _)| *key == item.key)
-            .map_or(0, |(_, chars)| chars);
-        self.reveal = Some(Reveal {
-            key: item.key.clone(),
-            shown,
-        });
-        self.revealed_at = Instant::now();
-    }
-
-    /// One frame of the reveal: steps it by the time since the last, and rests once it has caught up.
-    fn reveal_frame(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.frame_asked = false;
-        let Some(reveal) = &mut self.reveal else {
-            return;
-        };
-        let found = self
-            .view
-            .items
-            .iter()
-            .position(|item| item.key == reveal.key);
-        let target = found.and_then(|at| match &self.view.items[at].kind {
-            ItemKind::Message { blocks, .. } => Some(Reveal::chars(blocks)),
-            _ => None,
-        });
-        let (Some(at), Some(target)) = (found, target) else {
-            self.reveal = None;
-            return;
-        };
-        let now = Instant::now();
-        let dt = now.duration_since(self.revealed_at).as_secs_f64() * 1000.0;
-        self.revealed_at = now;
-        reveal.shown = Reveal::step(reveal.shown, target, dt);
-        if reveal.shown >= target {
-            self.reveal = None;
-        }
-        self.refresh(Change::Updated(at), cx);
-    }
-
-    /// The blocks a reply draws: cut to what the reveal shows while it's revealing.
-    pub(super) fn shown_blocks(&self, key: &str, blocks: &[Block]) -> Option<Vec<Block>> {
-        self.reveal
-            .as_ref()
-            .filter(|reveal| reveal.key == key)
-            .map(|reveal| Reveal::clip(blocks, reveal.shown))
-    }
-
     /// The key of a row that arrived live moments ago, which fades in as it's drawn.
     fn fresh_key(&self, entry: &Entry) -> Option<String> {
         let Entry::Item(at) = entry else { return None };
@@ -454,6 +421,8 @@ impl SessionPane {
 
 #[path = "pane_actions.rs"]
 mod actions;
+#[path = "pane_reveal.rs"]
+mod reveal;
 #[path = "pane_rows.rs"]
 mod rows;
 
