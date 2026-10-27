@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
@@ -16,6 +17,12 @@ internal sealed class RowsFeature : IFeature
     /// <summary>The most rows a page call reads, and the most a resume catches up.</summary>
     public const int PageLimit = 500;
 
+    /// <summary>
+    /// The most row JSON a resume catches up, in bytes. A socket closes past 16 MB queued (SocketConnection.MaxWaiting),
+    /// so a bigger catch-up would close it, and the page would ask again from the same seq forever.
+    /// </summary>
+    public const int CatchUpBytes = 8 * 1024 * 1024;
+
     private readonly LiveHub _hub;
     private readonly RowStore _store;
 
@@ -32,8 +39,9 @@ internal sealed class RowsFeature : IFeature
         calls.Rows(Topic, (session, after, _) =>
         {
             var last = _store.LastSeq(session);
-            if (after is >= 0 and var from && from <= last && _store.RowsAfter(session, from, PageLimit + 1) is { Count: <= PageLimit } rows)
-                return (from, rows.Select(RowWire.ToJson).ToList());
+            if (after is >= 0 and var from && from <= last && _store.RowsAfter(session, from, PageLimit + 1) is { Count: <= PageLimit } rows
+                && rows.Select(RowWire.ToJson).ToList() is var json && json.Sum(row => (long)Encoding.UTF8.GetByteCount(row)) <= CatchUpBytes)
+                return (from, json);
             return (last, []);
         });
         calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, (args, call) =>

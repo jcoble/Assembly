@@ -29,15 +29,17 @@ public sealed class RowsSocketTests : IAsyncLifetime
     private readonly TempDatabase _file = new();
     private AppDatabase _db = null!;
     private LiveHub _hub = null!;
+    private RowStore _store = null!;
+    private TopicSet _topics = null!;
     private SocketDispatcher _calls = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
 
     public async Task InitializeAsync()
     {
-        var topics = new TopicSet();
+        var topics = _topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
-        var store = RowStore.Open(_db);
+        var store = _store = RowStore.Open(_db);
         _hub = new LiveHub(store, topics: topics);
         _calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new RowsFeature(_hub, store).Register(_calls);
@@ -121,6 +123,47 @@ public sealed class RowsSocketTests : IAsyncLifetime
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s","after":9}""");
         Assert.Equal("""{"t":"state","sub":1,"seq":3,"items":[]}""", await ReadAsync(socket));
 
+        Commit("s", 1);
+        AssertRow(await ReadAsync(socket), sub: 1, seq: 4, prevSeq: 3);
+    }
+
+    // A row committed before the snapshot but published after it (5.7, B5's test 6): the snapshot already has it, so
+    // the published copy isn't sent again.
+    [Fact]
+    public async Task A_row_the_snapshot_already_has_isnt_sent_again_when_it_is_published()
+    {
+        Commit("s", 2);
+        var batch = new RowBatch();
+        batch.Rows.Add(new NewRow("run-1", null, RowKind.User, JsonSerializer.SerializeToElement(new { text = "late" }), 1));
+        var late = Assert.Single(_store.Commit("s", batch));
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s","after":1}""");
+        Assert.Equal("""{"t":"state","sub":1,"seq":1,"items":[]}""", await ReadAsync(socket));
+        AssertRow(await ReadAsync(socket), sub: 1, seq: 2, prevSeq: 1);
+        AssertRow(await ReadAsync(socket), sub: 1, seq: 3, prevSeq: 2);
+
+        _topics.Publish(RowsFeature.Topic, "s", RowWire.ToJson(late));
+        Commit("s", 1);
+        AssertRow(await ReadAsync(socket), sub: 1, seq: 4, prevSeq: 3);
+    }
+
+    // The socket closes past 16 MB queued, so a catch-up that big would loop: past RowsFeature.CatchUpBytes, the page
+    // reloads instead.
+    [Fact]
+    public async Task A_catch_up_past_its_byte_budget_starts_again_from_the_last_seq()
+    {
+        var big = new string('x', 3 * 1024 * 1024);
+        for (var i = 0; i < 3; i++)
+        {
+            var batch = new RowBatch();
+            batch.Rows.Add(new NewRow("run-1", null, RowKind.User, JsonSerializer.SerializeToElement(new { text = big }), 1));
+            _hub.Publish("s", batch);
+        }
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s","after":0}""");
+        Assert.Equal("""{"t":"state","sub":1,"seq":3,"items":[]}""", await ReadAsync(socket));
         Commit("s", 1);
         AssertRow(await ReadAsync(socket), sub: 1, seq: 4, prevSeq: 3);
     }
