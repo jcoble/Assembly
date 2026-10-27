@@ -1441,6 +1441,15 @@ drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. 
 code brought over piece by piece. Sol's step numbers are given so his
 catalogue stays the reference.
 
+### Status (2026-10-27): `app/` is frozen
+
+GPUI's `desktop/` replaces `app/` (decided 2026-10-27). No step moves `app/` onto the socket: it keeps `call.ts`,
+`api.ts` and `/live` as they are now, and is deleted whole at the cut. The steps above and below that move `app/`
+onto the socket (the page halves of B7, B8 and B10, and C1's page side) aren't built for it. `app/src/lib/socket.ts`
+stays, unused, until then. On the backend, the HTTP routes only `app/` uses (`FeatureCalls`, the chat routes,
+`/live` and `/page/<method>`) go at the cut with `app/`; the routes the remote client uses (`RemoteMachine` and
+`RemoteFollower`) go in C2, as written.
+
 ### C. Chat on the socket
 
 - **C1. Sessions, rows, sends and config** (Sol P03, P07, P12, P14).
