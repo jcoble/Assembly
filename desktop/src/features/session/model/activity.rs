@@ -21,14 +21,16 @@ pub fn steps(items: &[Item], run: &str, started_at: i64, now: i64) -> Vec<Step> 
             continue;
         }
         if let ItemKind::Tool { tool, .. } = &item.kind {
-            let end = if tool.state == ToolState::Started {
-                now
+            // A running call's newest row is usually its start, which a call that ran beside it and finished first
+            // doesn't move.
+            let (start, end) = if tool.state == ToolState::Started {
+                (since.min(item.at), now)
             } else {
-                item.at
+                (since, item.at)
             };
             steps.push(Step {
                 at,
-                took_ms: (end - since).max(0),
+                took_ms: (end - start).max(0),
             });
         }
         since = since.max(item.at);

@@ -16,7 +16,7 @@ use gpui_kit::*;
 use serde_json::json;
 
 use super::attachment::{Attachment, AttachmentState};
-use crate::features::session::client::session_client::{CallError, SessionClient};
+use crate::features::session::client::session_client::SessionClient;
 
 pub struct Composer {
     client: Rc<dyn SessionClient>,
@@ -164,9 +164,9 @@ impl Composer {
                                 });
                             }
                         }
-                        Err(CallError::Aborted) => {}
-                        // The prompt didn't go out: it comes back to its session's draft, unless something new was
-                        // typed there.
+                        // It didn't go out, or the socket closed before it answered (`Aborted`: a send has no key,
+                        // so nothing else takes its place): it comes back to its session's draft, unless something
+                        // new was typed there, and a resend keeps its clientId in case the first did land.
                         Err(_) => {
                             composer
                                 .retry_ids

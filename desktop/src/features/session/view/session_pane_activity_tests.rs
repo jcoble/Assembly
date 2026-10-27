@@ -61,3 +61,22 @@ fn a_running_turns_tool_calls_sit_in_its_card_then_fold_when_it_ends(cx: &mut Te
         "its work folds under the turn's heading: {ended:?}"
     );
 }
+
+// Pins: g0-session#12
+#[gpui::test]
+fn the_card_counts_from_the_turn_row_once_it_arrives(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(1, "go")], false, Some("r1"))));
+    jump(&client, 1, cx);
+    live(
+        &client,
+        row(2, "turn", None, json!({ "state": "started" })),
+        cx,
+    );
+    assert_eq!(
+        cx.update(|_, cx| pane.read(cx).live_since.clone()),
+        Some(("r1".to_string(), 2)),
+        "the backend's start, not when the pane first saw the run"
+    );
+}

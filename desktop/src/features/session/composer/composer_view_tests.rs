@@ -168,9 +168,14 @@ fn a_retried_send_reuses_its_client_id_and_a_new_one_gets_its_own(cx: &mut TestA
     composer.update_in(cx, |composer, window, cx| {
         composer.set_session(Some("s1".into()), window, cx)
     });
-    client.queue_answer(Err(CallError::Timeout("no answer".into())));
+    // The socket closed before it answered: it may have landed.
+    client.queue_answer(Err(CallError::Aborted));
     type_and_send(&composer, "hello", cx);
-    assert_eq!(draft(&composer, cx), "hello", "the failed send comes back");
+    assert_eq!(
+        draft(&composer, cx),
+        "hello",
+        "the unanswered send comes back"
+    );
     client.queue_answer(Ok(json!({ "runId": "r1" })));
     composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
     cx.run_until_parked();

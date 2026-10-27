@@ -30,7 +30,7 @@ use crate::features::session::client::session_client::{
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
-use crate::features::session::model::entries::{Entry, entry_key, in_card};
+use crate::features::session::model::entries::{Entry, entry_key};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
@@ -479,17 +479,13 @@ impl SessionPane {
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
         let active = self.view.active_run(self.known_run.as_deref());
         let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
-        // An item changed in place is measured again; so is the activity card when a step arrives in it.
+        // An item changed in place is measured again, and a running turn's card on any change: a step can arrive in
+        // it live or on an older page.
         let changed = match change {
             Change::Updated(at) => Some(entry_key(&self.view.items[at], active.as_deref())),
-            Change::Appended => self
-                .view
-                .items
-                .last()
-                .filter(|item| in_card(item, active.as_deref()))
-                .map(|item| entry_key(item, active.as_deref())),
-            Change::Nothing => None,
-        };
+            _ => None,
+        }
+        .or_else(|| active.is_some().then(|| Entry::Working.key(&[])));
         let (items, loading) = (&self.view.items, self.loading);
         let entries = Entry::all(items, &folds, &self.open_folds, loading, active.as_deref());
         self.folds = folds;
@@ -500,12 +496,20 @@ impl SessionPane {
                 .collect();
             timeline.set_entries(keyed, changed.as_deref(), cx);
         });
+        // The turn row's time once it's loaded (the backend's clock, as the steps' are); until then when the pane first
+        // saw the run, on the backend clock if it's ticking.
+        let started = active
+            .as_deref()
+            .and_then(|run| self.view.run_started_at(run));
         if self.live_since.as_ref().map(|(run, _)| run) != active.as_ref() {
             self.live_since = active.clone().map(|run| {
-                let at = self.view.run_started_at(&run);
-                let since = at.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-                (run, since)
+                let seen = self
+                    .now
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                (run, started.unwrap_or(seen))
             });
+        } else if let (Some((_, since)), Some(started)) = (&mut self.live_since, started) {
+            *since = started;
         }
         match (active.is_some(), self._clock.is_some()) {
             (true, false) => {

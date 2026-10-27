@@ -75,3 +75,10 @@ fn the_footer_counts_the_steps_and_the_turns_time() {
     assert_eq!(footer(3, 125_000), "3 steps · 2:05");
     assert_eq!(footer(2, 3_725_000), "2 steps · 1:02:05");
 }
+
+// Pins: g0-session#12
+#[test]
+fn a_running_step_counts_from_its_own_start_when_one_beside_it_finished_first() {
+    let items = vec![tool("a", 3_000, "completed"), tool("b", 1_500, "started")];
+    assert_eq!(steps(&items, "r1", 1_000, 5_000)[1].took_ms, 3_500);
+}
