@@ -272,40 +272,6 @@ public sealed class MachinesSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_watch_while_the_session_is_followed_follows_it_once_more_after()
-    {
-        _stub.Pings = false;
-        _box.WatchRunning(["s1"]);
-        await Until(() => _stub.LiveHits == 1);
-
-        _box.WatchRunning(["s1"]);
-
-        // The first link settles after 2 s of quiet; the second watch is still owed a pass.
-        await Until(() => _stub.LiveHits == 2);
-    }
-
-    [Fact]
-    public async Task Watches_at_the_same_moment_start_one_follower()
-    {
-        _stub.Pings = false;
-        var ids = Enumerable.Range(0, 40).Select(n => $"s{n}").ToArray();
-        foreach (var id in ids)
-        {
-            using var ready = new Barrier(8);
-            var watches = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
-            {
-                ready.SignalAndWait();
-                _box.WatchRunning([id]);
-            })).ToArray();
-            await Task.WhenAll(watches);
-        }
-
-        await Until(() => _stub.LiveHits >= ids.Length);
-        await Task.Delay(300);
-        Assert.Equal(ids.Length, _stub.LiveHits);
-    }
-
-    [Fact]
     public async Task A_500_answers_failed_and_leaves_the_machine_reachable()
     {
         _stub.AgentsStatus = 500;
@@ -478,7 +444,7 @@ public sealed class MachinesSocketTests : IAsyncLifetime
 
     // The remote's far end: /version and /agents, each able to answer an error status, drop the connection or (/version)
     // hang; /live, which sends its rows and then a ping every 300 ms; and a session read that always fails.
-    private sealed class StubRemote : IAsyncDisposable
+    internal sealed class StubRemote : IAsyncDisposable
     {
         private WebApplication _app = null!;
 
