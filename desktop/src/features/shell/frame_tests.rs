@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use futures_channel::oneshot;
 use gpui::TestAppContext;
 use gpui_kit::component::dock::{
     BasePanel, DockPlacement, Panel, PanelEvent, panel_handle, register_panel,
@@ -13,7 +14,11 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 
+use crate::core::socket::connection_state::ConnectionState;
+use crate::core::socket::update::Update;
+
 use super::default_layout::CHAT;
+use super::layout_store::{LAYOUT_KEY, WriteLayout, read_saved_layout, saved_layout};
 
 use super::frame::Frame;
 use super::placeholder_pane::PlaceholderPane;
@@ -38,17 +43,31 @@ fn open_window(
 ) -> (Entity<Frame>, Writes, &mut VisualTestContext) {
     let writes = Writes::default();
     let sink = writes.clone();
-    let (frame, cx) = cx.add_window_view(move |window, cx| {
-        Frame::new(
-            Task::ready(saved),
-            Box::new(move |layout, _| sink.borrow_mut().push(layout)),
-            window,
-            cx,
-        )
+    let write: WriteLayout = Box::new(move |layout, _| {
+        sink.borrow_mut().push(layout);
+        Task::ready(())
     });
+    let (frame, cx) = open_with(saved, write, cx);
+    (frame, writes, cx)
+}
+
+fn open_with(
+    saved: Option<Value>,
+    write: WriteLayout,
+    cx: &mut TestAppContext,
+) -> (Entity<Frame>, &mut VisualTestContext) {
+    open_reading(Task::ready(saved), write, cx)
+}
+
+fn open_reading(
+    read: Task<Option<Value>>,
+    write: WriteLayout,
+    cx: &mut TestAppContext,
+) -> (Entity<Frame>, &mut VisualTestContext) {
+    let (frame, cx) = cx.add_window_view(move |window, cx| Frame::new(read, write, window, cx));
     cx.simulate_resize(size(px(1400.), px(900.)));
     cx.run_until_parked();
-    (frame, writes, cx)
+    (frame, cx)
 }
 
 fn dump(frame: &Entity<Frame>, cx: &mut VisualTestContext) -> Value {
@@ -365,4 +384,154 @@ fn the_usage_popover_is_built_only_once_it_opens(cx: &mut TestAppContext) {
         body.bottom() <= button.top(),
         "the popover opens above the strip"
     );
+}
+
+// Pins: g0-shape#3
+#[test]
+fn the_saved_layout_is_the_layout_preference_in_the_first_state() {
+    let layout = json!({"version": 1});
+    let state = Update::State(vec![
+        ("theme".into(), json!({"key": "theme", "value": "dark"})),
+        (
+            LAYOUT_KEY.into(),
+            json!({"key": LAYOUT_KEY, "value": layout}),
+        ),
+    ]);
+    assert_eq!(saved_layout(Some(state)), Some(layout));
+    assert_eq!(saved_layout(Some(Update::State(Vec::new()))), None);
+    // The subscription ended without a state: the backend refused it.
+    assert_eq!(saved_layout(None), None);
+}
+
+/// Records which of the saves still being written were given up, by their order.
+struct GivenUp(usize, Rc<RefCell<Vec<usize>>>);
+
+impl Drop for GivenUp {
+    fn drop(&mut self) {
+        self.1.borrow_mut().push(self.0);
+    }
+}
+
+// Pins: g0-shape#4
+#[gpui::test]
+fn a_newer_save_replaces_one_still_being_written(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        PlaceholderPane::register_all(cx);
+    });
+    let given_up = Rc::new(RefCell::new(Vec::new()));
+    let (record, saves) = (given_up.clone(), Cell::new(0));
+    // A backend that never answers a save.
+    let write: WriteLayout = Box::new(move |_, cx| {
+        let pending = GivenUp(saves.replace(saves.get() + 1), record.clone());
+        cx.spawn(async move |_| {
+            let _pending = pending;
+            std::future::pending::<()>().await
+        })
+    });
+    let (frame, cx) = open_with(None, write, cx);
+    for placement in [DockPlacement::Right, DockPlacement::Bottom] {
+        cx.update(|window, cx| {
+            frame
+                .read(cx)
+                .dock()
+                .clone()
+                .update(cx, |dock, cx| dock.toggle_dock(placement, window, cx))
+        });
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        *given_up.borrow(),
+        [0],
+        "the first save was given up for the second"
+    );
+}
+
+/// Stands in for the socket client's connection state.
+struct Connection;
+
+impl EventEmitter<ConnectionState> for Connection {}
+
+// Pins: g0-shape#3
+#[gpui::test]
+fn a_backend_that_refuses_the_window_opens_the_default_layout(cx: &mut TestAppContext) {
+    let (fresh, _, cx) = open(None, cx);
+    let default = dump(&fresh, cx);
+    let (connection, read) = cx.update(|_, cx| {
+        let connection = cx.new(|_| Connection);
+        // The preferences state never comes; the refusal is what ends the wait.
+        let read = read_saved_layout(
+            std::future::pending(),
+            std::future::pending(),
+            &connection,
+            cx,
+        );
+        (connection, read)
+    });
+    let (frame, cx) = open_reading(read, Box::new(|_, _| Task::ready(())), &mut cx.cx);
+    assert_ne!(
+        dump(&frame, cx),
+        default,
+        "the window waits for the saved layout"
+    );
+    let refused = ConnectionState::Refused { code: 4401 };
+    cx.update(|_, cx| connection.update(cx, |_, cx| cx.emit(refused)));
+    cx.run_until_parked();
+    assert_eq!(dump(&frame, cx), default);
+}
+
+// Pins: g0-shape#3
+#[gpui::test]
+fn a_backend_that_connects_the_window_opens_the_saved_layout(cx: &mut TestAppContext) {
+    let (fresh, _, cx) = open(None, cx);
+    let mut saved = dump(&fresh, cx);
+    saved["right_dock"]["open"] = json!(true);
+    let (state, first) = oneshot::channel::<Update>();
+    let (connection, read) = cx.update(|_, cx| {
+        let connection = cx.new(|_| Connection);
+        let first = async { first.await.ok() };
+        let read = read_saved_layout(first, std::future::pending(), &connection, cx);
+        (connection, read)
+    });
+    let (frame, cx) = open_reading(read, Box::new(|_, _| Task::ready(())), &mut cx.cx);
+    // The client connects before the preferences state comes.
+    let connected = ConnectionState::Connected {
+        machine: "mac".into(),
+    };
+    cx.update(|_, cx| connection.update(cx, |_, cx| cx.emit(connected)));
+    let item = json!({"key": LAYOUT_KEY, "value": saved.clone()});
+    _ = state.send(Update::State(vec![(LAYOUT_KEY.into(), item)]));
+    cx.run_until_parked();
+    assert_eq!(without_sizes(dump(&frame, cx)), without_sizes(saved));
+}
+
+// Pins: g0-shape#3
+#[gpui::test]
+fn a_launcher_that_gives_up_after_ready_the_window_opens_the_default_layout(
+    cx: &mut TestAppContext,
+) {
+    let (fresh, _, cx) = open(None, cx);
+    let default = dump(&fresh, cx);
+    let (give_up, gave_up) = oneshot::channel::<()>();
+    let (connection, read) = cx.update(|_, cx| {
+        let connection = cx.new(|_| Connection);
+        // The backend was ready, then died before the preferences state, until the launcher gave up.
+        let gave_up = async { _ = gave_up.await };
+        let read = read_saved_layout(std::future::pending(), gave_up, &connection, cx);
+        (connection, read)
+    });
+    let (frame, cx) = open_reading(read, Box::new(|_, _| Task::ready(())), &mut cx.cx);
+    let connected = ConnectionState::Connected {
+        machine: "mac".into(),
+    };
+    cx.update(|_, cx| connection.update(cx, |_, cx| cx.emit(connected)));
+    cx.run_until_parked();
+    assert_ne!(
+        dump(&frame, cx),
+        default,
+        "the window waits for the saved layout"
+    );
+    drop(give_up);
+    cx.run_until_parked();
+    assert_eq!(dump(&frame, cx), default);
 }
