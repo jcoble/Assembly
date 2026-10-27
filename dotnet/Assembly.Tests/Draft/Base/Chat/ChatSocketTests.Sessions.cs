@@ -148,4 +148,17 @@ public sealed partial class ChatSocketTests
 
         Assert.Equal(made.Order(), seen.Order());
     }
+
+    [Fact]
+    public async Task Sessions_page_whose_answer_is_over_4_MB_answers_failed()
+    {
+        var title = new string('a', Mb);
+        for (var i = 0; i < 5; i++)
+            _sessions.SetTitle(_sessions.Create("claude", $"repo-{i}").SessionId, title);
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "sessions", "page", "{}");
+
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"the answer is over 4 MB"}""", await ReadAsync(socket));
+    }
 }
