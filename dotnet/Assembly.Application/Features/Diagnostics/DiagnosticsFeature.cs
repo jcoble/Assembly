@@ -4,7 +4,7 @@ namespace Assembly.Application.Features.Diagnostics;
 
 /// <summary>
 /// The Mac page's own calls (plan B8), named as the page named them: <c>diagnostics/memory.sample</c>,
-/// <c>activity.begin</c> and <c>activity.end</c> around a turn (App Nap), <c>drop</c> for the debug control that drops
+/// <c>drop</c> for the debug control that drops
 /// every subscription and every open socket (the caller's too, so its answer may not arrive), and <c>soak.append</c>.
 /// </summary>
 internal sealed class DiagnosticsFeature : IFeature
@@ -22,8 +22,6 @@ internal sealed class DiagnosticsFeature : IFeature
     {
         var empty = DiagnosticsJson.Default.Empty;
         calls.Read("diagnostics", "memory.sample", empty, DiagnosticsJson.Default.MemoryReading, (_, _) => Task.FromResult(_host.Memory()));
-        calls.Read("diagnostics", "activity.begin", empty, empty, (_, _) => Done(_host.BeginActivity));
-        calls.Read("diagnostics", "activity.end", empty, empty, (_, _) => Done(_host.EndActivity));
         calls.Read("diagnostics", "drop", empty, empty, (_, _) => Done(_drop));
         calls.Read("diagnostics", "soak.append", DiagnosticsJson.Default.SoakLine, empty, (soak, _) =>
         {

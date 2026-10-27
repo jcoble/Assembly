@@ -20,18 +20,17 @@ public sealed class TurnActivityTests
         Assert.False(activity.Held);
     }
 
+    // The real NSProcessInfo activity, begun and ended.
     [MacFact]
-    public void Begin_is_idempotent_and_end_releases_it()
+    public void Hold_begins_and_ends_the_macs_activity()
     {
         var activity = new TurnActivity();
-        activity.End();
-        Assert.False(activity.Held);
-        activity.Begin();
-        activity.Begin();
+        activity.Hold(false);
+        activity.Hold(true);
+        activity.Hold(true);
         Assert.True(activity.Held);
-        activity.End();
-        Assert.False(activity.Held);
-        activity.End();
+        activity.Hold(false);
+        activity.Hold(false);
         Assert.False(activity.Held);
     }
 }
