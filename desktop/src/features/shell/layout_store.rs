@@ -3,10 +3,15 @@
 //! backend's `preferences` topic and `preferences/set` call (main.rs), the tests' own in tests. Replaces
 //! layoutStorage.ts and frame.ts's persistence.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
+use futures_channel::oneshot;
 use gpui_kit::component::dock::DockAreaState;
 use gpui_kit::*;
 use serde_json::Value;
 
+use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::update::Update;
 
 use super::default_layout::{LAYOUT_VERSION, default_state};
@@ -36,6 +41,38 @@ pub fn saved_layout(first: Option<Update>) -> Option<Value> {
         .into_iter()
         .find(|(key, _)| key == LAYOUT_KEY)
         .and_then(|(_, mut item)| item.get_mut("value").map(Value::take))
+}
+
+/// The saved layout in `first`, the `preferences` topic's first update, unless `connection` reports first that the
+/// backend refused the client (a token or protocol it doesn't take). Then it's `None`, so the window opens the default
+/// layout instead of waiting for a reconnect.
+pub fn read_saved_layout<C: EventEmitter<ConnectionState>>(
+    first: impl Future<Output = Option<Update>> + 'static,
+    connection: &Entity<C>,
+    cx: &mut App,
+) -> Task<Option<Value>> {
+    // Answered by whichever comes first, the update or the refusal.
+    let (answer, answered) = oneshot::channel::<Option<Update>>();
+    let answer = Rc::new(Cell::new(Some(answer)));
+    let refused = answer.clone();
+    let watch = cx.subscribe(connection, move |_, state, _| {
+        if let ConnectionState::Refused { .. } = state
+            && let Some(answer) = refused.take()
+        {
+            _ = answer.send(None);
+        }
+    });
+    let reading = cx.spawn(async move |_| {
+        let update = first.await;
+        if let Some(answer) = answer.take() {
+            _ = answer.send(update);
+        }
+    });
+    cx.spawn(async move |_| {
+        // Held until the answer, then dropped, which ends the subscription.
+        let _held = (watch, reading);
+        saved_layout(answered.await.ok().flatten())
+    })
 }
 
 impl LayoutStore {

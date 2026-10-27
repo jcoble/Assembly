@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use features::shell::frame::Frame;
-use features::shell::layout_store::{LAYOUT_KEY, WriteLayout, saved_layout};
+use features::shell::layout_store::{LAYOUT_KEY, WriteLayout, read_saved_layout};
 use futures_channel::oneshot;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use crate::core::backend::backend_config::BackendConfig;
 use crate::core::backend::launcher::Launcher;
 use crate::core::socket::client::SocketClient;
+use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::outcome::Outcome;
 use crate::core::window_root::WindowRoot;
@@ -95,11 +96,18 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
         }
         Err(error) => eprintln!("no backend: {error}"),
     }
-    // The saved layout is in the `preferences` topic's state; the subscription ends once that's read.
+    // Waits for the client, then reads the saved layout from its preferences.
     let read = cx.spawn(async move |cx| {
         let client = client.await.ok()?;
-        let mut preferences = cx.update(|cx| client.read(cx).subscribe("preferences", None));
-        saved_layout(preferences.updates.recv().await.ok())
+        cx.update(|cx| {
+            if matches!(client.read(cx).state(), ConnectionState::Refused { .. }) {
+                return Task::ready(None);
+            }
+            let mut preferences = client.read(cx).subscribe("preferences", None);
+            let first = async move { preferences.updates.recv().await.ok() };
+            read_saved_layout(first, &client, cx)
+        })
+        .await
     });
     let write: WriteLayout = Box::new(move |layout, cx| {
         let Some(client) = socket.get() else {
