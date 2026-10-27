@@ -651,7 +651,8 @@ or below it. Topics without a seq (settings, config) send whole-value upserts, s
   counters group, and `minute` when a step first shows a relative time.
 
 The backend's other waits are listed in the timer inventory: the `SessionHost` coalesce timer, the adapter idle
-grace, the SSH backoff, and the follower's backoff. They stay where they are, since they're backend work that needs
+grace, the SSH backoff, the follower's backoff, and the follower's 500 ms settle poll (`RemoteFollower.cs`,
+`SettleAsync`). They stay where they are, since they're backend work that needs
 time and isn't a page clock, except that C2's machine retries run on the backend clock. Phase P1 replaces two polls with pushes: `RemoteOutbox.cs:44`, every second, and
 `MessageStatusTool.cs:30`, every 250 ms.
 
