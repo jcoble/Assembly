@@ -28,7 +28,7 @@ pub mod pending_call;
 #[cfg(test)]
 pub(crate) mod real_backend;
 #[cfg(test)]
-mod real_backend_cancel_tests;
+pub(crate) mod real_backend_cancel_tests;
 #[cfg(test)]
 mod real_backend_tests;
 pub mod row;

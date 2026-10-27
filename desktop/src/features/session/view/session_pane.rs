@@ -173,7 +173,7 @@ impl SessionPane {
             match fold {
                 Some((key, open, toggled_at)) => {
                     let grown = turn(open, toggled_at, window, cx);
-                    let faded = faded(open, toggled_at, cx);
+                    let faded = faded(grown.0);
                     grow(
                         format!("{key}:fold-grow").into(),
                         grown,
@@ -550,6 +550,9 @@ const PAGE_ROWS: usize = 100;
 #[cfg(test)]
 #[path = "session_pane_action_tests.rs"]
 mod action_tests;
+#[cfg(test)]
+#[path = "session_pane_real_switch_tests.rs"]
+mod real_switch_tests;
 #[cfg(test)]
 #[path = "session_pane_reveal_tests.rs"]
 mod reveal_tests;
