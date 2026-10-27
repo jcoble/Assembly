@@ -1,21 +1,19 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line) and each session's unsent
 //! draft while the window runs. Send is `send/send` with the draft and a clientId, which a retry of the same text
 //! reuses. While a turn runs, a send steers it and a Stop button beside the draft stops it (`send/stop` with the run
-//! id). It holds the attachments and the "/" menu's state for when those are drawn; nothing
-//! attaches images, draws the menus or draws the context ring yet, and a sent prompt isn't shown as pending before its
-//! row arrives. Replaces Composer.svelte.
+//! id). The ring beside Send shows how much of the agent's context window is left (context_ring.rs). It holds the
+//! attachments and the "/" menu's state for when those are drawn; nothing attaches images or draws the menus yet, and
+//! a sent prompt isn't shown as pending before its row arrives. Drawn in composer_render.rs. Replaces Composer.svelte.
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
 use serde_json::json;
 
 use super::attachment::{Attachment, AttachmentState};
+use super::context_meter::ContextMeter;
 use crate::features::session::client::session_client::SessionClient;
 
 pub struct Composer {
@@ -29,6 +27,8 @@ pub struct Composer {
     slash_selected: Option<usize>,
     /// The run going now, which Stop stops.
     running: Option<String>,
+    /// How full the agent's context window is, from the session's newest report.
+    meter: Option<ContextMeter>,
     /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
     /// the agent the backend answers its run instead of starting another.
     retry_ids: HashMap<String, (String, String)>,
@@ -56,8 +56,11 @@ impl Composer {
                 .placeholder("Message")
         });
         let enter = cx.subscribe_in(&draft, window, |composer, _, event, window, cx| {
-            if let InputEvent::PressEnter { shift: false, .. } = event {
-                composer.send(window, cx);
+            match event {
+                InputEvent::PressEnter { shift: false, .. } => composer.send(window, cx),
+                // Send is dimmed while there's nothing to send.
+                InputEvent::Change => cx.notify(),
+                _ => {}
             }
         });
         Composer {
@@ -68,6 +71,7 @@ impl Composer {
             attachments: Vec::new(),
             slash_selected: None,
             running: None,
+            meter: None,
             retry_ids: HashMap::new(),
             named: 0,
             _enter: enter,
@@ -108,6 +112,20 @@ impl Composer {
             self.running = run;
             cx.notify();
         }
+    }
+
+    /// The newest context report as (used, size), or `None` before the agent sends one.
+    pub fn set_context(&mut self, context: Option<(i64, i64)>, cx: &mut Context<Self>) {
+        let meter = context.and_then(|(used, size)| ContextMeter::of(used, size));
+        if self.meter != meter {
+            self.meter = meter;
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn meter(&self) -> Option<&ContextMeter> {
+        self.meter.as_ref()
     }
 
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
@@ -190,26 +208,8 @@ const DRAFT_ROWS: usize = 10;
 
 impl EventEmitter<ComposerEvent> for Composer {}
 
-impl Render for Composer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let stop = cx.listener(|composer, _, _, cx| composer.stop(cx));
-        let pill = cx.theme().radius_full();
-        h_flex()
-            .w_full()
-            .gap_2()
-            .items_end()
-            .child(div().flex_1().child(Textarea::new(&self.draft)))
-            .when(self.running.is_some(), |row| {
-                row.child(
-                    Button::new("composer:stop")
-                        .primary()
-                        .rounded(pill)
-                        .label("Stop")
-                        .on_click(stop),
-                )
-            })
-    }
-}
+#[path = "composer_render.rs"]
+mod render;
 
 #[cfg(test)]
 #[path = "composer_view_tests.rs"]

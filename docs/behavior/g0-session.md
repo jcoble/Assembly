@@ -29,7 +29,7 @@ g0-session#24 Images attach by drop, paste or picker (png, jpeg, gif or webp, up
 g0-session#25 Attached images show on the sent message and open full size; a click or Esc closes it. Partly built: a sent message's images open full size, but nothing here attaches images yet.
 g0-session#26 Typing "/" lists the agent's own commands (names starting with what you typed first); a pick fills the draft and selects its hint. Not built yet.
 g0-session#27 The agent's own menus (model, effort, mode) sit in the composer, open upward, and show the agent's current value after each turn. Not built yet.
-g0-session#28 A ring in the composer shows how much of the context window is left, warm at a quarter left and hot at a tenth. Not built yet.
+g0-session#28 A ring in the composer shows how much of the context window is left, warm at a quarter left and hot at a tenth. Hovering it says how much is used, as "51,285 of 1,000,000 (5%)".
 g0-session#29 A remote session opens its saved messages while its machine is unreachable, and says it's offline; a backend restart in the middle of a turn doesn't leave "Working" on.
 g0-session#30 The sessions column lists every session, newest first, and loads more as you scroll; picking one opens it. A working session gets a still dot once the list knows which are working.
 g0-session#31 A new session is started from the sessions column by picking its agent, machine and folder, and opens ready for its first message.

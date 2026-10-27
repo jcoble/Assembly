@@ -8,13 +8,16 @@ use super::assets::AppAssets;
 // Pins: g0-shape#6
 #[test]
 fn the_window_has_every_icon_it_draws() {
-    // The kit's own ChevronRight, and the window's own: the Home button's house, a question's marks, an unfinished step.
+    // The kit's own ChevronRight, and the window's own: the Home button's house, a question's marks, an unfinished step,
+    // the composer's Send and Stop.
     for icon in [
         IconName::ChevronRight,
         IconName::House,
         IconName::CircleQuestionMark,
         IconName::ShieldQuestionMark,
         IconName::Dot,
+        IconName::ArrowUp,
+        IconName::Square,
     ] {
         let path = icon.path();
         let svg = AppAssets.load(&path).expect("loads").expect("is there");
