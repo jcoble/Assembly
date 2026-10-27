@@ -106,22 +106,34 @@ public sealed partial class ChatSocketTests
         Assert.Contains("unknown upload", await ReadAsync(other));
     }
 
-    // The socket's close drops what it left, once its chunks have run: no chunk writes to a file already deleted.
+    // The socket's close drops what it left only once the chunks it queued have run: here they wait behind a send that
+    // hangs on the session's machine, past the close.
     [Fact]
     public async Task Closing_the_socket_drops_its_uploads_after_their_chunks()
     {
         var session = _sessions.Create("claude", "repo");
+        var other = _sessions.Create("claude", "repo");
         var socket = await OpenAsync();
-
         var upload = await BeginAsync(socket, session.SessionId, "image/png", 4 * Mb);
+        _here.Hold();
+
+        // A read is cancelled by its socket closing, and a closing socket cancels in the reverse order the calls came,
+        // so once this one, sent first, is cancelled, the backend is closing.
+        await CallAsync(socket, 2, "rows", "tool", $$"""{"session":"{{other.SessionId}}","item":"t1"}""");
+        await _here.Reached.Task.WaitAsync(Wait);
+        await CallAsync(socket, 3, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
         for (var i = 0; i < 3; i++)
             await ChunkAsync(socket, 10 + i, upload, i * Mb, new byte[Mb]);
-        // Frames are read in order, so once this save answers, the chunks are queued.
+        // Frames are read in order, so once this save answers, the send and the chunks are queued.
         await CallAsync(socket, 20, "preferences", "set", Save);
-        Assert.Contains(20L, (await ReadAnswersAsync(socket, 4)).Keys);
+        Assert.Equal([20], (await ReadAnswersAsync(socket, 1)).Keys);
         socket.Abort();
         socket.Dispose();
+        await _here.Cancelled.Task.WaitAsync(Wait);
 
+        // Nothing marks the moment a close would drop it too early, so give that half a second to show.
+        Assert.False(SpinWait.SpinUntil(() => Directory.GetFiles(Staging).Length == 0, TimeSpan.FromMilliseconds(500)));
+        _here.Release();
         Assert.True(SpinWait.SpinUntil(() => Directory.GetFiles(Staging).Length == 0, Wait));
     }
 
