@@ -33,11 +33,16 @@ way of the task, stop and tell him rather than quietly working around it.
 There is one path for each kind of work, so the right way is the easy way. There are no allowlists, exception lists
 or carve-outs anywhere, and nobody adds one: a rule either holds for every file or it is changed, with Jesse's OK.
 
-- No timers or ticks in the app. Nothing in `app/src` uses `setTimeout`, `setInterval`, `requestAnimationFrame`,
-  `queueMicrotask`, Svelte's `tick()`, `AbortSignal.timeout`, or anything else that waits on time. What needs time
-  comes from the backend, which pushes it (one shared backend clock), from CSS (an animation that ends), or from an
-  event (`ResizeObserver`, a shell event). A timer in a row runs once per row, so on the session rail it fires
-  thousands of times. If you think you need one, ask Jesse; there's no list to add yourself to.
+- No timers or ticks in `app/`, the old Svelte page, kept until the GPUI window (`desktop/`) replaces it. Nothing in
+  `app/src` uses `setTimeout`, `setInterval`, `requestAnimationFrame`, `queueMicrotask`, Svelte's `tick()`,
+  `AbortSignal.timeout`, or anything else that waits on time. What needs time comes from the backend, which pushes it
+  (one shared backend clock), from CSS (an animation that ends), or from an event (`ResizeObserver`, a shell event). A
+  timer in a row runs once per row, so on the session rail it fires thousands of times. If you think you need one,
+  ask Jesse; there's no list to add yourself to.
+- In `desktop/`, anything that ticks on a schedule (an elapsed time, a relative time, the meter) subscribes to the
+  backend clock's topic: one shared clock, so no window thread is left running. The window's own timers are only for
+  animations, frame waits and a debounce, and each is a Task held by its view, so it ends with the view. Jesse,
+  2026-10-27: "The no -timer rule, take out, we aren't using a frontend like those other JS ones now." (12:33Z), then "Having one backend clock is prob goood practice anyways i'm thinking. You still wouldn't want threads open that never got closed of properly" (12:50Z).
 - No CSS `:has()`, and no Tailwind variant that starts with `has-` or contains `-has-`, which compile to it. Use a class or data attribute on the element
   that owns the state, a custom property inherited down, or a pseudo-class scoped to the element that has it.
 - One transport. The page talks to the backend over one WebSocket, through one file (`app/src/lib/socket.ts`, built
@@ -129,8 +134,9 @@ doesn't. Before calling work done, name which of these you covered:
   directly (type stripping). If a tool truly needs a JS config file, ask Jesse. `scripts/lint.d/00-typescript-only.sh`
   enforces it.
 
-## Timers, ticks and :has() in the app
+## Timers, ticks and :has() in app/
 
+- These rules cover `app/`, the old Svelte page. `desktop/` follows its own bullet in "One way to do each thing".
 - `app/scripts/guards.sh` enforces "One way to do each thing" on the page's source, before every commit and on every
   push to main. It is locked like the pinned tests (see "Who may OK" below).
 - The guard still reads `app/scripts/guards-allowed.txt` until step B10 of the plan deletes it. Nothing is ever added
