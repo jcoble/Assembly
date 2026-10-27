@@ -95,6 +95,7 @@ impl Sessions {
         if self.loading_older.is_some() {
             return;
         }
+        self.older_error = None;
         let args = json!({"before": before, "beforeId": before_id, "limit": PAGE});
         let page = SocketClient::global(cx)
             .read(cx)
@@ -103,22 +104,31 @@ impl Sessions {
             let outcome = page.await;
             let _ = this.update(cx, |sessions, cx| {
                 sessions.loading_older = None;
-                if let Outcome::Ok(page) = outcome {
-                    sessions.older = page.next_before.zip(page.next_before_id);
-                    for change in add_page(&mut sessions.items, page.sessions) {
-                        cx.emit(change);
-                    }
-                    cx.notify();
+                for change in sessions.finish_older(outcome) {
+                    cx.emit(change);
                 }
+                cx.notify();
             });
         }));
+        cx.notify();
     }
 
     /// Takes an older page's outcome: a page moves the cursor and is added, a failure keeps its message, and an
     /// aborted call changes nothing.
     fn finish_older(&mut self, outcome: Outcome<SessionPage>) -> Vec<SessionChange> {
-        let _ = outcome;
-        todo!()
+        match outcome {
+            Outcome::Ok(page) => {
+                self.older_error = None;
+                self.older = page.next_before.zip(page.next_before_id);
+                add_page(&mut self.items, page.sessions)
+            }
+            Outcome::Failed(failure) => {
+                self.older_error =
+                    Some(format!("Couldn't load older sessions: {}", failure.message));
+                Vec::new()
+            }
+            Outcome::Aborted => Vec::new(),
+        }
     }
 
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
