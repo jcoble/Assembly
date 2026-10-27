@@ -6,14 +6,15 @@
 //! so tungstenite's own pong and close replies never reach the wire, and a ping goes to the client thread as
 //! `Event::Ping` for it to answer. Nothing is lost in the split: the backend sends nothing after the welcome until
 //! the client writes. Dropping the connection shuts the stream down, which ends its reader, and waits for it.
-//! Every write stays bounded: a backend that stops reading can't hold the client thread, since a write that fails
-//! shuts the stream down, so the reader sends `Closed`, as on a drop.
+//! Every send has a deadline, however the kernel takes its bytes: a backend that stops reading can't hold the client
+//! thread, since a send that fails or runs out of time shuts the stream down, so the reader sends `Closed`, as on a
+//! drop.
 
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tungstenite::protocol::Role;
 use tungstenite::{Message, WebSocket};
@@ -25,13 +26,17 @@ use super::open_failure::OpenFailure;
 use super::out_frame::OutFrame;
 
 pub(super) const PROTOCOL: u32 = 1;
-/// How long opening may take, connected to welcomed, on the same machine, and how long a write may go with no progress.
+/// How long opening may take, connected to welcomed, on the same machine.
 const OPENING: Duration = Duration::from_secs(5);
+/// How long one send may take in all.
+const SENDING: Duration = Duration::from_secs(5);
 
 pub(super) struct Connection {
     pub machine: String,
-    writer: WebSocket<TcpStream>,
+    writer: WebSocket<Bounded>,
     reader: Option<JoinHandle<()>>,
+    /// A send failed and the stream is shut down: the frames after it are dropped, not built.
+    ended: bool,
 }
 
 impl Connection {
@@ -40,11 +45,15 @@ impl Connection {
         let stream = TcpStream::connect(("127.0.0.1", endpoint.port)).map_err(failed)?;
         // A backend that takes the connection but never welcomes it (wedged, or another process on the port) would
         // hold the client thread, and every call waiting on it, for good: opening gets a bound. Reads lose it after
-        // the welcome (the reader waits as long as the socket is quiet); writes keep it.
+        // the welcome (the reader waits as long as the socket is quiet); each send after it has its own deadline.
         stream.set_read_timeout(Some(OPENING)).map_err(failed)?;
         stream.set_write_timeout(Some(OPENING)).map_err(failed)?;
         let read_half = stream.try_clone().map_err(failed)?;
         let url = format!("ws://127.0.0.1:{}/socket", endpoint.port);
+        let stream = Bounded {
+            stream,
+            deadline: None,
+        };
         let (mut writer, _) = tungstenite::client(url, stream).map_err(failed)?;
         let hello = OutFrame::Hello {
             token: &endpoint.token,
@@ -61,7 +70,7 @@ impl Connection {
             }
             other => return Err(failed(format!("expected a welcome, got {other:?}"))),
         };
-        let opened = writer.get_ref();
+        let opened = &writer.get_ref().stream;
         opened.set_read_timeout(None).map_err(failed)?;
         let reader = WebSocket::from_raw_socket(ReadOnly(read_half), Role::Client, None);
         let reader = thread::Builder::new()
@@ -72,22 +81,29 @@ impl Connection {
             machine,
             writer,
             reader: Some(reader),
+            ended: false,
         })
     }
 
-    /// Sends one frame. A write that fails or runs past its bound shuts the stream down, so the reader sends `Closed`.
+    /// Sends one frame. A send that fails or runs past its deadline shuts the stream down, so the reader sends `Closed`.
     pub fn send(&mut self, frame: &OutFrame<'_>) {
-        self.write(text(frame));
+        if !self.ended {
+            self.write(text(frame));
+        }
     }
 
     pub fn pong(&mut self, payload: Vec<u8>) {
-        self.write(Message::Pong(payload.into()));
+        if !self.ended {
+            self.write(Message::Pong(payload.into()));
+        }
     }
 
     fn write(&mut self, message: Message) {
+        self.writer.get_mut().deadline = Some(Instant::now() + SENDING);
         if let Err(error) = self.writer.send(message) {
-            eprintln!("socket: a write failed, so the connection ends: {error}");
-            let _ = self.writer.get_ref().shutdown(Shutdown::Both);
+            eprintln!("socket: a send failed, so the connection ends: {error}");
+            let _ = self.writer.get_ref().stream.shutdown(Shutdown::Both);
+            self.ended = true;
         }
     }
 }
@@ -133,10 +149,44 @@ fn read_frames(mut socket: WebSocket<ReadOnly>, events: Sender<Event>) {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        let _ = self.writer.get_ref().shutdown(Shutdown::Both);
+        let _ = self.writer.get_ref().stream.shutdown(Shutdown::Both);
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
+    }
+}
+
+/// The writer's side of the stream: each write waits only as long as its send has left, so a backend that takes a
+/// few bytes at a time can't stretch a send past its deadline.
+struct Bounded {
+    stream: TcpStream,
+    /// When the current send must be done; `None` while opening, which has its own bound.
+    deadline: Option<Instant>,
+}
+
+impl Read for Bounded {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buf)
+    }
+}
+
+impl Write for Bounded {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(deadline) = self.deadline {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the send ran past its deadline",
+                ));
+            }
+            self.stream.set_write_timeout(Some(left))?;
+        }
+        self.stream.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.flush()
     }
 }
 
