@@ -102,6 +102,9 @@ Exceptions in the approved look (Assembly, Assembly Glass, Assembly Light):
   Light. The design system puts menus and popovers on glass behind a 20 px blur, but GPUI 0.3.10 can blur only the
   whole window, not what's behind one element, so translucent menus would show the text under them. The kit draws the
   popover's ring from `foreground` at 10% (styled.rs:190-193), so `glass-edge` has no key.
+- `overlay` is black at 0x99 in the dark two (0x33 in Light). The kit draws a dialog, such as the Cmd-K palette, on
+  `background` with a `border` ring and a 10% black shadow (dialog.rs:779-782, 343-357), and none of that shows on
+  near-black grey. A deeper dim is the one theme value that makes the ring read without changing `line` everywhere.
 - The status-pill, diff, `code-bg`, `ink-icon` and provider tokens have no kit key. They stay in the design system
   until a view needs them per theme.
 - Houston, Dracula, Tokyo Night, Graphite, Rosé Pine Dawn and Ayu Light keep their own colours; only the radii and the
