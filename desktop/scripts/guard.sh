@@ -11,6 +11,9 @@ b='(^|[^[:alnum:]_])'
 e='([^[:alnum:]_]|$)'
 # Sockets and HTTP: only the socket client, desktop/src/core/socket/, may.
 sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_client|HttpClient)${e}|${b}hyper::"
+# Native views (the terminal's Ghostty view, the browser's WKWebView, any NSView): only desktop/src/core/native_views/
+# may, so one module shows, hides and places them all.
+natives="${b}(gpui_webview|ghostty|libghostty|NSView|WKWebView|objc|objc2|cocoa|raw_window_handle)${e}|${b}(ghostty|objc2)_[[:alnum:]_]+"
 # A file that draws (implements Render or RenderOnce, or has a render function), and file reads in one.
 draws="${b}impl([^[:alnum:]_]|[^[:alnum:]_].*[^[:alnum:]_])(Render|RenderOnce)[[:space:]]+for${e}|${b}fn[[:space:]]+render${e}"
 files="${b}fs${e}|${b}File::"
@@ -25,6 +28,7 @@ hits() {
   local path=$1 file=${2:-$1}
   {
     [[ $path == desktop/src/core/socket/* ]] || match "$file" "$sockets" "sockets and HTTP only in core/socket/"
+    [[ $path == desktop/src/core/native_views/* ]] || match "$file" "$natives" "native views only in core/native_views/"
     [ -z "$(match "$file" "$draws" .)" ] || match "$file" "$files" "no file reads in a file that draws"
   } | sed "s|^|$path:|"
 }
@@ -49,6 +53,12 @@ catch|desktop/src/features/x/a.rs|use hyper::Client;
 pass|desktop/src/core/socket/a.rs|let (socket, _) = tungstenite::client(request, stream)?;
 pass|desktop/src/core/socket/a.rs|let stream = std::net::TcpStream::connect(addr)?;
 pass|desktop/src/features/x/a.rs|let link = hyperlink(text);
+catch|desktop/src/features/browser/a.rs|use gpui_webview::WebView;
+catch|desktop/src/features/terminal/a.rs|let surface = ghostty_sys::surface_new(app);
+catch|desktop/src/features/x/a.rs|let view: id = msg_send![class!(NSView), alloc];
+catch|desktop/src/core/x/a.rs|use raw_window_handle::HasWindowHandle;
+pass|desktop/src/core/native_views/a.rs|use gpui_webview::WebView;
+pass|desktop/src/features/terminal/a.rs|NativeViews::close(id, cx);
 catch|desktop/src/features/x/a.rs|impl Render for A {} fn f() { std::fs::read("x"); }
 catch|desktop/src/features/x/a.rs|impl<T> gpui::RenderOnce for A<T> {} fn f() { let f = File::open("x"); }
 catch|desktop/src/features/x/a.rs|fn render(&mut self) { let s = fs::read_to_string("x"); }
