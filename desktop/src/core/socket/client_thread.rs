@@ -195,6 +195,10 @@ impl ClientThread {
                 }
             }
             Event::Closed => self.closed(),
+            Event::Broken => {
+                self.close();
+                self.set_state(ConnectionState::Disconnected);
+            }
             Event::Reconnect(endpoint) => {
                 if self.connection.is_none() {
                     self.endpoint = endpoint;
@@ -213,12 +217,16 @@ impl ClientThread {
 
     /// The socket closed: waiting calls settle `Aborted`, one try to reopen, then subscribe again or `Disconnected`.
     fn closed(&mut self) {
+        self.close();
+        self.open();
+    }
+
+    fn close(&mut self) {
         self.connection = None;
         self.keys.clear();
         for (_, answer) in self.calls.drain() {
             let _ = answer.send(Outcome::Aborted);
         }
-        self.open();
     }
 
     fn open(&mut self) {
