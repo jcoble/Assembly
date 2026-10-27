@@ -34,6 +34,27 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Serve_refuses_a_remote_named_local_before_anything_starts()
+    {
+        var home = Path.Combine(_home, "refused");
+        var tokenFile = Path.Combine(home, "env");
+        var errors = new StringWriter();
+        var stderr = Console.Error;
+        Console.SetError(errors);
+        try
+        {
+            Assert.Equal(2, await DesktopServe.MainAsync(["--remote", "local", "--home", home, "--token-file", tokenFile]));
+        }
+        finally
+        {
+            Console.SetError(stderr);
+        }
+
+        Assert.Contains("a remote can't be named local, the key for this computer", errors.ToString());
+        Assert.False(File.Exists(tokenFile));
+    }
+
+    [Fact]
     public async Task A_local_session_runs_a_turn_through_the_mac_backend()
     {
         var sessionId = await CreateSessionAsync();
