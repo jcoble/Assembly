@@ -1570,6 +1570,19 @@ Each W phase:
 - **P6. Usage and resources** (Sol P31).
 - **P7. Run** (Sol P32).
 - **P8. Providers and Settings** (Sol P33).
+- **P8a. Agent sign-in, local and remote.** It can start once C2 (remote machines) and W4 (terminals) are in, without
+  waiting for the rest of P. Jesse (2026-10-27 01:30Z): "I don't want to have to login again. Even though, that is
+  onen of the things we were supposed to work on, wsa having an in app login." Draft behaviour, for Jesse to correct:
+  1. On the local machine, ACP `authenticate` at parity with the old app (mac-command-bar
+     `providers/authentication.rs`): the first advertised method it can start on its own (Codex `chat-gpt`,
+     Antigravity `oauth-personal`), with a time limit and a cancel.
+  2. Claude's terminal login method, run in an Assembly terminal.
+  3. On a remote host, the same flows, with the sign-in URL or device code shown and opened on the computer Jesse is
+     looking at. The old app refused this on `--assembly-server`, so it's new work, not a port.
+  4. Recreating or replacing a host never makes him sign in again.
+
+  Time limits run on the backend's `TimeProvider`, never a page timer. A sign-in belongs to the agent on a machine,
+  not to one session.
 
 Each P phase has the same shape as the W phases.
 
