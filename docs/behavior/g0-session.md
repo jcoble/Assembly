@@ -2,7 +2,7 @@
 
 Draft by Claude, not corrected by Jesse.
 
-g0-session#1 Opening a session shows its newest messages at once, then keeps up with new ones as they arrive.
+g0-session#1 Opening a session shows its newest messages at once, then keeps up with new ones as they arrive. Switching to another before they load cancels that load on the backend, and none of them show in the next session.
 g0-session#2 Scrolling up loads older messages before you reach the top, and the message you're reading stays where it is.
 g0-session#3 History has no blank gaps, no repeated messages and no empty rows, also where a resumed session joins its earlier history.
 g0-session#4 A reply streams in place, its text coming in smoothly like typing, in one message, never as a new message per piece. It speeds up the further it falls behind, so even a long burst shows within two seconds, and it stops moving once it has caught up.

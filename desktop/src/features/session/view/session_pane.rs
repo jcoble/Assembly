@@ -542,5 +542,8 @@ mod action_tests;
 #[path = "session_pane_reveal_tests.rs"]
 mod reveal_tests;
 #[cfg(test)]
+#[path = "session_pane_switch_tests.rs"]
+mod switch_tests;
+#[cfg(test)]
 #[path = "session_pane_tests.rs"]
 mod tests;
