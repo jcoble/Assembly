@@ -26,8 +26,11 @@ internal sealed class UpdateRouter
     public UpdateRouter(ChannelReader<SessionNotification> all)
     {
         _all = all;
-        _ = PumpAsync();
+        Completion = PumpAsync();
     }
+
+    /// <summary>Completes when the adapter's updates have ended and every session's queue with them.</summary>
+    public Task Completion { get; }
 
     /// <summary>The session's updates, in arrival order. Completes when the session is forgotten or the adapter ends.</summary>
     public ChannelReader<SessionNotification> For(string acpSessionId)

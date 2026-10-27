@@ -31,6 +31,8 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     private RunningAdapter? _running;
     private int _sessions;
     private CancellationTokenSource? _idle;
+    // The wait for the idle grace to end, awaited by the dispose.
+    private Task _idleTask = Task.CompletedTask;
     // Each retired adapter, with the sessions still on it.
     private readonly Dictionary<RunningAdapter, int> _retired = [];
     // Each ACP session whose close timed out, with its retired adapter's exit.
@@ -45,6 +47,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         try
         {
             _idle?.Cancel();
+            _idle?.Dispose();
             _idle = null;
             if (_running is not { } running || running.Link.Exited.IsCompleted)
             {
@@ -98,7 +101,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
             if (--_sessions > 0)
                 return;
             _idle = new CancellationTokenSource();
-            _ = StopWhenIdleAsync(_idle.Token);
+            _idleTask = StopWhenIdleAsync(_idle.Token);
         }
         finally
         {
@@ -185,7 +188,11 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     private async Task StopAsync()
     {
         if (Interlocked.Exchange(ref _running, null) is { } running)
+        {
             await running.Link.DisposeAsync();
+            // Disposing the link completes its updates, which ends the router's pump.
+            await running.Updates.Completion;
+        }
     }
 
     /// <summary>Ends the adapter and any retired ones, and with them every session still open on them.</summary>
@@ -195,6 +202,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         try
         {
             _idle?.Cancel();
+            await _idleTask;
             await StopAsync();
             foreach (var retired in _retired.Keys)
                 await retired.Link.DisposeAsync();
