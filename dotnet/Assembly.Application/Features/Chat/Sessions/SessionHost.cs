@@ -5,6 +5,7 @@ using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Acp.V1;
+using Assembly.Application.Common.Calls;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
@@ -38,6 +39,8 @@ public sealed partial class SessionHost : IPermissionPolicy
     private RunningTurn? _turn;
     // The last turn's work, which goes on past its end rows until its session is closed.
     private Task _lastTurn = Task.CompletedTask;
+    // Sends with a clientId that haven't answered yet, by that id, with their text. Guarded by _gate.
+    private readonly Dictionary<string, (string Text, Task<string?> Send)> _sending = [];
     // The asks waiting for the user, by id. Guarded by _gate.
     private readonly Dictionary<string, OpenAsk> _asks = [];
 
@@ -101,7 +104,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     }
 
     /// <summary>Starts a turn and returns its run id, or null if one is already running.</summary>
-    public string? Send(string text)
+    public string? Send(string text, string? clientId = null)
     {
         RunningTurn turn;
         KeptSession? kept;
@@ -112,7 +115,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             // A session kept open for background work takes the prompt as it is.
             (kept, _kept) = (_kept, null);
             turn = _turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time)) { Session = kept?.Session };
-            Apply(new TurnStarted(Now(), turn.RunId, text));
+            Apply(new TurnStarted(Now(), turn.RunId, text, clientId));
         }
 
         _sessionStore.Touch(_sessionId);
@@ -123,15 +126,86 @@ public sealed partial class SessionHost : IPermissionPolicy
     /// <summary>
     /// Sends <paramref name="text"/> into the running turn, through the agent's <c>_session/steering</c>, and returns
     /// that turn's run id; with no turn running, starts one. Null when the turn can't take it: its session isn't open
-    /// yet, or the agent doesn't steer.
+    /// yet, or the agent doesn't steer. A send with a <paramref name="clientId"/> already sent in this session answers
+    /// that send's run id, or waits for it while it's still going, and never starts a second turn or steer.
     /// </summary>
-    public async Task<string?> SteerAsync(string text, CancellationToken cancellationToken)
+    public async Task<string?> SteerAsync(string text, string? clientId, CancellationToken cancellationToken)
+    {
+        if (clientId is null)
+            return await SteerOnceAsync(text, null, cancellationToken);
+        while (true)
+        {
+            Task<string?> sending;
+            TaskCompletionSource<string?>? mine = null;
+            lock (_gate)
+            {
+                if (_sending.TryGetValue(clientId, out var going))
+                {
+                    SameText(clientId, going.Text, text);
+                    sending = going.Send;
+                }
+                else if (_hub.UserRowOfClient(_sessionId, clientId) is { } row)
+                {
+                    SameText(clientId, row.Text, text);
+                    return row.RunId;
+                }
+                else
+                {
+                    mine = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _sending[clientId] = (text, sending = mine.Task);
+                }
+            }
+
+            if (mine is not null)
+                return await SendOnceAsync(text, clientId, mine, cancellationToken);
+            try
+            {
+                // Its own token: a retry that gives up doesn't cancel the send it waits on.
+                return await sending.WaitAsync(cancellationToken);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The send it waited on was cancelled or failed: look again, and send it here if it never landed.
+            }
+        }
+    }
+
+    // The one send of a clientId in flight. It leaves the map before it answers, so a retry that wakes looks again.
+    private async Task<string?> SendOnceAsync(string text, string clientId, TaskCompletionSource<string?> mine, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var runId = await SteerOnceAsync(text, clientId, cancellationToken);
+            lock (_gate)
+                _sending.Remove(clientId);
+            mine.SetResult(runId);
+            return runId;
+        }
+        catch (Exception error)
+        {
+            lock (_gate)
+                _sending.Remove(clientId);
+            mine.SetException(error);
+            throw;
+        }
+    }
+
+    // A clientId names one message: the same id with other text is refused.
+    private void SameText(string clientId, string sent, string text)
+    {
+        if (sent == text)
+            return;
+        _log.WriteLine($"Warning: session {_sessionId}: clientId {clientId} was sent again with other text");
+        throw new CallFailed("clientId already used for another message");
+    }
+
+    private async Task<string?> SteerOnceAsync(string text, string? clientId, CancellationToken cancellationToken)
     {
         RunningTurn? turn;
         lock (_gate)
             turn = _turn;
         if (turn is null)
-            return Send(text);
+            return Send(text, clientId);
         if (turn.Session is not { } session || !session.Adapter.Init.CanSteer)
             return null;
 
@@ -151,14 +225,14 @@ public sealed partial class SessionHost : IPermissionPolicy
                 lock (_gate)
                 {
                     if (_turn == turn)
-                        Apply(new TurnSteered(Now(), text));
+                        Apply(new TurnSteered(Now(), text, clientId));
                 }
                 _sessionStore.Touch(_sessionId);
                 return turn.RunId;
             case "promptRequired":
                 // The turn ended as the message went: it starts the next one, once this one's session is closed.
-                await turn.Done;
-                return Send(text);
+                await turn.Done.WaitAsync(cancellationToken);
+                return Send(text, clientId);
             default:
                 return null;
         }

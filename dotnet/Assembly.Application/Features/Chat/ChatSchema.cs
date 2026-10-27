@@ -78,6 +78,16 @@ internal static class Schema
         ORDER BY item_id DESC, seq DESC LIMIT 1;
         """;
 
+    /// <summary>
+    /// The run and text of the session's newest user row sent with clientId <c>$client</c>. A user row has no item, so
+    /// rows_item finds the session's user rows and walks them newest first.
+    /// </summary>
+    public const string UserRowOfClient = """
+        SELECT run_id, json_extract(payload, '$.text') FROM rows INDEXED BY rows_item
+        WHERE session_id = $session AND item_id IS NULL AND kind = 'user' AND json_extract(payload, '$.clientId') = $client
+        ORDER BY seq DESC LIMIT 1;
+        """;
+
     // The kinds a summary reads. SQLite uses a partial index only for a query that names its condition as the index
     // does, so the queries use this text as it is; INDEXED BY makes a query that drifts from it fail to prepare.
     private const string SummaryKinds = "kind IN ('turn', 'ask', 'task', 'subagent')";

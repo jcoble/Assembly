@@ -106,6 +106,13 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
             return;
         }
 
+        var clientId = JsonReply.String(body, "clientId");
+        if (body.TryGetProperty("clientId", out _) && SendFeature.ClientIdError(clientId) is { } bad)
+        {
+            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, bad);
+            return;
+        }
+
         if (sessionStore.Get(RequestValues.Route(context, "id")) is not { } session)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status404NotFound, "unknown session");
@@ -122,7 +129,7 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
         string? runId;
         try
         {
-            runId = await machines.For(session).SendAsync(session, text, context.RequestAborted);
+            runId = await machines.For(session).SendAsync(session, text, clientId, context.RequestAborted);
         }
         catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {

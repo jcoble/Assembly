@@ -82,7 +82,7 @@ public sealed class RowConverter
                 // The agent's answer so far is finished; what follows answers the new message too.
                 CloseThinking(batch, steered.At);
                 CloseMessage(batch, steered.At);
-                Add(batch, null, RowKind.User, new UserPayload(steered.Text, MessageFrame.SenderOf(steered.Text)), RowJsonContext.Rows.UserPayload, steered.At);
+                Add(batch, null, RowKind.User, new UserPayload(steered.Text, MessageFrame.SenderOf(steered.Text), steered.ClientId), RowJsonContext.Rows.UserPayload, steered.At);
                 break;
             case TextChunk chunk:
                 AddText(batch, chunk);
@@ -139,7 +139,7 @@ public sealed class RowConverter
     private void StartTurn(RowBatch batch, TurnStarted started)
     {
         _turn = new OpenTurn(started.RunId, started.At, _sessionCost);
-        Add(batch, null, RowKind.User, new UserPayload(started.Text, MessageFrame.SenderOf(started.Text)), RowJsonContext.Rows.UserPayload, started.At);
+        Add(batch, null, RowKind.User, new UserPayload(started.Text, MessageFrame.SenderOf(started.Text), started.ClientId), RowJsonContext.Rows.UserPayload, started.At);
         Add(batch, null, RowKind.Turn, new TurnPayload("started"), RowJsonContext.Rows.TurnPayload, started.At);
     }
 
