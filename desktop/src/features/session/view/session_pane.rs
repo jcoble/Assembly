@@ -5,6 +5,7 @@
 //! name through the core registry (lane g0-host, names from lane g0-shape), never by importing another feature.
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
+use gpui_kit::base::motion::{Presence, Transition};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -12,7 +13,7 @@ use gpui_kit::*;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -49,6 +50,8 @@ pub struct SessionPane {
     open_folds: HashSet<String>,
     /// The plan's list of steps is open; it shuts when the turn ends.
     plan_open: bool,
+    /// When each row that arrived live since the session opened came in, by item key, so it fades in once.
+    fresh: HashMap<String, Instant>,
     /// What each item keeps while off screen, by item key.
     kept: HashMap<String, Kept>,
     /// What each row's buttons call: this pane's `on_action`.
@@ -100,14 +103,18 @@ impl SessionPane {
                     .ok();
             })
         };
-        let render_row: RenderRow = Rc::new(move |entry, _, cx| {
-            pane.upgrade().map_or_else(
-                || div().into_any_element(),
-                |pane| {
-                    let pane = pane.read(cx);
-                    pane.row(entry, &pane.on_action, cx)
-                },
-            )
+        let render_row: RenderRow = Rc::new(move |entry, window, cx| {
+            let Some(pane) = pane.upgrade() else {
+                return div().into_any_element();
+            };
+            let (row, fresh) = {
+                let pane = pane.read(cx);
+                (pane.row(entry, &pane.on_action, cx), pane.fresh_key(entry))
+            };
+            match fresh {
+                Some(key) => fade_in(key, row, window, cx),
+                None => row,
+            }
         });
         let timeline = cx.new(|cx| Timeline::new(render_row, cx));
         let composer = cx.new(|cx| Composer::new(client.clone(), window, cx));
@@ -138,6 +145,7 @@ impl SessionPane {
             folds: HashMap::new(),
             open_folds: HashSet::new(),
             kept: HashMap::new(),
+            fresh: HashMap::new(),
             plan_open: false,
             on_action,
             timeline,
@@ -171,6 +179,7 @@ impl SessionPane {
         self.held = Some(Vec::new());
         self.open_folds.clear();
         self.kept.clear();
+        self.fresh.clear();
         self.reveal = None;
         (
             self.known_run,
@@ -243,6 +252,12 @@ impl SessionPane {
                 _ => None,
             });
         let change = self.view.apply(row);
+        if let (Change::Appended, Some(item)) = (change, self.view.items.last()) {
+            let now = Instant::now();
+            self.fresh
+                .retain(|_, at| now.duration_since(*at) < FADE_FOR);
+            self.fresh.insert(item.key.clone(), now);
+        }
         if let Change::Appended | Change::Updated(_) = change {
             self.reveal_from(change, before);
         }
@@ -422,6 +437,14 @@ impl SessionPane {
             .map(|reveal| Reveal::clip(blocks, reveal.shown))
     }
 
+    /// The key of a row that arrived live moments ago, which fades in as it's drawn.
+    fn fresh_key(&self, entry: &Entry) -> Option<String> {
+        let Entry::Item(at) = entry else { return None };
+        let key = &self.view.items.get(*at)?.key;
+        let at = self.fresh.get(key)?;
+        (at.elapsed() < FADE_FOR).then(|| key.clone())
+    }
+
     /// The timeline's entries, for tests.
     #[cfg(test)]
     pub fn entries(&self, cx: &App) -> Vec<Entry> {
@@ -433,6 +456,18 @@ impl SessionPane {
 mod actions;
 #[path = "pane_rows.rs"]
 mod rows;
+
+/// How long after it arrives a live row still fades in when it's drawn; drawn later, after scrolling back, it doesn't.
+const FADE_FOR: Duration = Duration::from_millis(400);
+
+/// A row fading in, on the theme's timing; plain with Reduce Motion on.
+fn fade_in(key: String, row: AnyElement, window: &mut Window, cx: &mut App) -> AnyElement {
+    let duration = cx.theme().motion.duration_normal;
+    let shown = Presence::new(SharedString::from(format!("{key}:fade")), true)
+        .transition(Transition::new(duration))
+        .sample(window, cx);
+    div().opacity(shown.progress).child(row).into_any_element()
+}
 
 /// Rows a page holds, as the web view asks for.
 const PAGE_ROWS: usize = 100;
