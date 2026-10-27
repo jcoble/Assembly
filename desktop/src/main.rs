@@ -6,6 +6,7 @@ mod features;
 
 use std::path::PathBuf;
 
+use features::shell::frame::Frame;
 use gpui_kit::*;
 
 use crate::core::backend::backend_config::BackendConfig;
@@ -19,6 +20,7 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
+            features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
             start_backend(cx);
             PaletteView::init(cx);
             features::meter::start_if_on(cx);
@@ -29,9 +31,12 @@ fn main() {
                 }),
                 ..Default::default()
             };
-            gpui_kit::open_window(options, cx, |_, cx| {
-                let content = cx.new(|_| EmptyView);
-                cx.new(|_| WindowRoot::new(content))
+            // The layout's read and write join the socket client when lane g0-socket lands. Until then the window
+            // opens the default layout and keeps changes for this run only.
+            gpui_kit::open_window(options, cx, |window, cx| {
+                let frame =
+                    cx.new(|cx| Frame::new(Task::ready(None), Box::new(|_, _| {}), window, cx));
+                cx.new(|_| WindowRoot::new(frame))
             })
             .expect("open the window");
             cx.activate(true);

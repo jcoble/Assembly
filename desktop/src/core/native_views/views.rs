@@ -3,7 +3,7 @@
 //!
 //! - Each view's pane draws `host(id)`, an empty element that records its bounds, clipped to what's visible, when it
 //!   lays out. The dock reuses an unchanged pane's last layout without running its host, so a view keeps its last
-//!   bounds until the dock's layout changes. Then `layout_changed` forgets every view's bounds and has the window
+//!   bounds until the dock changes (the shell's Frame observes it). Then `layout_changed` forgets every view's bounds and has the window
 //!   draw every pane afresh: a view whose host doesn't lay out (its tab isn't in front, its dock is closed, another
 //!   group is zoomed, its pane is gone) is hidden (821ec040).
 //! - The window draws `placer()` once; after every element has laid out, it places or hides every view. All views
@@ -69,10 +69,6 @@ impl NativeViews {
     /// The dock's layout changed (a tab chosen, a pane moved, closed or zoomed, a dock opened or closed): every view
     /// hides unless its host lays out again, and the window draws every pane afresh so each shown host does. The shell
     /// calls it on the dock's `LayoutChanged`.
-    #[allow(
-        dead_code,
-        reason = "the shell's Frame calls it on the dock's LayoutChanged"
-    )]
     pub fn layout_changed(window: &mut Window, cx: &mut App) {
         for (view, _) in cx.default_global::<Self>().views.values_mut() {
             view.forget();

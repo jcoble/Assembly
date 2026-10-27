@@ -5,9 +5,8 @@ public interface IDiagnosticsHost
 {
     MemoryReading Memory();
 
-    void BeginActivity();
-
-    void EndActivity();
+    // Held while any turn runs (the desktop calls it from its rows); holding it twice does nothing.
+    void HoldActivity(bool held);
 
     // One line appended to soak-results/<name>; the name is already a plain file name.
     void AppendSoak(string name, string line);
