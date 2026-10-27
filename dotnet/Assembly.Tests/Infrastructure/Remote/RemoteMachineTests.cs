@@ -27,7 +27,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private readonly string _boxHome = Directory.CreateTempSubdirectory("assembly-box-").FullName;
     private readonly FakeLauncher _desktopLauncher = new();
     private readonly FakeLauncher _boxLauncher = new();
-    private readonly StringWriter _log = new();
+    private readonly SharedLog _log = new();
     private DesktopBackend _box = null!;
     private DesktopBackend? _desktop;
 

@@ -28,7 +28,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     private readonly SessionInfo _session;
     private readonly SessionHost _host;
     private readonly LiveSubscription _live;
-    private readonly StringWriter _log = new();
+    private readonly SharedLog _log = new();
     private readonly BackgroundWork _work;
 
     public SessionHostTests()

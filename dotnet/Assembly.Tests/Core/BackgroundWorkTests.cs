@@ -10,7 +10,7 @@ public sealed class BackgroundWorkTests
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     private readonly FakeTimeProvider _time = new();
-    private readonly StringWriter _log = new();
+    private readonly SharedLog _log = new();
     private readonly BackgroundWork _work;
 
     public BackgroundWorkTests() => _work = new BackgroundWork(_time, _log);
