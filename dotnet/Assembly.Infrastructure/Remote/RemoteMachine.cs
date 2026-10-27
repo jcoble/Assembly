@@ -119,9 +119,8 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         using var response = await SendRequestAsync(HttpMethod.Post, $"/runs/{runId}/stop", null, cancellationToken);
         if (response.StatusCode is HttpStatusCode.Accepted or HttpStatusCode.NotFound)
             return response.StatusCode == HttpStatusCode.Accepted;
-        // Any other answer fails the call.
-        await ReadJsonAsync(response, cancellationToken);
-        return false;
+        // Any other answer fails the call, a 200 included.
+        throw new CallFailed($"{_name} answered {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}");
     }
 
     // From the copied rows, so it agrees with what the webview has.
