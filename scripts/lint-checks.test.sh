@@ -56,6 +56,18 @@ for f in dotnet/Assembly.Domain/A.cs app/src/lib/B.svelte app/src/lib/C.ts shell
 done
 rm -rf "$r"
 
+r=$(repo_with 45-no-select-star.sh)
+mkdir -p "$r/dotnet/Assembly.Application" "$r/app/src/lib"
+echo '// One result row, read by column position. So every query names its columns: never SELECT *.' >"$r/dotnet/Assembly.Application/IRow.cs"
+echo 'const string All = "SELECT key, value FROM preferences";' >"$r/dotnet/Assembly.Application/A.cs"
+echo 'const all = "SELECT * FROM notes";' >"$r/app/src/lib/a.ts"
+expect 0 "no select star: named columns, a comment saying SELECT *, and code outside dotnet/ pass" "$r" 45-no-select-star.sh
+for bad in 'const string All = "SELECT * FROM preferences";' 'var sql = "select  *  from rows WHERE seq > 1";'; do
+  echo "$bad" >"$r/dotnet/Assembly.Application/A.cs"
+  expect 1 "no select star: fails on: $bad" "$r" 45-no-select-star.sh
+done
+rm -rf "$r"
+
 # scripts/lint.sh runs every lint.d check and fails if any one does.
 r=$(mktemp -d)
 git -C "$r" init -q
