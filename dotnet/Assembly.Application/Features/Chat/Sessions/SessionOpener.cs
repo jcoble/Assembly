@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
+using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Agents;
 using Assembly.Domain.Sessions;
 
@@ -71,23 +72,58 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             }
         }
 
-        var acp = await running.Link.Client.NewSessionAsync(folder, cancellationToken, mcpServers?.Invoke(sessionId));
-        sessionStore.SetAcpSession(sessionId, acp.SessionId);
-        stages.Mark("session new");
-        if (session.Title is null && Title(firstText) is { } title)
-            sessionStore.SetTitle(sessionId, title);
-        // A helper's title is its task, not the framed prompt it's sent.
-        if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
+        // Neither adapter honours a request's cancel, so session/new goes out on a token the cancel doesn't cut: a cancel
+        // after it went out waits for the answer and closes the session the agent opened. That delays the cancel by up to
+        // the close limit.
+        cancellationToken.ThrowIfCancellationRequested();
+        var opening = running.Link.Client.NewSessionAsync(folder, CancellationToken.None, mcpServers?.Invoke(sessionId));
+        NewSessionResponse acp;
+        try
         {
-            // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.
-            await running.Link.Client.RenameSessionAsync(acp.SessionId, agentTitle, cancellationToken);
-            stages.Mark("session rename");
+            acp = await opening.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                var late = await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, CancellationToken.None);
+                running.Updates.Forget(late.SessionId);
+                await CloseQuietlyAsync(adapter, running, late.SessionId);
+                Console.Error.WriteLine($"session {sessionId}: closed {late.SessionId}, which answered after the open was cancelled");
+            }
+            catch (Exception error) when (error is TimeoutException or JsonRpcException or IOException or ObjectDisposedException)
+            {
+                // No answer in time, or none at all: a session it opened lives until the adapter exits.
+            }
+            throw;
         }
 
-        if (acp.ConfigOptions.ValueKind == JsonValueKind.Array)
-            sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
-        var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);
-        return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen);
+        try
+        {
+            sessionStore.SetAcpSession(sessionId, acp.SessionId);
+            stages.Mark("session new");
+            if (session.Title is null && Title(firstText) is { } title)
+                sessionStore.SetTitle(sessionId, title);
+            // A helper's title is its task, not the framed prompt it's sent.
+            if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
+            {
+                // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.
+                await running.Link.Client.RenameSessionAsync(acp.SessionId, agentTitle, cancellationToken);
+                stages.Mark("session rename");
+            }
+
+            if (acp.ConfigOptions.ValueKind == JsonValueKind.Array)
+                sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
+            var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);
+            return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen);
+        }
+        catch (Exception)
+        {
+            // Stopped or failed once the agent had opened it: it's closed there too, as after a resume.
+            running.Updates.Forget(acp.SessionId);
+            await CloseQuietlyAsync(adapter, running, acp.SessionId);
+            throw;
+        }
     }
 
     private static async Task CloseQuietlyAsync(SharedAdapter adapter, RunningAdapter running, string acpSessionId)
@@ -98,7 +134,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException or TimeoutException)
         {
-            Console.Error.WriteLine($"session {acpSessionId} didn't close after a failed resume: {error.Message}");
+            Console.Error.WriteLine($"session {acpSessionId} didn't close after a failed open: {error.Message}");
         }
     }
 
