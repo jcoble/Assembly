@@ -109,13 +109,13 @@ public sealed partial class SessionHost
                         // Closing ends it anyway.
                     }
                 }
-                await session.Adapter.Link.Client.CloseSessionAsync(session.AcpSessionId, CancellationToken.None);
+                await session.Pool.CloseAsync(session.Adapter, session.AcpSessionId);
                 stages?.Mark("session close");
                 if (sessionCost is { } total)
                     _sessionStore.SetSessionCost(_sessionId, total);
             }
         }
-        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
+        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException or TimeoutException)
         {
             Console.Error.WriteLine($"session {_sessionId}: session {session.AcpSessionId} didn't close: {error.Message}");
         }
@@ -131,7 +131,7 @@ public sealed partial class SessionHost
                 foreach (var shown in _subagents.StopAll(Now()))
                     Apply(shown);
             }
-            await session.Pool.ReleaseAsync();
+            await session.Pool.ReleaseAsync(session.Adapter);
         }
     }
 
