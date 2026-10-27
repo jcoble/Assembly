@@ -146,6 +146,19 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown machine"}""", await ReadTextAsync(socket));
     }
 
+    [Fact]
+    public async Task The_socket_takes_the_desktops_attachments()
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+
+        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"attachments","method":"begin","args":{"session":"no-such-session","mime":"image/png","size":10}}""");
+
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
+    }
+
     private static Task SendTextAsync(WebSocket socket, string text) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
 

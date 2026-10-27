@@ -30,6 +30,9 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     /// <summary>The run <see cref="ActiveRun"/> answers.</summary>
     public string? Running { get; set; }
     public StoredToolCall? Tool { get; set; }
+    /// <summary>The last image saved here.</summary>
+    public byte[]? Saved { get; private set; }
+
     public SessionConfig Config { get; set; } = new("[]", new Dictionary<string, string>());
 
     /// <summary>From now on, each call waits until <see cref="Release"/> or its token fires.</summary>
@@ -62,7 +65,11 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         Remote($"tool {itemId}", () => Tool, cancellationToken);
 
     public Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
-        throw new NotSupportedException();
+        Remote($"save {type.Extension} {bytes.Length}", () =>
+        {
+            Saved = bytes.ToArray();
+            return $"/{name ?? "here"}/image.{type.Extension}";
+        }, cancellationToken);
 
     public Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
         Remote("config", () => Config, cancellationToken);
