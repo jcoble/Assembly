@@ -145,6 +145,34 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_clientIds_user_row_is_found_through_the_rows_item_index()
+    {
+        // Looked up by name, so this builds before the query exists.
+        var lookup = typeof(Schema).GetField("UserRowOfClient")?.GetValue(null) as string;
+        Assert.NotNull(lookup);
+        var plan = _database.Query("EXPLAIN QUERY PLAN " + lookup, row => row.Text(3), CancellationToken.None,
+            new SqlArg("$session", "t"), new SqlArg("$client", "c"));
+
+        // A search of the session's user rows, newest first, with no sort.
+        Assert.Contains("SEARCH rows USING INDEX rows_item (session_id=? AND item_id=? AND kind=?)", plan);
+        Assert.DoesNotContain(plan, step => step.Contains("TEMP B-TREE", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_clientId_older_than_the_sessions_newest_200_user_rows_isnt_found()
+    {
+        _store.Commit("t", Batch("first"));
+        var batch = new RowBatch();
+        batch.Rows.Add(new NewRow("run-1", null, RowKind.User, Payload("""{"text":"hi","clientId":"old"}"""), 1));
+        _store.Commit("t", batch);
+        Assert.Equal(("run-1", "hi"), _store.UserRowOfClient("t", "old"));
+
+        _store.Commit("t", Batch([.. Enumerable.Range(0, 200).Select(i => $"later {i}")]));
+
+        Assert.Null(_store.UserRowOfClient("t", "old"));
+    }
+
+    [Fact]
     public void A_page_reads_only_its_own_items_rows_not_the_whole_session()
     {
         // Every search of rows names more than the session: by seq below the page, or by one item.

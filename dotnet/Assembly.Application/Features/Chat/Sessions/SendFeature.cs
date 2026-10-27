@@ -39,7 +39,9 @@ internal sealed class SendFeature : IFeature
             // A helper whose parent is on the machine that reaches this one takes its prompts from there.
             if (session.ParentSessionId is { } parent && _store.Get(parent) is not null)
                 throw new CallFailed("a subagent's session takes prompts from its parent only");
-            var runId = await _machines.For(session).SendAsync(session, args.Text, call.Cancellation)
+            if (args.ClientId is not null && ClientIdError(args.ClientId) is { } bad)
+                throw new CallFailed(bad);
+            var runId = await _machines.For(session).SendAsync(session, args.Text, args.ClientId, call.Cancellation)
                 ?? throw new CallFailed("the running turn can't take a message yet");
             return _ => new Sent(runId);
         }, args => OrderOf(args.Session));
@@ -75,7 +77,14 @@ internal sealed class SendFeature : IFeature
 
     private SessionInfo Session(string id) => _store.Get(id) ?? throw new CallFailed("unknown session");
 
-    internal sealed record SendArgs([property: JsonRequired] string Session, [property: JsonRequired] string Text);
+    /// <summary>Why <paramref name="clientId"/> can't name a send, or null if it can.</summary>
+    internal static string? ClientIdError(string? clientId) =>
+        clientId is { Length: >= 1 and <= 64 } && clientId.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_')
+            ? null
+            : "clientId must be 1 to 64 letters, digits, - or _";
+
+    /// <summary><c>ClientId</c>, when given, names the message, so a resend of it answers the first send's run.</summary>
+    internal sealed record SendArgs([property: JsonRequired] string Session, [property: JsonRequired] string Text, string? ClientId = null);
 
     internal sealed record Sent(string RunId);
 

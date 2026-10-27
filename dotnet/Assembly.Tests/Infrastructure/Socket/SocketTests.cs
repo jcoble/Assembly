@@ -476,7 +476,7 @@ public sealed partial class SocketTests : IAsyncLifetime
         }
     }
 
-    private sealed class FakeLog : ILogger
+    internal sealed class FakeLog : ILogger
     {
         private readonly List<(LogLevel Level, string Message)> _entries = [];
 

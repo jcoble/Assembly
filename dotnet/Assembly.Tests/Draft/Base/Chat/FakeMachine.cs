@@ -60,7 +60,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Remote("helper", () => store.Helper(parent, agent, title), cancellationToken);
 
-    public Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken) =>
+    public Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken) =>
         Remote<string?>($"send {session.SessionId} {text}", () => Refuses ? null : "run-1", cancellationToken);
 
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
