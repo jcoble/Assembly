@@ -170,11 +170,12 @@ fn read(item: Value) -> Option<SessionItem> {
 
 /// Adds the topic's state (`full` when it holds the topic's 200). The first sets where older pages start. A later
 /// one, after a reconnect, whose oldest is newer than the newest held session leaves a gap: the held list is
-/// replaced and the pages start again from the state's oldest. One that reaches the held list is merged.
+/// replaced and the pages start again from the state's oldest, without an older page's error. One that reaches
+/// the held list is merged.
 fn add_state(
     items: &mut Vec<SessionItem>,
     older: &mut Option<(i64, String)>,
-    _older_error: &mut Option<String>,
+    older_error: &mut Option<String>,
     first: bool,
     state: Vec<SessionItem>,
     full: bool,
@@ -188,6 +189,7 @@ fn add_state(
     }
     if first || gap {
         *older = oldest.filter(|_| full);
+        *older_error = None;
     }
     state.into_iter().map(|item| upsert(items, item)).collect()
 }
