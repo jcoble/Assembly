@@ -141,7 +141,14 @@ impl Sessions {
                     .into_iter()
                     .filter_map(|(_, item)| read(item))
                     .collect();
-                for change in add_state(&mut self.items, &mut self.older, first, state, full) {
+                for change in add_state(
+                    &mut self.items,
+                    &mut self.older,
+                    &mut self.older_error,
+                    first,
+                    state,
+                    full,
+                ) {
                     cx.emit(change);
                 }
             }
@@ -167,6 +174,7 @@ fn read(item: Value) -> Option<SessionItem> {
 fn add_state(
     items: &mut Vec<SessionItem>,
     older: &mut Option<(i64, String)>,
+    _older_error: &mut Option<String>,
     first: bool,
     state: Vec<SessionItem>,
     full: bool,
@@ -323,9 +331,21 @@ mod tests {
         let mut items = vec![session("a", 10), session("b", 5)];
         let mut older = Some((5, "b".to_owned()));
         let state = vec![session("x", 30), session("y", 20)];
-        add_state(&mut items, &mut older, false, state, true);
+        add_state(&mut items, &mut older, &mut None, false, state, true);
         assert_eq!(ids(&items), ["x", "y"]);
         assert_eq!(older, Some((20, "y".to_owned())));
+    }
+
+    // An older page failed before the reconnect. The gap restarts the pages, so that page's error no longer applies.
+    #[test]
+    fn a_reconnect_state_past_the_held_list_clears_the_older_page_error() {
+        let mut items = vec![session("a", 10), session("b", 5)];
+        let mut older = Some((5, "b".to_owned()));
+        let mut older_error =
+            Some("Couldn't load older sessions: the database is locked".to_owned());
+        let state = vec![session("x", 30), session("y", 20)];
+        add_state(&mut items, &mut older, &mut older_error, false, state, true);
+        assert_eq!(older_error, None);
     }
 
     // Pins: g0-socket#7, g0-socket#10
@@ -334,7 +354,7 @@ mod tests {
         let mut items = vec![session("a", 10), session("b", 5)];
         let mut older = Some((1, "z".to_owned()));
         let state = vec![session("x", 30), session("a", 10)];
-        add_state(&mut items, &mut older, false, state, true);
+        add_state(&mut items, &mut older, &mut None, false, state, true);
         assert_eq!(ids(&items), ["x", "a", "b"]);
         assert_eq!(older, Some((1, "z".to_owned())));
     }
