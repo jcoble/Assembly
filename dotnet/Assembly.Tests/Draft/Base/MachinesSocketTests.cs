@@ -28,7 +28,7 @@ namespace Assembly.Tests.Draft.Base;
 /// The <c>machines</c> topic over the socket, with a real remote machine whose far end is a small stub server: whether
 /// each machine answered last time, and why not when it didn't. The probe rides the backend clock, on a fake clock.
 /// </summary>
-public sealed class MachinesSocketTests : IAsyncLifetime
+public sealed partial class MachinesSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
     private const string Local = """{"name":null,"kind":"local","reachable":true,"reason":null}""";
@@ -482,104 +482,5 @@ public sealed class MachinesSocketTests : IAsyncLifetime
         while (!received.EndOfMessage);
         // The error frames escape an apostrophe; compare on one spelling.
         return Encoding.UTF8.GetString(message.ToArray()).Replace("\\u0027", "'");
-    }
-
-    // The remote's far end: /version and /agents, each able to answer an error status, drop the connection or (/version)
-    // hang; /live, which sends its rows and then a ping every 300 ms; and a session read that always fails.
-    internal sealed class StubRemote : IAsyncDisposable
-    {
-        private WebApplication _app = null!;
-
-        public Uri Address { get; private set; } = null!;
-        public int Format { get; set; } = RowStore.FormatVersion;
-        public int AgentsStatus { get; set; } = 200;
-        public int StopStatus { get; set; } = 202;
-        public bool Drop { get; set; }
-        public bool DropVersion { get; set; }
-        public bool HangVersion { get; set; }
-        public bool Pings { get; set; } = true;
-        public string[] LiveRows { get; set; } = [];
-        public int VersionHits;
-        public int VersionAborted;
-        public int AgentsHits;
-        public int LiveHits;
-        public int TitleHits;
-
-        public async Task StartAsync()
-        {
-            var builder = WebApplication.CreateSlimBuilder();
-            builder.Logging.ClearProviders();
-            builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
-            _app = builder.Build();
-            _app.UseWebSockets();
-            _app.MapGet("/version", async (HttpContext context) =>
-            {
-                Interlocked.Increment(ref VersionHits);
-                if (DropVersion)
-                {
-                    context.Abort();
-                    return Results.Empty;
-                }
-                if (HangVersion)
-                {
-                    try
-                    {
-                        await Task.Delay(Timeout.Infinite, context.RequestAborted);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        Interlocked.Increment(ref VersionAborted);
-                        return Results.Empty;
-                    }
-                }
-                return Results.Text($$"""{"formatVersion":{{Format}},"commit":"abc"}""", "application/json");
-            });
-            _app.MapGet("/sessions/{id}", () =>
-            {
-                Interlocked.Increment(ref TitleHits);
-                return Results.Text("boom", statusCode: 500);
-            });
-            _app.Map("/live", async (HttpContext context) =>
-            {
-                Interlocked.Increment(ref LiveHits);
-                using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                var aborted = context.RequestAborted;
-                try
-                {
-                    foreach (var row in LiveRows)
-                        await socket.SendAsync(Encoding.UTF8.GetBytes(row), WebSocketMessageType.Text, endOfMessage: true, aborted);
-                    while (Pings)
-                    {
-                        await socket.SendAsync("""{"type":"ping"}"""u8.ToArray(), WebSocketMessageType.Text, endOfMessage: true, aborted);
-                        await Task.Delay(300, aborted);
-                    }
-                    await Task.Delay(Timeout.Infinite, aborted);
-                }
-                catch (Exception error) when (error is OperationCanceledException or WebSocketException)
-                {
-                }
-            });
-            _app.MapGet("/agents", (HttpContext context) =>
-            {
-                Interlocked.Increment(ref AgentsHits);
-                if (Drop)
-                {
-                    context.Abort();
-                    return Results.Empty;
-                }
-                return AgentsStatus == 200
-                    ? Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json")
-                    : Results.Text("boom", statusCode: AgentsStatus);
-            });
-            _app.MapPost("/runs/{id}/stop", () => Results.Text(StopStatus == 500 ? "boom" : "", statusCode: StopStatus));
-            await _app.StartAsync();
-            Address = new Uri(_app.Urls.Single());
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            await _app.StopAsync();
-            await _app.DisposeAsync();
-        }
     }
 }
