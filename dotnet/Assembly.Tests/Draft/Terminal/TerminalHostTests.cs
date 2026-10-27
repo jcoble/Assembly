@@ -95,6 +95,17 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
+    public void A_command_run_for_a_session_is_never_handed_back_as_its_shell()
+    {
+        // Pins: terminal#9
+        var run = _host.Start(new StartArgs(_folder, Command: "make test", Owner: "session-1"));
+        var shell = _host.Start(new StartArgs(_folder, Owner: "session-1"));
+        var again = _host.Start(new StartArgs(_folder, Command: "make test", Owner: "session-1"));
+
+        Assert.Equal(3, new[] { run.Id, shell.Id, again.Id }.Distinct().Count());
+    }
+
+    [Fact]
     public void A_size_is_kept_between_20_and_300_columns_and_4_and_100_rows()
     {
         // Pins: terminal#4
@@ -146,6 +157,27 @@ public sealed class TerminalHostTests : IAsyncDisposable
         Assert.Equal("two three"u8.ToArray(), Data(row));
         Assert.Equal(13, fresh);
         Assert.Empty(none);
+    }
+
+    [Fact]
+    public async Task Coming_back_after_the_exit_repeats_nothing_and_far_behind_reads_the_replay()
+    {
+        // Pins: terminal#5
+        var terminal = _host.Start(new StartArgs(_folder));
+        for (var i = 0; i < 16; i++)
+            _pty.Started[0].Emit(new byte[64 * 1024]);
+        _pty.Started[0].Emit(new byte[10]);
+        _pty.Started[0].End(0);
+        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"exit\":"));
+        var end = OutputRing.ReadLimit + 10L;
+
+        var (seen, nothing) = _host.State(terminal.Id, after: end + 1);
+        var (behind, onlyExit) = _host.State(terminal.Id, after: 0);
+
+        Assert.Equal(end + 1, seen);
+        Assert.Empty(nothing);
+        Assert.Equal(end, behind);
+        Assert.Equal((end + 1, end), (Seq(onlyExit.Single()), PrevSeq(onlyExit.Single())));
     }
 
     [Fact]
