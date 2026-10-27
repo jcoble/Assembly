@@ -2,6 +2,8 @@
 //! "Failed") and the checkout line above a prompt when the run started on another branch or commit. Ported from
 //! session/turns.ts.
 
+use chrono::{Local, TimeZone};
+
 use crate::features::session::rows::turn_stats::TurnStats;
 
 /// The line under a turn. A live turn with no stats yet shows only its running time, from the backend clock's `now`
@@ -24,6 +26,7 @@ pub fn turn_line(stats: Option<&TurnStats>, live_started_at: Option<i64>, now: i
     };
     let Some(stats) = stats else { return head };
     let mut parts = vec![head];
+    parts.extend(stats.started_at.map(|at| local(at, "%a %-I:%M %p")));
     parts.extend(stats.model.clone());
     parts.extend(stats.input_tokens.map(|n| format!("{} in", count(n))));
     parts.extend(stats.output_tokens.map(|n| format!("{} out", count(n))));
@@ -51,8 +54,16 @@ pub fn checkout_line(stats: Option<&TurnStats>) -> Option<String> {
 }
 
 /// A prompt's or reply's time: "Thursday 12:02 PM" within the last 7 days, "Oct 17, 12:02 PM" before that.
-pub fn message_time(_at: i64, _now: i64) -> String {
-    todo!()
+pub fn message_time(at: i64, now: i64) -> String {
+    const WEEK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+    local(
+        at,
+        if now - at < WEEK_MS {
+            "%A %-I:%M %p"
+        } else {
+            "%b %-d, %-I:%M %p"
+        },
+    )
 }
 
 /// Assembly's "Worked for" duration: 9.5s, 42s, 3m 5s.
@@ -67,6 +78,15 @@ pub fn worked_for(ms: i64) -> String {
     } else {
         format!("{}m {}s", seconds / 60, seconds % 60)
     }
+}
+
+/// A time in ms since the epoch, in the local time zone.
+fn local(at: i64, format: &str) -> String {
+    Local
+        .timestamp_millis_opt(at)
+        .single()
+        .map(|time| time.format(format).to_string())
+        .unwrap_or_default()
 }
 
 /// 340, or 12k and 1.2k past a thousand.
