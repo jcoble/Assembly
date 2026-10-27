@@ -187,7 +187,7 @@ public sealed class RowStore
 
     /// <summary>For <see cref="SessionSummaries"/>, the seq of the session's newest turn row that ended a turn, or 0.</summary>
     public long LastTurnEnd(string sessionId) =>
-        Query(Schema.LastTurnEnd, reader => reader.IsNull(0) ? 0 : reader.Long(0), new SqlArg("$session", sessionId)).Single();
+        Query(Schema.LastTurnEnd, reader => reader.Long(0), new SqlArg("$session", sessionId)).FirstOrDefault();
 
     /// <summary>The run of the session's newest turn row if that row says <c>started</c>, else null.</summary>
     public string? OpenRun(string sessionId) =>

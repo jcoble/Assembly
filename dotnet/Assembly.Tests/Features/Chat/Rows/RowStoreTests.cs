@@ -140,7 +140,8 @@ public sealed class RowStoreTests : IDisposable
         var end = _database.Query("EXPLAIN QUERY PLAN " + Schema.LastTurnEnd, row => row.Text(3), CancellationToken.None, new SqlArg("$session", "t"));
 
         Assert.Contains(rows, step => step == "SCAN rows USING COVERING INDEX rows_summary");
-        Assert.Contains(end, step => step == "SEARCH rows USING INDEX rows_summary (session_id=? AND kind=?)");
+        // The look back walks the index from the newest turn row: no sort of all of them first.
+        Assert.Equal(["SEARCH rows USING INDEX rows_summary (session_id=? AND kind=?)"], end);
     }
 
     [Fact]
