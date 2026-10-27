@@ -31,12 +31,12 @@ public sealed class Topics : ITopics
     /// Runs <paramref name="state"/>, which reads the state and queues it, then registers the subscription, both under
     /// the lock. With no key, it gets every change on the topic; with a key, only changes published with that key.
     /// </summary>
-    internal Subscription Subscribe(string topic, string? key, Action state, Action<string?, string> change)
+    internal Subscription Subscribe(string topic, string? key, Action<Subscription> state, Action<string?, string> change)
     {
         lock (_lock)
         {
-            state();
             var subscription = new Subscription(topic, key, change);
+            state(subscription);
             _subscriptions.Add(subscription);
             return subscription;
         }
@@ -45,13 +45,25 @@ public sealed class Topics : ITopics
     internal void Unsubscribe(Subscription subscription)
     {
         lock (_lock)
+        {
+            subscription.Open = false;
             _subscriptions.Remove(subscription);
+        }
     }
 
     internal sealed class Subscription(string topic, string? key, Action<string?, string> change)
     {
+        private volatile bool _open = true;
+
         public string Topic { get; } = topic;
         public string? Key { get; } = key;
         public Action<string?, string> Change { get; } = change;
+
+        /// <summary>Until it's unsubscribed; its frames still queued then are dropped.</summary>
+        public bool Open
+        {
+            get => _open;
+            set => _open = value;
+        }
     }
 }

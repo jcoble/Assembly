@@ -118,17 +118,18 @@ public sealed class RowStore
 
     /// <summary>
     /// Every row with seq above <paramref name="after"/>, in seq order. This is how a copy catches up. The first
-    /// row's <c>PrevSeq</c> is <paramref name="after"/>, since nothing is kept between them.
+    /// row's <c>PrevSeq</c> is <paramref name="after"/>, since nothing is kept between them. At most
+    /// <paramref name="limit"/> of them, or all with -1.
     /// </summary>
-    public IReadOnlyList<StoredRow> RowsAfter(string sessionId, long after)
+    public IReadOnlyList<StoredRow> RowsAfter(string sessionId, long after, int limit = -1)
     {
         var prev = after;
-        return Query($"SELECT {Columns} FROM rows WHERE session_id = $session AND seq > $after ORDER BY seq;", reader =>
+        return Query($"SELECT {Columns} FROM rows WHERE session_id = $session AND seq > $after ORDER BY seq LIMIT $limit;", reader =>
         {
             var row = ReadRow(reader) with { PrevSeq = prev };
             prev = row.Seq;
             return row;
-        }, new SqlArg("$session", sessionId), new SqlArg("$after", after));
+        }, new SqlArg("$session", sessionId), new SqlArg("$after", after), new SqlArg("$limit", limit));
     }
 
     /// <summary>

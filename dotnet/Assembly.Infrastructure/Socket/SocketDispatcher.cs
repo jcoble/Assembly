@@ -24,8 +24,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private static readonly JsonElement Null = JsonDocument.Parse("null").RootElement.Clone();
 
     private readonly Dictionary<string, Call> _calls = [];
-    // Each topic's state frame for a new subscriber: (sub id, key, context) to the frame.
-    private readonly Dictionary<string, Func<long, string?, CallContext, ReadOnlyMemory<byte>>> _topics = [];
+    // Each topic, by name.
+    private readonly Dictionary<string, TopicFrames> _topics = [];
 
     public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<TResult>> handler) =>
@@ -77,11 +77,15 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
 
     public void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key,
         Func<string?, CallContext, IReadOnlyList<TItem>> state) =>
-        _topics.Add(topic, (sub, subKey, context) => StateFrame(sub, state(subKey, context), item, key));
+        _topics.Add(topic, new TopicFrames(NeedsKey: false,
+            (sub, frame, context) => [StateFrame(sub, state(frame.Key, context), item, key)], ChangeFrame));
 
-    public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state)
-    {
-    }
+    public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state) =>
+        _topics.Add(topic, new TopicFrames(NeedsKey: true, (sub, frame, context) =>
+        {
+            var (seq, rows) = state(frame.Key!, frame.After, context);
+            return [RowsStateFrame(sub, seq), .. rows.Select(row => RowsFrame(sub, null, row))];
+        }, RowsFrame));
 
     /// <summary>
     /// Subscribes the socket to a <c>sub</c> frame's topic: its state is read and queued, and the subscription registered,
@@ -89,22 +93,30 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// </summary>
     internal TopicSet.Subscription? Subscribe(InFrame frame, long id, SocketConnection connection)
     {
-        if (!_topics.TryGetValue(frame.Topic!, out var state))
+        if (!_topics.TryGetValue(frame.Topic!, out var topic))
         {
             connection.Send(Error(id, "not_found", $"there's no topic {frame.Topic}"));
             return null;
         }
+        if (topic.NeedsKey && frame.Key is null)
+        {
+            connection.Send(Error(id, "bad_args", $"{frame.Topic} needs a key"));
+            return null;
+        }
         var context = new CallContext(connection.Closed, connection.Id);
+        TopicSet.Subscription? self = null;
         try
         {
-            return topics.Subscribe(frame.Topic!, frame.Key, () =>
+            return topics.Subscribe(frame.Topic!, frame.Key, subscription =>
             {
-                var snapshot = state(id, frame.Key, context);
+                self = subscription;
+                var snapshot = topic.State(id, frame, context);
                 // Thrown inside the lock, so a state that can't go out subscribes nothing.
-                if (snapshot.Length > SocketConnection.MaxFrame)
+                if (snapshot.Any(part => part.Length > SocketConnection.MaxFrame))
                     throw new CallFailed($"{frame.Topic}'s state is over 4 MB");
-                connection.Send(snapshot);
-            }, (key, json) => connection.Send(ChangeFrame(id, key, json)));
+                foreach (var part in snapshot)
+                    connection.Send(part, subscription);
+            }, (key, json) => connection.Send(topic.Change(id, key, json), self));
         }
         catch (CallFailed error)
         {
@@ -239,6 +251,44 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }
         return buffer.WrittenMemory;
     }
+
+    // {"t":"state","sub":N,"seq":S,"items":[]}: the rows frames that follow continue from seq S.
+    private static ReadOnlyMemory<byte> RowsStateFrame(long sub, long seq)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var json = new Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            json.WriteString("t", "state");
+            json.WriteNumber("sub", sub);
+            json.WriteNumber("seq", seq);
+            json.WriteStartArray("items");
+            json.WriteEndArray();
+            json.WriteEndObject();
+        }
+        return buffer.WrittenMemory;
+    }
+
+    // {"t":"rows","sub":N,"row":...}: one row, as the rows topic published it.
+    private static ReadOnlyMemory<byte> RowsFrame(long sub, string? key, string row)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var json = new Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            json.WriteString("t", "rows");
+            json.WriteNumber("sub", sub);
+            json.WritePropertyName("row");
+            json.WriteRawValue(row, skipInputValidation: true);
+            json.WriteEndObject();
+        }
+        return buffer.WrittenMemory;
+    }
+
+    // A topic's frames: its state for a new subscriber, (sub id, sub frame, context) to the frames, and a change, (sub
+    // id, key, published JSON) to the frame.
+    private sealed record TopicFrames(bool NeedsKey, Func<long, InFrame, CallContext, IReadOnlyList<ReadOnlyMemory<byte>>> State,
+        Func<long, string?, string, ReadOnlyMemory<byte>> Change);
 
     private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync);
 }

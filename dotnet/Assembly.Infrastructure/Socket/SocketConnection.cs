@@ -22,7 +22,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private static long _last;
 
     private readonly CancellationTokenSource _closed = new();
-    private readonly Channel<ReadOnlyMemory<byte>> _outbox = Channel.CreateUnbounded<ReadOnlyMemory<byte>>(new() { SingleReader = true });
+    private readonly Channel<(ReadOnlyMemory<byte> Frame, TopicSet.Subscription? From)> _outbox =
+        Channel.CreateUnbounded<(ReadOnlyMemory<byte>, TopicSet.Subscription?)>(new() { SingleReader = true });
     private readonly Channel<Func<Task>> _writes = Channel.CreateUnbounded<Func<Task>>(new() { SingleReader = true });
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
@@ -165,24 +166,25 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
 
     /// <summary>
     /// Queues a frame for the sender and returns at once, so a publish under the writer's lock never waits on a socket.
-    /// Answers, states and changes share this one queue, so a write's change goes out before its result.
+    /// Answers, states and changes share this one queue, so a write's change goes out before its result. A frame
+    /// <paramref name="from"/> a subscription that has closed by its turn isn't sent: a closed tab really stops.
     /// </summary>
-    internal void Send(ReadOnlyMemory<byte> frame)
+    internal void Send(ReadOnlyMemory<byte> frame, TopicSet.Subscription? from = null)
     {
         // A page that stops reading is closed, and so is one sent a change over 4 MB; it reconnects and loads again.
         if (frame.Length > MaxFrame || Interlocked.Add(ref _waiting, frame.Length) > MaxWaiting)
             socket.Abort();
         else
-            _outbox.Writer.TryWrite(frame);
+            _outbox.Writer.TryWrite((frame, from));
     }
 
     private async Task SendLoopAsync()
     {
-        await foreach (var frame in _outbox.Reader.ReadAllAsync())
+        await foreach (var (frame, from) in _outbox.Reader.ReadAllAsync())
         {
             try
             {
-                if (socket.State == WebSocketState.Open)
+                if (socket.State == WebSocketState.Open && from is not { Open: false })
                     await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
             }
             catch (Exception error) when (error is WebSocketException or ObjectDisposedException)

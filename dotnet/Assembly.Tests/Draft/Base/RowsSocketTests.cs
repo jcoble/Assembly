@@ -173,6 +173,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
 
         // The state's send holds, with the ten rows queued behind it, until the unsub has been read.
         socket.Receive("""{"t":"sub","id":1,"topic":"rows","key":"s","after":0}""");
+        await Until(() => socket.Sends >= 2);
         socket.Receive("""{"t":"unsub","id":1}""");
         await Until(() => socket.Receives >= 4);
         socket.Release();
@@ -241,6 +242,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         private int _receives;
 
         public int Receives => Volatile.Read(ref _receives);
+        public int Sends => Volatile.Read(ref _sends);
         public override WebSocketCloseStatus? CloseStatus => null;
         public override string? CloseStatusDescription => null;
         public override WebSocketState State => WebSocketState.Open;

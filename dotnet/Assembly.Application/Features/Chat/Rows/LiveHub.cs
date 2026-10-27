@@ -14,14 +14,17 @@ public sealed class LiveHub : IDisposable
 {
     private readonly RowStore _store;
     private readonly int _queueLimit;
+    private readonly ITopics? _topics;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, List<LiveSubscription>> _subscribers = [];
 
     /// <param name="queueLimit">Rows a socket may fall behind before it's closed.</param>
+    /// <param name="topics">Where each saved row is also published, on the <c>rows</c> topic under its session.</param>
     public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null)
     {
         _store = store;
         _queueLimit = queueLimit;
+        _topics = topics;
     }
 
     /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
@@ -134,6 +137,9 @@ public sealed class LiveHub : IDisposable
 
     private void Push(string sessionId, IReadOnlyList<StoredRow> rows)
     {
+        if (_topics is not null)
+            foreach (var row in rows)
+                _topics.Publish(RowsFeature.Topic, sessionId, RowWire.ToJson(row));
         if (!_subscribers.TryGetValue(sessionId, out var subscribers))
             return;
         foreach (var subscriber in subscribers.ToList())
