@@ -2,7 +2,7 @@
 //! plan card above the composer. Rows are `RenderOnce` and read their item and its `Kept`; their buttons send a
 //! `SessionAction` to the pane, and only the pane and the timeline own state.
 
-pub mod ask_card;
+pub mod ask_row;
 pub mod grow;
 pub mod header;
 pub mod item_row;

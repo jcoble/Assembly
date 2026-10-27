@@ -392,3 +392,36 @@ fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
         )]
     );
 }
+
+// An open ask whose answer arrives shrinks from then; one already answered when drawn stays still.
+// Pins: g0-session#16, g0-session#34
+#[gpui::test]
+fn an_ask_answered_while_shown_shrinks_and_one_drawn_answered_is_still(cx: &mut TestAppContext) {
+    let ask = |seq: i64, item: &str, state: &str| {
+        let payload =
+            json!({ "kind": "permission", "state": state, "options": [], "answer": null });
+        row(seq, "ask", Some(item), payload)
+    };
+    let (pane, client, cx) = opened(
+        vec![
+            user(1, "go"),
+            ask(2, "ask:a1", "open"),
+            ask(3, "ask:a2", "answered"),
+        ],
+        cx,
+    );
+    live(&client, ask(4, "ask:a1", "answered"), cx);
+    cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        let key = |at: usize| pane.view.items[at].key.clone();
+        let toggled = |at: usize| pane.kept.get(&key(at)).and_then(|kept| kept.toggled_at);
+        assert!(
+            toggled(1).is_some() && pane.growing.contains(&key(1)),
+            "the answered one shrinks"
+        );
+        assert!(
+            toggled(2).is_none() && !pane.growing.contains(&key(2)),
+            "drawn answered: still"
+        );
+    });
+}

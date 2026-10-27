@@ -14,7 +14,7 @@ use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::tool::ToolDetail;
-use crate::features::session::view::ask_card::AskForm;
+use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::grow::{GROW, toggled};
 use crate::features::session::view::lightbox::open_lightbox;
 use crate::features::session::view::session_action::SessionAction;
@@ -41,7 +41,7 @@ impl SessionPane {
                     self.open_folds.insert(run_id);
                     self.refresh(Change::Nothing, cx);
                 }
-                self.start_growing(key, window, cx);
+                self.start_growing(key, cx);
             }
             SessionAction::Toggle { key } => {
                 let kept = self.kept.entry(key.clone()).or_default();
@@ -51,7 +51,7 @@ impl SessionPane {
                     self.refresh(Change::Updated(at), cx);
                     self.read_detail_if_stale(at, cx);
                 }
-                self.start_growing(key, window, cx);
+                self.start_growing(key, cx);
             }
             SessionAction::RetryPage => {
                 if let Some(before) = self.retry_first {
@@ -187,12 +187,10 @@ impl SessionPane {
         );
     }
 
-    /// Starts `key`'s ease (an item's key, or `fold:<run>`), unless the frames are already running.
-    fn start_growing(&mut self, key: String, window: &mut Window, cx: &mut Context<Self>) {
+    /// Starts `key`'s ease (an item's key, or `fold:<run>`): the next draw runs its frames, unless they're running.
+    pub(super) fn start_growing(&mut self, key: String, cx: &mut Context<Self>) {
         self.growing.insert(key);
-        if !self.grow_asked {
-            self.grow_frame(window, cx);
-        }
+        cx.notify();
     }
 
     /// One frame of the rows growing: the list measures each again, so the rows below slide with it. An ease that's

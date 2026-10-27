@@ -6,7 +6,7 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::ask_card::{AskCard, AskForm};
+use super::ask_row::{AskForm, AskRow};
 use super::grow::{band, chevron, faded, grow, turn};
 use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
@@ -146,9 +146,10 @@ impl RenderOnce for ItemRow {
                     None => div().into_any_element(),
                 }
             }
-            ItemKind::Ask { ask_id, ask } => AskCard {
+            ItemKind::Ask { ask_id, ask } => AskRow {
                 ask_id,
                 ask,
+                toggled_at: self.kept.toggled_at,
                 form: self.form,
                 on_action: self.on_action.clone(),
             }

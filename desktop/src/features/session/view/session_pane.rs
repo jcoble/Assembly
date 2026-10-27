@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use super::ask_card::AskForm;
-use super::grow::{GROW, faded, grow, turn};
+use super::ask_row::AskForm;
+use super::grow::{GROW, faded, grow, toggled, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
@@ -339,7 +339,19 @@ impl SessionPane {
                 ItemKind::Message { blocks, .. } if item.key == key => Some(Reveal::chars(blocks)),
                 _ => None,
             });
+        // An ask that was open when its answer arrives shrinks from now.
+        let asked = self.view.items.iter().any(|item| {
+            item.key == key
+                && matches!(&item.kind, ItemKind::Ask { ask, .. } if ask.state == "open")
+        });
         let change = self.view.apply(row);
+        if let (true, Change::Updated(at)) = (asked, change)
+            && matches!(&self.view.items[at].kind, ItemKind::Ask { ask, .. } if ask.state != "open")
+        {
+            let kept = self.kept.entry(key.clone()).or_default();
+            kept.toggled_at = Some(toggled(false, kept.toggled_at, Instant::now(), GROW));
+            self.start_growing(key.clone(), cx);
+        }
         if let (Change::Appended, Some(item)) = (change, self.view.items.last()) {
             let now = Instant::now();
             self.fresh

@@ -45,6 +45,10 @@ impl Render for SessionPane {
             self.frame_asked = true;
             cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
         }
+        if !self.growing.is_empty() && !self.grow_asked {
+            self.grow_asked = true;
+            cx.on_next_frame(window, |pane, window, cx| pane.grow_frame(window, cx));
+        }
         div()
             .size_full()
             .flex()
