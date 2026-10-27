@@ -6,21 +6,29 @@ mod features;
 
 use gpui_kit::*;
 
+use crate::core::theme::{self, theme_id::ThemeId};
+
 fn main() {
     // On macOS GPUI's default keeps the app running with no window open.
     gpui_kit::application()
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
-            let options = WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Assembly".into()),
+            // The window opens once the theme files have loaded, already in its theme.
+            theme::init(cx, |cx| {
+                let options = WindowOptions {
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("Assembly".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            };
-            gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| EmptyView))
+                };
+                gpui_kit::open_window(options, cx, |window, cx| {
+                    theme::set(ThemeId::DEFAULT, window, cx);
+                    cx.new(|_| EmptyView)
+                })
                 .expect("open the window");
-            cx.activate(true);
+                cx.activate(true);
+            });
         });
 }

@@ -3,6 +3,13 @@
 
 /// One theme. The setting saves `as_str`; the kit knows the theme by `theme_name`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "picked by the palette commands (g0-host) and preferences (the cut); until then only the default opens"
+    )
+)]
 pub enum ThemeId {
     Assembly,
     AssemblyGlass,
@@ -17,6 +24,13 @@ pub enum ThemeId {
     Tomorrow,
 }
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "picked by the palette commands (g0-host) and preferences (the cut); until then only the default opens"
+    )
+)]
 impl ThemeId {
     /// The theme the app opens with, and the one an unknown id gives.
     pub const DEFAULT: ThemeId = ThemeId::Assembly;
@@ -117,17 +131,29 @@ mod tests {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
         let files: BTreeSet<String> = fs::read_dir(&dir)
             .expect("read desktop/themes")
-            .map(|entry| entry.expect("a folder entry").file_name().into_string().expect("a UTF-8 name"))
+            .map(|entry| {
+                entry
+                    .expect("a folder entry")
+                    .file_name()
+                    .into_string()
+                    .expect("a UTF-8 name")
+            })
             .filter(|name| name.ends_with(".json"))
             .collect();
-        let expected: BTreeSet<String> = ThemeId::ALL.iter().map(|id| format!("{}.json", id.as_str())).collect();
+        let expected: BTreeSet<String> = ThemeId::ALL
+            .iter()
+            .map(|id| format!("{}.json", id.as_str()))
+            .collect();
         assert_eq!(files, expected);
 
         let mut names = BTreeSet::new();
         for id in ThemeId::ALL {
             let path = dir.join(format!("{}.json", id.as_str()));
-            let set: ThemeSet = serde_json::from_str(&fs::read_to_string(&path).expect("read the file"))
-                .unwrap_or_else(|err| panic!("{} isn't a kit theme file: {err}", path.display()));
+            let set: ThemeSet =
+                serde_json::from_str(&fs::read_to_string(&path).expect("read the file"))
+                    .unwrap_or_else(|err| {
+                        panic!("{} isn't a kit theme file: {err}", path.display())
+                    });
             assert_eq!(set.themes.len(), 1, "{}", path.display());
             let theme = &set.themes[0];
             assert_eq!(theme.name.as_ref(), id.theme_name(), "{}", path.display());
@@ -135,7 +161,11 @@ mod tests {
             assert!(!theme.is_default, "{} says is_default", path.display());
             // Every theme is dark, so picking one never switches mode.
             assert_eq!(theme.mode, ThemeMode::Dark, "{}", path.display());
-            assert!(names.insert(id.theme_name()), "two ids share the name {}", id.theme_name());
+            assert!(
+                names.insert(id.theme_name()),
+                "two ids share the name {}",
+                id.theme_name()
+            );
         }
     }
 }

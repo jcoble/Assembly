@@ -10,3 +10,9 @@ gpui-fps = "=0.8.1"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 tungstenite = "=0.27.0"
+
+[dev-dependencies]
+# GPUI's test platform (TestAppContext, #[gpui::test]) for tests that need an App or a window but no screen. It's the
+# gpui-pre that gpui-kit re-exports, named directly because gpui-kit's own test-support feature pulls in gpui-fast,
+# whose exact taffy pin conflicts with gpui-pre's.
+gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support"] }
