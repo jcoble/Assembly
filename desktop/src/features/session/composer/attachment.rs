@@ -31,6 +31,22 @@ impl Attachment {
         todo!()
     }
 
+    /// "512 B", "2.0 KB", "3.5 MB", for the chip.
+    pub fn size_text(_size: u64) -> String {
+        todo!()
+    }
+
+    /// Dropped files and folders as draft text: their paths, separated by spaces, a path with a space in quotes.
+    pub fn paths_text(_paths: &[String]) -> String {
+        todo!()
+    }
+
+    /// `text` put in `draft` at the byte `caret`, with a space either side unless the draft has one there; the new
+    /// draft and caret.
+    pub fn insert_at(_draft: &str, _caret: usize, _text: &str) -> (String, usize) {
+        todo!()
+    }
+
     /// A sent message's text and the attachments its trailing lines name, as (path, name, thumbnail).
     pub fn split_lines(_text: &str) -> (String, Vec<(String, String, Option<String>)>) {
         todo!()
