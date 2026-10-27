@@ -38,7 +38,8 @@ internal sealed class SessionsFeature : IFeature
             return Task.FromResult(new Page([.. page.Sessions.Select(SessionItem.From)], page.NextBefore, page.NextBeforeId));
         });
         // The machine's work runs before the write, which only answers: the store's own write publishes the new
-        // session, so it goes out on this socket before the answer.
+        // session, so it goes out on this socket before the answer. It's keyed on its machine, so one that hangs holds
+        // up only creates there.
         calls.Write(Topic, "create", SessionsJson.Default.CreateArgs, SessionsJson.Default.Created, async (args, call) =>
         {
             if (args.Agent.Length == 0 || args.RepoUrl.Length == 0)
@@ -51,7 +52,7 @@ internal sealed class SessionsFeature : IFeature
                     args.Title ?? "Helper", call.Cancellation)
                 : await machine.CreateSessionAsync(args.Agent, args.RepoUrl, call.Cancellation);
             return _ => new Created(session.SessionId);
-        });
+        }, args => $"machine {args.Machine}");
     }
 
     /// <summary>A page after the cursor: <c>before</c> and <c>beforeId</c> are the last page's <c>nextBefore</c> and <c>nextBeforeId</c>.</summary>

@@ -36,7 +36,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             async (value, call) => JsonSerializer.SerializeToElement(await handler((TArgs)value, call), result)));
 
     public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler)
+        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null)
     {
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
@@ -47,7 +47,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             var database = await handler((TArgs)value, call);
             call.Cancellation.ThrowIfCancellationRequested();
             return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
-        }));
+        }, order is null ? null : value => order((TArgs)value)));
     }
 
     public void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save)
@@ -175,10 +175,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         var context = new CallContext(token.Token, connection.Id);
         try
         {
-            // A write joins its socket's queue now, in arrival order; a read runs off the receive loop, so one that
-            // blocks doesn't hold up the frames after it.
+            // A write joins its key's queue, or else its socket's, now, in arrival order; a read runs off the receive
+            // loop, so one that blocks doesn't hold up the frames after it.
             var result = call.Writes
-                ? await connection.QueueWriteAsync(() => call.RunAsync(args, context))
+                ? await connection.QueueWriteAsync(call.Order?.Invoke(args), () => call.RunAsync(args, context))
                 : await Task.Run(() => call.RunAsync(args, context));
             var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
             return Bounded(answer, id);
@@ -334,5 +334,6 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private sealed record TopicFrames(bool NeedsKey,
         Func<long, InFrame, CallContext, (IReadOnlyList<ReadOnlyMemory<byte>> State, Func<string?, string, ReadOnlyMemory<byte>?> Change)> Open);
 
-    private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync);
+    private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync,
+        Func<object, string?>? Order = null);
 }

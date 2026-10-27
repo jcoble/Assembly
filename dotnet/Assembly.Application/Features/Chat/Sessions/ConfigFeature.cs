@@ -39,7 +39,7 @@ internal sealed class ConfigFeature : IFeature
             var session = _store.Get(args.Session) ?? throw new CallFailed("unknown session");
             var config = Json(await _machines.For(session).SetConfigAsync(session, args.ConfigId, args.Value, call.Cancellation));
             return _ => config;
-        });
+        }, args => SendFeature.OrderOf(args.Session));
     }
 
     // The agent's options and commands are its own JSON, kept as it sent them.

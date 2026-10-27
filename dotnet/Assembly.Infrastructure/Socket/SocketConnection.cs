@@ -25,6 +25,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private readonly Channel<(ReadOnlyMemory<byte> Frame, TopicSet.Subscription? From)> _outbox =
         Channel.CreateUnbounded<(ReadOnlyMemory<byte>, TopicSet.Subscription?)>(new() { SingleReader = true });
     private readonly Channel<Func<Task>> _writes = Channel.CreateUnbounded<Func<Task>>(new() { SingleReader = true });
+    // The last write queued under each order key, until it ends. Only the receive loop adds one.
+    private readonly Dictionary<string, Task> _ordered = [];
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
     // This socket's subscriptions, by their sub id. Only the receive loop, and then its finally, touch it.
@@ -64,6 +66,10 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             await _closed.CancelAsync();
             _writes.Writer.TryComplete();
             await writing;
+            Task[] ordered;
+            lock (_ordered)
+                ordered = [.. _ordered.Values];
+            await Task.WhenAll(ordered.Select(write => write.ContinueWith(_ => { }, TaskScheduler.Default)));
             _outbox.Writer.TryComplete();
             await sending;
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -71,9 +77,28 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         }
     }
 
-    /// <summary>Runs a write's whole call on the write queue, after the writes before it.</summary>
-    public Task<T> QueueWriteAsync<T>(Func<Task<T>> run)
+    /// <summary>
+    /// Runs a write's whole call after the writes before it with the same order key, or with none, on the socket's
+    /// queue. A socket that closes still runs every write it queued.
+    /// </summary>
+    public Task<T> QueueWriteAsync<T>(string? order, Func<Task<T>> run)
     {
+        if (order is not null)
+        {
+            lock (_ordered)
+            {
+                var write = AfterAsync(_ordered.GetValueOrDefault(order), run);
+                _ordered[order] = write;
+                write.ContinueWith(_ =>
+                {
+                    lock (_ordered)
+                        if (_ordered.GetValueOrDefault(order) == write)
+                            _ordered.Remove(order);
+                }, TaskScheduler.Default);
+                return write;
+            }
+        }
+
         var done = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!_writes.Writer.TryWrite(async () =>
             {
@@ -88,6 +113,13 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             }))
             done.SetException(new OperationCanceledException("The socket closed."));
         return done.Task;
+    }
+
+    private static async Task<T> AfterAsync<T>(Task? before, Func<Task<T>> run)
+    {
+        if (before is not null)
+            await before.ContinueWith(_ => { }, TaskScheduler.Default);
+        return await run();
     }
 
     // The first frame must be a hello with this protocol and the token; nothing is sent before it.

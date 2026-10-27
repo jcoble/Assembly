@@ -70,6 +70,26 @@ public sealed partial class ChatSocketTests
         Assert.Equal([1], (await ReadAnswersAsync(socket, 1)).Keys);
     }
 
+    [Fact]
+    public async Task A_socket_that_closes_still_runs_the_sends_it_queued()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        _box.Hold();
+        var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"one"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
+        await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"two"}""");
+        await CallAsync(socket, 3, "preferences", "set", Save);
+        await ReadAnswersAsync(socket, 1);
+        socket.Abort();
+        socket.Dispose();
+        _box.Release();
+
+        Assert.True(SpinWait.SpinUntil(() => { lock (_box.Asked) return _box.Asked.Count == 2; }, Wait));
+        Assert.Equal($"send {session.SessionId} two", _box.Asked[1]);
+    }
+
     // The next count answers (result or error frames), by id; other frames are skipped.
     private static async Task<Dictionary<long, string>> ReadAnswersAsync(WebSocket socket, int count)
     {

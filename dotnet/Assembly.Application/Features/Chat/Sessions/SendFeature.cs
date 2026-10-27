@@ -28,8 +28,9 @@ internal sealed class SendFeature : IFeature
         _hub = hub;
     }
 
-    // Each is a write, so a socket's calls reach the machine in the order sent and a closing socket doesn't cancel
-    // one already queued; the machine's work runs outside the write, which only answers.
+    // Each is a write keyed on its session (a stop, on its run's), so one session's calls reach its machine in the order
+    // sent, a machine that hangs holds up only its sessions' calls, and a closing socket doesn't cancel one already
+    // queued; the machine's work runs outside the write, which only answers.
     public void Register(ICallRegistry calls)
     {
         calls.Write(Feature, "send", SessionsJson.Default.SendArgs, SessionsJson.Default.Sent, async (args, call) =>
@@ -41,13 +42,13 @@ internal sealed class SendFeature : IFeature
             var runId = await _machines.For(session).SendAsync(session, args.Text, call.Cancellation)
                 ?? throw new CallFailed("the running turn can't take a message yet");
             return _ => new Sent(runId);
-        });
+        }, args => OrderOf(args.Session));
         calls.Write(Feature, "stop", SessionsJson.Default.StopArgs, SessionsJson.Default.Done, async (args, call) =>
         {
             var stopped = _hub.SessionOfRun(args.RunId) is { } sessionId && _store.Get(sessionId) is { } session
                 && await _machines.For(session).StopAsync(session, args.RunId, call.Cancellation);
             return stopped ? _ => new Done(true) : throw new CallFailed("that run isn't running");
-        });
+        }, args => _hub.SessionOfRun(args.RunId) is { } session ? OrderOf(session) : null);
         calls.Write(Feature, "answer", SessionsJson.Default.AnswerArgs, SessionsJson.Default.Done, async (args, call) =>
         {
             if (args.Answer.ValueKind != JsonValueKind.Object)
@@ -56,7 +57,7 @@ internal sealed class SendFeature : IFeature
             return await _machines.For(session).AnswerAsync(session, args.Ask, args.Answer, call.Cancellation)
                 ? _ => new Done(true)
                 : throw new CallFailed("that ask isn't open, or the answer doesn't fit it");
-        });
+        }, args => OrderOf(args.Session));
         calls.Write(Feature, "stopTask", SessionsJson.Default.StopTaskArgs, SessionsJson.Default.Done, async (args, call) =>
         {
             var session = Session(args.Session);
@@ -65,8 +66,11 @@ internal sealed class SendFeature : IFeature
                 ? _machines.For(helper).ActiveRun(helper) is { } run && await _machines.For(helper).StopAsync(helper, run, call.Cancellation)
                 : await _machines.For(session).StopTaskAsync(session, args.Task, call.Cancellation);
             return stopped ? _ => new Done(true) : throw new CallFailed("that task isn't running, or can't be stopped");
-        });
+        }, args => OrderOf(args.Session));
     }
+
+    /// <summary>The order key of the writes that reach a session's machine.</summary>
+    internal static string OrderOf(string sessionId) => $"session {sessionId}";
 
     private SessionInfo Session(string id) => _store.Get(id) ?? throw new CallFailed("unknown session");
 
