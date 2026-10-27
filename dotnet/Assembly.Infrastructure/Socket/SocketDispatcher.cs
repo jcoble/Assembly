@@ -131,8 +131,16 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 if (change!(key, json) is { } changed)
                     connection.Send(changed, self);
             });
-            // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work.
-            topic.Opened?.Invoke(frame.Key!, context);
+            // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work. The sub is
+            // registered by now, so one that throws is logged and the sub stays good, as the socket's to unsubscribe.
+            try
+            {
+                topic.Opened?.Invoke(frame.Key!, context);
+            }
+            catch (Exception error)
+            {
+                log.LogError(error, "topic {Topic} opened {Key} but its follow-up failed", frame.Topic, frame.Key);
+            }
             return opened;
         }
         catch (CallFailed error)
