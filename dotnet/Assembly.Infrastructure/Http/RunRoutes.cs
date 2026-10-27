@@ -139,6 +139,11 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
             {
                 runId = await machines.For(session).SendAsync(session, text, clientId, limit.Token);
             }
+            catch (OperationCanceledException) when (limit.IsCancellationRequested)
+            {
+                await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, $"send ran over {SocketDispatcher.Limit.TotalSeconds:0} s");
+                return;
+            }
             catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed or OperationCanceledException)
             {
                 await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);

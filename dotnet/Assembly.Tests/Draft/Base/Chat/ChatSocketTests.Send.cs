@@ -117,6 +117,45 @@ public sealed partial class ChatSocketTests
         Assert.Equal("""{"t":"error","id":3,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
     }
 
+    // A cancel that lands once the machine has started the turn can't stop it, so the send answers its run.
+    [Fact]
+    public async Task A_cancel_after_the_turn_started_still_answers_its_run()
+    {
+        var session = _sessions.Create("claude", "repo");
+        _here.Started = true;
+        _here.Hold();
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
+        await _here.Reached.Task.WaitAsync(Wait);
+        await SendAsync(socket, """{"t":"cancel","id":1}""");
+        await _here.Cancelled.Task.WaitAsync(Wait);
+        _here.Release();
+
+        Assert.Equal("""{"t":"result","id":1,"result":{"runId":"run-1"}}""", await ReadAsync(socket));
+    }
+
+    // The same for a stop the machine has already carried out.
+    [Fact]
+    public async Task A_cancel_after_the_run_stopped_still_answers_ok()
+    {
+        var session = _sessions.Create("claude", "repo");
+        var turn = new RowBatch();
+        turn.Rows.Add(new NewRow("run-7", null, RowKind.Turn, JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
+        _hub.Publish(session.SessionId, turn);
+        _here.Started = true;
+        _here.Hold();
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "send", "stop", """{"runId":"run-7"}""");
+        await _here.Reached.Task.WaitAsync(Wait);
+        await SendAsync(socket, """{"t":"cancel","id":1}""");
+        await _here.Cancelled.Task.WaitAsync(Wait);
+        _here.Release();
+
+        Assert.Equal("""{"t":"result","id":1,"result":{"ok":true}}""", await ReadAsync(socket));
+    }
+
     private const string Injected = """{"outcome":"injected"}""";
     private const string BadClientId = "clientId must be 1 to 64 letters, digits, - or _";
 
