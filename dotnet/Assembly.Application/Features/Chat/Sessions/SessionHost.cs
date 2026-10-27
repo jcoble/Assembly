@@ -191,14 +191,14 @@ public sealed partial class SessionHost : IPermissionPolicy
     public async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken)
     {
         var options = request.Options.Select(option => new AskOption(option.OptionId, option.Name, option.Kind)).ToList();
-        var card = new AskPayload("permission", "open", request.ToolTitle, null, ToolCallId(request.ToolCall), options, null, null);
+        var card = new AskPayload("permission", "open", Titled(request.SessionId, request.ToolTitle), null, ToolCallId(request.ToolCall), options, null, null);
         var answer = await AskAsync(card, cancellationToken);
         return PermissionOutcome.Selected(answer.GetProperty("optionId").GetString()!);
     }
 
     public async Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken)
     {
-        var card = new AskPayload("question", "open", null, request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
+        var card = new AskPayload("question", "open", Titled(request.SessionId, null), request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
         var answer = await AskAsync(card, cancellationToken);
         return new ElicitationResponse(answer.GetProperty("action").GetString()!,
             answer.TryGetProperty("content", out var content) ? content.Clone() : default);
@@ -250,6 +250,13 @@ public sealed partial class SessionHost : IPermissionPolicy
                 Apply(new AskChanged(Now(), askId, card with { State = answer is null ? "cancelled" : "answered", Answer = answer }));
             }
         }
+    }
+
+    // A subagent's ask is shown here, in its parent's session, under the subagent's title.
+    private string? Titled(string acpSessionId, string? title)
+    {
+        lock (_gate)
+            return _subagents.Title(acpSessionId) is not { } subagent ? title : title is null ? subagent : $"{subagent}: {title}";
     }
 
     private static string? ToolCallId(JsonElement toolCall) =>

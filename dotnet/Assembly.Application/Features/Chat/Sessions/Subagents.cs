@@ -31,6 +31,9 @@ internal sealed class Subagents(SessionStore sessionStore, LiveHub hub)
 
     public bool Has(string acpSessionId) => _children.ContainsKey(acpSessionId);
 
+    /// <summary>The child's title as its parent's row shows it, or null for a session that isn't one of its children.</summary>
+    public string? Title(string acpSessionId) => _children.TryGetValue(acpSessionId, out var child) ? child.Shown.Title : null;
+
     /// <summary>Children still at work: they keep their parent's session open.</summary>
     public bool AnyRunning => _children.Values.Any(child => child.Shown.State != "idle");
 

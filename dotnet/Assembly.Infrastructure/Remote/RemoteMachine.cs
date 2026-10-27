@@ -43,7 +43,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status = status;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, () => _status.Reachable(_name), RefreshAsync, AddSubagentSession, log);
+        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, () => _status.Reachable(_name), RefreshAsync, AddSubagentSession, log, TimeProvider.System);
     }
 
     public string? Name => _name;
@@ -106,6 +106,9 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public async Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken)
     {
+        // Before the send, so a catch-up settling meanwhile can't end the row of the turn it starts; a send that fails
+        // leaves the row as it is.
+        _follower.TakeShownRunning(session.SessionId);
         using var response = await SendRequestAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/send", Body(("text", text)), cancellationToken);
         if (response.StatusCode == HttpStatusCode.Conflict)
             return null;
@@ -177,9 +180,10 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
 
     /// <summary>Follows the remote sessions whose copied rows show a turn still running, as after a desktop restart mid-turn.</summary>
-    public void WatchRunning(IEnumerable<string> sessionIds)
+    public void WatchRunning(IEnumerable<string> sessionIds, IEnumerable<string> helpersShownRunning)
     {
-        foreach (var sessionId in sessionIds)
+        _follower.ShownRunning(helpersShownRunning);
+        foreach (var sessionId in sessionIds.Concat(helpersShownRunning).Distinct())
             _follower.Watch(sessionId);
     }
 

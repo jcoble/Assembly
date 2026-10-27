@@ -14,4 +14,7 @@ public interface ITopics
 
     /// <summary>Whether a publish on the topic under this key would reach anyone, so a publisher can skip building it.</summary>
     bool HasSubscribers(string topic, string key);
+
+    /// <summary>Raised, never under the lock, when the last subscription with exactly this topic and key goes.</summary>
+    event Action<string, string?>? Unsubscribed;
 }
