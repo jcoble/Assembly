@@ -1,10 +1,12 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line), the attached images, the
 //! agent's config (`config/get`, read again when a turn ends) and the "/" menu's state. Send is `send/send` with the
-//! draft, its "Attached image:" lines and a client id made here, which the session's user row echoes: until it does,
-//! the timeline shows the prompt as pending. While a turn runs, a send steers it and Send turns into Stop
-//! (`send/stop`). Dropped or pasted images attach; any other dropped file
-//! goes into the draft as its path. The draft lives here while the window runs. It draws, so it never reads a file: `Upload` does. Replaces Composer.svelte.
+//! draft, its "Attached image:" lines and a client id made here; the timeline shows the prompt as pending until a
+//! user row echoes that id (the base lane is adding it to send/send and the user row). While a turn runs, a send
+//! steers it and Send turns into Stop (`send/stop`). Dropped or pasted images attach; any other dropped file goes
+//! into the draft as its path. Each session's unsent draft lives here while the window runs. It draws, so it never
+//! reads a file: `upload_image` does. Replaces Composer.svelte.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::component::input::TextareaState;
@@ -18,6 +20,8 @@ pub struct Composer {
     client: Rc<dyn SessionClient>,
     session: Option<String>,
     draft: Entity<TextareaState>,
+    /// The other sessions' unsent drafts, by session id.
+    drafts: HashMap<String, String>,
     attachments: Vec<Attachment>,
     config: Option<AgentConfig>,
     /// The "/" menu's highlighted row, or `None` while it's closed or Esc hid it.
@@ -40,7 +44,7 @@ impl Composer {
         todo!()
     }
 
-    /// Points the composer at a session, with its saved draft.
+    /// Points the composer at a session: keeps the draft it leaves and puts back the one it left there.
     pub fn set_session(&mut self, _session: Option<String>, _window: &mut Window, _cx: &mut Context<Self>) {
         todo!()
     }

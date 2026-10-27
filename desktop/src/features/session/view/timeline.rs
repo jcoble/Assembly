@@ -6,6 +6,7 @@
 //! Conversation.svelte and session/scroll.ts.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use gpui_kit::component::message_scroller::MessageScrollerState;
 use gpui_kit::*;
@@ -14,11 +15,16 @@ use crate::features::session::model::entries::Entry;
 use crate::features::session::model::follow::Follow;
 use crate::features::session::model::kept::Kept;
 
+pub type RenderRow = Rc<dyn Fn(&Entry, &mut Window, &mut App) -> AnyElement>;
+
 /// Load the next older page when the top row on screen is this close to the first loaded entry.
 pub const LOAD_OLDER_WITHIN: usize = 10;
 
 pub struct Timeline {
     scroller: Entity<MessageScrollerState>,
+    /// Draws one entry: the pane's, reading its view and sending its actions.
+    render_row: RenderRow,
+    session: Option<String>,
     entries: Vec<Entry>,
     /// Each item's kept state, by item key.
     kept: HashMap<String, Kept>,
@@ -30,7 +36,13 @@ pub struct Timeline {
 }
 
 impl Timeline {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
+    pub fn new(_render_row: RenderRow, _cx: &mut Context<Self>) -> Self {
+        todo!()
+    }
+
+    /// Switches to another session's entries: keeps the reading place of the one it leaves, and goes back to the
+    /// one it left the new one at, or the end.
+    pub fn set_session(&mut self, _session: Option<String>, _entries: Vec<Entry>, _cx: &mut Context<Self>) {
         todo!()
     }
 
