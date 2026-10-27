@@ -324,6 +324,68 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.CloseAsync();
     }
 
+    [Fact]
+    public async Task A_choice_made_while_the_session_opens_waits_for_the_open_and_goes_to_the_new_session()
+    {
+        _sessionStore.SetConfigChoice(_session.SessionId, "model", "haiku");
+        _host.Send("hi");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        // The open has read the stored choices and is setting the model.
+        var model = await agent.ReadAsync("session/set_config_option");
+
+        var choosing = _host.SetConfigAsync("mode", "plan", CancellationToken.None);
+        await agent.ReplyAsync(model, $$"""{"configOptions":{{Options("haiku", "low")}}}""");
+
+        // The choice and the prompt both follow the open, in either order.
+        var next = new[] { await agent.NextMessageAsync().WaitAsync(Wait), await agent.NextMessageAsync().WaitAsync(Wait) };
+        var set = next.Single(message => message.GetProperty("method").GetString() == "session/set_config_option");
+        var prompt = next.Single(message => message.GetProperty("method").GetString() == "session/prompt");
+        Assert.Equal("mode", set.GetProperty("params").GetProperty("configId").GetString());
+        Assert.Equal("plan", set.GetProperty("params").GetProperty("value").GetString());
+        await agent.ReplyAsync(set, $$"""{"configOptions":{{Options("haiku", "low", "plan")}}}""");
+        await choosing.WaitAsync(Wait);
+        Assert.Equal("plan", _sessionStore.Config(_session.SessionId).Choices["mode"]);
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+    }
+
+    [Fact]
+    public async Task A_choice_cancelled_while_the_session_opens_is_not_stored()
+    {
+        _sessionStore.SetConfigChoice(_session.SessionId, "model", "haiku");
+        _host.Send("hi");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        var model = await agent.ReadAsync("session/set_config_option");
+
+        using var cancel = new CancellationTokenSource();
+        var choosing = _host.SetConfigAsync("mode", "plan", cancel.Token);
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => choosing.WaitAsync(Wait));
+        Assert.False(_sessionStore.Config(_session.SessionId).Choices.ContainsKey("mode"));
+
+        await agent.ReplyAsync(model, $$"""{"configOptions":{{Options("haiku", "low")}}}""");
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+    }
+
+    [Fact]
+    public async Task A_choice_made_while_the_session_opens_is_kept_for_the_next_session_when_the_open_fails()
+    {
+        var launching = new TaskCompletionSource<IAgentLink>();
+        _launcher.Launch = _ => launching.Task;
+        _host.Send("hi");
+
+        var choosing = _host.SetConfigAsync("mode", "plan", CancellationToken.None);
+        Assert.False(choosing.IsCompleted);
+        launching.SetException(new InvalidOperationException("git clone failed: repository not found"));
+
+        await choosing.WaitAsync(Wait);
+        Assert.Equal("plan", _sessionStore.Config(_session.SessionId).Choices["mode"]);
+    }
+
     private const string Permission = """
         {"sessionId":"acp-1","toolCall":{"toolCallId":"t1","title":"rm -rf build"},"options":[
           {"optionId":"yes","name":"Allow","kind":"allow_once"},{"optionId":"always","name":"Always allow","kind":"allow_always"},
