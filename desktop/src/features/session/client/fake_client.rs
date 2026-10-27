@@ -1,5 +1,7 @@
 //! `FakeClient` is a `SessionClient` for tests: it answers calls from what the test queued, records every call and
-//! every cancel, and hands rows events to the subscriber when the test pushes them.
+//! every cancel, and hands rows events to the subscriber when the test pushes them. The agent's config is kept apart:
+//! the composer reads it whenever it's pointed at a session, so `config/*` calls answer from it and are recorded on
+//! their own, and never take an answer queued for another call.
 
 #![cfg(test)]
 
@@ -29,6 +31,9 @@ struct FakeState {
     clock: Option<ClockSink>,
     /// How many clock subscriptions were dropped.
     clock_drops: usize,
+    /// What `config/get` and `config/set` answer; `None` fails them.
+    config: Option<Value>,
+    config_calls: Vec<(String, Value)>,
 }
 
 impl FakeClient {
@@ -69,6 +74,15 @@ impl FakeClient {
     /// The clock is subscribed.
     pub fn ticking(&self) -> bool {
         self.state.borrow().clock.is_some()
+    }
+
+    pub fn set_config(&self, config: Option<Value>) {
+        self.state.borrow_mut().config = config;
+    }
+
+    /// Every `config/*` call made, as ("config/get", args).
+    pub fn config_calls(&self) -> Vec<(String, Value)> {
+        self.state.borrow().config_calls.clone()
     }
 
     pub fn calls(&self) -> Vec<(String, Value)> {
@@ -113,6 +127,13 @@ impl SessionClient for FakeClient {
         _cx: &App,
     ) -> Task<Result<Value, CallError>> {
         let mut state = self.state.borrow_mut();
+        if feature == "config" {
+            state
+                .config_calls
+                .push((format!("{feature}/{method}"), args));
+            let config = state.config.clone();
+            return Task::ready(config.ok_or_else(|| CallError::Failed("no config".into())));
+        }
         state.calls.push((format!("{feature}/{method}"), args));
         let answer = state
             .answers

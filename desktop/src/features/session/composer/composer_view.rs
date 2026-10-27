@@ -1,9 +1,10 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line) and each session's unsent
 //! draft while the window runs. Send is `send/send` with the draft and a clientId, which a retry of the same text
 //! reuses. While a turn runs, a send steers it and a Stop button beside the draft stops it (`send/stop` with the run
-//! id). The ring beside Send shows how much of the agent's context window is left (context_ring.rs). It holds the
-//! attachments and the "/" menu's state for when those are drawn; nothing attaches images or draws the menus yet, and
-//! a sent prompt isn't shown as pending before its row arrives. Drawn in composer_render.rs. Replaces Composer.svelte.
+//! id). The ring beside Send shows how much of the agent's context window is left (context_ring.rs), and the agent's
+//! own menus and "/" commands come from its config (composer_config.rs). It holds the attachments for when those are
+//! drawn; nothing attaches images yet, and a sent prompt isn't shown as pending before its row arrives. Drawn in
+//! composer_render.rs. Replaces Composer.svelte.
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -12,6 +13,7 @@ use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
 use serde_json::json;
 
+use super::agent_config::AgentConfig;
 use super::attachment::{Attachment, AttachmentState};
 use super::context_meter::ContextMeter;
 use crate::features::session::client::session_client::SessionClient;
@@ -25,6 +27,10 @@ pub struct Composer {
     attachments: Vec<Attachment>,
     /// The "/" menu's highlighted row, or `None` while it's closed or Esc hid it.
     slash_selected: Option<usize>,
+    /// The agent's menus and commands for this session, once read.
+    config: Option<AgentConfig>,
+    /// Why the last pick failed, above the box until the next works or the session changes.
+    error: Option<SharedString>,
     /// The run going now, which Stop stops.
     running: Option<String>,
     /// How full the agent's context window is, from the session's newest report.
@@ -35,6 +41,8 @@ pub struct Composer {
     /// How many sends this composer has named, for the next clientId.
     named: u64,
     _enter: Subscription,
+    /// The config read going now.
+    _config: Option<Task<()>>,
     /// Sends and Stops still going; finished ones are let go at the next.
     _tasks: Vec<Task<()>>,
 }
@@ -55,14 +63,15 @@ impl Composer {
                 .submit_on_enter(true)
                 .placeholder("Message")
         });
-        let enter = cx.subscribe_in(&draft, window, |composer, _, event, window, cx| {
-            match event {
+        let enter = cx.subscribe_in(
+            &draft,
+            window,
+            |composer, _, event, window, cx| match event {
                 InputEvent::PressEnter { shift: false, .. } => composer.send(window, cx),
-                // Send is dimmed while there's nothing to send.
-                InputEvent::Change => cx.notify(),
+                InputEvent::Change => composer.draft_changed(cx),
                 _ => {}
-            }
-        });
+            },
+        );
         Composer {
             client,
             session: None,
@@ -70,11 +79,14 @@ impl Composer {
             drafts: HashMap::new(),
             attachments: Vec::new(),
             slash_selected: None,
+            config: None,
+            error: None,
             running: None,
             meter: None,
             retry_ids: HashMap::new(),
             named: 0,
             _enter: enter,
+            _config: None,
             _tasks: Vec::new(),
         }
     }
@@ -104,12 +116,19 @@ impl Composer {
         self.session = session;
         self.attachments.clear();
         self.slash_selected = None;
+        (self.config, self.error, self._config) = (None, None, None);
+        self.read_config(cx);
         cx.notify();
     }
 
+    /// The run going now; when one ends, the agent's menus are read again.
     pub fn set_running(&mut self, run: Option<String>, cx: &mut Context<Self>) {
         if self.running != run {
+            let ended = run.is_none();
             self.running = run;
+            if ended {
+                self.read_config(cx);
+            }
             cx.notify();
         }
     }
@@ -155,6 +174,7 @@ impl Composer {
         }
         let text = Attachment::with_lines(&typed, &self.attachments);
         self.attachments.clear();
+        (self.slash_selected, self.error) = (None, None);
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
         cx.emit(ComposerEvent::Sending);
@@ -208,6 +228,8 @@ const DRAFT_ROWS: usize = 10;
 
 impl EventEmitter<ComposerEvent> for Composer {}
 
+#[path = "composer_config.rs"]
+mod config;
 #[path = "composer_render.rs"]
 mod render;
 

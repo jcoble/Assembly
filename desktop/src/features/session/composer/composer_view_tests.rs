@@ -12,9 +12,11 @@ use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::CallError;
 
 /// What the composer told the pane, and the subscription that hears it.
-type Events = (Rc<RefCell<Vec<String>>>, Subscription);
+pub(super) type Events = (Rc<RefCell<Vec<String>>>, Subscription);
 
-fn open(cx: &mut TestAppContext) -> (Entity<Composer>, FakeClient, Events, &mut VisualTestContext) {
+pub(super) fn open(
+    cx: &mut TestAppContext,
+) -> (Entity<Composer>, FakeClient, Events, &mut VisualTestContext) {
     cx.update(gpui_kit::init);
     let client = FakeClient::default();
     let fake = client.clone();
@@ -43,7 +45,7 @@ fn type_and_send(composer: &Entity<Composer>, text: &str, cx: &mut VisualTestCon
     cx.run_until_parked();
 }
 
-fn draft(composer: &Entity<Composer>, cx: &mut VisualTestContext) -> String {
+pub(super) fn draft(composer: &Entity<Composer>, cx: &mut VisualTestContext) -> String {
     cx.update(|_, cx| composer.read(cx).draft.read(cx).value().to_string())
 }
 
