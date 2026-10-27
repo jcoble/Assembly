@@ -80,9 +80,18 @@ impl TestClient {
         method: &str,
         key: Option<&str>,
     ) -> (u64, oneshot::Receiver<Outcome<Value>>) {
+        self.call_to("test", method, key)
+    }
+
+    pub fn call_to(
+        &self,
+        feature: &str,
+        method: &str,
+        key: Option<&str>,
+    ) -> (u64, oneshot::Receiver<Outcome<Value>>) {
         let (answer, outcome) = oneshot::channel();
         let id = self.id();
-        let (feature, method, key) = ("test".into(), method.into(), key.map(Into::into));
+        let (feature, method, key) = (feature.into(), method.into(), key.map(Into::into));
         self.events
             .send(Event::Call {
                 id,
@@ -97,13 +106,21 @@ impl TestClient {
     }
 
     pub fn subscribe(&self, topic: &str) -> (u64, UnboundedReceiver<Update>) {
+        self.subscribe_key(topic, None)
+    }
+
+    pub fn subscribe_key(
+        &self,
+        topic: &str,
+        key: Option<&str>,
+    ) -> (u64, UnboundedReceiver<Update>) {
         let (updates, receiver) = unbounded();
         let id = self.id();
         self.events
             .send(Event::Subscribe {
                 id,
                 topic: topic.into(),
-                key: None,
+                key: key.map(Into::into),
                 updates,
             })
             .unwrap();
@@ -165,6 +182,19 @@ pub(super) fn outcome(receiver: oneshot::Receiver<Outcome<Value>>) -> Outcome<Va
         .recv_timeout(DEADLINE)
         .expect("an outcome within the deadline");
     answered.expect("an outcome")
+}
+
+/// Hands a subscription's updates on to a channel the test can wait on with a deadline.
+pub(super) fn updates(mut receiver: UnboundedReceiver<Update>) -> Receiver<Update> {
+    let (forward, updates) = mpsc::channel();
+    thread::spawn(move || {
+        while let Ok(update) = block_on(receiver.recv()) {
+            if forward.send(update).is_err() {
+                return;
+            }
+        }
+    });
+    updates
 }
 
 pub(super) fn row(seq: i64, prev: i64) -> Value {
