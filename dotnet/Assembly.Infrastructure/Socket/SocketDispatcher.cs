@@ -91,7 +91,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             var sent = rows.Count > 0 ? Seq(rows[^1]) : seq;
             return ([RowsStateFrame(sub, seq), .. rows.Select(row => RowsFrame(sub, row))],
                 (_, row) => Seq(row) > sent ? RowsFrame(sub, row) : (ReadOnlyMemory<byte>?)null);
-        }));
+        }, opened));
 
     /// <summary>
     /// Subscribes the socket to a <c>sub</c> frame's topic: its state is read and queued, and the subscription registered,
@@ -114,7 +114,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         Func<string?, string, ReadOnlyMemory<byte>?>? change = null;
         try
         {
-            return topics.Subscribe(frame.Topic!, frame.Key, subscription =>
+            var opened = topics.Subscribe(frame.Topic!, frame.Key, subscription =>
             {
                 self = subscription;
                 (var snapshot, change) = topic.Open(id, frame, context);
@@ -128,6 +128,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 if (change!(key, json) is { } changed)
                     connection.Send(changed, self);
             });
+            // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work.
+            topic.Opened?.Invoke(frame.Key!, context);
+            return opened;
         }
         catch (CallFailed error)
         {
@@ -315,7 +318,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     // A topic's frames for one new subscription, (sub id, sub frame, context): its state, and what each change it's
     // published becomes, (key, JSON) to a frame, or null for none.
     private sealed record TopicFrames(bool NeedsKey,
-        Func<long, InFrame, CallContext, (IReadOnlyList<ReadOnlyMemory<byte>> State, Func<string?, string, ReadOnlyMemory<byte>?> Change)> Open);
+        Func<long, InFrame, CallContext, (IReadOnlyList<ReadOnlyMemory<byte>> State, Func<string?, string, ReadOnlyMemory<byte>?> Change)> Open,
+        Action<string, CallContext>? Opened = null);
 
     private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync);
 }

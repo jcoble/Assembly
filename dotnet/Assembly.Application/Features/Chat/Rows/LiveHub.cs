@@ -52,11 +52,12 @@ public sealed class LiveHub : IDisposable
         }
     }
 
-    /// <summary>Whether a webview has the session's live socket open.</summary>
+    /// <summary>Whether a webview watches the session's rows: its live socket, or a rows sub on the socket.</summary>
     public bool HasSubscribers(string sessionId)
     {
         lock (_gate)
-            return _subscribers.TryGetValue(sessionId, out var subscribers) && subscribers.Count > 0;
+            return (_subscribers.TryGetValue(sessionId, out var subscribers) && subscribers.Count > 0)
+                || _topics?.HasSubscribers(RowsFeature.Topic, sessionId) == true;
     }
 
     /// <summary>The rows after <paramref name="after"/>, and from then on every new row of the session.</summary>
