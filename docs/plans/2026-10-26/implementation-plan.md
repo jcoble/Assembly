@@ -152,6 +152,16 @@ changed. The options:
 **Decided by Jesse, 2026-10-26 19:27Z (card): A, chunked calls** of about 1 MB, with one atomic commit. It keeps one frame format and one path, keeps
 the 4 MB limit, and doesn't block other traffic.
 
+**Status (2026-10-27): built, backend only** (`Infrastructure/Chat/Attachments/AttachmentsFeature.cs`). `begin
+{session, mime, size}` checks the type and the 20 MB limit and answers `{upload}`; `chunk {upload, offset, data}`
+appends at most 1 MB at the upload's offset; `commit {upload}` checks the size and the magic bytes and saves the image
+on the session's machine through today's `SaveAttachmentAsync`, answering `{path}`; `read {session, name, offset}`
+answers up to 1 MB with the size and type. The three writes are keyed on the upload's session. Staging files live under
+the backend's home (`uploads/`, cleared at startup), bounded by the declared size, and an upload belongs to the socket
+that began it. A failed chunk or commit drops the upload with its file, and so does a socket's close, once every write
+it queued has run (the `Closed` hook). A chunk cancelled while still queued never runs, so the next chunk fails on its
+offset and drops the upload; the window starts a new one. `POST` and `GET .../attachments` stay until the cut.
+
 ## 2. Where Jesse's comments went
 
 | His comment (in `docs/# Assembly .md` or his 26 October message) | Where it is in this plan |
