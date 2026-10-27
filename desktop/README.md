@@ -35,8 +35,10 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
 - One type per file, and no file over about 300 lines.
 - A timer or animation is a `Task` held by the view that started it, never detached, so closing the view stops it.
   App-wide subscriptions (window closed, app quit) are held in the root view's `_subscriptions: Vec<Subscription>`.
-- Anything that ticks on a schedule (elapsed or relative times, the meter) subscribes to the backend's `clock` topic.
+- Anything that ticks on a schedule (elapsed or relative times) subscribes to the backend's `clock` topic.
   Window timers are only for animations, frame waits and a debounce.
+- The one exception is the lag meter (`features/meter/`): its 100 ms stall tick and 5 s report timer run only while
+  `ASSEMBLY_METER` is set (Jesse, 2026-10-27).
 - The root module is named `core`, so in `main.rs` the `core` crate is `::core::`.
 
 ## The guard
