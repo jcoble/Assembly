@@ -4,7 +4,9 @@
 use gpui_kit::*;
 use serde_json::Value;
 
-use super::session_client::{CallError, RowsSink, SessionClient};
+use super::session_client::{CallError, ClockSink, RowsSink, SessionClient};
+use crate::core::clock::backend_clock::BackendClock;
+use crate::core::clock::tick::Tick;
 use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::error_code::ErrorCode;
@@ -50,6 +52,16 @@ impl SessionClient for SocketSessionClient {
                 Outcome::Failed(failure) => Err(call_error(failure)),
             }
         })
+    }
+
+    fn clock(&self, mut sink: ClockSink, cx: &mut App) -> Subscription {
+        let clock = cx.new(|cx| {
+            let mut clock = BackendClock::new();
+            clock.hold(cx);
+            clock
+        });
+        let heard = cx.subscribe(&clock, move |_, tick: &Tick, cx| sink(tick.now, cx));
+        Subscription::new(move || drop((heard, clock)))
     }
 }
 

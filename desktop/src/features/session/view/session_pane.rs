@@ -5,15 +5,18 @@
 //! name through the core registry (lane g0-host, names from lane g0-shape), never by importing another feature.
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::time::Instant;
 
 use serde_json::{Value, json};
 
+use super::plan_card::PlanCard;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::features::session::client::session_client::{
@@ -27,7 +30,9 @@ use crate::features::session::model::fold::Fold;
 use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::kept::Kept;
+use crate::features::session::model::reveal::Reveal;
 use crate::features::session::model::session_view::SessionView;
+use crate::features::session::rows::markdown::Block;
 use crate::features::session::rows::row::Row;
 use crate::features::session::rows::row_page::RowPage;
 
@@ -42,12 +47,24 @@ pub struct SessionPane {
     folds: HashMap<String, Fold>,
     /// The folds the reader opened, by run id.
     open_folds: HashSet<String>,
+    /// The plan's list of steps is open; it shuts when the turn ends.
+    plan_open: bool,
     /// What each item keeps while off screen, by item key.
     kept: HashMap<String, Kept>,
+    /// What each row's buttons call: this pane's `on_action`.
+    on_action: OnAction,
     timeline: Entity<Timeline>,
     composer: Entity<Composer>,
     /// The streaming reply's reveal, stepped once a frame while it's behind; `None` at rest.
-    reveal: Option<crate::features::session::model::reveal::Reveal>,
+    reveal: Option<Reveal>,
+    /// When the reveal last stepped.
+    revealed_at: Instant,
+    /// A frame is asked for the reveal's next step.
+    frame_asked: bool,
+    /// The backend clock's last second while a turn runs, which the "Working for" line counts by.
+    now: Option<i64>,
+    /// The clock's ticks, only while a turn runs.
+    _clock: Option<Subscription>,
     /// Live rows that came before the first page, applied once it lands: a delta needs the blocks the page has.
     /// `None` once the first page is in.
     held: Option<Vec<Row>>,
@@ -86,7 +103,10 @@ impl SessionPane {
         let render_row: RenderRow = Rc::new(move |entry, _, cx| {
             pane.upgrade().map_or_else(
                 || div().into_any_element(),
-                |pane| pane.read(cx).row(entry, &on_action, cx),
+                |pane| {
+                    let pane = pane.read(cx);
+                    pane.row(entry, &pane.on_action, cx)
+                },
             )
         });
         let timeline = cx.new(|cx| Timeline::new(render_row, cx));
@@ -118,9 +138,15 @@ impl SessionPane {
             folds: HashMap::new(),
             open_folds: HashSet::new(),
             kept: HashMap::new(),
+            plan_open: false,
+            on_action,
             timeline,
             composer,
             reveal: None,
+            revealed_at: Instant::now(),
+            frame_asked: false,
+            now: None,
+            _clock: None,
             held: None,
             loading: false,
             failed_before: None,
@@ -145,6 +171,7 @@ impl SessionPane {
         self.held = Some(Vec::new());
         self.open_folds.clear();
         self.kept.clear();
+        self.reveal = None;
         (
             self.known_run,
             self.loading,
@@ -186,6 +213,7 @@ impl SessionPane {
                 self._tasks.clear();
                 self.view = SessionView::default();
                 self.held = Some(Vec::new());
+                self.reveal = None;
                 (self.loading, self.failed_before) = (false, None);
                 self.timeline.update(cx, |timeline, cx| {
                     timeline.set_entries(Vec::new(), None, cx)
@@ -200,7 +228,24 @@ impl SessionPane {
     }
 
     fn apply_live(&mut self, row: &Row, cx: &mut Context<Self>) {
+        // What the streaming reply showed before this row, so the reveal goes on from there.
+        let before = self
+            .view
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match &item.kind {
+                ItemKind::Message {
+                    blocks,
+                    done: false,
+                    ..
+                } => Some((item.key.clone(), Reveal::chars(blocks))),
+                _ => None,
+            });
         let change = self.view.apply(row);
+        if let Change::Appended | Change::Updated(_) = change {
+            self.reveal_from(change, before);
+        }
         // The entries take the new item first, so the timeline can find it to scroll to.
         self.refresh(change, cx);
         if let Change::Updated(at) = change {
@@ -292,14 +337,89 @@ impl SessionPane {
                 .collect();
             timeline.set_entries(keyed, changed.as_deref(), cx);
         });
+        match (active.is_some(), self._clock.is_some()) {
+            (true, false) => {
+                let pane = cx.weak_entity();
+                let sink = Box::new(move |now, cx: &mut App| {
+                    pane.update(cx, |pane, cx| {
+                        pane.now = Some(now);
+                        pane.timeline.update(cx, |_, cx| cx.notify());
+                    })
+                    .ok();
+                });
+                self._clock = Some(self.client.clock(sink, cx));
+            }
+            (false, true) => (self._clock, self.now, self.plan_open) = (None, None, false),
+            _ => {}
+        }
         self.composer
             .update(cx, |composer, cx| composer.set_running(active, cx));
         cx.notify();
     }
 
-    /// One frame of the reveal: steps it, and asks for the next frame only while it's still behind.
-    fn reveal_frame(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-        todo!()
+    /// Starts the reveal on a reply that's still streaming, from what it showed before (`before`), unless it's
+    /// already revealing.
+    fn reveal_from(&mut self, change: Change, before: Option<(String, usize)>) {
+        let at = match change {
+            Change::Updated(at) => at,
+            _ => self.view.items.len() - 1,
+        };
+        let item = &self.view.items[at];
+        let ItemKind::Message { done: false, .. } = item.kind else {
+            return;
+        };
+        if self
+            .reveal
+            .as_ref()
+            .is_some_and(|reveal| reveal.key == item.key)
+        {
+            return;
+        }
+        let shown = before
+            .filter(|(key, _)| *key == item.key)
+            .map_or(0, |(_, chars)| chars);
+        self.reveal = Some(Reveal {
+            key: item.key.clone(),
+            shown,
+        });
+        self.revealed_at = Instant::now();
+    }
+
+    /// One frame of the reveal: steps it by the time since the last, and rests once it has caught up.
+    fn reveal_frame(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.frame_asked = false;
+        let Some(reveal) = &mut self.reveal else {
+            return;
+        };
+        let found = self
+            .view
+            .items
+            .iter()
+            .position(|item| item.key == reveal.key);
+        let target = found.and_then(|at| match &self.view.items[at].kind {
+            ItemKind::Message { blocks, .. } => Some(Reveal::chars(blocks)),
+            _ => None,
+        });
+        let (Some(at), Some(target)) = (found, target) else {
+            self.reveal = None;
+            return;
+        };
+        let now = Instant::now();
+        let dt = now.duration_since(self.revealed_at).as_secs_f64() * 1000.0;
+        self.revealed_at = now;
+        reveal.shown = Reveal::step(reveal.shown, target, dt);
+        if reveal.shown >= target {
+            self.reveal = None;
+        }
+        self.refresh(Change::Updated(at), cx);
+    }
+
+    /// The blocks a reply draws: cut to what the reveal shows while it's revealing.
+    pub(super) fn shown_blocks(&self, key: &str, blocks: &[Block]) -> Option<Vec<Block>> {
+        self.reveal
+            .as_ref()
+            .filter(|reveal| reveal.key == key)
+            .map(|reveal| Reveal::clip(blocks, reveal.shown))
     }
 
     /// The timeline's entries, for tests.
@@ -346,14 +466,38 @@ impl Panel for SessionPane {
 impl Render for SessionPane {
     /// The header, the timeline, the plan card, the status (why the last call failed, or "Offline, showing the saved
     /// session") and the composer, top to bottom.
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.reveal.is_some() && !self.frame_asked {
+            self.frame_asked = true;
+            cx.on_next_frame(window, |pane, window, cx| pane.reveal_frame(window, cx));
+        }
         div()
             .size_full()
             .flex()
             .flex_col()
             .child(div().flex_1().min_h_0().child(self.timeline.clone()))
+            .when_some(
+                self.view
+                    .plan
+                    .as_ref()
+                    .filter(|(_, items)| !items.is_empty()),
+                |pane, (_, items)| {
+                    pane.child(PlanCard {
+                        items: items.clone(),
+                        open: self.plan_open,
+                        on_action: self.on_action.clone(),
+                    })
+                },
+            )
             .when(!self.status.is_empty(), |pane| {
-                pane.child(self.status.clone())
+                pane.child(
+                    div()
+                        .px_4()
+                        .py_1()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(self.status.clone()),
+                )
             })
             .child(self.composer.clone())
     }
@@ -362,6 +506,9 @@ impl Render for SessionPane {
 #[cfg(test)]
 #[path = "session_pane_action_tests.rs"]
 mod action_tests;
+#[cfg(test)]
+#[path = "session_pane_reveal_tests.rs"]
+mod reveal_tests;
 #[cfg(test)]
 #[path = "session_pane_tests.rs"]
 mod tests;

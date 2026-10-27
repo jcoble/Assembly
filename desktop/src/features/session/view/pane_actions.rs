@@ -42,6 +42,10 @@ impl SessionPane {
                     self.read_detail_if_stale(at, cx);
                 }
             }
+            SessionAction::TogglePlan => {
+                self.plan_open = !self.plan_open;
+                cx.notify();
+            }
             SessionAction::ShowAllDiff { key } => {
                 self.kept.entry(key.clone()).or_default().all_diff = true;
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {

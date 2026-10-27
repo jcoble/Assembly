@@ -29,7 +29,14 @@ pub trait SessionClient: 'static {
         key: Option<&str>,
         cx: &App,
     ) -> Task<Result<Value, CallError>>;
+
+    /// The backend clock's seconds, as Unix milliseconds, until the subscription drops: what a "Working for" line
+    /// counts by, so nothing ticks while nothing runs.
+    fn clock(&self, sink: ClockSink, cx: &mut App) -> Subscription;
 }
+
+/// Where the clock's ticks go, on the main thread.
+pub type ClockSink = Box<dyn FnMut(i64, &mut App)>;
 
 /// Where a rows subscription's events go, on the main thread.
 pub type RowsSink = Box<dyn FnMut(RowUpdate, &mut App)>;

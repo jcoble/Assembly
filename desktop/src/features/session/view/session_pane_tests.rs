@@ -217,7 +217,7 @@ fn a_page_that_fails_says_why_and_an_aborted_one_says_nothing(cx: &mut TestAppCo
     assert_eq!(cx.update(|_, cx| pane.read(cx).status.clone()), "");
 }
 
-fn message(seq: i64, from: usize, texts: &[&str]) -> Value {
+pub(super) fn message(seq: i64, from: usize, texts: &[&str]) -> Value {
     let blocks: Vec<Value> = texts
         .iter()
         .map(|text| json!({ "kind": "paragraph", "parts": [{ "kind": "text", "value": text }] }))

@@ -15,13 +15,21 @@ use crate::features::session::view::turn_fold_row::TurnFoldRow;
 impl SessionPane {
     pub(super) fn row(&self, entry: &Entry, on_action: &OnAction, cx: &App) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let now = chrono::Utc::now().timestamp_millis();
+        let now = self
+            .now
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         match entry {
             Entry::Loading => line("Loading older messages…", muted),
             Entry::Item(at) => {
                 let item = &self.view.items[*at];
+                let mut shown = item.clone();
+                if let ItemKind::Message { blocks, .. } = &mut shown.kind
+                    && let Some(cut) = self.shown_blocks(&item.key, blocks)
+                {
+                    *blocks = cut;
+                }
                 ItemRow {
-                    item: item.clone(),
+                    item: shown,
                     kept: self.kept.get(&item.key).cloned().unwrap_or_default(),
                     session: self.session.clone().unwrap_or_default().into(),
                     copy: self.copy_text(item),

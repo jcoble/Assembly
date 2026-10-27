@@ -226,3 +226,28 @@ fn an_opened_prompt_stays_open_until_closed(cx: &mut TestAppContext) {
     toggle(&pane, "seq:1", cx);
     assert!(!cx.update(|_, cx| pane.read(cx).kept["seq:1"].open));
 }
+
+// Pins: g0-session#12
+#[gpui::test]
+fn the_working_line_counts_by_the_backend_clock_only_while_a_turn_runs(cx: &mut TestAppContext) {
+    let (pane, client, cx) = opened(vec![user(1, "go")], cx);
+    assert!(client.ticking());
+    cx.update(|_, cx| client.tick(42_000, cx));
+    assert_eq!(cx.update(|_, cx| pane.read(cx).now), Some(42_000));
+    live(
+        &client,
+        row(
+            2,
+            "stats",
+            None,
+            json!({ "runId": "r1", "status": "completed", "toolCalls": 0 }),
+        ),
+        cx,
+    );
+    live(
+        &client,
+        row(3, "turn", None, json!({ "state": "finished" })),
+        cx,
+    );
+    assert!(!client.ticking(), "nothing ticks once the turn is over");
+}
