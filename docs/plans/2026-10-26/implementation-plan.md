@@ -541,6 +541,11 @@ audit and its prune from the `TimeProvider`, and sends publishes to the `ITopics
 A plain lock is right, because the body can't await. Reads outside a write never use the write connection: each read
 takes a pooled read connection of its own, so a slow read never holds up another. That was measured (step B2a): with
 one shared read connection, a session list would wait behind a 200 ms page read, where today it takes about 90 µs.
+SQLite's automatic checkpoint is off on the write connection, because it runs inside the commit that crosses 1,000
+WAL pages (step B3b). Every 100 commits the writer starts one passive checkpoint on a second long-lived connection of
+its own, outside the lock, one at a time, and re-runs an incomplete pass up to 5 times so it catches up in the next
+quiet moment. Past a cap of 16,384 WAL frames (about 64 MB), a write does that copy itself, under the lock, after
+its commit.
 
 `Infrastructure/Persistence/AtomicWriter.cs` handles every write the same way:
 
@@ -583,7 +588,11 @@ instead of waiting a day per 5,000 rows.
 
 **Measured** in the same scratch program as 5.9: a 20-row batch with 400-byte payloads takes 131 to 138 µs at the
 median with its audit row, against 96 to 99 µs without. The 99th percentile is 2.7 to 3.4 ms with the audit row and
-2.6 to 2.7 ms without; most of that is the WAL write. Step B3 measures it again through the real writer.
+2.6 to 2.7 ms without; most of that is the WAL write. Through the real writer (step B3, agent-workbox), SQLite's
+automatic checkpoint was the slow tail: 0.2 to 0.3 ms at the median and 12 to 16 ms at the 99th percentile with it on,
+0.7 to 0.8 ms with it off. With B3b's checkpoints, a burst of 20,000 commits takes about 1 ms at the 99th percentile
+and 3 ms at the 99.9th; a write that pays the cap's catch-up takes 20 to 110 ms, and only past the cap.
+The Mac's NVMe fsync may be faster than the workbox's disk; the Mac lag check will tell once Mac builds resume.
 
 Reads go through `IAppDatabase`, which has no write methods.
 
@@ -1006,9 +1015,51 @@ old tables, columns and folder it renames. **Proof:** the same grep finds no oth
   1,000 pages) by timing commits with and without automatic checkpoints. B3 only measures. If a commit's p99 is
   still over about 5 ms, keeping checkpoints out of the write lock (for example `wal_autocheckpoint` off on the
   write connection, with a checkpoint run after a write releases the lock) becomes its own step before B6, with its
-  p99 before and after.
+  p99 before and after. B3 measured it: automatic checkpoints were the cause (p99 12 to 16 ms with them, 0.7 to
+  0.8 ms without), so step B3b moves them out of the commit.
 - **Proof:** the tests, run, with their counts, the measurement, and check4.
 - **Size:** 250 to 350 lines with tests.
+
+### B3b. Checkpoints out of the commit
+
+- **Why:** SQLite's automatic checkpoint runs inside the commit that crosses 1,000 WAL pages, so about one commit in
+  a few hundred takes 12 to 20 ms (B3's measurement). B6's keystroke saves live in that tail.
+- **Change:** `AtomicWriter` turns `wal_autocheckpoint` off on the write connection. After every 100th commit, with
+  no checkpoint already running, it starts one `PRAGMA wal_checkpoint(PASSIVE)` with `Task.Run` on a second
+  long-lived connection, outside the lock. The pass re-runs, at most 5 times, while frames keep arriving. SQLite
+  rewinds the WAL only for a write that starts with every frame copied, and the copy ends in an fsync, so this
+  rewinds in a quiet moment. A turn that writes nonstop would never give it one: when no checkpoint is running and
+  the last one reported 16,384 frames or more (about 64 MB), a write runs the passive checkpoint itself, under the
+  lock, after its commit, so the next write rewinds. Both choices are made at that one point after the commit; with
+  the catch-up checked before the transaction instead, a new background checkpoint always started first and the
+  cap never fired (a 1 GB WAL over 8,000 commits of 100 KB).
+  `Dispose` waits for a running checkpoint under the lock, which is safe because a checkpoint never takes it. A
+  checkpoint left unfinished at quit is harmless: SQLite replays the WAL at the next open.
+- **Tests (`CheckpointTests.cs`):** the write connection reads `wal_autocheckpoint` 0; a checkpoint still copies the
+  WAL into the main file after 100 commits; the WAL rewinds once writes pause; with a small cap, writes with no
+  pause and writes 1 ms apart rewind again and again (with the catch-up checked before the transaction, the no-pause
+  case never rewound); a reader holding a snapshot stops the rewind but no commit waits on it, and the WAL rewinds
+  after it closes. The WAL's peak depends on the disk's fsync, so it's in the measurement, not the tests, as are the
+  full 20,000-commit and 1 ms-gap runs.
+- **Measured** on agent-workbox, before: SQLite's automatic checkpoint; after: B3b. Each cell gives the 99th
+  percentile / 99.9th / max / WAL peak / rewinds. After was measured once, with the box's load average near 10 from
+  other work.
+
+  | Run | Before | After |
+  | --- | --- | --- |
+  | 20,000 commits of 20 rows, no pause | 15-16 / 21 / 23-46 ms / 4 MB / 299 | 1.0 / 2.9 / 40 ms / 72 MB / 16 |
+  | 2,000 commits of one 100 KB row | 17-19 ms p99 / 22-34 ms max / 4 MB / 61 | 0.9 / 61 / 71 ms / 86 MB / 1 |
+  | 8,000 commits of one 100 KB row | — | 0.7 / 55 / 113 ms / 158 MB / 8 |
+  | 5,000 commits 1 ms apart | — | 1.5 / 3.9 / 23 ms / 67 MB / 3 |
+  | 200-commit bursts with 100 ms pauses | — | 1.6 / 3.5 / 5.5 ms / 12 MB / 13 |
+  | A reader holding a snapshot | 1.3 ms p99 / 110 MB / 0 | 0.7 / 1.9 / 2.5 ms / 114 MB / 0 |
+
+  The slow commits that remain are the cap's catch-ups, which happen only when writing never pauses for about one
+  fsync. The WAL's peak is then the cap plus what one background checkpoint leaves; with 100 KB rows that's more.
+  The Mac's NVMe fsync may be faster than the workbox's disk, which would make the catch-up cheaper; the Mac lag
+  check will tell once Mac builds resume.
+- **Proof:** the tests, the measurement, check4.
+- **Size:** about 130 lines with tests.
 
 ### B4. The socket: endpoint, frames, dispatcher, cancellation
 
