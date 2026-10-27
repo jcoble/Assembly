@@ -9,7 +9,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// run. While the topic has a subscriber, the backend clock's ticks probe each remote: on the first tick after a
 /// subscribe, then every 15th.
 /// </summary>
-internal sealed class MachinesFeature : IFeature
+internal sealed class MachinesFeature : IFeature, IAsyncDisposable
 {
     public const string Feature = "machines";
     public const string Topic = "machines";
@@ -109,6 +109,8 @@ internal sealed class MachinesFeature : IFeature
                 _probing.Remove(machine.Name!);
         }
     }
+
+    public ValueTask DisposeAsync() => throw new NotImplementedException();
 
     internal sealed record AgentsArgs(string? Machine = null);
 
