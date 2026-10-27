@@ -22,10 +22,11 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
     private readonly Action _startClock;
     private readonly TimeProvider _time;
     // Each remote's last probe, run off the tick's thread; a remote whose probe is still out gets no second. Guarded
-    // by itself, as are _stop and _ticks.
+    // by itself, as are _stop, _ticks and _disposed.
     private readonly Dictionary<string, Task> _probes = [];
     private CancellationTokenSource _stop = new();
     private int _ticks = Every - 1;
+    private bool _disposed;
 
     /// <param name="startClock">Starts the backend clock, whose ticks come back through <see cref="Tick"/>.</param>
     public MachinesFeature(MachineSet machines, MachineStatus status, Action startClock, TimeProvider time)
@@ -70,11 +71,10 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         }
         lock (_probes)
         {
-            if (++_ticks < Every)
+            // Disposed: no probe it wouldn't wait for.
+            if (++_ticks < Every || _disposed)
                 return;
             _ticks = 0;
-        }
-        lock (_probes)
             foreach (var machine in _machines.Remotes)
             {
                 if (_probes.TryGetValue(machine.Name!, out var probe) && !probe.IsCompleted)
@@ -82,6 +82,7 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
                 var stop = _stop.Token;
                 _probes[machine.Name!] = Task.Run(() => ProbeAsync(machine, stop));
             }
+        }
     }
 
     private async Task ProbeAsync(IMachine machine, CancellationToken stop)
@@ -108,7 +109,10 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         Task[] probes;
         CancellationTokenSource stop;
         lock (_probes)
+        {
+            _disposed = true;
             (probes, stop) = ([.. _probes.Values], _stop);
+        }
         await stop.CancelAsync();
         await Task.WhenAll(probes);
     }
