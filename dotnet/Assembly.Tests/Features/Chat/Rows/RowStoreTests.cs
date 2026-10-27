@@ -145,6 +145,19 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_clientIds_user_row_is_found_through_the_rows_item_index()
+    {
+        // Looked up by name, so this builds before the query exists.
+        var lookup = typeof(Schema).GetField("UserRowOfClient")?.GetValue(null) as string;
+        Assert.NotNull(lookup);
+        var plan = _database.Query("EXPLAIN QUERY PLAN " + lookup, row => row.Text(3), CancellationToken.None,
+            new SqlArg("$session", "t"), new SqlArg("$client", "c"));
+
+        // One search of the session's user rows, newest first, with no sort.
+        Assert.Equal(["SEARCH rows USING INDEX rows_item (session_id=? AND item_id=? AND kind=?)"], plan);
+    }
+
+    [Fact]
     public void A_page_reads_only_its_own_items_rows_not_the_whole_session()
     {
         // Every search of rows names more than the session: by seq below the page, or by one item.
