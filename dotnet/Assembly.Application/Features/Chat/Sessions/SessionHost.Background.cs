@@ -217,9 +217,7 @@ public sealed partial class SessionHost
                 switch (agentEvent)
                 {
                     case SubagentChanged subagent:
-                        if (!_subagents.Has(subagent.AcpSessionId))
-                            // What the child asks (a permission, a question) is a card in this session.
-                            (_turn?.Session ?? _kept?.Session)?.Adapter.Link.Client.SetSessionPolicy(subagent.AcpSessionId, this);
+                        // What the child asks (a permission, a question) AcpClient sends to this session's policy, as its parent's.
                         Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
                         break;
                     case TitleChanged title when _sessionStore.Get(_sessionId) is { Helper: false }:
