@@ -16,6 +16,7 @@ use crate::features::session::composer::upload::{UploadSource, size_of, upload_i
 impl Composer {
     /// Asks for images with the system's file picker.
     pub(super) fn pick_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let session = self.session.clone();
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -28,8 +29,13 @@ impl Composer {
                 let Ok(Ok(Some(paths))) = picked.await else {
                     return;
                 };
+                // Not if another session was picked meanwhile.
                 composer
-                    .update(cx, |composer, cx| composer.attach_paths(&paths, cx))
+                    .update(cx, |composer, cx| {
+                        if composer.session == session {
+                            composer.attach_paths(&paths, cx)
+                        }
+                    })
                     .ok();
             }));
     }
@@ -81,6 +87,9 @@ impl Composer {
 
     /// A paste with an image attaches it and pastes no text; `false` leaves any other paste to the draft.
     pub(super) fn pasted(&mut self, item: &ClipboardItem, cx: &mut Context<Self>) -> bool {
+        if self.session.is_none() {
+            return false;
+        }
         let mut taken = false;
         for entry in item.entries() {
             let ClipboardEntry::Image(image) = entry else {

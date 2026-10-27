@@ -174,3 +174,22 @@ fn escape_hides_the_list_until_the_draft_changes(cx: &mut TestAppContext) {
         "it closes once arguments begin"
     );
 }
+
+// Pins: g0-session#26
+#[gpui::test]
+fn enter_picks_the_last_row_when_the_list_got_shorter_under_the_lit_one(cx: &mut TestAppContext) {
+    let (composer, client, cx) = on_s1(cx);
+    cx.simulate_input("/");
+    cx.simulate_keystrokes("down down");
+    let mut fewer = config("sonnet");
+    fewer["commands"] = json!([{ "name": "compact", "description": "Compact the context" }]);
+    client.set_config(Some(fewer));
+    composer.update(cx, |composer, cx| {
+        composer.set_running(Some("r1".into()), cx);
+        composer.set_running(None, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(listed(&composer, cx), ["compact"]);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(draft(&composer, cx), "/compact ");
+}

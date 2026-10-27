@@ -46,6 +46,8 @@ impl Composer {
             .into_iter()
             .find(|(option, _)| option.id == config_id)
             .map_or(config_id.clone(), |(option, _)| option.name.clone());
+        // A read still going would answer the value from before the pick.
+        self._config = None;
         let args = json!({ "session": session, "configId": config_id, "value": value });
         let call = self.client.call("config", "set", args, None, cx);
         self._tasks.retain(|task| !task.is_ready());
@@ -137,8 +139,11 @@ impl Composer {
         let step = |by: isize| {
             move |composer: &mut Composer, cx: &mut Context<Composer>| {
                 let shown = composer.slash_list(cx).len() as isize;
+                if shown == 0 {
+                    return;
+                }
                 let at = composer.slash_selected.unwrap_or_default() as isize;
-                composer.slash_selected = Some((at + by).rem_euclid(shown) as usize);
+                composer.slash_selected = Some((at.min(shown - 1) + by).rem_euclid(shown) as usize);
                 cx.stop_propagation();
                 cx.notify();
             }
@@ -161,9 +166,17 @@ impl Composer {
             }))
     }
 
+    /// The row lit now, kept in range when the list got shorter under it (a re-read config with fewer commands).
+    pub(super) fn slash_lit(&self, cx: &App) -> usize {
+        let shown = self.slash_list(cx).len();
+        (self.slash_selected.unwrap_or_default()).min(shown.saturating_sub(1))
+    }
+
     fn pick_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let at = self.slash_selected.unwrap_or_default();
-        self.pick_command(at, window, cx);
+        if self.slash_list(cx).is_empty() {
+            return;
+        }
+        self.pick_command(self.slash_lit(cx), window, cx);
         cx.stop_propagation();
     }
 }

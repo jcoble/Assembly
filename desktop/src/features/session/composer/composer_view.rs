@@ -154,6 +154,12 @@ impl Composer {
         self.meter.as_ref()
     }
 
+    /// Every attached image has uploaded.
+    fn all_saved(&self) -> bool {
+        (self.attachments.iter())
+            .all(|attachment| matches!(attachment.state, AttachmentState::Saved { .. }))
+    }
+
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
     fn stop(&mut self, cx: &mut Context<Self>) {
         let Some(run) = self.running.clone() else {
@@ -166,21 +172,17 @@ impl Composer {
         self._tasks.push(cx.spawn(async move |_, _| _ = call.await));
     }
 
-    /// Sends the draft once every attachment has uploaded.
+    /// Sends the draft once every attachment has uploaded; one whose upload failed is removed first.
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
             return;
         };
         let typed = self.draft.read(cx).value().trim().to_string();
-        let uploading = self
-            .attachments
-            .iter()
-            .any(|attachment| matches!(attachment.state, AttachmentState::Uploading));
-        if uploading || (typed.is_empty() && self.attachments.is_empty()) {
+        if !self.all_saved() || (typed.is_empty() && self.attachments.is_empty()) {
             return;
         }
         let text = Attachment::with_lines(&typed, &self.attachments);
-        self.attachments.clear();
+        let attached = std::mem::take(&mut self.attachments);
         self.uploads.clear();
         (self.slash_selected, self.error) = (None, None);
         self.draft
@@ -211,18 +213,23 @@ impl Composer {
                             }
                         }
                         // It didn't go out, or the socket closed before it answered (`Aborted`: a send has no key,
-                        // so nothing else takes its place): it comes back to its session's draft, unless something
-                        // new was typed there, and a resend keeps its clientId in case the first did land.
+                        // so nothing else takes its place): it comes back to its session's draft with its images,
+                        // unless something new was typed there, and a resend keeps its clientId in case the first
+                        // did land. Images don't follow a draft to another session.
                         Err(_) => {
                             composer
                                 .retry_ids
                                 .insert(session.clone(), (text, client_id));
                             if composer.session.as_ref() != Some(&session) {
                                 composer.drafts.entry(session).or_insert(typed);
-                            } else if composer.draft.read(cx).value().is_empty() {
+                            } else if composer.draft.read(cx).value().is_empty()
+                                && composer.attachments.is_empty()
+                            {
                                 composer
                                     .draft
                                     .update(cx, |draft, cx| draft.set_value(typed, window, cx));
+                                composer.attachments = attached;
+                                cx.notify();
                             }
                         }
                     })

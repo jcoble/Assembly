@@ -10,6 +10,7 @@ use serde_json::json;
 use super::super::Composer;
 use super::super::tests::{draft, open};
 use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::client::session_client::CallError;
 use crate::features::session::composer::attachment::AttachmentState;
 
 fn on_s1(cx: &mut TestAppContext) -> (Entity<Composer>, FakeClient, &mut VisualTestContext) {
@@ -214,4 +215,57 @@ fn removing_a_chip_drops_its_upload_and_it_goes_out_with_nothing(cx: &mut TestAp
     client.queue_answer(Ok(json!({ "runId": "r1" })));
     type_and_send(&composer, "hi", cx);
     assert_eq!(sends(&client), ["hi"]);
+}
+
+// Pins: g0-session#24
+#[gpui::test]
+fn a_failed_upload_holds_the_send_until_its_chip_is_removed(cx: &mut TestAppContext) {
+    let (composer, client, cx) = on_s1(cx);
+    let path = file("failed", "bad.png", b"bytes");
+    client.queue_answer(Err(CallError::Failed("no room".into())));
+    composer.update(cx, |composer, cx| composer.attach_paths(&[path], cx));
+    cx.run_until_parked();
+    assert_eq!(chips(&composer, cx)[0].1, "failed no room");
+    type_and_send(&composer, "hi", cx);
+    assert!(
+        sends(&client).is_empty(),
+        "it doesn't go out without the image"
+    );
+    assert_eq!(draft(&composer, cx), "hi");
+    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    composer.update_in(cx, |composer, window, cx| {
+        let id = composer.attachments[0].id;
+        composer.remove_attachment(id, cx);
+        composer.send(window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(sends(&client), ["hi"]);
+}
+
+// Pins: g0-session#24
+#[gpui::test]
+fn a_failed_send_brings_its_images_back_and_the_resend_keeps_its_client_id(
+    cx: &mut TestAppContext,
+) {
+    let (composer, client, cx) = on_s1(cx);
+    let path = file("resend", "shot.png", b"bytes");
+    queue_upload(&client, "/box/shot.png");
+    composer.update(cx, |composer, cx| composer.attach_paths(&[path], cx));
+    cx.run_until_parked();
+    client.queue_answer(Err(CallError::Aborted));
+    type_and_send(&composer, "look", cx);
+    assert_eq!(draft(&composer, cx), "look");
+    assert_eq!(
+        chips(&composer, cx),
+        [("shot.png".to_string(), "saved /box/shot.png".to_string())]
+    );
+    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
+    cx.run_until_parked();
+    let ids: Vec<_> = (client.calls().into_iter())
+        .filter(|(call, _)| call == "send/send")
+        .map(|(_, args)| (args["text"].clone(), args["clientId"].clone()))
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], ids[1], "the same text with the same clientId");
 }

@@ -1,7 +1,7 @@
 //! How the composer draws, to the approved look (the mockup canvas's board 4): one box on the raised ground with the
 //! design system's radius-xl corners: attached images' chips, the draft, and a footer with Attach and the agent's menus
 //! as pills on the left, then the context ring, Stop while a turn runs and the round Send, which is the one solid
-//! button and is dimmed while there's nothing to send or an image is still uploading. Files dropped anywhere on the box
+//! button and is dimmed while there's nothing to send or an image hasn't uploaded. Files dropped anywhere on the box
 //! light its edge. The "/" list floats just above the box, and why something failed sits above it.
 
 use gpui_kit::assets::IconName as Glyph;
@@ -14,7 +14,6 @@ use gpui_kit::*;
 use std::rc::Rc;
 
 use super::Composer;
-use crate::features::session::composer::attachment::AttachmentState;
 use crate::features::session::composer::attachment_chip::AttachmentChip;
 use crate::features::session::composer::config_menu::{ConfigMenu, OnSelect};
 use crate::features::session::composer::context_ring::ContextRing;
@@ -30,8 +29,7 @@ impl Render for Composer {
         let theme = cx.theme();
         let pill = theme.radius_full();
         let empty = self.draft.read(cx).value().trim().is_empty() && self.attachments.is_empty();
-        let uploading = (self.attachments.iter())
-            .any(|attachment| matches!(attachment.state, AttachmentState::Uploading));
+        let waiting = !self.all_saved();
         let running = self.running.is_some();
         let composer = cx.weak_entity();
         let on_select: OnSelect = Rc::new(move |id, value, _, cx| {
@@ -85,7 +83,7 @@ impl Render for Composer {
                     .icon(Glyph::ArrowUp)
                     .rounded(pill)
                     .with_size(ROUND_BUTTON)
-                    .disabled(empty || uploading)
+                    .disabled(empty || waiting)
                     .tooltip(if running { "Steer" } else { "Send" })
                     .on_click(cx.listener(|composer, _, window, cx| composer.send(window, cx))),
             );
@@ -103,7 +101,7 @@ impl Render for Composer {
         let composer = cx.weak_entity();
         let slash = (!commands.is_empty()).then(|| SlashList {
             commands,
-            selected: self.slash_selected.unwrap_or_default(),
+            selected: self.slash_lit(cx),
             on_pick: Rc::new(move |at, window, cx| {
                 _ = composer.update(cx, |composer, cx| composer.pick_command(at, window, cx));
             }),
