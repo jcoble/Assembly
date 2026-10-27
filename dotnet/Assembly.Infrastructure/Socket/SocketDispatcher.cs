@@ -45,11 +45,11 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         {
             try
             {
-                // A write cancelled or out of time while it waited in the queue never runs, and one whose outside part
-                // ran over commits nothing.
+                // A write cancelled or out of time while it waited in the queue never runs. Once its handler returns,
+                // its outside work has happened, so it commits and answers its result; a handler cancelled while that
+                // work runs throws on its own token.
                 call.Cancellation.ThrowIfCancellationRequested();
                 var database = await handler((TArgs)value, call);
-                call.Cancellation.ThrowIfCancellationRequested();
                 return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
             }
             catch when (failed is not null)
