@@ -24,6 +24,9 @@
 //! - The child's stdin is a pipe held until it exits, so it sees end of file if the window dies without quitting.
 //! - Dropping the launcher stops the child the same way, so nothing outlives the window.
 //!
+//! A home with no `agents.json` gets an empty one, so a window launched straight on a fresh home still starts its
+//! backend (with no agents).
+//!
 //! It never attaches to a backend it didn't start: a backend that can't take its port or its home folder exits
 //! before it's ready, and backend.log says why. The token is never printed or logged.
 
@@ -202,6 +205,21 @@ fn run(
         eprintln!("the backend's log {} can't be opened", log_path.display());
         return;
     };
+    // The backend won't start without its agents file. shell/assembly.sh writes the real one (agents-file.sh, which
+    // needs node and pnpm); a window launched on a fresh home gets an empty list, so its backend starts with no agents.
+    let agents = config.home.join("agents.json");
+    if !agents.exists() {
+        match std::fs::write(&agents, "[]\n") {
+            Ok(()) => {
+                _ = writeln!(
+                    log,
+                    "{} was missing, so the backend starts with no agents; dotnet/scripts/agents-file.sh writes the real one",
+                    agents.display()
+                )
+            }
+            Err(error) => _ = writeln!(log, "{}: {error}", agents.display()),
+        }
+    }
     let mut quick_exits = 0;
     while !quitting.load(Ordering::SeqCst) {
         let ready_at = run_child(config, &mut log, ready, pid, quitting);

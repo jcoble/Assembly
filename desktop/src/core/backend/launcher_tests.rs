@@ -211,3 +211,21 @@ fn a_backend_killed_from_outside_is_started_again_though_a_stray_holds_its_outpu
     );
     assert_eq!(read(&launcher.config, "runs"), "2\n");
 }
+
+#[test]
+fn a_fresh_home_gets_an_empty_agents_file_and_a_written_one_is_kept() {
+    let (mut launcher, _ready) = launch(fake("fresh", "exit 3"));
+    launcher.thread.take().unwrap().join().unwrap();
+    let agents = launcher.config.home.join("agents.json");
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), "[]\n");
+    let log = std::fs::read_to_string(launcher.config.home.join("backend.log")).unwrap();
+    assert!(log.contains("agents-file.sh"), "{log}");
+
+    std::fs::write(&agents, "[{\"id\":\"claude\"}]").unwrap();
+    launcher.restart_if_stopped();
+    launcher.thread.take().unwrap().join().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&agents).unwrap(),
+        "[{\"id\":\"claude\"}]"
+    );
+}
