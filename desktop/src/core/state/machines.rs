@@ -1,11 +1,11 @@
-//! `Machines` owns the machines list, read with `machines/list`, which answers the remote machines' names. Their
-//! reachability comes with the backend's machines step (M1, then a topic); until then a call's `unreachable` error
-//! names the machine. It reads the list again on each reconnect.
+//! `Machines` owns the machines list, read with `machines/list`: each machine, and whether it answered last time. It
+//! reads the list again on each reconnect, until the backend's machines topic replaces the call.
 
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::machine::Machine;
+use super::machine_list::MachineList;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
@@ -39,7 +39,7 @@ impl Machines {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
-        let list = SocketClient::global(cx).read(cx).call::<Value>(
+        let list = SocketClient::global(cx).read(cx).call::<MachineList>(
             "machines",
             "list",
             json!({}),
@@ -50,12 +50,7 @@ impl Machines {
             let _ = this.update(cx, |machines, cx| {
                 machines.loading = None;
                 if let Outcome::Ok(list) = outcome {
-                    let names = list["machines"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(Value::as_str);
-                    machines.machines = names.map(|name| Machine { name: name.into() }).collect();
+                    machines.machines = list.machines;
                     cx.notify();
                 }
             });

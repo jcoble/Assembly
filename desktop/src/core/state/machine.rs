@@ -1,7 +1,14 @@
-//! `Machine` is one machine from `machines/list`. Main answers `{machines: [name]}`, names only; whether it's reachable comes with the base
-//! lane's machines step M1, and is added here then.
+//! `Machine` is one machine from `machines/list` (dotnet/Assembly.Application/Common/Machines/MachineStatus.cs,
+//! `MachineItem`): whether it answered last time, and why not.
 
-#[derive(Clone, Debug)]
+use serde::Deserialize;
+
+#[derive(Clone, Debug, Deserialize)]
 pub struct Machine {
-    pub name: String,
+    /// `None` for this machine.
+    pub name: Option<String>,
+    pub kind: String,
+    pub reachable: bool,
+    /// Why it didn't answer, when it didn't.
+    pub reason: Option<String>,
 }
