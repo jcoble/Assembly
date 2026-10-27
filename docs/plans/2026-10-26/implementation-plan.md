@@ -1508,6 +1508,68 @@ catalogue stays the reference.
       byte over the limit is refused; cancelling midway leaves nothing linked.
   - **Proof:** check4 with `rows.sh`, `sessions.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
     the chat used in the window on the Mac.
+  - **The cut, its shape (plan only, no code yet; 2026-10-27).** The window is now the GPUI one, which only speaks
+    `/socket`. Paths are under `dotnet/`, lines as of e8e361e.
+    - **What changes from the bullets above.** The desktop and the remote serve the same routes from one
+      `ApiServer` (`Infrastructure/Http/ApiServer.cs:37-59`), and the desktop's remote client calls most of the chat
+      routes on the remote. So the cut can't delete `/live` and every chat route together, as the bullet above says.
+      It deletes the routes no .NET code calls, and the rest go in C2, with the calls that use them. That's the rule
+      the "Deleted" bullet already states: a route goes with its last caller.
+    - **Deleted in the cut, with what replaces each:**
+
+      | Route | Where | Replaced by |
+      |---|---|---|
+      | `GET /machines` | `Http/InfoRoutes.cs:24` | the `machines` topic (`machines/list` until it lands) |
+      | `GET /sessions` (the list) | `Http/SessionRoutes.cs:21` | the `sessions` topic and `sessions/page` |
+      | `GET /sessions/{id}/rows` | `Http/RowRoutes.cs:19` | `rows/page` and the `rows` topic |
+      | `GET /sessions/{id}/attachments/{name}` | `Http/AttachmentRoutes.cs:23` | `attachments/read` |
+      | `POST /debug/drop` | `Http/DebugRoutes.cs:14`, mapped at `Desktop/Serve/DesktopBackend.cs:98` | `diagnostics/drop` |
+      | `POST /preferences/get` and `/set` | `Http/PreferencesRoutes.cs:17-19`, through `FeatureCalls` | the `preferences` topic and its save |
+
+    - **Removed with them:** the handlers behind each route above, `DebugRoutes.cs`, and `PreferencesRoutes.cs`.
+      With preferences gone, `FeatureCalls.cs` maps nothing, so it goes too, with `Draft/Base/FeatureCallsTests.cs`.
+      Its guard, `scripts/lint.d/40-routes.sh` ("every feature route goes through FeatureCalls"), then becomes a
+      fixed list of the route files left, which only shrinks. That changes a guard, so it needs the move thread's OK
+      first.
+    - **Stays until C2, because the desktop's remote client calls it on the remote:**
+      - `/version` (`RemoteMachine.cs:184`, the format check) and `/agents` (`:63`);
+      - `POST /sessions` (`:70`, `:77`) and `GET /sessions/{id}` (`:196`);
+      - tools (`:124`), send (`:105`), `/runs/{id}/stop` (`:115`), asks (`:148`) and task stop (`:157`);
+      - config get and set (`:140`, `:143`), and `POST .../attachments` (`:135`);
+      - the three `/outbox` routes (`:87`, `:93`, `:98`);
+      - `/live` and `LiveSocket.cs` (`RemoteFollower.cs:85`).
+    - **Stays after C2 too:** `/socket`, `/mcp` (the agents' tools), and `/version`, which check4 and a health
+      check read. Also the `Assembly.Remote` host, and the evidence scripts (`scripts/check4.sh`,
+      `scripts/check-evidence.sh`). `/page` stays: its thumbnail and upload-path methods (`Http/PageRoutes.cs:55-77`)
+      have no socket call. They served the Svelte composer, so whether they're needed at all goes with the open
+      question below.
+    - **Gaps that close first:**
+      - **check4's rows read:** check4 reads the local rows page (`scripts/check4.sh:128`), and so does its rows
+        scenario (`scripts/features/rows.sh:12`). Both move to `rows/page` over the socket, through a small `.ts`
+        client next to the scenarios, like `scripts/features/live-rows.ts`. Its other local calls (create, send,
+        `GET /sessions/{id}`) use routes that stay until C2, so they move then.
+      - **The tests that call a deleted route** move to the socket call that replaces it, or to a route that stays:
+        - `ApiTests.cs:75`, `:78` and `:99` use the session list to test the token guard, and move to
+          `GET /sessions/{id}`;
+        - `ApiTests.cs:144` and `:172`;
+        - `DesktopBackendTests.cs:199-200`;
+        - `RemoteMachineTests.cs:45`, `:74`, `:216` and `:253`;
+        - the attachment reads in `ApiTests.cs`.
+      - **Nothing on the window side:** the GPUI window has no HTTP client.
+    - **What breaks in `app/`** (paused, not removed). Each of these calls a route that's deleted:
+      - in `app/src/lib/api.ts`: `listSessions` (`:44`), `listMachines` (`:77`), `fetchAttachment` (`:85`),
+        `rowsPage` (`:90`) and `dropLink` (`:115`, also used by `soak.ts:239`);
+      - `send` in `app/src/lib/call.ts:17-20`, behind `call` and `save` (`:44`, `:70`), which carry preferences.
+      - `rows/client.ts` (`/live`) and the other `api.ts` calls keep working until C2.
+    - **Open question, for Jesse:** what happens to `app/` once its HTTP routes go? It can stay as it is and break
+      (paused), get those few calls moved to its existing `socket.ts`, or be removed. This note doesn't decide it.
+      The cut only goes ahead once it's answered.
+    - **Commit order, each one green (it builds and the full suite passes):**
+      1. The tests above move off the routes being deleted, while those routes still exist.
+      2. check4's rows read and `rows.sh` move to `rows/page` over the socket. Proof: check4 on that head.
+      3. One commit per row of the table, each deleting the route, its handler and its test-only helpers.
+         Preferences goes last, with `FeatureCalls` and the guard change, after the move thread's OK.
+      4. Proof: check4 on the last head, and a grep showing no `.NET`, script or test caller of a deleted path.
 - **C2. One socket per remote machine** (Sol P11, P13).
   - **Files:** `Infrastructure/Remote/RemoteMachine.cs` becomes a socket client of the remote's `/socket`, and
     `RemoteFollower.cs` becomes one subscription per session on that socket. The remote's sessions topic is relayed,
