@@ -68,16 +68,14 @@ api() { # api local|box METHOD PATH [JSON]
 # Preflight: both backends answer and run this commit. If not, every case fails with the reason.
 blocked=""
 [ -z "$(git status --porcelain -- . ':!evidence')" ] || blocked="the checkout has uncommitted changes, so this isn't a check of $commit"
-local_commit=$(api local GET /version | jq -r '.commit // empty' 2>/dev/null || true)
-box_commit=$(api box GET /version | jq -r '.commit // empty' 2>/dev/null || true)
-# A backend built from an earlier commit counts when the code between the two is the same (only scripts or docs moved).
-same_code() { [ "$1" = "$commit" ] || { git cat-file -e "$1^{commit}" 2>/dev/null && git diff --quiet "$1" "$commit" -- dotnet app shell; }; }
+# Each waits up to 30 s for the backend just started to answer with this commit's code, so one still starting, or an
+# old process not yet stopped, isn't taken for it.
+local_commit="" box_commit=""
 if [ -z "$blocked" ]; then
-  if [ -z "$local_commit" ]; then blocked="the local backend on $local_base didn't answer /version"
-  elif ! same_code "$local_commit"; then blocked="the local backend runs $local_commit, not the code of $commit"
-  elif [ -z "$box_commit" ]; then blocked="the Workbox Test host (through $box_base) didn't answer /version"
-  elif ! same_code "$box_commit"; then blocked="the Workbox Test host runs $box_commit, not the code of $commit"
-  fi
+  local_commit=$(echo "$local_token" | scripts/wait-version.sh "the local backend" "$local_base" "$commit") || { blocked=$local_commit; local_commit=""; }
+fi
+if [ -z "$blocked" ]; then
+  box_commit=$(echo "$box_token" | scripts/wait-version.sh "the Workbox Test host (through the tunnel)" "$box_base" "$commit") || { blocked=$box_commit; box_commit=""; }
 fi
 
 # A tiny repo for each session to check out, on each machine.

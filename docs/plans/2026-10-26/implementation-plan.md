@@ -1445,10 +1445,113 @@ catalogue stays the reference.
     with `activeRunId` and the machine's watch; `rows/tool`, its output and diff cut at `RowsFeature.ToolCap` bytes
     each with `truncated` and their full sizes; `config/get`, `config/set`, `machines/list` and `machines/agents`. A
     machine that's down answers `unreachable` with its name. Attachments (D4) are their own PR next.
-  - **The sessions topic's item is only the stored columns for now** (`SessionItem`: agent, repo, title, machine,
+  - **The sessions topic's item was only the stored columns until step 1c** (`SessionItem`: agent, repo, title, machine,
     parent, ACP session, last activity). The summary fields above (state, active run, pending ask, needs attention,
     background work, online, unread) come in step 1c, after D4 and before the cut. They publish only when one of them
     changes, never once per row.
+  - **Status (2026-10-27), step 1c: built, backend only.** Each sessions item carries `state`, `activeRunId`,
+    `pendingAsk`, `background`, `needsAttention` and `unread` (`SessionItem.cs`), from `SessionSummaries`
+    (`Rows/SessionSummaries.cs`): filled at the start from one grouped query (`RowStore.SummaryRows` and `TurnEnds`,
+    about 21 ms on the 40k copy) before run recovery, then changed by the hub's `Push` under its lock, which swaps in a
+    new immutable snapshot that readers take with no lock. Only a change to a summary sends the item again, through
+    the writer like every other item change (`SessionStore.PublishSummary`), so a thousand-row turn sends two.
+    `read_seq` is added and backfilled to each session's last row in one write; `sessions/read {session, seq}` is an
+    unkeyed write that ignores a seq at or below it. A write's `failed` callback that throws is logged and the call
+    keeps its own error.
+  - **Step 1c shape (proposal, 2026-10-27; no code yet).** Every field comes from rows the desktop already stores,
+    so none needs a machine call. In the old app the same fields were worked out in the window from streamed events
+    (`ownedSessions.ts:18-46`, `WorktreeAgentRow.svelte:109-125`); here they move to the backend.
+
+    | Field (JSON) | Type | Value | Source today |
+    |---|---|---|---|
+    | `state` | `"idle" \| "running" \| "waiting" \| "failed"` | `waiting` if an ask is open, else `running` if a run is open, else `failed` if the newest turn row says `failed`, else `idle` | turn and ask rows; no query for an open ask yet |
+    | `activeRunId` | string or null | the run of the newest turn row if it says `started` | `RowStore.OpenRun` (`RowStore.cs:183`), `LiveHub.OpenRun` (`LiveHub.cs:108`) |
+    | `pendingAsk` | bool | the newest row of some ask item says `open` | none: a new `RowStore` query beside `RunningItems`, no schema change |
+    | `background` | int | task and subagent items whose newest row says `running` or `requires_action` | `RowStore.RunningItems(kind)` (`RowStore.cs:172`), for all sessions; needs a per-session form |
+    | `needsAttention` | bool | `pendingAsk`, or `unread` while not running (the old app's rule, `WorktreeAgentRow.svelte:118`, `sessionPresence.ts:115-127`) | derived from the others |
+    | `unread` | bool | the newest turn end (`finished`, `failed` or `cancelled`) comes after the last one the window marked read | **no source: needs storage**, see below |
+    | `online` | — | not a session field | **no source**: see below |
+
+    *When each changes, and the one place that publishes.* Every row the desktop stores goes through `LiveHub.Publish`
+    (`LiveHub.cs:31`) or, for a remote session's copied rows, `LiveHub.PublishCopy` (`LiveHub.cs:44`); both end in
+    `Push` (`LiveHub.cs:139`). Only four kinds can change a summary: `turn` (start, end), `ask` (open, answered,
+    cancelled), `task` and `subagent` (state changes). `Push` checks the saved rows' kinds first, a loop over the
+    batch with no query; a batch with none of the four does nothing more. For one that has one, the hub works the
+    session's summary out again (`OpenRun` plus the two new queries, all on `(session_id, seq)`), compares it with the
+    last one it sent, which it keeps in memory by session, and only if it differs publishes the sessions upsert, the
+    stored columns plus the summary, through `ITopics.Publish` as `Push` already does for rows (hub lock, then the
+    Topics lock: the order the code keeps). So a turn that streams a thousand delta, message and tool rows sends two
+    upserts (`running` at its start row, `idle` at its end row), plus two per ask it opens and answers and two per
+    background task; the deltas never reach the check. `SessionStore.Publish` (`SessionStore.cs:313`) stays the
+    publisher for stored-column changes (title, ACP session, `Touch` at `SessionHost.cs:115,153` and
+    `RemoteMachine.cs:199`) and includes the summary in its item, so both upserts carry the whole item.
+
+    *A remote session's summary is only as fresh as its copied rows.* `RemoteFollower` copies rows while a run is open
+    or a window watches the session (`RemoteFollower.cs:36`). A turn started from this desktop is followed to its end;
+    a background task that ends after its turn, or a turn started on the remote by something else, isn't seen until the
+    session is next followed. Fixing that (follow while `background > 0`, or a remote push of its summaries) is a
+    separate decision, not part of 1c.
+
+    *The spike thread passed this shape (2026-10-27)* from the window's side: the four states, the in-memory diff (two
+    upserts a turn) and no machine calls.
+
+    *Unread, if the move thread OKs the column.* Only a turn's end sets it: `unread` is true when the seq of the
+    newest turn row that ended (`finished`, `failed` or `cancelled`) is above the session's `read_seq`; deltas and the
+    user's own rows never set it. While a session is on screen, the window calls `sessions/read {session, seq}` with
+    the newest seq it has shown: a write with no order key and nothing outside the database, which raises `read_seq`
+    and publishes the item, and ignores a seq at or below `read_seq`, so it's idempotent. The old app kept unread in
+    memory only (`sessionPresence.ts:52`), lost on a restart. If the move thread doesn't OK it, 1c ships without
+    unread and `needsAttention` is `pendingAsk` alone.
+
+    *The migration, proposed.*
+    - DDL: `ALTER TABLE session_info ADD COLUMN read_seq INTEGER NOT NULL DEFAULT 0;`. It goes in
+      `SessionStore.Open`'s schema write (`SessionStore.cs:60-82`), behind a `Missing(HasReadSeq)` check like the
+      `machine`, `helper` and other added columns there, so it runs once and is safe to run again.
+    - Existing rows: in the same write, `UPDATE session_info SET read_seq = COALESCE((SELECT MAX(seq) FROM rows WHERE
+      rows.session_id = session_info.session_id), 0);`. Every existing session starts read: otherwise the first start
+      after the upgrade marks every old session that ever finished a turn (hundreds on Jesse's 9797 data) unread, which
+      is noise, not news. `rows` exists by then: `RowStore.Open` runs before `SessionStore.Open`
+      (`DesktopBackend.cs:67-68`). A session made after the upgrade starts at 0, so its first finished turn is unread
+      until the window shows it.
+    - No `FormatVersion` bump. `RowStore.FormatVersion` (`RowStore.cs:18`) is the rows' format, which two machines
+      compare before copying rows (`RemoteMachine.cs:185`); this changes no row. `session_info` is each machine's
+      own, and the read marker lives on the desktop that shows the session (a remote session's item is in the
+      desktop's `session_info` too), so the desktop and the remote needn't deploy together. An older build reading the
+      file ignores the column, since every query names its columns. Jesse's 9797 data gets the column and the backfill
+      on its next start, all its sessions read.
+
+    *Online is the machine's, not the session's.* The old app kept it per machine (`sessionRailStore.svelte.ts:20-59`).
+    Here nothing records it: a remote call that fails throws `MachineUnreachable` (`RemoteMachine.cs:220-230`), and
+    `machines/list` answers names only (`MachinesFeature.cs:32`). On each session it would send an upsert for every
+    session on a machine when it drops. So it stays off `SessionItem`: `machines/list` gets a `reachable` flag that
+    the tunnel and follower set, and the window joins it on the machine name (the spike thread agreed). Until the
+    machines topic below exists, the window learns a machine dropped only from an `unreachable` error. No field here
+    needs a machine call.
+
+    *Timing, measured on a copy of the 40k database* (387 sessions, 46,978 rows, one session of 40,033; the newest 200
+    sessions include it; 20 runs each). The three proposed per-session queries for the newest 200 take a median of
+    10.1 ms, worst 11.3 ms; the 40k session alone is 6.4 ms of that, because no index starts `(session_id, kind)`, so
+    the ask and background checks walk all its rows. One grouped query for the 200 takes 14.8 ms (worst 15.2). With an
+    index on `(session_id, kind, seq)`, added to a second copy only to measure, the per-session way drops to 2.7 ms
+    (worst 3.0) and the 40k session to 0.01 ms; the grouped query to 8.3 ms. Either way it's more than a few ms under
+    the Topics lock, so the sessions state never queries: it reads an in-memory summary by session.
+
+    *The in-memory summary.* The hub keeps each session's summary in a dictionary. To be correct from the first
+    subscriber:
+    - It's filled once when the hub is made, before `RunRecovery.CloseUnfinished` (`DesktopBackend.cs:69-70`) and
+      before the socket serves, from one grouped query over every session (any can move to the top), not the newest 200.
+      Recovery then closes open runs, asks and tasks through `hub.Publish` (`RunRecovery.cs:29,36,45`), so its rows
+      update the dictionary like any others.
+    - From then on every stored row reaches it: `Publish` and `PublishCopy` both end in `Push` under the hub lock, which
+      updates the entry before publishing, so no commit lands between a read and its update.
+    - A session with no rows has no entry and reads as idle with nothing pending. It holds a few fields per session,
+      under 100 bytes each.
+
+    *Also for 1c's PR* (the move thread, 2026-10-27): if a write's `failed` callback throws, its exception replaces
+    the call's real error. The dispatcher wraps the call to `failed` in a try/catch that logs and rethrows the original,
+    with a red test first.
+  - **Next after 1c: a `machines` topic.** Each machine by name with `reachable`, set by the tunnel and the follower,
+    so the window sees a machine drop without waiting for an `unreachable` error. `machines/list` stays for the names.
   - **Config stays calls, without a topic for now.** A change the agent makes mid-turn (`config_option_update`,
     `available_commands_update`) only updates SessionStore's stored copy (`SessionHost.Background.cs:228-233`), with no
     row and nothing published, and `current_mode_update` is ignored (`UpdateReader.cs:33`). So nothing pushes it, and
@@ -1459,6 +1562,118 @@ catalogue stays the reference.
     database), means it drops its copy and loads history through `rows/page` with `before` = that seq + 1, since `before`
     is exclusive and the topic sends nothing at or below that seq. A `rows/page` answer that
     fails for being over 4 MB means it asks again with a smaller `limit`.
+  - **Next after 1c: the `machines` topic (shape only, no code yet).** Paths are under `dotnet/`, lines as of e8e361e.
+    - **Two PRs.**
+      - **M1:** `reachable` and `reason` on `machines/list`, the error mapping (non-2xx is `failed`, 401 and 403
+        are unreachable with the token reason), every catch that takes the new `failed` (the nine HTTP routes
+        included), a format mismatch recorded once, and no `host`. No topic and no probe.
+      - **M2,** branched from M1: the `machines` topic, the probe on the backend clock, the tunnel passed into
+        `DesktopBackend`, the follower-link signal, and the clock-stops test.
+    - **What `reachable` means, per kind.** `MachineSet` holds this machine and the remotes, at most one today, from
+      `--remote` (`Application/Common/Machines/MachineSet.cs:7`, built in `Desktop/Serve/DesktopBackend.cs:76`).
+      - *This machine* (`LocalMachine`, `Name` null, `Infrastructure/Machines/LocalMachine.cs:15`) is always reachable:
+        the backend answering the window is the machine.
+      - *A remote over the tunnel*: reachable means the last thing that went to it got an answer, and nothing has
+        failed since. The code that already knows:
+        - `RemoteMachine.SendRequestAsync` turns a transport error, or a timeout the caller didn't ask for, into
+          `MachineUnreachable` (`Infrastructure/Remote/RemoteMachine.cs:213-223`, the throw at `:222`). That's every
+          HTTP call to the remote.
+        - `CheckFormatAsync` throws `MachineUnreachable` when the remote stores another row format (`:180-186`). The
+          machine answers but can't be used, so it counts as unreachable, and its message says why.
+        - `ReadJsonAsync` also throws `MachineUnreachable` for any non-2xx answer (`:228-230`). That's wrong for this
+          flag: the machine answered. It becomes `CallFailed` (`failed`) in this step, except 401 and 403: the remote
+          refused this computer's token, so nothing will work until that's fixed, and it stays `MachineUnreachable`
+          with the reason "the remote refused this computer's token". Every place that catches `MachineUnreachable`
+          also catches the new `failed`, or it would fault:
+          - the follower (`RemoteFollower.cs:52`), the title refresh (`RemoteMachine.cs:201`), the outbox
+            (`RemoteOutbox.cs:51`), and the helper tools (`StartSessionTool.cs:50,62`, `SendMessageTool.cs:44`), each
+            with a test;
+          - the nine HTTP route catches (`RowRoutes.cs:57`, `SessionRoutes.cs:82`, `InfoRoutes.cs:41`,
+            `AttachmentRoutes.cs:58`, `RunRoutes.cs:50,86,126,155`, `ConfigRoutes.cs:53`), which would otherwise turn a
+            502 into an unhandled 500;
+          - `Infrastructure/Http` has its own `CallFailed` (`Http/CallFailed.cs:4`), so the route files name the
+            Application one in full;
+          - the socket already answers `CallFailed` with `failed` (`SocketDispatcher.cs:226`).
+        - `RemoteFollower`: connected once `ConnectAsync` returns (`RemoteFollower.cs:86`), and "link lost" with
+          backoff (`:57-62`). It runs only while a session needs it (`:36`), so it's a signal, not a heartbeat.
+        - `RemoteTunnel`: ssh exits within about 45 s of a dead link (`ServerAliveInterval=15`, `ServerAliveCountMax=3`,
+          `Infrastructure/Remote/RemoteTunnel.cs:58`). `SuperviseAsync` logs the exit and starts ssh again with 1-30 s
+          backoff (`:121-155`, the exit at `:146`), and `Pid` is 0 between starts (`:37`). The tunnel is made in
+          `Desktop/Serve/DesktopServe.cs:23` and isn't passed to `RemoteMachine`. `Topics` only exists inside
+          `DesktopBackend.StartAsync` (`DesktopBackend.cs:62`), so `DesktopServe` passes the tunnel in (`:25`), and the
+          backend wires its exit to the status.
+      - Nothing else is in `MachineSet`. A name it doesn't hold throws `MachineUnreachable` ("isn't set up here",
+        `MachineSet.cs:12`). That isn't a machine in the topic; the call fails `unreachable` as it does today.
+    - **When it changes, and what sets it.** One store, `Application/Common/Machines/MachineStatus.cs`, holds each
+      remote's flag. It works like `SessionSummaries` (#24, not on main yet): writers swap an immutable snapshot under its own lock and
+      publish the item while holding it; the topic's state reads the snapshot with no lock. Lock order: status, then
+      Topics. It never takes the hub lock or the writer.
+      - **False:** every `MachineUnreachable` thrown in `RemoteMachine` (`:186`, `:222`) is recorded just before the
+        throw. A follower's "link lost" (`RemoteFollower.cs:60`) and the tunnel's ssh exit (`RemoteTunnel.cs:146`)
+        record it too.
+      - **True:** any answer from the remote (a response in `SendRequestAsync`, of any status) and a follower's
+        connect. An ssh restart alone doesn't set it: ssh up doesn't mean the remote backend is up. The next answer
+        does. A `/version` answer whose row format doesn't match sets it false, with the format reason, and never true
+        first. Otherwise every call would flip it twice (`RemoteMachine.cs:184-186`).
+      - **At the start:** a remote is false with the reason "not checked yet" until its first answer, and the first
+        probe goes on the first tick after a `machines` subscribe, not 15 s later.
+      - **The probe.** Calls and the tunnel can't see a remote backend that dies while ssh stays up and nobody calls
+        it, and the old app never saw that either (it only had ssh keepalive). So while anyone subscribes to
+        `machines`, each remote with no live follower link gets `GET /version` every 15 s (ssh keepalive's interval).
+        An open follower link already proves the remote is there. The probe also checks the row format, so a remote
+        that's upgraded in place is seen. It rides B9's clock:
+        - `BackendClock` (`Infrastructure/Clock/BackendClock.cs`) today runs only while `clock` has a subscriber, and
+          stops on the first tick with none (`:40-62`). It changes to run while `clock` or `machines` has one, and
+          `MachinesFeature` counts its ticks: every 15th, it starts one probe per remote that has no live link.
+        - **Limits:** the probe has its own 5 s timeout, not `HttpClient`'s 30 s. A remote's probe never starts while
+          its last one is still out. When the last `machines` subscriber leaves, the probe in flight is cancelled.
+          Its outcome goes through the same two paths as a call's. That's the only timing; no new timer.
+        - **Cost per tick:** 14 ticks in 15 do nothing past a counter. On the 15th, one GET of a few hundred bytes per
+          remote without a link, over the tunnel, off the tick's thread. With no subscriber to `machines`, nothing at
+          all. A machine that comes back shows within 15 s, or on the next call.
+    - **The `machines` topic.**
+      - **Key:** none; one subscription covers every machine.
+      - **State:** one item per machine, keyed by name (`local` for this machine), with:
+        - `name`: null for this machine, which the window shows as this computer's name, as the old app showed
+          "This Mac";
+        - `kind`: `local` or `remote`;
+        - `reachable`;
+        - `reason`: set while `reachable` is false, and null otherwise. It's "didn't answer", "ssh tunnel exited",
+          "the remote refused this computer's token", or a format mismatch such as "stores rows in format 3; this
+          computer reads 4".
+        - The old app's machine UI (`RemoteConnections.svelte:234-237`, `:309-310`, `:71-81`;
+          `WorktreeAgentRow.svelte:145-149`, `:223-228`) showed a name, a status dot, the ssh target, connected or
+          not, and the backend version. The version isn't carried here. Its third status, `reconnecting` (`sessionRailStore.svelte.ts:20`), was "a connect is in
+          progress". Here that's the window's own pending call, not machine state, so it isn't in the item.
+      - **Upserts:** only when an item changes (`reachable` flips, or `reason` changes). Each call or probe that
+        leaves it as it was publishes nothing.
+      - **`machines/list` folds in:** the topic's state replaces it, and it's deleted in the same step.
+        `machines/agents` stays a call.
+      - **A session's `online`** is its machine's `reachable`, read by the window from this topic. It isn't a
+        sessions-topic field, so a machine going down sends one upsert, not one per session.
+    - **The `unreachable` error frame and the flag stay consistent.** A failed call records `reachable: false`, which
+      publishes the upsert, before it throws. The dispatcher sends the error frame only after the handler throws
+      (`Infrastructure/Socket/SocketDispatcher.cs:230-232`), and both go out on the same socket's queue. So the window
+      always gets `reachable: false` first and never shows a machine reachable right after an `unreachable` error. A
+      call that started earlier and gets an answer afterwards sets it back to true, which is correct: the machine did
+      answer.
+    - **Tests (red first):**
+      - a call that fails `unreachable` sends the `machines` change before its error frame;
+      - a non-2xx answer fails `failed` and leaves the machine reachable; a 401 or 403 marks it unreachable with the
+        token reason;
+      - ssh exiting marks the remote unreachable, and the next answer marks it reachable;
+      - with `machines` watched and a remote that stops answering, the 15th tick's probe marks it unreachable (on a
+        fake `TimeProvider`); with nobody watching, no probe goes out;
+      - a remote with a live follower link isn't probed; a probe still out when the next 15th tick comes isn't
+        doubled; one that hangs gives up at 5 s; the last subscriber leaving cancels the probe in flight;
+      - the clock still stops when neither `clock` nor `machines` has a subscriber;
+      - a remote whose rows are in another format stays unreachable with that reason, with no flip to reachable on
+        each call;
+      - a remote starts "not checked yet", and the first tick after a subscribe probes it;
+      - a route that gets a non-2xx answer from the remote answers it as an error, not an unhandled 500;
+      - a second identical outcome publishes nothing.
+    - **C2** turns `RemoteMachine` into one socket per remote. Its open and close then replace most of the signals
+      above, and the probe becomes that socket's keepalive. The topic's shape stays the same.
   - **Next, its own PR right after, before the cut:** every chat route the window calls moves onto the socket: the
     sessions list, send, cancel, tool detail, ask answers, run rows, and anything else under `/sessions`, with bytes
     as D4's chunked calls. **The cut** then deletes `/live` and the HTTP chat routes together, with the HTTP
