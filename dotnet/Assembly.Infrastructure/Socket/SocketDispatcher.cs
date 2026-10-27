@@ -79,6 +79,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         Func<string?, CallContext, IReadOnlyList<TItem>> state) =>
         _topics.Add(topic, (sub, subKey, context) => StateFrame(sub, state(subKey, context), item, key));
 
+    public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state)
+    {
+    }
+
     /// <summary>
     /// Subscribes the socket to a <c>sub</c> frame's topic: its state is read and queued, and the subscription registered,
     /// under the Topics lock. Null when there's nothing to subscribe to; the socket has been answered with an error.

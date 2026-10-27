@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Assembly.Domain.Rows;
+using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -17,7 +18,7 @@ public sealed class LiveHub : IDisposable
     private readonly Dictionary<string, List<LiveSubscription>> _subscribers = [];
 
     /// <param name="queueLimit">Rows a socket may fall behind before it's closed.</param>
-    public LiveHub(RowStore store, int queueLimit = 4096)
+    public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null)
     {
         _store = store;
         _queueLimit = queueLimit;
