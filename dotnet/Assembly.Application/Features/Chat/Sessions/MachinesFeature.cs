@@ -21,7 +21,7 @@ internal sealed class MachinesFeature : IFeature
     private readonly MachineStatus _status;
     private readonly Action _startClock;
     private readonly TimeProvider _time;
-    // The remotes with a probe out, which never get a second; guarded by itself, as is _stop.
+    // The remotes with a probe out, which never get a second; guarded by itself, as are _stop and _ticks.
     private readonly HashSet<string> _probing = [];
     private CancellationTokenSource _stop = new();
     private int _ticks = Every - 1;
@@ -42,7 +42,8 @@ internal sealed class MachinesFeature : IFeature
             if (key is not null)
                 throw new CallFailed("machines has no keys");
             // The first tick after a subscribe probes.
-            Volatile.Write(ref _ticks, Every - 1);
+            lock (_probing)
+                _ticks = Every - 1;
             _startClock();
             return _status.Items;
         });
@@ -67,9 +68,12 @@ internal sealed class MachinesFeature : IFeature
                 }
             return;
         }
-        if (Interlocked.Increment(ref _ticks) < Every)
-            return;
-        Volatile.Write(ref _ticks, 0);
+        lock (_probing)
+        {
+            if (++_ticks < Every)
+                return;
+            _ticks = 0;
+        }
         foreach (var machine in _machines.Remotes)
         {
             CancellationToken stop;
