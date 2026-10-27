@@ -1,7 +1,7 @@
-//! `SessionRow` is one session in the column: its title, agent and machine. Selected, it's marked; a click selects
-//! it. The still dot for a working session waits for the sessions list to carry that state.
+//! `SessionRow` is one session in the column: its title, agent and machine, with a still dot while it's working.
+//! Selected, it's marked; a click selects it.
 
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -15,6 +15,8 @@ pub struct SessionRow {
     /// "claude · Workbox Test".
     pub place: SharedString,
     pub selected: bool,
+    /// A run is going: the row has a still dot.
+    pub working: bool,
 }
 
 impl SessionRow {
@@ -24,6 +26,7 @@ impl SessionRow {
             title: item.title().into(),
             place: item.place().into(),
             selected,
+            working: item.active_run_id.is_some(),
         }
     }
 }
@@ -46,7 +49,14 @@ impl RenderOnce for SessionRow {
                 SelectedSession::global(cx)
                     .update(cx, |selected, cx| selected.select(Some(id), cx));
             })
-            .child(div().text_sm().truncate().child(self.title))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .when(self.working, |line| {
+                        line.child(div().size(px(6.)).rounded_full().bg(theme.primary))
+                    })
+                    .child(div().text_sm().truncate().child(self.title)),
+            )
             .child(
                 div()
                     .text_xs()
@@ -56,3 +66,7 @@ impl RenderOnce for SessionRow {
             )
     }
 }
+
+#[cfg(test)]
+#[path = "session_row_tests.rs"]
+mod tests;

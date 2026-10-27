@@ -15,6 +15,9 @@ pub struct SessionItem {
     pub parent_session_id: Option<String>,
     pub acp_session_id: Option<String>,
     pub updated_at: i64,
+    /// The run going now, from the session's summary; `None` while it's idle.
+    #[serde(default)]
+    pub active_run_id: Option<String>,
 }
 
 impl SessionItem {
