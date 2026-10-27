@@ -114,6 +114,19 @@ public sealed class UnixPtyTests
         await GoneAsync(child);
     }
 
+    [Fact]
+    public async Task The_output_ends_when_the_shell_exits_even_with_a_job_it_left_running()
+    {
+        // Pins: terminal#7
+        await using var pty = Start("sleep 300 & echo \"child:$!\"", interactive: true);
+        var line = await ReadUntilAsync(pty, "child:");
+        var child = int.Parse(line[(line.IndexOf("child:", StringComparison.Ordinal) + 6)..].Split('\r', '\n')[0]);
+
+        await ReadToEndAsync(pty);
+
+        await GoneAsync(child);
+    }
+
     private static IPty Start(string script, int cols = 80, int rows = 24, bool interactive = false) =>
         new UnixPtyStarter().Start(new PtyRequest("/bin/sh", interactive ? ["-i", "-c", script] : ["-c", script], Path.GetTempPath(),
             NoEnvironment, cols, rows));
