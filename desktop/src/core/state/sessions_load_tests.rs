@@ -102,7 +102,7 @@ async fn a_gap_cancels_the_older_page_still_loading_and_its_page_never_lands(
         || seen.lock().unwrap().cancelled,
     )
     .await;
-    // The page answered to the cancel has come and gone.
+    // The cancel is the proof: the dropped call's late answer has nowhere to land. These hold whenever it arrives.
     cx.run_until_parked();
     sessions.read_with(cx, |sessions, _| {
         assert!(
