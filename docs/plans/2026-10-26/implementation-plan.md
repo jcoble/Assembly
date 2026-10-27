@@ -1460,6 +1460,12 @@ catalogue stays the reference.
     is exclusive and the topic sends nothing at or below that seq. A `rows/page` answer that
     fails for being over 4 MB means it asks again with a smaller `limit`.
   - **Next after 1c: the `machines` topic (shape only, no code yet).** Paths are under `dotnet/`, lines as of e8e361e.
+    - **Two PRs.**
+      - **M1:** `reachable` and `reason` on `machines/list`, the error mapping (non-2xx is `failed`, 401 and 403
+        are unreachable with the token reason), every catch that takes the new `failed` (the nine HTTP routes
+        included), a format mismatch recorded once, and no `host`. No topic and no probe.
+      - **M2,** branched from M1: the `machines` topic, the probe on the backend clock, the tunnel passed into
+        `DesktopBackend`, the follower-link signal, and the clock-stops test.
     - **What `reachable` means, per kind.** `MachineSet` holds this machine and the remotes, at most one today, from
       `--remote` (`Application/Common/Machines/MachineSet.cs:7`, built in `Desktop/Serve/DesktopBackend.cs:76`).
       - *This machine* (`LocalMachine`, `Name` null, `Infrastructure/Machines/LocalMachine.cs:15`) is always reachable:
