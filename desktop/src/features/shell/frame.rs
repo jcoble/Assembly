@@ -2,10 +2,13 @@
 //! a layout change when a dock edge drag ends) and the utility strip. Replaces ShellFrame.svelte and the `next-shell`
 //! markup in routes/+page.svelte (lines 817-958).
 
-use gpui_kit::component::dock::DockArea;
+use gpui_kit::component::dock::{DockArea, DockEvent, DockSkin};
+use gpui_kit::component::v_flex;
 use gpui_kit::*;
+use serde_json::Value;
 
-use super::layout_store::LayoutStore;
+use super::default_layout::{LAYOUT_VERSION, default_state};
+use super::layout_store::{LayoutStore, WriteLayout};
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
 
@@ -13,9 +16,9 @@ pub struct Frame {
     top_bar: Entity<TopBar>,
     dock: Entity<DockArea>,
     utility_strip: Entity<UtilityStrip>,
-    layout: LayoutStore,
-    /// The saved layout being read; dropped once it's applied.
-    loading: Option<Task<()>>,
+    pub(super) layout: LayoutStore,
+    /// Reads the saved layout, then applies it.
+    _load: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -23,13 +26,41 @@ impl Frame {
     /// Builds the DockArea and loads the saved layout, or the default one when there's none, through
     /// `DockArea::load` either way. Only then does it subscribe to layout changes, so a launch doesn't write the
     /// layout straight back.
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
-        todo!()
+    pub fn new(read: Task<Option<Value>>, write: WriteLayout, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let (dock, _skin) = DockSkin::dock_area("assembly-shell", Some(LAYOUT_VERSION), window, cx);
+        let top_bar = cx.new(|cx| TopBar::new(dock.clone(), cx));
+        let utility_strip = cx.new(|_| UtilityStrip);
+        let _load = cx.spawn_in(window, async move |this, cx| {
+            let state = LayoutStore::layout_to_open(read.await);
+            _ = this.update_in(cx, |frame, window, cx| {
+                frame.dock.update(cx, |dock, cx| {
+                    if let Err(error) = dock.load(state, window, cx) {
+                        eprintln!("shell: the saved layout didn't load, so the default opens: {error}");
+                        _ = dock.load(default_state(), window, cx);
+                    }
+                });
+                let changes = cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent, window, cx| {
+                    if matches!(event, DockEvent::LayoutChanged) {
+                        frame.layout.save_soon(window, cx);
+                    }
+                });
+                frame._subscriptions.push(changes);
+            });
+        });
+        Self { top_bar, dock, utility_strip, layout: LayoutStore::new(write), _load, _subscriptions: Vec::new() }
+    }
+
+    pub fn dock(&self) -> &Entity<DockArea> {
+        &self.dock
     }
 }
 
 impl Render for Frame {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        v_flex()
+            .size_full()
+            .child(self.top_bar.clone())
+            .child(div().flex_1().min_h_0().child(self.dock.clone()))
+            .child(self.utility_strip.clone())
     }
 }

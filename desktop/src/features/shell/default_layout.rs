@@ -6,8 +6,12 @@
 //! Run, Context, History, closed at launch as in the old app. Bottom dock: Problems, Terminal, closed. Editor, browser
 //! and diff tabs aren't in the default: they open beside Chat when the first one opens, as the old tab pane did.
 
-use gpui_kit::component::dock::DockAreaState;
+use gpui_kit::component::dock::{DockAreaState, DockPlacement, DockState, PanelInfo, PanelState};
 use gpui_kit::*;
+
+/// The saved layout's version. A layout saved with another version opens the default instead, so raise it whenever
+/// the default's panes change, or old layouts never gain the new pane.
+pub const LAYOUT_VERSION: usize = 1;
 
 pub const SESSIONS: &str = "Sessions";
 pub const CHAT: &str = "Chat";
@@ -35,5 +39,25 @@ pub const DOCK_HEIGHT: Pixels = px(180.);
 
 /// The default layout as the kit's saved-layout value, so the window loads it the same way as a saved one.
 pub fn default_state() -> DockAreaState {
-    todo!()
+    DockAreaState {
+        version: Some(LAYOUT_VERSION),
+        center: tabs(&[CHAT]),
+        left_dock: Some(DockState::new(tabs(&[SESSIONS]), DockPlacement::Left, SESSIONS_WIDTH, true)),
+        right_dock: Some(DockState::new(
+            tabs(&[FILES, SOURCE_CONTROL, AGENTS, TASKS, WORKTREES, RUN, CONTEXT, HISTORY]),
+            DockPlacement::Right,
+            DRAWER_WIDTH,
+            false,
+        )),
+        bottom_dock: Some(DockState::new(tabs(&[PROBLEMS, TERMINAL]), DockPlacement::Bottom, DOCK_HEIGHT, false)),
+    }
+}
+
+/// One tab group holding these panes, the first in front.
+fn tabs(panes: &[&str]) -> PanelState {
+    PanelState {
+        panel_name: "TabPanel".into(),
+        children: panes.iter().map(|&pane| PanelState::new(pane)).collect(),
+        info: PanelInfo::tabs(0),
+    }
 }

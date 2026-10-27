@@ -1,33 +1,49 @@
-//! `LayoutStore` owns reading the saved layout at start and saving it when it changes, at most once a frame and with
-//! no timer, so fast tab clicks save once. The layout goes through the backend's settings call over the socket (lane
-//! g0-socket), never blocking the window. Replaces layoutStorage.ts and frame.ts's persistence (the
-//! `shell.grid-layout` setting).
+//! `LayoutStore` owns turning the saved layout into the one to open, and saving the layout when it changes: once per
+//! update, however many changes the update made, with no timer. The read and the write come from outside: lane
+//! g0-socket's preferences calls once it lands, the tests' own until then. Replaces layoutStorage.ts and frame.ts's
+//! persistence.
 
 use gpui_kit::component::dock::DockAreaState;
 use gpui_kit::*;
+use serde_json::Value;
 
+use super::default_layout::{LAYOUT_VERSION, default_state};
 use super::frame::Frame;
 
-/// The setting the layout is saved under.
-pub const LAYOUT_SETTING: &str = "shell.dock-layout";
+pub type WriteLayout = Box<dyn Fn(Value, &mut App)>;
 
 pub struct LayoutStore {
-    /// A save is already asked for this frame.
+    write: WriteLayout,
+    /// A save is already asked for in this update.
     save_pending: bool,
 }
 
 impl LayoutStore {
-    pub fn new() -> Self {
-        todo!()
+    pub fn new(write: WriteLayout) -> Self {
+        Self { write, save_pending: false }
     }
 
-    /// Reads the saved layout from the backend; `None` when there's none this build can read.
-    pub fn load(&self, _cx: &mut Context<Frame>) -> Task<Option<DockAreaState>> {
-        todo!()
+    /// The saved layout when this build can read it, otherwise the default.
+    pub fn layout_to_open(saved: Option<Value>) -> DockAreaState {
+        saved
+            .and_then(|value| serde_json::from_value::<DockAreaState>(value).ok())
+            .filter(|state| state.version == Some(LAYOUT_VERSION))
+            .unwrap_or_else(default_state)
     }
 
-    /// Asks for the frame's layout to be saved on the next frame; more changes in the same frame add nothing.
-    pub fn save_soon(&mut self, _window: &mut Window, _cx: &mut Context<Frame>) {
-        todo!()
+    /// Saves the frame's layout at the end of this update; more changes in the same update add nothing.
+    pub fn save_soon(&mut self, window: &mut Window, cx: &mut Context<Frame>) {
+        if self.save_pending {
+            return;
+        }
+        self.save_pending = true;
+        cx.defer_in(window, |frame, _, cx| {
+            frame.layout.save_pending = false;
+            let state = frame.dock().read(cx).dump(cx);
+            match serde_json::to_value(state) {
+                Ok(layout) => (frame.layout.write)(layout, cx),
+                Err(error) => eprintln!("shell: the layout didn't serialize, so it wasn't saved: {error}"),
+            }
+        });
     }
 }

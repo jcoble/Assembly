@@ -4,8 +4,10 @@
 
 pub mod default_layout;
 pub mod frame;
-pub mod home_button;
 pub mod layout_store;
 pub mod placeholder_pane;
 pub mod top_bar;
 pub mod utility_strip;
+
+#[cfg(test)]
+mod frame_tests;
