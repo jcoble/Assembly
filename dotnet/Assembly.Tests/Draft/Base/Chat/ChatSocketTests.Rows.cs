@@ -29,7 +29,7 @@ public sealed partial class ChatSocketTests
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
         Assert.Equal(
-            """{"t":"result","id":1,"result":{"summary":"ls","input":"-la","output":"a.txt","diff":null,"path":null,"truncated":false,"outputBytes":5,"diffBytes":0}}""",
+            """{"t":"result","id":1,"result":{"summary":"ls","input":"-la","output":"a.txt","truncated":false,"outputBytes":5,"diffBytes":0}}""",
             await ReadAsync(socket));
         Assert.Equal(["tool t1"], _box.Asked);
 
