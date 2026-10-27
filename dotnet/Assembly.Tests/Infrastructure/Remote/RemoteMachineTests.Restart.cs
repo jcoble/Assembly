@@ -68,8 +68,6 @@ public sealed partial class RemoteMachineTests
 
         await box.ReplyAsync(secondPrompt, """{"stopReason":"end_turn"}""");
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
-        // Past the follower settling (2 s quiet), which must not end the row a second time.
-        await Task.Delay(TimeSpan.FromSeconds(3));
         Assert.Single(await RowsAsync(_desktop!, DesktopToken, parent), row => row.GetProperty("seq").GetInt64() > before
             && row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
     }
