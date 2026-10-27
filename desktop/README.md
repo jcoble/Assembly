@@ -34,6 +34,9 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
 - `src/features/<feature>/`: one folder per feature, which never uses another feature's folder.
 - One type per file, and no file over about 300 lines.
 - A timer or animation is a `Task` held by the view that started it, never detached, so closing the view stops it.
+  App-wide subscriptions (window closed, app quit) are held in the root view's `_subscriptions: Vec<Subscription>`.
+- Anything that ticks on a schedule (elapsed or relative times, the meter) subscribes to the backend's `clock` topic.
+  Window timers are only for animations, frame waits and a debounce.
 - The root module is named `core`, so in `main.rs` the `core` crate is `::core::`.
 
 ## The guard
@@ -41,6 +44,9 @@ CI's `desktop` job runs the first three on Linux; the guard runs before every co
 `scripts/guard.sh` fails, with no allow lists, on:
 
 - `tungstenite`, `TcpStream`, `TcpListener`, `UdpSocket` or an HTTP client outside `src/core/socket/`;
+- `.detach()` (or `detach_and_log_err`) on a task or subscription anywhere: whatever starts one holds it;
+- starting an OS thread (`thread::spawn`, `thread::Builder`) outside `src/core/socket/` and `src/core/backend/` (the
+  backend launcher); `thread::scope` always joins, so it's fine anywhere;
 - file reads (`std::fs` in any form, `File::`) in a file that draws: one that implements `Render` or `RenderOnce` or
   has a `fn render`.
 
