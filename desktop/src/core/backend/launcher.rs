@@ -31,6 +31,9 @@ use std::thread::JoinHandle;
 use gpui_kit::*;
 
 use super::backend_config::BackendConfig;
+use crate::core::commands::command_registry::CommandRegistry;
+
+actions!(backend, [RestartBackend]);
 
 /// Gets the token each time a backend is ready.
 type Ready = Arc<dyn Fn(String) + Send + Sync>;
@@ -82,6 +85,8 @@ impl Launcher {
             async {}
         }));
         cx.set_global(launcher);
+        cx.on_action(|_: &RestartBackend, cx| cx.global_mut::<Self>().restart_if_stopped());
+        CommandRegistry::add("Restart backend", Box::new(RestartBackend), cx);
     }
 
     fn new(config: BackendConfig, ready: Ready) -> Self {
@@ -98,7 +103,7 @@ impl Launcher {
         launcher
     }
 
-    /// Starts a backend when none is running; does nothing when one is. The palette's "Restart backend" calls it.
+    /// Starts a backend when none is running; does nothing when one is. The palette's "Restart backend" runs it.
     fn restart_if_stopped(&mut self) {
         if self
             .thread

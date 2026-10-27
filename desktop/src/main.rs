@@ -11,6 +11,7 @@ use gpui_kit::*;
 use crate::core::backend::backend_config::BackendConfig;
 use crate::core::backend::launcher::Launcher;
 use crate::core::window_root::WindowRoot;
+use crate::features::palette::palette_view::PaletteView;
 
 fn main() {
     // On macOS GPUI's default keeps the app running with no window open.
@@ -19,6 +20,7 @@ fn main() {
         .run(|cx| {
             gpui_kit::init(cx);
             start_backend(cx);
+            PaletteView::init(cx);
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Assembly".into()),
