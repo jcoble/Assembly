@@ -69,6 +69,24 @@ public sealed class MachineProbeTests
         Assert.True(ended);
     }
 
+    [Fact]
+    public async Task A_tick_after_dispose_starts_no_probe()
+    {
+        var probed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _far.Probe = _ =>
+        {
+            probed.TrySetResult();
+            return Task.CompletedTask;
+        };
+        var feature = Feature();
+        await feature.DisposeAsync();
+
+        // A tick that was already on its way when the backend stopped.
+        feature.Tick(true);
+
+        Assert.NotSame(probed.Task, await Task.WhenAny(probed.Task, Task.Delay(TimeSpan.FromMilliseconds(300))));
+    }
+
     private static async Task Until(Func<bool> done)
     {
         for (var waited = TimeSpan.Zero; !done(); waited += TimeSpan.FromMilliseconds(10))
