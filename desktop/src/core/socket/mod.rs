@@ -19,7 +19,7 @@ pub mod endpoint;
 pub mod error_code;
 mod event;
 #[cfg(test)]
-mod fake_backend;
+pub(crate) mod fake_backend;
 mod in_frame;
 mod open_failure;
 mod out_frame;

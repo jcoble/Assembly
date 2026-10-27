@@ -48,11 +48,12 @@ impl Header {
         }));
     }
 
-    /// A helper session takes no prompts of its own.
-    pub fn is_helper(&self) -> bool {
+    /// The session takes prompts once it's known not to be a helper: a helper takes none of its own, and until the
+    /// topic sends the session it isn't known, so the composer never shows on a helper even for a moment.
+    pub fn takes_prompts(&self) -> bool {
         self.item
             .as_ref()
-            .is_some_and(|item| item.parent_session_id.is_some())
+            .is_some_and(|item| item.parent_session_id.is_none())
     }
 }
 
