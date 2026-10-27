@@ -45,6 +45,7 @@ echo "removed $unit, ~/$data and ~/assembly/$branch"
 BOX
     exit ;;
   kill-adapter)
+    [ -n "$LANE_NAME" ] || { echo "kill-adapter is for a lane's host; main's host keeps its adapter" >&2; exit 1; }
     ssh workbox-test bash -s -- "$BOX_UNIT" <<'BOX'
 set -euo pipefail
 unit=$1
@@ -97,10 +98,11 @@ fi
 adapters=~/spike-dotnet/adapters
 entry=$adapters/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 # The box has pnpm but no npm.
-mkdir -p ~/"$data"/serve
-"$dir/dotnet/scripts/agents-file.sh" "$adapters" ~/"$data"/serve/agents.json
 
 if [ "$mode" = serve ]; then
+  # Only the server reads agents.json; smoke and record start the adapter themselves.
+  mkdir -p ~/"$data"/serve
+  "$dir/dotnet/scripts/agents-file.sh" "$adapters" ~/"$data"/serve/agents.json
   # Published apart from the checkout, so a later smoke build never swaps files under the running server.
   bin=~/$data/bin/$commit
   dotnet publish -v q --nologo -c Release -o "$bin" "$dir/dotnet/Assembly.Remote" >&2

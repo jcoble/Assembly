@@ -26,15 +26,17 @@ git clone -q "$tmp/origin.git" "$tmp/work"
 work=$tmp/work
 failed=0
 # expect <stops|passes> <name> [branch]: stops means it exits non-zero with no ssh call; passes means it reached ssh.
+# MODE picks the workbox.sh mode (serve when unset).
 expect() {
   rm -f "$tmp/ssh.log"
-  (cd "$work" && PATH="$tmp/bin:$PATH" SSH_LOG="$tmp/ssh.log" bash dotnet/scripts/workbox.sh serve ${3:-}) </dev/null >"$tmp/out" 2>&1
+  (cd "$work" && PATH="$tmp/bin:$PATH" SSH_LOG="$tmp/ssh.log" bash dotnet/scripts/workbox.sh "${MODE:-serve}" ${3:-}) </dev/null >"$tmp/out" 2>&1
   local got=$? called=no
   [ -f "$tmp/ssh.log" ] && called=yes
   if { [ "$1" = stops ] && [ "$got" != 0 ] && [ "$called" = no ]; } || { [ "$1" = passes ] && [ "$called" = yes ]; }
   then echo "ok   $2"; else echo "FAIL $2: exit $got, ssh called: $called, wanted $1"; failed=1; fi
 }
 expect passes "main's host from a clean checkout of origin/main"
+MODE=kill-adapter expect stops "kill-adapter on main's host"
 echo dirty >"$work/scratch.txt"
 expect stops "main's host from a checkout with uncommitted files"
 rm "$work/scratch.txt"
