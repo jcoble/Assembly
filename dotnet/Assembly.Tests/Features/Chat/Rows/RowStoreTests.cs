@@ -153,8 +153,23 @@ public sealed class RowStoreTests : IDisposable
         var plan = _database.Query("EXPLAIN QUERY PLAN " + lookup, row => row.Text(3), CancellationToken.None,
             new SqlArg("$session", "t"), new SqlArg("$client", "c"));
 
-        // One search of the session's user rows, newest first, with no sort.
-        Assert.Equal(["SEARCH rows USING INDEX rows_item (session_id=? AND item_id=? AND kind=?)"], plan);
+        // A search of the session's user rows, newest first, with no sort.
+        Assert.Contains("SEARCH rows USING INDEX rows_item (session_id=? AND item_id=? AND kind=?)", plan);
+        Assert.DoesNotContain(plan, step => step.Contains("TEMP B-TREE", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_clientId_older_than_the_sessions_newest_200_user_rows_isnt_found()
+    {
+        _store.Commit("t", Batch("first"));
+        var batch = new RowBatch();
+        batch.Rows.Add(new NewRow("run-1", null, RowKind.User, Payload("""{"text":"hi","clientId":"old"}"""), 1));
+        _store.Commit("t", batch);
+        Assert.Equal(("run-1", "hi"), _store.UserRowOfClient("t", "old"));
+
+        _store.Commit("t", Batch([.. Enumerable.Range(0, 200).Select(i => $"later {i}")]));
+
+        Assert.Null(_store.UserRowOfClient("t", "old"));
     }
 
     [Fact]

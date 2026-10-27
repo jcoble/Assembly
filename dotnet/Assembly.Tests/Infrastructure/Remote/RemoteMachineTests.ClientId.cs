@@ -80,6 +80,36 @@ public sealed partial class RemoteMachineTests
     }
 
     [Fact]
+    public async Task A_send_whose_desktop_request_drops_still_lands_on_the_remote_and_its_retry_answers_that_run()
+    {
+        var sessionId = await CreateSessionAsync();
+        using var socket = await OpenSocketAsync(_desktop!);
+        var runId = RunOf(await CallSendAsync(socket, 1, sessionId, "hi", "c17"));
+        var agent = await _boxLauncher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+
+        // The desktop's request drops (a tunnel blip, the Mac asleep) while the remote's steer waits on the agent.
+        using var box = Client(_box, BoxToken);
+        using var dropped = new CancellationTokenSource();
+        var sending = box.PostAsync($"/sessions/{sessionId}/send", Json("""{"text":"also this","clientId":"c18"}"""), dropped.Token);
+        var steer = await agent.ReadAsync("_session/steering");
+        await dropped.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sending);
+
+        // The window retries through the desktop; it joins the remote's send, which the agent then takes.
+        await SendTextAsync(socket, $$$"""{"t":"call","id":2,"feature":"send","method":"send","args":{"session":"{{{sessionId}}}","text":"also this","clientId":"c18"}}""");
+        await Until(() => _log.ToString().Contains("send c18: joined in-flight send", StringComparison.Ordinal));
+        await agent.ReplyAsync(steer, """{"outcome":"injected"}""");
+        Assert.Equal($$$"""{"t":"result","id":2,"result":{"runId":"{{{runId}}}"}}""", await ReadTextAsync(socket));
+
+        // The next thing the agent hears is the turn's close: one steering request.
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        Assert.Single(await RowsAsync(_box, BoxToken, sessionId), row => ClientIdOf(row) == "c18");
+    }
+
+    [Fact]
     public async Task The_remote_send_route_refuses_a_bad_clientId()
     {
         var sessionId = await CreateSessionAsync();
@@ -91,6 +121,8 @@ public sealed partial class RemoteMachineTests
             Assert.Equal(HttpStatusCode.BadRequest, answer.StatusCode);
             Assert.Equal($$"""{"error":"{{BadClientId}}"}""", await answer.Content.ReadAsStringAsync());
         }
+        // A null clientId is no clientId, as on the socket: this one gets as far as the session lookup.
+        Assert.Equal(HttpStatusCode.NotFound, (await http.PostAsync("/sessions/nope/send", Json("""{"text":"hi","clientId":null}"""))).StatusCode);
 
         var sent = await http.PostAsync($"/sessions/{sessionId}/send", Json(JsonSerializer.Serialize(new { text = "hi", clientId = new string('a', 64) })));
         Assert.Equal(HttpStatusCode.OK, sent.StatusCode);

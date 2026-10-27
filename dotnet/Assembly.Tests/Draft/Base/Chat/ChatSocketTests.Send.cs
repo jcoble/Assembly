@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
 using Assembly.Tests.Features.Chat.Sessions;
@@ -204,7 +205,7 @@ public sealed partial class ChatSocketTests
         Assert.Equal(Result(2, runId), await ReadAsync(socket));
 
         // The first is cut off by its 30 s limit after its request went out, while the retry waits on it: with no row,
-        // the retry answers the same failure and sends nothing.
+        // the retry fails, saying so, and sends nothing.
         await CallAsync(socket, 3, "send", "send", Args(session.SessionId, "and this", "c8"));
         await agent.ReadAsync("_session/steering");
         _time.Advance(TimeSpan.FromSeconds(20));
@@ -212,7 +213,9 @@ public sealed partial class ChatSocketTests
         await _log.WrittenAsync("send c8: joined in-flight send");
         _time.Advance(TimeSpan.FromSeconds(10));
         Assert.Contains("\"code\":\"timeout\"", await ReadAsync(socket));
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(retry));
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"this message's first send was cut off; it may have reached the agent"}""",
+            await ReadAsync(retry));
+        Assert.DoesNotContain(_calls.Entries, entry => entry.Level >= LogLevel.Error);
 
         // The next thing the agent hears is the turn's close: c8 was a steering request once.
         await EndTurnAsync(agent, prompt);

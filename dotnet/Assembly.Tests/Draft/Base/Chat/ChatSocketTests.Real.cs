@@ -7,13 +7,13 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Machines;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Features.Chat.Sessions;
+using Assembly.Tests.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Draft.Base.Chat;
@@ -26,6 +26,8 @@ public sealed partial class ChatSocketTests
 {
     private readonly FakeLauncher _launcher = new();
     private readonly WatchedLog _log = new();
+    // What the real socket's calls log.
+    private readonly SocketTests.FakeLog _calls = new();
     private BackgroundWork? _work;
     private SessionRegistry? _registry;
     private WebApplication? _real;
@@ -37,7 +39,7 @@ public sealed partial class ChatSocketTests
         {
             _work = new BackgroundWork(_time, _log);
             _registry = new SessionRegistry(_hub, _sessions, _launcher, _time, _log, _work);
-            var calls = new SocketDispatcher(_db.Writer, new TopicSet(), _time, NullLogger.Instance);
+            var calls = new SocketDispatcher(_db.Writer, new TopicSet(), _time, _calls);
             new SendFeature(_sessions, new MachineSet(new LocalMachine(_hub, _sessions, _registry, _attachments)), _hub).Register(calls);
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
