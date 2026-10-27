@@ -36,9 +36,10 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
 
         try
         {
-            // A helper on another machine stops there.
+            // A helper on another machine than its parent's stops there; the parent's machine stops its own.
             var task = RequestValues.Route(context, "task");
             var stopped = sessionStore.Get(task) is { Helper: true, Machine: not null } helper && helper.ParentSessionId == session.SessionId
+                && helper.Machine != session.Machine
                 ? machines.For(helper).ActiveRun(helper) is { } run && await machines.For(helper).StopAsync(helper, run, context.RequestAborted)
                 : await machines.For(session).StopTaskAsync(session, task, context.RequestAborted);
             if (!stopped)

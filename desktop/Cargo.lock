@@ -279,9 +279,12 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "futures-channel",
+ "futures-executor",
  "gpui-fps",
  "gpui-kit",
  "gpui-pre",
+ "libc",
  "serde",
  "serde_json",
  "tungstenite",

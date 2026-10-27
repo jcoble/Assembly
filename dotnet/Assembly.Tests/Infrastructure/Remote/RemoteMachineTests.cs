@@ -17,7 +17,7 @@ using Assembly.Tests.Features.Diagnostics;
 namespace Assembly.Tests.Infrastructure.Remote;
 
 /// <summary>A desktop backend with a remote machine: a second backend on the same engine stands in for Workbox Test.</summary>
-public sealed class RemoteMachineTests : IAsyncLifetime
+public sealed partial class RemoteMachineTests : IAsyncLifetime
 {
     private const string DesktopToken = "desktop-token";
     private const string BoxToken = "box-token";
@@ -27,7 +27,7 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     private readonly string _boxHome = Directory.CreateTempSubdirectory("assembly-box-").FullName;
     private readonly FakeLauncher _desktopLauncher = new();
     private readonly FakeLauncher _boxLauncher = new();
-    private readonly StringWriter _log = new();
+    private readonly SharedLog _log = new();
     private DesktopBackend _box = null!;
     private DesktopBackend? _desktop;
 
@@ -89,9 +89,10 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         var prompt = await agent.ReadAsync("session/prompt");
         using (var watching = await OpenLiveAsync(_desktop!, DesktopToken, sessionId, after: 0))
             await ApiTests.ReadRowsAsync(watching, 2);
-        Assert.True(_desktop!.ActivityHeld);
+        // The hub sends the rows before it applies their summary, which is what holds it.
+        await Until(() => _desktop!.ActivityHeld);
 
-        await _desktop.DisposeAsync();
+        await _desktop!.DisposeAsync();
         await StartDesktopAsync();
         Assert.True(_desktop.ActivityHeld);
 
@@ -170,6 +171,79 @@ public sealed class RemoteMachineTests : IAsyncLifetime
         }
         var helper = await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{helperId}");
         Assert.Equal(("codex", sessionId), (helper.GetProperty("agent").GetString(), helper.GetProperty("parentSessionId").GetString()));
+    }
+
+    [Fact]
+    public async Task A_remote_helper_s_turn_end_doesnt_put_a_row_into_its_remote_parent_here()
+    {
+        var (parent, parentAgent, parentPrompt, helperId, helperAgent, helperPrompt) = await StartRemoteHelperOfRemoteParentAsync();
+
+        // Follow the helper here, and let its turn end.
+        await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{helperId}/rows");
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, helperId)).Any(row => row.GetProperty("kind").GetString() == "user"));
+        await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, parent)).Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
+
+        // The parent's turn ends, and it runs another.
+        await parentAgent.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
+        await parentAgent.CloseAsync();
+        await SendAsync(parent);
+        await parentAgent.OpenAsync();
+        await parentAgent.ReplyAsync(await parentAgent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
+        await Until(async () => (await RowsAsync(_box, BoxToken, parent)).Count(row => row.GetProperty("kind").GetString() == "turn"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "finished") == 2);
+        var box = await RowsAsync(_box, BoxToken, parent);
+        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, parent)).Max(row => row.GetProperty("seq").GetInt64()) >= box.Max(row => row.GetProperty("seq").GetInt64()));
+        var desktop = await RowsAsync(_desktop!, DesktopToken, parent);
+
+        // Every row here is the box's copy, at the box's seq.
+        static (long, string?, string?, long) Key(JsonElement row) =>
+            (row.GetProperty("seq").GetInt64(), row.GetProperty("kind").GetString(), row.GetProperty("itemId").GetString(), row.GetProperty("createdAt").GetInt64());
+        var copied = desktop.Select(Key).ToHashSet();
+        foreach (var row in box.Where(row => row.GetProperty("kind").GetString() is "user" or "turn"))
+            Assert.Contains(Key(row), copied);
+        var boxRows = box.Select(Key).ToHashSet();
+        foreach (var row in desktop)
+            Assert.Contains(Key(row), boxRows);
+    }
+
+    // A session on the box whose agent starts a helper on the box, both mid-turn; the desktop knows the helper.
+    private async Task<(string Parent, FakeLink ParentAgent, JsonElement ParentPrompt, string Helper, FakeLink HelperAgent, JsonElement HelperPrompt)>
+        StartRemoteHelperOfRemoteParentAsync()
+    {
+        var parent = await CreateSessionAsync();
+        await SendAsync(parent);
+        var parentAgent = await _boxLauncher.NextAsync();
+        var parentToken = SessionToken(await parentAgent.StartAsync());
+        var parentPrompt = await parentAgent.ReadAsync("session/prompt");
+        var helperId = (await ToolAsync(_box, parentToken, "start_session", new { prompt = "Count the lines.", agent = "codex" })).GetProperty("sessionId").GetString()!;
+        var helperAgent = await _boxLauncher.NextAsync();
+        await helperAgent.StartAsync(acpSessionId: "acp-helper");
+        var helperPrompt = await helperAgent.ReadAsync("session/prompt");
+        using var http = Client(_desktop!, DesktopToken);
+        await Until(async () => (await http.GetAsync($"/sessions/{helperId}")).StatusCode == HttpStatusCode.OK);
+        return (parent, parentAgent, parentPrompt, helperId, helperAgent, helperPrompt);
+    }
+
+    private static async Task<List<JsonElement>> RowsAsync(DesktopBackend backend, string token, string sessionId) =>
+        (await GetJsonAsync(backend, token, $"/sessions/{sessionId}/rows?limit=500")).GetProperty("rows").EnumerateArray().ToList();
+
+    private static Task SocketSendAsync(WebSocket socket, string text) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+    private static async Task<string> SocketReadAsync(WebSocket socket)
+    {
+        using var message = new MemoryStream();
+        var buffer = new byte[64 * 1024];
+        WebSocketReceiveResult received;
+        do
+        {
+            received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+            message.Write(buffer, 0, received.Count);
+        }
+        while (!received.EndOfMessage);
+        return Encoding.UTF8.GetString(message.ToArray());
     }
 
     [Fact]
@@ -283,74 +357,38 @@ public sealed class RemoteMachineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_route_that_gets_a_non_2xx_from_the_remote_answers_502_not_500()
+    public async Task Ssh_exiting_marks_the_remote_unreachable_and_the_next_answer_marks_it_reachable()
     {
-        await using var remote = await StubAsync(app => app.MapGet("/agents", () => Results.Text("boom", statusCode: 500)));
-        await using var desktop = await DesktopOnAsync(remote, Directory.CreateTempSubdirectory("assembly-desktop-").FullName);
+        // The tunnel's command exits each time this file appears.
+        var exit = Path.Combine(Directory.CreateTempSubdirectory("assembly-tunnel-").FullName, "exit");
+        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", $"while [ ! -e '{exit}' ]; do sleep 0.1; done; rm '{exit}'"], TextWriter.Null);
+        await using var desktop = await DesktopBackend.StartAsync(Directory.CreateTempSubdirectory("assembly-desktop-").FullName, DesktopToken, 0,
+            _desktopLauncher, _log, new RemoteConfig(Box, _box.Address, BoxToken), tunnel);
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{desktop.Address.Authority}/socket"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
+        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+        await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"machines"}""");
+        Assert.Contains("not checked yet", await ReadTextAsync(socket));
+        // The first tick after the subscribe probes it.
+        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
 
-        using var http = Client(desktop, DesktopToken);
-        var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
+        File.WriteAllText(exit, "");
+        Assert.Contains("\"reachable\":false,\"reason\":\"ssh tunnel exited\"", await ReadTextAsync(socket));
 
-        Assert.Equal(HttpStatusCode.BadGateway, created.StatusCode);
-        Assert.Contains("answered 500", await created.Content.ReadAsStringAsync());
+        await SendTextAsync(socket, $$$"""{"t":"call","id":2,"feature":"machines","method":"agents","args":{"machine":"{{{Box}}}"}}""");
+        Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
+        Assert.Contains("\"result\":", await ReadTextAsync(socket));
     }
 
-    [Fact]
-    public async Task The_helper_tools_answer_a_500_from_the_remote_as_a_tool_error_and_the_outbox_logs_it()
+    private static Task SendTextAsync(WebSocket socket, string text) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+
+    private static async Task<string> ReadTextAsync(WebSocket socket)
     {
-        var creates = 0;
-        await using var remote = await StubAsync(app =>
-        {
-            // The first create fails; the next makes s1, whose sends fail.
-            app.MapPost("/sessions", () => Interlocked.Increment(ref creates) == 1
-                ? Results.Text("boom", statusCode: 500)
-                : Results.Text("""{"sessionId":"s1"}""", "application/json"));
-            app.MapPost("/sessions/s1/send", () => Results.Text("boom", statusCode: 500));
-            app.MapGet("/outbox", () => Results.Text("outbox down", statusCode: 500));
-        });
-        var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
-        await using var desktop = await DesktopOnAsync(remote, home);
-        using var http = Client(desktop, DesktopToken);
-        var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
-        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
-        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync($"/sessions/{parent}/send", Json("""{"text":"hi"}"""))).StatusCode);
-        var agent = await _desktopLauncher.NextAsync();
-        var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
-        await agent.ReadAsync("session/prompt");
-        var start = new { prompt = "Count the lines.", agent = "codex", machine = Box };
-
-        Assert.Contains("answered 500", await ToolErrorAsync(desktop, parentToken, "start_session", start));
-        Assert.Contains("answered 500", await ToolErrorAsync(desktop, parentToken, "start_session", start));
-        Assert.Contains("answered 500", MessageError(Path.Combine(home, "assembly.db"), "s1"));
-        Assert.Contains("answered 500", await ToolErrorAsync(desktop, parentToken, "send_message", new { sessionId = "s1", text = "Which file?" }));
-
-        // s1 is a helper on the remote, so the outbox looks there, and logs the 500 instead of dying.
-        await Until(() => _log.ToString().Contains($"{Box} outbox: {Box} answered 500: outbox down"), TimeSpan.FromSeconds(20));
-    }
-
-    [Fact]
-    public async Task A_remote_that_answers_500_to_version_does_not_fault_the_follower()
-    {
-        var versionStatus = 200;
-        await using var remote = await StubAsync(app =>
-        {
-            app.MapGet("/agents", () => Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json"));
-            app.MapPost("/sessions", () => Results.Text("""{"sessionId":"s1"}""", "application/json"));
-        }, () => versionStatus);
-        var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
-        await using (var first = await DesktopOnAsync(remote, home))
-        {
-            using var http = Client(first, DesktopToken);
-            var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
-            Assert.Equal(HttpStatusCode.OK, created.StatusCode);
-        }
-
-        // A new desktop checks the format again, when opening s1 starts following it.
-        versionStatus = 500;
-        await using var desktop = await DesktopOnAsync(remote, home);
-        await GetJsonAsync(desktop, DesktopToken, "/sessions/s1/rows");
-
-        await Until(() => _log.ToString().Contains($"remote session s1: {Box} answered 500"));
+        var buffer = new byte[64 * 1024];
+        var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        return Encoding.UTF8.GetString(buffer, 0, received.Count);
     }
 
     // A stand-in for the remote: /version answers this computer's format, or the status given, beside the routes the test maps.

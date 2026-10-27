@@ -10,7 +10,8 @@ namespace Assembly.Infrastructure.Diagnostics;
 /// <c>memory.sample</c>: the RSS of the app (the shell that started this backend), of its WebContent process, and of
 /// this backend. WebContent is an XPC service launchd starts, not a child; macOS holds the app responsible for it and
 /// for this backend, so the app is this process's responsible pid and WebContent is the one the app is responsible for.
-/// Elsewhere (a lane on the workbox, headless) there's no app, so only the backend is measured.
+/// A GPUI window has no WebContent, so that pair is null. Elsewhere (a lane on the workbox, headless) there's no app,
+/// so only the backend is measured.
 /// </summary>
 internal static class MemorySample
 {
@@ -18,11 +19,14 @@ internal static class MemorySample
     {
         var backend = Environment.ProcessId;
         if (!OperatingSystem.IsMacOS())
-            return new MemoryReading(null, null, null, null, backend, Rss(backend));
+            return Reading(backend, null, null, Rss);
         var appPid = ResponsibleFor(backend);
-        var webPid = WebContentPid(appPid) ?? throw new InvalidOperationException("no WebContent process for this app");
-        return new MemoryReading(appPid, Rss(appPid), webPid, Rss(webPid), backend, Rss(backend));
+        return Reading(backend, appPid, WebContentPid(appPid), Rss);
     }
+
+    // Each pid that's there is measured; a GPUI window has no WebContent, and a headless lane has no app.
+    internal static MemoryReading Reading(int backend, int? appPid, int? webPid, Func<int, long?> rss) =>
+        new(appPid, appPid is { } app ? rss(app) : null, webPid, webPid is { } web ? rss(web) : null, backend, rss(backend));
 
     public static void Write(Utf8JsonWriter writer)
     {

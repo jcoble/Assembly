@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
@@ -29,6 +30,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     private readonly SessionOpener _opener;
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
+    private readonly BackgroundWork _work;
     private readonly RowConverter _converter = new();
     private readonly Lock _gate = new();
     // Held from a turn's open to its close, so a quick next send resumes only once the session is closed.
@@ -64,7 +66,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
-        Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
+        BackgroundWork work, Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
     {
         _sessionClosed = sessionClosed;
         _helpersWorking = helpersWorking ?? (() => false);
@@ -75,6 +77,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         _opener = opener;
         _time = time;
         _log = log;
+        _work = work;
         _subagents = new Subagents(sessionStore, hub);
     }
 
@@ -188,14 +191,14 @@ public sealed partial class SessionHost : IPermissionPolicy
     public async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken)
     {
         var options = request.Options.Select(option => new AskOption(option.OptionId, option.Name, option.Kind)).ToList();
-        var card = new AskPayload("permission", "open", request.ToolTitle, null, ToolCallId(request.ToolCall), options, null, null);
+        var card = new AskPayload("permission", "open", Titled(request.SessionId, request.ToolTitle), null, ToolCallId(request.ToolCall), options, null, null);
         var answer = await AskAsync(card, cancellationToken);
         return PermissionOutcome.Selected(answer.GetProperty("optionId").GetString()!);
     }
 
     public async Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken)
     {
-        var card = new AskPayload("question", "open", null, request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
+        var card = new AskPayload("question", "open", Titled(request.SessionId, null), request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
         var answer = await AskAsync(card, cancellationToken);
         return new ElicitationResponse(answer.GetProperty("action").GetString()!,
             answer.TryGetProperty("content", out var content) ? content.Clone() : default);
@@ -249,6 +252,13 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
     }
 
+    // A subagent's ask is shown here, in its parent's session, under the subagent's title.
+    private string? Titled(string acpSessionId, string? title)
+    {
+        lock (_gate)
+            return _subagents.Title(acpSessionId) is not { } subagent ? title : title is null ? subagent : $"{subagent}: {title}";
+    }
+
     private static string? ToolCallId(JsonElement toolCall) =>
         toolCall.ValueKind == JsonValueKind.Object && toolCall.TryGetProperty("toolCallId", out var id) && id.ValueKind == JsonValueKind.String
             ? id.GetString()
@@ -274,7 +284,7 @@ public sealed partial class SessionHost : IPermissionPolicy
 
         turn.Stopping.Cancel();
         if (session is not null)
-            _ = CancelQuietlyAsync(session);
+            _work.Start("cancel " + runId, stopping => CancelQuietlyAsync(session, stopping));
         return true;
     }
 
@@ -491,11 +501,11 @@ public sealed partial class SessionHost : IPermissionPolicy
 
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 
-    private static async Task CancelQuietlyAsync(OpenSession session)
+    private static async Task CancelQuietlyAsync(OpenSession session, CancellationToken stopping)
     {
         try
         {
-            await session.Adapter.Link.Client.CancelAsync(session.AcpSessionId, CancellationToken.None);
+            await session.Adapter.Link.Client.CancelAsync(session.AcpSessionId, stopping);
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException)
         {

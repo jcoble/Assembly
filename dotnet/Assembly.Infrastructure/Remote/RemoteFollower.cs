@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
@@ -17,21 +16,79 @@ namespace Assembly.Infrastructure.Remote;
 /// reconnects from the last seq when the link drops or a row doesn't follow the one before it.
 /// </summary>
 internal sealed class RemoteFollower(
-    Uri address, string token, LiveHub hub, Func<CancellationToken, Task> checkFormat, Func<string, Task> turnEnded,
-    Action<string, StoredRow> subagentCopied, TextWriter log) : IAsyncDisposable
+    Uri address, string token, LiveHub hub, Func<CancellationToken, Task> checkFormat, Action linked, Func<string, Task> turnEnded,
+    Action<string, StoredRow> subagentCopied, TextWriter log, TimeProvider time) : IAsyncDisposable
 {
     // How long a socket may stay quiet, with nobody watching and no turn running, before it counts as caught up.
     private static readonly TimeSpan Settled = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
 
-    private readonly ConcurrentDictionary<string, Task> _following = new();
+    // The sessions followed now; those watched again while followed, owed one more pass; and those given up on because
+    // the remote was unreachable, until it answers again. All three under _following's lock.
+    private readonly Dictionary<string, Task> _following = [];
+    private readonly HashSet<string> _again = [];
+    private readonly HashSet<string> _gaveUp = [];
+    // Remote helpers a restart found shown running here, until their follower first catches up. Under the same lock.
+    private readonly HashSet<string> _shownRunning = [];
     private readonly CancellationTokenSource _stopping = new();
+    private int _links;
 
-    /// <summary>Catches the session up, and follows it for as long as it's needed. A session already followed is left as it is.</summary>
+    /// <summary>Whether any session's socket to the remote is open now, which shows the remote is there.</summary>
+    public bool Linked => Volatile.Read(ref _links) > 0;
+
+    /// <summary>
+    /// Catches the session up, and follows it for as long as it's needed. A session already followed gets one more
+    /// pass once its follower would stop, so a watch that lands as it stops isn't lost.
+    /// </summary>
     public void Watch(string sessionId)
     {
-        if (!_stopping.IsCancellationRequested)
-            _following.GetOrAdd(sessionId, id => Task.Run(() => FollowAsync(id)));
+        lock (_following)
+        {
+            if (_stopping.IsCancellationRequested)
+                return;
+            if (_following.ContainsKey(sessionId))
+                _again.Add(sessionId);
+            else
+                _following[sessionId] = Task.Run(() => FollowAsync(sessionId));
+        }
+    }
+
+    /// <summary>The remote answered again: follows the sessions given up on while it was unreachable.</summary>
+    public void Resume()
+    {
+        string[] gaveUp;
+        lock (_following)
+        {
+            gaveUp = [.. _gaveUp];
+            _gaveUp.Clear();
+        }
+        foreach (var sessionId in gaveUp)
+            Watch(sessionId);
+    }
+
+    /// <summary>Helpers a restart found shown running: each is ended once its follower catches up with no turn open.</summary>
+    public void ShownRunning(IEnumerable<string> helperIds)
+    {
+        lock (_following)
+            _shownRunning.UnionWith(helperIds);
+    }
+
+    public bool TakeShownRunning(string sessionId)
+    {
+        lock (_following)
+            return _shownRunning.Remove(sessionId);
+    }
+
+    private bool IsShownRunning(string sessionId)
+    {
+        lock (_following)
+            return _shownRunning.Contains(sessionId);
+    }
+
+    private bool Again(string sessionId)
+    {
+        lock (_following)
+            return _again.Remove(sessionId);
     }
 
     private bool Needed(string sessionId) => hub.OpenRun(sessionId) is not null || hub.HasSubscribers(sessionId);
@@ -39,6 +96,8 @@ internal sealed class RemoteFollower(
     private async Task FollowAsync(string sessionId)
     {
         var backoff = TimeSpan.FromSeconds(1);
+        var gaveUp = false;
+        var again = false;
         try
         {
             // At least once, so opening a session catches up on turns that ran while nobody was watching.
@@ -47,48 +106,87 @@ internal sealed class RemoteFollower(
                 try
                 {
                     await checkFormat(_stopping.Token);
-                    await FollowOnceAsync(sessionId, _stopping.Token);
-                    backoff = TimeSpan.FromSeconds(1);
+                    var (settled, copied) = await FollowOnceAsync(sessionId, _stopping.Token);
+                    // A link that copied rows was healthy, however it ended.
+                    if (settled || copied)
+                        backoff = TimeSpan.FromSeconds(1);
+                    if (!settled)
+                    {
+                        // Closed or out of step before catching up: waits like a lost link, so a box that keeps doing it
+                        // isn't asked again at once, forever.
+                        await Task.Delay(backoff, time, _stopping.Token);
+                        backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
+                    }
                 }
                 catch (Exception error) when (error is MachineUnreachable or CallFailed)
                 {
                     log.WriteLine($"remote session {sessionId}: {error.Message}");
-                    return;
+                    gaveUp = true;
+                    break;
                 }
                 catch (Exception error) when (error is WebSocketException or HttpRequestException or IOException
                                               || (error is OperationCanceledException && !_stopping.IsCancellationRequested))
                 {
                     log.WriteLine($"remote session {sessionId}: link lost ({error.GetType().Name}); again in {backoff.TotalSeconds:0} s");
-                    await Task.Delay(backoff, _stopping.Token);
+                    await Task.Delay(backoff, time, _stopping.Token);
                     backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
                 }
             }
-            while (!_stopping.IsCancellationRequested && Needed(sessionId));
+            // A helper a restart found shown running is followed until a real catch-up decides its row; not in Needed,
+            // which would keep it from ever settling.
+            while (!_stopping.IsCancellationRequested && (Again(sessionId) | Needed(sessionId) || IsShownRunning(sessionId)));
         }
         catch (OperationCanceledException) when (_stopping.IsCancellationRequested)
         {
         }
         finally
         {
-            _following.TryRemove(sessionId, out _);
+            lock (_following)
+            {
+                _following.Remove(sessionId);
+                again = _again.Remove(sessionId);
+                // A watch that came meanwhile wins over giving up.
+                if (gaveUp && !again)
+                    _gaveUp.Add(sessionId);
+            }
         }
 
-        // Needed again between the last check and the removal: start over.
-        if (!_stopping.IsCancellationRequested && Needed(sessionId))
+        // Watched or needed again between the last check and the removal: start over. A give-up doesn't start over on
+        // its own; Resume or a new watch does.
+        if (!_stopping.IsCancellationRequested && (again || (!gaveUp && Needed(sessionId))))
             Watch(sessionId);
     }
 
     // One socket, until it's no longer needed, drops, or a row arrives out of order.
-    private async Task FollowOnceAsync(string sessionId, CancellationToken stopping)
+    // Settled once it caught up and nobody needed more, not when the link closed or a row was out of step first; and
+    // whether it copied any row.
+    private async Task<(bool Settled, bool Copied)> FollowOnceAsync(string sessionId, CancellationToken stopping)
     {
         using var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {token}");
         var live = new UriBuilder(address) { Scheme = address.Scheme == "https" ? "wss" : "ws", Path = "/live", Query = $"session={Uri.EscapeDataString(sessionId)}&after={hub.LastSeq(sessionId)}" };
         await socket.ConnectAsync(live.Uri, stopping);
+        Interlocked.Increment(ref _links);
+        // The format was checked before the connect, so an open link shows the remote is there.
+        linked();
 
         using var done = CancellationTokenSource.CreateLinkedTokenSource(stopping);
-        var lastFrame = DateTime.UtcNow;
-        var settling = SettleAsync(sessionId, () => lastFrame, done);
+        var lastFrame = time.GetUtcNow();
+        var copied = false;
+        // Tells the settle to look again: a frame came, or the session's last viewer left.
+        var wake = new SemaphoreSlim(0);
+        void Wake()
+        {
+            if (wake.CurrentCount == 0)
+                wake.Release();
+        }
+        void Unwatched(string unwatched)
+        {
+            if (unwatched == sessionId)
+                Wake();
+        }
+        hub.Unwatched += Unwatched;
+        var settling = SettleAsync(sessionId, () => lastFrame, wake, done);
         try
         {
             var buffer = new MemoryStream();
@@ -101,12 +199,13 @@ internal sealed class RemoteFollower(
                 {
                     received = await socket.ReceiveAsync(chunk, done.Token);
                     if (received.MessageType == WebSocketMessageType.Close)
-                        return;
+                        return (false, copied);
                     buffer.Write(chunk, 0, received.Count);
                 }
                 while (!received.EndOfMessage);
 
-                lastFrame = DateTime.UtcNow;
+                lastFrame = time.GetUtcNow();
+                Wake();
                 using var frame = JsonDocument.Parse(buffer.ToArray());
                 if (frame.RootElement.GetProperty("type").GetString() != "row")
                     continue; // a ping
@@ -117,47 +216,72 @@ internal sealed class RemoteFollower(
                 if (!hub.PublishCopy(row))
                 {
                     log.WriteLine($"remote session {sessionId}: seq {row.Seq} doesn't follow {hub.LastSeq(sessionId)}; catching up again");
-                    return;
+                    return (false, copied);
                 }
+                copied = true;
                 if (row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started")
+                {
+                    TakeShownRunning(sessionId);
                     await turnEnded(sessionId);
+                }
             }
         }
         catch (OperationCanceledException) when (done.IsCancellationRequested && !stopping.IsCancellationRequested)
         {
             // Caught up, and nobody needs more.
+            return (true, copied);
         }
         finally
         {
+            hub.Unwatched -= Unwatched;
+            Interlocked.Decrement(ref _links);
             await done.CancelAsync();
             await settling;
         }
     }
 
-    // Ends the socket once it has been quiet for a while with nobody watching and no turn running.
-    private async Task SettleAsync(string sessionId, Func<DateTime> lastFrame, CancellationTokenSource done)
+    // Once the link has been quiet for a while, decides the row of a helper a restart found shown running (only here,
+    // on a real connected link: a give-up, a dropped link, a Close or a seq mismatch leaves it running), then ends the
+    // socket if nobody is watching and no turn runs. While it's needed it waits for a reason to look again: a frame (a
+    // copied turn end opens nothing more) or its last viewer leaving, by live socket or rows sub.
+    private async Task SettleAsync(string sessionId, Func<DateTimeOffset> lastFrame, SemaphoreSlim wake, CancellationTokenSource done)
     {
         try
         {
             while (true)
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(500), done.Token);
-                if (DateTime.UtcNow - lastFrame() >= Settled && !Needed(sessionId))
+                var quiet = time.GetUtcNow() - lastFrame();
+                if (quiet < Settled)
                 {
-                    await done.CancelAsync();
-                    return;
+                    await Task.Delay(Settled - quiet, time, done.Token);
+                    continue;
                 }
+                if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
+                    await turnEnded(sessionId);
+                if (!Needed(sessionId))
+                    return;
+                await wake.WaitAsync(done.Token);
             }
         }
         catch (OperationCanceledException)
         {
         }
+        finally
+        {
+            // Also when turnEnded throws, so the read isn't left waiting on a quiet link; the throw comes out of the follow.
+            await done.CancelAsync();
+        }
     }
 
     public async ValueTask DisposeAsync()
     {
-        await _stopping.CancelAsync();
-        await Task.WhenAll(_following.Values);
+        Task[] following;
+        lock (_following)
+        {
+            _stopping.Cancel();
+            following = [.. _following.Values];
+        }
+        await Task.WhenAll(following);
         _stopping.Dispose();
     }
 }

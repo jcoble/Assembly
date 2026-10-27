@@ -13,6 +13,7 @@ closed at launch. The bottom dock holds Problems and Terminal, and it's closed t
 g0-shape#2 Any pane can be dragged anywhere, and any divider can be resized.
 g0-shape#3 The layout is kept across relaunches, including the sessions column's width and whether it's folded
 (491a4447, 5bfc3360). A layout saved by an older build, or one that can't be read, opens the default layout instead.
+So does a launch with no backend, or one whose backend never gets ready: the window is never left empty.
 g0-shape#4 Launching the app doesn't save the layout. Changes made together save once, and a save is never queued
 behind older ones (378bc67d).
 g0-shape#5 Opening the drawer pushes the panes over instead of covering them. Closing it gives the center its width

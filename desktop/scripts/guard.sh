@@ -11,6 +11,15 @@ b='(^|[^[:alnum:]_])'
 e='([^[:alnum:]_]|$)'
 # Sockets and HTTP: only the socket client, desktop/src/core/socket/, may.
 sockets="${b}(tungstenite|TcpStream|TcpListener|UdpSocket|ureq|reqwest|http_client|HttpClient)${e}|${b}hyper::"
+# Native views (the terminal's Ghostty view, the browser's WKWebView, any NSView): only desktop/src/core/native_views/
+# may, so one module shows, hides and places them all.
+natives="${b}(gpui_webview|ghostty|libghostty|NSView|WKWebView|objc|objc2|cocoa|raw_window_handle)${e}|${b}(ghostty|objc2)_[[:alnum:]_]+"
+# Detaching a task or subscription: whatever starts one holds it, so dropping the holder stops it.
+detaches="(\.|::)detach[a-z_]*[[:space:]]*\("
+# Starting an OS thread: only the socket client, desktop/src/core/socket/, and the backend launcher,
+# desktop/src/core/backend/, may. A scoped thread (thread::scope) always joins, so it's fine anywhere.
+# A grouped import split over lines (a line ending in "thread::{") counts too, since grep reads one line at a time.
+threads="${b}thread::(spawn|Builder)${e}|${b}thread::\{([^}]*[^[:alnum:]_])?(spawn|Builder)${e}|${b}thread::\{[[:space:]]*$"
 # A file that draws (implements Render or RenderOnce, or has a render function), and file reads in one.
 draws="${b}impl([^[:alnum:]_]|[^[:alnum:]_].*[^[:alnum:]_])(Render|RenderOnce)[[:space:]]+for${e}|${b}fn[[:space:]]+render${e}"
 files="${b}fs${e}|${b}File::"
@@ -25,6 +34,10 @@ hits() {
   local path=$1 file=${2:-$1}
   {
     [[ $path == desktop/src/core/socket/* ]] || match "$file" "$sockets" "sockets and HTTP only in core/socket/"
+    [[ $path == desktop/src/core/native_views/* ]] || match "$file" "$natives" "native views only in core/native_views/"
+    match "$file" "$detaches" "no detached tasks or subscriptions; hold them"
+    [[ $path == desktop/src/core/socket/* || $path == desktop/src/core/backend/* ]] \
+      || match "$file" "$threads" "threads only in core/socket/ and core/backend/"
     [ -z "$(match "$file" "$draws" .)" ] || match "$file" "$files" "no file reads in a file that draws"
   } | sed "s|^|$path:|"
 }
@@ -49,6 +62,30 @@ catch|desktop/src/features/x/a.rs|use hyper::Client;
 pass|desktop/src/core/socket/a.rs|let (socket, _) = tungstenite::client(request, stream)?;
 pass|desktop/src/core/socket/a.rs|let stream = std::net::TcpStream::connect(addr)?;
 pass|desktop/src/features/x/a.rs|let link = hyperlink(text);
+catch|desktop/src/features/browser/a.rs|use gpui_webview::WebView;
+catch|desktop/src/features/terminal/a.rs|let surface = ghostty_sys::surface_new(app);
+catch|desktop/src/features/x/a.rs|let view: id = msg_send![class!(NSView), alloc];
+catch|desktop/src/core/x/a.rs|use raw_window_handle::HasWindowHandle;
+pass|desktop/src/core/native_views/a.rs|use gpui_webview::WebView;
+pass|desktop/src/features/terminal/a.rs|NativeViews::close(id, cx);
+catch|desktop/src/features/x/a.rs|cx.spawn(async move |_, _| {}).detach();
+catch|desktop/src/features/x/a.rs|        .detach();
+catch|desktop/src/features/x/a.rs|cx.observe(&model, |_, _, _| {}).detach();
+catch|desktop/src/features/x/a.rs|Task::detach(task);
+catch|desktop/src/features/x/a.rs|task.detach_and_log_err(cx);
+pass|desktop/src/features/x/a.rs|self.load = Some(cx.spawn(async move |_, _| {}));
+pass|desktop/src/features/x/a.rs|let detached = true;
+catch|desktop/src/features/x/a.rs|std::thread::spawn(move || {});
+catch|desktop/src/core/x/a.rs|let t = thread::Builder::new().name("x".into()).spawn(f)?;
+catch|desktop/src/features/x/a.rs|use std::thread::{self, spawn as go};
+catch|desktop/src/features/x/a.rs|use std::thread::{spawn};
+catch|desktop/src/features/x/a.rs|use std::thread::{
+pass|desktop/src/features/x/a.rs|use nonthread::{spawn};
+pass|desktop/src/core/socket/a.rs|std::thread::spawn(move || {});
+pass|desktop/src/core/backend/a.rs|let t = thread::Builder::new().name("x".into()).spawn(f)?;
+pass|desktop/src/features/x/a.rs|let task = cx.background_executor().spawn(async {});
+pass|desktop/src/features/x/a.rs|let t = nonthread::spawn(f);
+pass|desktop/src/features/x/a.rs|std::thread::scope(|s| {});
 catch|desktop/src/features/x/a.rs|impl Render for A {} fn f() { std::fs::read("x"); }
 catch|desktop/src/features/x/a.rs|impl<T> gpui::RenderOnce for A<T> {} fn f() { let f = File::open("x"); }
 catch|desktop/src/features/x/a.rs|fn render(&mut self) { let s = fs::read_to_string("x"); }

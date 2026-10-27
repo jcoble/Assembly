@@ -43,7 +43,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status = status;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, RefreshAsync, AddSubagentSession, log);
+        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, () => _status.Reachable(_name), RefreshAsync, AddSubagentSession, log, TimeProvider.System);
     }
 
     public string? Name => _name;
@@ -106,6 +106,9 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public async Task<string?> SendAsync(SessionInfo session, string text, CancellationToken cancellationToken)
     {
+        // Before the send, so a catch-up settling meanwhile can't end the row of the turn it starts; a send that fails
+        // leaves the row as it is.
+        _follower.TakeShownRunning(session.SessionId);
         using var response = await SendRequestAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/send", Body(("text", text)), cancellationToken);
         if (response.StatusCode == HttpStatusCode.Conflict)
             return null;
@@ -119,9 +122,8 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         using var response = await SendRequestAsync(HttpMethod.Post, $"/runs/{runId}/stop", null, cancellationToken);
         if (response.StatusCode is HttpStatusCode.Accepted or HttpStatusCode.NotFound)
             return response.StatusCode == HttpStatusCode.Accepted;
-        // Any other answer fails the call.
-        await ReadJsonAsync(response, cancellationToken);
-        return false;
+        // Any other answer fails the call, a 200 included.
+        throw new CallFailed($"{_name} answered {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}");
     }
 
     // From the copied rows, so it agrees with what the webview has.
@@ -178,10 +180,28 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
 
     /// <summary>Follows the remote sessions whose copied rows show a turn still running, as after a desktop restart mid-turn.</summary>
-    public void WatchRunning(IEnumerable<string> sessionIds)
+    public void WatchRunning(IEnumerable<string> sessionIds, IEnumerable<string> helpersShownRunning)
     {
-        foreach (var sessionId in sessionIds)
+        _follower.ShownRunning(helpersShownRunning);
+        foreach (var sessionId in sessionIds.Concat(helpersShownRunning).Distinct())
             _follower.Watch(sessionId);
+    }
+
+    /// <summary>
+    /// Reads the remote's row format again, so a remote upgraded in place is seen, unless an open follower link already
+    /// shows it's there. Either way, the sessions the follower gave up on while it was unreachable are followed again.
+    /// </summary>
+    public async Task ProbeAsync(CancellationToken cancellationToken)
+    {
+        if (_follower.Linked)
+        {
+            _status.Reachable(_name);
+            _follower.Resume();
+            return;
+        }
+        _formatChecked = false;
+        await CheckFormatAsync(cancellationToken);
+        _follower.Resume();
     }
 
     // The remote's rows are copied as they are, so it must write the format this computer reads. Until it's known to,

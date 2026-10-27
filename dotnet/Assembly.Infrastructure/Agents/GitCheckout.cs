@@ -24,7 +24,7 @@ public static class GitCheckout
 
         using var git = Process.Start(start) ?? throw new InvalidOperationException("Could not start git.");
         var stderr = git.StandardError.ReadToEndAsync(CancellationToken.None);
-        _ = git.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        var stdout = git.StandardOutput.ReadToEndAsync(CancellationToken.None);
         try
         {
             await git.WaitForExitAsync(cancellationToken);
@@ -33,11 +33,13 @@ public static class GitCheckout
         {
             git.Kill(entireProcessTree: true);
             await git.WaitForExitAsync(CancellationToken.None);
+            await stdout;
             if (Directory.Exists(partial))
                 Directory.Delete(partial, recursive: true);
             throw;
         }
 
+        await stdout;
         if (git.ExitCode != 0)
         {
             if (Directory.Exists(partial))

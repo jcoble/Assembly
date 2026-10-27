@@ -12,7 +12,7 @@ namespace Assembly.Infrastructure.Remote;
 /// it kills the group. A dead link is noticed by ssh's keepalive and a failed forward ends ssh; either way it's started
 /// again, with backoff.
 /// </summary>
-internal sealed class RemoteTunnel : IAsyncDisposable
+public sealed class RemoteTunnel : IAsyncDisposable
 {
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
 
@@ -39,6 +39,9 @@ internal sealed class RemoteTunnel : IAsyncDisposable
     /// <summary>How many times ssh has been started.</summary>
     public int Starts { get; private set; }
 
+    /// <summary>Raised each time the command exits on its own.</summary>
+    public event Action? Exited;
+
     // Leads a new group, runs the command in it, and exits as the command did; once this process (its parent) is gone,
     // it kills the group. SIGCHLD wakes the sleep, so the command's exit is seen at once.
     private const string Wrapper =
@@ -54,7 +57,7 @@ internal sealed class RemoteTunnel : IAsyncDisposable
     public static RemoteTunnel ForSsh(string host, int localPort, int remotePort, TextWriter log) =>
         Wrapped(
             [
-                "ssh", "-N",
+                "ssh", "-N", "-n",
                 "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                 "-L", $"127.0.0.1:{localPort}:127.0.0.1:{remotePort}", host,
             ],
@@ -123,7 +126,14 @@ internal sealed class RemoteTunnel : IAsyncDisposable
         var backoff = TimeSpan.FromSeconds(1);
         while (!_stopping.IsCancellationRequested)
         {
-            var start = new ProcessStartInfo(_file) { UseShellExecute = false, RedirectStandardError = true };
+            // Its own stdout and stdin, so after a hard exit here an orphaned ssh doesn't hold this process's output open.
+            var start = new ProcessStartInfo(_file)
+            {
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                RedirectStandardInput = true,
+            };
             foreach (var arg in _args)
                 start.ArgumentList.Add(arg);
             using var process = Process.Start(start)!;
@@ -131,6 +141,8 @@ internal sealed class RemoteTunnel : IAsyncDisposable
             Starts++;
             var startedAt = DateTime.UtcNow;
             var errors = process.StandardError.ReadToEndAsync();
+            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+            process.StandardInput.Close();
             try
             {
                 await process.WaitForExitAsync(_stopping.Token);
@@ -143,6 +155,8 @@ internal sealed class RemoteTunnel : IAsyncDisposable
             // A link that held for a while starts again quickly.
             if (DateTime.UtcNow - startedAt > MaxBackoff)
                 backoff = TimeSpan.FromSeconds(1);
+            Exited?.Invoke();
+            await output;
             _log.WriteLine($"tunnel: ssh exited ({process.ExitCode}: {(await errors).Trim()}); again in {backoff.TotalSeconds:0} s");
             try
             {

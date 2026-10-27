@@ -62,11 +62,11 @@ internal sealed class RowsFeature : IFeature
         // Opening a session's rows has its machine watch it, as GET /sessions/{id}/rows does.
         calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, (args, call) =>
         {
+            var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var page = _hub.Page(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
-            var session = _sessions.Get(args.Session);
-            var machine = session is null ? null : _machines.Named(session.Machine);
-            machine?.Watch(session!);
-            return Task.FromResult(PageJson(page, machine?.ActiveRun(session!)));
+            var machine = _machines.Named(session.Machine);
+            machine?.Watch(session);
+            return Task.FromResult(PageJson(page, machine?.ActiveRun(session)));
         });
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {

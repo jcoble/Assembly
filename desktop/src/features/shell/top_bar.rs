@@ -3,7 +3,7 @@
 //! the sessions, drawer and bottom dock toggles in them. Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
-use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement};
 use gpui_kit::component::h_flex;
 use gpui_kit::*;
@@ -42,13 +42,7 @@ impl Render for TopBar {
                 .w(sessions.max(MIN_HOME_WIDTH))
                 .h_full()
                 .pl(px(80.))
-                .child(
-                    div()
-                        .id("home")
-                        .size(px(26.))
-                        .rounded_full()
-                        .bg(cx.theme().primary),
-                ),
+                .child(Button::new("home").ghost().compact().label("Home")),
         )
     }
 }

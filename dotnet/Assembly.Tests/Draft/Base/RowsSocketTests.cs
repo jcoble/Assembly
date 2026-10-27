@@ -225,11 +225,12 @@ public sealed class RowsSocketTests : IAsyncLifetime
     [Fact]
     public async Task Rows_page_answers_the_page_before_a_seq()
     {
-        Commit("s", 5);
-        var expected = _hub.Page("s", 5, 2);
+        var s = _sessions.Create("claude", "repo").SessionId;
+        Commit(s, 5);
+        var expected = _hub.Page(s, 5, 2);
         using var socket = await OpenAsync();
 
-        await SendAsync(socket, """{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"s","before":5,"limit":2}}""");
+        await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"{{{s}}}","before":5,"limit":2}}""");
 
         using var answer = JsonDocument.Parse(await ReadAsync(socket));
         var result = answer.RootElement.GetProperty("result");
@@ -241,13 +242,33 @@ public sealed class RowsSocketTests : IAsyncLifetime
     [Fact]
     public async Task Rows_page_reads_at_most_a_page()
     {
-        Commit("s", RowsFeature.PageLimit + 1);
+        var s = _sessions.Create("claude", "repo").SessionId;
+        Commit(s, RowsFeature.PageLimit + 1);
         using var socket = await OpenAsync();
 
-        await SendAsync(socket, """{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"s","before":999999,"limit":100000}}""");
+        await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"{{{s}}}","before":999999,"limit":100000}}""");
 
         using var answer = JsonDocument.Parse(await ReadAsync(socket));
         Assert.Equal(RowsFeature.PageLimit, answer.RootElement.GetProperty("result").GetProperty("rows").GetArrayLength());
+    }
+
+    // The window's socket dropping ends its rows sub like an unsub, and the session's last watcher going is told.
+    [Fact]
+    public async Task A_dropped_socket_s_rows_sub_leaves_its_session_unwatched()
+    {
+        var unwatched = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _hub.Unwatched += session => unwatched.TrySetResult(session);
+        var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s"}""");
+        for (var tries = 0; !_hub.HasSubscribers("s") && tries < 100; tries++)
+            await Task.Delay(20);
+        Assert.True(_hub.HasSubscribers("s"));
+
+        socket.Abort();
+        socket.Dispose();
+
+        Assert.Equal("s", await unwatched.Task.WaitAsync(Wait));
+        Assert.False(_hub.HasSubscribers("s"));
     }
 
     // A closed tab really stops: the catch-up rows still queued for a sub it drops never go out.
@@ -328,12 +349,20 @@ public sealed class RowsSocketTests : IAsyncLifetime
     private static Task SendAsync(WebSocket socket, string text) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
 
+    // One whole frame, however many receives it takes: a full page is more than 64 KB.
     private static async Task<string> ReadAsync(WebSocket socket)
     {
         var buffer = new byte[64 * 1024];
-        var received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(Wait);
-        Assert.Equal(WebSocketMessageType.Text, received.MessageType);
-        return Encoding.UTF8.GetString(buffer, 0, received.Count);
+        using var frame = new MemoryStream();
+        WebSocketReceiveResult received;
+        do
+        {
+            received = await socket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(Wait);
+            Assert.Equal(WebSocketMessageType.Text, received.MessageType);
+            frame.Write(buffer, 0, received.Count);
+        }
+        while (!received.EndOfMessage);
+        return Encoding.UTF8.GetString(frame.ToArray());
     }
 
     // A socket the test feeds frames to, whose sends after the welcome wait until it's released.

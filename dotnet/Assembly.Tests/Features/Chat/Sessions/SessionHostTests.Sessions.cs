@@ -240,7 +240,7 @@ public sealed partial class SessionHostTests
     public async Task Sessions_share_one_adapter_initialized_once_and_each_gets_its_own_updates()
     {
         var other = _sessionStore.Create("claude", "https://github.com/o/r");
-        var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log);
+        var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
 
         _host.Send("one");
@@ -268,7 +268,7 @@ public sealed partial class SessionHostTests
     public async Task When_the_shared_adapter_dies_every_turn_on_it_ends_as_lost()
     {
         var other = _sessionStore.Create("claude", "https://github.com/o/r");
-        var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log);
+        var otherHost = new SessionHost(other.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         using var otherLive = _hub.Subscribe(other.SessionId, after: 0);
         _host.Send("one");
         var agent = await _launcher.NextAsync();
@@ -315,6 +315,69 @@ public sealed partial class SessionHostTests
         var end = await Rows(2);
         Assert.Equal("aborted", end[0].Payload.GetProperty("status").GetString());
         Assert.Equal("cancelled", end[1].Payload.GetProperty("state").GetString());
+    }
+
+    // The tracker holds a stop's cancel: one that fails is logged by its name, and it still ends.
+    [Fact]
+    public async Task A_stops_cancel_that_fails_is_logged_and_ends()
+    {
+        var runId = _host.Send("hi")!;
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        await agent.ReadAsync("session/prompt");
+        await Kinds(2);
+        agent.BreakInput();
+
+        Assert.True(_host.Stop(runId));
+        await Until(() => _log.ToString().Contains($"background cancel {runId}: "));
+        await Until(() => _work.Running == 0);
+    }
+
+    // Inside the idle grace, disposing the adapter ends its idle wait and waits for it. The idle wait's end is held on
+    // a context the test releases, so the dispose returns only if it awaits the wait.
+    [Fact]
+    public async Task Disposing_the_adapter_inside_its_idle_grace_waits_for_the_idle_wait()
+    {
+        var getting = _adapter.GetAsync(new StageTimes(_time), CancellationToken.None);
+        var agent = await _launcher.NextAsync();
+        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        var running = await getting.WaitAsync(Wait);
+        var held = new HeldContext();
+        var outer = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(held);
+        var releasing = _adapter.ReleaseAsync(running);
+        SynchronizationContext.SetSynchronizationContext(outer);
+        Assert.True(releasing.IsCompleted);
+
+        var disposing = _adapter.DisposeAsync().AsTask();
+        Assert.False(agent.Disposed);
+        held.Release();
+        await disposing.WaitAsync(Wait);
+        Assert.True(agent.Disposed);
+    }
+
+    // Holds what is posted to it until Release runs it.
+    private sealed class HeldContext : SynchronizationContext
+    {
+        private readonly List<(SendOrPostCallback Callback, object? State)> _posted = [];
+
+        public override void Post(SendOrPostCallback d, object? state)
+        {
+            lock (_posted)
+                _posted.Add((d, state));
+        }
+
+        public void Release()
+        {
+            (SendOrPostCallback Callback, object? State)[] posted;
+            lock (_posted)
+            {
+                posted = [.. _posted];
+                _posted.Clear();
+            }
+            foreach (var (callback, state) in posted)
+                callback(state);
+        }
     }
 
     [Fact]

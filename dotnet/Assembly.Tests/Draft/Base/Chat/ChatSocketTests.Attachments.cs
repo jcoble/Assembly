@@ -296,4 +296,22 @@ public sealed partial class ChatSocketTests
         Assert.True(json.RootElement.TryGetProperty("result", out var result), frame);
         return result.Clone();
     }
+
+    // Of the attachments calls, only commit reaches the session's machine.
+    [Fact]
+    public async Task Commit_to_a_machine_thats_down_is_unreachable_and_drops_the_upload()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        var image = Png(100);
+        _box.Down = true;
+        using var socket = await OpenAsync();
+
+        var upload = await BeginAsync(socket, session.SessionId, "image/png", image.Length);
+        await ChunkAsync(socket, 2, upload, 0, image);
+        await ReadAsync(socket);
+        await CallAsync(socket, 3, "attachments", "commit", $$"""{"upload":"{{upload}}"}""");
+
+        Assert.Equal("""{"t":"error","id":3,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        Assert.Empty(Directory.GetFiles(Staging));
+    }
 }
