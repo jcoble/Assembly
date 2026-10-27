@@ -61,8 +61,9 @@ internal sealed class SendFeature : IFeature
         calls.Write(Feature, "stopTask", SessionsJson.Default.StopTaskArgs, SessionsJson.Default.Done, async (args, call) =>
         {
             var session = Session(args.Session);
-            // A helper on another machine stops there.
+            // A helper on another machine than its parent's stops there; the parent's machine stops its own.
             var stopped = _store.Get(args.Task) is { Helper: true, Machine: not null } helper && helper.ParentSessionId == session.SessionId
+                && helper.Machine != session.Machine
                 ? _machines.For(helper).ActiveRun(helper) is { } run && await _machines.For(helper).StopAsync(helper, run, call.Cancellation)
                 : await _machines.For(session).StopTaskAsync(session, args.Task, call.Cancellation);
             return stopped ? _ => new Done(true) : throw new CallFailed("that task isn't running, or can't be stopped");

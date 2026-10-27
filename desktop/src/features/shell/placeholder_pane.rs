@@ -13,14 +13,19 @@ pub struct PlaceholderPane {
 
 impl PlaceholderPane {
     pub fn new(name: &'static str, cx: &mut Context<Self>) -> Self {
-        Self { name, focus: cx.focus_handle() }
+        Self {
+            name,
+            focus: cx.focus_handle(),
+        }
     }
 
     /// Registers a placeholder under each of the default layout's pane names. It runs once at app start, before any
     /// feature registers its real pane, because the kit's registry keeps the last registration for a name.
     pub fn register_all(cx: &mut App) {
         for name in PANES {
-            register_panel(cx, name, move |_, _, cx| panel_handle(cx.new(|cx| PlaceholderPane::new(name, cx))));
+            register_panel(cx, name, move |_, _, cx| {
+                panel_handle(cx.new(|cx| PlaceholderPane::new(name, cx)))
+            });
         }
     }
 }
