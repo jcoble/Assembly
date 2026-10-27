@@ -29,6 +29,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private readonly Dictionary<string, Call> _calls = [];
     // Each topic, by name.
     private readonly Dictionary<string, TopicFrames> _topics = [];
+    private readonly List<Action<string>> _closedHooks = [];
 
     public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<TResult>> handler) =>
@@ -36,17 +37,26 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             async (value, call) => JsonSerializer.SerializeToElement(await handler((TArgs)value, call), result)));
 
     public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null)
+        Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
+        Action<TArgs, CallContext>? failed = null)
     {
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
         {
-            // A write cancelled or out of time while it waited in the queue never runs, and one whose outside part ran
-            // over commits nothing.
-            call.Cancellation.ThrowIfCancellationRequested();
-            var database = await handler((TArgs)value, call);
-            call.Cancellation.ThrowIfCancellationRequested();
-            return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
+            try
+            {
+                // A write cancelled or out of time while it waited in the queue never runs, and one whose outside part
+                // ran over commits nothing.
+                call.Cancellation.ThrowIfCancellationRequested();
+                var database = await handler((TArgs)value, call);
+                call.Cancellation.ThrowIfCancellationRequested();
+                return JsonSerializer.SerializeToElement(writer.Write(name, database), result);
+            }
+            catch when (failed is not null)
+            {
+                failed((TArgs)value, call);
+                throw;
+            }
         }, order is null ? null : value => order((TArgs)value)));
     }
 
@@ -130,8 +140,16 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 if (change!(key, json) is { } changed)
                     connection.Send(changed, self);
             });
-            // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work.
-            topic.Opened?.Invoke(frame.Key!, context);
+            // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work. The sub is
+            // registered by now, so one that throws is logged and the sub stays good, as the socket's to unsubscribe.
+            try
+            {
+                topic.Opened?.Invoke(frame.Key!, context);
+            }
+            catch (Exception error)
+            {
+                log.LogError(error, "topic {Topic} opened {Key} but its follow-up failed", frame.Topic, frame.Key);
+            }
             return opened;
         }
         catch (CallFailed error)
@@ -152,6 +170,24 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     }
 
     internal void Unsubscribe(TopicSet.Subscription subscription) => topics.Unsubscribe(subscription);
+
+    public void Closed(Action<string> connection) => _closedHooks.Add(connection);
+
+    /// <summary>Runs every <see cref="Closed"/> hook for a socket that closed, once its writes have all run.</summary>
+    internal void ConnectionClosed(string connection)
+    {
+        foreach (var hook in _closedHooks)
+        {
+            try
+            {
+                hook(connection);
+            }
+            catch (Exception error)
+            {
+                log.LogError(error, "a close hook failed on {Connection}", connection);
+            }
+        }
+    }
 
     /// <summary>Runs one <c>call</c> frame to its answer. <paramref name="cancelled"/> is its <c>cancel</c>.</summary>
     internal async Task<ReadOnlyMemory<byte>> AnswerAsync(InFrame frame, long id, SocketConnection connection, CancellationToken cancelled)

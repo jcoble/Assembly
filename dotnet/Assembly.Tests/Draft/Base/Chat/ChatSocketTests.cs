@@ -13,6 +13,7 @@ using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Preferences;
+using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
@@ -28,12 +29,15 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     private readonly TempDatabase _file = new();
+    // The backend's home: its attachments and its uploads' staging files.
+    private readonly DirectoryInfo _home = Directory.CreateTempSubdirectory("chat-socket-");
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 27, 12, 0, 0, TimeSpan.Zero));
     private AppDatabase _db = null!;
     private LiveHub _hub = null!;
     private SessionStore _sessions = null!;
     private FakeMachine _here = null!;
     private FakeMachine _box = null!;
+    private AttachmentStore _attachments = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
 
@@ -54,6 +58,8 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new ConfigFeature(_sessions, machines).Register(calls);
         new MachinesFeature(machines).Register(calls);
         new PreferencesFeature(_db).Register(calls);
+        _attachments = new AttachmentStore(Path.Combine(_home.FullName, "attachments"));
+        new AttachmentsFeature(_sessions, machines, _attachments, Staging).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -74,7 +80,10 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _hub.Dispose();
         _db.Dispose();
         _file.Dispose();
+        _home.Delete(recursive: true);
     }
+
+    private string Staging => Path.Combine(_home.FullName, "staging", "attachments");
 
     private async Task<ClientWebSocket> OpenAsync()
     {

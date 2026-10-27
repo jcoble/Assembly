@@ -70,6 +70,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             lock (_ordered)
                 ordered = [.. _ordered.Values];
             await Task.WhenAll(ordered.Select(write => write.ContinueWith(_ => { }, TaskScheduler.Default)));
+            calls.ConnectionClosed(Id);
             _outbox.Writer.TryComplete();
             await sending;
             if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
