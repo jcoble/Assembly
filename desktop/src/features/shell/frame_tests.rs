@@ -32,6 +32,23 @@ fn dump(frame: &Entity<Frame>, cx: &mut VisualTestContext) -> Value {
     cx.update(|_, cx| serde_json::to_value(frame.read(cx).dock().read(cx).dump(cx)).unwrap())
 }
 
+/// A saved layout without its split sizes: those are measurements, and a save made before the next layout pass records
+/// the ones from the last pass.
+fn without_sizes(mut layout: Value) -> Value {
+    fn strip(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                map.remove("sizes");
+                map.values_mut().for_each(strip);
+            }
+            Value::Array(items) => items.iter_mut().for_each(strip),
+            _ => {}
+        }
+    }
+    strip(&mut layout);
+    layout
+}
+
 /// The three docks of a saved layout. The center's measured width is left out: it fills what's left, and a save made
 /// before the next layout pass records the width from the last one.
 fn docks(layout: &Value) -> [&Value; 3] {
@@ -51,7 +68,8 @@ fn the_sessions_width_and_fold_survive_a_relaunch(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let saved = writes.borrow().last().cloned().expect("the change was saved");
 
-    let (again, _, cx) = open(Some(saved), &mut cx.cx);
+    let (again, _, cx) = open(Some(saved.clone()), &mut cx.cx);
+    assert_eq!(without_sizes(dump(&again, cx)), without_sizes(saved));
     cx.update(|_, cx| {
         let dock = again.read(cx).dock().read(cx);
         assert_eq!(dock.dock_size(DockPlacement::Left), Some(px(400.)));
@@ -91,6 +109,24 @@ fn changes_made_together_save_once(cx: &mut TestAppContext) {
             dock.toggle_dock(DockPlacement::Right, window, cx);
             dock.set_dock_size(DockPlacement::Left, px(400.), window, cx);
         })
+    });
+    cx.run_until_parked();
+    let writes = writes.borrow();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(docks(&writes[0]), docks(&dump(&frame, cx)));
+}
+
+// Pins: g0-shape#4
+#[gpui::test]
+fn a_change_that_follows_from_another_in_the_same_update_saves_with_it(cx: &mut TestAppContext) {
+    let (frame, writes, cx) = open(None, cx);
+    cx.update(|window, cx| {
+        let dock = frame.read(cx).dock().clone();
+        dock.update(cx, |dock, cx| dock.toggle_dock(DockPlacement::Right, window, cx));
+        // As a tab click does: the dock hears about it later in the same update.
+        window.defer(cx, move |window, cx| {
+            dock.update(cx, |dock, cx| dock.toggle_dock(DockPlacement::Bottom, window, cx))
+        });
     });
     cx.run_until_parked();
     let writes = writes.borrow();

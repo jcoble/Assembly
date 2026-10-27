@@ -25,25 +25,37 @@ impl LayoutStore {
 
     /// The saved layout when this build can read it, otherwise the default.
     pub fn layout_to_open(saved: Option<Value>) -> DockAreaState {
-        saved
-            .and_then(|value| serde_json::from_value::<DockAreaState>(value).ok())
-            .filter(|state| state.version == Some(LAYOUT_VERSION))
-            .unwrap_or_else(default_state)
+        let Some(value) = saved else { return default_state() };
+        match serde_json::from_value::<DockAreaState>(value) {
+            Ok(state) if state.version == Some(LAYOUT_VERSION) => state,
+            Ok(state) => {
+                eprintln!("shell: the saved layout is version {:?}, not {LAYOUT_VERSION}, so the default opens", state.version);
+                default_state()
+            }
+            Err(error) => {
+                eprintln!("shell: the saved layout didn't read, so the default opens: {error}");
+                default_state()
+            }
+        }
     }
 
-    /// Saves the frame's layout at the end of this update; more changes in the same update add nothing.
-    pub fn save_soon(&mut self, window: &mut Window, cx: &mut Context<Frame>) {
+    /// Saves the frame's layout once this update has settled, so the changes that follow from it (a tab click reaches
+    /// the dock later in the same update) save with it; more changes before then add nothing.
+    pub fn save_soon(&mut self, cx: &mut Context<Frame>) {
         if self.save_pending {
             return;
         }
         self.save_pending = true;
-        cx.defer_in(window, |frame, _, cx| {
-            frame.layout.save_pending = false;
-            let state = frame.dock().read(cx).dump(cx);
-            match serde_json::to_value(state) {
-                Ok(layout) => (frame.layout.write)(layout, cx),
-                Err(error) => eprintln!("shell: the layout didn't serialize, so it wasn't saved: {error}"),
-            }
-        });
+        cx.spawn(async move |frame, cx| {
+            _ = frame.update(cx, |frame, cx| {
+                frame.layout.save_pending = false;
+                let state = frame.dock().read(cx).dump(cx);
+                match serde_json::to_value(state) {
+                    Ok(layout) => (frame.layout.write)(layout, cx),
+                    Err(error) => eprintln!("shell: the layout didn't serialize, so it wasn't saved: {error}"),
+                }
+            });
+        })
+        .detach();
     }
 }

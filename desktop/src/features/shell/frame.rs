@@ -7,7 +7,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::*;
 use serde_json::Value;
 
-use super::default_layout::{LAYOUT_VERSION, default_state};
+use super::default_layout::LAYOUT_VERSION;
 use super::layout_store::{LayoutStore, WriteLayout};
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
@@ -33,15 +33,11 @@ impl Frame {
         let _load = cx.spawn_in(window, async move |this, cx| {
             let state = LayoutStore::layout_to_open(read.await);
             _ = this.update_in(cx, |frame, window, cx| {
-                frame.dock.update(cx, |dock, cx| {
-                    if let Err(error) = dock.load(state, window, cx) {
-                        eprintln!("shell: the saved layout didn't load, so the default opens: {error}");
-                        _ = dock.load(default_state(), window, cx);
-                    }
-                });
-                let changes = cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent, window, cx| {
+                // The kit's load always succeeds: a pane it doesn't know loads as a placeholder that keeps its state.
+                frame.dock.update(cx, |dock, cx| _ = dock.load(state, window, cx));
+                let changes = cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent, _, cx| {
                     if matches!(event, DockEvent::LayoutChanged) {
-                        frame.layout.save_soon(window, cx);
+                        frame.layout.save_soon(cx);
                     }
                 });
                 frame._subscriptions.push(changes);
