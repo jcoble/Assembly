@@ -36,6 +36,9 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
   kit's slow step and move spring are 280 ms (motion.rs:28, 36; tab indicators use the spring, tab/tab_bar.rs:249),
   past the design system's 180, so `set` brings both down to 180 ms. Reduced motion is the kit's too: its components
   already settle at rest when the system asks for it.
+- A theme switch fades: the window root draws the old theme's `background` over everything and fades it to clear over
+  `duration_normal` on `easing_enter` (src/core/theme/fade.rs). There's no fade when the window first opens, when the
+  theme in force is set again, or when the new theme has the same `background`.
 - Kit 0.8.1 has no highlight keys for added, removed and changed lines (highlighter/registry.rs:318-349), so the
   design system's `add-bg`, `del-bg`, `mint` and `amber` for diffs belong to the diff view that draws them, not to
   these files.

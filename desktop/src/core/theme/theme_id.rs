@@ -3,13 +3,6 @@
 
 /// One theme. The setting saves `as_str`; the kit knows the theme by `theme_name`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "picked by the palette commands (on g0-host's registry) and preferences (the cut); until then only the default opens"
-    )
-)]
 pub enum ThemeId {
     Assembly,
     AssemblyGlass,

@@ -11,6 +11,7 @@ use gpui_kit::base::Spring;
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::{App, Window, WindowBackgroundAppearance};
 
+use super::fade;
 use super::theme_id::ThemeId;
 
 /// The theme files, read in place from the source tree. A packaged app's location comes with packaging.
@@ -34,10 +35,10 @@ pub fn init(dir: PathBuf, cx: &mut App, on_ready: impl Fn(&mut App) + 'static) {
 }
 
 /// Puts `id` in force: makes its file the kit's active theme, sets the window background to blurred for glass and
-/// opaque for the rest, and brings the kit's 280 ms slow step and move spring down to 180 ms. Off macOS there's no
-/// blur, so glass gives Assembly. A theme whose file didn't load leaves the theme in force as it is. Every theme file
-/// is dark, so this fills `dark_theme` and asks for dark mode; a light file would need `light_theme` and
-/// `ThemeMode::Light`.
+/// opaque for the rest, brings the kit's 280 ms slow step and move spring down to 180 ms, and starts the fade from
+/// the old theme (fade.rs). Off macOS there's no blur, so glass gives Assembly. A theme whose file didn't load leaves
+/// the theme in force as it is. Every theme file is dark, so this fills `dark_theme` and asks for dark mode; a light
+/// file would need `light_theme` and `ThemeMode::Light`.
 pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     let id = if id.is_glass() && !cfg!(target_os = "macos") {
         ThemeId::Assembly
@@ -51,6 +52,8 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     else {
         return;
     };
+    let before = Theme::global(cx);
+    let (old_name, old_ground) = (before.theme_name().clone(), before.background);
     Theme::update(cx, |theme| {
         theme.dark_theme = config;
         theme.motion.duration_slow = MOTION_CEILING;
@@ -61,6 +64,17 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
     });
     // Loads the dark theme just swapped in; one update alone doesn't reload it (theme/mod.rs:288-327).
     Theme::change(ThemeMode::Dark, Some(window), cx);
+    // A fade only between two of our themes with different grounds: not at the window's first `set` (from the kit's
+    // default), not when the theme in force is set again, and not to a ThemeMirror entry, whose ground is Assembly's.
+    let from_ours = ThemeId::ALL
+        .iter()
+        .any(|ours| ours.theme_name() == old_name.as_ref());
+    if from_ours
+        && old_name.as_ref() != id.theme_name()
+        && old_ground != Theme::global(cx).background
+    {
+        fade::record(old_ground, cx);
+    }
     window.set_background_appearance(if id.is_glass() {
         WindowBackgroundAppearance::Blurred
     } else {
@@ -71,6 +85,7 @@ pub fn set(id: ThemeId, window: &mut Window, cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::{THEMES_DIR, init, set};
+    use crate::core::theme::fade::LastSwitch;
     use crate::core::theme::theme_id::ThemeId;
     use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
     use gpui_kit::{TestAppContext, gpui};
@@ -155,6 +170,51 @@ mod tests {
         // A later change of mode, as the kit's registry observer makes on a reload, keeps the motion.
         cx.update(|cx| Theme::change(ThemeMode::Dark, None, cx));
         assert_motion_within_180_ms(cx);
+    }
+
+    #[gpui::test]
+    fn a_switch_between_themes_records_a_fade_from_the_old_ground(cx: &mut TestAppContext) {
+        load_themes(cx);
+        let window = cx.add_empty_window();
+        window.update(|window, cx| set(ThemeId::Assembly, window, cx));
+        let old_ground = window.update(|_, cx| Theme::global(cx).background);
+        window.update(|window, cx| set(ThemeId::Houston, window, cx));
+        window.update(|_, cx| {
+            let switch = cx.try_global::<LastSwitch>().expect("a fade");
+            assert_eq!(switch.from, old_ground);
+            assert_eq!(switch.generation, 1);
+        });
+    }
+
+    #[gpui::test]
+    fn opening_and_re_applying_a_theme_record_no_fade(cx: &mut TestAppContext) {
+        load_themes(cx);
+        let window = cx.add_empty_window();
+        window.update(|window, cx| set(ThemeId::Assembly, window, cx));
+        window.update(|window, cx| set(ThemeId::Assembly, window, cx));
+        window.update(|_, cx| assert!(cx.try_global::<LastSwitch>().is_none()));
+    }
+
+    #[gpui::test]
+    fn a_switch_to_a_theme_with_the_same_ground_records_no_fade(cx: &mut TestAppContext) {
+        // Houston given Assembly's ground, as the ThemeMirror entries have.
+        let dir = copy_of_themes("same-ground");
+        let read = |file: &str| -> serde_json::Value {
+            serde_json::from_str(&fs::read_to_string(dir.join(file)).expect("read a theme file"))
+                .expect("parse a theme file")
+        };
+        let ground = read("assembly.json")["themes"][0]["colors"]["background"].clone();
+        let mut houston = read("houston.json");
+        houston["themes"][0]["colors"]["background"] = ground;
+        fs::write(dir.join("houston.json"), houston.to_string()).expect("save houston.json");
+        load_themes_from(dir, cx);
+        let window = cx.add_empty_window();
+        window.update(|window, cx| set(ThemeId::Assembly, window, cx));
+        window.update(|window, cx| set(ThemeId::Houston, window, cx));
+        window.update(|_, cx| {
+            assert_eq!(Theme::global(cx).theme_name().as_ref(), "Houston");
+            assert!(cx.try_global::<LastSwitch>().is_none());
+        });
     }
 
     #[gpui::test]
