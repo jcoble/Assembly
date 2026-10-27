@@ -1,5 +1,6 @@
 //! The session pane's actions: what a row's button or link asks for, and reading an open tool call's detail.
 
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -177,7 +178,7 @@ impl SessionPane {
                         Ok(detail) => {
                             // A call opened before its first detail came grows into it now (its ExpandRow).
                             pane.kept.entry(key.clone()).or_default().detail =
-                                Some((state, detail));
+                                Some((state, Rc::new(detail)));
                             if let Some(at) =
                                 pane.view.items.iter().position(|item| item.key == key)
                             {

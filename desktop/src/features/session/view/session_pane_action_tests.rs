@@ -5,6 +5,7 @@ use gpui::TestAppContext;
 use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
+use std::rc::Rc;
 use std::time::Instant;
 
 use super::SessionPane;
@@ -12,6 +13,7 @@ use super::tests::{jump, live, open, page, row, show, user};
 use crate::core::theme::grow::GROW;
 use crate::core::ui::expand_row::{ExpandRow, ExpandRowEvent};
 use crate::features::session::client::fake_client::FakeClient;
+use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::rows::tool::ToolState;
 use crate::features::session::view::session_action::SessionAction;
@@ -500,4 +502,29 @@ fn an_ask_answered_while_disconnected_shuts_once_the_page_reloads(cx: &mut TestA
     )));
     jump(&client, 3, cx);
     assert!(!is_open(cx), "the reloaded page's answer shuts it");
+}
+
+// An opened call's detail (up to 1 MiB of output and as much diff) is held once, however often its row draws: the
+// row's title and body share the pane's copy.
+// Pins: g0-session#14
+#[gpui::test]
+fn an_open_tool_calls_detail_is_held_once_however_often_it_draws(cx: &mut TestAppContext) {
+    let (pane, client, cx) = opened(vec![user(1, "go"), tool(2, "started")], cx);
+    client.queue_answer(Ok(detail("+fn main() {}")));
+    click(&pane, "tool:t1", cx);
+    for _ in 0..3 {
+        cx.update(|window, cx| {
+            pane.update(cx, |pane, cx| pane.refresh(Change::Updated(1), cx));
+            window.refresh();
+        });
+        cx.run_until_parked();
+    }
+    let held = cx.update(|_, cx| {
+        let (_, detail) = pane.read(cx).kept["tool:t1"].detail.clone().unwrap();
+        Rc::strong_count(&detail) - 1
+    });
+    assert!(
+        held <= 3,
+        "the pane's copy and the row's title and body: {held}"
+    );
 }

@@ -39,8 +39,15 @@ impl SessionPane {
         match entry {
             Entry::Loading => line("Loading older messages…", muted),
             Entry::Item(at) => {
-                let item = &self.view.items[*at].clone();
-                let expand = self.expand_of(item, None, cx);
+                // Only a row that opens in place needs its own copy, for the pane's `&mut` while it's made.
+                let opens = matches!(
+                    self.view.items[*at].kind,
+                    ItemKind::Tool { .. } | ItemKind::Thinking { .. } | ItemKind::Ask { .. }
+                );
+                let expand = opens
+                    .then(|| self.view.items[*at].clone())
+                    .and_then(|item| self.expand_of(&item, None, cx));
+                let item = &self.view.items[*at];
                 let mut shown = item.clone();
                 if let ItemKind::Message { blocks, .. } = &mut shown.kind
                     && let Some(cut) = self.shown_blocks(&item.key, blocks)

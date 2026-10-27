@@ -2,6 +2,7 @@
 //! opened tool call, thinking, fold or long prompt, a long diff shown in full, and an open tool's detail. A tool's
 //! detail is read again only when its state changes or the call finishes. Ported from rows/kept.svelte.ts.
 
+use std::rc::Rc;
 use std::time::Instant;
 
 use crate::features::session::rows::tool::{ToolDetail, ToolState};
@@ -10,8 +11,9 @@ use crate::features::session::rows::tool::{ToolDetail, ToolState};
 pub struct Kept {
     pub open: bool,
     pub all_diff: bool,
-    /// An open tool's detail, and the state it was read for.
-    pub detail: Option<(ToolState, ToolDetail)>,
+    /// An open tool's detail, and the state it was read for. Shared, not copied, with the row that shows it: it can
+    /// hold a megabyte of output and as much diff.
+    pub detail: Option<(ToolState, Rc<ToolDetail>)>,
     /// When a fold was last opened or shut: its chevron and work ease from then.
     pub toggled_at: Option<Instant>,
 }
