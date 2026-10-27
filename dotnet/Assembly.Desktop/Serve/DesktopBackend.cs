@@ -66,7 +66,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System);
-        var hub = new LiveHub(store);
+        var hub = new LiveHub(store, topics: topics);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             runsHere: session => sessionStore.Get(session) is not { Machine: not null });
         if (closed > 0)
@@ -88,7 +88,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
         // the last socket.
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System),
+            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines),
                 new DiagnosticsFeature(new DiagnosticsHost(Path.Combine(home, "soak-results")), hub.CloseSubscriptions)]), port, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));

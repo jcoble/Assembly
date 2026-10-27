@@ -244,5 +244,7 @@ public sealed class AtomicWriterTests : IDisposable
             OnPublish?.Invoke();
             Sent.Add((topic, key, json));
         }
+
+        public bool HasSubscribers(string topic, string key) => true;
     }
 }

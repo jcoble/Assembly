@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Assembly.Domain.Rows;
+using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -13,14 +14,17 @@ public sealed class LiveHub : IDisposable
 {
     private readonly RowStore _store;
     private readonly int _queueLimit;
+    private readonly ITopics? _topics;
     private readonly Lock _gate = new();
     private readonly Dictionary<string, List<LiveSubscription>> _subscribers = [];
 
     /// <param name="queueLimit">Rows a socket may fall behind before it's closed.</param>
-    public LiveHub(RowStore store, int queueLimit = 4096)
+    /// <param name="topics">Where each saved row is also published, on the <c>rows</c> topic under its session.</param>
+    public LiveHub(RowStore store, int queueLimit = 4096, ITopics? topics = null)
     {
         _store = store;
         _queueLimit = queueLimit;
+        _topics = topics;
     }
 
     /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
@@ -48,11 +52,12 @@ public sealed class LiveHub : IDisposable
         }
     }
 
-    /// <summary>Whether a webview has the session's live socket open.</summary>
+    /// <summary>Whether a webview watches the session's rows: its live socket, or a rows sub on the socket.</summary>
     public bool HasSubscribers(string sessionId)
     {
         lock (_gate)
-            return _subscribers.TryGetValue(sessionId, out var subscribers) && subscribers.Count > 0;
+            return (_subscribers.TryGetValue(sessionId, out var subscribers) && subscribers.Count > 0)
+                || _topics?.HasSubscribers(RowsFeature.Topic, sessionId) == true;
     }
 
     /// <summary>The rows after <paramref name="after"/>, and from then on every new row of the session.</summary>
@@ -133,6 +138,10 @@ public sealed class LiveHub : IDisposable
 
     private void Push(string sessionId, IReadOnlyList<StoredRow> rows)
     {
+        // Deltas are the hottest path: a session nobody watches on rows isn't serialized.
+        if (_topics is not null && _topics.HasSubscribers(RowsFeature.Topic, sessionId))
+            foreach (var row in rows)
+                _topics.Publish(RowsFeature.Topic, sessionId, RowWire.ToJson(row));
         if (!_subscribers.TryGetValue(sessionId, out var subscribers))
             return;
         foreach (var subscriber in subscribers.ToList())
