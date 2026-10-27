@@ -56,16 +56,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0
           for t in scripts/*.test.sh; do echo "== $t"; bash "$t" || failed=1; done
           exit $failed
   lint:
-    # The app's guards and scripts/lint.sh. Both need only bash, git and grep, and read the checkout, not its history.
+    # The app's guards and scripts/lint.sh. They read the checkout, not its history; lint.sh's .NET checks need dotnet.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
       - run: bash app/scripts/guards.sh
       - run: bash scripts/lint.sh
   commits:

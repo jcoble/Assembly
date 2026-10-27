@@ -1259,6 +1259,9 @@ path `Forget` has already run, so only the release and the next turn are held up
 
 ### B7. Preferences rebuilt on the base (the example every feature copies)
 
+**Status (2026-10-27):** the backend half is done (the feature, its topic and save over the socket, its tests and the
+check4 scenario); the page half (`preferences.svelte.ts`, the deletions and the window proof) waits for the GPUI switch plan.
+
 The first port done files first, then code: B7a creates every file below with no logic, B7b brings the code over.
 Each is reviewed on its own.
 

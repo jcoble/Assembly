@@ -139,7 +139,7 @@ public sealed class SessionStoreTests : IDisposable
         Assert.Equal("""[{"name":"review"}]""", _sessionStore.Config(_sessionStore.Create("claude", "repo").SessionId).Commands);
     }
 
-        [Fact]
+    [Fact]
     public void A_subagent_keeps_one_session_under_its_parent_for_every_delegation()
     {
         var parent = _sessionStore.Create("claude", "repo");
@@ -151,7 +151,7 @@ public sealed class SessionStoreTests : IDisposable
         Assert.DoesNotContain(_sessionStore.List(null, 50).Sessions, session => session.ParentSessionId is not null);
     }
 
-        public void Dispose()
+    public void Dispose()
     {
         _database.Dispose();
         _db.Dispose();

@@ -166,7 +166,7 @@ public sealed partial class SocketTests : IAsyncLifetime
     public async Task Two_calls_at_once_each_get_their_own_answer()
     {
         var gates = new Dictionary<string, TaskCompletionSource>
-            { ["a"] = new(TaskCreationOptions.RunContinuationsAsynchronously), ["b"] = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        { ["a"] = new(TaskCreationOptions.RunContinuationsAsynchronously), ["b"] = new(TaskCreationOptions.RunContinuationsAsynchronously) };
         _calls.Read("notes", "gated", TestJson.Default.Note, TestJson.Default.Note, async (note, _) =>
         {
             await gates[note.Text].Task;

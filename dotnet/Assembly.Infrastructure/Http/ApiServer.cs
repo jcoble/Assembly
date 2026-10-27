@@ -52,6 +52,8 @@ public static class ApiServer
         if (services is { Writer: { } writer, Topics: { } topics })
         {
             var calls = new SocketDispatcher(writer, topics, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"));
+            foreach (var feature in services.Features ?? [])
+                feature.Register(calls);
             var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
             app.Map("/socket", socket.HandleAsync);
