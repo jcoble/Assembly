@@ -105,4 +105,47 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "sessions", "page", "{}");
         Assert.Contains("\"title\":\"Café's\"", await ReadAsync(socket));
     }
+
+    // The list's state has no helpers, so its changes don't either; a helper's own sub still gets them.
+    [Fact]
+    public async Task A_helpers_changes_go_only_to_its_own_sub()
+    {
+        var parent = _sessions.Create("claude", "repo");
+        using var list = await OpenAsync();
+        await SendAsync(list, """{"t":"sub","id":1,"topic":"sessions"}""");
+        await ReadAsync(list);
+
+        var helper = _sessions.Helper(parent, "claude", "Helper");
+        using var own = await OpenAsync();
+        await SendAsync(own, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{helper.SessionId}}"}""");
+        await ReadAsync(own);
+        _sessions.SetTitle(helper.SessionId, "Renamed");
+        _sessions.SetTitle(parent.SessionId, "Parent");
+
+        Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(own));
+        using var change = JsonDocument.Parse(await ReadAsync(list));
+        Assert.Equal(parent.SessionId, change.RootElement.GetProperty("key").GetString());
+    }
+
+    // Copied databases give sessions the same time; a page break between them loses neither.
+    [Fact]
+    public async Task Sessions_page_keeps_sessions_that_share_a_time()
+    {
+        _time.Advance(TimeSpan.FromSeconds(1));
+        var made = Enumerable.Range(0, 3).Select(i => _sessions.Create("claude", $"repo-{i}").SessionId).ToList();
+        using var socket = await OpenAsync();
+
+        var seen = new List<string?>();
+        var cursor = "";
+        for (var id = 1; id <= 3; id++)
+        {
+            await CallAsync(socket, id, "sessions", "page", $$"""{"limit":1{{cursor}}}""");
+            using var answer = JsonDocument.Parse(await ReadAsync(socket));
+            var page = answer.RootElement.GetProperty("result");
+            seen.AddRange(page.GetProperty("sessions").EnumerateArray().Select(item => item.GetProperty("sessionId").GetString()));
+            cursor = $$""","before":{{page.GetProperty("nextBefore").GetInt64()}},"beforeId":"{{page.GetProperty("nextBeforeId").GetString()}}" """.TrimEnd();
+        }
+
+        Assert.Equal(made.Order(), seen.Order());
+    }
 }
