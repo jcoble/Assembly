@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.Time.Testing;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Application.Features.Chat.Rows;
@@ -28,6 +29,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     private readonly SessionHost _host;
     private readonly LiveSubscription _live;
     private readonly StringWriter _log = new();
+    private readonly BackgroundWork _work;
 
     public SessionHostTests()
     {
@@ -38,7 +40,8 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         _session = _sessionStore.Create("claude", "https://github.com/o/r");
         _adapter = new SharedAdapter(_launcher, "claude", _time);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
-        _host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log);
+        _work = new BackgroundWork(_time, _log);
+        _host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         _live = _hub.Subscribe(_session.SessionId, after: 0);
     }
 
@@ -172,7 +175,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     public async Task A_helper_keeps_its_task_as_its_title_whatever_its_framed_prompt_says()
     {
         var helper = _sessionStore.Helper(_session, "codex", "Count the lines");
-        var host = new SessionHost(helper.SessionId, _hub, _sessionStore, _opener, _time, _log);
+        var host = new SessionHost(helper.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         host.Send("You're a helper session, started by another agent's session.\n\nCount the lines");
         var agent = await _launcher.NextAsync();
         await agent.StartAsync(canRename: true);

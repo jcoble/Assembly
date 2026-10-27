@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Assembly.Infrastructure.Persistence;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Infrastructure.Http;
@@ -86,7 +87,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
         // Loading the summaries tells nobody: a remote's run left open holds it from the start.
         diagnostics.HoldActivity(summaries.AnyRunOpen);
-        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log);
+        var work = new BackgroundWork(TimeProvider.System, log);
+        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
         var status = new MachineStatus(remote is null ? [] : [remote.Name]);
         var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
@@ -105,7 +107,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         // The clock isn't disposed: a closing socket's finally unsubscribes everything, so it stops within a second of
         // the last socket.
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+            [new PreferencesFeature(db), new BackendClock(topics, TimeProvider.System, work), new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), new MachinesFeature(machines, status),
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new DiagnosticsFeature(diagnostics, () =>

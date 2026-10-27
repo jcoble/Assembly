@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Threading.Channels;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
@@ -64,7 +65,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
-        Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
+        BackgroundWork work, Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
     {
         _sessionClosed = sessionClosed;
         _helpersWorking = helpersWorking ?? (() => false);

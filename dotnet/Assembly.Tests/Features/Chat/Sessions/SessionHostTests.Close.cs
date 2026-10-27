@@ -134,5 +134,5 @@ public sealed partial class SessionHostTests
 
     // A second session of the same agent, on the same shared adapter.
     private SessionHost Other() =>
-        new(_sessionStore.Create("claude", "https://github.com/o/r").SessionId, _hub, _sessionStore, _opener, _time, _log);
+        new(_sessionStore.Create("claude", "https://github.com/o/r").SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
 }

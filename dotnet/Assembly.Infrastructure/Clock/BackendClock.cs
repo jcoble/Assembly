@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
@@ -22,7 +23,7 @@ internal sealed class BackendClock : IFeature, IDisposable
     // Set by a subscribe, so a subscription that lands while a tick looks for one keeps the timer going.
     private bool _asked;
 
-    public BackendClock(TopicSet topics, TimeProvider time)
+    public BackendClock(TopicSet topics, TimeProvider time, BackgroundWork work)
     {
         _topics = topics;
         _time = time;
