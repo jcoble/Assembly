@@ -16,7 +16,10 @@ impl SelectedSession {
         self.session_id.as_deref()
     }
 
-    pub fn select(&mut self, _session_id: Option<String>, _cx: &mut Context<Self>) {
-        todo!()
+    pub fn select(&mut self, session_id: Option<String>, cx: &mut Context<Self>) {
+        if self.session_id != session_id {
+            self.session_id = session_id;
+            cx.notify();
+        }
     }
 }

@@ -3,19 +3,19 @@
 //! debounce, the only code that waits on time), the theme and the registries. A root module named `core` hides the
 //! `core` crate in `main.rs` only: write `::core::` there.
 
-// Files only until step 2 of lane g0-socket fills them in and the window uses them.
+// Unused until g0-host starts the client and the panes read the state.
 #[expect(
     dead_code,
-    reason = "lane g0-socket step 1: files, names and types, no logic"
+    reason = "nothing in the window uses these until g0-host starts the client"
 )]
 pub mod clock;
 #[expect(
     dead_code,
-    reason = "lane g0-socket step 1: files, names and types, no logic"
+    reason = "nothing in the window uses these until g0-host starts the client"
 )]
 pub mod socket;
 #[expect(
     dead_code,
-    reason = "lane g0-socket step 1: files, names and types, no logic"
+    reason = "nothing in the window uses these until g0-host starts the client"
 )]
 pub mod state;
