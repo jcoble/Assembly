@@ -2,6 +2,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -25,11 +27,15 @@ internal sealed class RowsFeature : IFeature
 
     private readonly LiveHub _hub;
     private readonly RowStore _store;
+    private readonly SessionStore _sessions;
+    private readonly MachineSet _machines;
 
-    public RowsFeature(LiveHub hub, RowStore store)
+    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines)
     {
         _hub = hub;
         _store = store;
+        _sessions = sessions;
+        _machines = machines;
     }
 
     public void Register(ICallRegistry calls)

@@ -81,7 +81,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         _topics.Add(topic, new TopicFrames(NeedsKey: false, (sub, frame, context) =>
             ([StateFrame(sub, state(frame.Key, context), item, key)], (changed, json) => ChangeFrame(sub, changed, json))));
 
-    public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state) =>
+    public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
+        Action<string, CallContext>? opened = null) =>
         _topics.Add(topic, new TopicFrames(NeedsKey: true, (sub, frame, context) =>
         {
             var (seq, rows) = state(frame.Key!, frame.After, context);
