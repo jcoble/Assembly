@@ -9,7 +9,7 @@ public sealed class MachineSet(IMachine local, params IReadOnlyList<IMachine> re
     public IReadOnlyList<IMachine> Remotes => remotes;
 
     public IMachine For(SessionInfo session) =>
-        Named(session.Machine) ?? throw new MachineUnreachable($"{session.Machine} isn't set up here");
+        Named(session.Machine) ?? throw new MachineUnreachable(session.Machine!, $"{session.Machine} isn't set up here");
 
     /// <summary>The machine with that name, this one for null, or null if there's none.</summary>
     public IMachine? Named(string? name) => name is null ? local : remotes.FirstOrDefault(machine => machine.Name == name);
