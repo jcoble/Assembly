@@ -113,3 +113,13 @@ The behavior list is docs/behavior/g0-socket.md.
 9. With no test timeouts, a missing event hangs CI. Use a nextest slow-timeout?
 10. Upserts can grow the list past 200. Trim it?
 11. Should `send/send` carry a window-made id, so after a reconnect the window can tell a send that landed from one that was lost? A backend change; Jesse decides (reconnect-later-window.md section 6).
+
+## Taken from the coordinator's plan (project file g0-socket.md, 2026-10-27)
+
+- Reachability until backend step 1c adds an `online` flag: `Machines` keeps the set of machines named by
+  `unreachable` errors, cleared on reconnect and when a later call to that machine succeeds. Not a field on
+  `Machine`. (Supersedes "reachable with M1" above if M1 doesn't land first.)
+- Tests in two layers: an in-process fake server for the client's rules (hello, cancel, latest-wins, drop and
+  reconnect, rows gaps and jumps), which needs no .NET; and a few real-backend tests. CI's `desktop` job has no
+  .NET, so the real-backend layer needs a `ci.yml` change, which goes to the move thread first. It must fail, not
+  skip, when the backend is missing.
