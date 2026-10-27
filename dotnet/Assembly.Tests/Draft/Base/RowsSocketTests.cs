@@ -33,6 +33,8 @@ public sealed class RowsSocketTests : IAsyncLifetime
     private AppDatabase _db = null!;
     private LiveHub _hub = null!;
     private RowStore _store = null!;
+    private SessionStore _sessions = null!;
+    private FakeMachine _box = null!;
     private TopicSet _topics = null!;
     private SocketDispatcher _calls = null!;
     private WebApplication _app = null!;
@@ -45,8 +47,9 @@ public sealed class RowsSocketTests : IAsyncLifetime
         var store = _store = RowStore.Open(_db);
         _hub = new LiveHub(store, topics: topics);
         _calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        var sessions = SessionStore.Open(_db, TimeProvider.System);
-        new RowsFeature(_hub, store, sessions, new MachineSet(new FakeMachine(null, sessions))).Register(_calls);
+        var sessions = _sessions = SessionStore.Open(_db, TimeProvider.System);
+        _box = new FakeMachine("box", sessions);
+        new RowsFeature(_hub, store, sessions, new MachineSet(new FakeMachine(null, sessions), _box)).Register(_calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -271,6 +274,20 @@ public sealed class RowsSocketTests : IAsyncLifetime
             Assert.True(waited < Wait, "it didn't happen within 10 s");
             await Task.Delay(10);
         }
+    }
+
+    // A resume doesn't call rows/page, so the sub itself starts the remote session's follower, as a page call does;
+    // without it, rows the remote ran meanwhile would never be copied in.
+    [Fact]
+    public async Task A_resume_sub_on_a_remote_session_has_its_machine_watch_it()
+    {
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"rows","key":"{{session.SessionId}}","after":0}""");
+        await ReadAsync(socket);
+
+        Assert.True(SpinWait.SpinUntil(() => _box.Asked.Contains($"watch {session.SessionId}"), Wait));
     }
 
     private async Task<ClientWebSocket> OpenAsync()

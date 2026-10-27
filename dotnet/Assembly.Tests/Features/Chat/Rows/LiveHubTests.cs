@@ -180,6 +180,17 @@ public sealed class LiveHubTests : IDisposable
         Assert.Contains("\"watched\"", published.Json);
     }
 
+    // A remote session's follower keeps copying its rows while anyone watches it, a socket's rows sub included, so a
+    // turn that starts there later still reaches the window.
+    [Fact]
+    public void A_rows_sub_counts_as_a_subscriber_for_the_follower()
+    {
+        using var hub = new LiveHub(_store, topics: new WatchedTopics("a"));
+
+        Assert.True(hub.HasSubscribers("a"));
+        Assert.False(hub.HasSubscribers("b"));
+    }
+
     private static RowBatch Batch(params string[] texts)
     {
         var batch = new RowBatch();

@@ -30,6 +30,8 @@ public interface ICallRegistry
 
     // A topic of rows in seq order (5.1, 5.7), keyed by session, which a sub must name. Its state gets the key and the
     // sub's `after` and gives the seq the rows after it continue from, then those rows as JSON; the state frame carries
-    // that seq, each row goes out as a `rows` frame, and so does every row published on the topic after.
-    void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state);
+    // that seq, each row goes out as a `rows` frame, and so does every row published on the topic after. opened runs
+    // with the key once the subscription is registered, outside the Topics lock, so it may take other locks or start work.
+    void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
+        Action<string, CallContext>? opened = null);
 }
