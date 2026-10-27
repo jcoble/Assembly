@@ -124,6 +124,38 @@ public sealed partial class SessionHostTests
         await other.StopForShutdownAsync();
     }
 
+    // Neither adapter honours a request's cancel, so a session/new stopped after it went out is still opened there.
+    [Fact]
+    public async Task A_new_session_stopped_before_its_answer_is_closed_once_the_late_answer_arrives()
+    {
+        var runId = _host.Send("one")!;
+        await Kinds(2);
+        var agent = await _launcher.NextAsync();
+        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        var open = await agent.ReadAsync("session/new");
+
+        Assert.True(_host.Stop(runId));
+        await agent.ReplyAsync(open, """{"sessionId":"acp-late"}""");
+
+        Assert.Equal("acp-late", await agent.CloseAsync());
+        Assert.Equal("cancelled", (await Rows(2))[1].Payload.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task A_new_session_stopped_while_it_is_being_named_is_closed()
+    {
+        var runId = _host.Send("one")!;
+        await Kinds(2);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(canRename: true);
+        await agent.ReadAsync("_session/rename");
+
+        Assert.True(_host.Stop(runId));
+
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
+        Assert.Equal("cancelled", (await Rows(2))[1].Payload.GetProperty("state").GetString());
+    }
+
     // An update pump that never ends holds the adapter's dispose only up to the close limit, and is logged.
     [Fact]
     public async Task A_stuck_update_pump_holds_the_dispose_only_to_the_close_limit()
