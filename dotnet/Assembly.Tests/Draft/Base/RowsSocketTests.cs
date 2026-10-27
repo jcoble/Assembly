@@ -111,6 +111,20 @@ public sealed class RowsSocketTests : IAsyncLifetime
         AssertRow(await ReadAsync(behind), sub: 1, RowsFeature.PageLimit + 2, prevSeq: RowsFeature.PageLimit + 1);
     }
 
+    // A copied or restored database can be behind what the page applied: it starts again from the last seq.
+    [Fact]
+    public async Task An_after_past_the_sessions_last_seq_starts_again_from_the_last_seq()
+    {
+        Commit("s", 3);
+        using var socket = await OpenAsync();
+
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s","after":9}""");
+        Assert.Equal("""{"t":"state","sub":1,"seq":3,"items":[]}""", await ReadAsync(socket));
+
+        Commit("s", 1);
+        AssertRow(await ReadAsync(socket), sub: 1, seq: 4, prevSeq: 3);
+    }
+
     [Fact]
     public async Task Another_sessions_rows_never_arrive()
     {

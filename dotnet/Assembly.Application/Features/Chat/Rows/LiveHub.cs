@@ -137,7 +137,8 @@ public sealed class LiveHub : IDisposable
 
     private void Push(string sessionId, IReadOnlyList<StoredRow> rows)
     {
-        if (_topics is not null)
+        // Deltas are the hottest path: a session nobody watches on rows isn't serialized.
+        if (_topics is not null && _topics.HasSubscribers(RowsFeature.Topic, sessionId))
             foreach (var row in rows)
                 _topics.Publish(RowsFeature.Topic, sessionId, RowWire.ToJson(row));
         if (!_subscribers.TryGetValue(sessionId, out var subscribers))

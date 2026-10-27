@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Domain.Rows;
@@ -164,12 +165,37 @@ public sealed class LiveHubTests : IDisposable
     private static async Task<StoredRow> Next(LiveSubscription live) =>
         await live.Rows.ReadAsync().AsTask().WaitAsync(Wait);
 
+    // Deltas are the hottest path: a row of a session nobody watches on rows isn't serialized or published.
+    [Fact]
+    public void Only_a_watched_sessions_rows_are_published_on_the_rows_topic()
+    {
+        var topics = new WatchedTopics("a");
+        using var hub = new LiveHub(_store, topics: topics);
+
+        hub.Publish("b", Batch("unwatched"));
+        hub.Publish("a", Batch("watched"));
+
+        var published = Assert.Single(topics.Published);
+        Assert.Equal((RowsFeature.Topic, "a"), (published.Topic, published.Key));
+        Assert.Contains("\"watched\"", published.Json);
+    }
+
     private static RowBatch Batch(params string[] texts)
     {
         var batch = new RowBatch();
         foreach (var text in texts)
             batch.Rows.Add(new NewRow("run-1", null, RowKind.User, JsonSerializer.SerializeToElement(new { text }), 1));
         return batch;
+    }
+
+    // Topics where only one session is watched on rows.
+    private sealed class WatchedTopics(string watched) : ITopics
+    {
+        public List<(string Topic, string? Key, string Json)> Published { get; } = [];
+
+        public void Publish(string topic, string? key, string json) => Published.Add((topic, key, json));
+
+        public bool HasSubscribers(string topic, string key) => topic == RowsFeature.Topic && key == watched;
     }
 
     public void Dispose()

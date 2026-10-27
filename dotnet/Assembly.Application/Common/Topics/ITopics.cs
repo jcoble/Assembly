@@ -7,4 +7,7 @@ namespace Assembly.Application.Common.Topics;
 public interface ITopics
 {
     void Publish(string topic, string? key, string json);
+
+    /// <summary>Whether a publish on the topic under this key would reach anyone, so a publisher can skip building it.</summary>
+    bool HasSubscribers(string topic, string key);
 }

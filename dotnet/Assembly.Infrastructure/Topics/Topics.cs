@@ -21,6 +21,12 @@ public sealed class Topics : ITopics
                     subscription.Change(key, json);
     }
 
+    public bool HasSubscribers(string topic, string key)
+    {
+        lock (_lock)
+            return _subscriptions.Exists(subscription => subscription.Topic == topic && (subscription.Key is null || subscription.Key == key));
+    }
+
     public bool HasSubscribers(string topic)
     {
         lock (_lock)
