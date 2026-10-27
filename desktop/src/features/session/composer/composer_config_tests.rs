@@ -1,7 +1,7 @@
 //! The agent's menus and its "/" commands, on the fake client.
 
 use gpui::TestAppContext;
-use gpui_kit::{Entity, VisualTestContext};
+use gpui_kit::{Entity, VisualTestContext, px};
 use serde_json::{Value, json};
 
 use super::super::Composer;
@@ -192,4 +192,37 @@ fn enter_picks_the_last_row_when_the_list_got_shorter_under_the_lit_one(cx: &mut
     assert_eq!(listed(&composer, cx), ["compact"]);
     cx.simulate_keystrokes("enter");
     assert_eq!(draft(&composer, cx), "/compact ");
+}
+
+// Pins: g0-session#26
+#[gpui::test]
+fn the_lit_row_scrolls_into_sight_when_the_keys_move_past_the_list(cx: &mut TestAppContext) {
+    let (composer, client, cx) = on_s1(cx);
+    let mut many = config("sonnet");
+    many["commands"] = (0..40)
+        .map(|at| json!({ "name": format!("c{at:02}"), "description": "A command" }))
+        .collect();
+    client.set_config(Some(many));
+    composer.update(cx, |composer, cx| {
+        composer.set_running(Some("r1".into()), cx);
+        composer.set_running(None, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_input("/");
+    cx.run_until_parked();
+    let offset =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| composer.read(cx).slash_scroll.offset().y);
+    assert_eq!(offset(cx), px(0.));
+    cx.simulate_keystrokes("up");
+    cx.run_until_parked();
+    assert!(
+        offset(cx) < px(0.),
+        "up from the first row wraps to the last, scrolled to"
+    );
+    cx.simulate_keystrokes("down");
+    cx.run_until_parked();
+    assert!(
+        offset(cx) > px(-10.),
+        "and back to the first row, just under the list's padding"
+    );
 }

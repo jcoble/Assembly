@@ -31,6 +31,8 @@ pub struct Composer {
     attached: u64,
     /// The "/" menu's highlighted row, or `None` while it's closed or Esc hid it.
     slash_selected: Option<usize>,
+    /// Keeps the highlighted row in sight as the keys move it.
+    slash_scroll: ScrollHandle,
     /// The agent's menus and commands for this session, once read.
     config: Option<AgentConfig>,
     /// Why the last pick failed, above the box until the next works or the session changes.
@@ -85,6 +87,7 @@ impl Composer {
             uploads: HashMap::new(),
             attached: 0,
             slash_selected: None,
+            slash_scroll: ScrollHandle::new(),
             config: None,
             error: None,
             running: None,

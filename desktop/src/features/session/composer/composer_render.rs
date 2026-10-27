@@ -102,6 +102,7 @@ impl Render for Composer {
         let slash = (!commands.is_empty()).then(|| SlashList {
             commands,
             selected: self.slash_lit(cx),
+            scroll: self.slash_scroll.clone(),
             on_pick: Rc::new(move |at, window, cx| {
                 _ = composer.update(cx, |composer, cx| composer.pick_command(at, window, cx));
             }),

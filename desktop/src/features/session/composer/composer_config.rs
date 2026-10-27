@@ -109,6 +109,7 @@ impl Composer {
     pub(super) fn draft_changed(&mut self, cx: &mut Context<Self>) {
         let draft = self.draft.read(cx).value();
         self.slash_selected = SlashCommand::query(&draft).map(|_| 0);
+        self.slash_scroll.scroll_to_item(0);
         cx.notify();
     }
 
@@ -143,7 +144,9 @@ impl Composer {
                     return;
                 }
                 let at = composer.slash_selected.unwrap_or_default() as isize;
-                composer.slash_selected = Some((at.min(shown - 1) + by).rem_euclid(shown) as usize);
+                let at = (at.min(shown - 1) + by).rem_euclid(shown) as usize;
+                composer.slash_selected = Some(at);
+                composer.slash_scroll.scroll_to_item(at);
                 cx.stop_propagation();
                 cx.notify();
             }

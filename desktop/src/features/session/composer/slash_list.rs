@@ -1,5 +1,5 @@
 //! `SlashList` is the "/" list above the composer: the agent's commands matching the command word being typed, the
-//! highlighted one lit, each with its description. A click picks one; the keys are the composer's (composer_config.rs),
+//! highlighted one lit and kept in sight, each with its description. A click picks one; the keys are the composer's (composer_config.rs),
 //! since the draft keeps focus. Drawn on the popover ground, as the kit's menus are. Replaces the slash list in
 //! Composer.svelte.
 
@@ -23,6 +23,8 @@ pub struct SlashList {
     /// (name as typed, description) for each command shown.
     pub commands: Vec<(SharedString, SharedString)>,
     pub selected: usize,
+    /// The composer's, which keeps the highlighted row in sight.
+    pub scroll: ScrollHandle,
     pub on_pick: OnPick,
 }
 
@@ -65,6 +67,7 @@ impl RenderOnce for SlashList {
             .id("composer:slash")
             .max_h(MAX_HEIGHT)
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p_1()
             .rounded(RADIUS)
             .bg(theme.popover)
