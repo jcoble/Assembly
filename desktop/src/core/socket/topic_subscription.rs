@@ -15,8 +15,18 @@ pub struct TopicSubscription<U> {
     pub updates: UnboundedReceiver<U>,
 }
 
+impl<U> TopicSubscription<U> {
+    pub(super) fn new(id: u64, events: Sender<Event>, updates: UnboundedReceiver<U>) -> Self {
+        Self {
+            id,
+            events,
+            updates,
+        }
+    }
+}
+
 impl<U> Drop for TopicSubscription<U> {
     fn drop(&mut self) {
-        todo!()
+        let _ = self.events.send(Event::Unsubscribe { id: self.id });
     }
 }
