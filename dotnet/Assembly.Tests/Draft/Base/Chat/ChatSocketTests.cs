@@ -12,6 +12,7 @@ using Microsoft.Extensions.Time.Testing;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Preferences;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
@@ -52,6 +53,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new RowsFeature(_hub, rows, _sessions, machines).Register(calls);
         new ConfigFeature(_sessions, machines).Register(calls);
         new MachinesFeature(machines).Register(calls);
+        new PreferencesFeature(_db).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
