@@ -80,7 +80,18 @@ impl SessionPane {
                 row.clone()
             }
             None => {
-                let row = cx.new(|_| ExpandRow::new(open, title, body).band(band));
+                // A tool call opened before its first detail came stays unlit until it has something to show.
+                let (pane, key) = (cx.weak_entity(), item.key.clone());
+                let tool = matches!(item.kind, ItemKind::Tool { .. });
+                let lit = move |row, grown, cx: &App| {
+                    let waiting = tool
+                        && pane.upgrade().is_some_and(|pane| {
+                            let kept = pane.read(cx).kept.get(&key);
+                            kept.is_none_or(|kept| kept.detail.is_none())
+                        });
+                    band(row, if waiting { 0. } else { grown }, cx)
+                };
+                let row = cx.new(|_| ExpandRow::new(open, title, body).band(lit));
                 let key = item.key.clone();
                 let heard = cx.subscribe(&row, move |pane, _, event, cx| {
                     pane.on_expand(&key, event, cx)
