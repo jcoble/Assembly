@@ -96,6 +96,27 @@ public sealed class AcpClientChildTests
         await turn.WaitAsync(Wait);
     }
 
+    [Fact]
+    public async Task An_update_that_names_no_state_leaves_an_idle_child_idle()
+    {
+        var agent = new FakeAgent();
+        await using var client = Connect(agent);
+        var parent = new AllowOncePolicy();
+        client.SetSessionPolicy("parent", parent);
+        var turn = client.PromptAsync("parent", "count them with a sub-agent", CancellationToken.None);
+        var prompt = await agent.ReadAsync();
+        await agent.SendAsync(Announced);
+        await agent.SendAsync(ChildIdle);
+
+        await agent.SendAsync("""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"parent","update":{"sessionUpdate":"subagent_update","sessionId":"child1","title":"renamed"}}}""");
+        await agent.SendAsync(Ask("child1"));
+
+        Assert.Equal("cancelled", Outcome(await agent.ReadAsync()));
+        Assert.Empty(parent.Asked);
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await turn.WaitAsync(Wait);
+    }
+
     // A child asks after its parent's turn has ended, and nobody answers: each way the child's work can end settles it.
     private static async Task<(FakeAgent Agent, AcpClient Client, HeldPolicy Parent)> AskedAfterTheTurnAsync()
     {
