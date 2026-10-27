@@ -34,8 +34,8 @@ internal sealed class SessionsFeature : IFeature
                 : _store.Get(key) is { } session ? [SessionItem.From(session)] : []);
         calls.Read(Topic, "page", SessionsJson.Default.PageArgs, SessionsJson.Default.Page, (args, call) =>
         {
-            var page = _store.List(args.Before, Math.Clamp(args.Limit, 1, ListLimit), call.Cancellation);
-            return Task.FromResult(new Page([.. page.Sessions.Select(SessionItem.From)], page.NextBefore));
+            var page = _store.List(args.Before, Math.Clamp(args.Limit, 1, ListLimit), call.Cancellation, args.BeforeId);
+            return Task.FromResult(new Page([.. page.Sessions.Select(SessionItem.From)], page.NextBefore, page.NextBeforeId));
         });
         // The machine's work runs before the write, which only answers: the store's own write publishes the new
         // session, so it goes out on this socket before the answer.
@@ -54,9 +54,10 @@ internal sealed class SessionsFeature : IFeature
         });
     }
 
-    internal sealed record PageArgs(long? Before = null, int Limit = 50);
+    /// <summary>A page after the cursor: <c>before</c> and <c>beforeId</c> are the last page's <c>nextBefore</c> and <c>nextBeforeId</c>.</summary>
+    internal sealed record PageArgs(long? Before = null, int Limit = 50, string? BeforeId = null);
 
-    internal sealed record Page(IReadOnlyList<SessionItem> Sessions, long? NextBefore);
+    internal sealed record Page(IReadOnlyList<SessionItem> Sessions, long? NextBefore, string? NextBeforeId);
 
     internal sealed record CreateArgs([property: JsonRequired] string Agent, [property: JsonRequired] string RepoUrl, string? Machine = null,
         string? ParentSessionId = null, string? Title = null);

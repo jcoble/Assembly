@@ -239,7 +239,7 @@ public sealed class AtomicWriterTests : IDisposable
 
         public Action? OnPublish { get; set; }
 
-        public void Publish(string topic, string? key, string json)
+        public void Publish(string topic, string? key, string json, bool keyedOnly = false)
         {
             OnPublish?.Invoke();
             Sent.Add((topic, key, json));

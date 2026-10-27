@@ -214,13 +214,21 @@ public sealed class SessionStore
     public SessionInfo? Get(string sessionId) =>
         Query($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ("$id", sessionId)).FirstOrDefault();
 
-    /// <summary>The <paramref name="limit"/> most recently used sessions below <paramref name="before"/>; subagents' sessions are opened from their parent.</summary>
-    public SessionPage List(long? before, int limit, CancellationToken cancel = default)
+    /// <summary>
+    /// The <paramref name="limit"/> most recently used sessions after the cursor (<paramref name="before"/>, then
+    /// <paramref name="beforeId"/> among sessions used at that time; no id means none of them); subagents' sessions are
+    /// opened from their parent.
+    /// </summary>
+    public SessionPage List(long? before, int limit, CancellationToken cancel = default, string? beforeId = null)
     {
         var sessions = _db.Query(
-            $"SELECT {Columns} FROM session_info WHERE updated_at < $before AND parent_session_id IS NULL ORDER BY updated_at DESC LIMIT $limit;",
-            ReadSession, cancel, Args([("$before", before ?? long.MaxValue), ("$limit", limit)]));
-        return new SessionPage(sessions, sessions.Count == limit ? sessions[^1].UpdatedAt : null);
+            $"""
+            SELECT {Columns} FROM session_info
+            WHERE (updated_at < $before OR (updated_at = $before AND session_id < $id)) AND parent_session_id IS NULL
+            ORDER BY updated_at DESC, session_id DESC LIMIT $limit;
+            """,
+            ReadSession, cancel, Args([("$before", before ?? long.MaxValue), ("$id", beforeId ?? ""), ("$limit", limit)]));
+        return sessions.Count == limit ? new SessionPage(sessions, sessions[^1].UpdatedAt, sessions[^1].SessionId) : new SessionPage(sessions, null, null);
     }
 
     public void SetTitle(string sessionId, string title) =>
@@ -305,7 +313,9 @@ public sealed class SessionStore
     private static void Publish(IWriteScope scope, string sessionId)
     {
         if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", sessionId)) is { } session)
-            scope.Publish(SessionsFeature.Topic, sessionId, SessionItem.From(session), SessionsJson.Default.SessionItem);
+            // The list holds top-level sessions only; a subagent's is opened from its parent.
+            scope.Publish(SessionsFeature.Topic, sessionId, SessionItem.From(session), SessionsJson.Default.SessionItem,
+                keyedOnly: session.ParentSessionId is not null);
     }
 
     private List<SessionInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>

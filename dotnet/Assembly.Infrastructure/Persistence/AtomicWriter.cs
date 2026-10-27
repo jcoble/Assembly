@@ -71,8 +71,8 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
                 transaction.Commit();
             }
 
-            foreach (var (topic, key, json) in scope.Published)
-                _topics.Publish(topic, key, json);
+            foreach (var (topic, key, json, keyedOnly) in scope.Published)
+                _topics.Publish(topic, key, json, keyedOnly);
             // One decision, so a new background checkpoint never beats the cap's catch-up to the moment the last ends.
             _commits++;
             if (_checkpoint is not { IsCompleted: false })
@@ -171,7 +171,7 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
 
     private sealed class Scope(SqliteConnection db) : IWriteScope
     {
-        public List<(string Topic, string? Key, string Json)> Published { get; } = [];
+        public List<(string Topic, string? Key, string Json, bool KeyedOnly)> Published { get; } = [];
 
         public int Execute(string sql, params SqlArg[] args) => Sql.Execute(db, sql, args);
 
@@ -181,7 +181,7 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
         public T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args) =>
             Query(sql, map, args) is [var first, ..] ? first : default;
 
-        public void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type) =>
-            Published.Add((topic, key, JsonSerializer.Serialize(change, type)));
+        public void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type, bool keyedOnly = false) =>
+            Published.Add((topic, key, JsonSerializer.Serialize(change, type), keyedOnly));
     }
 }

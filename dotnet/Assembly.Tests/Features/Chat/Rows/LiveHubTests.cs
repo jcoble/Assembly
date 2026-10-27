@@ -193,7 +193,7 @@ public sealed class LiveHubTests : IDisposable
     {
         public List<(string Topic, string? Key, string Json)> Published { get; } = [];
 
-        public void Publish(string topic, string? key, string json) => Published.Add((topic, key, json));
+        public void Publish(string topic, string? key, string json, bool keyedOnly = false) => Published.Add((topic, key, json));
 
         public bool HasSubscribers(string topic, string key) => topic == RowsFeature.Topic && key == watched;
     }

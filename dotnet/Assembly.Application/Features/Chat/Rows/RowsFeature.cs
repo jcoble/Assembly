@@ -81,9 +81,10 @@ internal sealed class RowsFeature : IFeature
     {
         if (text is null)
             return (null, 0);
+        var size = Encoding.UTF8.GetByteCount(text);
+        if (size <= ToolCap)
+            return (text, size);
         var bytes = Encoding.UTF8.GetBytes(text);
-        if (bytes.Length <= ToolCap)
-            return (text, bytes.Length);
         var end = ToolCap;
         while ((bytes[end] & 0xC0) == 0x80)
             end--;
