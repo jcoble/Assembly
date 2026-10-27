@@ -1,5 +1,6 @@
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
 using Assembly.Application.Features.Chat.Sessions;
@@ -48,7 +49,7 @@ internal sealed class RemoteOutbox : IAsyncDisposable
                 {
                     await PollOnceAsync(_stopping.Token);
                 }
-                catch (MachineUnreachable error)
+                catch (Exception error) when (error is MachineUnreachable or CallFailed)
                 {
                     _log.WriteLine($"{_remote.Name} outbox: {error.Message}");
                 }

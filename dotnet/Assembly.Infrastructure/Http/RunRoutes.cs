@@ -47,7 +47,7 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
                 return;
             }
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;
@@ -83,7 +83,7 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
                 return;
             }
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;
@@ -123,7 +123,7 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
         {
             runId = await machines.For(session).SendAsync(session, text, context.RequestAborted);
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
             return;
@@ -152,7 +152,7 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
                 && await machines.For(session).StopAsync(session, runId, context.RequestAborted);
             context.Response.StatusCode = stopped ? StatusCodes.Status202Accepted : StatusCodes.Status404NotFound;
         }
-        catch (MachineUnreachable error)
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
         }

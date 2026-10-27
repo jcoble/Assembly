@@ -56,12 +56,13 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task Machines_list_names_the_remote_machines_and_agents_answers_a_machines_agents()
+    public async Task Machines_list_answers_each_machine_and_agents_answers_a_machines_agents()
     {
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "machines", "list", "{}");
-        Assert.Equal("""{"t":"result","id":1,"result":{"machines":["box"]}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"result","id":1,"result":{"machines":[{"name":null,"kind":"local","reachable":true,"reason":null},"""
+            + """{"name":"box","kind":"remote","reachable":false,"reason":"not checked yet"}]}}""", await ReadAsync(socket));
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
         Assert.Equal("""{"t":"result","id":2,"result":{"agents":[{"id":"claude","name":"Claude"}]}}""", await ReadAsync(socket));
         Assert.Equal(["agents"], _box.Asked);
