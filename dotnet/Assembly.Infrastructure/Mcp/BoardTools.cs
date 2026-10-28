@@ -50,7 +50,7 @@ public sealed class BoardTools(SessionStore sessions, MachineSet machines, Workf
         {
             var task = queries.Task(new("local", args.TaskKey, null, null), _stop.Token).Task;
             var session = sessions.Get(task.CreatorSessionId) ?? throw new CallFailed("not_found");
-            var identity = $"question \"{args.QuestionKey}\" (task \"{args.TaskKey}\", generation {args.Generation})";
+            var identity = $"question \"{args.QuestionKey}\" (task \"{args.TaskKey}\", generation {args.Generation}, answer key \"{args.AnswerKey}\")";
             var text = args.Answer.Kind switch
             {
                 "approve" => "Approved: " + identity,

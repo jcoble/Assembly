@@ -52,7 +52,7 @@ public sealed class BoardToolsTests
         await tools.AnswerAsync(args, CancellationToken.None);
         Assert.Equal(1, Assert.Single(f.Page().Items).QuestionCount);
         var message = Assert.Single(machine.Asked)[($"send {session.SessionId} ".Length)..];
-        var identity = """question "q1" (task "task", generation 1)""";
+        var identity = $"""question "q1" (task "task", generation 1, answer key "{args.AnswerKey}")""";
         Assert.Equal(answerKind switch
         {
             "approve" => "Approved: " + identity,
