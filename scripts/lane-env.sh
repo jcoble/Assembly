@@ -2,7 +2,7 @@
 # keeps the defaults; a lane worktree (scripts/lane.sh new) has one with LANE_NAME and LANE_NUMBER (1 to 9), and
 # gets its own ports, folders, app id and box unit from them, so several lanes run side by side.
 root=$(git rev-parse --show-toplevel)
-LANE_NAME="" LANE_NUMBER=0
+LANE_NAME="" LANE_NUMBER=0 REMOTE=""
 [ -f "$root/.lane" ] && . "$root/.lane"
 # With no .lane a checkout gets main's ports, folders and Workbox Test host, so only main may have none.
 if [ ! -f "$root/.lane" ] && [ "$(git -C "$root" branch --show-current)" != main ]; then
@@ -13,6 +13,11 @@ fi
 # outside 1 to 9 would land on main's values or past the lane ports.
 if [ -f "$root/.lane" ] && ! [[ $LANE_NAME =~ ^[a-z0-9][a-z0-9-]*$ && $LANE_NUMBER =~ ^[1-9]$ ]]; then
   echo "stop: $root/.lane needs a LANE_NAME of lowercase letters, digits and dashes and a LANE_NUMBER from 1 to 9" >&2
+  return 1
+fi
+# REMOTE is the ssh alias of the box the desktop backend reaches (empty: none), kept to the same kind of name.
+if [ -n "$REMOTE" ] && ! [[ $REMOTE =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+  echo "stop: $root/.lane has REMOTE=$REMOTE; it needs an ssh alias of lowercase letters, digits and dashes, or nothing" >&2
   return 1
 fi
 suffix=${LANE_NAME:+-$LANE_NAME}
