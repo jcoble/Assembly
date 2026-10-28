@@ -11,4 +11,4 @@ Draft by Claude, not corrected by Jesse. From the old app (mac-command-bar 20892
 - sessions-list#6: Inside each group, sessions are grouped by project, A to Z, newest first inside a project. Until sessions carry a project folder, a session's project is its repo or folder on its machine, so the same folder on two machines is two projects.
 - sessions-list#7: Settled starts folded; its header opens and folds it.
 - sessions-list#8: Each project's header has a New session button that opens the new-session form with that project's folder and machine filled in.
-- sessions-list#9: The list is the sessions loaded so far (the newest 200, then older pages as you scroll), grouped; an older session shows in its group once its page loads.
+- sessions-list#9: The list is the sessions loaded so far (the newest 200, then older pages as you scroll near its end), grouped; an older session shows in its group once its page loads. While the list ends in a folded Settled, older pages wait until Settled is opened.

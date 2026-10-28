@@ -43,12 +43,22 @@ function frame(wanted: (frame: Frame) => boolean, ms: number, step: string) {
     next();
   });
 }
+const sub = (got: Frame) => got.sub === 1 || got.id === 1;
 let ids = 10;
-async function mark(state: string, step: string) {
+/** Sends the mark and waits for the change `moved` takes, which the backend sends before the call's answer; the
+ * turn's own changes come on the same topic and are passed over. A failed call ends the wait at once. */
+async function mark(state: string, moved: (item: Item) => boolean, step: string) {
   const id = ++ids;
   socket.send(JSON.stringify({ t: 'call', id, feature: 'sessions', method: 'mark', args: { session, state } }));
-  const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 10_000, step);
+  const got = await frame(
+    (got) => (sub(got) && got.t === 'change' && !!got.item && moved(got.item)) || (got.id === id && got.t === 'error'),
+    10_000,
+    step,
+  );
+  if (got.t === 'error') fail(step, `it failed: ${got.message ?? JSON.stringify(got)}`);
+  const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 10_000, `${step} is answered`);
   if (answer.t !== 'result') fail(step, `it failed: ${answer.message ?? JSON.stringify(answer)}`);
+  return got.item!;
 }
 
 async function main() {
@@ -60,7 +70,6 @@ async function main() {
   await frame((got) => got.t === 'welcome', 10_000, 'hello is answered with welcome');
 
   socket.send(JSON.stringify({ t: 'sub', id: 1, topic: 'sessions', key: session }));
-  const sub = (got: Frame) => got.sub === 1 || got.id === 1;
   const state = await frame((got) => sub(got) && got.t === 'state', 10_000, 'the keyed topic sends the session');
   const first = state.items?.find((entry) => entry.key === session)?.item;
   if (!first) fail('the keyed topic sends the session', 'its state has no item for it');
@@ -68,22 +77,15 @@ async function main() {
     fail('a new session is in Working', `it has ${JSON.stringify([first.completedAt, first.settledAt])}`);
   console.log('ok a new session is in Working');
 
-  // The turn's own changes come on the same topic, so wait for the one that carries the move.
-  const moved = async (done: (item: Item) => boolean, step: string) =>
-    (await frame((got) => sub(got) && got.t === 'change' && !!got.item && done(got.item), 10_000, step)).item!;
-
-  await mark('done', 'Mark done is answered');
-  const done = await moved((item) => item.completedAt !== null, 'Mark done stamps completedAt');
+  const done = await mark('done', (item) => item.completedAt !== null, 'Mark done stamps completedAt');
   if (done.settledAt !== null) fail('Mark done leaves it unsettled', `settledAt is ${done.settledAt}`);
   console.log('ok Mark done stamps completedAt');
 
-  await mark('settled', 'Settle is answered');
-  const settled = await moved((item) => item.settledAt !== null, 'Settle stamps settledAt');
+  const settled = await mark('settled', (item) => item.settledAt !== null, 'Settle stamps settledAt');
   if (settled.completedAt !== done.completedAt) fail('Settle keeps the done time', `it moved to ${settled.completedAt}`);
   console.log('ok Settle stamps settledAt and keeps the done time');
 
-  await mark('working', 'Back to working is answered');
-  await moved((item) => item.completedAt === null && item.settledAt === null, 'Back to working clears both stamps');
+  await mark('working', (item) => item.completedAt === null && item.settledAt === null, 'Back to working clears both stamps');
   console.log('ok Back to working clears both stamps');
 }
 

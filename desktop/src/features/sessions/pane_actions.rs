@@ -49,18 +49,19 @@ impl SessionsPane {
         form
     }
 
-    /// Moves a session to a group. The backend stamps it and sends the changed item on the sessions topic.
+    /// Moves a session to a group. The backend stamps it and sends the changed item on the sessions topic. A mark
+    /// is a save, so it's never keyed and a later one doesn't cancel it: each runs to its answer.
     pub(super) fn mark(&mut self, session_id: String, to: Status, cx: &mut Context<Self>) {
         let Some(socket) = SocketClient::try_global(cx) else {
             return;
         };
-        let key = format!("sessions/mark:{session_id}");
         let args = json!({ "session": session_id, "state": to.wire() });
         let call = socket
             .read(cx)
-            .call::<Value>("sessions", "mark", args, Some(&key));
+            .call::<Value>("sessions", "mark", args, None);
         self.mark_error = None;
-        let id = session_id.clone();
+        self.next_mark += 1;
+        let id = self.next_mark;
         let task = cx.spawn(async move |pane, cx| {
             let outcome = call.await;
             pane.update(cx, |pane, cx| {
@@ -73,7 +74,7 @@ impl SessionsPane {
             })
             .ok();
         });
-        self.marking.insert(session_id, task);
+        self.marking.insert(id, task);
         cx.notify();
     }
 }

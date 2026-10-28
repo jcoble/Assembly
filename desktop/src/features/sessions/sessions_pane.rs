@@ -34,8 +34,9 @@ pub struct SessionsPane {
     pub(super) creating: Option<(Entity<NewSessionForm>, Subscription)>,
     /// Settled is folded until its header is clicked.
     pub(super) settled_open: bool,
-    /// Each session's mark on its way, by session id: a newer mark of the same session replaces the older.
-    pub(super) marking: HashMap<String, Task<()>>,
+    /// The marks on their way, each until its answer, by `next_mark`.
+    pub(super) marking: HashMap<u64, Task<()>>,
+    pub(super) next_mark: u64,
     /// Why the last mark failed, until the next one starts.
     pub(super) mark_error: Option<SharedString>,
     list: UniformListScrollHandle,
@@ -64,6 +65,7 @@ impl SessionsPane {
             creating: None,
             settled_open: false,
             marking: HashMap::new(),
+            next_mark: 0,
             mark_error: None,
             list: UniformListScrollHandle::new(),
             _heard: heard,
@@ -178,7 +180,9 @@ impl Render for SessionsPane {
                 };
                 // After a failure, only Retry asks again.
                 let failed = sessions.read(cx).older_error().is_some();
-                if !failed && range.end + LOAD_OLDER_WITHIN >= entries.len() {
+                // A list that ends in a folded Settled waits for it to open: older pages would only fill it unseen.
+                let folded = matches!(entries.last(), Some(ListEntry::Group { open: false, .. }));
+                if !failed && !folded && range.end + LOAD_OLDER_WITHIN >= entries.len() {
                     // Checked again when it runs: a page that failed since this was queued waits for Retry.
                     cx.on_next_frame(window, move |_, _, cx| {
                         sessions.update(cx, |sessions, cx| {
