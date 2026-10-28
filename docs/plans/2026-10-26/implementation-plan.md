@@ -1998,6 +1998,21 @@ Each W phase:
 - **P4. Phone** (Sol P29). The phone speaks the same socket protocol, with paired credentials.
 - **P5. Notion Tasks** (Sol P30).
 - **P6. Usage and resources** (Sol P31).
+  - **RS1. The backend's CPU and memory** (for the GPUI utility strip, TSK-1627). A `resources` topic with one key,
+    `backend`, carries `{ cpuPercent, memoryBytes }`, summed over the backend and every process under it (its
+    adapters, agents and CLIs), so the strip shows what Assembly costs as a whole.
+    - `cpuPercent` is the share of one core over the last window, rounded to 0.1, and null until the first window
+      closes. `memoryBytes` is resident memory.
+    - Sampling rides the backend clock (5.8) instead of a timer of its own. The clock keeps running while `resources`
+      has a subscriber. A subscribe takes one sample at once, then every 5th tick takes another, and a change goes out
+      only when CPU moves by 0.1 or memory by 1 MiB. With nobody subscribed nothing is read, and the clock stops as it
+      does today.
+    - CPU comes from each process's own CPU time since the last sample, so a child that exited can't make the sum go
+      negative and a new child counts from its second sample.
+    - On Linux the tree is read from `/proc` (each process's parent, CPU time and resident pages), with no `ps` per
+      sample. On macOS and Windows it reads only the backend process itself for now.
+    - The sampler takes the process reader as a constructor input, as the clock takes `TimeProvider`, so its tests run
+      on a fake clock and fake readings.
 - **P7. Run** (Sol P32).
 - **P8. Providers and Settings** (Sol P33).
 - **P8a. Agent sign-in, local and remote.** It can start once C2 (remote machines) and W4 (terminals) are in, without
