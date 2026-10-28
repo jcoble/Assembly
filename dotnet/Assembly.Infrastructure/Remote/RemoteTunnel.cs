@@ -62,7 +62,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
     public static RemoteTunnel ForSsh(string host, int localPort, int remotePort, TextWriter log) =>
         Wrapped(
             [
-                "ssh", "-v", "-N", "-n",
+                "ssh", "-v", "-N", "-n", "-S", "none",
                 "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                 "-L", $"127.0.0.1:{localPort}:127.0.0.1:{remotePort}", host,
             ],
@@ -153,7 +153,13 @@ public sealed class RemoteTunnel : IAsyncDisposable
         {
             // With ExitOnForwardFailure, ssh reaches this point only after its local forwards bind.
             if (line == "debug1: Entering interactive session.") _forwardReady.TrySetResult(true);
-            errors.AppendLine(line);
+            if (line.StartsWith("debug1:", StringComparison.Ordinal)
+                || line.StartsWith("debug2:", StringComparison.Ordinal)
+                || line.StartsWith("debug3:", StringComparison.Ordinal)) continue;
+            // Keep the last error context, including the reason ssh finally exited.
+            const int maxErrorChars = 4096;
+            errors.AppendLine(line.Length > maxErrorChars ? line[^maxErrorChars..] : line);
+            if (errors.Length > maxErrorChars) errors.Remove(0, errors.Length - maxErrorChars);
         }
         return errors.ToString();
     }

@@ -9,6 +9,35 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed class RemoteTunnelTests
 {
     [Fact]
+    public async Task The_owned_ssh_forward_disables_connection_sharing()
+    {
+        // -V exits without connecting; the setup seam otherwise replaces the entire ssh command.
+        await using var tunnel = RemoteTunnel.ForSsh("-V", 12345, 9797, TextWriter.Null);
+        var args = (string[])typeof(RemoteTunnel).GetField("_args",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(tunnel)!;
+        Assert.Contains(Enumerable.Range(0, args.Length - 1), i => args[i] == "-S" && args[i + 1] == "none");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1000)]
+    public async Task Debug_output_is_discarded_and_real_exit_errors_are_bounded(int errorLines)
+    {
+        var log = new SharedLog();
+        await using var tunnel = RemoteTunnel.Wrapped(["python3", "-c",
+            "import sys; print('debug1: Entering interactive session.',file=sys.stderr); " +
+            "[print('debug%d: channel noise %d' % (i%3+1,i),file=sys.stderr) for i in range(50000)]; " +
+            $"[print('error context ' + 'x'*100,file=sys.stderr) for _ in range({errorLines})]; " +
+            "print('connection lost: real error',file=sys.stderr); sys.exit(3)"], log);
+        await Until(() => log.ToString().Contains("tunnel: ssh exited"));
+
+        var message = log.ToString();
+        Assert.Contains("connection lost: real error", message);
+        Assert.DoesNotContain("debug", message);
+        Assert.True(message.Length < 4200, $"retained exit message has {message.Length} characters");
+    }
+
+    [Fact]
     public async Task Occupied_forward_port_fails_setup_and_stops_the_owned_process()
     {
         System.Net.Sockets.TcpListener? occupied = null;
