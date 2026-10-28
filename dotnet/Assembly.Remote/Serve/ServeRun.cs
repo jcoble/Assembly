@@ -14,6 +14,7 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Topics;
+using Assembly.Application.Features.Preferences;
 
 namespace Assembly.Remote.Serve;
 
@@ -45,7 +46,8 @@ public static class ServeRun
         var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
         // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
-        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work);
+        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
+            utilityModel: new CliUtilityModel("claude", "codex", new PreferenceStore(db), TimeProvider.System, Console.Out));
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));

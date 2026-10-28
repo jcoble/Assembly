@@ -19,6 +19,10 @@ internal sealed class PreferenceStore
         Task.FromResult<IReadOnlyList<(string, string)>>(
             _db.Query("SELECT key, value FROM preferences ORDER BY key;", row => (row.Text(0), row.Text(1)), cancellationToken));
 
+    /// <summary>One saved preference, its value as JSON text; null when it isn't saved.</summary>
+    public string? Read(string key) =>
+        _db.QueryFirst("SELECT value FROM preferences WHERE key = $key;", row => row.Text(0), CancellationToken.None, new SqlArg("$key", key));
+
     /// <summary>
     /// Saves each of the object's properties under its name, in one transaction; other keys stay. It takes no token:
     /// a save that has started always finishes.
