@@ -50,17 +50,13 @@ public sealed class BoardTools(SessionStore sessions, MachineSet machines, Workf
         {
             var task = queries.Task(new("local", args.TaskKey, null, null), _stop.Token).Task;
             var session = sessions.Get(task.CreatorSessionId) ?? throw new CallFailed("not_found");
-            // The transport message intentionally excludes machineId: the owning source supplies it.
-            var json = JsonSerializer.SerializeToElement(args, WorkflowJson.Default.BoardAnswerArgs);
-            using var bytes = new MemoryStream();
-            using (var writer = new Utf8JsonWriter(bytes))
+            var identity = $"question \"{args.QuestionKey}\" (task \"{args.TaskKey}\", generation {args.Generation})";
+            var text = args.Answer.Kind switch
             {
-                writer.WriteStartObject();
-                foreach (var property in json.EnumerateObject())
-                    if (property.Name != "machineId") property.WriteTo(writer);
-                writer.WriteEndObject();
-            }
-            var text = "Board answer: " + System.Text.Encoding.UTF8.GetString(bytes.ToArray());
+                "approve" => "Approved: " + identity,
+                "deny" => "Denied: " + identity,
+                _ => $"Answer to {identity}: {args.Answer.Text}"
+            };
             turn = await machines.For(session).SendAsync(session, text, "board-answer/" + args.AnswerKey, _stop.Token);
             state = turn is null ? "delivery_failed" : "delivered";
         }

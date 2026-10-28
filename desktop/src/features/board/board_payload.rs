@@ -46,6 +46,7 @@ pub struct BoardEvent {
     pub kind: String,
     pub occurred_at: i64,
     pub task: BoardTask,
+    pub questions: Vec<BoardQuestion>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

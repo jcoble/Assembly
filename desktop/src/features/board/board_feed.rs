@@ -1,5 +1,5 @@
-//! The expanded card's feed: one entry per event, newest first, with its time, what happened and the summary it
-//! carried, in full. A report shows the state it moved the task to.
+//! The expanded card's feed: each event's time, kind and its own question, answer or delivery status.
+//! A progress report shows the state it moved the task to and its summary.
 
 use chrono::{Local, TimeZone};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -35,6 +35,28 @@ pub fn feed(events: &[BoardEvent], cx: &App) -> Div {
                     .text_color(muted)
                     .child(what.to_string()),
             )
-            .child(div().flex_1().min_w_0().child(event.task.summary.clone()))
+            .child(div().flex_1().min_w_0().child(event_text(event)))
     }))
+}
+
+pub(super) fn event_text(event: &BoardEvent) -> String {
+    let Some(question) = event.questions.first() else {
+        return event.task.summary.clone();
+    };
+    match event.kind.as_str() {
+        "question_asked" => question.prompt.clone(),
+        "answer_recorded" => question
+            .answer
+            .as_ref()
+            .map(|answer| match answer.kind.as_str() {
+                "approve" => "Approved".into(),
+                "deny" => "Denied".into(),
+                _ => answer.text.clone().unwrap_or_default(),
+            })
+            .unwrap_or_default(),
+        "answer_delivered" | "answer_delivery_failed" | "answer_delivery_unknown" => {
+            super::board_question::delivery(&question.delivery_state).into()
+        }
+        _ => event.task.summary.clone(),
+    }
 }

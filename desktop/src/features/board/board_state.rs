@@ -4,6 +4,7 @@
 //! dropped. A change reads from the first page again, as many cards as are held, and swaps them in once that read is
 //! done, so the reader keeps their place and the order is always fresh from SQL.
 
+use gpui_kit::{ListOffset, px};
 use std::collections::HashMap;
 
 use crate::core::socket::update::Update;
@@ -52,6 +53,7 @@ pub struct BoardState {
     pub selected: Option<(String, String)>,
     pub detail: Option<BoardTaskResult>,
     pub drafts: HashMap<QuestionId, Draft>,
+    offline_machines: Vec<String>,
 }
 
 pub fn question_id(q: &BoardQuestion) -> QuestionId {
@@ -63,6 +65,24 @@ pub fn question_id(q: &BoardQuestion) -> QuestionId {
 }
 
 impl BoardState {
+    pub fn scroll_anchor(&self, top: ListOffset) -> Option<(String, String)> {
+        if top.item_ix == 0 && top.offset_in_item == px(0.) {
+            return None;
+        }
+        self.items
+            .get(top.item_ix)
+            .map(|item| (item.task.machine_id.clone(), item.task.task_key.clone()))
+    }
+
+    /// A remote source came back without reconnecting the local socket: reload its expanded detail.
+    pub fn machines_changed(&mut self, offline: Vec<String>) -> Option<BoardTaskArgs> {
+        let reconnected = self.selected.as_ref().is_some_and(|(machine, _)| {
+            self.offline_machines.contains(machine) && !offline.contains(machine)
+        });
+        self.offline_machines = offline;
+        reconnected.then(|| self.detail_read(None, None)).flatten()
+    }
+
     /// Shows `filter`'s cards from their first page; a read on its way for another filter is stale.
     pub fn set_filter(&mut self, filter: Option<String>) -> PageRead {
         self.filter = filter;
@@ -254,3 +274,7 @@ impl BoardState {
 #[cfg(test)]
 #[path = "board_state_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "board_ui_check_tests.rs"]
+mod ui_check_tests;

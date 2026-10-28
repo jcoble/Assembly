@@ -124,8 +124,13 @@ pub fn card(
         })
     };
     let facts = [
-        (questions > 0).then(|| format!("{questions} questions")),
-        files.map(|files| format!("{files} files")),
+        (questions > 0).then(|| {
+            format!(
+                "{questions} question{}",
+                if questions == 1 { "" } else { "s" }
+            )
+        }),
+        files.map(|files| format!("{files} file{}", if files == 1 { "" } else { "s" })),
     ];
     let has_facts =
         facts.iter().any(Option::is_some) || task.pr_url.is_some() || task.task_url.is_some();

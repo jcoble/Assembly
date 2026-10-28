@@ -78,8 +78,19 @@ impl BoardPane {
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
-        let _machines =
-            Machines::try_global(cx).map(|machines| cx.observe(&machines, |_, _, cx| cx.notify()));
+        let _machines = Machines::try_global(cx).map(|machines| {
+            cx.observe(&machines, |pane, machines, cx| {
+                let offline = machines
+                    .read(cx)
+                    .machines()
+                    .filter(|machine| machine.didnt_answer())
+                    .filter_map(|machine| machine.name.clone())
+                    .collect();
+                let read = pane.state.machines_changed(offline);
+                pane.read_detail(read, cx);
+                cx.notify();
+            })
+        });
         let mut pane = BoardPane {
             focus: cx.focus_handle(),
             state: BoardState::default(),
@@ -95,6 +106,16 @@ impl BoardPane {
             clock: None,
             _machines,
         };
+        if let Some(machines) = Machines::try_global(cx) {
+            pane.state.machines_changed(
+                machines
+                    .read(cx)
+                    .machines()
+                    .filter(|machine| machine.didnt_answer())
+                    .filter_map(|machine| machine.name.clone())
+                    .collect(),
+            );
+        }
         match SocketClient::try_global(cx) {
             Some(socket) => pane.listen(socket, cx),
             None => pane.failed = Some("The backend isn't running.".into()),
@@ -147,8 +168,7 @@ impl BoardPane {
         };
         // The card at the top of the list, and how far into it, so the swap keeps the reader's place.
         let top = self.list.logical_scroll_top();
-        let anchor = (self.state.items.get(top.item_ix))
-            .map(|item| (item.task.machine_id.clone(), item.task.task_key.clone()));
+        let anchor = self.state.scroll_anchor(top);
         let (replaced, next) = self.state.apply_page(epoch, page);
         if replaced {
             self.failed = None;

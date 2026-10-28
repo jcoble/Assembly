@@ -13,7 +13,7 @@ use super::board_payload::{BoardAnswerValue, BoardQuestion};
 use super::board_state::question_id;
 
 /// Where an answer is, in plain words.
-fn delivery(state: &str) -> &str {
+pub(super) fn delivery(state: &str) -> &str {
     match state {
         "pending" => "Sending to the agent…",
         "delivered" => "Delivered to the agent.",

@@ -51,11 +51,14 @@ public sealed class BoardToolsTests
         var args = f.Answer(value: new(answerKind, text));
         await tools.AnswerAsync(args, CancellationToken.None);
         Assert.Equal(1, Assert.Single(f.Page().Items).QuestionCount);
-        var message = Assert.Single(machine.Asked);
-        var json = JsonDocument.Parse(message[(message.IndexOf("Board answer: ", StringComparison.Ordinal) + 14)..]).RootElement;
-        Assert.Equal("q1", json.GetProperty("questionKey").GetString());
-        Assert.Equal(1, json.GetProperty("generation").GetInt32());
-        Assert.Equal(answerKind, json.GetProperty("answer").GetProperty("kind").GetString());
+        var message = Assert.Single(machine.Asked)[($"send {session.SessionId} ".Length)..];
+        var identity = """question "q1" (task "task", generation 1)""";
+        Assert.Equal(answerKind switch
+        {
+            "approve" => "Approved: " + identity,
+            "deny" => "Denied: " + identity,
+            _ => $"Answer to {identity}: {text}"
+        }, message);
         Assert.Equal("delivered", f.Detail().Questions.Single(q => q.QuestionKey == "q1").DeliveryState);
     }
 

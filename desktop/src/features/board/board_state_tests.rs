@@ -20,7 +20,7 @@ use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
 use crate::core::socket::update::Update;
 
-fn task(key: &str, state: &str) -> Value {
+pub(super) fn task(key: &str, state: &str) -> Value {
     json!({"machineId": "local", "taskKey": key, "creatorSessionId": "s1", "project": "Assembly",
         "title": format!("Task {key}"), "summary": "Working", "state": state, "taskUrl": null, "prUrl": null,
         "startedAt": 1000, "endedAt": null, "updatedAt": 2000, "revision": 1})
@@ -37,7 +37,7 @@ fn page_json(keys: &[String], next: Option<&str>) -> Value {
         "nextCursor": next, "watermarks": [{"machineId": "local", "seq": 4}]})
 }
 
-fn page(keys: &[&str], next: Option<&str>) -> BoardPageResult {
+pub(super) fn page(keys: &[&str], next: Option<&str>) -> BoardPageResult {
     let keys: Vec<String> = keys.iter().map(|key| key.to_string()).collect();
     serde_json::from_value(page_json(&keys, next)).expect("a page")
 }
@@ -58,7 +58,7 @@ fn keys(state: &BoardState) -> Vec<String> {
         .collect()
 }
 
-fn question(machine: &str, generation: i32, answer: Value) -> Value {
+pub(super) fn question(machine: &str, generation: i32, answer: Value) -> Value {
     json!({"machineId": machine, "taskKey": "t1", "questionKey": "q1", "generation": generation, "kind": "text",
         "prompt": "Merge now?", "recommendation": "Merge now", "askedAt": 3000, "answer": answer,
         "answeredAt": null, "answerKey": null, "deliveryClientId": null, "deliveryTurnId": null,
@@ -330,6 +330,7 @@ fn payload_decodes_empty_and_populated_results() {
         kind: "task_reported".into(),
         occurred_at: 5000,
         task: read_ended,
+        questions: vec![],
     };
     let full = BoardTaskResult {
         questions: vec![open, answered],
