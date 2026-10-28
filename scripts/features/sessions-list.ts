@@ -4,10 +4,10 @@
 // (sessions/rail) lists it under its provider and location with totals that count it, under Running while its turn
 // runs and not once it has ended, drops it while it's settled, and the sessionRail topic names it when it moves. On the remote, Connect
 // (machines/connect) reaches it and answers it reachable; on this machine, there's nothing to connect to. node
-// scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN and CHECK4_SESSION set (scripts/features/README.md).
+// scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_RUN set (scripts/features/README.md).
 // The token goes in the hello frame, never in argv or output.
-const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine, CHECK4_AGENT: agent } =
-  process.env;
+const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_RUN: run } = process.env;
+const { CHECK4_MACHINE: machine, CHECK4_AGENT: agent } = process.env;
 
 type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
 type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
@@ -95,11 +95,12 @@ async function rail(tab: string, step: string): Promise<Rail> {
   return answer.result as Rail;
 }
 const listed = (page: Rail) => page.sessions.some((entry) => entry.sessionId === session);
-/** Whether the session has a run out, on whichever machine runs it. */
-async function runOut(step: string) {
-  const answer = await fetch(`${api}/sessions/${session}/rows?limit=1`, { headers: { Authorization: `Bearer ${token}` } });
+/** Whether the case's turn has ended, as check4 tells it: its run has a turn row past started. */
+async function caseTurnEnded(step: string) {
+  const answer = await fetch(`${api}/sessions/${session}/rows?limit=500`, { headers: { Authorization: `Bearer ${token}` } });
   if (!answer.ok) fail(step, `its rows answered ${answer.status}`);
-  return ((await answer.json()) as { activeRunId: string | null }).activeRunId !== null;
+  const { rows } = (await answer.json()) as { rows: { runId: string | null; kind: string; payload: { state?: string } }[] };
+  return rows.some((row) => row.runId === run && row.kind === 'turn' && row.payload.state !== 'started');
 }
 
 /** Waits for sessionRail to name the session, at once if it has since the last wait, within `ms`. */
@@ -191,9 +192,9 @@ async function main() {
   }
   console.log(`ok ${connect}`);
 
-  // On a remote, the case's turn can start after this point, so its run ending is what says it's over.
+  // On a remote, the case's turn can start after this point, so its turn row ending is what says it's over.
   step = 'once its turn has ended, Running no longer lists the session';
-  for (const end = Date.now() + 180_000; await runOut(step); await new Promise((resolve) => setTimeout(resolve, 1_000)))
+  for (const end = Date.now() + 180_000; !(await caseTurnEnded(step)); await new Promise((resolve) => setTimeout(resolve, 1_000)))
     if (Date.now() >= end) fail(step, "the case's run didn't end within 180 s");
   await untilRail('running', step, 30_000, (page) => !listed(page));
   console.log(`ok ${step}`);
