@@ -61,7 +61,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         _endpoint = new SocketEndpoint("rows-token", _calls, "test-machine", TimeProvider.System);
         _app.Map("/socket", _endpoint.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(_endpoint.CloseAll);
-        var bulk = new SocketEndpoint("rows-token", _calls, "test-machine", TimeProvider.System);
+        var bulk = new SocketEndpoint("rows-token", _calls, "test-machine", TimeProvider.System, bulk: true);
         _app.Map("/socket/bulk", bulk.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
         await _app.StartAsync();

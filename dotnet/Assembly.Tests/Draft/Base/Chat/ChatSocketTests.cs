@@ -77,7 +77,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         var endpoint = new SocketEndpoint("chat-token", calls, "test-machine", TimeProvider.System);
         _app.Map("/socket", endpoint.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
-        var bulk = new SocketEndpoint("chat-token", calls, "test-machine", TimeProvider.System);
+        var bulk = new SocketEndpoint("chat-token", calls, "test-machine", TimeProvider.System, bulk: true);
         _app.Map("/socket/bulk", bulk.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
         await _app.StartAsync();

@@ -6,8 +6,9 @@ namespace Assembly.Application.Common.Calls;
 /// <summary>Where a feature lists its calls, saves and topics (plan 5.2).</summary>
 public interface ICallRegistry
 {
+    // A bulk call is served only on /socket/bulk, and every other call only on /socket.
     void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, CallContext, Task<TResult>> handler);
+        Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false);
 
     // The async part runs first, with the call's token, for anything outside the database (upload bytes, files,
     // hashing, another machine). The function it returns is the database part, run once inside IAtomicWriter.Write.
@@ -18,7 +19,7 @@ public interface ICallRegistry
     // the call opened or would have finished.
     void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
-        Action<TArgs, CallContext>? failed = null);
+        Action<TArgs, CallContext>? failed = null, bool bulk = false);
 
     // A save (5.9): `{feature}/set` with {key, value}, one write each, audited as "{feature}/set <key>", never with its
     // value. Its database part publishes the change on the topic named after its feature, which must be registered first.

@@ -53,11 +53,16 @@ public sealed partial class ChatSocketTests
     public async Task A_bulk_socket_that_closes_mid_upload_leaves_no_staging_file_and_no_save()
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
+        var other = _sessions.Create("claude", "repo");
         var first = Png(100);
         var bulk = await OpenBulkAsync();
         var a = await UploadAsync(bulk, session.SessionId, first);
         var b = await UploadAsync(bulk, session.SessionId, Png(200));
+        _here.Hold();
         _box.Hold();
+        // A read is cancelled by its socket closing, so once this one is, the backend has seen the close.
+        await CallAsync(bulk, 2, "rows", "tool", $$"""{"session":"{{other.SessionId}}","item":"t1"}""");
+        await _here.Reached.Task.WaitAsync(Wait);
         await CallAsync(bulk, 3, "attachments", "commit", $$"""{"upload":"{{a}}"}""");
         await _box.Reached.Task.WaitAsync(Wait);
         await CallAsync(bulk, 4, "attachments", "commit", $$"""{"upload":"{{b}}"}""");
@@ -67,6 +72,7 @@ public sealed partial class ChatSocketTests
 
         bulk.Abort();
         bulk.Dispose();
+        await _here.Cancelled.Task.WaitAsync(Wait);
         _box.Release();
         await _socketClosed.Task.WaitAsync(Wait);
 

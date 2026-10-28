@@ -67,7 +67,7 @@ internal sealed class RowsFeature : IFeature
             var machine = _machines.Named(session.Machine);
             machine?.Watch(session);
             return Task.FromResult(PageJson(page, machine?.ActiveRun(session)));
-        });
+        }, bulk: true);
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {
             var tool = _sessions.Get(args.Session) is { } session
@@ -79,7 +79,7 @@ internal sealed class RowsFeature : IFeature
             var (diff, diffBytes) = Cut(tool.Diff);
             return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, output != tool.Output || diff != tool.Diff,
                 outputBytes, diffBytes);
-        });
+        }, bulk: true);
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.
