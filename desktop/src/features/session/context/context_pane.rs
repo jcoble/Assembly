@@ -142,12 +142,7 @@ impl Render for ContextPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let picked = SelectedSession::global(cx).read(cx).session_id().is_some();
         let theme = cx.theme();
-        let (muted, success, danger, accent) = (
-            theme.muted_foreground,
-            theme.success,
-            theme.danger,
-            theme.accent,
-        );
+        let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
         let note = |id: &'static str, text: SharedString| {
             div()
                 .debug_selector(move || id.into())
@@ -177,8 +172,6 @@ impl Render for ContextPane {
                         .h(px(28.))
                         .px_2()
                         .gap_2()
-                        .rounded(px(6.))
-                        .hover(|row| row.bg(accent))
                         .child(div().min_w_0().truncate().child(name.to_string()))
                         .child(
                             div()

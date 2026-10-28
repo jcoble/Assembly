@@ -81,10 +81,10 @@ internal sealed class RowsFeature : IFeature
                 outputBytes, diffBytes);
         });
         // The drawer's Context tab: what the session's tool calls changed, from this machine's copy of its rows.
-        calls.Read(Topic, "files", RowJsonContext.Rows.FilesArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, _) =>
+        calls.Read(Topic, "files", RowJsonContext.Rows.FilesArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
             Task.FromResult(_sessions.Get(args.Session) is null
                 ? throw new CallFailed("unknown session")
-                : _store.FilesTouched(args.Session)));
+                : _store.FilesTouched(args.Session, call.Cancellation)));
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.

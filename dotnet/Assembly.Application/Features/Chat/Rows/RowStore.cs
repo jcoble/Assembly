@@ -233,22 +233,31 @@ public sealed class RowStore
 
     /// <summary>
     /// The files the session's tool calls edited, deleted or moved, newest first (<c>rows/files</c>). Each call counts once,
-    /// by its newest row, since a call writes one as it starts and another as it ends; a failed call touched nothing.
+    /// by its newest row, since a call writes one as it starts and another as it ends; a failed call touched nothing. A call
+    /// that changed several files lists each in <c>files</c>; one that changed one names it in <c>path</c>.
     /// </summary>
-    public IReadOnlyList<FileTouched> FilesTouched(string sessionId) =>
-        Query(
+    public IReadOnlyList<FileTouched> FilesTouched(string sessionId, CancellationToken cancellationToken) =>
+        _db.Query(
             """
-            SELECT json_extract(r.payload, '$.path'), SUM(COALESCE(json_extract(r.payload, '$.added'), 0)),
-              SUM(COALESCE(json_extract(r.payload, '$.removed'), 0)), MAX(r.seq)
-            FROM rows r
-            WHERE r.session_id = $session AND r.kind = 'tool'
-              AND json_extract(r.payload, '$.kind') IN ('edit', 'delete', 'move')
-              AND json_extract(r.payload, '$.state') <> 'failed' AND json_extract(r.payload, '$.path') IS NOT NULL
-              AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id AND l.kind = 'tool'
-                              AND l.seq > r.seq)
-            GROUP BY 1 ORDER BY 4 DESC;
+            WITH calls AS (
+              SELECT r.seq, r.payload FROM rows r
+              WHERE r.session_id = $session AND r.kind = 'tool'
+                AND json_extract(r.payload, '$.kind') IN ('edit', 'delete', 'move') AND json_extract(r.payload, '$.state') <> 'failed'
+                AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id AND l.kind = 'tool'
+                                AND l.seq > r.seq)),
+            changes AS (
+              SELECT c.seq, json_extract(f.value, '$.path') AS path, json_extract(f.value, '$.added') AS added,
+                json_extract(f.value, '$.removed') AS removed
+              FROM calls c, json_each(c.payload, '$.files') f
+              UNION ALL
+              SELECT c.seq, json_extract(c.payload, '$.path'), json_extract(c.payload, '$.added'), json_extract(c.payload, '$.removed')
+              FROM calls c WHERE json_extract(c.payload, '$.files') IS NULL)
+            SELECT path, SUM(COALESCE(added, 0)), SUM(COALESCE(removed, 0)), MAX(seq) FROM changes
+            WHERE path IS NOT NULL
+            GROUP BY path ORDER BY 4 DESC, 1;
             """,
-            reader => new FileTouched(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3)), new SqlArg("$session", sessionId));
+            reader => new FileTouched(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3)), cancellationToken,
+            new SqlArg("$session", sessionId));
 
     private static long NextSeq(IWriteScope scope, string sessionId) =>
         scope.QueryFirst("SELECT next_seq FROM sessions WHERE session_id = $session;", row => row.Long(0),
