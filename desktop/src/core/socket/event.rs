@@ -8,7 +8,7 @@ use serde_json::Value;
 use super::endpoint::Endpoint;
 use super::in_frame::InFrame;
 use super::outcome::Outcome;
-use super::row_update::RowsSink;
+use super::row_update::RowUpdate;
 use super::update::Update;
 
 pub(super) enum Event {
@@ -29,13 +29,11 @@ pub(super) enum Event {
         key: Option<String>,
         updates: UnboundedSender<Update>,
     },
-    /// A rows topic (`rows`, `terminal`), keyed: the rows after `after`.
     SubscribeRows {
         id: u64,
-        topic: String,
-        key: String,
+        session_id: String,
         after: Option<i64>,
-        rows: RowsSink,
+        rows: UnboundedSender<RowUpdate>,
     },
     Unsubscribe {
         id: u64,

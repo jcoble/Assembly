@@ -7,5 +7,4 @@ pub mod session;
 pub mod sessions;
 pub mod shell;
 pub mod source_control;
-pub mod terminal;
 pub mod worktrees;
