@@ -13,6 +13,7 @@ use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
 use super::file_tree::Row;
+use super::file_view::FileView;
 use super::files_pane::FilesPane;
 use super::search_pane::{DEBOUNCE, SearchPane};
 use crate::core::socket::client::SocketClient;
@@ -226,5 +227,54 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
     settled(&pane, cx, |pane| pane.loads.is_empty()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(shape(pane), [".git/ -", ".gitignore", "readme.md"])
+    });
+}
+
+// Pins: files#11, files#12, files#15
+#[gpui::test]
+async fn a_file_reads_its_first_part_then_the_rest_and_closing_drops_the_read(
+    cx: &mut TestAppContext,
+) {
+    let big: Vec<String> = (0..20_000)
+        .map(|i| format!("line {i:05} of the file padding"))
+        .collect();
+    let (_backend, root) = selected_session(cx, &["a.rs"]).await;
+    let session = cx.read(|cx| {
+        SelectedSession::global(cx)
+            .read(cx)
+            .session_id()
+            .unwrap()
+            .to_string()
+    });
+    let (view, cx) =
+        cx.add_window_view(|_, cx| FileView::new(session.clone(), "big.txt".into(), cx));
+    fs::write(Path::new(&root).join("big.txt"), big.join("\n") + "\n").unwrap();
+    view.update_in(cx, |view, window, cx| {
+        BasePanel::set_active(view, true, window, cx)
+    });
+    settled(&view, cx, |view| view.loading.is_none()).await;
+    let first = view.read_with(cx, |view, _| {
+        assert_eq!(view.text.line_count, 20_000);
+        assert_eq!(view.text.lines[0], big[0]);
+        view.text.lines.len()
+    });
+    assert!(first < 20_000, "a part, not the whole file");
+    view.update(cx, |view, cx| {
+        let offset = view.text.more(first).expect("another part");
+        view.load_part(offset, cx);
+    });
+    settled(&view, cx, |view| view.loading.is_none()).await;
+    view.read_with(cx, |view, _| assert_eq!(view.text.lines, big));
+    view.update(cx, |view, cx| {
+        let offset = view.text.start();
+        view.load_part(offset, cx);
+    });
+    view.update_in(cx, |view, window, cx| {
+        assert!(view.loading.is_some());
+        BasePanel::on_removed(view, window, cx);
+        assert!(
+            view.loading.is_none(),
+            "closing drops the read, which cancels its call"
+        );
     });
 }
