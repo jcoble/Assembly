@@ -27,7 +27,15 @@ internal sealed class FakeLauncher : IAgentLauncher
     /// <summary>The agent of each launch, in order.</summary>
     public List<string> Launched { get; } = [];
 
-    public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) => Task.FromResult(Checkout);
+    /// <summary>The id of each session checked out, in order.</summary>
+    public List<string> CheckedOut { get; } = [];
+
+    public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
+    {
+        lock (CheckedOut)
+            CheckedOut.Add(session.SessionId);
+        return Task.FromResult(Checkout);
+    }
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {

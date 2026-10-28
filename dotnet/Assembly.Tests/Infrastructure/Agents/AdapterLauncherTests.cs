@@ -37,8 +37,8 @@ public sealed class AdapterLauncherTests : IDisposable
         // Pins: terminal#1, terminal#12
         using var db = new TempDatabase();
         using var database = TestDatabase.Open(db.Path);
-        var sessions = SessionStore.Open(database, TimeProvider.System);
         var checkouts = Path.Combine(_work, "checkouts");
+        var sessions = SessionStore.Open(database, TimeProvider.System, checkouts);
         var local = sessions.Create("claude", "https://github.com/o/r");
         var remote = sessions.Helper(sessions.Add("remote-1", "codex", "https://github.com/o/r", "Workbox Test"), "claude", "look");
         var folder = AdapterLauncher.ExistingFolder(checkouts, sessions);

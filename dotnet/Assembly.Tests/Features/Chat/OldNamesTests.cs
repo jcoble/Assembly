@@ -205,7 +205,7 @@ public sealed class OldNamesTests : IDisposable
     {
         var database = TestDatabase.Open(path);
         rows = RowStore.Open(database);
-        sessions = SessionStore.Open(database, _time);
+        sessions = SessionStore.Open(database, _time, "checkouts");
         return database;
     }
 

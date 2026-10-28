@@ -16,6 +16,7 @@ use super::new_session_form::NewSessionForm;
 use super::presence::Presence;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
+use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::{GlobalSessions, Sessions};
 
@@ -85,6 +86,9 @@ impl SessionsPane {
         if let Some(socket) = socket {
             backend.push(cx.observe(&socket, |_, _, cx| cx.notify()));
         }
+        if let Some(machines) = Machines::try_global(cx) {
+            backend.push(cx.observe(&machines, |_, _, cx| cx.notify()));
+        }
         self._backend = backend;
         cx.notify();
     }
@@ -143,7 +147,7 @@ impl Render for SessionsPane {
             let items = sessions.read(cx).items();
             items
                 .iter()
-                .filter(|item| Presence::of(item) == Presence::NeedsYou)
+                .filter(|item| Presence::now(item, cx) == Presence::NeedsYou)
                 .count()
         });
         let header = h_flex()
@@ -160,12 +164,12 @@ impl Render for SessionsPane {
                             .child("Sessions"),
                     )
                     .when(needs_you > 0, |title| {
-                        title.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().warning)
-                                .child(format!("{needs_you} need you")),
-                        )
+                        title.child(div().text_xs().text_color(cx.theme().warning).child(
+                            match needs_you {
+                                1 => "1 needs you".to_string(),
+                                n => format!("{n} need you"),
+                            },
+                        ))
                     }),
             )
             .child(

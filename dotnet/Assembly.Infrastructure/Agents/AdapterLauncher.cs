@@ -33,7 +33,7 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
 
     public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
     {
-        var folder = FolderOf(checkouts, session);
+        var folder = SessionStore.Folder(checkouts, session) ?? throw new InvalidOperationException($"{session.SessionId} has no folder");
         await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
         stages.Mark("clone");
         return folder;
@@ -47,13 +47,9 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
         sessions.Get(id) switch
         {
             { Machine: { Length: > 0 } machine } => throw new CallFailed($"The terminal for a session on {machine} can't be opened here yet."),
-            { } session when FolderOf(checkouts, session) is var folder && Directory.Exists(folder) => folder,
+            { } session when SessionStore.Folder(checkouts, session) is { } folder && Directory.Exists(folder) => folder,
             _ => null,
         };
-
-    // A helper works in its parent's folder, as an agent's own subagents do.
-    private static string FolderOf(string checkouts, SessionInfo session) =>
-        Path.Combine(checkouts, session is { Helper: true, ParentSessionId: { } parent } ? parent : session.SessionId);
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {

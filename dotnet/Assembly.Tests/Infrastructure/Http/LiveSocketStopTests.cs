@@ -39,7 +39,7 @@ public sealed class LiveSocketStopTests : IAsyncLifetime
     [Fact]
     public async Task A_live_socket_that_subscribes_after_stopping_began_ends_at_once()
     {
-        var sessionStore = SessionStore.Open(_database, TimeProvider.System);
+        var sessionStore = SessionStore.Open(_database, TimeProvider.System, "checkouts");
         _sessions = new SessionRegistry(_hub, sessionStore, new FakeLauncher(), TimeProvider.System, TextWriter.Null,
             new BackgroundWork(TimeProvider.System, TextWriter.Null));
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));

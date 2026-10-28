@@ -26,7 +26,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken)
     {
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
-        var folder = await launcher.CheckoutAsync(session, stages, cancellationToken);
+        var folder = await launcher.CheckoutAsync(sessionStore.Top(session), stages, cancellationToken);
         var adapter = adapters(session.Agent);
         await adapter.ClosedAsync(session.AcpSessionId, cancellationToken);
         var running = await adapter.GetAsync(stages, cancellationToken);

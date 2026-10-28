@@ -59,16 +59,19 @@ public sealed class SessionStore
     private readonly IAtomicWriter _writer;
     private readonly TimeProvider _time;
     private readonly SessionSummaries? _summaries;
+    private readonly string _checkouts;
 
-    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time, SessionSummaries? summaries)
+    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time, SessionSummaries? summaries, string checkouts)
     {
         _summaries = summaries;
+        _checkouts = checkouts;
         _db = db;
         _writer = writer;
         _time = time;
     }
 
-    public static SessionStore Open(IAppDatabase db, TimeProvider time, SessionSummaries? summaries = null)
+    /// <summary><paramref name="checkouts"/> is the folder holding this machine's sessions' checkouts.</summary>
+    public static SessionStore Open(IAppDatabase db, TimeProvider time, string checkouts, SessionSummaries? summaries = null)
     {
         db.Writer.Write("sessions.schema", scope =>
         {
@@ -100,7 +103,7 @@ public sealed class SessionStore
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
             return 0;
         });
-        return new SessionStore(db, db.Writer, time, summaries);
+        return new SessionStore(db, db.Writer, time, summaries, checkouts);
     }
 
     /// <summary>A config's chosen values, from its JSON object; anything not a string is left out.</summary>
@@ -324,7 +327,36 @@ public sealed class SessionStore
         });
 
     /// <summary>The session's list item: its stored columns and its summary.</summary>
-    public SessionItem Item(SessionInfo session) => SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None);
+    public SessionItem Item(SessionInfo session) =>
+        SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(session));
+
+    /// <summary>
+    /// The session's folder on this machine, made on its first send, so it may not exist yet; null for a session that runs
+    /// on another machine, or has no folder.
+    /// </summary>
+    public string? Root(SessionInfo session) => session.Machine is null ? Folder(_checkouts, Top(session)) : null;
+
+    /// <summary>
+    /// The session at the top of <paramref name="session"/>'s parents, whose folder its children all work in: itself when it
+    /// has no parent; the walk stops at a parent that's missing or already passed.
+    /// </summary>
+    public SessionInfo Top(SessionInfo session)
+    {
+        var passed = new HashSet<string>(StringComparer.Ordinal) { session.SessionId };
+        while (session.ParentSessionId is { } parentId && passed.Add(parentId) && Get(parentId) is { } parent)
+            session = parent;
+        return session;
+    }
+
+    /// <summary>
+    /// A session's folder under <paramref name="checkouts"/>: its own, or for a child (a subagent, or a helper) its
+    /// parent's, which its agent works in. Callers pass the <see cref="Top"/> session, so a grandchild gets the top folder.
+    /// </summary>
+    /// Null when that id isn't one plain name: a parent id given as a path, or "..", would put the folder outside.
+    public static string? Folder(string checkouts, SessionInfo session) =>
+        (session.ParentSessionId ?? session.SessionId) is var id && id is not ("" or "." or "..") && Path.GetFileName(id) == id
+            ? Path.Combine(checkouts, id)
+            : null;
 
     /// <summary>
     /// Marks the session read up to <paramref name="seq"/>, or its last row if that's lower, publishing its item; a seq

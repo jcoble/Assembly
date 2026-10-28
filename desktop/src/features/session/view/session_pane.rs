@@ -20,6 +20,7 @@ use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
+use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
 use crate::core::ui::expand_row::ExpandRow;
 use crate::features::session::client::session_client::{
@@ -108,6 +109,9 @@ pub struct SessionPane {
     read_to: i64,
     /// The selected session, followed once the pane is registered.
     _selected: Option<Subscription>,
+    /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
+    _machines_started: Subscription,
+    _machines: Option<Subscription>,
     /// The composer's events and the timeline's scrolling.
     _heard: [Subscription; 3],
 }
@@ -181,9 +185,13 @@ impl SessionPane {
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
                 pane.load_older(cx)
             }),
-            cx.observe(&header, |_, _, cx| cx.notify()),
+            cx.observe(&header, |pane, _, cx| {
+                pane.tell_offline(cx);
+                cx.notify()
+            }),
         ];
-        SessionPane {
+        let machines = cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
+        let mut pane = SessionPane {
             client,
             focus: cx.focus_handle(),
             session: None,
@@ -222,7 +230,11 @@ impl SessionPane {
             _writes: HashMap::new(),
             read_to: 0,
             _heard: heard,
-        }
+            _machines_started: machines,
+            _machines: None,
+        };
+        pane.follow_machines(cx);
+        pane
     }
 
     /// Shows a session: subscribes to its rows first, then, on the `Jump` that says its seq, loads the page below
@@ -521,6 +533,8 @@ impl SessionPane {
 mod actions;
 #[path = "pane_expand.rs"]
 mod expand;
+#[path = "pane_machine.rs"]
+mod machine;
 #[path = "pane_read.rs"]
 mod read;
 #[path = "pane_render.rs"]

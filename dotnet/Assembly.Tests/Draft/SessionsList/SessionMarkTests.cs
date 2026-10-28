@@ -14,7 +14,7 @@ public sealed class SessionMarkTests : IDisposable
     public SessionMarkTests()
     {
         _database = TestDatabase.Open(_file.Path);
-        _sessions = SessionStore.Open(_database, _time);
+        _sessions = SessionStore.Open(_database, _time, "checkouts");
     }
 
     // Pins: sessions-list#1, sessions-list#2, sessions-list#4, sessions-list#5
@@ -67,11 +67,11 @@ public sealed class SessionMarkTests : IDisposable
             INSERT INTO session_info VALUES ('old', 'agent', 'repo', NULL, NULL, 1, 2);
             """));
 
-        var store = SessionStore.Open(_database, _time);
+        var store = SessionStore.Open(_database, _time, "checkouts");
         var saved = store.Get("old")!;
         Assert.Null(saved.CompletedAt);
         Assert.Null(saved.SettledAt);
-        Assert.Equal(saved, SessionStore.Open(_database, _time).Get("old"));
+        Assert.Equal(saved, SessionStore.Open(_database, _time, "checkouts").Get("old"));
     }
 
     public void Dispose()

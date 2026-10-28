@@ -34,6 +34,9 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
     (`IWriteScope.Publish`) go to `ITopics` only after it commits.
 - `Assembly.Infrastructure/`: references Application. SQLite and the one writer, starting agent processes and git,
   the local and remote machines, and the files and native calls behind a feature (`Infrastructure/<Feature>/`).
+  A session's folder on disk is `SessionStore.Root` (on its `sessions` item as `root`); anything that reads inside it
+  turns a relative path into a full one with `Infrastructure/Chat/SessionPaths`, which refuses paths outside it.
+  `Infrastructure/Chat/Files/` lists and searches it for the window's Files and Search tabs.
 
 ## The hosts
 
