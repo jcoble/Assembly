@@ -1,6 +1,7 @@
 //! The sessions pane's list: its lines follow the rail's answer (only the lines that changed are re-measured, so the
 //! list keeps its place), each line draws as a project's header, a parent's row, a helper's row or the line that
-//! loads more helpers, and the next parent page loads while the list's end is in view.
+//! loads more helpers, and the next parent page loads while the list's end is in view (the page before the held ones
+//! while their start is).
 
 use std::rc::Rc;
 
@@ -40,7 +41,8 @@ impl SessionsPane {
         cx.on_next_frame(window, |pane, _, cx| pane.page_if_near_end(cx));
     }
 
-    /// Loads the next page while the end is in view, unless the last read failed (then only Retry asks again).
+    /// Loads the next page while the end is in view, and the rows before the held ones while their start is,
+    /// unless the last read failed (then only Retry asks again).
     fn page_if_near_end(&mut self, cx: &mut Context<Self>) {
         if self.rail.error.is_some() {
             return;
@@ -48,6 +50,9 @@ impl SessionsPane {
         let near = self.entries.len().saturating_sub(LOAD_OLDER_WITHIN);
         if self.lines.item_is_below_viewport(near) == Some(false) {
             let read = self.rail.more();
+            self.send(read, cx);
+        } else if self.lines.logical_scroll_top().item_ix < LOAD_OLDER_WITHIN {
+            let read = self.rail.earlier();
             self.send(read, cx);
         }
     }

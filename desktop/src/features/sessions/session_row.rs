@@ -1,6 +1,7 @@
 //! `SessionRow` is one session in the rail. A parent shows its title over its provider, machine, recorded branch, age
 //! and helpers, with its state in a pill; one with helpers has a chevron that shows or hides them. A helper sits
-//! indented under its parent on one line, with its state as a word. A click opens the row's own session, a helper's
+//! indented under its parent on one line, with its state as a word and "offline" beside it while its machine isn't
+//! answering. A parent's provider glyph sits before its title. A click opens the row's own session, a helper's
 //! too; a parent's right-click menu moves it between Working and Done or settles it (`sessions/mark`).
 
 use std::rc::Rc;
@@ -74,6 +75,15 @@ pub fn subtitle(entry: &RailEntry, now: Option<i64>, offline: bool, expanded: bo
     parts.join(" · ")
 }
 
+/// A helper's one line ends with its state, and "offline" beside it while its own machine isn't answering.
+pub fn helper_word(presence: Presence, offline: bool) -> Option<String> {
+    match (presence.word(), offline) {
+        (Some(word), true) => Some(format!("{word} · offline")),
+        (word, false) => word.map(String::from),
+        (None, true) => Some("offline".into()),
+    }
+}
+
 impl RenderOnce for SessionRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
@@ -120,7 +130,11 @@ impl RenderOnce for SessionRow {
                 })
         });
         let helper = self.helper;
-        let word = presence.word().map(|word| {
+        let word = match helper {
+            true => helper_word(presence, offline),
+            false => presence.word().map(String::from),
+        };
+        let word = word.map(|word| {
             h_flex()
                 .flex_none()
                 .items_center()
@@ -152,6 +166,14 @@ impl RenderOnce for SessionRow {
                 h_flex()
                     .gap_2()
                     .children(unread)
+                    .when(!helper, |line| {
+                        line.child(
+                            Icon::empty()
+                                .path(self.entry.icon.clone())
+                                .small()
+                                .text_color(theme.muted_foreground),
+                        )
+                    })
                     .child(div().text_sm().truncate().child(title)),
             )
             .when(!helper, |text| {

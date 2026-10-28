@@ -2,7 +2,11 @@
 //! providers to filter by, a page of parents in the backend's order and the expanded parent's helpers. `Rail` is the
 //! sessions column's read: the tab and filters it asks for, what it holds, and its one read at a time. A change while
 //! a read is out reads again once it answers; a new tab or filter reads at once, and the older read's answer is
-//! dropped. The window never counts, sorts or groups: it draws what the backend sent.
+//! dropped. It holds a window of the tab's parents, at most `KEEP` once the reader has scrolled past them: the rows
+//! after `after`, a position in the backend's order. A read again keeps that position, asks for a page more than it
+//! holds so a session new ahead of the reader doesn't push the reader's row out, and reads the expanded parent's
+//! helpers up to their own limit. Scrolling down past `KEEP` lets the first rows go; scrolling back up reads them
+//! again. The window never counts, sorts or groups: it draws what the backend sent.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -13,6 +17,7 @@ use crate::core::socket::outcome::Outcome;
 /// most (`SessionsFeature.ListLimit`).
 pub const PAGE: usize = 50;
 const MOST: usize = 200;
+const KEEP: usize = MOST - PAGE;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tab {
@@ -93,6 +98,8 @@ pub struct RailEntry {
     /// The newest branch a turn's stats recorded: what it was then, not the checkout now.
     pub branch: Option<String>,
     pub branch_at: Option<i64>,
+    /// The provider's glyph: a bundled icon's path, picked by the backend.
+    pub icon: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -106,12 +113,14 @@ pub struct RailPage {
     pub helpers_next: Option<RailChildCursor>,
 }
 
-/// Which read is out: from the top (a change, a new tab, filter or expanded parent), the next parent page, or the
-/// expanded parent's next helper page (with the parents from the top again, as the backend reads both at once).
+/// Which read is out: what's held again (a change, a new tab, filter or expanded parent), the next parent page, the
+/// page before what's held, or the expanded parent's next helper page (with the held parents again, as the backend
+/// reads both at once).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Read {
     Top,
     More,
+    Earlier,
     Helpers,
 }
 
@@ -133,6 +142,9 @@ pub struct Rail {
     pub helpers: Vec<RailEntry>,
     next: Option<RailCursor>,
     helpers_next: Option<RailChildCursor>,
+    /// Where the held parents start: after this one, or at the top. `earlier` are the starts before it.
+    after: Option<RailCursor>,
+    earlier: Vec<Option<RailCursor>>,
     /// Why the last read failed, until one answers.
     pub error: Option<String>,
     /// A first read has answered.
@@ -193,6 +205,15 @@ impl Rail {
         (self.reading.is_none() && self.next.is_some()).then(|| self.start(Read::More))
     }
 
+    /// The parents before the held ones, when the reader scrolled past some and nothing's out.
+    pub fn earlier(&mut self) -> Option<Request> {
+        if self.reading.is_some() || self.earlier.is_empty() {
+            return None;
+        }
+        self.after = self.earlier.pop().flatten();
+        Some(self.start(Read::Earlier))
+    }
+
     pub fn has_more_helpers(&self) -> bool {
         self.helpers_next.is_some()
     }
@@ -225,20 +246,22 @@ impl Rail {
         self.totals = page.totals;
         self.agents = page.agents;
         if read == Read::More {
-            let fresh: Vec<RailEntry> = (page.sessions.into_iter())
-                .filter(|entry| {
-                    !self
-                        .sessions
-                        .iter()
-                        .any(|held| held.session_id == entry.session_id)
-                })
-                .collect();
-            self.sessions.extend(fresh);
+            self.sessions.extend(page.sessions);
             self.next = page.next;
+            if self.sessions.len() > KEEP {
+                let gone: Vec<RailEntry> =
+                    self.sessions.drain(..self.sessions.len() - KEEP).collect();
+                self.earlier
+                    .push(self.after.replace(cursor(&gone[gone.len() - 1])));
+            }
             return;
         }
         self.sessions = page.sessions;
         self.next = page.next;
+        if read == Read::Earlier && self.sessions.len() > KEEP {
+            self.sessions.truncate(KEEP);
+            self.next = Some(cursor(&self.sessions[KEEP - 1]));
+        }
         if read == Read::Helpers {
             self.helpers.extend(page.helpers);
         } else {
@@ -251,7 +274,8 @@ impl Rail {
     fn requery(&mut self) -> Request {
         self.sessions.clear();
         self.helpers.clear();
-        (self.next, self.helpers_next) = (None, None);
+        (self.next, self.helpers_next, self.after) = (None, None, None);
+        self.earlier.clear();
         self.start(Read::Top)
     }
 
@@ -263,18 +287,28 @@ impl Rail {
     }
 
     fn args(&self, read: Read) -> Value {
-        let more = read == Read::More;
-        let held = self.sessions.len().max(self.helpers.len());
+        let (more, helpers) = (read == Read::More, read == Read::Helpers);
         json!({
             "tab": self.tab.wire(),
             "providers": self.providers,
             "locations": self.locations,
             "filter": (!self.filter.is_empty()).then_some(&self.filter),
-            "after": if more { self.next.as_ref() } else { None },
-            "limit": if more { PAGE } else { held.clamp(PAGE, MOST) },
+            "after": if more { self.next.as_ref() } else { self.after.as_ref() },
+            "limit": if more { PAGE } else { (self.sessions.len() + PAGE).min(MOST) },
             "expanded": if more { None } else { self.expanded.as_ref() },
-            "helpersAfter": if read == Read::Helpers { self.helpers_next.as_ref() } else { None },
+            "helpersAfter": if helpers { self.helpers_next.as_ref() } else { None },
+            "helperLimit": if helpers { PAGE } else { self.helpers.len().clamp(PAGE, MOST) },
         })
+    }
+}
+
+/// Where a parent sits in the backend's order, to read after it.
+fn cursor(entry: &RailEntry) -> RailCursor {
+    RailCursor {
+        group: entry.group.clone(),
+        repo_url: entry.repo_url.clone(),
+        updated_at: entry.updated_at,
+        session_id: entry.session_id.clone(),
     }
 }
 
@@ -284,7 +318,7 @@ pub fn test_entry(id: &str, repo_url: &str) -> RailEntry {
     serde_json::from_value(json!({ "sessionId": id, "agent": "claude", "repoUrl": repo_url, "group": repo_url,
         "groupStart": false, "title": null, "machine": null, "updatedAt": 1, "completedAt": null, "running": false,
         "needsYou": false, "failed": false, "unread": false, "helpers": 0, "askSession": null, "askSeq": null,
-        "branch": null, "branchAt": null }))
+        "branch": null, "branchAt": null, "icon": "icons/bot.svg" }))
     .unwrap()
 }
 

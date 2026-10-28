@@ -1,4 +1,4 @@
-use super::subtitle;
+use super::{helper_word, subtitle};
 use crate::features::sessions::presence::Presence;
 use crate::features::sessions::rail_page::{RailEntry, test_entry};
 
@@ -66,5 +66,27 @@ fn a_session_on_a_machine_that_isnt_answering_keeps_its_state_and_says_offline()
     assert_eq!(
         subtitle(&local, None, false, true),
         "claude · This Mac · lane/rail"
+    );
+}
+
+#[test]
+fn an_offline_helper_says_so_beside_its_kept_state() {
+    // A helper on Workbox Test under a parent on this Mac: only the helper's machine is offline.
+    let parent = RailEntry {
+        running: true,
+        ..entry()
+    };
+    assert!(!subtitle(&parent, None, false, true).contains("offline"));
+    assert_eq!(
+        helper_word(Presence::Working, true).as_deref(),
+        Some("Working · offline")
+    );
+    assert_eq!(
+        helper_word(Presence::Working, false).as_deref(),
+        Some("Working")
+    );
+    assert_eq!(
+        helper_word(Presence::Idle, true).as_deref(),
+        Some("offline")
     );
 }

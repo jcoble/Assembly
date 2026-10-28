@@ -9,6 +9,7 @@ use std::rc::Rc;
 use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::{Entity, Modifiers, VisualTestContext};
+use serde_json::{Value, json};
 
 use super::{SessionsPane, empty_line};
 use crate::core::socket::client::SocketClient;
@@ -19,7 +20,7 @@ use crate::core::socket::test_wait::until;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::Sessions;
 use crate::features::sessions::rail_page::{
-    Rail, RailEntry, RailPage, RailTotals, Tab, test_entry,
+    Rail, RailEntry, RailPage, RailTotals, Request, Tab, test_entry,
 };
 
 fn page(sessions: Vec<RailEntry>, helpers: Vec<RailEntry>) -> RailPage {
@@ -111,6 +112,118 @@ fn helper_only_change_invalidates_parent_tab() {
     rail.finish(id, Outcome::Ok(answer));
     assert_eq!(ids(&rail), ["p"]);
     assert_eq!(Tab::NeedsYou.label(&rail.totals), "Needs you 1");
+}
+
+/// What the backend answers over `all` and the expanded parent's `helpers`, both in its order: each page after its
+/// cursor, up to its limit.
+fn serve(all: &[RailEntry], helpers: &[RailEntry], args: &Value) -> RailPage {
+    fn after(list: &[RailEntry], cursor: &Value) -> usize {
+        cursor["sessionId"].as_str().map_or(0, |id| {
+            1 + list
+                .iter()
+                .position(|entry| entry.session_id == id)
+                .unwrap()
+        })
+    }
+    let limit = args["limit"].as_u64().unwrap() as usize;
+    let helper_limit = args["helperLimit"].as_u64().map_or(limit, |n| n as usize);
+    let sessions: Vec<RailEntry> = all[after(all, &args["after"])..]
+        .iter()
+        .take(limit)
+        .cloned()
+        .collect();
+    let shown: Vec<RailEntry> = match args["expanded"].is_string() {
+        true => helpers[after(helpers, &args["helpersAfter"])..]
+            .iter()
+            .take(helper_limit)
+            .cloned()
+            .collect(),
+        false => vec![],
+    };
+    let cursor = |entry: &RailEntry| {
+        json!({ "group": entry.group, "repoUrl": entry.repo_url, "updatedAt": entry.updated_at,
+            "sessionId": entry.session_id })
+    };
+    RailPage {
+        next: (sessions.len() == limit)
+            .then(|| serde_json::from_value(cursor(&sessions[limit - 1])).unwrap()),
+        helpers_next: (shown.len() == helper_limit)
+            .then(|| serde_json::from_value(cursor(&shown[helper_limit - 1])).unwrap()),
+        helpers: shown,
+        ..page(sessions, vec![])
+    }
+}
+
+/// Sends `read` and every read its answer asks for, to `serve`.
+fn answer_all(rail: &mut Rail, all: &[RailEntry], helpers: &[RailEntry], read: Option<Request>) {
+    let mut read = read;
+    while let Some((id, args)) = read {
+        read = rail.finish(id, Outcome::Ok(serve(all, helpers, &args)));
+    }
+}
+
+fn parents(n: usize) -> Vec<RailEntry> {
+    (0..n)
+        .map(|i| test_entry(&format!("p{i:03}"), "/r"))
+        .collect()
+}
+
+/// Every parent page read, as scrolling to the end does.
+fn scroll_to_end(rail: &mut Rail, all: &[RailEntry]) {
+    let first = rail.changed();
+    answer_all(rail, all, &[], first);
+    while let Some(read) = rail.more() {
+        answer_all(rail, all, &[], Some(read));
+    }
+}
+
+fn held(rail: &Rail, id: &str) -> bool {
+    rail.sessions.iter().any(|entry| entry.session_id == id)
+}
+
+#[test]
+fn a_refresh_keeps_the_rows_held_beyond_200() {
+    let all = parents(250);
+    let mut rail = Rail::default();
+    scroll_to_end(&mut rail, &all);
+    assert!(held(&rail, "p230") && rail.sessions.len() <= 200);
+    let read = rail.changed();
+    answer_all(&mut rail, &all, &[], read);
+    assert!(held(&rail, "p230"), "the reader's row is still there");
+    // Scrolling back up reads the rows before the held ones.
+    let read = rail.earlier();
+    assert!(read.is_some());
+    answer_all(&mut rail, &all, &[], read);
+    assert_eq!(ids(&rail)[0], "p050");
+}
+
+#[test]
+fn a_session_new_ahead_of_the_visible_row_keeps_it() {
+    let mut all = parents(60);
+    let mut rail = Rail::default();
+    let first = rail.changed();
+    answer_all(&mut rail, &all, &[], first);
+    assert_eq!(ids(&rail).last(), Some(&"p049"));
+    all.insert(10, test_entry("new", "/r"));
+    let read = rail.changed();
+    answer_all(&mut rail, &all, &[], read);
+    assert!(held(&rail, "new") && held(&rail, "p049"));
+}
+
+#[test]
+fn more_helpers_keep_a_parent_beyond_200() {
+    let all = parents(250);
+    let helpers: Vec<RailEntry> = (0..60)
+        .map(|i| test_entry(&format!("h{i:02}"), "/r"))
+        .collect();
+    let mut rail = Rail::default();
+    scroll_to_end(&mut rail, &all);
+    let read = Some(rail.toggle_expanded("p230"));
+    answer_all(&mut rail, &all, &helpers, read);
+    let read = rail.more_helpers();
+    answer_all(&mut rail, &all, &helpers, read);
+    assert!(held(&rail, "p230"), "the expanded parent is still there");
+    assert_eq!(rail.helpers.len(), 60);
 }
 
 // Pins: g0-session#30
