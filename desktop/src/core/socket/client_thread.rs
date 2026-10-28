@@ -45,6 +45,8 @@ const LONGEST_WAIT: Duration = Duration::from_secs(5);
 
 pub(super) struct ClientThread {
     endpoint: Endpoint,
+    /// The socket's path: `/socket`, or `/socket/bulk` for the large calls.
+    path: &'static str,
     events: Receiver<Event>,
     /// Handed to each connection's reader.
     sender: Sender<Event>,
@@ -83,6 +85,7 @@ impl ClientThread {
     /// Starts the thread, which opens the socket at once and runs until `Event::Stop`.
     pub fn spawn(
         endpoint: Endpoint,
+        path: &'static str,
         events: Receiver<Event>,
         sender: Sender<Event>,
         states: UnboundedSender<ConnectionState>,
@@ -90,6 +93,7 @@ impl ClientThread {
     ) -> JoinHandle<()> {
         let mut client = Self {
             endpoint,
+            path,
             events,
             sender,
             connection: None,
@@ -296,7 +300,7 @@ impl ClientThread {
 
     fn open(&mut self) {
         self.set_state(ConnectionState::Connecting);
-        match Connection::open(&self.endpoint, self.sender.clone()) {
+        match Connection::open(&self.endpoint, self.path, self.sender.clone()) {
             Ok(connection) => {
                 let machine = connection.machine.clone();
                 self.connection = Some(connection);

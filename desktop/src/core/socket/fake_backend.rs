@@ -89,6 +89,10 @@ pub fn unused_port() -> u16 {
     listener.local_addr().expect("its port").port()
 }
 
+#[expect(
+    clippy::result_large_err,
+    reason = "the handshake callback returns tungstenite's own error response"
+)]
 fn serve(
     stream: TcpStream,
     (seen, on): (Sender<Value>, Sender<(String, Value)>),
