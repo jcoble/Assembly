@@ -90,6 +90,8 @@ got=$(serve_args rem 'LANE_NAME=rem\nLANE_NUMBER=9\nREMOTE=workbox-test\n')
 check "a REMOTE in .lane reaches the backend's command line" '[[ $got == *" --remote workbox-test $(rtail rem)" ]]'
 got=$(serve_args over 'LANE_NAME=over\nLANE_NUMBER=9\nREMOTE=workbox-test\n' --remote other-box)
 check "--remote overrides the .lane's REMOTE" '[[ $got == *" --remote other-box $(rtail over)" && $got != *workbox-test* ]]'
+got=$(serve_args bad 'LANE_NAME=bad\nLANE_NUMBER=9\n' --remote -oProxyCommand=x)
+check "a --remote that isn't an ssh alias of that kind stops before the backend starts" '[ -z "$got" ]'
 got=$(serve_args none2 'LANE_NAME=none2\nLANE_NUMBER=9\n')
 check "with no remote set the backend gets no --remote" '[[ -n $got && $got != *--remote* ]]'
 [ "$failed" = 0 ] || printf 'the backend got: %s\n' "$got"
