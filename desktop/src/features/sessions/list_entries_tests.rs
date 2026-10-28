@@ -222,19 +222,25 @@ fn a_row_shows_needs_you_first_then_working_failed_and_unread() {
     use crate::features::sessions::presence::Presence;
     // An open ask comes while a run goes: it needs you.
     assert_eq!(
-        Presence::of(&summary("waiting", Some("r"), true)),
+        Presence::of(&summary("waiting", Some("r"), true), false),
         Presence::NeedsYou
     );
     assert_eq!(
-        Presence::of(&summary("running", Some("r"), true)),
+        Presence::of(&summary("running", Some("r"), true), false),
         Presence::Working
     );
     assert_eq!(
-        Presence::of(&summary("failed", None, true)),
+        Presence::of(&summary("failed", None, true), false),
         Presence::Failed
     );
-    assert_eq!(Presence::of(&summary("idle", None, true)), Presence::Unread);
-    assert_eq!(Presence::of(&summary("idle", None, false)), Presence::Idle);
+    assert_eq!(
+        Presence::of(&summary("idle", None, true), false),
+        Presence::Unread
+    );
+    assert_eq!(
+        Presence::of(&summary("idle", None, false), false),
+        Presence::Idle
+    );
     assert_eq!(Presence::NeedsYou.word(), Some("needs you"));
     assert_eq!(Presence::Unread.word(), None);
 }

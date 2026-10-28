@@ -27,20 +27,21 @@ pub struct SessionRow {
     /// "claude · Workbox Test".
     pub place: SharedString,
     pub selected: bool,
-    /// What it's doing: every presence but Idle has a still dot.
+    /// What it's doing: every presence but Offline and Idle has a still dot.
     pub presence: Presence,
     pub status: Status,
     on_mark: Option<OnMark>,
 }
 
 impl SessionRow {
-    pub fn of(item: &SessionItem, selected: bool) -> SessionRow {
+    /// `offline`: whether its machine didn't answer last time (`Machines::offline`).
+    pub fn of(item: &SessionItem, selected: bool, offline: bool) -> SessionRow {
         SessionRow {
             session_id: item.session_id.clone(),
             title: item.title().into(),
             place: item.place().into(),
             selected,
-            presence: Presence::of(item),
+            presence: Presence::of(item, offline),
             status: Status::of(item),
             on_mark: None,
         }
@@ -61,7 +62,7 @@ impl RenderOnce for SessionRow {
             Presence::Working => Some(theme.primary),
             Presence::Failed => Some(theme.danger),
             Presence::Unread => Some(theme.muted_foreground),
-            Presence::Idle => None,
+            Presence::Offline | Presence::Idle => None,
         };
         let place = match self.presence.word() {
             Some(word) => format!("{} · {word}", self.place),

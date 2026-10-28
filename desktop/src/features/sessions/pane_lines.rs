@@ -13,6 +13,7 @@ use super::project_header::ProjectHeader;
 use super::session_row::{OnMark, SessionRow};
 use super::sessions_pane::SessionsPane;
 use super::status::Status;
+use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
 
 /// Load the next older page when the line this far from the end is in view.
@@ -112,9 +113,12 @@ impl SessionsPane {
                         items.iter().find(|item| item.session_id == id).cloned()
                     });
                     match item {
-                        Some(item) => SessionRow::of(&item, selected)
-                            .on_mark(on_mark.clone())
-                            .into_any_element(),
+                        Some(item) => {
+                            let offline = Machines::offline(item.machine.as_deref(), cx);
+                            SessionRow::of(&item, selected, offline)
+                                .on_mark(on_mark.clone())
+                                .into_any_element()
+                        }
                         None => Empty.into_any_element(),
                     }
                 }

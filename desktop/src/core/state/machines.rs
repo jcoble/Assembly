@@ -18,7 +18,8 @@ pub struct Machines {
     _feed: Task<()>,
 }
 
-struct GlobalMachines(Entity<Machines>);
+/// Set once the socket client has started; observing it tells a view the list is there.
+pub(crate) struct GlobalMachines(Entity<Machines>);
 
 impl Global for GlobalMachines {}
 
@@ -56,6 +57,18 @@ impl Machines {
 
     pub fn machines(&self) -> impl Iterator<Item = &Machine> {
         self.machines.iter().map(|(_, machine)| machine)
+    }
+
+    /// Whether the machine `name` didn't answer last time. This machine (`None`) and one the list doesn't have yet
+    /// aren't offline.
+    pub fn offline(name: Option<&str>, cx: &App) -> bool {
+        let Some(name) = name else {
+            return false;
+        };
+        Machines::try_global(cx).is_some_and(|machines| {
+            (machines.read(cx).machines())
+                .any(|held| held.name.as_deref() == Some(name) && !held.reachable)
+        })
     }
 
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {

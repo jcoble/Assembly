@@ -39,6 +39,8 @@ pub struct Composer {
     error: Option<SharedString>,
     /// The run going now, which Stop stops.
     running: Option<String>,
+    /// The open session's machine while it isn't answering: Send and Stop wait for it.
+    offline: Option<String>,
     /// How full the agent's context window is, from the session's newest report.
     meter: Option<ContextMeter>,
     /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
@@ -93,6 +95,7 @@ impl Composer {
             config: None,
             error: None,
             running: None,
+            offline: None,
             meter: None,
             retry_ids: HashMap::new(),
             named: 0,
@@ -166,9 +169,17 @@ impl Composer {
             .all(|attachment| matches!(attachment.state, AttachmentState::Saved { .. }))
     }
 
+    /// The open session's machine while it isn't answering, from the machines list; `None` once it answers.
+    pub fn set_offline(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
+        if self.offline != machine {
+            self.offline = machine;
+            cx.notify();
+        }
+    }
+
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
     fn stop(&mut self, cx: &mut Context<Self>) {
-        let Some(run) = self.running.clone() else {
+        let Some(run) = self.running.clone().filter(|_| self.offline.is_none()) else {
             return;
         };
         let call = self
@@ -184,7 +195,10 @@ impl Composer {
             return;
         };
         let typed = self.draft.read(cx).value().trim().to_string();
-        if !self.all_saved() || (typed.is_empty() && self.attachments.is_empty()) {
+        if self.offline.is_some()
+            || !self.all_saved()
+            || (typed.is_empty() && self.attachments.is_empty())
+        {
             return;
         }
         let text = Attachment::with_lines(&typed, &self.attachments);
