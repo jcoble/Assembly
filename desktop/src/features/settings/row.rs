@@ -98,6 +98,6 @@ pub const ROWS: [Row; 11] = [
         card: "Remote machines",
         title: "Machines",
         description: "This Mac and the remote machines the backend knows.",
-        keywords: "ssh workbox server remote reconnect connect",
+        keywords: "ssh workbox server remote reconnect connect disconnect add edit remove port token",
     },
 ];

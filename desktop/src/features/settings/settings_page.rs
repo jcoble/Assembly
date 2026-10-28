@@ -1,7 +1,8 @@
 //! `SettingsPage` owns the open Settings page: a sheet over the whole window, with the sections in a column on the
 //! left under "Search settings", and the chosen section's cards of rows on the right. Each change is saved at once
 //! through `Preferences`, which the window and the views follow. The page and everything it started (the search box,
-//! the sliders, a Connect on its way) go when the sheet closes. Replaces SettingsDialog.svelte and SettingsHost.svelte.
+//! the sliders, a machine call on its way) go when the sheet closes. Replaces SettingsDialog.svelte and
+//! SettingsHost.svelte.
 
 use std::cell::Cell;
 
@@ -16,6 +17,7 @@ use gpui_kit::*;
 use serde_json::json;
 
 use super::fonts;
+use super::machine_edits::MachineEdits;
 use super::search;
 use super::section::Section;
 use crate::core::state::appearance::{
@@ -37,8 +39,11 @@ pub struct SettingsPage {
     pub(super) sliders: Vec<(NumberSetting, Entity<SliderState>)>,
     pub(super) ui_fonts: Vec<SharedString>,
     pub(super) code_fonts: Vec<SharedString>,
-    /// The machine a Connect is reaching, and the call; dropping it stops waiting.
-    pub(super) connecting: Option<(String, Task<()>)>,
+    /// The Connections form's name, SSH destination, port and token file.
+    pub(super) machine_fields: [Entity<InputState>; 4],
+    pub(super) machine_edits: MachineEdits,
+    /// The button whose machine call is running, and the call; dropping it stops waiting. One call at a time.
+    pub(super) machine_call: Option<(SharedString, Task<()>)>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -121,7 +126,9 @@ impl SettingsPage {
             sliders: sliders.into(),
             ui_fonts,
             code_fonts,
-            connecting: None,
+            machine_fields: Self::machine_fields(window, cx),
+            machine_edits: MachineEdits::default(),
+            machine_call: None,
             _subscriptions: subscriptions,
         };
         page.follow_machines(cx);
