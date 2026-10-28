@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{list_entries, project_label};
+use super::{changed_lines, list_entries, project_label, wants_older};
 use crate::core::state::session_item::SessionItem;
 use crate::features::sessions::list_entry::ListEntry;
 use crate::features::sessions::status::Status;
@@ -68,16 +68,16 @@ fn groups_come_in_order_with_projects_a_to_z_and_sessions_newest_first() {
                 open: true
             },
             project(Status::Working, "https://github.com/o/Beta", None),
-            ListEntry::Session(2),
+            ListEntry::Session("w2".into()),
             project(Status::Working, "/home/me/zeta", None),
-            ListEntry::Session(0),
-            ListEntry::Session(3),
+            ListEntry::Session("w1".into()),
+            ListEntry::Session("w3".into()),
             ListEntry::Group {
                 status: Status::Done,
                 open: true
             },
             project(Status::Done, "/home/me/alpha", None),
-            ListEntry::Session(1),
+            ListEntry::Session("d1".into()),
         ]
     );
 }
@@ -94,9 +94,9 @@ fn the_same_folder_on_two_machines_is_two_projects() {
         entries[1..],
         [
             project(Status::Working, "/srv/app", None),
-            ListEntry::Session(1),
+            ListEntry::Session("b".into()),
             project(Status::Working, "/srv/app", Some("Workbox Test")),
-            ListEntry::Session(0),
+            ListEntry::Session("a".into()),
         ]
     );
 }
@@ -120,7 +120,7 @@ fn settled_starts_folded_to_its_header_and_opens() {
                 open: true
             },
             project(Status::Settled, "/r", None),
-            ListEntry::Session(0),
+            ListEntry::Session("s".into()),
         ]
     );
 }
@@ -141,4 +141,87 @@ fn the_row_menu_moves_a_session_to_the_other_two_groups() {
         assert_eq!(targets.len(), 2);
     }
     assert_eq!(Status::Settled.moves()[0], ("Unsettle", Status::Done));
+}
+
+fn line(id: &str) -> ListEntry {
+    ListEntry::Session(id.into())
+}
+
+#[test]
+fn only_the_lines_between_what_both_share_change() {
+    let old = [line("a"), line("b"), line("c"), line("d")];
+    assert_eq!(changed_lines(&old, &old), (4..4, 0));
+    // "c" moved up past "b": only those two lines change.
+    assert_eq!(
+        changed_lines(&old, &[line("a"), line("c"), line("b"), line("d")]),
+        (1..3, 2)
+    );
+    // One added at the end, one removed at the start.
+    assert_eq!(
+        changed_lines(
+            &old,
+            &[line("a"), line("b"), line("c"), line("d"), line("e")]
+        ),
+        (4..4, 1)
+    );
+    assert_eq!(
+        changed_lines(&old, &[line("b"), line("c"), line("d")]),
+        (0..1, 0)
+    );
+    assert_eq!(changed_lines(&[], &old), (0..0, 4));
+}
+
+// Pins: sessions-list#9
+#[test]
+fn a_list_ending_in_a_folded_settled_holds_back_older_pages() {
+    let folded = [
+        line("a"),
+        ListEntry::Group {
+            status: Status::Settled,
+            open: false,
+        },
+    ];
+    let open = [
+        line("a"),
+        ListEntry::Group {
+            status: Status::Settled,
+            open: true,
+        },
+        line("s"),
+    ];
+    assert!(!wants_older(&folded, true));
+    assert!(wants_older(&open, true));
+    assert!(wants_older(&[line("a")], true));
+    assert!(!wants_older(&[line("a")], false));
+}
+
+fn summary(state: &str, run: Option<&str>, unread: bool) -> SessionItem {
+    serde_json::from_value(
+        json!({ "sessionId": "a", "agent": "claude", "repoUrl": "/r", "title": null,
+        "machine": null, "parentSessionId": null, "acpSessionId": null, "updatedAt": 1,
+        "state": state, "activeRunId": run, "unread": unread }),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_row_shows_needs_you_first_then_working_failed_and_unread() {
+    use crate::features::sessions::presence::Presence;
+    // An open ask comes while a run goes: it needs you.
+    assert_eq!(
+        Presence::of(&summary("waiting", Some("r"), true)),
+        Presence::NeedsYou
+    );
+    assert_eq!(
+        Presence::of(&summary("running", Some("r"), true)),
+        Presence::Working
+    );
+    assert_eq!(
+        Presence::of(&summary("failed", None, true)),
+        Presence::Failed
+    );
+    assert_eq!(Presence::of(&summary("idle", None, true)), Presence::Unread);
+    assert_eq!(Presence::of(&summary("idle", None, false)), Presence::Idle);
+    assert_eq!(Presence::NeedsYou.word(), Some("needs you"));
+    assert_eq!(Presence::Unread.word(), None);
 }

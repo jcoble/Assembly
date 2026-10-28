@@ -1,5 +1,5 @@
 //! `ListEntry` is one line of the grouped sessions list: a group's header, a project's header inside it, or a
-//! session (its index in the sessions list).
+//! session (by its id).
 
 use super::status::Status;
 
@@ -17,5 +17,5 @@ pub enum ListEntry {
         folder: String,
         machine: Option<String>,
     },
-    Session(usize),
+    Session(String),
 }

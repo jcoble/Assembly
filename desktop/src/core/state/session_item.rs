@@ -17,6 +17,12 @@ pub struct SessionItem {
     pub updated_at: i64,
     /// The run going now, from the session's summary; `None` while it's idle.
     pub active_run_id: Option<String>,
+    /// The summary's state: "running", "waiting" (an open ask), "failed" (the last turn) or "idle".
+    #[serde(default)]
+    pub state: String,
+    /// A turn ended past what a window has shown.
+    #[serde(default)]
+    pub unread: bool,
     /// When the user first marked it done, and when they settled it (Unix ms); both `None` while it's working.
     #[serde(default)]
     pub completed_at: Option<i64>,
