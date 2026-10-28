@@ -70,7 +70,7 @@ public sealed class BackgroundWorkTests
         var stopping = _work.StopAsync(Deadline);
         // The first one's end runs here, inline, and starts the late one before it ends.
         first.SetResult();
-        Assert.NotSame(stopping, await Task.WhenAny(stopping, Task.Delay(200)));
+        await Assert.ThrowsAsync<TimeoutException>(() => stopping.WaitAsync(TimeSpan.FromMilliseconds(200)));
         Assert.Equal(1, _work.Running);
 
         late.SetResult();
@@ -92,7 +92,7 @@ public sealed class BackgroundWorkTests
         Assert.True(entered.Wait(Wait));
 
         var stopping = _work.StopAsync(Deadline);
-        Assert.NotSame(stopping, await Task.WhenAny(stopping, Task.Delay(200)));
+        await Assert.ThrowsAsync<TimeoutException>(() => stopping.WaitAsync(TimeSpan.FromMilliseconds(200)));
         gate.Set();
         await starting.WaitAsync(Wait);
         Assert.Equal(0, await stopping.WaitAsync(Wait));

@@ -42,14 +42,12 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         using var viewer = _hub.Subscribe("s1", 0);
         await FollowPastSettledAsync();
 
-        var made = _time.Made;
+        var made = _time.Made.Value;
         for (var second = 0; second < 60; second++)
-        {
             _time.Advance(TimeSpan.FromSeconds(1));
-            await Task.Delay(5);
-        }
 
-        Assert.Equal(made, _time.Made);
+        // A wake on any of those seconds would make its next timer soon after.
+        await Assert.ThrowsAsync<TimeoutException>(() => _time.Made.ReachedAsync(made + 1).WaitAsync(TimeSpan.FromMilliseconds(300)));
         Assert.False(_closed.Task.IsCompleted);
     }
 
@@ -71,14 +69,12 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         var viewer = _topics.Subscribe(RowsFeature.Topic, "s1", _ => { }, (_, _) => { });
         await FollowPastSettledAsync();
 
-        var made = _time.Made;
+        var made = _time.Made.Value;
         for (var second = 0; second < 60; second++)
-        {
             _time.Advance(TimeSpan.FromSeconds(1));
-            await Task.Delay(5);
-        }
 
-        Assert.Equal(made, _time.Made);
+        // A wake on any of those seconds would make its next timer soon after.
+        await Assert.ThrowsAsync<TimeoutException>(() => _time.Made.ReachedAsync(made + 1).WaitAsync(TimeSpan.FromMilliseconds(300)));
         Assert.False(_closed.Task.IsCompleted);
         _topics.Unsubscribe(viewer);
     }
@@ -142,15 +138,14 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
     // Counts the timers made, which is what a wake costs.
     private sealed class CountingTime(DateTimeOffset start) : FakeTimeProvider(start)
     {
-        private int _made;
-        public int Made => Volatile.Read(ref _made);
+        public Count Made { get; } = new();
 
         // Done once the follower's settle waits out a quiet link: its timer is due in the follower's Settled.
         public TaskCompletionSource SettleTimerMade { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            Interlocked.Increment(ref _made);
+            Made.Add();
             var timer = base.CreateTimer(callback, state, dueTime, period);
             if (dueTime == RemoteFollower.Settled)
                 SettleTimerMade.TrySetResult();

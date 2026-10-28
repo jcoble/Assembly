@@ -9,28 +9,31 @@ namespace Assembly.Tests.Infrastructure.Agents;
 /// <summary>A fake adapter whose fake Claude Code starts a child, as the real one starts its tools.</summary>
 public sealed class AgentProcessTests : IDisposable
 {
-    private readonly string _childPidFile = Path.GetTempFileName();
+    // The child writes its pid down this pipe and holds it open, so the pipe's end is the child's end, zombie or not.
+    private readonly string _childPipe = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
     private readonly string _claudeScript = Path.GetTempFileName();
+    private StreamReader? _child;
+    private int? _childPid;
 
     [Fact]
     public async Task Killing_only_the_adapter_also_ends_what_it_started()
     {
         await using var adapter = Start();
-        var child = await ChildAsync();
+        await ChildAsync();
 
         // The adapter's pid alone, as a crash or kill -9 would end it.
         Process.GetProcessById(adapter.Id).Kill(entireProcessTree: false);
-        await GoneAsync(child);
+        await GoneAsync();
     }
 
     [Fact]
     public async Task Stopping_the_adapter_ends_what_it_started()
     {
         var adapter = Start();
-        var child = await ChildAsync();
+        await ChildAsync();
 
         await adapter.DisposeAsync();
-        await GoneAsync(child);
+        await GoneAsync();
     }
 
     [Fact]
@@ -38,47 +41,36 @@ public sealed class AgentProcessTests : IDisposable
     {
         // Claude Code starts its Bash tool's shell with setsid, outside the adapter's group.
         // It writes its own pid once it has left, so the kill can't catch it still inside.
-        await using var adapter = Start(
-            $"perl -MPOSIX -e 'POSIX::setsid(); open my $f, q(>), $ARGV[0]; print $f $$; close $f; exec q(sleep), 300' '{_childPidFile}' & wait");
-        var child = await ChildAsync();
+        await using var adapter = Start("perl -MPOSIX -e 'POSIX::setsid(); $| = 1; print qq($$\n); exec q(sleep), 300' >&3 & wait");
+        await ChildAsync();
 
         Process.GetProcessById(adapter.Id).Kill(entireProcessTree: false);
-        await GoneAsync(child);
+        await GoneAsync();
     }
 
     /// <summary>
     /// The fake adapter starts a fake Claude Code (a shell in its group) that runs <paramref name="claude"/>, which
-    /// starts a child and writes its pid, as the real one starts its tools.
+    /// starts a child and writes its pid to the pipe on fd 3, as the real one starts its tools.
     /// </summary>
     private AgentProcess Start(string? claude = null)
     {
-        File.WriteAllText(_claudeScript, (claude ?? $"sleep 300 & echo $! > '{_childPidFile}'; wait") + "\n");
+        using (var mkfifo = Process.Start("/usr/bin/mkfifo", [_childPipe]))
+            mkfifo.WaitForExit();
+        File.WriteAllText(_claudeScript, $"exec 3>'{_childPipe}'\n" + (claude ?? "sleep 300 & echo $! >&3; wait") + "\n");
         return AgentProcess.Start(
             new AgentCommand("/bin/sh", ["-c", "/bin/sh \"$1\" & wait", "fake-adapter", _claudeScript], Path.GetTempPath()),
             TranscriptLog.Discard());
     }
 
-    private async Task<int> ChildAsync()
+    private async Task ChildAsync()
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!int.TryParse(File.ReadAllText(_childPidFile).Trim(), out var pid))
-        {
-            Assert.True(DateTime.UtcNow < deadline, "the fake adapter didn't start its child");
-            await Task.Delay(10);
-        }
-
-        return int.Parse(File.ReadAllText(_childPidFile).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        // Opening a pipe waits for its writer.
+        _child = new StreamReader(await Task.Run(() => File.OpenRead(_childPipe)).WaitAsync(TimeSpan.FromSeconds(5)));
+        _childPid = int.Parse((await _child.ReadLineAsync())!, System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    private static async Task GoneAsync(int pid)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (Running(pid))
-        {
-            Assert.True(DateTime.UtcNow < deadline, $"pid {pid} outlived its adapter");
-            await Task.Delay(20);
-        }
-    }
+    // The pipe ends once every process holding it has ended, the child among them.
+    private Task GoneAsync() => _child!.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(2));
 
     /// <summary>
     /// Alive and not a zombie. A killed child of an orphaned parent stays a zombie until init reaps it, which can
@@ -100,9 +92,10 @@ public sealed class AgentProcessTests : IDisposable
     public void Dispose()
     {
         // If a test failed, don't leave its child behind. Only that pid, which this test started.
-        if (int.TryParse(File.ReadAllText(_childPidFile).Trim(), out var pid) && Running(pid))
+        if (_childPid is { } pid && Running(pid))
             Process.GetProcessById(pid).Kill();
-        File.Delete(_childPidFile);
+        _child?.Dispose();
+        File.Delete(_childPipe);
         File.Delete(_claudeScript);
     }
 }

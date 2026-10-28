@@ -59,10 +59,15 @@ public sealed partial class SocketTests
         await ReadAsync(other);
         Assert.True(_topics.HasSubscribers("notes"));
         Assert.False(context!.Cancellation.IsCancellationRequested);
+        var unsubscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _topics.Unsubscribed += (_, _) => unsubscribed.TrySetResult();
+        using var registration = context.Cancellation.Register(() => cancelled.TrySetResult());
         other.Abort();
         other.Dispose();
 
-        await UntilAsync(() => !_topics.HasSubscribers("notes") && context.Cancellation.IsCancellationRequested);
+        await Task.WhenAll(unsubscribed.Task, cancelled.Task).WaitAsync(Wait);
+        Assert.False(_topics.HasSubscribers("notes"));
     }
 
     [Fact]
@@ -182,10 +187,17 @@ public sealed partial class SocketTests
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"notes"}""");
         await reading.Task.WaitAsync(Wait);
         // The write commits after the read began, then publishes on its own thread, which blocks on the Topics lock.
+        // It says so just before it takes the lock.
         rows.Add("b");
-        var publisher = new Thread(() => _topics.Publish("notes", "b", """{"text":"b"}""")) { IsBackground = true };
+        var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publisher = new Thread(() =>
+        {
+            publishing.SetResult();
+            _topics.Publish("notes", "b", """{"text":"b"}""");
+        })
+        { IsBackground = true };
         publisher.Start();
-        await UntilAsync(() => publisher.ThreadState.HasFlag(ThreadState.WaitSleepJoin));
+        await publishing.Task.WaitAsync(Wait);
         gate.Set();
 
         Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"a","item":{"text":"a"}}]}""", await ReadAsync(socket));
@@ -193,13 +205,5 @@ public sealed partial class SocketTests
         Assert.True(publisher.Join(Wait));
         await CallAsync(socket, 2, "notes", "echo", "{}");
         Assert.Equal("""{"t":"result","id":2,"result":{"text":""}}""", await ReadAsync(socket));
-    }
-
-    // Waits for something the backend does on its own after the socket closes, giving up after Wait.
-    private static async Task UntilAsync(Func<bool> done)
-    {
-        using var limit = new CancellationTokenSource(Wait);
-        while (!done())
-            await Task.Delay(10, limit.Token);
     }
 }

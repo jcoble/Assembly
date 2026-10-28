@@ -88,7 +88,7 @@ public sealed partial class SocketTests
         socket.Dispose();
         await cancelled.Task.WaitAsync(Wait);
         // Long enough for the hook to come, if the socket's end didn't wait for the call.
-        await Task.WhenAny(hooked.Task, Task.Delay(200));
+        await Assert.ThrowsAsync<TimeoutException>(() => hooked.Task.WaitAsync(TimeSpan.FromMilliseconds(200)));
         finish.SetResult();
 
         Assert.True(await hooked.Task.WaitAsync(Wait));

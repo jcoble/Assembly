@@ -94,8 +94,7 @@ public sealed class McpTests : IAsyncLifetime
         // The parent's turn ends while its helper works: its session stays open, and message_status waits for the answer.
         await agent.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
         var status = CallAsync(parentToken, "message_status", new { messageId });
-        await Task.Delay(500);
-        Assert.False(status.IsCompleted);
+        await Assert.ThrowsAsync<TimeoutException>(() => status.WaitAsync(TimeSpan.FromMilliseconds(500)));
         await helperAgent.TextAsync("notes.txt has 3 lines.", "h1", "acp-helper");
         await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         var answered = await status;
