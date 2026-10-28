@@ -89,6 +89,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
                     if (stop.IsCancellationRequested) return;
                     if (connect && probe && _active.TryGetValue(name, out var active))
                     {
+                        if (active.Tunnel is RemoteTunnel activeTunnel) activeTunnel.TryNow();
                         try { await _feature.ConnectAsync(active.Machine, stop.Token); }
                         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
                         return;

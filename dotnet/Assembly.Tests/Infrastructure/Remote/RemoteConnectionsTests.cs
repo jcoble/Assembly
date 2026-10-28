@@ -11,6 +11,41 @@ namespace Assembly.Tests.Infrastructure.Remote;
 
 public sealed class RemoteConnectionsTests
 {
+    // Pins: sessions-list#12
+    [Fact]
+    public async Task ConnectOnAConnectedMachineRetriesItsTunnelNow()
+    {
+        using var file = new TempDatabase();
+        var topics = new Topics();
+        using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
+        using var hub = new LiveHub(RowStore.Open(db));
+        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        var machines = new MachineSet(new FakeMachine(null, sessions));
+        var status = new MachineStatus(topics, []);
+        var store = new MachineStore(db);
+        await using var stub = new MachinesSocketTests.StubRemote();
+        await stub.StartAsync();
+        var log = new SharedLog();
+        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", "exit 3"], log);
+        await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
+        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+            feature, open: (profile, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>(
+                (new(profile.Name, stub.Address, "token"), tunnel)));
+        store.Import(new("box", "host"));
+        await connections.ConnectionAsync("box", true, CancellationToken.None);
+        await log.WrittenAsync("again in 4 s");
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+        // Again until it lands: the wait may begin just after the line is logged.
+        while (tunnel.Starts < 4)
+        {
+            await connections.ConnectionAsync("box", true, CancellationToken.None);
+            Assert.True(waited.Elapsed < TimeSpan.FromSeconds(5), "tunnel did not restart");
+            await Task.Delay(20);
+        }
+
+        Assert.True(waited.Elapsed < TimeSpan.FromSeconds(2), $"it started again after {waited.Elapsed}");
+    }
+
     [Theory]
     [InlineData("update")]
     [InlineData("disconnect")]
