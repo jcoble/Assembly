@@ -1,6 +1,6 @@
 using Assembly.Application.Common.Git;
 
-namespace Assembly.Application.Features.SourceControl;
+namespace Assembly.Application.Features.Chat.SourceControl;
 
 /// <summary>Reads a project's status in one git call without changing the index.</summary>
 public sealed class GitStatusReader(IGit git)

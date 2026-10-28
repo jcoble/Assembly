@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace Assembly.Application.Features.SourceControl;
+namespace Assembly.Application.Features.Chat.SourceControl;
 
 /// <summary>Reads porcelain v2 status, keeping paths intact and counting files beyond the display limit.</summary>
 public static class GitStatusPorcelain

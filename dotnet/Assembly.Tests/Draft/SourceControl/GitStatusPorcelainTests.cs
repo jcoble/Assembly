@@ -1,4 +1,4 @@
-using Assembly.Application.Features.SourceControl;
+using Assembly.Application.Features.Chat.SourceControl;
 
 namespace Assembly.Tests.Draft.SourceControl;
 
