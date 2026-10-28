@@ -17,18 +17,9 @@ internal sealed class FilesFeature(SessionStore sessions) : IFeature
     public void Register(ICallRegistry calls)
     {
         calls.Read(Feature, "list", FilesJson.Default.ListArgs, FilesJson.Default.FileListing, (args, call) =>
-            DirectoryListing.ListAsync(RootOf(args.Session), args.Dir, args.IncludeExcluded, call.Cancellation));
+            DirectoryListing.ListAsync(SessionPaths.RootOf(sessions, args.Session), args.Dir, args.IncludeExcluded, call.Cancellation));
         calls.Read(Feature, "search", FilesJson.Default.SearchArgs, FilesJson.Default.SearchPage, (args, call) =>
-            NameSearch.PageAsync(RootOf(args.Session), args.Query, args.Cursor, args.PageSize, call.Cancellation));
-    }
-
-    private string RootOf(string sessionId)
-    {
-        var session = sessions.Get(sessionId) ?? throw new CallFailed("unknown session");
-        if (session.Machine is not null)
-            throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");
-        var root = sessions.Root(session) ?? throw new CallFailed("this session has no folder");
-        return Directory.Exists(root) ? root : throw new CallFailed("this session's folder is made on its first message");
+            NameSearch.PageAsync(SessionPaths.RootOf(sessions, args.Session), args.Query, args.Cursor, args.PageSize, call.Cancellation));
     }
 
     internal sealed record ListArgs([property: JsonRequired] string Session, string Dir = "", bool IncludeExcluded = false);

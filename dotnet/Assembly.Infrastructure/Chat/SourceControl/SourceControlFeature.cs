@@ -12,14 +12,7 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
     public void Register(ICallRegistry calls)
     {
         calls.Read("git", "status", SourceControlJson.Default.Args, SourceControlJson.Default.GitStatus, async (args, call) =>
-            await new GitStatusReader(new GitCli()).ReadAsync(RootOf(args.Session), call.Cancellation));
-    }
-
-    private string RootOf(string sessionId)
-    {
-        var session = sessions.Get(sessionId) ?? throw new CallFailed("unknown session");
-        var root = sessions.Root(session) ?? throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");
-        return Directory.Exists(root) ? root : throw new CallFailed("this session's folder is made on its first message");
+            await new GitStatusReader(new GitCli()).ReadAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation));
     }
 
     internal sealed record Args([property: JsonRequired] string Session);

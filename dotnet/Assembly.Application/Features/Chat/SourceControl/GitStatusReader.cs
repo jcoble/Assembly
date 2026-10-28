@@ -5,10 +5,7 @@ namespace Assembly.Application.Features.Chat.SourceControl;
 /// <summary>Reads a project's status in one git call without changing the index.</summary>
 public sealed class GitStatusReader(IGit git)
 {
-    public async Task<GitStatus> ReadAsync(string root, CancellationToken cancellationToken)
-    {
-        var output = await git.RunAsync(root,
-            ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], cancellationToken);
-        return GitStatusPorcelain.Parse(output);
-    }
+    public Task<GitStatus> ReadAsync(string root, CancellationToken cancellationToken) =>
+        GitStatusPorcelain.ParseAsync(git.ReadAsync(root,
+            ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], null, cancellationToken));
 }

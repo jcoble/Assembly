@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Git;
 namespace Assembly.Infrastructure.Chat.Files;
 
 /// <summary>
@@ -43,7 +44,7 @@ public static class DirectoryListing
         var ignored = new HashSet<string>(StringComparer.Ordinal);
         if (paths.Count == 0)
             return ignored;
-        await foreach (var path in GitLines.ReadAsync(folder, ["check-ignore", "-z", "--stdin"], paths, cancellationToken))
+        await foreach (var path in new GitCli().ReadAsync(folder, ["check-ignore", "-z", "--stdin"], paths, cancellationToken))
             ignored.Add(path);
         return ignored;
     }

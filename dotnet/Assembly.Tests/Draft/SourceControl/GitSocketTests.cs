@@ -134,8 +134,13 @@ public sealed class GitSocketTests : IAsyncLifetime
         await GitAsync(root, "-c", "commit.gpgsign=false", "commit", "-m", "Initial commit");
     }
 
-    private static Task<string> GitAsync(string root, params string[] args) =>
-        new GitCli().RunAsync(root, args, CancellationToken.None);
+    private static async Task<string> GitAsync(string root, params string[] args)
+    {
+        var records = new List<string>();
+        await foreach (var record in new GitCli().ReadAsync(root, args, null, CancellationToken.None))
+            records.Add(record);
+        return string.Join('\0', records);
+    }
 
     private async Task<ClientWebSocket> OpenAsync()
     {
