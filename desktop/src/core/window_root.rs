@@ -1,7 +1,7 @@
 //! `WindowRoot` owns the window's content view (the kit's `Root` wraps it, for dialogs and sheets), and draws
 //! `NativeViews::placer` once over it, so native views are placed once a frame after everything has laid out. On top
 //! goes the fade from the old theme after a switch (theme/fade.rs). It puts the theme and faces Settings saved in
-//! force as they arrive and change.
+//! force from the start, and as they change.
 
 use gpui_kit::*;
 
@@ -23,11 +23,14 @@ impl WindowRoot {
                 root.follow_preferences(window, cx)
             })
         });
-        Self {
+        let mut root = Self {
             content: content.into(),
             theme: ThemeId::DEFAULT,
             _preferences,
-        }
+        };
+        // What arrived before the window was made.
+        root.follow_preferences(window, cx);
+        root
     }
 
     fn follow_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -49,3 +52,7 @@ impl Render for WindowRoot {
             .children(theme::fade::layer(cx))
     }
 }
+
+#[cfg(test)]
+#[path = "window_root_tests.rs"]
+mod tests;

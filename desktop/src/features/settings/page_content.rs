@@ -78,6 +78,15 @@ impl SettingsPage {
                     )
                 }),
         );
+        if let Some(failure) = Preferences::failure(cx) {
+            column = column.child(
+                div()
+                    .pt_2()
+                    .text_xs()
+                    .text_color(theme.danger)
+                    .child(failure),
+            );
+        }
         if id == "terminal" {
             column = column.child(note(
                 "The terminal isn't in this window yet. These are saved now and apply once it is.",

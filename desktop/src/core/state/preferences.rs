@@ -19,6 +19,10 @@ pub struct Preferences {
     _feed: Option<Task<()>>,
     /// The last save of each key, while it's being written. A newer one replaces it, so the newest value wins.
     saves: HashMap<&'static str, Task<()>>,
+    /// The values the backend has: its topic's, and each save it took. A failed save puts its key's back.
+    confirmed: HashMap<String, Value>,
+    /// Why the last edit wasn't saved, until the next one.
+    failure: Option<SharedString>,
 }
 
 struct GlobalPreferences(Entity<Preferences>);
@@ -32,6 +36,8 @@ impl Preferences {
             appearance: Appearance::default(),
             _feed: None,
             saves: HashMap::new(),
+            confirmed: HashMap::new(),
+            failure: None,
         });
         cx.set_global(GlobalPreferences(preferences));
     }
@@ -71,6 +77,11 @@ impl Preferences {
         }
     }
 
+    /// Why the last edit wasn't saved, while it's the last one.
+    pub fn failure(cx: &App) -> Option<SharedString> {
+        Self::try_global(cx).and_then(|preferences| preferences.read(cx).failure.clone())
+    }
+
     /// The editor's face, text size and line height, which the file view and the diff draw in.
     pub fn editor_text(cx: &App) -> (SharedString, Pixels, Pixels) {
         Self::read(cx, |appearance| {
@@ -82,32 +93,55 @@ impl Preferences {
         })
     }
 
-    /// Sets `key` to `value` here at once and saves it. A null resets it to its default.
+    /// Sets `key` to `value` here at once and saves it. With no socket the edit isn't made; a save the backend
+    /// doesn't take puts back the value it has. Either way the page says why.
     pub fn save(key: &'static str, value: Value, cx: &mut App) {
         let Some(preferences) = Self::try_global(cx) else {
             return;
         };
-        let call = SocketClient::try_global(cx).map(|socket| {
-            socket.read(cx).call::<Value>(
-                "preferences",
-                "set",
-                json!({ "key": key, "value": value }),
-                None,
-            )
-        });
+        let Some(socket) = SocketClient::try_global(cx) else {
+            preferences.update(cx, |preferences, cx| {
+                preferences.failure = Some("Not saved: the backend isn't running.".into());
+                cx.notify();
+            });
+            return;
+        };
+        let call = socket.read(cx).call::<Value>(
+            "preferences",
+            "set",
+            json!({ "key": key, "value": value }),
+            None,
+        );
         preferences.update(cx, |preferences, cx| {
-            preferences.appearance.set(key.into(), value);
-            if let Some(call) = call {
-                let save = cx.spawn(async move |_, _| {
-                    // Aborted (the socket dropped mid-save) shows nothing: the next change saves again.
-                    if let Outcome::Failed(failure) = call.await {
-                        eprintln!("settings: {key} wasn't saved: {}", failure.message);
-                    }
+            preferences.appearance.set(key.into(), value.clone());
+            preferences.failure = None;
+            let save = cx.spawn(async move |this, cx| {
+                let failure = match call.await {
+                    Outcome::Ok(_) => None,
+                    Outcome::Failed(failure) => Some(failure.message),
+                    Outcome::Aborted => Some("the connection to the backend closed".into()),
+                };
+                _ = this.update(cx, |preferences, cx| {
+                    preferences.saved(key, value, failure, cx)
                 });
-                preferences.saves.insert(key, save);
-            }
+            });
+            preferences.saves.insert(key, save);
             cx.notify();
         });
+    }
+
+    fn saved(&mut self, key: &str, value: Value, failure: Option<String>, cx: &mut Context<Self>) {
+        match failure {
+            None => {
+                self.confirmed.insert(key.into(), value);
+            }
+            Some(reason) => {
+                let confirmed = self.confirmed.get(key).cloned().unwrap_or_default();
+                self.appearance.set(key.into(), confirmed);
+                self.failure = Some(format!("Not saved: {reason}").into());
+            }
+        }
+        cx.notify();
     }
 
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
@@ -117,8 +151,13 @@ impl Preferences {
         };
         for (key, mut item) in items {
             let value = item.get_mut("value").map(Value::take).unwrap_or_default();
+            self.confirmed.insert(key.clone(), value.clone());
             self.appearance.set(key, value);
         }
         cx.notify();
     }
 }
+
+#[cfg(test)]
+#[path = "preferences_tests.rs"]
+mod tests;

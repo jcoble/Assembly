@@ -136,7 +136,7 @@ impl SettingsPage {
         }
     }
 
-    /// Moves a slider whose value changed from elsewhere: a reset, or the saved value arriving.
+    /// Moves a slider whose value changed from elsewhere: the saved value arriving, or put back after a failed save.
     fn follow_preferences(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for (setting, slider) in &self.sliders {
             let value = Preferences::read(cx, |appearance| appearance.number(setting));
