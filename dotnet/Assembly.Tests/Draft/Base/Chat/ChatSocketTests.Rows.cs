@@ -216,11 +216,38 @@ public sealed partial class ChatSocketTests
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "rows", "attachments", $$"""{"session":"{{session}}"}""");
-        Assert.Equal("""{"t":"result","id":1,"result":{"prompts":["both\nAttached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)","look\nAttached image: /a/1.png (one.png)"]}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"result","id":1,"result":{"prompts":["both\nAttached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)","look\nAttached image: /a/1.png (one.png)"],"more":false}}""", await ReadAsync(socket));
         await CallAsync(socket, 2, "rows", "attachments", $$"""{"session":"{{remote}}"}""");
-        Assert.Equal("""{"t":"result","id":2,"result":{"machine":"Workbox Test","prompts":[]}}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"result","id":2,"result":{"machine":"Workbox Test","prompts":[],"more":false}}""", await ReadAsync(socket));
         await CallAsync(socket, 3, "rows", "attachments", """{"session":"nope"}""");
         Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
+    }
+
+    // Pins: g0-shape#14
+    // The answer stays inside the socket's 4 MB cap: each prompt's end only, where its image lines are, and the newest
+    // AttachmentPrompts prompts, with more set when older ones were left out.
+    [Fact]
+    public async Task Rows_attachments_sends_each_prompts_end_and_at_most_the_newest_fifty()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        var line = "Attached image: /a/big.png (big.png)";
+        Row(session, RowKind.User, null, JsonSerializer.Serialize(new { text = new string('x', 20_000) + "\n" + line }));
+        for (var i = 0; i < RowsFeature.AttachmentPrompts; i++)
+            Row(session, RowKind.User, null, $$"""{"text":"Attached image: /a/{{i}}.png ({{i}}.png)"}""");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "attachments", $$"""{"session":"{{session}}"}""");
+        var answer = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
+        var prompts = answer.GetProperty("prompts").EnumerateArray().Select(prompt => prompt.GetString()!).ToList();
+        Assert.Equal(RowsFeature.AttachmentPrompts, prompts.Count);
+        Assert.Equal($"Attached image: /a/{RowsFeature.AttachmentPrompts - 1}.png ({RowsFeature.AttachmentPrompts - 1}.png)", prompts[0]);
+        Assert.True(answer.GetProperty("more").GetBoolean());
+
+        Row(session, RowKind.User, null, JsonSerializer.Serialize(new { text = new string('x', 20_000) + "\n" + line }));
+        await CallAsync(socket, 2, "rows", "attachments", $$"""{"session":"{{session}}"}""");
+        var newest = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result").GetProperty("prompts")[0].GetString()!;
+        Assert.Equal(RowsFeature.AttachmentTail, newest.Length);
+        Assert.EndsWith("\n" + line, newest);
     }
 
     // A page of an unknown session fails, as a tool call of an unknown session or item does.

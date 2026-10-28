@@ -51,4 +51,6 @@ first, each by the name it was attached with (`rows/attachments`, parity map 11d
 lines, from this machine's copy of the session's rows). A click reads the image by its file name in the store and opens
 it full size, as Chat's chips do; one that won't open says why. A remote session's images stay on its machine, so its
 rows don't open and a note names the machine. With nothing attached it says images added to the message box are listed
-there; a read that fails says why. It reads when Files touched does.
+there; a read that fails says why. It reads when Files touched does. To stay inside the socket's 4 MB answer, the read
+sends only the end of each prompt, where the lines are, and the newest 50 prompts; when it leaves older ones out, the tab
+says so.

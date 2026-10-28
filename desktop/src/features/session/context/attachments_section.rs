@@ -81,7 +81,13 @@ impl ContextPane {
             .when_some(remote.filter(|_| count.is_some()), |section, machine| {
                 section.child(note(
                     "attachments-note-remote",
-                    format!("These images are on {machine}, so they open there, not here.").into(),
+                    format!("These images are on {machine} and can't be opened here yet.").into(),
+                ))
+            })
+            .when(self.more && count.is_some(), |section| {
+                section.child(note(
+                    "attachments-note-more",
+                    "Only images from this session's newest 50 prompts are listed.".into(),
                 ))
             })
             .when_some(self.open_failed.clone(), |section, why| {
@@ -126,9 +132,10 @@ impl ContextPane {
     }
 }
 
-/// `rows/attachments`' answer as each image's (path, name), newest prompt first, and the machine that has them. Only a
+/// `rows/attachments`' answer as each image's (path, name), newest prompt first, the machine that has them, and whether
+/// older prompts were left out (RowsFeature.AttachmentPrompts). Only a
 /// prompt's trailing "Attached image:" lines name images, as Chat reads them.
-pub(super) fn attached(answer: &Value) -> (Listing<(String, String)>, Option<String>) {
+pub(super) fn attached(answer: &Value) -> (Listing<(String, String)>, Option<String>, bool) {
     let images = answer["prompts"]
         .as_array()
         .into_iter()
@@ -140,5 +147,6 @@ pub(super) fn attached(answer: &Value) -> (Listing<(String, String)>, Option<Str
     let machine = answer["machine"]
         .as_str()
         .filter(|machine| !machine.is_empty());
-    (Listing::Read(images), machine.map(String::from))
+    let more = answer["more"].as_bool().unwrap_or_default();
+    (Listing::Read(images), machine.map(String::from), more)
 }

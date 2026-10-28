@@ -39,6 +39,8 @@ pub struct ContextPane {
     attachments: Listing<(String, String)>,
     /// The machine that has a remote session's images, from the same read.
     machine: Option<String>,
+    /// The read left out older prompts' images.
+    more: bool,
     /// Why the last image clicked didn't open.
     open_failed: Option<String>,
     _selected: Subscription,
@@ -64,6 +66,7 @@ impl ContextPane {
             files: Listing::Reading,
             attachments: Listing::Reading,
             machine: None,
+            more: false,
             open_failed: None,
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.read(cx)),
             _read: None,
@@ -74,8 +77,13 @@ impl ContextPane {
     /// Reads the selected session's files and attachments, if the tab is shown. A hidden tab drops the last session's
     /// lists, so the frame before it's shown again never draws them.
     fn read(&mut self, cx: &mut Context<Self>) {
-        (self.files, self.attachments, self.machine, self.open_failed) =
-            (Listing::Reading, Listing::Reading, None, None);
+        (
+            self.files,
+            self.attachments,
+            self.machine,
+            self.more,
+            self.open_failed,
+        ) = (Listing::Reading, Listing::Reading, None, false, None);
         (self._read, self._open) = (None, None);
         cx.notify();
         if !self.active {
@@ -100,9 +108,9 @@ impl ContextPane {
             let attachments = attachments.await;
             pane.update(cx, |pane, cx| {
                 pane.files = files;
-                (pane.attachments, pane.machine) = match attachments {
+                (pane.attachments, pane.machine, pane.more) = match attachments {
                     Ok(answer) => attached(&answer),
-                    Err(error) => (Listing::Failed(error.reason()), None),
+                    Err(error) => (Listing::Failed(error.reason()), None, false),
                 };
                 cx.notify();
             })

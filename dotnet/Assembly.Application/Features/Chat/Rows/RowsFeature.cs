@@ -28,6 +28,13 @@ internal sealed class RowsFeature : IFeature
     /// <summary>The most bytes of a tool call's output, and of its diff, that <c>rows/tool</c> sends.</summary>
     public const int ToolCap = 1024 * 1024;
 
+    /// <summary>
+    /// The most prompts <c>rows/attachments</c> sends, and the characters of each one's end: its "Attached image:" lines
+    /// are last. Even escaped at 6 bytes a character that's under 2.5 MB, inside the socket's 4 MB answer.
+    /// </summary>
+    public const int AttachmentPrompts = 50;
+    public const int AttachmentTail = 8192;
+
     private readonly LiveHub _hub;
     private readonly RowStore _store;
     private readonly SessionStore _sessions;
@@ -90,7 +97,9 @@ internal sealed class RowsFeature : IFeature
         calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionAttachments, (args, call) =>
         {
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
-            return Task.FromResult(new SessionAttachments(session.Machine, _store.Attachments(args.Session, call.Cancellation)));
+            var prompts = _store.Attachments(args.Session, AttachmentPrompts + 1, AttachmentTail, call.Cancellation);
+            return Task.FromResult(new SessionAttachments(session.Machine, [.. prompts.Take(AttachmentPrompts)],
+                prompts.Count > AttachmentPrompts));
         });
     }
 

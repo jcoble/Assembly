@@ -268,6 +268,25 @@ fn a_session_with_no_images_says_where_they_come_from(cx: &mut TestAppContext) {
 
 // Pins: g0-shape#14
 #[gpui::test]
+fn a_session_with_older_images_left_out_says_so(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    let mut answer = one_prompt();
+    answer["more"] = json!(true);
+    shown_with(answer, &pane, &client, cx);
+    assert!(cx.debug_bounds("attachments-note-more").is_some());
+
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Ok(one_prompt()));
+    pick(Some("s2"), cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("attachments-note-more").is_none(),
+        "a session with none left out doesn't"
+    );
+}
+
+// Pins: g0-shape#14
+#[gpui::test]
 fn a_failed_attachments_read_says_why_and_leaves_the_files(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
     client.queue_answer(Ok(
