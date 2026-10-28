@@ -14,10 +14,11 @@ use serde_json::json;
 
 use super::entry::FileListing;
 use super::file_tree::{FileTree, Row};
+use super::file_view::FileView;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
-use crate::features::shell::default_layout::FILES;
+use crate::core::ui::pane_names::FILES;
 
 /// The design system's `tree` type: 15 px text on 26 px lines.
 pub const TREE_TEXT: Pixels = px(15.);
@@ -183,9 +184,12 @@ impl FilesPane {
                             .text_ellipsis()
                             .child(entry.name.clone()),
                     )
-                    .on_click(
-                        cx.listener(move |pane, _, _, cx| pane.clicked(path.clone(), folder, cx)),
-                    )
+                    .on_click(cx.listener(move |pane, _, window, cx| {
+                        pane.clicked(path.clone(), folder, cx);
+                        if let (false, Some(session)) = (folder, pane.session.clone()) {
+                            FileView::open(session, path.clone(), window, cx);
+                        }
+                    }))
                     .into_any_element()
             }
             Row::Loading { depth } => line(depth)

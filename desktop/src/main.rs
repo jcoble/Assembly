@@ -41,6 +41,7 @@ fn main() {
             features::sessions::sessions_pane::SessionsPane::register(cx);
             features::files::files_pane::FilesPane::register(cx);
             features::files::search_pane::SearchPane::register(cx);
+            features::files::file_view::FileView::register(cx);
             features::session::context::context_pane::ContextPane::register(cx);
             features::sessions::history::history_pane::HistoryPane::register(cx);
             features::source_control::source_control_pane::SourceControlPane::register(cx);
