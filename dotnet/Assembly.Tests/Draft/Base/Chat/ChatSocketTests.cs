@@ -42,6 +42,9 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
     private AttachmentStore _attachments = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
+    private Uri _bulkAddress = null!;
+    // Set once a socket's close has run every close hook, the features' first.
+    private readonly TaskCompletionSource<string> _socketClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public async Task InitializeAsync()
     {
@@ -65,6 +68,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         new PreferencesFeature(_db).Register(calls);
         _attachments = new AttachmentStore(Path.Combine(_home.FullName, "attachments"));
         new AttachmentsFeature(_sessions, machines, _attachments, Staging).Register(calls);
+        calls.Closed(connection => _socketClosed.TrySetResult(connection));
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -73,9 +77,13 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         var endpoint = new SocketEndpoint("chat-token", calls, "test-machine", TimeProvider.System);
         _app.Map("/socket", endpoint.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
+        var bulk = new SocketEndpoint("chat-token", calls, "test-machine", TimeProvider.System, bulk: true);
+        _app.Map("/socket/bulk", bulk.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _address = new Uri($"ws://{http.Authority}/socket");
+        _bulkAddress = new Uri($"ws://{http.Authority}/socket/bulk");
     }
 
     public async Task DisposeAsync()
@@ -91,10 +99,15 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
 
     private string Staging => Path.Combine(_home.FullName, "staging", "attachments");
 
-    private async Task<ClientWebSocket> OpenAsync()
+    private Task<ClientWebSocket> OpenAsync() => ConnectAsync(_address);
+
+    // The socket for the large calls: attachments, rows/page and rows/tool.
+    private Task<ClientWebSocket> OpenBulkAsync() => ConnectAsync(_bulkAddress);
+
+    private static async Task<ClientWebSocket> ConnectAsync(Uri address)
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(_address, CancellationToken.None);
+        await socket.ConnectAsync(address, CancellationToken.None);
         await SendAsync(socket, """{"t":"hello","token":"chat-token","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;

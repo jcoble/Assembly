@@ -46,6 +46,14 @@ shown, and doesn't follow the live rows, as the old app's didn't, so a remote se
 copied here can list too few until the tab is shown again. With no session picked it says to pick one; a read that
 fails or is cancelled says why.
 
+g0-shape#14 Under Files touched, the Context tab lists the images the selected session's prompts carried, newest prompt
+first, each by the name it was attached with (`rows/attachments`, parity map 11d: each prompt's "Attached image:"
+lines, from this machine's copy of the session's rows). A click reads the image by its file name in the store and opens
+it full size, as Chat's chips do; one that won't open says why. A remote session's images stay on its machine, so its
+rows don't open and a note names the machine. With nothing attached it says images added to the message box are listed
+there; a read that fails says why. It reads when Files touched does. To stay inside the socket's 4 MB answer, the read
+sends only the end of each prompt, where the lines are, and the newest 50 prompts; when it leaves older ones out, the tab
+says so.
 g0-shape#15 The drawer's History tab lists the sessions the sessions list has loaded, by project (its folder or repo,
 and its machine when it isn't this computer), the project with the newest session first (parity map 12a). Each
 project starts folded, with its count; a click opens or folds it. Open, it lists its sessions newest first, 25 at a

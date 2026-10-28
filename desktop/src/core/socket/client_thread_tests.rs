@@ -390,3 +390,24 @@ fn calls_while_disconnected_do_not_postpone_the_next_try() {
     assert_eq!(soon, Some(ConnectionState::Connecting));
     assert_eq!(client.state(), connected());
 }
+
+// The bulk socket's client is the same client on `/socket/bulk`: it reopens there after a drop, as the main one does.
+#[test]
+fn a_client_on_the_bulk_socket_reopens_it_after_a_drop() {
+    let backend = backend();
+    let mut client = Client::start_on(endpoint(backend.port), "/socket/bulk");
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    drop(client.call("drop", None));
+    assert_eq!(client.state(), ConnectionState::Connecting);
+    assert_eq!(client.state(), connected());
+    let (_, echo) = client.call("echo", None);
+    assert!(matches!(outcome(echo), Outcome::Ok(_)));
+    let paths: Vec<(String, Value)> = backend.on.try_iter().collect();
+    let hellos: Vec<&str> = paths
+        .iter()
+        .filter(|(_, frame)| frame["t"] == "hello")
+        .map(|(path, _)| path.as_str())
+        .collect();
+    assert_eq!(hellos, ["/socket/bulk", "/socket/bulk"]);
+}

@@ -13,7 +13,7 @@ namespace Assembly.Infrastructure.Http;
 /// <summary>
 /// The API on 127.0.0.1: the webview's, on the desktop, and the desktop's, on a remote machine. Port 0 picks a free port
 /// (for tests). <paramref name="more"/> maps a host's own routes after the shared ones. <paramref name="dropSockets"/>
-/// ends every open <c>/socket</c>, for the debug control's drop.
+/// ends every open <c>/socket</c> and <c>/socket/bulk</c>, for the debug control's drop.
 /// </summary>
 public static class ApiServer
 {
@@ -57,9 +57,17 @@ public static class ApiServer
             foreach (var feature in services.Features ?? [])
                 feature.Register(calls);
             var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
+            var bulk = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, bulk: true);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
-            dropSockets = socket.DropAll;
+            app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
+            dropSockets = () =>
+            {
+                socket.DropAll();
+                bulk.DropAll();
+            };
+            // Each is an exact route: /socket/other reaches neither.
             app.Map("/socket", socket.HandleAsync);
+            app.Map("/socket/bulk", bulk.HandleAsync);
         }
         more?.Invoke(app);
         return app;

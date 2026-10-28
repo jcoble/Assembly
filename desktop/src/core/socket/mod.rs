@@ -7,6 +7,8 @@
 //! channel of `Event`s: the window's requests, each frame the reader thread read, and the socket
 //! closing. When an open socket drops it tries once at once; if that fails it tries again after a short wait that
 //! doubles up to 5 s, or at once on `reconnect`, which the launcher sends on the backend's ready line.
+//!
+//! The same client, a second time, holds `/socket/bulk`, which alone carries the large calls (`client.rs`).
 
 pub mod call_failure;
 pub mod client;
