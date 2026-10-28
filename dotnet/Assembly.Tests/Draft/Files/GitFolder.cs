@@ -17,7 +17,7 @@ internal sealed class GitFolder : IDisposable
     public static void Fill(string root, params string[] paths)
     {
         Directory.CreateDirectory(root);
-        Git(root, "init", "--quiet");
+        Run(root, "init", "--quiet");
         foreach (var path in paths)
         {
             var full = Path.Combine(root, path);
@@ -33,7 +33,14 @@ internal sealed class GitFolder : IDisposable
 
     public void Dispose() => Directory.Delete(Root, recursive: true);
 
-    private static void Git(string root, params string[] arguments)
+    /// <summary>Commits everything in the repo at <paramref name="root"/>.</summary>
+    public static void Commit(string root)
+    {
+        Run(root, "add", "-A");
+        Run(root, "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "start");
+    }
+
+    public static void Run(string root, params string[] arguments)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false };
         foreach (var argument in arguments)

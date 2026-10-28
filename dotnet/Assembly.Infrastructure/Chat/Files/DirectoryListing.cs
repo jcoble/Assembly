@@ -27,22 +27,23 @@ public static class DirectoryListing
             : StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name) is var order and not 0 ? order : string.CompareOrdinal(a.Name, b.Name));
         // Shown with the excluded ones, only the first Limit need asking about; without them, all may.
         var asked = includeExcluded ? found.Take(Limit).ToList() : found;
-        var ignored = await IgnoredAsync(root, [.. asked.Select(entry => prefix + entry.Name + (entry.IsDirectory ? "/" : ""))], cancellationToken);
+        // Asked from the folder itself, by name, so a folder inside a submodule is asked of the submodule's own git.
+        var ignored = await IgnoredAsync(folder, [.. asked.Select(entry => entry.Name + (entry.IsDirectory ? "/" : ""))], cancellationToken);
         var entries = asked
             .Select(entry => new FileEntry(prefix + entry.Name, entry.Name, entry.IsDirectory,
-                (prefix.Length == 0 && entry.Name == ".git") || ignored.Contains(prefix + entry.Name + (entry.IsDirectory ? "/" : ""))))
+                entry.Name == ".git" || ignored.Contains(entry.Name + (entry.IsDirectory ? "/" : ""))))
             .Where(entry => includeExcluded || !entry.Excluded)
             .ToList();
         var shown = includeExcluded ? found.Count : entries.Count;
         return new FileListing(entries.Take(Limit).ToList(), shown > Limit);
     }
 
-    private static async Task<HashSet<string>> IgnoredAsync(string root, IReadOnlyList<string> paths, CancellationToken cancellationToken)
+    private static async Task<HashSet<string>> IgnoredAsync(string folder, IReadOnlyList<string> paths, CancellationToken cancellationToken)
     {
         var ignored = new HashSet<string>(StringComparer.Ordinal);
         if (paths.Count == 0)
             return ignored;
-        await foreach (var path in GitLines.ReadAsync(root, ["check-ignore", "-z", "--stdin"], paths, cancellationToken))
+        await foreach (var path in GitLines.ReadAsync(folder, ["check-ignore", "-z", "--stdin"], paths, cancellationToken))
             ignored.Add(path);
         return ignored;
     }

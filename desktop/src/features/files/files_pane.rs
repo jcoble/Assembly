@@ -81,7 +81,7 @@ impl FilesPane {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        if self.shown && !self.started && self.session.is_some() {
+        if self.shown && self.session.is_some() && (!self.started || self.tree.root_failed()) {
             self.started = true;
             let root = self.tree.start();
             self.load(root.to_string(), cx);
@@ -227,7 +227,7 @@ impl BasePanel for FilesPane {
         false
     }
 
-    /// Shown, it loads the session's root if it hasn't yet; hidden, it keeps what it has.
+    /// Shown, it loads the session's root if it hasn't yet, or if that failed; hidden, it keeps what it has.
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.shown = active;
         self.start(cx);

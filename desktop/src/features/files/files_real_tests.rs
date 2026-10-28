@@ -25,7 +25,10 @@ use crate::core::state::selected_session::SelectedSession;
 
 /// A backend with one session selected, whose folder is a git repo holding `files` (a path ending in '/' is a folder)
 /// and a `.gitignore` that ignores `target/`.
-async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> Option<RealBackend> {
+async fn selected_session(
+    cx: &mut TestAppContext,
+    files: &[&str],
+) -> Option<(RealBackend, String)> {
     let (backend, repo) = backend_with_stub()?;
     cx.executor().allow_parking();
     cx.update(gpui_kit::init);
@@ -65,7 +68,7 @@ async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> Option<Rea
     cx.update(|cx| {
         SelectedSession::global(cx).update(cx, |selected, cx| selected.select(Some(id), cx))
     });
-    Some(backend)
+    Some((backend, root))
 }
 
 fn fill(root: &Path, files: &[&str]) {
@@ -134,7 +137,7 @@ fn shape(pane: &FilesPane) -> Vec<String> {
 // Pins: files#1, files#2, files#3, files#5
 #[gpui::test]
 async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut TestAppContext) {
-    let Some(_backend) = selected_session(
+    let Some((_backend, _)) = selected_session(
         cx,
         &["src/main.rs", "src/lib/", "target/out.bin", "readme.md"],
     )
@@ -179,7 +182,7 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
 // Pins: files#7, files#8
 #[gpui::test]
 async fn search_finds_names_and_a_newer_search_replaces_the_older(cx: &mut TestAppContext) {
-    let Some(_backend) = selected_session(
+    let Some((_backend, _)) = selected_session(
         cx,
         &["src/main.rs", "src/lib.rs", "target/main.o", "docs/Main.md"],
     )
@@ -202,5 +205,36 @@ async fn search_finds_names_and_a_newer_search_replaces_the_older(cx: &mut TestA
         found.sort();
         assert_eq!(found, ["docs/Main.md", "src/main.rs"]);
         assert!(pane.error.is_none());
+    });
+}
+
+// Pins: files#6
+#[gpui::test]
+async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut TestAppContext) {
+    let Some((_backend, root)) = selected_session(cx, &["readme.md"]).await else {
+        return;
+    };
+    // As before the session's first message: no folder yet.
+    let away = format!("{root}.away");
+    fs::rename(&root, &away).unwrap();
+    let (pane, cx) = cx.add_window_view(|_, cx| FilesPane::new(cx));
+    pane.update_in(cx, |pane, window, cx| {
+        BasePanel::set_active(pane, true, window, cx)
+    });
+    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(
+            shape(pane),
+            ["! this session's folder is made on its first message"]
+        );
+    });
+    fs::rename(&away, &root).unwrap();
+    pane.update_in(cx, |pane, window, cx| {
+        BasePanel::set_active(pane, false, window, cx);
+        BasePanel::set_active(pane, true, window, cx);
+    });
+    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    pane.read_with(cx, |pane, _| {
+        assert_eq!(shape(pane), [".git/ -", ".gitignore", "readme.md"])
     });
 }

@@ -75,6 +75,11 @@ impl FileTree {
         }
     }
 
+    /// Whether the root's load failed, so showing the tree again retries it (its folder may exist by now).
+    pub fn root_failed(&self) -> bool {
+        self.failed.contains_key("")
+    }
+
     /// The lines to draw: the root's entries, each open folder's under it.
     pub fn rows(&self) -> Vec<Row<'_>> {
         let mut rows = Vec::new();

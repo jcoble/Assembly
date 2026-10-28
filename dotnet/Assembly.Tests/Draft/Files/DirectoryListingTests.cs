@@ -47,6 +47,18 @@ public sealed class DirectoryListingTests
         Assert.Equal(["bin/app.dll (excluded)"], listing.Entries.Select(Shape));
     }
 
+    // Pins: files#1
+    [Fact]
+    public async Task A_checked_out_submodule_s_folder_lists()
+    {
+        using var inner = new GitFolder("lib.rs");
+        GitFolder.Commit(inner.Root);
+        using var folder = new GitFolder(Tree);
+        GitFolder.Run(folder.Root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", inner.Root, "sub");
+        var listing = await DirectoryListing.ListAsync(folder.Root, "sub", includeExcluded: true, CancellationToken.None);
+        Assert.Equal(["sub/.git (excluded)", "sub/lib.rs"], listing.Entries.Select(Shape));
+    }
+
     // Pins: files#10
     [Fact]
     public async Task A_link_is_listed_but_never_as_a_folder()
