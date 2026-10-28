@@ -87,6 +87,25 @@ impl Sessions {
         self.older_error.as_deref()
     }
 
+    /// Whether there are older sessions than those loaded.
+    pub fn has_older(&self) -> bool {
+        self.older.is_some()
+    }
+
+    /// A list holding `items` that follows nothing, for a view's tests.
+    #[cfg(test)]
+    pub fn start_holding(items: Vec<SessionItem>, cx: &mut App) {
+        let state = cx.new(|_| Sessions {
+            items,
+            older: None,
+            seeded: true,
+            _feed: Task::ready(()),
+            loading_older: None,
+            older_error: None,
+        });
+        cx.set_global(GlobalSessions(state));
+    }
+
     /// Loads the next older page, once at a time; nothing when there are no more.
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
         let Some((before, before_id)) = &self.older else {

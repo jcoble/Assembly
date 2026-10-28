@@ -45,3 +45,12 @@ failed call touched nothing; a call that changed several files lists each with i
 shown, and doesn't follow the live rows, as the old app's didn't, so a remote session picked before its rows are
 copied here can list too few until the tab is shown again. With no session picked it says to pick one; a read that
 fails or is cancelled says why.
+
+g0-shape#15 The drawer's History tab lists the sessions the sessions list has loaded, by project (its folder or repo,
+and its machine when it isn't this computer), the project with the newest session first (parity map 12a). Each
+project starts folded, with its count; a click opens or folds it. Open, it lists its sessions newest first, 25 at a
+time, with a "Show 25 more" line while more are loaded, each row with its title, agent and age ("now", "5m", "3h",
+"2d", "1w", "1mo", "1y" by the backend clock, ticking only while the tab is shown). A click on a session opens it, as
+the sessions column does. A line at the end loads the list's next older page while there is one. With no sessions it
+says they appear here; before the backend starts it says it's waiting. Every session has its own checkout, so there's
+no worktree level; sessions found in the agents' own folders, and resuming them, are parity map 12b to 12d.
