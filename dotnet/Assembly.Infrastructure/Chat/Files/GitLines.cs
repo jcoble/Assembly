@@ -26,6 +26,8 @@ internal static class GitLines
         };
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
+        // English messages, so a caller can tell one failure from another.
+        start.Environment["LC_ALL"] = "C";
         using var git = Process.Start(start) ?? throw new InvalidOperationException("Could not start git.");
         // Killing it ends its output, so a read waiting on it returns and the token's throw below runs.
         using var stop = cancellationToken.Register(() => Kill(git));

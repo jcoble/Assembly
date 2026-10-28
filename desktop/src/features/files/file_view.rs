@@ -75,8 +75,7 @@ impl FileView {
 
     pub(super) fn load_part(&mut self, offset: u64, cx: &mut Context<Self>) {
         let Some(socket) = SocketClient::try_global(cx) else {
-            self.text
-                .loaded(offset, Err("The backend isn't running.".into()));
+            self.text.failed("The backend isn't running.".into());
             return;
         };
         let args = json!({ "session": self.session, "path": self.path, "offset": offset });
@@ -191,6 +190,8 @@ impl Render for FileView {
             Some(note("This file isn't text, so it isn't shown.".into()).text_color(muted))
         } else if self.text.lines.is_empty() && self.text.is_loading() {
             Some(note("Loading…".into()).text_color(muted))
+        } else if self.text.lines.is_empty() && self.started {
+            Some(note("This file is empty.".into()).text_color(muted))
         } else {
             None
         };
@@ -214,8 +215,9 @@ impl Render for FileView {
                         "file-lines",
                         self.text.lines.len(),
                         cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
-                            // A one-row range is the list measuring its widest row, not what's shown.
-                            if range.len() > 1
+                            // A one-row range is the list measuring its widest row, not what's shown, unless one
+                            // row is all there is.
+                            if (range.len() > 1 || view.text.lines.len() == 1)
                                 && let Some(offset) = view.text.more(range.end)
                             {
                                 view.load_part(offset, cx);

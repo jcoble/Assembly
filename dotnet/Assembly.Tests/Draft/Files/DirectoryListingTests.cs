@@ -84,6 +84,16 @@ public sealed class DirectoryListingTests
         Assert.Contains("up/", listing.Entries.Select(Shape));
     }
 
+    // Pins: files#3
+    [Fact]
+    public async Task A_git_failure_other_than_no_repo_still_fails_the_listing()
+    {
+        using var folder = new GitFolder(Tree);
+        File.WriteAllText(Path.Combine(folder.Root, ".git", "config"), "[broken");
+        await Assert.ThrowsAsync<Application.Common.Calls.CallFailed>(() =>
+            DirectoryListing.ListAsync(folder.Root, "", includeExcluded: false, CancellationToken.None));
+    }
+
     // Pins: files#17
     [Fact]
     public async Task A_folder_that_is_not_a_git_repo_lists_with_nothing_excluded()

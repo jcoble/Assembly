@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Unicode;
@@ -30,9 +31,11 @@ public static class FileRead
         var file = new FileInfo(full);
         if (!file.Exists)
             throw new CallFailed("that file isn't there");
-        if (file.Length > MaxBytes)
-            throw new CallFailed($"that file is {file.Length / (1024.0 * 1024):0.#} MiB, more than the {MaxBytes / (1024 * 1024)} MiB this view shows");
-        var bytes = await File.ReadAllBytesAsync(full, cancellationToken);
+        var bytes = file.Length > MaxBytes ? null : await File.ReadAllBytesAsync(full, cancellationToken);
+        // Checked again after the read, for a file that grew past the limit in between.
+        if (bytes is null || bytes.Length > MaxBytes)
+            throw new CallFailed(string.Create(CultureInfo.InvariantCulture,
+                $"that file is {Math.Max(file.Length, bytes?.Length ?? 0) / (1024.0 * 1024):0.0#} MiB, more than the {MaxBytes / (1024 * 1024)} MiB this view shows"));
         if (offset < 0 || offset > bytes.Length)
             throw new CallFailed("the offset is outside the file");
         var revision = Convert.ToHexStringLower(SHA256.HashData(bytes));

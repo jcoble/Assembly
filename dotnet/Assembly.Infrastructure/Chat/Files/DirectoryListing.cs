@@ -51,7 +51,7 @@ public static class DirectoryListing
             await foreach (var path in GitLines.ReadAsync(folder, ["check-ignore", "-z", "--stdin"], paths, cancellationToken))
                 ignored.Add(path);
         }
-        catch (CallFailed)
+        catch (CallFailed failed) when (failed.Message.Contains("not a git repository", StringComparison.Ordinal))
         {
             // A folder git can't answer for (it isn't a repo) has nothing ignored; the listing still shows.
             ignored.Clear();

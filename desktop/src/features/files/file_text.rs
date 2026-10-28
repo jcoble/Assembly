@@ -67,7 +67,7 @@ impl FileText {
                 return Some(0);
             }
             Err(error) => {
-                self.error = Some(error);
+                self.failed(error);
                 return None;
             }
         };
@@ -87,20 +87,31 @@ impl FileText {
         }
         let ends_line = chunk.content.ends_with('\n');
         let body = chunk.content.strip_suffix('\n').unwrap_or(&chunk.content);
-        for (ix, line) in body.split('\n').enumerate() {
-            let line = line.strip_suffix('\r').unwrap_or(line);
+        let last_part = body.split('\n').count() - 1;
+        for (ix, part) in body.split('\n').enumerate() {
             if ix == 0 && self.open_line {
-                self.lines.last_mut().expect("an open line").push_str(line);
+                self.lines.last_mut().expect("an open line").push_str(part);
             } else {
-                self.lines.push(line.to_string());
+                self.lines.push(part.to_string());
             }
             let last = self.lines.len() - 1;
+            // A line ended by "\r\n" drops the "\r", once its "\n" has come.
+            if (ix < last_part || ends_line) && self.lines[last].ends_with('\r') {
+                self.lines[last].pop();
+            }
             if self.lines[last].len() > self.lines[self.widest].len() {
                 self.widest = last;
             }
         }
         self.open_line = !ends_line;
         None
+    }
+
+    /// Shows `error` and asks for nothing more.
+    pub fn failed(&mut self, error: String) {
+        self.error = Some(error);
+        self.loading = None;
+        self.next = None;
     }
 
     fn start_over(&mut self) -> u64 {

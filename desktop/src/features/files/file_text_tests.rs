@@ -121,3 +121,28 @@ fn a_crlf_file_shows_its_lines_without_the_carriage_return_and_knows_its_widest_
     assert_eq!(text.lines, ["a", "longest", "bb"]);
     assert_eq!(text.widest, 1);
 }
+
+// Pins: files#12
+#[test]
+fn after_a_failure_that_is_shown_nothing_more_is_asked_for() {
+    let mut text = FileText::default();
+    text.start();
+    text.loaded(0, chunk("a\n", "r1", Some(2)));
+    text.failed("The backend isn't running.".into());
+    assert_eq!(text.more(0), None);
+    assert!(!text.is_loading());
+}
+
+// Pins: files#11
+#[test]
+fn a_crlf_split_between_parts_is_dropped_but_a_lone_carriage_return_at_a_part_end_is_kept() {
+    let mut text = FileText::default();
+    text.start();
+    text.loaded(0, chunk("a\r", "r1", Some(2)));
+    text.more(0);
+    text.loaded(2, chunk("\nb\r", "r1", Some(5)));
+    assert_eq!(text.lines, ["a", "b\r"]);
+    text.more(0);
+    text.loaded(5, chunk("c", "r1", None));
+    assert_eq!(text.lines, ["a", "b\rc"]);
+}
