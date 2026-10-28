@@ -1,3 +1,5 @@
+using Assembly.Application.Features.Workflows;
+using Assembly.Infrastructure.Workflows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
@@ -38,6 +40,10 @@ public static class ServeRun
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var topics = new Topics();
         using var db = AppDatabase.Open(options.Database, TimeProvider.System, topics);
+        WorkflowSchema.Open(db);
+        var boardQueries = new WorkflowQueries(db);
+        var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
+        boardTransitions.Recover();
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts);
         using var hub = new LiveHub(store);
@@ -53,10 +59,12 @@ public static class ServeRun
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
+        await using var board = new BoardTools(sessionStore, machines, boardTransitions, boardQueries, CancellationToken.None);
+        var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync);
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics), options.Port, out _,
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [workflowCalls], board), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

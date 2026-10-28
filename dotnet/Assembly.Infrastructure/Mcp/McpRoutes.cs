@@ -12,7 +12,7 @@ namespace Assembly.Infrastructure.Mcp;
 /// request carries a session's own token (<see cref="SessionTokens.ServersFor"/>), not the API's, and the tools act
 /// for that session. A notification gets 202 and no body.
 /// </summary>
-internal sealed class McpRoutes(HelperSessions helpers)
+internal sealed class McpRoutes(HelperSessions helpers, BoardTools? board = null)
 {
     private const string ProtocolVersion = "2025-06-18";
 
@@ -61,11 +61,31 @@ internal sealed class McpRoutes(HelperSessions helpers)
                 await ResultAsync(context, id, _ => { });
                 return;
             case "tools/list":
-                await ResultAsync(context, id, helpers.Tools.WriteTools);
+                await ResultAsync(context, id, json =>
+                {
+                    using var bytes = new MemoryStream();
+                    using (var writer = new Utf8JsonWriter(bytes))
+                    {
+                        writer.WriteStartObject();
+                        helpers.Tools.WriteTools(writer);
+                        writer.WriteEndObject();
+                    }
+                    using var existing = JsonDocument.Parse(bytes.ToArray());
+                    json.WriteStartArray("tools");
+                    foreach (var tool in existing.RootElement.GetProperty("tools").EnumerateArray()) tool.WriteTo(json);
+                    board?.WriteTool(json);
+                    json.WriteEndArray();
+                });
                 return;
             case "tools/call" when parameters.ValueKind == JsonValueKind.Object && JsonReply.String(parameters, "name") is { } name:
                 var arguments = parameters.TryGetProperty("arguments", out var args) ? args : default;
-                var result = await helpers.Tools.CallAsync(sessionId, name, arguments, context.RequestAborted);
+                ToolResult result;
+                if (name == "board_update" && board is not null)
+                {
+                    var reported = board.Call(sessionId, arguments);
+                    result = new ToolResult(reported.Text, reported.IsError);
+                }
+                else result = await helpers.Tools.CallAsync(sessionId, name, arguments, context.RequestAborted);
                 await ResultAsync(context, id, json =>
                 {
                     json.WriteStartArray("content");
