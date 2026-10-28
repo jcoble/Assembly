@@ -46,6 +46,17 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         {
             return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken);
         }
+        catch (HandedOver)
+        {
+            // The late answer's background work has this place and gives it back.
+            throw;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A stop never waits on the adapter's gate, which another session's launch may hold.
+            work.Start("release " + sessionId, _ => adapter.ReleaseAsync(running));
+            throw;
+        }
         catch
         {
             await adapter.ReleaseAsync(running);
@@ -128,8 +139,9 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     }
 
     // Neither adapter honours a request's cancel, so a session/new or session/resume goes out on a token the cancel
-    // doesn't cut. A cancel after it went out ends the open at once; background work holds a place on the adapter,
-    // waits for the late answer and closes the session the agent opened, so the adapter isn't shut down under it.
+    // doesn't cut. A cancel after it went out ends the open at once; background work takes over the open's place on
+    // the adapter, waits for the late answer and closes the session the agent opened, so the adapter isn't shut down
+    // under it, and then gives the place back.
     private async Task<T> AnsweredAsync<T>(
         SharedAdapter adapter, RunningAdapter running, string sessionId, Task<T> opening, Func<T, string> acpSessionId,
         CancellationToken cancellationToken, bool resume = false)
@@ -140,7 +152,6 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await adapter.HoldAsync(running);
             var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             if (resume)
                 _lateCloses[sessionId] = closed.Task;
@@ -170,9 +181,12 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
                     }
                 }
             });
-            throw;
+            throw new HandedOver(cancellationToken);
         }
     }
+
+    // A stopped open whose place on the adapter the late answer's background work now has.
+    private sealed class HandedOver(CancellationToken token) : OperationCanceledException(token);
 
     private static async Task CloseQuietlyAsync(SharedAdapter adapter, RunningAdapter running, string acpSessionId)
     {
