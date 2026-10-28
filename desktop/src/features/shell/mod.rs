@@ -2,7 +2,6 @@
 //! with the top bar above and the utility strip below. Replaces mac-command-bar's ShellFrame, frame.ts and the frame
 //! markup in routes/+page.svelte. Panes are empty placeholders until the lanes that own them register real ones.
 
-pub mod center_panes;
 pub mod default_layout;
 pub mod frame;
 pub mod layout_store;
