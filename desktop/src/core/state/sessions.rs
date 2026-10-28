@@ -92,12 +92,12 @@ impl Sessions {
         self.older.is_some()
     }
 
-    /// A list holding `items` that follows nothing, for a view's tests.
+    /// A list holding `items`, with older ones past them when `older`, that follows nothing, for a view's tests.
     #[cfg(test)]
-    pub fn start_holding(items: Vec<SessionItem>, cx: &mut App) {
+    pub fn start_holding(items: Vec<SessionItem>, older: bool, cx: &mut App) {
         let state = cx.new(|_| Sessions {
             items,
-            older: None,
+            older: older.then(|| (0, String::new())),
             seeded: true,
             _feed: Task::ready(()),
             loading_older: None,

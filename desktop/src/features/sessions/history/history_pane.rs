@@ -23,7 +23,6 @@ use crate::core::state::sessions::{GlobalSessions, Sessions};
 const HISTORY: &str = "History";
 /// How many of a project's sessions show at first, and how many more each "Show more" adds, as the old tab did.
 const WINDOW: usize = 25;
-const MINUTE: i64 = 60_000;
 
 type Key = (Option<String>, String);
 
@@ -35,7 +34,9 @@ pub struct HistoryPane {
     open: HashSet<Key>,
     /// How many of a project's sessions show, past the first `WINDOW`.
     shown: HashMap<Key, usize>,
-    /// The backend clock's last tick (Unix ms), once one has come.
+    /// The kit shows this tab; only then is the clock held.
+    active: bool,
+    /// The backend clock's last tick (Unix ms), once one has come while the tab is shown.
     now: Option<i64>,
     /// The clock and its subscription, while the tab is shown.
     clock: Option<(Entity<BackendClock>, Subscription)>,
@@ -61,6 +62,7 @@ impl HistoryPane {
             sessions: None,
             open: HashSet::new(),
             shown: HashMap::new(),
+            active: false,
             now: None,
             clock: None,
             _heard: heard,
@@ -77,16 +79,28 @@ impl HistoryPane {
             .sessions
             .as_ref()
             .map(|sessions| cx.observe(sessions, |_, _, cx| cx.notify()));
+        self.hold_clock(cx);
         cx.notify();
     }
 
-    /// A clock tick: the ages redraw only when the minute changes, since none says less.
-    pub(super) fn tick(&mut self, now: i64, cx: &mut Context<Self>) {
-        let minute = |now: Option<i64>| now.map(|now| now / MINUTE);
-        if minute(self.now) != minute(Some(now)) {
-            cx.notify();
+    /// Holds the backend clock while the tab is shown and the socket client has started, whichever comes last.
+    fn hold_clock(&mut self, cx: &mut Context<Self>) {
+        if !self.active || self.clock.is_some() || SocketClient::try_global(cx).is_none() {
+            return;
         }
+        let clock = cx.new(|cx| {
+            let mut clock = BackendClock::new();
+            clock.hold(cx);
+            clock
+        });
+        let heard = cx.subscribe(&clock, |pane, _, tick: &Tick, cx| pane.tick(tick.now, cx));
+        self.clock = Some((clock, heard));
+    }
+
+    /// A clock tick redraws the ages: each steps at its own session's minute, so any second can change one.
+    pub(super) fn tick(&mut self, now: i64, cx: &mut Context<Self>) {
         self.now = Some(now);
+        cx.notify();
     }
 
     fn toggle(&mut self, key: Key, cx: &mut Context<Self>) {
@@ -127,19 +141,15 @@ impl BasePanel for HistoryPane {
         false
     }
 
-    /// Holds the backend clock while the tab is shown, so nothing ticks while it's hidden.
+    /// Holds the backend clock while the tab is shown, so nothing ticks while it's hidden. Hidden, it drops the last
+    /// tick too, so a tab shown again never draws ages from when it was hidden.
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
-        self.clock = None;
-        if !active || SocketClient::try_global(cx).is_none() {
+        self.active = active;
+        if !active {
+            (self.clock, self.now) = (None, None);
             return;
         }
-        let clock = cx.new(|cx| {
-            let mut clock = BackendClock::new();
-            clock.hold(cx);
-            clock
-        });
-        let heard = cx.subscribe(&clock, |pane, _, tick: &Tick, cx| pane.tick(tick.now, cx));
-        self.clock = Some((clock, heard));
+        self.hold_clock(cx);
     }
 }
 
@@ -240,7 +250,7 @@ impl Render for HistoryPane {
                     format!("history-age-{id}"),
                     selected.as_deref() == Some(id.as_str()),
                 );
-                let pick = id.clone();
+                let (pick, title_id) = (id.clone(), format!("history-title-{id}"));
                 lines.push(
                     h_flex()
                         .id(SharedString::from(row.clone()))
@@ -258,24 +268,34 @@ impl Render for HistoryPane {
                             SelectedSession::global(cx)
                                 .update(cx, |selected, cx| selected.select(Some(id), cx));
                         })
-                        .child(div().flex_1().min_w_0().truncate().child(item.title()))
+                        .child(
+                            div()
+                                .debug_selector(move || title_id)
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(item.title()),
+                        )
                         .child(
                             div()
                                 .flex_none()
                                 .text_color(muted)
                                 .child(item.agent.clone()),
                         )
-                        .when_some(self.now, |line, now| {
-                            line.child(
-                                div()
-                                    .debug_selector(move || age_id)
-                                    .flex_none()
-                                    .w(px(28.))
-                                    .text_right()
-                                    .text_color(muted)
-                                    .child(age(now, item.updated_at)),
-                            )
-                        })
+                        .child(
+                            div()
+                                .flex_none()
+                                // Room for "11mo" on one line, so the ages line up, kept before the first tick
+                                // so the titles don't move when it comes.
+                                .min_w(px(32.))
+                                .whitespace_nowrap()
+                                .text_right()
+                                .text_color(muted)
+                                .when_some(self.now, |cell, now| {
+                                    cell.debug_selector(move || age_id)
+                                        .child(age(now, item.updated_at))
+                                }),
+                        )
                         .into_any_element(),
                 );
             }

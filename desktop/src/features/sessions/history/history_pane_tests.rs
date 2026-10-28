@@ -1,6 +1,7 @@
 //! The History tab over a held sessions list: folded projects, opening one, showing more, picking a session.
 
 use gpui::TestAppContext;
+use gpui_kit::component::dock::BasePanel as _;
 use gpui_kit::{Entity, Modifiers, VisualTestContext};
 use serde_json::json;
 
@@ -13,10 +14,18 @@ fn open(
     items: Option<Vec<SessionItem>>,
     cx: &mut TestAppContext,
 ) -> (Entity<HistoryPane>, &mut VisualTestContext) {
+    open_with_older(items, false, cx)
+}
+
+fn open_with_older(
+    items: Option<Vec<SessionItem>>,
+    older: bool,
+    cx: &mut TestAppContext,
+) -> (Entity<HistoryPane>, &mut VisualTestContext) {
     cx.update(gpui_kit::init);
     cx.update(SelectedSession::init);
     if let Some(items) = items {
-        cx.update(|cx| Sessions::start_holding(items, cx));
+        cx.update(|cx| Sessions::start_holding(items, older, cx));
     }
     let (pane, cx) = cx.add_window_view(|_, cx| HistoryPane::new(cx));
     draw(cx);
@@ -113,16 +122,43 @@ fn an_open_project_shows_25_sessions_then_25_more(cx: &mut TestAppContext) {
 
 // Pins: g0-shape#15
 #[gpui::test]
-fn a_tick_draws_each_sessions_age(cx: &mut TestAppContext) {
+fn a_tick_draws_each_sessions_age_and_hiding_the_tab_drops_it(cx: &mut TestAppContext) {
     let (pane, cx) = open(Some(two_projects()), cx);
     click("history-project-/w/notes", cx);
     assert!(
         !drawn("history-age-s3", cx),
         "no age before the clock's first tick"
     );
+    let title = cx.debug_bounds("history-title-s3").expect("s3 is listed");
     pane.update(cx, |pane, cx| pane.tick(5 * 60_000, cx));
     draw(cx);
     assert!(drawn("history-age-s3", cx));
+    assert_eq!(
+        cx.debug_bounds("history-title-s3"),
+        Some(title),
+        "the row doesn't move when the age comes"
+    );
+
+    pane.update_in(cx, |pane, window, cx| pane.set_active(false, window, cx));
+    draw(cx);
+    assert!(
+        !drawn("history-age-s3", cx),
+        "shown again, it waits for a fresh tick"
+    );
+}
+
+// Pins: g0-shape#15
+#[gpui::test]
+fn a_line_at_the_end_loads_older_sessions_while_there_are_some(cx: &mut TestAppContext) {
+    let (_pane, cx) = open_with_older(Some(two_projects()), true, cx);
+    assert!(drawn("history-older", cx));
+}
+
+// Pins: g0-shape#15
+#[gpui::test]
+fn with_every_session_loaded_there_is_no_older_line(cx: &mut TestAppContext) {
+    let (_pane, cx) = open(Some(two_projects()), cx);
+    assert!(!drawn("history-older", cx));
 }
 
 // Pins: g0-shape#15
