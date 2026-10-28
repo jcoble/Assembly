@@ -14,6 +14,80 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 public sealed partial class SessionHostTests
 {
     [Fact]
+    public async Task SteerWhileOpeningWaitsForTheSession()
+    {
+        _sessionStore.SetConfigChoice(_session.SessionId, "model", "haiku");
+        var runId = _host.Send("one");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        var model = await agent.ReadAsync("session/set_config_option");
+
+        var steering = _host.SteerAsync("two", null, CancellationToken.None);
+        Assert.False(steering.IsCompleted);
+        await agent.ReplyAsync(model, $$"""{"configOptions":{{Options("haiku", "low")}}}""");
+
+        // The initial prompt and the waiting steer both follow the open, in either order.
+        var next = new[] { await agent.NextMessageAsync().WaitAsync(Wait), await agent.NextMessageAsync().WaitAsync(Wait) };
+        var prompt = next.Single(message => message.GetProperty("method").GetString() == "session/prompt");
+        var steer = next.Single(message => message.GetProperty("method").GetString() == "_session/steering");
+        Assert.Equal(FakeLink.AcpSessionId, steer.GetProperty("params").GetProperty("sessionId").GetString());
+        Assert.Equal("two", steer.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        await agent.ReplyAsync(steer, """{"outcome":"injected"}""");
+        Assert.Equal(runId, await steering.WaitAsync(Wait));
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+
+        var saved = Assert.Single(_store.RowsAfter(_session.SessionId, 0),
+            row => row.Kind == "user" && row.Payload.GetProperty("text").GetString() == "two");
+        Assert.Equal(runId, saved.RunId);
+        Assert.Equal(1, _launcher.Launches);
+    }
+
+    [Fact]
+    public async Task SteerWhileOpeningHonoursCancellation()
+    {
+        _sessionStore.SetConfigChoice(_session.SessionId, "model", "haiku");
+        var runId = _host.Send("one");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync(configOptions: Options("opus", "low"));
+        var model = await agent.ReadAsync("session/set_config_option");
+
+        using var cancel = new CancellationTokenSource();
+        var steering = _host.SteerAsync("two", null, cancel.Token);
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => steering.WaitAsync(Wait));
+
+        await agent.ReplyAsync(model, $$"""{"configOptions":{{Options("haiku", "low")}}}""");
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.Equal(runId, _host.ActiveRunId);
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        // A stray steer would be read here instead of the close.
+        await agent.CloseAsync();
+        Assert.Single(_store.RowsAfter(_session.SessionId, 0), row => row.Kind == "user");
+        Assert.Equal(1, _launcher.Launches);
+    }
+
+    [Fact]
+    public async Task SteerAfterAFailedOpenIsRefused()
+    {
+        var launching = new TaskCompletionSource<IAgentLink>();
+        _launcher.Launch = _ => launching.Task;
+        var runId = _host.Send("one");
+        var steering = _host.SteerAsync("two", null, CancellationToken.None);
+        launching.SetException(new InvalidOperationException("open failed"));
+
+        Assert.Null(await steering.WaitAsync(Wait));
+        var rows = await Rows(5);
+        Assert.Equal(["user", "turn", "error", "stats", "turn"], rows.Select(row => row.Kind));
+        Assert.Equal("failed", rows[4].Payload.GetProperty("state").GetString());
+        Assert.All(rows, row => Assert.Equal(runId, row.RunId));
+        Assert.Null(_host.ActiveRunId);
+        Assert.Single(_store.RowsAfter(_session.SessionId, 0), row => row.Kind == "user");
+        Assert.Equal(1, _launcher.Launches);
+        Assert.Single(_launcher.CheckedOut);
+    }
+
+    [Fact]
     public async Task An_agent_that_does_not_steer_refuses_a_message_mid_turn()
     {
         _host.Send("one");
