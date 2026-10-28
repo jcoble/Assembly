@@ -22,26 +22,26 @@ public sealed class MachineProbeTests
     {
         var answer = new TaskCompletionSource();
         _far.Probe = _ => answer.Task;
-        await using var feature = Feature();
+        var feature = Feature();
 
         feature.Tick(true);
-        await Until(() => _far.Probes == 1);
+        await _far.Probes.ReachedAsync(1);
         // Its 5 s limit passes, but this machine ignores it, so the probe is still out.
         _time.Advance(TimeSpan.FromSeconds(5));
         for (var tick = 0; tick < 15; tick++)
             feature.Tick(true);
-        await Task.Delay(100);
-        Assert.Equal(1, _far.Probes);
 
-        answer.SetResult();
+        // Set off the test's thread, whose context would queue the probe's continuation: here it runs inside SetResult,
+        // so the first probe has ended once this returns.
+        await Task.Run(answer.SetResult);
         // Every 15th tick tries again, once the first probe has ended.
-        for (var round = 0; round < 100 && _far.Probes < 2; round++)
-        {
-            for (var tick = 0; tick < 15; tick++)
-                feature.Tick(true);
-            await Task.Delay(10);
-        }
-        Assert.Equal(2, _far.Probes);
+        for (var tick = 0; tick < 15; tick++)
+            feature.Tick(true);
+        await _far.Probes.ReachedAsync(2);
+
+        // The dispose waits for the last probe started; a doubled one would have made it the third.
+        await feature.DisposeAsync().AsTask().WaitAsync(Wait);
+        Assert.Equal(2, _far.Probes.Value);
     }
 
     [Fact]
@@ -62,7 +62,7 @@ public sealed class MachineProbeTests
         };
         var feature = Feature();
         feature.Tick(true);
-        await Until(() => _far.Probes == 1);
+        await _far.Probes.ReachedAsync(1);
 
         await feature.DisposeAsync().AsTask().WaitAsync(Wait);
 
@@ -84,15 +84,8 @@ public sealed class MachineProbeTests
         // A tick that was already on its way when the backend stopped.
         feature.Tick(true);
 
-        Assert.NotSame(probed.Task, await Task.WhenAny(probed.Task, Task.Delay(TimeSpan.FromMilliseconds(300))));
-    }
-
-    private static async Task Until(Func<bool> done)
-    {
-        for (var waited = TimeSpan.Zero; !done(); waited += TimeSpan.FromMilliseconds(10))
-        {
-            Assert.True(waited < Wait, "it didn't happen within 10 s");
-            await Task.Delay(10);
-        }
+        // A second dispose waits for any probe the tick started.
+        await feature.DisposeAsync().AsTask().WaitAsync(Wait);
+        Assert.False(probed.Task.IsCompleted);
     }
 }

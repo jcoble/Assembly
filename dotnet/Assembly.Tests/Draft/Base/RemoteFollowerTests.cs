@@ -22,6 +22,7 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
     private AppDatabase _db = null!;
     private LiveHub _hub = null!;
     private RemoteMachine _box = null!;
+    private bool _boxStopped;
 
     public async Task InitializeAsync()
     {
@@ -36,7 +37,7 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         _log.Release();
-        await _box.DisposeAsync();
+        await StopBoxAsync();
         await _stub.DisposeAsync();
         _hub.Dispose();
         _db.Dispose();
@@ -46,14 +47,13 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
     [Fact]
     public async Task A_watch_while_the_session_is_followed_follows_it_once_more_after()
     {
-        _stub.Pings = false;
         _box.WatchRunning(["s1"], []);
-        await Until(() => _stub.LiveHits == 1);
+        await _stub.LiveHits.ReachedAsync(1);
 
         _box.WatchRunning(["s1"], []);
 
         // The first link settles after 2 s of quiet; the second watch is still owed a pass.
-        await Until(() => _stub.LiveHits == 2);
+        await _stub.LiveHits.ReachedAsync(2);
     }
 
     [Fact]
@@ -93,7 +93,7 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
         _stub.DropVersion = false;
         _log.Release();
 
-        await Until(() => _stub.LiveHits == 1);
+        await _stub.LiveHits.ReachedAsync(1);
     }
 
     [Fact]
@@ -104,20 +104,20 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
         _stub.DropVersion = true;
 
         _box.WatchRunning(["s1"], []);
-        await Until(() => _stub.VersionHits == 1);
-        await Task.Delay(1500);
+        // It logs why as it gives up; stopping the box then waits for the follow to end, and with it any try it started.
+        await _log.Reached.Task.WaitAsync(Wait);
+        await StopBoxAsync();
 
-        Assert.Equal(1, _stub.VersionHits);
-        Assert.Equal(0, _stub.LiveHits);
+        Assert.Equal(1, _stub.VersionHits.Value);
+        Assert.Equal(0, _stub.LiveHits.Value);
     }
 
-    private static async Task Until(Func<bool> done)
+    // A machine is stopped once.
+    private async Task StopBoxAsync()
     {
-        for (var waited = TimeSpan.Zero; !done(); waited += TimeSpan.FromMilliseconds(10))
-        {
-            Assert.True(waited < Wait, "it didn't happen within 10 s");
-            await Task.Delay(10);
-        }
+        if (!_boxStopped)
+            await _box.DisposeAsync();
+        _boxStopped = true;
     }
 
     // A log that, once held, stops the first line it's given until it's released.

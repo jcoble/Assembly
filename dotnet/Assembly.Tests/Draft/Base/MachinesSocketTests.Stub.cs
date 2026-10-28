@@ -27,7 +27,7 @@ namespace Assembly.Tests.Draft.Base;
 public sealed partial class MachinesSocketTests
 {
     // The remote's far end: /version and /agents, each able to answer an error status, drop the connection or (/version)
-    // hang; /live, which sends its rows and then a ping every 300 ms; and a session read that always fails.
+    // hang; /live, which sends the session's rows and then stays open; and a session read that always fails.
     internal sealed class StubRemote : IAsyncDisposable
     {
         private WebApplication _app = null!;
@@ -39,12 +39,12 @@ public sealed partial class MachinesSocketTests
         public bool Drop { get; set; }
         public bool DropVersion { get; set; }
         public bool HangVersion { get; set; }
-        public bool Pings { get; set; } = true;
+        // Each /live sends those of these rows that are its session's.
         public string[] LiveRows { get; set; } = [];
-        public int VersionHits;
-        public int VersionAborted;
+        public Count VersionHits { get; } = new();
+        public Count VersionAborted { get; } = new();
         public int AgentsHits;
-        public int LiveHits;
+        public Count LiveHits { get; } = new();
         public int TitleHits;
         // The most /live links any one session had open at once, and each session's first /live link, under _liveOpen.
         public int MostLiveAtOnce;
@@ -70,7 +70,7 @@ public sealed partial class MachinesSocketTests
             _app.UseWebSockets();
             _app.MapGet("/version", async (HttpContext context) =>
             {
-                Interlocked.Increment(ref VersionHits);
+                VersionHits.Add();
                 if (DropVersion)
                 {
                     context.Abort();
@@ -84,7 +84,7 @@ public sealed partial class MachinesSocketTests
                     }
                     catch (OperationCanceledException)
                     {
-                        Interlocked.Increment(ref VersionAborted);
+                        VersionAborted.Add();
                         return Results.Empty;
                     }
                 }
@@ -97,7 +97,7 @@ public sealed partial class MachinesSocketTests
             });
             _app.Map("/live", async (HttpContext context) =>
             {
-                Interlocked.Increment(ref LiveHits);
+                LiveHits.Add();
                 var session = context.Request.Query["session"].ToString();
                 lock (_liveOpen)
                 {
@@ -108,14 +108,12 @@ public sealed partial class MachinesSocketTests
                 var aborted = context.RequestAborted;
                 try
                 {
-                    foreach (var row in LiveRows)
+                    foreach (var row in LiveRows.Where(row => row.Contains($"\"sessionId\":\"{session}\"", StringComparison.Ordinal)))
                         await socket.SendAsync(Encoding.UTF8.GetBytes(row), WebSocketMessageType.Text, endOfMessage: true, aborted);
-                    while (Pings)
+                    // Open until the follower closes it.
+                    while ((await socket.ReceiveAsync(new byte[1024], aborted)).MessageType != WebSocketMessageType.Close)
                     {
-                        await socket.SendAsync("""{"type":"ping"}"""u8.ToArray(), WebSocketMessageType.Text, endOfMessage: true, aborted);
-                        await Task.Delay(300, aborted);
                     }
-                    await Task.Delay(Timeout.Infinite, aborted);
                 }
                 catch (Exception error) when (error is OperationCanceledException or WebSocketException)
                 {

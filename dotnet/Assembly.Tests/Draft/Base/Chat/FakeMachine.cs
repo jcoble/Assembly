@@ -47,12 +47,12 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public bool Started { get; set; }
 
     /// <summary>How many probes reached it. Each answers as <see cref="Probe"/> does, which may ignore the probe's token.</summary>
-    public int Probes;
+    public Count Probes { get; } = new();
     public Func<CancellationToken, Task> Probe { get; set; } = _ => Task.CompletedTask;
 
     public Task ProbeAsync(CancellationToken cancellationToken)
     {
-        Interlocked.Increment(ref Probes);
+        Probes.Add();
         return Probe(cancellationToken);
     }
 

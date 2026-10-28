@@ -82,17 +82,17 @@ public sealed class ClockSocketTests : IAsyncLifetime
     [Fact]
     public async Task The_clock_ticks_only_while_someone_is_subscribed()
     {
-        Assert.Equal(0, _time.Timers);
+        Assert.Equal(0, _time.Timers.Value);
         using var socket = await OpenAsync();
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
         await ReadAsync(socket);
-        Assert.Equal(1, _time.Timers);
+        Assert.Equal(1, _time.Timers.Value);
 
         await SendAsync(socket, """{"t":"unsub","id":1}""");
         await SendAsync(socket, """{"t":"call","id":2,"feature":"nothing","method":"here","args":{}}""");
         Assert.Contains("\"not_found\"", await ReadAsync(socket));
         _time.Advance(TimeSpan.FromSeconds(1));
-        await Until(() => _time.Timers == 0);
+        await _time.Timers.ReachedAsync(0);
 
         await SendAsync(socket, """{"t":"sub","id":3,"topic":"clock","key":"second"}""");
         await ReadAsync(socket);
@@ -106,25 +106,16 @@ public sealed class ClockSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"clock","key":"second"}""");
         await ReadAsync(socket);
-        Assert.Equal(1, _time.Timers);
+        Assert.Equal(1, _time.Timers.Value);
 
         Assert.Equal(0, await _work.StopAsync(TimeSpan.FromSeconds(5)).WaitAsync(Wait));
-        Assert.Equal(0, _time.Timers);
+        Assert.Equal(0, _time.Timers.Value);
     }
 
     private static long Ms(int seconds) => Start.AddSeconds(seconds).ToUnixTimeMilliseconds();
 
     private static string Change(int sub, int seconds) =>
         $"{{\"t\":\"change\",\"sub\":{sub},\"op\":\"upsert\",\"key\":\"second\",\"item\":{{\"now\":{Ms(seconds)}}}}}";
-
-    private static async Task Until(Func<bool> done)
-    {
-        for (var waited = TimeSpan.Zero; !done(); waited += TimeSpan.FromMilliseconds(10))
-        {
-            Assert.True(waited < Wait, "it didn't happen within 10 s");
-            await Task.Delay(10);
-        }
-    }
 
     private async Task<ClientWebSocket> OpenAsync()
     {
@@ -149,12 +140,12 @@ public sealed class ClockSocketTests : IAsyncLifetime
     // A fake clock that counts its live timers, so a test can see the backend clock's timer stop.
     internal sealed class CountingTime(DateTimeOffset start) : FakeTimeProvider(start)
     {
-        private int _timers;
-        public int Timers => Volatile.Read(ref _timers);
+        // The timers made and not yet disposed.
+        public Count Timers { get; } = new();
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            Interlocked.Increment(ref _timers);
+            Timers.Add();
             return new Counted(base.CreateTimer(callback, state, dueTime, period), this);
         }
 
@@ -166,7 +157,7 @@ public sealed class ClockSocketTests : IAsyncLifetime
             public void Dispose()
             {
                 if (Interlocked.Exchange(ref _disposed, 1) == 0)
-                    Interlocked.Decrement(ref owner._timers);
+                    owner.Timers.Add(-1);
                 timer.Dispose();
             }
 

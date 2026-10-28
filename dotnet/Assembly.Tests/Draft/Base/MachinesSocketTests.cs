@@ -142,15 +142,15 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
         await TickAsync(socket);
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-        Assert.Equal(1, _stub.VersionHits);
+        Assert.Equal(1, _stub.VersionHits.Value);
 
         _stub.DropVersion = true;
         for (var tick = 0; tick < 14; tick++)
             await TickAsync(socket);
-        Assert.Equal(1, _stub.VersionHits);
+        Assert.Equal(1, _stub.VersionHits.Value);
         await TickAsync(socket);
         Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
-        Assert.Equal(2, _stub.VersionHits);
+        Assert.Equal(2, _stub.VersionHits.Value);
     }
 
     [Fact]
@@ -160,7 +160,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         await SubAsync(socket, 2, "clock", "second");
         for (var tick = 0; tick < 30; tick++)
             await TickAsync(socket);
-        Assert.Equal(0, _stub.VersionHits);
+        Assert.Equal(0, _stub.VersionHits.Value);
 
         await SubAsync(socket, 1, "machines");
         await TickAsync(socket);
@@ -171,18 +171,21 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     [Fact]
     public async Task A_remote_with_a_live_follower_link_is_not_probed()
     {
+        // An open run keeps the link from settling.
+        _stub.LiveRows = [Row("s1", 1, "r1", """{"state":"started"}""")];
         _box.WatchRunning(["s1"], []);
-        await Until(() => _stub.LiveHits == 1);
-        // The link counts once the follower's connect returns, just after the stub sees it.
-        await Task.Delay(200);
+        await CopiedAsync("s1", 1);
         using var socket = await OpenAsync();
         Assert.Equal(List(1, Box(true, null)), await SubAsync(socket, 1, "machines"));
         await SubAsync(socket, 2, "clock", "second");
+        // Marked down, so the probe's outcome shows as a change, whichever way it went.
+        _status.Unreachable("box", "marked down");
+        Assert.Equal(Change(1, Box(false, "marked down")), await ReadAsync(socket));
 
         await TickAsync(socket);
-        await Task.Delay(300);
+        Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
 
-        Assert.Equal(1, _stub.VersionHits);
+        Assert.Equal(1, _stub.VersionHits.Value);
     }
 
     [Fact]
@@ -193,7 +196,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         await SubAsync(socket, 1, "machines");
         await SubAsync(socket, 2, "clock", "second");
         await TickAsync(socket);
-        await Until(() => _stub.VersionHits == 1);
+        await _stub.VersionHits.ReachedAsync(1);
 
         for (var tick = 0; tick < 4; tick++)
             await TickAsync(socket);
@@ -202,7 +205,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         // The clock's change and the probe's run on their own; either may come first.
         var frames = new[] { await ReadAsync(socket), await ReadAsync(socket) };
         Assert.Contains(Change(1, Box(false, "didn't answer")), frames);
-        await Until(() => _time.Timers == 1);
+        await _time.Timers.ReachedAsync(1);
     }
 
     [Fact]
@@ -212,33 +215,33 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
         _time.Advance(TimeSpan.FromSeconds(1));
-        await Until(() => _stub.VersionHits == 1);
+        await _stub.VersionHits.ReachedAsync(1);
 
         await UnsubAsync(socket, 1);
         _time.Advance(TimeSpan.FromSeconds(1));
 
-        await Until(() => _stub.VersionAborted == 1);
-        await Until(() => _time.Timers == 0);
+        await _stub.VersionAborted.ReachedAsync(1);
+        await _time.Timers.ReachedAsync(0);
         Assert.Equal(List(3, Box(false, "not checked yet")), await SubAsync(socket, 3, "machines"));
     }
 
     [Fact]
     public async Task The_clock_runs_for_machines_alone_and_stops_when_neither_is_watched()
     {
-        Assert.Equal(0, _time.Timers);
+        Assert.Equal(0, _time.Timers.Value);
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
-        Assert.Equal(1, _time.Timers);
+        Assert.Equal(1, _time.Timers.Value);
         _time.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
 
         await UnsubAsync(socket, 1);
         _time.Advance(TimeSpan.FromSeconds(1));
-        await Until(() => _time.Timers == 0);
+        await _time.Timers.ReachedAsync(0);
 
         await SubAsync(socket, 3, "machines");
         _time.Advance(TimeSpan.FromSeconds(1));
-        await Until(() => _stub.VersionHits == 2);
+        await _stub.VersionHits.ReachedAsync(2);
     }
 
     [Fact]
@@ -254,7 +257,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _time.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
 
-        await Until(() => _stub.LiveHits == 1);
+        await _stub.LiveHits.ReachedAsync(1);
     }
 
     [Fact]
@@ -262,6 +265,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     {
         using var socket = await OpenAsync();
         await SubAsync(socket, 1, "machines");
+        // An open run keeps s2's link from settling.
+        _stub.LiveRows = [Row("s2", 1, "r1", """{"state":"started"}""")];
         _stub.DropVersion = true;
         _box.WatchRunning(["s1"], []);
         Assert.Equal(Change(1, Box(false, "didn't answer")), await ReadAsync(socket));
@@ -269,13 +274,11 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _stub.DropVersion = false;
         _box.WatchRunning(["s2"], []);
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-        await Until(() => _stub.LiveHits == 1);
-        // The link counts once the follower's connect returns, just after the stub sees it.
-        await Task.Delay(200);
+        await CopiedAsync("s2", 1);
         await SubAsync(socket, 2, "clock", "second");
         await TickAsync(socket);
 
-        await Until(() => _stub.LiveHits == 2);
+        await _stub.LiveHits.ReachedAsync(2);
     }
 
     [Fact]
@@ -292,7 +295,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _box.WatchRunning(["s1"], []);
 
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-        Assert.Equal(1, _stub.VersionHits);
+        Assert.Equal(1, _stub.VersionHits.Value);
     }
 
     [Fact]
@@ -302,13 +305,13 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _sessions.SetTitle("s1", "kept");
         _stub.LiveRows =
         [
-            Row(1, "r1", """{"state":"done"}"""),
-            Row(2, "r2", """{"state":"started"}"""),
+            Row("s1", 1, "r1", """{"state":"done"}"""),
+            Row("s1", 2, "r2", """{"state":"started"}"""),
         ];
 
         _box.WatchRunning(["s1"], []);
 
-        await Until(() => _hub.LastSeq("s1") == 2);
+        await CopiedAsync("s1", 2);
         Assert.Equal(1, _stub.TitleHits);
         Assert.Equal("kept", _sessions.Get("s1")!.Title);
     }
@@ -377,7 +380,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
             Assert.Contains(reason, error);
             Assert.Equal(List(id + 1, Box(false, reason)), await ListAsync(socket, id + 1));
         }
-        Assert.Equal((2, 0), (_stub.VersionHits, _stub.AgentsHits));
+        Assert.Equal((2, 0), (_stub.VersionHits.Value, _stub.AgentsHits));
     }
 
     [Theory]
@@ -413,8 +416,20 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     private static string Change(long sub, string box) =>
         $$"""{"t":"change","sub":{{sub}},"op":"upsert","key":"box","item":{{box}}}""";
 
-    private static string Row(long seq, string runId, string payload) =>
-        $$$"""{"type":"row","row":{"sessionId":"s1","seq":{{{seq}}},"runId":"{{{runId}}}","itemId":null,"kind":"turn","payload":{{{payload}}},"createdAt":{{{seq}}},"prevSeq":{{{seq - 1}}}}}""";
+    private static string Row(string session, long seq, string runId, string payload) =>
+        $$$"""{"type":"row","row":{"sessionId":"{{{session}}}","seq":{{{seq}}},"runId":"{{{runId}}}","itemId":null,"kind":"turn","payload":{{{payload}}},"createdAt":{{{seq}}},"prevSeq":{{{seq - 1}}}}}""";
+
+    // Done once the hub holds the session's row at seq: copied by its follower, whose link counted before the row came.
+    private async Task CopiedAsync(string session, long seq)
+    {
+        using var rows = _hub.Subscribe(session, after: seq - 1);
+        // The backlog holds it, or it's among the rows pushed from now on.
+        if (rows.Backlog.Count > 0)
+            return;
+        while ((await rows.Rows.ReadAsync().AsTask().WaitAsync(Wait)).Seq < seq)
+        {
+        }
+    }
 
     // The machines state, read through a subscription that's then dropped.
     private static async Task<string> ListAsync(WebSocket socket, long id)
@@ -443,15 +458,6 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     {
         _time.Advance(TimeSpan.FromSeconds(1));
         Assert.StartsWith("""{"t":"change","sub":2,""", await ReadAsync(socket));
-    }
-
-    private static async Task Until(Func<bool> done)
-    {
-        for (var waited = TimeSpan.Zero; !done(); waited += TimeSpan.FromMilliseconds(10))
-        {
-            Assert.True(waited < Wait, "it didn't happen within 10 s");
-            await Task.Delay(10);
-        }
     }
 
     private async Task<ClientWebSocket> OpenAsync()
