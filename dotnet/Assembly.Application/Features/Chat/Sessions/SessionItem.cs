@@ -11,13 +11,13 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// </summary>
 public sealed record SessionItem(string SessionId, string Agent, string RepoUrl, string? Title, string? Machine, string? ParentSessionId,
     string? AcpSessionId, long UpdatedAt, string State, string? ActiveRunId, bool PendingAsk, int Background, bool NeedsAttention, bool Unread,
-    string? Root)
+    long? CompletedAt, long? SettledAt, string? Root)
 {
     public static SessionItem From(SessionInfo session, SessionSummary summary, string? root)
     {
         var unread = summary.EndSeq > session.ReadSeq;
         return new(session.SessionId, session.Agent, session.RepoUrl, session.Title, session.Machine, session.ParentSessionId, session.AcpSessionId,
             session.UpdatedAt, summary.State, summary.RunId, summary.PendingAsk, summary.Background,
-            summary.PendingAsk || (unread && summary.RunId is null), unread, root);
+            summary.PendingAsk || (unread && summary.RunId is null), unread, session.CompletedAt, session.SettledAt, root);
     }
 }
