@@ -99,6 +99,45 @@ public sealed class GitSocketTests : IAsyncLifetime
         Assert.Equal("?", file.GetProperty("worktree").GetString());
     }
 
+    // Pins: scm#17
+    [Fact]
+    public async Task Diff_answers_working_changes_and_refuses_paths_outside_the_session()
+    {
+        var session = _sessions.Create("claude", "https://github.com/o/r");
+        var root = _sessions.Item(session).Root!;
+        await MakeRepoAsync(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "edited\n");
+        using var socket = await OpenAsync();
+        await SendAsync(socket, JsonSerializer.Serialize(new
+        {
+            t = "call",
+            id = 1,
+            feature = "git",
+            method = "diff",
+            args = new { session = session.SessionId, path = "tracked.txt" }
+        }));
+        using var answer = JsonDocument.Parse(await ReadAsync(socket));
+        Assert.Contains("+edited\n", answer.RootElement.GetProperty("result").GetProperty("unstaged").GetString());
+        await SendAsync(socket, JsonSerializer.Serialize(new
+        {
+            t = "call",
+            id = 2,
+            feature = "git",
+            method = "diff",
+            args = new { session = session.SessionId, path = "../outside" }
+        }));
+        await AssertErrorAsync(socket, "that path is outside the session's folder");
+        await SendAsync(socket, JsonSerializer.Serialize(new
+        {
+            t = "call",
+            id = 3,
+            feature = "git",
+            method = "diff",
+            args = new { session = session.SessionId, path = "." }
+        }));
+        await AssertErrorAsync(socket, "expected a file in the session's folder");
+    }
+
     // Pins: scm#6
     [Theory]
     [InlineData("worktrees", "list")]
@@ -134,8 +173,13 @@ public sealed class GitSocketTests : IAsyncLifetime
         await GitAsync(root, "-c", "commit.gpgsign=false", "commit", "-m", "Initial commit");
     }
 
-    private static Task<string> GitAsync(string root, params string[] args) =>
-        new GitCli().RunAsync(root, args, CancellationToken.None);
+    private static async Task<string> GitAsync(string root, params string[] args)
+    {
+        var records = new List<string>();
+        await foreach (var record in new GitCli().ReadAsync(root, args, null, CancellationToken.None))
+            records.Add(record);
+        return string.Join('\0', records);
+    }
 
     private async Task<ClientWebSocket> OpenAsync()
     {
