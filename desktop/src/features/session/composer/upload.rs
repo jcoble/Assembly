@@ -1,8 +1,7 @@
 //! Sends one image over the socket: `attachments/begin` with its type and size, then `attachments/chunk` a
 //! megabyte at a time (base64 in the call's JSON, since the backend reads `data` as bytes), then
-//! `attachments/commit`, which answers its path where the agent runs. It reads the file's bytes off the main thread
-//! before begin (it doesn't draw), and encodes each chunk off it as it's sent, so only one chunk's text is held at a
-//! time. Once begun it only waits on a call or a chunk's encoding: an upload whose task is
+//! `attachments/commit`, which answers its path where the agent runs. It reads and encodes the file's bytes off the
+//! main thread before begin (it doesn't draw), so once begun it only ever waits on a call: an upload whose task is
 //! dropped part way cancels that call, and the backend drops the upload with it. There's no retry and no wait: a
 //! failed upload shows on its chip, and a failure after begin drops what it began.
 
@@ -46,17 +45,23 @@ pub fn upload_image(
                 .map_err(|error| CallError::Failed(format!("Couldn't read the image: {error}"))),
             UploadSource::Bytes(bytes) => Ok(bytes),
         }
+        .map(|bytes| {
+            let chunks = bytes
+                .chunks(CHUNK_BYTES)
+                .map(|chunk| STANDARD.encode(chunk));
+            (bytes.len(), chunks.collect::<Vec<_>>())
+        })
     });
     cx.spawn(async move |cx| {
-        let bytes = read.await?;
-        let begin = json!({ "session": session, "mime": mime, "size": bytes.len() });
+        let (size, chunks) = read.await?;
+        let begin = json!({ "session": session, "mime": mime, "size": size });
         let begun = cx
             .update(|cx| client.call("attachments", "begin", begin, None, cx))
             .await?;
         let upload = begun["upload"]
             .as_str()
             .ok_or_else(|| CallError::Failed("The upload didn't start.".into()))?;
-        let saved = send(&*client, upload, bytes, cx).await;
+        let saved = send(&*client, upload, chunks, cx).await;
         if saved.is_err() {
             let drop = json!({ "upload": upload });
             cx.update(|cx| client.call("attachments", "drop", drop, None, cx))
@@ -71,16 +76,11 @@ pub fn upload_image(
 async fn send(
     client: &dyn SessionClient,
     upload: &str,
-    bytes: Arc<[u8]>,
+    chunks: Vec<String>,
     cx: &mut AsyncApp,
 ) -> Result<String, CallError> {
-    for offset in (0..bytes.len()).step_by(CHUNK_BYTES) {
-        let piece = bytes.clone();
-        let data = cx
-            .background_spawn(async move {
-                STANDARD.encode(&piece[offset..(offset + CHUNK_BYTES).min(piece.len())])
-            })
-            .await;
+    for (at, data) in chunks.into_iter().enumerate() {
+        let offset = at * CHUNK_BYTES;
         let chunk = json!({ "upload": upload, "offset": offset, "data": data });
         cx.update(|cx| client.call("attachments", "chunk", chunk, None, cx))
             .await?;
