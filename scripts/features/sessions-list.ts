@@ -6,7 +6,7 @@
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session } = process.env;
 
 type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
-type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item };
+type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
 
 class Failed extends Error {}
 function fail(step: string, why: string): never {
@@ -61,6 +61,16 @@ async function mark(state: string, moved: (item: Item) => boolean, step: string)
   return got.item!;
 }
 
+/** The ids on the newest page of one group, `open` or `settled`. */
+async function page(group: string, step: string): Promise<string[]> {
+  const id = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id, feature: 'sessions', method: 'page', args: { group, limit: 200 } }));
+  const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 10_000, step);
+  if (answer.t !== 'result') fail(step, `it failed: ${answer.message ?? JSON.stringify(answer)}`);
+  const result = answer.result as { sessions: Item[] };
+  return result.sessions.map((item) => item.sessionId);
+}
+
 async function main() {
   await new Promise((resolve, reject) => {
     socket.onopen = resolve;
@@ -84,6 +94,11 @@ async function main() {
   const settled = await mark('settled', (item) => item.settledAt !== null, 'Settle stamps settledAt');
   if (settled.completedAt !== done.completedAt) fail('Settle keeps the done time', `it moved to ${settled.completedAt}`);
   console.log('ok Settle stamps settledAt and keeps the done time');
+
+  const step = 'a settled session pages with Settled, not with the open ones';
+  if (!(await page('settled', step)).includes(session)) fail(step, "Settled's page doesn't have it");
+  if ((await page('open', step)).includes(session)) fail(step, 'the open page still has it');
+  console.log(`ok ${step}`);
 
   await mark('working', (item) => item.completedAt === null && item.settledAt === null, 'Back to working clears both stamps');
   console.log('ok Back to working clears both stamps');
