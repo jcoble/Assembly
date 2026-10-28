@@ -48,6 +48,12 @@ public sealed class GitCli : IGit
                     if (buffer[i] != '\0')
                     {
                         record.Append(buffer[i]);
+                        if (record.Length == 1024 * 1024)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            yield return record.ToString();
+                            record.Clear();
+                        }
                         continue;
                     }
                     cancellationToken.ThrowIfCancellationRequested();

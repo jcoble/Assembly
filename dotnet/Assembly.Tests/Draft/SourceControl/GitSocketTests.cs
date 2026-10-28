@@ -99,6 +99,36 @@ public sealed class GitSocketTests : IAsyncLifetime
         Assert.Equal("?", file.GetProperty("worktree").GetString());
     }
 
+    // Pins: scm#17
+    [Fact]
+    public async Task Diff_answers_working_changes_and_refuses_paths_outside_the_session()
+    {
+        var session = _sessions.Create("claude", "https://github.com/o/r");
+        var root = _sessions.Item(session).Root!;
+        await MakeRepoAsync(root);
+        await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "edited\n");
+        using var socket = await OpenAsync();
+        await SendAsync(socket, JsonSerializer.Serialize(new
+        {
+            t = "call",
+            id = 1,
+            feature = "git",
+            method = "diff",
+            args = new { session = session.SessionId, path = "tracked.txt" }
+        }));
+        using var answer = JsonDocument.Parse(await ReadAsync(socket));
+        Assert.Contains("+edited\n", answer.RootElement.GetProperty("result").GetProperty("unstaged").GetString());
+        await SendAsync(socket, JsonSerializer.Serialize(new
+        {
+            t = "call",
+            id = 2,
+            feature = "git",
+            method = "diff",
+            args = new { session = session.SessionId, path = "../outside" }
+        }));
+        await AssertErrorAsync(socket, "that path is outside the session's folder");
+    }
+
     // Pins: scm#6
     [Theory]
     [InlineData("worktrees", "list")]
