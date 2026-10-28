@@ -38,7 +38,7 @@ public static class ServeRun
         var topics = new Topics();
         using var db = AppDatabase.Open(options.Database, TimeProvider.System, topics);
         var store = RowStore.Open(db);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts);
         using var hub = new LiveHub(store);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);

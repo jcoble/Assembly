@@ -1,0 +1,29 @@
+using Assembly.Application.Common.Calls;
+
+namespace Assembly.Infrastructure.Chat;
+
+/// <summary>
+/// Turns a path relative to a session's root folder into a full one, refusing anything outside the root. "" and "."
+/// are the root itself, for calls that work on the whole folder (git, worktrees). A path through a link is refused
+/// wherever the link points, so nothing reaches past the root and no loop is followed.
+/// </summary>
+public static class SessionPaths
+{
+    public static string Resolve(string root, string relative)
+    {
+        root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        if (Path.IsPathRooted(relative))
+            throw new CallFailed("expected a path relative to the session's folder");
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.Combine(root, relative)));
+        if (full == root)
+            return root;
+        if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new CallFailed("that path is outside the session's folder");
+        for (var at = full; at != root; at = Path.GetDirectoryName(at)!)
+        {
+            if (new FileInfo(at).LinkTarget is not null)
+                throw new CallFailed("that path goes through a link");
+        }
+        return full;
+    }
+}
