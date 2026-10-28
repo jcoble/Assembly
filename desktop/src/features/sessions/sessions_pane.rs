@@ -1,30 +1,41 @@
-//! `SessionsPane` draws the sessions list as a virtual list, newest first, loading the next page (`sessions/page`)
-//! as the reader nears its end, with the new-session form above it while it's open. It registers under the
-//! sessions pane's name, after the placeholders.
+//! `SessionsPane` draws the sessions list as a virtual list in the user's groups (Working, Done, Settled) and, inside
+//! each, by project, loading the next page (`sessions/page`) as the reader nears its end, with the new-session form
+//! above it while it's open. A row's menu moves its session to another group (`sessions/mark`). It registers under
+//! the sessions pane's name, after the placeholders.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::collections::HashMap;
+use std::rc::Rc;
 
-use super::new_session_form::{Created, NewSessionForm};
-use super::session_row::SessionRow;
+use super::list_entry::ListEntry;
+use super::new_session_form::NewSessionForm;
+use super::presence::Presence;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
+use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::{GlobalSessions, Sessions};
-
-/// Load the next older page when the last row drawn is this close to the end.
-const LOAD_OLDER_WITHIN: usize = 20;
 
 pub struct SessionsPane {
     focus: FocusHandle,
     /// `None` before the backend's first ready line.
-    sessions: Option<Entity<Sessions>>,
+    pub(super) sessions: Option<Entity<Sessions>>,
     /// The new-session form while it's open, with the subscription that closes it once it's made a session.
-    creating: Option<(Entity<NewSessionForm>, Subscription)>,
-    list: UniformListScrollHandle,
+    pub(super) creating: Option<(Entity<NewSessionForm>, Subscription)>,
+    /// Settled is folded until its header is clicked.
+    pub(super) settled_open: bool,
+    /// The marks on their way, each until its answer, by `next_mark`.
+    pub(super) marking: HashMap<u64, Task<()>>,
+    pub(super) next_mark: u64,
+    /// Why the last mark failed, until the next one starts.
+    pub(super) mark_error: Option<SharedString>,
+    /// The list's lines as last drawn, and the list's own state (heights measured, where it's scrolled).
+    pub(super) entries: Rc<Vec<ListEntry>>,
+    pub(super) lines: ListState,
     _heard: Vec<Subscription>,
     /// The sessions list's and the socket's observers, once the backend's first ready line started them.
     _backend: Vec<Subscription>,
@@ -44,11 +55,18 @@ impl SessionsPane {
             cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
             cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
         ];
+        // A scroll redraws the pane, and each draw checks whether the end is in view (`follow_entries`).
+        let lines = ListState::new(0, ListAlignment::Top, px(200.));
         let mut pane = SessionsPane {
             focus: cx.focus_handle(),
             sessions: None,
             creating: None,
-            list: UniformListScrollHandle::new(),
+            settled_open: false,
+            marking: HashMap::new(),
+            next_mark: 0,
+            mark_error: None,
+            entries: Rc::new(Vec::new()),
+            lines,
             _heard: heard,
             _backend: Vec::new(),
         };
@@ -68,19 +86,10 @@ impl SessionsPane {
         if let Some(socket) = socket {
             backend.push(cx.observe(&socket, |_, _, cx| cx.notify()));
         }
-        self._backend = backend;
-        cx.notify();
-    }
-
-    fn toggle_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.creating.take().is_none() {
-            let form = cx.new(|cx| NewSessionForm::new(window, cx));
-            let made = cx.subscribe(&form, |pane, _, Created, cx| {
-                pane.creating = None;
-                cx.notify();
-            });
-            self.creating = Some((form, made));
+        if let Some(machines) = Machines::try_global(cx) {
+            backend.push(cx.observe(&machines, |_, _, cx| cx.notify()));
         }
+        self._backend = backend;
         cx.notify();
     }
 }
@@ -123,7 +132,7 @@ impl Panel for SessionsPane {
 }
 
 impl Render for SessionsPane {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let count = self
@@ -134,15 +143,34 @@ impl Render for SessionsPane {
             .sessions
             .as_ref()
             .and_then(|sessions| sessions.read(cx).older_error().map(String::from));
+        let needs_you = self.sessions.as_ref().map_or(0, |sessions| {
+            let items = sessions.read(cx).items();
+            items
+                .iter()
+                .filter(|item| Presence::now(item, cx) == Presence::NeedsYou)
+                .count()
+        });
         let header = h_flex()
             .px_3()
             .py_2()
             .justify_between()
             .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .child("Sessions"),
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Sessions"),
+                    )
+                    .when(needs_you > 0, |title| {
+                        title.child(div().text_xs().text_color(cx.theme().warning).child(
+                            match needs_you {
+                                1 => "1 needs you".to_string(),
+                                n => format!("{n} need you"),
+                            },
+                        ))
+                    }),
             )
             .child(
                 Button::new("new-session")
@@ -155,42 +183,10 @@ impl Render for SessionsPane {
                     })
                     .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx))),
             );
-        let list = uniform_list(
-            "sessions",
-            count,
-            cx.processor(|pane, range: std::ops::Range<usize>, window, cx| {
-                let Some(sessions) = pane.sessions.clone() else {
-                    return Vec::new();
-                };
-                // After a failure, only Retry asks again.
-                let failed = sessions.read(cx).older_error().is_some();
-                if !failed && range.end + LOAD_OLDER_WITHIN >= sessions.read(cx).items().len() {
-                    // Checked again when it runs: a page that failed since this was queued waits for Retry.
-                    cx.on_next_frame(window, move |_, _, cx| {
-                        sessions.update(cx, |sessions, cx| {
-                            if sessions.older_error().is_none() {
-                                sessions.load_older(cx);
-                            }
-                        })
-                    });
-                }
-                let selected = SelectedSession::global(cx)
-                    .read(cx)
-                    .session_id()
-                    .map(String::from);
-                let sessions = pane.sessions.as_ref().map(|sessions| sessions.read(cx));
-                range
-                    .filter_map(|at| sessions.and_then(|sessions| sessions.items().get(at)))
-                    .map(|item| {
-                        let picked = selected.as_deref() == Some(item.session_id.as_str());
-                        SessionRow::of(item, picked)
-                    })
-                    .collect()
-            }),
-        )
-        .track_scroll(&self.list)
-        .flex_1()
-        .px_1();
+        self.follow_entries(window, cx);
+        let list = list(self.lines.clone(), self.line_renderer(cx))
+            .flex_1()
+            .px_1();
         v_flex()
             .track_focus(&self.focus)
             .size_full()
@@ -206,6 +202,16 @@ impl Render for SessionsPane {
                         .text_sm()
                         .text_color(muted)
                         .child(empty_line(state.as_ref())),
+                )
+            })
+            .when_some(self.mark_error.clone(), |pane, error| {
+                pane.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(error),
                 )
             })
             .when_some(older_error, |pane, error| {

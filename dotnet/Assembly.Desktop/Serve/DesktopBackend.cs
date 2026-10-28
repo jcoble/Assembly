@@ -11,6 +11,9 @@ using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
+using Assembly.Infrastructure.Chat.Files;
+using Assembly.Infrastructure.Chat.Worktrees;
+using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
@@ -99,11 +102,12 @@ public sealed class DesktopBackend : IAsyncDisposable
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
         // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
         // before the API starts, so no session makes a checkout in sessions/ first.
-        AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
+        var checkouts = Path.Combine(home, "sessions");
+        AdapterLauncher.MoveOldCheckouts(home, checkouts, log);
         var store = RowStore.Open(db);
         // Filled before recovery, whose closing rows go through the hub and so update it.
         var summaries = SessionSummaries.Load(store);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System, summaries);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
         // App Nap is held while any session has a run open, here or on a remote.
         var diagnostics = new DiagnosticsHost(Path.Combine(home, "soak-results"));
         var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
@@ -147,6 +151,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             [new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
+                new FilesFeature(sessionStore),
+                new WorktreesFeature(sessionStore),
+                new SourceControlFeature(sessionStore),
                 new DiagnosticsFeature(diagnostics, () =>
                 {
                     hub.CloseSubscriptions();

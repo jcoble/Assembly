@@ -35,7 +35,7 @@ public sealed class RunRoutesTests : IAsyncLifetime
     {
         _db = TestDatabase.Open(_file.Path);
         _hub = new LiveHub(RowStore.Open(_db));
-        _sessions = SessionStore.Open(_db, _time);
+        _sessions = SessionStore.Open(_db, _time, "checkouts");
         _here = new FakeMachine(null, _sessions);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();

@@ -52,7 +52,7 @@ public sealed partial class ChatSocketTests : IAsyncLifetime
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _rows = RowStore.Open(_db);
         _summaries = SessionSummaries.Load(_rows);
-        _sessions = SessionStore.Open(_db, _time, _summaries);
+        _sessions = SessionStore.Open(_db, _time, "checkouts", _summaries);
         _hub = new LiveHub(_rows, topics: topics, summaries: _summaries, summaryChanged: _sessions.PublishSummary);
         var rows = _rows;
         _here = new FakeMachine(null, _sessions);

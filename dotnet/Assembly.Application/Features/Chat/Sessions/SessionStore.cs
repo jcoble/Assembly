@@ -14,7 +14,7 @@ public sealed class SessionStore
     private const string Schema = """
         CREATE TABLE IF NOT EXISTS session_info(session_id TEXT PRIMARY KEY, agent TEXT NOT NULL, repo_url TEXT NOT NULL,
           title TEXT, acp_session_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, machine TEXT,
-          session_cost TEXT);
+          session_cost TEXT, completed_at INTEGER, settled_at INTEGER);
         CREATE INDEX IF NOT EXISTS session_info_updated ON session_info(updated_at);
         CREATE TABLE IF NOT EXISTS session_config(session_id TEXT PRIMARY KEY, options TEXT, choices TEXT NOT NULL DEFAULT '{}');
         CREATE TABLE IF NOT EXISTS agent_config(agent TEXT PRIMARY KEY, options TEXT NOT NULL);
@@ -25,7 +25,7 @@ public sealed class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq";
+    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -42,6 +42,9 @@ public sealed class SessionStore
     // And one made before sessions were marked read starts with each read up to its last row, so none is unread.
     private const string HasReadSeq = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'read_seq';";
 
+    private const string HasCompletedAt = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'completed_at';";
+    private const string HasSettledAt = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'settled_at';";
+
     private const string HasRows = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'rows';";
 
     // And one made before a message could fail gets the error, empty.
@@ -56,16 +59,19 @@ public sealed class SessionStore
     private readonly IAtomicWriter _writer;
     private readonly TimeProvider _time;
     private readonly SessionSummaries? _summaries;
+    private readonly string _checkouts;
 
-    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time, SessionSummaries? summaries)
+    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time, SessionSummaries? summaries, string checkouts)
     {
         _summaries = summaries;
+        _checkouts = checkouts;
         _db = db;
         _writer = writer;
         _time = time;
     }
 
-    public static SessionStore Open(IAppDatabase db, TimeProvider time, SessionSummaries? summaries = null)
+    /// <summary><paramref name="checkouts"/> is the folder holding this machine's sessions' checkouts.</summary>
+    public static SessionStore Open(IAppDatabase db, TimeProvider time, string checkouts, SessionSummaries? summaries = null)
     {
         db.Writer.Write("sessions.schema", scope =>
         {
@@ -87,13 +93,17 @@ public sealed class SessionStore
                 if (!Missing(HasRows))
                     scope.Execute("UPDATE session_info SET read_seq = COALESCE((SELECT MAX(seq) FROM rows WHERE rows.session_id = session_info.session_id), 0);");
             }
+            if (Missing(HasCompletedAt))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN completed_at INTEGER;");
+            if (Missing(HasSettledAt))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN settled_at INTEGER;");
             if (Missing(HasMessageError))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
             if (Missing(HasMessageAnswer))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
             return 0;
         });
-        return new SessionStore(db, db.Writer, time, summaries);
+        return new SessionStore(db, db.Writer, time, summaries, checkouts);
     }
 
     /// <summary>A config's chosen values, from its JSON object; anything not a string is left out.</summary>
@@ -317,7 +327,36 @@ public sealed class SessionStore
         });
 
     /// <summary>The session's list item: its stored columns and its summary.</summary>
-    public SessionItem Item(SessionInfo session) => SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None);
+    public SessionItem Item(SessionInfo session) =>
+        SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(session));
+
+    /// <summary>
+    /// The session's folder on this machine, made on its first send, so it may not exist yet; null for a session that runs
+    /// on another machine, or has no folder.
+    /// </summary>
+    public string? Root(SessionInfo session) => session.Machine is null ? Folder(_checkouts, Top(session)) : null;
+
+    /// <summary>
+    /// The session at the top of <paramref name="session"/>'s parents, whose folder its children all work in: itself when it
+    /// has no parent; the walk stops at a parent that's missing or already passed.
+    /// </summary>
+    public SessionInfo Top(SessionInfo session)
+    {
+        var passed = new HashSet<string>(StringComparer.Ordinal) { session.SessionId };
+        while (session.ParentSessionId is { } parentId && passed.Add(parentId) && Get(parentId) is { } parent)
+            session = parent;
+        return session;
+    }
+
+    /// <summary>
+    /// A session's folder under <paramref name="checkouts"/>: its own, or for a child (a subagent, or a helper) its
+    /// parent's, which its agent works in. Callers pass the <see cref="Top"/> session, so a grandchild gets the top folder.
+    /// </summary>
+    /// Null when that id isn't one plain name: a parent id given as a path, or "..", would put the folder outside.
+    public static string? Folder(string checkouts, SessionInfo session) =>
+        (session.ParentSessionId ?? session.SessionId) is var id && id is not ("" or "." or "..") && Path.GetFileName(id) == id
+            ? Path.Combine(checkouts, id)
+            : null;
 
     /// <summary>
     /// Marks the session read up to <paramref name="seq"/>, or its last row if that's lower, publishing its item; a seq
@@ -332,6 +371,19 @@ public sealed class SessionStore
                 WHERE session_id = $id AND read_seq < mark.seq;
                 """,
                 new SqlArg("$id", sessionId), new SqlArg("$seq", seq)) > 0)
+            Publish(scope, sessionId);
+    }
+
+    /// <summary>Sets the user's mark without changing the session's place in the list; publishes only a changed mark.</summary>
+    internal void Mark(IWriteScope scope, string sessionId, string state)
+    {
+        var change = state switch
+        {
+            "working" => "SET completed_at = NULL, settled_at = NULL WHERE session_id = $id AND (completed_at IS NOT NULL OR settled_at IS NOT NULL)",
+            "done" => "SET completed_at = COALESCE(completed_at, $now), settled_at = NULL WHERE session_id = $id AND (completed_at IS NULL OR settled_at IS NOT NULL)",
+            _ => "SET completed_at = COALESCE(completed_at, $now), settled_at = COALESCE(settled_at, $now) WHERE session_id = $id AND (completed_at IS NULL OR settled_at IS NULL)"
+        };
+        if (scope.Execute($"UPDATE session_info {change};", new SqlArg("$id", sessionId), new SqlArg("$now", Now())) > 0)
             Publish(scope, sessionId);
     }
 
@@ -368,7 +420,8 @@ public sealed class SessionStore
         new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4), row.Long(5),
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
-            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10));
+            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10),
+            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12));
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

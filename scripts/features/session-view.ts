@@ -1,8 +1,8 @@
 // The session view (g0-session) over the socket, as the window uses it: the header's keyed sessions topic, the
 // sessions column's working dot (the session's activeRunId) coming and going with the turn, the first rows page,
-// an opened tool call's detail, and the sessions column's page. node scripts/features/session-view.ts, with
-// CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_RUN set (scripts/features/README.md). The token goes in the
-// hello frame, never in argv or output.
+// an opened tool call's detail, the Context tab's files, and the sessions column's page.
+// node scripts/features/session-view.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_RUN set
+// (scripts/features/README.md). The token goes in the hello frame, never in argv or output.
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_RUN: run } = process.env;
 
 type Item = { sessionId: string; parentSessionId: string | null; agent: string; activeRunId: string | null };
@@ -95,6 +95,19 @@ async function main() {
   const detail = await call('rows', 'tool', { session, item: tool.itemId }, 'an opened tool call reads its detail');
   if (!detail.output && !detail.input) fail('an opened tool call reads its detail', 'it has no input or output');
   console.log('ok an opened tool call reads its detail');
+
+  // The drawer's Context tab: the files the session's tool calls changed, one each, as the page's tool rows have them.
+  const files = await call('rows', 'files', { session }, "the Context tab reads the session's files");
+  const edited = new Set<string>(
+    page.rows
+      .filter((row: any) => row.kind === 'tool' && row.payload?.path && row.payload.state !== 'failed'
+        && ['edit', 'delete', 'move'].includes(row.payload.kind))
+      .map((row: any) => row.payload.path),
+  );
+  const listed = Array.isArray(files) ? files.map((file: any) => file.path) : [];
+  if (!Array.isArray(files) || listed.length !== edited.size || listed.some((path: string) => !edited.has(path)))
+    fail("the Context tab lists each file the session's tool calls changed", `it listed ${JSON.stringify(files)}`);
+  console.log(`ok the Context tab lists the ${listed.length} files the session's tool calls changed`);
 
   const sessions = await call('sessions', 'page', { limit: 50 }, 'the sessions column loads a page');
   if (!sessions.sessions?.some((listed: Item) => listed.sessionId === session))

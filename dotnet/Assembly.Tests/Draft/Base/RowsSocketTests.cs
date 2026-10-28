@@ -50,7 +50,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         var store = _store = RowStore.Open(_db);
         _hub = new LiveHub(store, topics: topics);
         _calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        var sessions = _sessions = SessionStore.Open(_db, TimeProvider.System);
+        var sessions = _sessions = SessionStore.Open(_db, TimeProvider.System, "checkouts");
         _box = new FakeMachine("box", sessions);
         new RowsFeature(_hub, store, sessions, new MachineSet(new FakeMachine(null, sessions), _box)).Register(_calls);
         var builder = WebApplication.CreateSlimBuilder();

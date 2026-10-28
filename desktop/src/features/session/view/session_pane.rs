@@ -1,7 +1,7 @@
 //! `SessionPane` owns the open session: the selected session's id (from the selected-session state lane g0-socket
 //! owns), its `SessionView`, the rows subscription and the loads it started, the timeline and the composer. Opening
 //! another session drops the old subscription and loads, so a stale load stops. While a session is on screen it
-//! tells the backend the newest seq shown (`sessions/read`, once the base lane's session summaries land). It registers under the chat pane's
+//! tells the backend the newest seq shown (`sessions/read`, pane_read.rs). It registers under the chat pane's
 //! name through the core registry (lane g0-host, names from lane g0-shape), never by importing another feature.
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
@@ -20,6 +20,7 @@ use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
+use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
 use crate::core::ui::expand_row::ExpandRow;
 use crate::features::session::client::session_client::{
@@ -104,8 +105,13 @@ pub struct SessionPane {
     _loads: HashMap<String, Task<()>>,
     /// The writes they started (an answer, a Stop), kept the same way; these go on when the reader switches away.
     _writes: HashMap<String, Task<()>>,
+    /// The newest seq told to the backend as read, for the open session.
+    read_to: i64,
     /// The selected session, followed once the pane is registered.
     _selected: Option<Subscription>,
+    /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
+    _machines_started: Subscription,
+    _machines: Option<Subscription>,
     /// The composer's events and the timeline's scrolling.
     _heard: [Subscription; 3],
 }
@@ -179,9 +185,13 @@ impl SessionPane {
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
                 pane.load_older(cx)
             }),
-            cx.observe(&header, |_, _, cx| cx.notify()),
+            cx.observe(&header, |pane, _, cx| {
+                pane.tell_offline(cx);
+                cx.notify()
+            }),
         ];
-        SessionPane {
+        let machines = cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
+        let mut pane = SessionPane {
             client,
             focus: cx.focus_handle(),
             session: None,
@@ -218,8 +228,13 @@ impl SessionPane {
             _page: None,
             _loads: HashMap::new(),
             _writes: HashMap::new(),
+            read_to: 0,
             _heard: heard,
-        }
+            _machines_started: machines,
+            _machines: None,
+        };
+        pane.follow_machines(cx);
+        pane
     }
 
     /// Shows a session: subscribes to its rows first, then, on the `Jump` that says its seq, loads the page below
@@ -235,6 +250,7 @@ impl SessionPane {
         self._page = None;
         self._loads.clear();
         self.view = SessionView::default();
+        self.read_to = 0;
         self.held = Some(Vec::new());
         self.open_folds.clear();
         self.kept.clear();
@@ -289,6 +305,7 @@ impl SessionPane {
             RowUpdate::Jump { seq } => {
                 self._page = None;
                 self.view = SessionView::default();
+                self.read_to = 0;
                 self.held = Some(Vec::new());
                 self.reveal = None;
                 self.reading.clear();
@@ -488,10 +505,12 @@ impl SessionPane {
             _ => {}
         }
         let context = self.view.context.map(|(_, used, size)| (used, size));
+        let running = active.is_some();
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
         });
+        self.tell_read(running, cx);
         cx.notify();
     }
 
@@ -514,6 +533,10 @@ impl SessionPane {
 mod actions;
 #[path = "pane_expand.rs"]
 mod expand;
+#[path = "pane_machine.rs"]
+mod machine;
+#[path = "pane_read.rs"]
+mod read;
 #[path = "pane_render.rs"]
 mod render;
 #[path = "pane_reveal.rs"]

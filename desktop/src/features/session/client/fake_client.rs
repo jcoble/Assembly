@@ -1,7 +1,8 @@
 //! `FakeClient` is a `SessionClient` for tests: it answers calls from what the test queued, records every call and
 //! every cancel, and hands rows events to the subscriber when the test pushes them. The agent's config is kept apart:
 //! the composer reads it whenever it's pointed at a session, so `config/*` calls answer from it and are recorded on
-//! their own, and never take an answer queued for another call.
+//! their own, and never take an answer queued for another call. So are `sessions/read` calls, which the pane makes as
+//! rows land and which always answer.
 
 #![cfg(test)]
 
@@ -34,6 +35,8 @@ struct FakeState {
     /// What `config/get` and `config/set` answer; `None` fails them.
     config: Option<Value>,
     config_calls: Vec<(String, Value)>,
+    /// Every `sessions/read`'s args.
+    reads: Vec<Value>,
 }
 
 impl FakeClient {
@@ -85,6 +88,10 @@ impl FakeClient {
         self.state.borrow().config_calls.clone()
     }
 
+    pub fn reads(&self) -> Vec<Value> {
+        self.state.borrow().reads.clone()
+    }
+
     pub fn calls(&self) -> Vec<(String, Value)> {
         self.state.borrow().calls.clone()
     }
@@ -133,6 +140,10 @@ impl SessionClient for FakeClient {
                 .push((format!("{feature}/{method}"), args));
             let config = state.config.clone();
             return Task::ready(config.ok_or_else(|| CallError::Failed("no config".into())));
+        }
+        if (feature, method) == ("sessions", "read") {
+            state.reads.push(args);
+            return Task::ready(Ok(Value::Null));
         }
         state.calls.push((format!("{feature}/{method}"), args));
         let answer = state

@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
+using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Socket;
 
@@ -145,6 +146,60 @@ public sealed partial class ChatSocketTests
         Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
         await CallAsync(socket, 2, "rows", "page", $$"""{"session":"{{session.SessionId}}"}""");
         Assert.StartsWith("""{"t":"result","id":2,""", await ReadAsync(socket));
+    }
+
+    // Pins: g0-shape#13
+    // Each call counts once, by its newest row; a read, a command and a failed edit touched nothing.
+    [Fact]
+    public async Task Rows_files_sums_each_edited_files_lines_newest_first()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        void Tool(string item, string kind, string state, string? path, string lines = "") =>
+            Row(session, RowKind.Tool, item,
+                $$"""{"name":"{{kind}}","state":"{{state}}","path":{{(path is null ? "null" : $"\"{path}\"")}},"hasDetail":false,"kind":"{{kind}}"{{lines}}}""");
+        Tool("t1", "edit", "started", "a.rs");
+        Tool("t1", "edit", "completed", "a.rs", ""","added":3,"removed":1""");
+        Tool("t2", "read", "completed", "b.rs");
+        Tool("t3", "edit", "completed", "a.rs", ""","added":2""");
+        Tool("t4", "delete", "completed", "c.rs");
+        Tool("t5", "edit", "failed", "d.rs", ""","added":1""");
+        Tool("t6", "execute", "completed", null);
+        Tool("t7", "move", "completed", "e.rs");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "files", $$"""{"session":"{{session}}"}""");
+        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"e.rs","added":0,"removed":0,"lastSeq":8},""" +
+            """{"path":"c.rs","added":0,"removed":0,"lastSeq":5},{"path":"a.rs","added":5,"removed":1,"lastSeq":4}]}""",
+            await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "files", """{"session":"nope"}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
+    }
+
+    // Pins: g0-shape#13
+    // A patch that changes two files lists each with its own lines, not the first with all of them.
+    [Fact]
+    public async Task Rows_files_lists_each_file_one_call_changed()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        var tool = new OpenTool("t1");
+        tool.Apply(new ToolCallFields(Name: "apply_patch", Kind: "edit", Status: "completed",
+            Diffs: [new FileDiff("a.rs", "x", "x\ny\nz"), new FileDiff("b.rs", null, "1\n2\n3")]));
+        Row(session, RowKind.Tool, "t1", JsonSerializer.Serialize(tool.TakeChanges().Line, RowJsonContext.Rows.ToolPayload));
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "files", $$"""{"session":"{{session}}"}""");
+
+        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"a.rs","added":2,"removed":0,"lastSeq":1},""" +
+            """{"path":"b.rs","added":3,"removed":0,"lastSeq":1}]}""", await ReadAsync(socket));
+    }
+
+    // Pins: g0-shape#13
+    // The read runs on the call's cancellation, so a read the window drops stops in SQLite rather than running on.
+    [Fact]
+    public void Rows_files_stops_once_its_read_is_cancelled()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        Assert.Throws<OperationCanceledException>(() => _rows.FilesTouched(session, new CancellationToken(canceled: true)));
     }
 
     // A page of an unknown session fails, as a tool call of an unknown session or item does.

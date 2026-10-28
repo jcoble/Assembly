@@ -123,9 +123,9 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
             _ => Task.CompletedTask, (_, _) => { }, new SharedLog(), _time);
         _follower.Watch("s1");
         await _connected.Task.WaitAsync(Wait);
-        await Task.Delay(100);
+        // The settle's timer is made after the link's last-frame time is read, so advancing past it now settles.
+        await _time.SettleTimerMade.Task.WaitAsync(Wait);
         _time.Advance(PastSettled);
-        await Task.Delay(100);
     }
 
     public async ValueTask DisposeAsync()
@@ -145,10 +145,16 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         private int _made;
         public int Made => Volatile.Read(ref _made);
 
+        // Done once the follower's settle waits out a quiet link: its timer is due in the follower's 2 s.
+        public TaskCompletionSource SettleTimerMade { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             Interlocked.Increment(ref _made);
-            return base.CreateTimer(callback, state, dueTime, period);
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            if (dueTime == TimeSpan.FromSeconds(2))
+                SettleTimerMade.TrySetResult();
+            return timer;
         }
     }
 }
