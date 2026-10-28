@@ -28,7 +28,13 @@ gpui_kit::assets::icon_assets!(
         Folder,
         FolderOpen,
         File,
-        ChevronDown
+        ChevronDown,
+        Type,
+        SlidersHorizontal,
+        Server,
+        Download,
+        Sparkles,
+        Puzzle
     ]
 );
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The four-way check: one turn each for Claude Code and Codex, on this checkout's local backend and on its Workbox
 # Test host, against this commit. It needs both running from this commit: the local backend on DESKTOP_PORT (the window,
-# `shell/assembly.sh start` with ASSEMBLY_REMOTE=workbox-test, or the headless backend on the workbox) and the host
+# `shell/assembly.sh start`, or the headless backend without --remote on the workbox) and the host
 # (`dotnet/scripts/workbox.sh serve`). Evidence goes to evidence/<commit>/four-way/: per case its rows and the
 # agent's transcript path and size, and summary.json and summary.md. Commit that folder; a code commit pushed
 # to main without a passing summary for it or a later commit fails CI (scripts/check-evidence.sh).
@@ -54,7 +54,12 @@ mkdir -p "$out"
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 started=$(now)
 local_base=http://127.0.0.1:$DESKTOP_PORT
-box_base=http://127.0.0.1:$((BOX_PORT + 10000))   # the local backend's tunnel to the host
+box_base=""
+forward_pid=""
+stop_forward() {
+  if [ -n "$forward_pid" ]; then kill "$forward_pid" 2>/dev/null || true; wait "$forward_pid" 2>/dev/null || true; fi
+}
+trap stop_forward EXIT
 # Tokens stay in variables and reach curl on stdin, never in argv, a file or the log.
 local_token=$(sed -n 's/^ASSEMBLY_TOKEN=//p' "$TOKEN_FILE" 2>/dev/null || true)
 box_token=$(ssh workbox-test "sed -n 's/^ASSEMBLY_TOKEN=//p' ~/$BOX_TOKEN_FILE 2>/dev/null" || true)
@@ -68,6 +73,11 @@ api() { # api local|box METHOD PATH [JSON]
 # Preflight: both backends answer and run this commit. If not, every case fails with the reason.
 blocked=""
 [ -z "$(git status --porcelain -- . ':!evidence')" ] || blocked="the checkout has uncommitted changes, so this isn't a check of $commit"
+if [ -z "$blocked" ]; then
+  setup=$(CHECK4_API=$local_base CHECK4_TOKEN=$local_token CHECK4_BOX_PORT=$BOX_PORT CHECK4_BOX_TOKEN_FILE=$BOX_TOKEN_FILE \
+    node scripts/features/machines.ts setup 2>&1) || blocked=$setup
+  printf '%s\n' "$setup" > "$out/machines-setup.log"
+fi
 # Each waits up to 30 s for the backend just started to answer with this commit's code, so one still starting, or an
 # old process not yet stopped, isn't taken for it.
 local_commit="" box_commit=""
@@ -75,6 +85,11 @@ if [ -z "$blocked" ]; then
   local_commit=$(echo "$local_token" | scripts/wait-version.sh "the local backend" "$local_base" "$commit") || { blocked=$local_commit; local_commit=""; }
 fi
 if [ -z "$blocked" ]; then
+  forward_port=$(node scripts/features/machines.ts port)
+  box_base=http://127.0.0.1:$forward_port
+  ssh -N -n -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+    -L "127.0.0.1:$forward_port:127.0.0.1:$BOX_PORT" workbox-test > "$out/forward.log" 2>&1 &
+  forward_pid=$!
   box_commit=$(echo "$box_token" | scripts/wait-version.sh "the Workbox Test host (through the tunnel)" "$box_base" "$commit") || { blocked=$box_commit; box_commit=""; }
 fi
 

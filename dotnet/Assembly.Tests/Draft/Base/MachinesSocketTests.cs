@@ -31,7 +31,7 @@ namespace Assembly.Tests.Draft.Base;
 public sealed partial class MachinesSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
-    private const string Local = """{"name":null,"kind":"local","reachable":true,"reason":null,"checked":true}""";
+    private const string Local = """{"name":null,"kind":"local","reachable":true,"reason":null,"checked":true,"ssh":null,"port":null,"tokenFile":null}""";
     private static readonly DateTimeOffset Start = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
 
     private readonly TempDatabase _file = new();
@@ -40,6 +40,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     private LiveHub _hub = null!;
     private SessionStore _sessions = null!;
     private readonly ClockSocketTests.CountingTime _time = new(Start);
+    private RemoteConnections _connections = null!;
+    private MachinesFeature _feature = null!;
     private BackendClock _clock = null!;
     private BackgroundWork _work = null!;
     private MachineStatus _status = null!;
@@ -56,11 +58,21 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _sessions = SessionStore.Open(_db, TimeProvider.System, "checkouts");
         var status = _status = new MachineStatus(topics, ["box"]);
         _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, _sessions, TextWriter.Null, status);
+        status.Profile(new SavedMachine("box", "box"));
         var machines = new MachineSet(new FakeMachine(null, _sessions), _box);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         _work = new BackgroundWork(_time, TextWriter.Null);
         _clock = new BackendClock(topics, _time, _work);
-        var feature = new MachinesFeature(machines, status, _clock.Start, _time);
+        _db.Writer.Write("test.profile", scope => scope.Execute("CREATE TABLE IF NOT EXISTS saved_machines(name TEXT PRIMARY KEY, ssh TEXT NOT NULL, port INTEGER NOT NULL, token_file TEXT NOT NULL); INSERT INTO saved_machines VALUES ('box', 'box', 9797, '.config/assembly-dotnet/env');"));
+        var profiles = new MachineStore(_db);
+        var feature = _feature = new MachinesFeature(machines, status, _clock.Start, _time, store: profiles,
+            connection: (name, connect, cancel) => _connections.ConnectionAsync(name, connect, cancel));
+        _connections = new RemoteConnections(profiles, machines, status, _hub, _sessions, topics, TextWriter.Null,
+            feature, open: (profile, cancel) =>
+            {
+                cancel.ThrowIfCancellationRequested();
+                return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name, _stub.Address, "box-token"), null));
+            });
         _clock.Ticked += feature.Tick;
         _clock.Register(calls);
         feature.Register(calls);
@@ -82,6 +94,8 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         await _app.StopAsync();
         await _app.DisposeAsync();
         await _work.StopAsync(Wait);
+        await _connections.DisposeAsync();
+        await _feature.DisposeAsync();
         await _box.DisposeAsync();
         await _stub.DisposeAsync();
         _hub.Dispose();
@@ -405,7 +419,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
     // Pins: sessions-list#11 (checked is false only before the first probe answers or fails)
     private static string Box(bool reachable, string? reason) =>
-        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}}}""";
+        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}},"ssh":"box","port":9797,"tokenFile":".config/assembly-dotnet/env"}""";
 
     private static string List(long sub, string box) =>
         $$$"""{"t":"state","sub":{{{sub}}},"items":[{"key":"local","item":{{{Local}}}},{"key":"box","item":{{{box}}}}]}""";

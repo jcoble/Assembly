@@ -1,14 +1,17 @@
-//! `TopBar` owns the title row above the panes, on the rail: the round Home button, which keeps the open sessions column's width so the
-//! dividers line up, also while the column's edge is dragged. The dock's own tab bars are the tabs, and the kit draws
-//! the sessions, drawer and bottom dock toggles in them. Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
-//! `window-chrome` markup in routes/+page.svelte.
+//! `TopBar` owns the title row above the panes, on the rail: the round Home button, whose menu opens Settings, and
+//! which keeps the open sessions column's width so the dividers line up, also while the column's edge is dragged. The
+//! dock's own tab bars are the tabs, and the kit draws the sessions, drawer and bottom dock toggles in them. Replaces
+//! TopTabRow.svelte's chrome, HomeButton.svelte and the `window-chrome` markup in routes/+page.svelte.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockArea, DockPlacement};
 use gpui_kit::component::h_flex;
+use gpui_kit::component::menu::DropdownMenu as _;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::*;
+
+use crate::core::intents::open_settings::OpenSettings;
 
 /// The row's height, the old app's `--center-head-row-height` (lib/shell/styles/nextTokens.css:287).
 const HEIGHT: Pixels = px(42.);
@@ -53,7 +56,13 @@ impl Render for TopBar {
                         .icon(IconName::House)
                         .rounded(cx.theme().radius_full())
                         .with_size(HOME_SIZE)
-                        .tooltip("Home"),
+                        .dropdown_menu(|menu, _, _| {
+                            menu.menu_with_icon(
+                                "Settings",
+                                IconName::Settings,
+                                Box::new(OpenSettings),
+                            )
+                        }),
                 ),
         )
     }

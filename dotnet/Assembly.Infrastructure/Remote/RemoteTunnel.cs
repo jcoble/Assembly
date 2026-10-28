@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net.Sockets;
+using System.Net;
 using System.Runtime.InteropServices;
 
 namespace Assembly.Infrastructure.Remote;
@@ -21,7 +22,9 @@ public sealed class RemoteTunnel : IAsyncDisposable
     private readonly TextWriter _log;
     private readonly CancellationTokenSource _stopping = new();
     private readonly Task _supervising;
+    private readonly TaskCompletionSource<bool> _forwardReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _pid;
+    private int _disposed;
     // The wait before ssh starts again, while there is one: TryNow cuts it short.
     private CancellationTokenSource? _waiting;
 
@@ -59,24 +62,32 @@ public sealed class RemoteTunnel : IAsyncDisposable
     public static RemoteTunnel ForSsh(string host, int localPort, int remotePort, TextWriter log) =>
         Wrapped(
             [
-                "ssh", "-N", "-n",
+                "ssh", "-v", "-N", "-n", "-S", "none",
                 "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                 "-L", $"127.0.0.1:{localPort}:127.0.0.1:{remotePort}", host,
             ],
             log);
 
     /// <summary>
-    /// Starts the tunnel to <paramref name="host"/>'s API on <paramref name="remotePort"/>, reached here on that port
-    /// plus 10000, and reads its token from <paramref name="tokenFile"/> there.
+    /// Starts an independent loopback forward and reads the remote token. Cancellation stops setup and its processes.
     /// </summary>
-    public static async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> ConnectAsync(string host, int remotePort, string tokenFile, TextWriter log)
+    public static async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> ConnectAsync(string host, int remotePort, string tokenFile, TextWriter log,
+        CancellationToken cancellationToken = default, Func<int, RemoteTunnel>? start = null, Func<CancellationToken, Task<string>>? readToken = null)
     {
-        var localPort = remotePort + 10000;
-        var tunnel = ForSsh(host, localPort, remotePort, log);
+        cancellationToken.ThrowIfCancellationRequested();
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var localPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        var tunnel = start is null ? ForSsh(host, localPort, remotePort, log) : start(localPort);
         try
         {
-            var token = await ReadTokenAsync(host, tokenFile, CancellationToken.None);
-            await WaitForPortAsync(localPort, TimeSpan.FromSeconds(15));
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            limit.CancelAfter(TimeSpan.FromSeconds(15));
+            var token = await (readToken is null ? ReadTokenAsync(host, tokenFile, limit.Token) : readToken(limit.Token));
+            if (!await tunnel._forwardReady.Task.WaitAsync(limit.Token))
+                throw new InvalidOperationException("ssh exited before establishing its forward");
+            await WaitForPortAsync(localPort, TimeSpan.FromSeconds(15), limit.Token);
             log.WriteLine($"tunnel: {host} on 127.0.0.1:{localPort} (ssh pid {tunnel.Pid})");
             return (tunnel, new RemoteConfig(host, new Uri($"http://127.0.0.1:{localPort}"), token));
         }
@@ -94,18 +105,30 @@ public sealed class RemoteTunnel : IAsyncDisposable
     public static async Task<string> ReadTokenAsync(string host, string tokenFile, CancellationToken cancellationToken)
     {
         var start = new ProcessStartInfo("ssh") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { "-o", "BatchMode=yes", host, $"cat {tokenFile}" })
+        foreach (var arg in new[] { "-o", "BatchMode=yes", host, $"cat -- '{tokenFile.Replace("'", "'\"'\"'", StringComparison.Ordinal)}'" })
             start.ArgumentList.Add(arg);
         using var ssh = Process.Start(start)!;
-        var output = await ssh.StandardOutput.ReadToEndAsync(cancellationToken);
-        await ssh.WaitForExitAsync(cancellationToken);
+        using var cancelled = cancellationToken.Register(() => { try { ssh.Kill(entireProcessTree: true); } catch (InvalidOperationException) { } });
+        var errors = ssh.StandardError.ReadToEndAsync(CancellationToken.None);
+        string output;
+        try
+        {
+            output = await ssh.StandardOutput.ReadToEndAsync(cancellationToken);
+            await ssh.WaitForExitAsync(cancellationToken);
+        }
+        finally
+        {
+            try { if (!ssh.HasExited) ssh.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+            await ssh.WaitForExitAsync(CancellationToken.None);
+            await errors;
+        }
         const string prefix = "ASSEMBLY_TOKEN=";
         return output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal))?[prefix.Length..]
             ?? throw new InvalidOperationException($"{host} has no token in ~/{tokenFile} (ssh exit {ssh.ExitCode})");
     }
 
     /// <summary>Waits until the forward accepts connections.</summary>
-    public static async Task WaitForPortAsync(int port, TimeSpan timeout)
+    public static async Task WaitForPortAsync(int port, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (true)
@@ -113,14 +136,32 @@ public sealed class RemoteTunnel : IAsyncDisposable
             try
             {
                 using var client = new TcpClient();
-                await client.ConnectAsync("127.0.0.1", port);
+                await client.ConnectAsync("127.0.0.1", port, cancellationToken);
                 return;
             }
             catch (SocketException) when (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(100);
+                await Task.Delay(100, cancellationToken);
             }
         }
+    }
+
+    private async Task<string> ReadErrorsAsync(Process process)
+    {
+        var errors = new System.Text.StringBuilder();
+        while (await process.StandardError.ReadLineAsync() is { } line)
+        {
+            // With ExitOnForwardFailure, ssh reaches this point only after its local forwards bind.
+            if (line == "debug1: Entering interactive session.") _forwardReady.TrySetResult(true);
+            if (line.StartsWith("debug1:", StringComparison.Ordinal)
+                || line.StartsWith("debug2:", StringComparison.Ordinal)
+                || line.StartsWith("debug3:", StringComparison.Ordinal)) continue;
+            // Keep the last error context, including the reason ssh finally exited.
+            const int maxErrorChars = 4096;
+            errors.AppendLine(line.Length > maxErrorChars ? line[^maxErrorChars..] : line);
+            if (errors.Length > maxErrorChars) errors.Remove(0, errors.Length - maxErrorChars);
+        }
+        return errors.ToString();
     }
 
     private async Task SuperviseAsync()
@@ -142,7 +183,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
             Volatile.Write(ref _pid, process.Id);
             Starts++;
             var startedAt = DateTime.UtcNow;
-            var errors = process.StandardError.ReadToEndAsync();
+            var errors = ReadErrorsAsync(process);
             var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
             process.StandardInput.Close();
             try
@@ -151,9 +192,20 @@ public sealed class RemoteTunnel : IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
-                break;
+                // The process may not have established its group yet; stop its owned tree as well.
+                Kill(Signal.Kill);
+                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                await process.WaitForExitAsync(CancellationToken.None);
             }
             Volatile.Write(ref _pid, 0);
+            await errors;
+            _forwardReady.TrySetResult(false);
+            if (_stopping.IsCancellationRequested)
+            {
+                await output;
+                await errors;
+                return;
+            }
             // A link that held for a while starts again quickly.
             if (DateTime.UtcNow - startedAt > MaxBackoff)
                 backoff = TimeSpan.FromSeconds(1);
@@ -207,27 +259,15 @@ public sealed class RemoteTunnel : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         AppDomain.CurrentDomain.ProcessExit -= OnExit;
         AppDomain.CurrentDomain.UnhandledException -= OnExit;
-        var pid = Pid;
         await _stopping.CancelAsync();
-        if (pid > 0)
-        {
-            _ = kill(-pid, (int)Signal.Term);
-            for (var i = 0; i < 20 && kill(pid, 0) == 0; i++)
-                await Task.Delay(100);
-            // Whatever of the group is left.
-            _ = kill(-pid, (int)Signal.Kill);
-        }
         await _supervising;
         _stopping.Dispose();
     }
 
-    private enum Signal
-    {
-        Kill = 9,
-        Term = 15,
-    }
+    private enum Signal { Kill = 9 }
 
     [DllImport("libc", SetLastError = true)]
     private static extern int kill(int pid, int signal);

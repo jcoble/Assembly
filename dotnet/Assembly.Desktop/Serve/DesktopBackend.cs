@@ -40,20 +40,17 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly LiveHub _hub;
     private readonly SessionRegistry _sessions;
     private readonly BackgroundWork _work;
-    private readonly RemoteMachine? _remote;
-    private readonly RemoteOutbox? _outbox;
+    private readonly RemoteConnections _connections;
     private readonly WebApplication _app;
     private readonly FileStream _homeLock;
     private readonly DiagnosticsHost _diagnostics;
     private readonly MachinesFeature _machinesFeature;
 
-    private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteMachine? remote,
-        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature)
+    private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature)
     {
         _homeLock = homeLock;
         _machinesFeature = machinesFeature;
-        _remote = remote;
-        _outbox = outbox;
+        _connections = connections;
         _db = db;
         _hub = hub;
         _sessions = sessions;
@@ -73,12 +70,11 @@ public sealed class DesktopBackend : IAsyncDisposable
     internal int BackgroundRunning => _work.Running;
 
     /// <summary>
-    /// Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there, and
-    /// <paramref name="tunnel"/>'s exits mark it unreachable. With <paramref name="utilityClis"/>, those CLIs run the utility
-    /// model that names new sessions.
+    /// Starts local serving independently of saved connection attempts. A supplied remote is a direct test endpoint;
+    /// production startup imports SSH settings with savedRemote. Utility CLIs name new sessions.
     /// </summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
-        RemoteTunnel? tunnel = null, (string Claude, string Codex)? utilityClis = null)
+        RemoteTunnel? tunnel = null, (string Claude, string Codex)? utilityClis = null, SavedMachine? savedRemote = null)
     {
         Directory.CreateDirectory(home);
         // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
@@ -86,7 +82,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         var homeLock = HomeLock.Take(home);
         try
         {
-            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis);
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis, savedRemote);
         }
         catch
         {
@@ -96,7 +92,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     }
 
     private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
-        RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis)
+        RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
@@ -127,28 +123,28 @@ public sealed class DesktopBackend : IAsyncDisposable
             ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log))
             : null);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
-        var status = new MachineStatus(topics, remote is null ? [] : [remote.Name]);
-        var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
-            sessions.Helpers.Row.TurnEnded);
-        var machines = remoteMachine is null
-            ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
-            : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
+        var profiles = new MachineStore(db);
+        var status = new MachineStatus(topics, []);
+        var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
-        if (tunnel is not null && remote is not null)
-            tunnel.Exited += () => status.Unreachable(remote.Name, "ssh tunnel exited");
-        var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, sessionStore, hub, machines.Named(null)!, log);
-        // Turns a remote was running when the desktop stopped: catch up on them rather than mark them lost. And remote
-        // helpers whose row here is still running, whose rows may not have been copied yet: once caught up with no turn
-        // open, their row goes idle.
-        remoteMachine?.WatchRunning(store.UnfinishedRuns().Select(run => run.SessionId).Where(id => sessionStore.Get(id)?.Machine == remote!.Name),
-            store.RunningItems(RowKind.Subagent).Select(row => row.Payload.GetProperty("sessionId").GetString()!)
-                .Where(id => sessionStore.Get(id)?.Machine == remote!.Name).ToList());
 
         Uri? address = null;
         Action dropSockets = () => { };
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var clock = new BackendClock(topics, TimeProvider.System, work);
-        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, () => tunnel?.TryNow());
+        RemoteConnections? connections = null;
+        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, store: profiles,
+            connection: (name, connect, cancel) => connections!.ConnectionAsync(name, connect, cancel));
+        connections = new RemoteConnections(profiles, machines, status, hub, sessionStore, topics, log,
+            machinesFeature, sessions.Helpers.Row.TurnEnded,
+            open: remote is null ? null : (profile, cancel) =>
+            {
+                cancel.ThrowIfCancellationRequested();
+                return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((remote, tunnel));
+            });
+        connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
+        // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
+        if (remote is not null) await connections.ReadyAsync(remote.Name);
         clock.Ticked += machinesFeature.Tick;
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
@@ -169,7 +165,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, connections, app, diagnostics, machinesFeature);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -197,14 +193,11 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _app.StopAsync();
         await _app.DisposeAsync();
         // Before the remote, so no probe is still out on it.
+        await _connections.DisposeAsync();
         await _machinesFeature.DisposeAsync();
-        if (_outbox is not null)
-            await _outbox.DisposeAsync();
         await _sessions.DisposeAsync();
         // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
         await _work.DisposeAsync();
-        if (_remote is not null)
-            await _remote.DisposeAsync();
         _hub.Dispose();
         _db.Dispose();
         _homeLock.Dispose();

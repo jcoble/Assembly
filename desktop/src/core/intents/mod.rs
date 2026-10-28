@@ -6,4 +6,5 @@
 pub mod open_diff;
 pub mod open_file;
 pub mod open_session;
+pub mod open_settings;
 pub mod open_url;
