@@ -202,6 +202,54 @@ public sealed partial class ChatSocketTests
         Assert.Throws<OperationCanceledException>(() => _rows.FilesTouched(session, new CancellationToken(canceled: true)));
     }
 
+    // Pins: g0-shape#14
+    // A prompt names its images in trailing "Attached image:" lines; the prompts that have them come back, newest first,
+    // with the machine that has the images when it isn't this one.
+    [Fact]
+    public async Task Rows_attachments_lists_the_prompts_naming_images_newest_first_and_the_machine()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        Row(session, RowKind.User, null, """{"text":"look\nAttached image: /a/1.png (one.png)"}""");
+        Row(session, RowKind.User, null, """{"text":"no images here"}""");
+        Row(session, RowKind.User, null, """{"text":"both\nAttached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)"}""");
+        var remote = _sessions.Add("r1", "claude", "repo", "Workbox Test").SessionId;
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "attachments", $$"""{"session":"{{session}}"}""");
+        Assert.Equal("""{"t":"result","id":1,"result":{"prompts":["both\nAttached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)","look\nAttached image: /a/1.png (one.png)"],"more":false}}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "attachments", $$"""{"session":"{{remote}}"}""");
+        Assert.Equal("""{"t":"result","id":2,"result":{"machine":"Workbox Test","prompts":[],"more":false}}""", await ReadAsync(socket));
+        await CallAsync(socket, 3, "rows", "attachments", """{"session":"nope"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
+    }
+
+    // Pins: g0-shape#14
+    // The answer stays inside the socket's 4 MB cap: each prompt's end only, where its image lines are, and the newest
+    // AttachmentPrompts prompts, with more set when older ones were left out.
+    [Fact]
+    public async Task Rows_attachments_sends_each_prompts_end_and_at_most_the_newest_fifty()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        var line = "Attached image: /a/big.png (big.png)";
+        Row(session, RowKind.User, null, JsonSerializer.Serialize(new { text = new string('x', 20_000) + "\n" + line }));
+        for (var i = 0; i < RowsFeature.AttachmentPrompts; i++)
+            Row(session, RowKind.User, null, $$"""{"text":"Attached image: /a/{{i}}.png ({{i}}.png)"}""");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "attachments", $$"""{"session":"{{session}}"}""");
+        var answer = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
+        var prompts = answer.GetProperty("prompts").EnumerateArray().Select(prompt => prompt.GetString()!).ToList();
+        Assert.Equal(RowsFeature.AttachmentPrompts, prompts.Count);
+        Assert.Equal($"Attached image: /a/{RowsFeature.AttachmentPrompts - 1}.png ({RowsFeature.AttachmentPrompts - 1}.png)", prompts[0]);
+        Assert.True(answer.GetProperty("more").GetBoolean());
+
+        Row(session, RowKind.User, null, JsonSerializer.Serialize(new { text = new string('x', 20_000) + "\n" + line }));
+        await CallAsync(socket, 2, "rows", "attachments", $$"""{"session":"{{session}}"}""");
+        var newest = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result").GetProperty("prompts")[0].GetString()!;
+        Assert.Equal(RowsFeature.AttachmentTail, newest.Length);
+        Assert.EndsWith("\n" + line, newest);
+    }
+
     // A page of an unknown session fails, as a tool call of an unknown session or item does.
     [Fact]
     public async Task Rows_page_and_tool_for_an_unknown_session_or_item()

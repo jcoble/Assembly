@@ -1,7 +1,8 @@
 //! `ContextPane` owns the drawer's Context tab: the files the selected session's tool calls edited, deleted or moved,
-//! newest first, each with its lines added and removed. Replaces SessionContextPanel.svelte's Files touched section.
-//! Like it, the tab reads them (`rows/files`) when it's shown, and again when another session is picked while it's
-//! shown, and doesn't follow the live rows: Chat already does, and nobody watches this list while it changes.
+//! newest first, each with its lines added and removed, and the images its prompts carried (attachments_section.rs).
+//! Replaces SessionContextPanel.svelte's Files touched and Attachments sections. Like it, the tab reads both
+//! (`rows/files`, `rows/attachments`) when it's shown, and again when another session is picked while it's shown, and
+//! doesn't follow the live rows: Chat already does, and nobody watches these lists while they change.
 
 use std::rc::Rc;
 
@@ -15,6 +16,7 @@ use serde_json::json;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::session_client::{CallError, SessionClient};
 use crate::features::session::client::socket_session_client::SocketSessionClient;
+use listing::Listing;
 
 /// The layout's name for the tab (default_layout.rs).
 const CONTEXT: &str = "Context";
@@ -27,23 +29,25 @@ pub struct FileTouched {
     pub removed: i64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum Files {
-    Reading,
-    Read(Vec<FileTouched>),
-    /// Why the read failed.
-    Failed(String),
-}
-
 pub struct ContextPane {
     focus: FocusHandle,
     client: Rc<dyn SessionClient>,
     /// The kit shows this tab; only then does a pick read.
     active: bool,
-    files: Files,
+    files: Listing<FileTouched>,
+    /// Each attached image's (path, name), newest prompt first.
+    attachments: Listing<(String, String)>,
+    /// The machine that has a remote session's images, from the same read.
+    machine: Option<String>,
+    /// The read left out older prompts' images.
+    more: bool,
+    /// Why the last image clicked didn't open.
+    open_failed: Option<String>,
     _selected: Subscription,
-    /// The read going now; dropping it cancels it.
+    /// The reads going now; dropping it cancels them.
     _read: Option<Task<()>>,
+    /// The image opening now.
+    _open: Option<Task<()>>,
 }
 
 impl ContextPane {
@@ -59,17 +63,28 @@ impl ContextPane {
             focus: cx.focus_handle(),
             client,
             active: false,
-            files: Files::Reading,
+            files: Listing::Reading,
+            attachments: Listing::Reading,
+            machine: None,
+            more: false,
+            open_failed: None,
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.read(cx)),
             _read: None,
+            _open: None,
         }
     }
 
-    /// Reads the selected session's files, if the tab is shown. A hidden tab drops the last session's list, so the
-    /// frame before it's shown again never draws it.
+    /// Reads the selected session's files and attachments, if the tab is shown. A hidden tab drops the last session's
+    /// lists, so the frame before it's shown again never draws them.
     fn read(&mut self, cx: &mut Context<Self>) {
-        self.files = Files::Reading;
-        self._read = None;
+        (
+            self.files,
+            self.attachments,
+            self.machine,
+            self.more,
+            self.open_failed,
+        ) = (Listing::Reading, Listing::Reading, None, false, None);
+        (self._read, self._open) = (None, None);
         cx.notify();
         if !self.active {
             return;
@@ -81,21 +96,21 @@ impl ContextPane {
         else {
             return;
         };
-        let call = self.client.call(
-            "rows",
-            "files",
-            json!({ "session": session }),
-            Some("rows/files"),
-            cx,
-        );
+        let args = json!({ "session": session });
+        let files = self
+            .client
+            .call("rows", "files", args.clone(), Some("rows/files"), cx);
+        let attachments =
+            self.client
+                .call("rows", "attachments", args, Some("rows/attachments"), cx);
         self._read = Some(cx.spawn(async move |pane, cx| {
-            let answer = call.await.and_then(|files| {
-                serde_json::from_value(files).map_err(|error| CallError::Failed(error.to_string()))
-            });
+            let files = touched(files.await);
+            let attachments = attachments.await;
             pane.update(cx, |pane, cx| {
-                pane.files = match answer {
-                    Ok(files) => Files::Read(files),
-                    Err(error) => Files::Failed(error.reason()),
+                pane.files = files;
+                (pane.attachments, pane.machine, pane.more) = match attachments {
+                    Ok(answer) => attached(&answer),
+                    Err(error) => (Listing::Failed(error.reason()), None, false),
                 };
                 cx.notify();
             })
@@ -153,18 +168,19 @@ impl Render for ContextPane {
         let body = match &self.files {
             _ if !picked => note(
                 "context-note-pick",
-                "Pick a session to see the files it has touched.".into(),
+                "Pick a session to see the files it has touched and the images attached to it."
+                    .into(),
             ),
-            Files::Reading => note("context-note-reading", "Reading this session…".into()),
-            Files::Failed(why) => note(
+            Listing::Reading => note("context-note-reading", "Reading this session…".into()),
+            Listing::Failed(why) => note(
                 "context-note-failed",
                 format!("Couldn't read files: {why}").into(),
             ),
-            Files::Read(files) if files.is_empty() => note(
+            Listing::Read(files) if files.is_empty() => note(
                 "context-note-empty",
                 "No files yet. Files this session edits are listed here, newest first.".into(),
             ),
-            Files::Read(files) => v_flex().children(files.iter().zip(names(files)).map(
+            Listing::Read(files) => v_flex().children(files.iter().zip(names(files)).map(
                 |(file, (name, folder))| {
                     let selector = format!("touched-file-{}", file.path);
                     h_flex()
@@ -203,7 +219,7 @@ impl Render for ContextPane {
             )),
         };
         let count = match &self.files {
-            Files::Read(files) if picked && !files.is_empty() => Some(files.len()),
+            Listing::Read(files) if picked && !files.is_empty() => Some(files.len()),
             _ => None,
         };
         v_flex()
@@ -226,6 +242,20 @@ impl Render for ContextPane {
                     }),
             )
             .child(body)
+            .when(picked, |pane| {
+                pane.child(div().h(px(8.)))
+                    .child(self.attachments_section(cx))
+            })
+    }
+}
+
+/// `rows/files`' answer, or why it couldn't be read.
+fn touched(answer: Result<serde_json::Value, CallError>) -> Listing<FileTouched> {
+    match answer.and_then(|list| {
+        serde_json::from_value(list).map_err(|error| CallError::Failed(error.to_string()))
+    }) {
+        Ok(list) => Listing::Read(list),
+        Err(error) => Listing::Failed(error.reason()),
     }
 }
 
@@ -255,6 +285,12 @@ fn names(files: &[FileTouched]) -> Vec<(&str, &str)> {
         })
         .collect()
 }
+
+#[path = "attachments_section.rs"]
+mod attachments_section;
+use attachments_section::attached;
+#[path = "listing.rs"]
+mod listing;
 
 #[cfg(test)]
 #[path = "context_pane_tests.rs"]

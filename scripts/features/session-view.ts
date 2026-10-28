@@ -1,11 +1,11 @@
 // The session view (g0-session) over the socket, as the window uses it: the header's keyed sessions topic, the
 // sessions column's working dot (the session's activeRunId) coming and going with the turn, the first rows page,
-// an opened tool call's detail, the Context tab's files, and the sessions column's page.
+// an opened tool call's detail, the Context tab's files and attachments, and the sessions column's page.
 // node scripts/features/session-view.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_RUN set
 // (scripts/features/README.md). The token goes in the hello frame, never in argv or output.
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_RUN: run } = process.env;
 
-type Item = { sessionId: string; parentSessionId: string | null; agent: string; activeRunId: string | null };
+type Item = { sessionId: string; parentSessionId: string | null; agent: string; machine: string | null; activeRunId: string | null };
 type Frame = { t: string; id?: number; sub?: number; result?: any; message?: string; items?: { key: string; item: Item }[]; item?: Item };
 
 class Failed extends Error {}
@@ -101,6 +101,12 @@ async function main() {
   if (!Array.isArray(files) || listed.length !== edited.size || listed.some((path: string) => !edited.has(path)))
     fail("the Context tab lists each file the session's tool calls changed", `it listed ${JSON.stringify(files)}`);
   console.log(`ok the Context tab lists the ${listed.length} files the session's tool calls changed`);
+
+  // Its attachments: the check's prompt attaches nothing, and a remote session's answer names the machine with them.
+  const attached = await call('rows', 'attachments', { session }, "the Context tab reads the session's attachments");
+  if (!Array.isArray(attached.prompts) || attached.prompts.length !== 0 || attached.more !== false || (attached.machine ?? null) !== (item!.machine ?? null))
+    fail("the Context tab's attachments are none, on the session's machine", `it answered ${JSON.stringify(attached)}`);
+  console.log(`ok the Context tab lists no attachments, on ${attached.machine ?? 'this machine'}`);
 
   const sessions = await call('sessions', 'page', { limit: 50 }, 'the sessions column loads a page');
   if (!sessions.sessions?.some((listed: Item) => listed.sessionId === session))
