@@ -11,7 +11,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::age::age;
+use super::history_row::history_row;
 use super::project_group::ProjectGroup;
 use crate::core::clock::backend_clock::BackendClock;
 use crate::core::clock::tick::Tick;
@@ -162,7 +162,7 @@ impl Panel for HistoryPane {
 impl Render for HistoryPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, secondary, hover) = (theme.muted_foreground, theme.secondary, theme.muted);
+        let (muted, hover) = (theme.muted_foreground, theme.muted);
         let note = |id: &'static str, text: &'static str| {
             div()
                 .debug_selector(move || id.into())
@@ -245,59 +245,8 @@ impl Render for HistoryPane {
             let shown = self.shown.get(&key).copied().unwrap_or(WINDOW);
             for id in group.sessions.iter().take(shown) {
                 let Some(item) = item(id) else { continue };
-                let (row, age_id, picked) = (
-                    format!("history-session-{id}"),
-                    format!("history-age-{id}"),
-                    selected.as_deref() == Some(id.as_str()),
-                );
-                let (pick, title_id) = (id.clone(), format!("history-title-{id}"));
-                lines.push(
-                    h_flex()
-                        .id(SharedString::from(row.clone()))
-                        .debug_selector(move || row)
-                        .h(px(28.))
-                        .pl(px(26.))
-                        .pr_2()
-                        .gap_2()
-                        .rounded(px(6.))
-                        .cursor_pointer()
-                        .when(picked, |line| line.bg(secondary))
-                        .when(!picked, |line| line.hover(|line| line.bg(hover)))
-                        .on_click(move |_, _, cx| {
-                            let id = pick.clone();
-                            SelectedSession::global(cx)
-                                .update(cx, |selected, cx| selected.select(Some(id), cx));
-                        })
-                        .child(
-                            div()
-                                .debug_selector(move || title_id)
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(item.title()),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_color(muted)
-                                .child(item.agent.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                // Room for "11mo" on one line, so the ages line up, kept before the first tick
-                                // so the titles don't move when it comes.
-                                .min_w(px(32.))
-                                .whitespace_nowrap()
-                                .text_right()
-                                .text_color(muted)
-                                .when_some(self.now, |cell, now| {
-                                    cell.debug_selector(move || age_id)
-                                        .child(age(now, item.updated_at))
-                                }),
-                        )
-                        .into_any_element(),
-                );
+                let picked = selected.as_deref() == Some(id.as_str());
+                lines.push(history_row(item, self.now, picked, cx).into_any_element());
             }
             if group.sessions.len() > shown {
                 let more = format!("history-more-{}", group.folder);

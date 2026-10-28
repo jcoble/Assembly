@@ -4,4 +4,5 @@
 
 pub mod age;
 pub mod history_pane;
+pub mod history_row;
 pub mod project_group;
