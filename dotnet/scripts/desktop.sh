@@ -24,7 +24,11 @@ running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 
 case "$mode" in
   serve)
-    if [ "${2:-}" = --remote ]; then REMOTE=${3:?--remote needs an ssh alias}; fi ;;
+    if [ "${2:-}" = --remote ]; then
+      REMOTE=${3:?--remote needs an ssh alias}
+      # The same kind of name lane-env.sh takes from .lane, so it can't reach ssh as an option.
+      [[ $REMOTE =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "stop: --remote $REMOTE isn't an ssh alias of lowercase letters, digits and dashes" >&2; exit 1; }
+    fi ;;
   stop)
     running || { echo "the backend isn't running" >&2; exit 1; }
     pid=$(cat "$pidfile")
