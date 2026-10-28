@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Workflows;
 using Assembly.Application.Features.Workflows.Contracts;
 using Assembly.Infrastructure.Workflows;
@@ -9,7 +8,7 @@ using Assembly.Infrastructure.Workflows;
 namespace Assembly.Infrastructure.Mcp;
 
 /// <summary>Token-owned reporting and host-owned answer delivery. No caller can select its creator or project.</summary>
-public sealed class BoardTools(SessionStore sessions, MachineSet machines, WorkflowTransitions transitions, WorkflowQueries queries, CancellationToken hostStop) : IAsyncDisposable
+public sealed class BoardTools(SessionStore sessions, SessionRegistry registry, WorkflowTransitions transitions, WorkflowQueries queries, CancellationToken hostStop) : IAsyncDisposable
 {
     private readonly CancellationTokenSource _stop = CancellationTokenSource.CreateLinkedTokenSource(hostStop);
     private readonly Lock _gate = new();
@@ -57,7 +56,7 @@ public sealed class BoardTools(SessionStore sessions, MachineSet machines, Workf
                 "deny" => "Denied: " + identity,
                 _ => $"Answer to {identity}: {args.Answer.Text}"
             };
-            turn = await machines.For(session).SendAsync(session, text, "board-answer/" + args.AnswerKey, _stop.Token);
+            turn = await registry.For(session.SessionId).SendAfterTurnAsync(text, "board-answer/" + args.AnswerKey, _stop.Token);
             state = turn is null ? "delivery_failed" : "delivered";
         }
         catch (Exception error) when (error is not OutOfMemoryException)

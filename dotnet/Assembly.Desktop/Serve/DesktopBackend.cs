@@ -152,7 +152,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
         sessions.Helpers.Delivery.Machines = machines;
         var hostStop = new CancellationTokenSource();
-        var board = new BoardTools(sessionStore, machines, boardTransitions, boardQueries, hostStop.Token);
+        var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
         var boardMirror = remote is null ? null : new RemoteWorkflowMirror(remote, boardQueries, boardTransitions,
             () => status.Unreachable(remote.Name, "Board connection closed"));
         var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);

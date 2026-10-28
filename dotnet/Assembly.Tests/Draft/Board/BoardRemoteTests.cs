@@ -125,7 +125,7 @@ public sealed class BoardRemoteTests
         Assert.Equal("Workbox Test", accepted.MachineId);
         Assert.Equal(args.AnswerKey, accepted.AnswerKey);
         Assert.Equal(args.Generation, accepted.Generation);
-        Assert.Single(source.Machine.Asked);
+        Assert.Single(source.Rows.RowsAfter(creator.SessionId, 0), row => row.Kind == "user");
         using var socket = await desktop.ConnectAsync();
         await BoardSocketTests.Send(socket, """{"t":"call","id":1,"feature":"board","method":"task","args":{"machineId":"unknown","taskKey":"task","beforeSeq":null,"questionCursor":null}}""");
         Assert.Equal("unreachable", (await BoardSocketTests.Read(socket)).GetProperty("code").GetString());

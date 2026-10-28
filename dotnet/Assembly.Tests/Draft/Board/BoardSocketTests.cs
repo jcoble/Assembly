@@ -13,6 +13,9 @@ using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Draft.Base.Chat;
+using Assembly.Application.Common;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Tests.Features.Chat.Sessions;
 using System.Text.Json;
 using Assembly.Application.Features.Workflows.Contracts;
 using Assembly.Infrastructure.Workflows;
@@ -82,14 +85,21 @@ public sealed class BoardSocketTests
         public BoardQueryTests.Fixture F { get; } = new();
         public SessionStore Sessions { get; }
         public BoardTools Tools { get; }
-        public FakeMachine Machine { get; }
+        public RowStore Rows { get; }
+        public FakeLauncher Launcher { get; } = new();
+        public SessionRegistry Registry { get; }
+        private readonly LiveHub _hub;
+        private readonly BackgroundWork _work;
         private WebApplication? _app;
         public Uri Address { get; private set; } = null!;
         public Host()
         {
             Sessions = SessionStore.Open(F.Db, F.Time, "unused");
-            Machine = new FakeMachine(null, Sessions);
-            Tools = new BoardTools(Sessions, new MachineSet(Machine), F.Transitions, F.Queries, CancellationToken.None);
+            Rows = RowStore.Open(F.Db);
+            _hub = new LiveHub(Rows);
+            _work = new BackgroundWork(F.Time, TextWriter.Null);
+            Registry = new SessionRegistry(_hub, Sessions, Launcher, F.Time, TextWriter.Null, _work);
+            Tools = new BoardTools(Sessions, Registry, F.Transitions, F.Queries, CancellationToken.None);
         }
         public async Task StartAsync(RemoteWorkflowMirror? mirror = null)
         {
@@ -119,6 +129,9 @@ public sealed class BoardSocketTests
         {
             if (_app is not null) { await _app.StopAsync(); await _app.DisposeAsync(); }
             await Tools.DisposeAsync();
+            await Registry.DisposeAsync();
+            await _work.DisposeAsync();
+            _hub.Dispose();
             F.Dispose();
         }
     }

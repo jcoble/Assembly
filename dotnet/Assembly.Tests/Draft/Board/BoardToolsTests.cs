@@ -24,6 +24,37 @@ namespace Assembly.Tests.Draft.Board;
 public sealed class BoardToolsTests
 {
     [Fact]
+    public async Task RapidAnswersEachStartTheirOwnTurn()
+    {
+        await using var host = new BoardSocketTests.Host();
+        var session = host.Sessions.Create("codex", "project");
+        var args = Enumerable.Range(1, 3).Select(i => host.F.Answer("q" + i)).ToArray();
+        foreach (var answer in args)
+            host.Tools.Update(session.SessionId, host.F.Report(question: host.F.Ask(answer.QuestionKey)));
+        await host.Tools.AnswerAsync(args[0], CancellationToken.None);
+        var agent = await host.Launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        var later = args.Skip(1).Select(a => host.Tools.AnswerAsync(a, CancellationToken.None)).ToArray();
+        for (var i = 0; i < 3; i++)
+        {
+            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            // Each turn closes before another opens; any steering request fails here.
+            await agent.CloseAsync();
+            if (i == 2) break;
+            await agent.OpenAsync();
+            prompt = await agent.ReadAsync("session/prompt");
+        }
+        await Task.WhenAll(later).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.All(host.F.Detail().Questions, q => Assert.Equal("delivered", q.DeliveryState));
+        var rows = host.Rows.RowsAfter(session.SessionId, 0).Where(row => row.Kind == "user").ToArray();
+        Assert.Equal(3, rows.Length);
+        Assert.Equal(3, rows.Select(row => row.RunId).Distinct().Count());
+        foreach (var answer in args)
+            Assert.Single(rows, row => row.Payload.GetProperty("clientId").GetString() == "board-answer/" + answer.AnswerKey);
+    }
+
+    [Fact]
     public void SameTaskKeyUpdatesOneCard()
     {
         using var f = new BoardQueryTests.Fixture();
@@ -41,17 +72,17 @@ public sealed class BoardToolsTests
     [InlineData("approval", "deny", null)]
     public async Task TwoQuestionsRemainIndependent(string kind, string answerKind, string? text)
     {
-        using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        await using var host = new BoardSocketTests.Host();
+        var f = host.F;
+        var sessions = host.Sessions;
         var session = sessions.Create("codex", "project");
-        var machine = new FakeMachine(null, sessions);
-        await using var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, CancellationToken.None);
+        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask(kind: kind)));
         tools.Update(session.SessionId, f.Report(question: f.Ask("q2")));
         var args = f.Answer(value: new(answerKind, text));
         await tools.AnswerAsync(args, CancellationToken.None);
         Assert.Equal(1, Assert.Single(f.Page().Items).QuestionCount);
-        var message = Assert.Single(machine.Asked)[($"send {session.SessionId} ".Length)..];
+        var message = Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user").Payload.GetProperty("text").GetString();
         var identity = $"""question "q1" (task "task", generation 1, answer key "{args.AnswerKey}")""";
         Assert.Equal(answerKind switch
         {
@@ -79,21 +110,18 @@ public sealed class BoardToolsTests
     [Fact]
     public async Task DuplicateAnswerKeepsAcceptanceAndSendsOnce()
     {
-        using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        await using var host = new BoardSocketTests.Host();
+        var f = host.F;
+        var sessions = host.Sessions;
         var session = sessions.Create("claude", "project");
-        var machine = new FakeMachine(null, sessions);
-        await using var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, CancellationToken.None);
+        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var args = f.Answer();
-        machine.Hold();
-        var sending = tools.AnswerAsync(args, CancellationToken.None);
-        await machine.Reached.Task;
-        Assert.Equal(Assert.Single(f.Detail().Questions).DeliveryClientId, machine.SentClientId);
-        machine.Release();
-        var accepted = await sending;
+        var accepted = await tools.AnswerAsync(args, CancellationToken.None);
+        Assert.Equal(Assert.Single(f.Detail().Questions).DeliveryClientId,
+            Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user").Payload.GetProperty("clientId").GetString());
         Assert.Equal(accepted, await tools.AnswerAsync(args, CancellationToken.None));
-        Assert.Single(machine.Asked);
+        Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user");
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(f.Answer(), CancellationToken.None));
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(args with { Answer = new("text", "Different") }, CancellationToken.None));
         Assert.Equal("board-answer/" + args.AnswerKey, Assert.Single(f.Detail().Questions).DeliveryClientId);
@@ -102,23 +130,22 @@ public sealed class BoardToolsTests
     [Fact]
     public async Task HostStopCancelsHeldDeliveryAfterCallerLeaves()
     {
-        using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        await using var host = new BoardSocketTests.Host();
+        var f = host.F;
+        var sessions = host.Sessions;
         var session = sessions.Create("codex", "project");
-        var machine = new FakeMachine(null, sessions);
-        machine.Hold();
+        host.Registry.For(session.SessionId).Send("held");
         using var hostStop = new CancellationTokenSource();
         using var caller = new CancellationTokenSource();
-        var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, hostStop.Token);
+        var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, hostStop.Token);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var sending = tools.AnswerAsync(f.Answer(), caller.Token);
-        await machine.Reached.Task;
+        Assert.False(sending.IsCompleted);
         await caller.CancelAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sending);
-        Assert.False(machine.Cancelled.Task.IsCompleted);
+        Assert.NotNull(host.Registry.For(session.SessionId).ActiveRunId);
         Assert.Equal("pending", Assert.Single(f.Detail().Questions).DeliveryState);
         await hostStop.CancelAsync();
-        await machine.Cancelled.Task;
         await tools.DisposeAsync();
         Assert.Equal("delivery_unknown", Assert.Single(f.Detail().Questions).DeliveryState);
     }
@@ -141,17 +168,17 @@ public sealed class BoardToolsTests
     [Fact]
     public async Task ChatAnswerRecordsWithoutSend()
     {
-        using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        await using var host = new BoardSocketTests.Host();
+        var f = host.F;
+        var sessions = host.Sessions;
         var session = sessions.Create("claude", "project");
-        var machine = new FakeMachine(null, sessions);
-        await using var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, CancellationToken.None);
+        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var a = f.Answer();
         var received = new BoardAnswerReceived(a.QuestionKey, a.Generation, a.AnswerKey, a.Answer);
         var result = tools.Update(session.SessionId, f.Report(received: received));
         Assert.Equal(result, tools.Update(session.SessionId, f.Report(received: received)));
-        Assert.Empty(machine.Asked);
+        Assert.Empty(host.Rows.RowsAfter(session.SessionId, 0));
         Assert.Equal("recorded_in_chat", Assert.Single(f.Detail().Questions).DeliveryState);
     }
 
@@ -161,19 +188,19 @@ public sealed class BoardToolsTests
     [Fact]
     public async Task RestartBetweenSendAndAckIsUnknown()
     {
-        using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        await using var host = new BoardSocketTests.Host();
+        var f = host.F;
+        var sessions = host.Sessions;
         var session = sessions.Create("codex", "project");
-        var machine = new FakeMachine(null, sessions);
         f.Transitions.Update(session.SessionId, "project", f.Report(question: f.Ask()));
         var args = f.Answer();
         var acceptance = f.Transitions.Answer(args).Acceptance;
-        await machine.SendAsync(session, "Board answer persisted before send", "board-answer/" + args.AnswerKey, CancellationToken.None);
+        host.Registry.For(session.SessionId).Send("Board answer persisted before send", "board-answer/" + args.AnswerKey);
         f.Transitions.Recover();
         Assert.Equal("delivery_unknown", Assert.Single(f.Detail().Questions).DeliveryState);
-        await using var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, CancellationToken.None);
+        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         Assert.Equal(acceptance, await tools.AnswerAsync(args, CancellationToken.None));
-        Assert.Single(machine.Asked);
+        Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user");
     }
 
     private static void RestartUnknown()
@@ -193,36 +220,44 @@ public sealed class BoardToolsTests
     }
 
     [Fact]
-    public async Task ExplicitRefusalRetainsAnswer()
+    public async Task CancelledWaitingDeliveryRetainsAnswer()
     {
-        using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        await using var host = new BoardSocketTests.Host();
+        var f = host.F;
+        var sessions = host.Sessions;
         var session = sessions.Create("claude", "project");
-        var machine = new FakeMachine(null, sessions) { Refuses = true };
-        await using var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, CancellationToken.None);
+        host.Registry.For(session.SessionId).Send("held");
+        using var hostStop = new CancellationTokenSource();
+        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, hostStop.Token);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var args = f.Answer();
-        await tools.AnswerAsync(args, CancellationToken.None);
+        var sending = tools.AnswerAsync(args, CancellationToken.None);
+        await hostStop.CancelAsync();
+        await sending;
         var q = Assert.Single(f.Detail().Questions);
         Assert.Equal(args.Answer, q.Answer);
-        Assert.Equal("delivery_failed", q.DeliveryState);
+        Assert.Equal("delivery_unknown", q.DeliveryState);
     }
 
     [Fact]
     public async Task ReaskWhileDeliveryPendingCannotReplaceQuestion()
     {
-        using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        await using var host = new BoardSocketTests.Host();
+        var f = host.F;
+        var sessions = host.Sessions;
         var session = sessions.Create("codex", "project");
-        var machine = new FakeMachine(null, sessions);
-        machine.Hold();
-        await using var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, CancellationToken.None);
+        host.Registry.For(session.SessionId).Send("held");
+        await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var args = f.Answer();
         var sending = tools.AnswerAsync(args, CancellationToken.None);
-        await machine.Reached.Task;
+        Assert.False(sending.IsCompleted);
         Assert.Throws<CallFailed>(() => tools.Update(session.SessionId, f.Report(question: f.Ask(generation: 1))));
-        machine.Release();
+        var agent = await host.Launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
         await sending;
         tools.Update(session.SessionId, f.Report(question: f.Ask(generation: 1)));
         var revision = f.Detail().Task.Revision;
@@ -242,7 +277,7 @@ public sealed class BoardToolsTests
         await using var registry = new SessionRegistry(hub, sessions, launcher, f.Time, TextWriter.Null, work);
         var machines = new MachineSet(new FakeMachine(null, sessions));
         registry.Helpers.Delivery.Machines = machines;
-        await using var tools = new BoardTools(sessions, machines, f.Transitions, f.Queries, CancellationToken.None);
+        await using var tools = new BoardTools(sessions, registry, f.Transitions, f.Queries, CancellationToken.None);
         await using var app = ApiServer.Build(new ApiServices(hub, sessions, machines, new AttachmentStore("unused"),
             "host-token", registry.Helpers, f.Db.Writer, f.Topics, [new WorkflowCalls(f.Queries, tools.AnswerAsync)], tools), 0, out _);
         await app.StartAsync();

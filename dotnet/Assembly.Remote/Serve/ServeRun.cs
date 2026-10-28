@@ -60,7 +60,7 @@ public static class ServeRun
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
         using var hostStop = new CancellationTokenSource();
-        await using var board = new BoardTools(sessionStore, machines, boardTransitions, boardQueries, hostStop.Token);
+        await using var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
         var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync);
 
         // Sessions here join this machine's MCP server, on the API's port.
