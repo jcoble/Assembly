@@ -41,6 +41,8 @@ fn a_sessions_terminal_runs_what_is_typed_and_streams_its_output_in_order() {
     let Some(RowUpdate::Jump { seq: mut last }) = block_on(rows.recv()).ok() else {
         panic!("a new subscriber starts with a jump to the end");
     };
+    // The prompt the shell may have printed already.
+    let before = last;
     call(
         &client,
         "write",
@@ -60,7 +62,11 @@ fn a_sessions_terminal_runs_what_is_typed_and_streams_its_output_in_order() {
             other => panic!("expected output rows, got {other:?}"),
         }
     }
-    assert_eq!(seen.len() as i64, last, "seqs count bytes since the start");
+    assert_eq!(
+        seen.len() as i64,
+        last - before,
+        "seqs count bytes since the start"
+    );
 
     let again = call(&client, "start", json!({"owner": "s1"}));
     assert_eq!(
@@ -69,6 +75,9 @@ fn a_sessions_terminal_runs_what_is_typed_and_streams_its_output_in_order() {
     );
     let piece = call(&client, "read", json!({"terminal": id, "offset": 0}));
     let replay = STANDARD.decode(piece["data"].as_str().unwrap()).unwrap();
-    assert!(replay.starts_with(&seen), "the replay is the same bytes");
+    assert!(
+        replay[before as usize..].starts_with(&seen),
+        "the replay is the same bytes"
+    );
     call(&client, "close", json!({"terminal": id}));
 }

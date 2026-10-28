@@ -109,6 +109,8 @@ impl TerminalPane {
         live.terminal = Some(started.id.clone());
         // A running terminal answers with its own size: it takes this view's before its output is read.
         self.send_size(cx);
+        // What was typed while it started.
+        self.flush(cx);
         let Some(socket) = SocketClient::try_global(cx) else {
             return;
         };
@@ -131,7 +133,7 @@ impl TerminalPane {
         match update {
             RowUpdate::Row(row) => {
                 let bytes = live.output.row(row);
-                self.show(bytes, cx);
+                self.show(bytes, true, cx);
             }
             RowUpdate::Jump { seq } => {
                 if let Some(from) = live.output.jump(seq) {
@@ -167,7 +169,8 @@ impl TerminalPane {
             _ = pane.update(cx, |pane, cx| {
                 let Some(live) = &mut pane.live else { return };
                 let (bytes, next) = live.output.page(piece);
-                pane.show(bytes, cx);
+                // Old output's questions were answered when they were asked.
+                pane.show(bytes, false, cx);
                 if let Some(next) = next {
                     pane.read(next, cx);
                 }
@@ -175,23 +178,24 @@ impl TerminalPane {
         }));
     }
 
-    /// Draws new output, and writes back what it asked the terminal to answer.
-    fn show(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+    /// Draws new output, and with `answer` writes back what it asked the terminal to answer.
+    fn show(&mut self, bytes: Vec<u8>, answer: bool, cx: &mut Context<Self>) {
         let Some(live) = &mut self.live else { return };
         if !bytes.is_empty() {
             live.screen.feed(&bytes);
             let replies = live.screen.replies();
-            if !replies.is_empty() {
+            if answer && !replies.is_empty() {
                 self.write(replies, cx);
             }
         }
         cx.notify();
     }
 
-    /// Sends what's typed, unless the terminal has ended: one write at a time, the rest queued for the next.
+    /// Sends what's typed, unless the terminal has ended: one write at a time, the rest queued for the next (or
+    /// until the terminal has started).
     pub(super) fn write(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         let Some(live) = &mut self.live else { return };
-        if live.terminal.is_none() || live.output.exit().is_some() {
+        if live.output.exit().is_some() {
             return;
         }
         live.queued.extend(bytes);

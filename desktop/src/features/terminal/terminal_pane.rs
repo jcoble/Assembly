@@ -15,7 +15,6 @@ use super::live::Live;
 use super::palette::Palette;
 use super::screen::{Look, Size};
 use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::sessions::Sessions;
 
 /// The pane name in the saved layout (g0-shape's `TERMINAL`).
 const NAME: &str = "Terminal";
@@ -27,13 +26,20 @@ pub struct TerminalPane {
     pub(super) live: Option<Live>,
     /// The pane's size in cells, once measured.
     size: Option<Size>,
+    /// What a scroll moved short of a whole line, kept for the next (a trackpad moves a few pixels at a time).
+    scrolled: Pixels,
     _selected: Subscription,
 }
 
 impl TerminalPane {
-    /// Registers the pane under the layout's Terminal name, after the placeholders.
+    /// Registers the pane under the layout's Terminal name, after the placeholders. Tab and Shift-Tab go to the
+    /// shell, not to the window's focus moves.
     pub fn register(cx: &mut App) {
         register_panel(cx, NAME, |_, _, cx| panel_handle(cx.new(TerminalPane::new)));
+        cx.bind_keys([
+            KeyBinding::new("tab", NoAction, Some(NAME)),
+            KeyBinding::new("shift-tab", NoAction, Some(NAME)),
+        ]);
     }
 
     fn new(cx: &mut Context<Self>) -> Self {
@@ -50,31 +56,20 @@ impl TerminalPane {
             selected,
             live: None,
             size: None,
+            scrolled: px(0.),
             _selected,
         }
     }
 
-    /// Opens the selected session's terminal once the pane has a size, unless one is shown or it's on another
-    /// machine, which this window can't reach yet.
-    fn open_selected(&mut self, cx: &mut Context<Self>) -> Option<String> {
-        let session = self.selected.read(cx).session_id()?.to_string();
-        let machine = Sessions::try_global(cx).and_then(|sessions| {
-            let item = sessions
-                .read(cx)
-                .items()
-                .iter()
-                .find(|item| item.session_id == session)?;
-            item.machine.clone().filter(|machine| !machine.is_empty())
-        });
-        if let Some(machine) = machine {
-            return Some(format!(
-                "The terminal for sessions on {machine} isn't in this window yet."
-            ));
-        }
+    /// Opens the selected session's terminal once the pane has a size, unless one is shown. The backend refuses a
+    /// session on another machine, which this window can't reach yet (terminal#12).
+    fn open_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(session) = self.selected.read(cx).session_id() else {
+            return;
+        };
         if let (None, Some(size)) = (&self.live, self.size) {
-            self.open(session, size, cx);
+            self.open(session.to_string(), size, cx);
         }
-        None
     }
 
     fn measured(&mut self, size: Size, cx: &mut Context<Self>) {
@@ -99,6 +94,8 @@ impl TerminalPane {
                 return;
             };
             if live.screen.mode().contains(TermMode::BRACKETED_PASTE) {
+                // Without its escapes, so pasted text can't end the paste early.
+                let text = text.replace('\x1b', "");
                 format!("\x1b[200~{text}\x1b[201~").into_bytes()
             } else {
                 text.into_bytes()
@@ -118,9 +115,11 @@ impl TerminalPane {
 
     fn scrolled(&mut self, event: &ScrollEvent, line: Pixels, cx: &mut Context<Self>) {
         let Some(live) = &mut self.live else { return };
-        let lines = (event.delta.pixel_delta(line).y / line).round() as i32;
-        if lines != 0 {
-            live.screen.scroll(lines);
+        self.scrolled += event.delta.pixel_delta(line).y;
+        let lines = (self.scrolled / line).trunc();
+        if lines != 0. {
+            self.scrolled -= line * lines;
+            live.screen.scroll(lines as i32);
             cx.notify();
         }
     }
@@ -164,7 +163,7 @@ impl Panel for TerminalPane {
 
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let note = self.open_selected(cx);
+        self.open_selected(cx);
         let theme = cx.theme();
         let palette = Palette::from_theme(theme);
         let (family, font_size) = (theme.mono_font_family.clone(), theme.mono_font_size);
@@ -179,18 +178,14 @@ impl Render for TerminalPane {
         let focused = self.focus.is_focused(window);
         let entity = cx.entity();
         let notice = |text: String| div().p_2().text_color(muted).child(text);
-        let body = match (&self.live, note) {
-            (_, Some(note)) => notice(note).into_any_element(),
-            (None, None) if self.selected.read(cx).session_id().is_none() => {
+        let body = match &self.live {
+            None if self.selected.read(cx).session_id().is_none() => {
                 notice("Pick a session to open its terminal.".into()).into_any_element()
             }
-            (
-                Some(Live {
-                    error: Some(error), ..
-                }),
-                _,
-            ) => notice(error.clone()).into_any_element(),
-            (Some(live), _) => {
+            Some(Live {
+                error: Some(error), ..
+            }) => notice(error.clone()).into_any_element(),
+            Some(live) => {
                 let exited = live.output.exit();
                 let lines = live.screen.lines(&palette, focused && exited.is_none());
                 v_flex()
@@ -221,7 +216,7 @@ impl Render for TerminalPane {
                     })
                     .into_any_element()
             }
-            (None, None) => div().into_any_element(),
+            None => div().into_any_element(),
         };
         div()
             .id("terminal")

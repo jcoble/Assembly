@@ -138,6 +138,11 @@ internal sealed class RunningTerminal : IAsyncDisposable
         {
             // Closed: nobody is left to tell.
         }
+        catch (Exception error)
+        {
+            // Logged here, so closing it (and the backend quitting) doesn't fail on it.
+            Console.Error.WriteLine($"terminal {_info.Id}: its output stopped: {error.Message}");
+        }
     }
 
     private void Publish(OutputRow row) => _topics.Publish(TerminalFeature.OutputTopic, _info.Id, Row(row));

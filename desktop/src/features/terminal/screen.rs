@@ -3,7 +3,8 @@
 //! the program asks the terminal to answer (a cursor position report, device attributes) comes back as `replies`, to
 //! write to it. Replaces ghosttyFactory.ts's terminal and its fit.
 
-use std::sync::{Arc, Mutex};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::{Event, EventListener};
@@ -54,14 +55,12 @@ pub struct Line {
 }
 
 #[derive(Clone, Default)]
-struct Replies(Arc<Mutex<Vec<u8>>>);
+struct Replies(Rc<RefCell<Vec<u8>>>);
 
 impl EventListener for Replies {
     fn send_event(&self, event: Event) {
-        if let Event::PtyWrite(text) = event
-            && let Ok(mut replies) = self.0.lock()
-        {
-            replies.extend_from_slice(text.as_bytes());
+        if let Event::PtyWrite(text) = event {
+            self.0.borrow_mut().extend_from_slice(text.as_bytes());
         }
     }
 }
@@ -88,11 +87,7 @@ impl Screen {
 
     /// What the program asked the terminal to answer since the last call.
     pub fn replies(&mut self) -> Vec<u8> {
-        self.replies
-            .0
-            .lock()
-            .map(|mut r| std::mem::take(&mut *r))
-            .unwrap_or_default()
+        self.replies.0.take()
     }
 
     pub fn resize(&mut self, size: Size) {
