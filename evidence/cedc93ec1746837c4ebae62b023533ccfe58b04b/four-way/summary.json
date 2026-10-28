@@ -1,0 +1,284 @@
+{
+  "commit": "cedc93ec1746837c4ebae62b023533ccfe58b04b",
+  "lane": "g0-session",
+  "localMachine": "agent-workbox",
+  "startedAt": "2026-10-27T23:24:56Z",
+  "finishedAt": "2026-10-27T23:25:54Z",
+  "builtFrom": {
+    "local": "cedc93ec1746837c4ebae62b023533ccfe58b04b",
+    "workboxTest": "cedc93ec1746837c4ebae62b023533ccfe58b04b"
+  },
+  "features": [
+    "preferences",
+    "rows",
+    "session-view",
+    "socket"
+  ],
+  "partial": false,
+  "pass": true,
+  "cases": [
+    {
+      "agent": "claude",
+      "machine": "local",
+      "sessionId": "f08492c9-02e5-425e-a838-d4a5ed958312",
+      "runId": "41f8c1b3-1441-4dc9-93b8-caf7b6af0c82",
+      "startedAt": "2026-10-27T23:25:01Z",
+      "finishedAt": "2026-10-27T23:25:14Z",
+      "state": "finished",
+      "reply": "agent-workbox\nfour-way-ok",
+      "acpSessionId": "2d520252-994f-4b4c-9688-d821796fd0fb",
+      "transcript": {
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-g0-session-mac-sessions-f08492c9-02e5-425e-a838-d4a5ed958312/2d520252-994f-4b4c-9688-d821796fd0fb.jsonl",
+        "bytes": 341236
+      },
+      "rows": "claude-local.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (it had committed)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 12 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (14)",
+            "ok the socket from 6 starts at 7 with prevSeq 6"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 7 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from agent-workbox",
+            "ok an unknown call answers not_found"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "claude",
+      "machine": "workbox-test",
+      "sessionId": "fbdb3048-fdad-477d-9330-53e1e03835c9",
+      "runId": "cdf1a7e8-8e5b-4dc2-82dc-603fd9b6be39",
+      "startedAt": "2026-10-27T23:25:14Z",
+      "finishedAt": "2026-10-27T23:25:26Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "0cf55bd7-5d5f-416e-a9c0-c4a35f6c6e1f",
+      "transcript": {
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-g0-session-serve-sessions-fbdb3048-fdad-477d-9330-53e1e03835c9/0cf55bd7-5d5f-416e-a9c0-c4a35f6c6e1f.jsonl",
+        "bytes": 194018
+      },
+      "rows": "claude-workbox-test.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (it had committed)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 11 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (12)",
+            "ok the socket from 5 starts at 6 with prevSeq 5"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 7 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from workbox-test",
+            "ok an unknown call answers not_found"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "local",
+      "sessionId": "ec8bb270-5f7e-40a2-b712-564155759526",
+      "runId": "c59deefa-784b-46b3-8c11-628fa7899960",
+      "startedAt": "2026-10-27T23:25:26Z",
+      "finishedAt": "2026-10-27T23:25:38Z",
+      "state": "finished",
+      "reply": "agent-workbox\nfour-way-ok",
+      "acpSessionId": "01a17fae-d75a-7b10-b6d3-8393f3c3ca6d",
+      "transcript": {
+        "path": "/home/blackcolours/.codex/sessions/2026/10/27/rollout-2026-10-27T19-25-27-01a17fae-d75a-7b10-b6d3-8393f3c3ca6d.jsonl",
+        "bytes": 156365
+      },
+      "rows": "codex-local.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (it had committed)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 12 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (13)",
+            "ok the socket from 6 starts at 7 with prevSeq 6"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 8 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from agent-workbox",
+            "ok an unknown call answers not_found"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "workbox-test",
+      "sessionId": "4961b49b-f269-4503-a4bb-0ac4733de67f",
+      "runId": "6800de98-ba43-4742-b9ca-5008c5ff305d",
+      "startedAt": "2026-10-27T23:25:38Z",
+      "finishedAt": "2026-10-27T23:25:54Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "01a17faf-07ad-7a72-b6fc-077bc8baa395",
+      "transcript": {
+        "path": "/home/blackcolours/.codex/sessions/2026/10/27/rollout-2026-10-27T23-25-39-01a17faf-07ad-7a72-b6fc-077bc8baa395.jsonl",
+        "bytes": 72955
+      },
+      "rows": "codex-workbox-test.rows.json",
+      "features": [
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (it had committed)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 17 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (18)",
+            "ok the socket from 8 starts at 9 with prevSeq 8"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 9 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from workbox-test",
+            "ok an unknown call answers not_found"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    }
+  ],
+  "windowScreenshots": {
+    "where": "project files: notes/evidence/four-way/g0-session/cedc93e/window/",
+    "files": [
+      "tsk-1628-head-image-saved-ready.png",
+      "tsk-1628-head-image-answered.png"
+    ]
+  }
+}

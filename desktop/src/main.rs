@@ -39,6 +39,8 @@ fn main() {
             SelectedSession::init(cx);
             features::session::view::session_pane::SessionPane::register(cx);
             features::sessions::sessions_pane::SessionsPane::register(cx);
+            features::files::files_pane::FilesPane::register(cx);
+            features::files::search_pane::SearchPane::register(cx);
             features::source_control::source_control_pane::SourceControlPane::register(cx);
             features::worktrees::worktrees_pane::WorktreesPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);

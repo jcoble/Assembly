@@ -53,7 +53,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         var topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _hub = new LiveHub(RowStore.Open(_db), topics: topics);
-        _sessions = SessionStore.Open(_db, TimeProvider.System);
+        _sessions = SessionStore.Open(_db, TimeProvider.System, "checkouts");
         var status = _status = new MachineStatus(topics, ["box"]);
         _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, _sessions, TextWriter.Null, status);
         var machines = new MachineSet(new FakeMachine(null, _sessions), _box);

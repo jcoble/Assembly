@@ -401,3 +401,36 @@ fn a_session_picked_before_the_chat_pane_is_made_opens_when_it_is(cx: &mut TestA
     let shown = cx.update(|_, cx| pane.read(cx).session.clone());
     assert_eq!(shown.as_deref(), Some("s2"));
 }
+
+// Pins: g0-session#28
+#[gpui::test]
+fn the_composers_ring_shows_the_newest_context_report(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    let context = |seq, used| {
+        row(
+            seq,
+            "context",
+            Some("context:r1"),
+            json!({ "used": used, "size": 1_000_000 }),
+        )
+    };
+    let meter = |pane: &Entity<SessionPane>, cx: &mut VisualTestContext| {
+        cx.update(|_, cx| pane.read(cx).composer.read(cx).meter().cloned())
+    };
+    assert_eq!(meter(&pane, cx), None, "no ring before the agent reports");
+    client.queue_answer(Ok(page(vec![context(3, 800_000)], false, None)));
+    jump(&client, 3, cx);
+    let shown = meter(&pane, cx).expect("the page's report");
+    assert_eq!((shown.left, shown.warm, shown.hot), (20, true, false));
+    live(&client, context(4, 950_000), cx);
+    let shown = meter(&pane, cx).expect("the live report");
+    assert!(shown.hot);
+    assert_eq!(shown.detail, "950,000 of 1,000,000 (95%)");
+    show(&pane, "s2", cx);
+    assert_eq!(
+        meter(&pane, cx),
+        None,
+        "another session's ring waits for its own report"
+    );
+}

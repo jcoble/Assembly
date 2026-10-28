@@ -29,7 +29,7 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
         var topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _hub = new LiveHub(RowStore.Open(_db), topics: topics);
-        _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, SessionStore.Open(_db, TimeProvider.System), _log,
+        _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, SessionStore.Open(_db, TimeProvider.System, "checkouts"), _log,
             new MachineStatus(topics, ["box"]));
     }
 

@@ -13,12 +13,22 @@ gpui_kit::assets::icon_assets!(
         CircleQuestionMark,
         ShieldQuestionMark,
         Dot,
+        ArrowUp,
+        Square,
+        Paperclip,
+        X,
+        Image,
+        CircleAlert,
         GitBranch,
         ListChecks,
         GitFork,
         CirclePlay,
         Gauge,
-        RotateCcwClock
+        RotateCcwClock,
+        Folder,
+        FolderOpen,
+        File,
+        ChevronDown
     ]
 );
 

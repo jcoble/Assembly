@@ -435,7 +435,8 @@ impl SessionPane {
         self.live_since.as_ref().map(|(run, _)| run.as_str())
     }
 
-    /// Works the timeline's entries out again from the view, and tells the composer the run going now.
+    /// Works the timeline's entries out again from the view, and tells the composer the run going now and the newest
+    /// context report.
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
         let active = self.view.active_run(self.known_run.as_deref());
         let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
@@ -486,8 +487,11 @@ impl SessionPane {
             (false, true) => (self._clock, self.now, self.plan_open) = (None, None, false),
             _ => {}
         }
-        self.composer
-            .update(cx, |composer, cx| composer.set_running(active, cx));
+        let context = self.view.context.map(|(_, used, size)| (used, size));
+        self.composer.update(cx, |composer, cx| {
+            composer.set_running(active, cx);
+            composer.set_context(context, cx);
+        });
         cx.notify();
     }
 

@@ -52,3 +52,17 @@ pub enum CallError {
     Unreachable { machine: String },
     Aborted,
 }
+
+impl CallError {
+    /// Why, in words, for a line under what failed.
+    pub fn reason(&self) -> String {
+        match self {
+            CallError::NotFound(message)
+            | CallError::BadArgs(message)
+            | CallError::Failed(message)
+            | CallError::Timeout(message) => message.clone(),
+            CallError::Unreachable { machine } => format!("{machine} is offline"),
+            CallError::Aborted => "it was cancelled".into(),
+        }
+    }
+}

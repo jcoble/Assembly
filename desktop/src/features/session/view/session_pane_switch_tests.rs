@@ -75,13 +75,16 @@ fn backend(
                 seen.pages.push((session, id));
                 answer.into_iter().collect()
             }
+            // The composer's config reads are cancelled as sessions change too; only the pages count here.
             (Some("cancel"), ..) => {
                 let session = seen
                     .pages
                     .iter()
                     .find(|(_, page)| *page == id)
                     .map(|(session, _)| session.clone());
-                seen.cancels.push(id.clone());
+                if session.is_some() {
+                    seen.cancels.push(id.clone());
+                }
                 session
                     .map(|session| {
                         Reply::Frame(json!({"t": "result", "id": id, "result": page(&session)}))

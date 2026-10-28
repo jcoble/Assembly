@@ -7,8 +7,8 @@ const PHOTO: &str = "/home/u/spike-sandboxes/attachments/t1/b.jpg";
 
 fn saved(path: &str, name: &str) -> Attachment {
     Attachment {
+        id: 0,
         name: name.to_string().into(),
-        mime: "image/png",
         size: 1,
         state: AttachmentState::Saved { path: path.into() },
     }
@@ -165,4 +165,14 @@ fn paths_go_in_at_the_caret_with_a_space_either_side_only_where_needed() {
     // A caret past the end or inside a character goes to the nearest boundary before it.
     assert_eq!(Attachment::insert_at("ab", 5, "/a"), ("ab /a".into(), 5));
     assert_eq!(Attachment::insert_at("é", 1, "/a"), ("/a é".into(), 3));
+}
+
+// Pins: g0-session#24
+#[test]
+fn an_image_type_comes_from_its_extension() {
+    assert_eq!(Attachment::mime_of("Shot.PNG"), Some("image/png"));
+    assert_eq!(Attachment::mime_of("a.b.jpeg"), Some("image/jpeg"));
+    assert_eq!(Attachment::mime_of("a.jpg"), Some("image/jpeg"));
+    assert_eq!(Attachment::mime_of("notes.txt"), None);
+    assert_eq!(Attachment::mime_of("png"), None);
 }
