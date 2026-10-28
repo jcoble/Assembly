@@ -88,7 +88,7 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_session_asking_again_gets_its_running_terminal_and_a_new_one_once_that_has_ended()
+    public async Task A_session_asking_again_gets_its_running_terminal_and_a_new_one_in_place_of_one_that_has_ended()
     {
         // Pins: terminal#9
         var first = await _host.StartAsync(new StartArgs(_folder, Owner: "session-1"));
@@ -102,6 +102,7 @@ public sealed class TerminalHostTests : IAsyncDisposable
         var next = await _host.StartAsync(new StartArgs(_folder, Owner: "session-1"));
         Assert.NotEqual(first.Id, next.Id);
         Assert.Equal(2, _pty.Started.Count);
+        Assert.Equal([next.Id], _host.List().Select(terminal => terminal.Id));
     }
 
     [Fact]

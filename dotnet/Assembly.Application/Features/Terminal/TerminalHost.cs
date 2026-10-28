@@ -31,7 +31,7 @@ internal sealed class TerminalHost : IAsyncDisposable
 
     /// <summary>
     /// Starts a terminal in <see cref="StartArgs.Cwd"/>, or answers the owner's terminal while it still runs
-    /// (terminal#9). Fails with the folder's path when it doesn't exist (terminal#1). With no folder it starts in the
+    /// (terminal#9), closing its shell that has ended. Fails with the folder's path when it doesn't exist (terminal#1). With no folder it starts in the
     /// owner's session folder, or the home folder while that session has none yet (its first turn checks it out).
     /// </summary>
     public async Task<TerminalInfo> StartAsync(StartArgs args)
@@ -62,6 +62,10 @@ internal sealed class TerminalHost : IAsyncDisposable
         var reusable = owner is not null && command is null;
         if (reusable && RunningShell(owner) is { } running)
             return running;
+        // The session's shell has ended, and it gets a new one: the old one's output goes, so ended shells don't pile up.
+        if (reusable)
+            foreach (var ended in EndedShells(owner))
+                await ended.DisposeAsync();
         // Started outside the lock: a subscriber's state takes it under the Topics lock, so a slow start (a folder on
         // a sleeping drive) would hold up every publish.
         var pty = _pty.Start(new PtyRequest(shell, arguments, cwd, environment, cols, rows));
@@ -131,6 +135,17 @@ internal sealed class TerminalHost : IAsyncDisposable
     {
         lock (_lock)
             return _terminals.TryGetValue(terminal, out var running) ? running : throw new CallFailed($"there's no terminal {terminal}");
+    }
+
+    private List<RunningTerminal> EndedShells(string? owner)
+    {
+        lock (_lock)
+        {
+            var ended = _terminals.Values.Where(terminal => terminal.Info is { Command: null, ExitCode: not null } info && info.Owner == owner).ToList();
+            foreach (var terminal in ended)
+                _terminals.Remove(terminal.Info.Id);
+            return ended;
+        }
     }
 
     private TerminalInfo? RunningShell(string? owner)
