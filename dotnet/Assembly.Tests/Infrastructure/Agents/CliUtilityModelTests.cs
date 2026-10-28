@@ -127,6 +127,29 @@ public sealed class CliUtilityModelTests : IDisposable
         Assert.Throws<ArgumentException>(() => Process.GetProcessById(pid));
     }
 
+    [Fact]
+    public async Task A_backend_stop_while_it_checks_which_cli_runs_kills_the_check()
+    {
+        var pidFifo = await FifoAsync("pid");
+        var blockFifo = await FifoAsync("block");
+        File.WriteAllText(Claude, $"#!/bin/sh\necho $$ > '{pidFifo}'; read line < '{blockFifo}'\n");
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(Claude, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var model = new CliUtilityModel(Claude, Missing, _preferences, TimeProvider.System, _log);
+        var work = new BackgroundWork(TimeProvider.System, _log);
+
+        work.Start("title", async stop =>
+        {
+            await Task.Yield();
+            await model.CompleteAsync("Name it", stop);
+        });
+        var pid = int.Parse((await Task.Run(() => File.ReadAllTextAsync(pidFifo)).WaitAsync(Wait)).Trim(), System.Globalization.CultureInfo.InvariantCulture);
+        // Well inside the check's own ten seconds.
+        Assert.Equal(0, await work.StopAsync(TimeSpan.FromSeconds(3)));
+
+        Assert.Throws<ArgumentException>(() => Process.GetProcessById(pid));
+    }
+
     // A fake CLI: it answers --version, and otherwise records its arguments, input, folder and API keys, then runs body.
     private void Script(string path, string body)
     {

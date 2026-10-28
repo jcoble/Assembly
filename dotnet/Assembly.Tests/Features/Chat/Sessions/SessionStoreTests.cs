@@ -68,6 +68,25 @@ public sealed class SessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_title_never_replaces_one_from_the_utility_model_or_the_user_unless_the_user_gives_it()
+    {
+        var a = Create();
+        _sessionStore.SetTitle(a.SessionId, "From the model", "helper");
+        _sessionStore.SetTitle(a.SessionId, "From the agent", "prompt");
+        Assert.Equal(("From the model", "helper"), Title(a.SessionId));
+
+        _sessionStore.SetTitle(a.SessionId, "Mine", "user");
+        _sessionStore.SetTitle(a.SessionId, "From the model again", "helper");
+        Assert.Equal(("Mine", "user"), Title(a.SessionId));
+
+        _sessionStore.SetTitle(a.SessionId, "Mine again", "user");
+        Assert.Equal(("Mine again", "user"), Title(a.SessionId));
+    }
+
+    private (string?, string?) Title(string sessionId) =>
+        _sessionStore.Get(sessionId) is { } session ? (session.Title, session.TitleSource) : (null, null);
+
+    [Fact]
     public void Title_and_agent_session_are_kept()
     {
         var a = Create();
