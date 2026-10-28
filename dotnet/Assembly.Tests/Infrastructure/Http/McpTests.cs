@@ -47,7 +47,7 @@ public sealed class McpTests : IAsyncLifetime
         _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _sessionStore = SessionStore.Open(_database, TimeProvider.System);
+        _sessionStore = SessionStore.Open(_database, TimeProvider.System, "checkouts");
         _sessions = new SessionRegistry(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null, new BackgroundWork(TimeProvider.System, TextWriter.Null), new HelperLimits(UnfinishedHelpers: 2, MessagesPerPair: 1));
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));

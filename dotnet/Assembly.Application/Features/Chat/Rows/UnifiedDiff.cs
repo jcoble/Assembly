@@ -5,8 +5,8 @@ using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
 namespace Assembly.Application.Features.Chat.Rows;
 
-/// <summary>A tool's file changes as one unified diff, with how many lines it adds and removes.</summary>
-internal sealed record UnifiedDiff(string Text, int Added, int Removed)
+/// <summary>A tool's file changes as one unified diff, with how many lines it adds and removes, in all and per file.</summary>
+internal sealed record UnifiedDiff(string Text, int Added, int Removed, IReadOnlyList<FileChange> Files)
 {
     private static readonly UnidiffRenderer Renderer = new(contextLines: 3);
 
@@ -14,12 +14,13 @@ internal sealed record UnifiedDiff(string Text, int Added, int Removed)
     {
         if (diffs is null or { Count: 0 })
             return null;
-        var (text, added, removed) = (new StringBuilder(), 0, 0);
+        var (text, files) = (new StringBuilder(), new List<FileChange>());
         foreach (var diff in diffs)
         {
             var one = Renderer.Generate(TrimEnd(diff.OldText ?? ""), TrimEnd(diff.NewText), diff.Path, diff.Path, ignoreWhitespace: false);
             text.Append(one);
             // Counted one file at a time: its --- and +++ lines come before its first hunk, and name the file.
+            var (added, removed) = (0, 0);
             foreach (var line in one.Split('\n').SkipWhile(line => !line.StartsWith("@@", StringComparison.Ordinal)))
             {
                 if (line.StartsWith('+'))
@@ -27,9 +28,10 @@ internal sealed record UnifiedDiff(string Text, int Added, int Removed)
                 else if (line.StartsWith('-'))
                     removed++;
             }
+            files.Add(new FileChange(diff.Path, added, removed));
         }
 
-        return text.Length == 0 ? null : new UnifiedDiff(text.ToString(), added, removed);
+        return text.Length == 0 ? null : new UnifiedDiff(text.ToString(), files.Sum(file => file.Added), files.Sum(file => file.Removed), files);
     }
 
     // A final newline would otherwise show up as an extra empty line in the diff.

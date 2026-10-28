@@ -32,8 +32,7 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
 
     public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
     {
-        // A helper works in its parent's folder, as an agent's own subagents do.
-        var folder = Path.Combine(checkouts, session is { Helper: true, ParentSessionId: { } parent } ? parent : session.SessionId);
+        var folder = SessionStore.Folder(checkouts, session) ?? throw new InvalidOperationException($"{session.SessionId} has no folder");
         await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
         stages.Mark("clone");
         return folder;

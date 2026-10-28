@@ -4,6 +4,7 @@
 
 pub mod client;
 pub mod composer;
+pub mod context;
 pub mod model;
 pub mod rows;
 pub mod view;

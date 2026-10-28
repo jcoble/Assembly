@@ -1,0 +1,99 @@
+using Assembly.Infrastructure.Chat.Files;
+
+namespace Assembly.Tests.Draft.Files;
+
+public sealed class NameSearchTests
+{
+    private static readonly string[] Tree =
+        [".gitignore", "src/Program.cs", "src/program_tests.cs", "docs/PROGRAM.md", "bin/program.dll", "programs/a.txt", "readme.md"];
+
+    // Pins: files#7
+    [Fact]
+    public async Task Names_match_without_case_folders_included_ignored_files_left_out()
+    {
+        using var folder = new GitFolder(Tree);
+        var page = await NameSearch.PageAsync(folder.Root, "PROGRAM", 0, 50, CancellationToken.None);
+        Assert.True(page.Complete);
+        Assert.Null(page.NextCursor);
+        Assert.Equal(["docs/PROGRAM.md", "programs/", "src/Program.cs", "src/program_tests.cs"],
+            page.Matches.Select(match => match.RelativePath + (match.IsDirectory ? "/" : "")).Order(StringComparer.Ordinal));
+        Assert.All(page.Matches, match => Assert.Equal(match.RelativePath, match.Path));
+        Assert.Contains(page.Matches, match => match is { Name: "Program.cs", RelativePath: "src/Program.cs" });
+    }
+
+    // Pins: files#7
+    [Fact]
+    public async Task Files_inside_a_submodule_are_found()
+    {
+        using var inner = new GitFolder("needle.txt");
+        GitFolder.Commit(inner.Root);
+        using var folder = new GitFolder(Tree);
+        GitFolder.Run(folder.Root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", inner.Root, "sub");
+        var page = await NameSearch.PageAsync(folder.Root, "needle", 0, 50, CancellationToken.None);
+        Assert.Equal(["sub/needle.txt"], page.Matches.Select(match => match.RelativePath));
+    }
+
+    // Pins: files#9
+    [Fact]
+    public async Task Pages_follow_the_cursor_without_repeats_until_complete()
+    {
+        using var folder = new GitFolder(Tree);
+        var first = await NameSearch.PageAsync(folder.Root, "program", 0, 3, CancellationToken.None);
+        Assert.Equal(3, first.Matches.Count);
+        Assert.False(first.Complete);
+        Assert.Equal(3, first.NextCursor);
+        var second = await NameSearch.PageAsync(folder.Root, "program", first.NextCursor!.Value, 3, CancellationToken.None);
+        Assert.True(second.Complete);
+        Assert.Null(second.NextCursor);
+        Assert.Equal(4, first.Matches.Concat(second.Matches).Select(match => match.RelativePath).Distinct().Count());
+    }
+
+    // Pins: files#7
+    [Fact]
+    public async Task A_file_deleted_from_disk_but_still_in_git_s_index_isn_t_found()
+    {
+        using var folder = new GitFolder(Tree);
+        GitFolder.Commit(folder.Root);
+        File.Delete(Path.Combine(folder.Root, "docs", "PROGRAM.md"));
+        var page = await NameSearch.PageAsync(folder.Root, "program", 0, 50, CancellationToken.None);
+        Assert.DoesNotContain(page.Matches, match => match.Path.StartsWith("docs", StringComparison.Ordinal));
+        Assert.Equal(3, page.Matches.Count);
+    }
+
+    // Pins: files#7
+    [Fact]
+    public async Task A_search_with_nothing_to_find_is_complete_and_empty()
+    {
+        using var folder = new GitFolder(Tree);
+        var page = await NameSearch.PageAsync(folder.Root, "nothing-like-it", 0, 50, CancellationToken.None);
+        Assert.Empty(page.Matches);
+        Assert.True(page.Complete);
+    }
+
+    // Pins: files#8
+    [Fact]
+    public async Task A_cancelled_search_stops()
+    {
+        using var folder = new GitFolder(Tree);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            NameSearch.PageAsync(folder.Root, "program", 0, 50, new CancellationToken(canceled: true)));
+    }
+
+    // Pins: files#8
+    [Fact]
+    public async Task A_walk_cancelled_partway_stops_and_says_so()
+    {
+        using var folder = new GitFolder([.. Enumerable.Range(0, 3000).Select(i => $"d{i % 30}/f{i:D4}.txt")]);
+        using var cancel = new CancellationTokenSource();
+        var read = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in GitLines.ReadAsync(folder.Root, ["ls-files", "-z", "--others"], null, cancel.Token))
+            {
+                if (++read == 1)
+                    await cancel.CancelAsync();
+            }
+        });
+        Assert.Equal(1, read);
+    }
+}

@@ -131,7 +131,8 @@ async fn clicking_across_sessions_cancels_each_superseded_load_and_no_stale_page
             port: backend.port,
             token: "secret".into(),
         };
-        SocketClient::start(endpoint, cx);
+        SocketClient::start(endpoint.clone(), cx);
+        SocketClient::start_bulk(endpoint, cx);
     });
     let (pane, cx) =
         cx.add_window_view(|window, cx| SessionPane::new(Rc::new(SocketSessionClient), window, cx));
@@ -147,8 +148,13 @@ async fn clicking_across_sessions_cancels_each_superseded_load_and_no_stale_page
         })
         .await;
     }
+    // The pages and their cancels go on the bulk socket, so the left sessions' unsubs, on the main one, may come later.
     until("the last page lands", &mut changes, &changed, || {
-        prompts(&pane, cx) == ["asked in s5"] && seen.lock().unwrap().cancels.len() == 4
+        let done = {
+            let seen = seen.lock().unwrap();
+            seen.cancels.len() == 4 && seen.unsubs.len() == 4
+        };
+        done && prompts(&pane, cx) == ["asked in s5"]
     })
     .await;
     // The stale answers to the cancels have come and gone by the time s5's own rows are drawn again.
@@ -193,7 +199,8 @@ async fn clicks_faster_than_the_rows_arrive_load_only_the_last_session(cx: &mut 
             port: backend.port,
             token: "secret".into(),
         };
-        SocketClient::start(endpoint, cx);
+        SocketClient::start(endpoint.clone(), cx);
+        SocketClient::start_bulk(endpoint, cx);
     });
     let (pane, cx) =
         cx.add_window_view(|window, cx| SessionPane::new(Rc::new(SocketSessionClient), window, cx));
@@ -204,8 +211,13 @@ async fn clicks_faster_than_the_rows_arrive_load_only_the_last_session(cx: &mut 
             pane.open(session.into(), window, cx);
         }
     });
+    // The page comes on the bulk socket, so the left sessions' unsubs, on the main one, may reach the backend after it.
     until("the last page lands", &mut changes, &changed, || {
-        prompts(&pane, cx) == ["asked in s5"]
+        let unsubbed = {
+            let seen = seen.lock().unwrap();
+            seen.unsubs.len() + 1 >= seen.subs.len()
+        };
+        unsubbed && prompts(&pane, cx) == ["asked in s5"]
     })
     .await;
     let seen = seen.lock().unwrap();

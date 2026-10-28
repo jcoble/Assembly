@@ -14,7 +14,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         var image = Png(5 * Mb / 2);
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         var upload = await BeginAsync(socket, session.SessionId, "image/png", image.Length);
         // The staging file is under the backend's home.
@@ -35,7 +35,7 @@ public sealed partial class ChatSocketTests
     public async Task Begin_turns_down_a_type_size_or_session_it_cant_take()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         foreach (var (mime, size, id) in new[] { ("text/plain", 10L, session.SessionId), ("image/png", AttachmentStore.MaxBytes + 1L, session.SessionId),
                      ("image/png", 0L, session.SessionId), ("image/png", 10L, "nope") })
@@ -50,7 +50,7 @@ public sealed partial class ChatSocketTests
     public async Task A_chunk_out_of_place_or_too_big_fails_and_drops_its_upload()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         // At the wrong offset; after it, the upload is gone.
         var upload = await BeginAsync(socket, session.SessionId, "image/png", 10);
@@ -76,7 +76,7 @@ public sealed partial class ChatSocketTests
     public async Task Commit_turns_down_bytes_that_arent_the_type_sent_or_arent_all_there()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         var upload = await BeginAsync(socket, session.SessionId, "image/png", 5);
         await ChunkAsync(socket, 2, upload, 0, "hello"u8.ToArray());
@@ -98,8 +98,8 @@ public sealed partial class ChatSocketTests
     public async Task An_upload_belongs_to_the_socket_that_began_it()
     {
         var session = _sessions.Create("claude", "repo");
-        using var mine = await OpenAsync();
-        using var other = await OpenAsync();
+        using var mine = await OpenBulkAsync();
+        using var other = await OpenBulkAsync();
 
         var upload = await BeginAsync(mine, session.SessionId, "image/png", 10);
         await ChunkAsync(other, 2, upload, 0, new byte[5]);
@@ -107,34 +107,38 @@ public sealed partial class ChatSocketTests
         Assert.Contains("unknown upload", await ReadAsync(other));
     }
 
-    // The socket's close drops what it left only once the chunks it queued have run: here they wait behind a send that
+    // The socket's close drops what it left only once the chunks it queued have run: here they wait behind a commit that
     // hangs on the session's machine, past the close.
     [Fact]
     public async Task Closing_the_socket_drops_its_uploads_after_their_chunks()
     {
-        var session = _sessions.Create("claude", "repo");
+        var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         var other = _sessions.Create("claude", "repo");
-        var socket = await OpenAsync();
+        var socket = await OpenBulkAsync();
         var upload = await BeginAsync(socket, session.SessionId, "image/png", 4 * Mb);
+        var held = await UploadAsync(socket, session.SessionId, Png(100));
         _here.Hold();
+        _box.Hold();
 
         // A read is cancelled by its socket closing, and a closing socket cancels in the reverse order the calls came,
         // so once this one, sent first, is cancelled, the backend is closing.
         await CallAsync(socket, 2, "rows", "tool", $$"""{"session":"{{other.SessionId}}","item":"t1"}""");
         await _here.Reached.Task.WaitAsync(Wait);
-        await CallAsync(socket, 3, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
+        await CallAsync(socket, 3, "attachments", "commit", $$"""{"upload":"{{held}}"}""");
+        await _box.Reached.Task.WaitAsync(Wait);
         for (var i = 0; i < 3; i++)
             await ChunkAsync(socket, 10 + i, upload, i * Mb, new byte[Mb]);
-        // Frames are read in order, so once this save answers, the send and the chunks are queued.
-        await CallAsync(socket, 20, "preferences", "set", Save);
+        // Frames are read in order, so once this drop of no upload answers, the chunks are queued.
+        await CallAsync(socket, 20, "attachments", "drop", """{"upload":"nope"}""");
         Assert.Equal([20], (await ReadAnswersAsync(socket, 1)).Keys);
         socket.Abort();
         socket.Dispose();
         await _here.Cancelled.Task.WaitAsync(Wait);
 
-        // Nothing marks the moment a close would drop it too early, so give that half a second to show.
-        Assert.False(SpinWait.SpinUntil(() => Directory.GetFiles(Staging).Length == 0, TimeSpan.FromMilliseconds(500)));
-        _here.Release();
+        // Nothing marks the moment a close would drop it too early, so give that half a second to show. The held
+        // commit's own file is there either way, so this watches the chunked upload's.
+        Assert.False(SpinWait.SpinUntil(() => !File.Exists(Path.Combine(Staging, upload)), TimeSpan.FromMilliseconds(500)));
+        _box.Release();
         Assert.True(SpinWait.SpinUntil(() => Directory.GetFiles(Staging).Length == 0, Wait));
     }
 
@@ -142,7 +146,7 @@ public sealed partial class ChatSocketTests
     public async Task Drop_deletes_an_uploads_staging_file_and_answers_ok_for_one_it_doesnt_know()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
         var upload = await BeginAsync(socket, session.SessionId, "image/png", 10);
 
         await CallAsync(socket, 2, "attachments", "drop", $$"""{"upload":"{{upload}}"}""");
@@ -163,7 +167,7 @@ public sealed partial class ChatSocketTests
     public async Task A_ninth_open_upload_fails_until_one_is_dropped()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
         var uploads = new List<string>();
         for (var i = 0; i < 8; i++)
             uploads.Add(await BeginAsync(socket, session.SessionId, "image/png", 10));
@@ -177,21 +181,22 @@ public sealed partial class ChatSocketTests
         await BeginAsync(socket, session.SessionId, "image/png", 10);
     }
 
-    // The chunk and the drop wait behind a send that hangs on the session's machine; if the drop ran first, the chunk
+    // The chunk and the drop wait behind a commit that hangs on the session's machine; if the drop ran first, the chunk
     // would find no upload.
     [Fact]
     public async Task A_drop_queued_behind_chunks_runs_after_them()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
         var upload = await BeginAsync(socket, session.SessionId, "image/png", 10);
+        var held = await UploadAsync(socket, session.SessionId, Png(100));
         _here.Hold();
-        await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
+        await CallAsync(socket, 2, "attachments", "commit", $$"""{"upload":"{{held}}"}""");
         await _here.Reached.Task.WaitAsync(Wait);
         await ChunkAsync(socket, 3, upload, 0, new byte[5]);
         await CallAsync(socket, 4, "attachments", "drop", $$"""{"upload":"{{upload}}"}""");
-        // Frames are read in order, so once this save answers, the chunk and the drop are queued.
-        await CallAsync(socket, 5, "preferences", "set", Save);
+        // Frames are read in order, so once this drop of no upload answers, the chunk and the drop are queued.
+        await CallAsync(socket, 5, "attachments", "drop", """{"upload":"nope"}""");
         Assert.Equal([5], (await ReadAnswersAsync(socket, 1)).Keys);
 
         _here.Release();
@@ -208,12 +213,13 @@ public sealed partial class ChatSocketTests
     public async Task A_chunk_cancelled_in_the_queue_drops_its_upload()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
         var uploads = new List<string>();
-        for (var i = 0; i < 8; i++)
+        for (var i = 0; i < 7; i++)
             uploads.Add(await BeginAsync(socket, session.SessionId, "image/png", 10));
+        var held = await UploadAsync(socket, session.SessionId, Png(10));
         _here.Hold();
-        await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
+        await CallAsync(socket, 2, "attachments", "commit", $$"""{"upload":"{{held}}"}""");
         await _here.Reached.Task.WaitAsync(Wait);
         await ChunkAsync(socket, 3, uploads[0], 0, new byte[5]);
         await SendAsync(socket, """{"t":"cancel","id":3}""");
@@ -229,6 +235,8 @@ public sealed partial class ChatSocketTests
         Assert.Contains("\"code\":\"cancelled\"", cancelled[3]);
         Assert.Equal([2], (await ReadAnswersAsync(socket, 1)).Keys);
 
+        // The commit dropped its upload; this takes its place.
+        await BeginAsync(socket, session.SessionId, "image/png", 10);
         // A begin waits for the chunk's turn, so the upload has gone by then.
         await BeginAsync(socket, session.SessionId, "image/png", 10);
         Assert.Equal(8, Directory.GetFiles(Staging).Length);
@@ -259,7 +267,7 @@ public sealed partial class ChatSocketTests
         var session = _sessions.Create("claude", "repo");
         var image = Png(3 * Mb / 2);
         var name = Path.GetFileName(await _attachments.SaveAsync(session.SessionId, AttachmentImage, image, CancellationToken.None));
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "attachments", "read", $$"""{"session":"{{session.SessionId}}","name":"{{name}}"}""");
         var first = Result(await ReadAsync(socket));
@@ -292,6 +300,18 @@ public sealed partial class ChatSocketTests
         return Result(await ReadAsync(socket)).GetProperty("upload").GetString()!;
     }
 
+    // Begins an upload of the image and sends all of it, a chunk at a time.
+    private static async Task<string> UploadAsync(WebSocket socket, string session, byte[] image)
+    {
+        var upload = await BeginAsync(socket, session, "image/png", image.Length);
+        for (var offset = 0; offset < image.Length; offset += Mb)
+        {
+            await ChunkAsync(socket, 2, upload, offset, image.AsSpan(offset, Math.Min(Mb, image.Length - offset)).ToArray());
+            Result(await ReadAsync(socket));
+        }
+        return upload;
+    }
+
     private static Task ChunkAsync(WebSocket socket, long id, string upload, long offset, byte[] data) =>
         CallAsync(socket, id, "attachments", "chunk", $$"""{"upload":"{{upload}}","offset":{{offset}},"data":"{{Convert.ToBase64String(data)}}"}""");
 
@@ -309,7 +329,7 @@ public sealed partial class ChatSocketTests
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         var image = Png(100);
         _box.Down = true;
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         var upload = await BeginAsync(socket, session.SessionId, "image/png", image.Length);
         await ChunkAsync(socket, 2, upload, 0, image);

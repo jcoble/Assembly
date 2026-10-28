@@ -1,5 +1,6 @@
 //! `SocketSessionClient` is the window's `SessionClient`: the socket client's rows and calls, with its outcomes read
-//! as `CallError`s.
+//! as `CallError`s. The large calls (attachments/*, rows/page and rows/tool) go to the bulk client, on
+//! `/socket/bulk`, the only socket the backend serves them on; every other call goes to the main one.
 
 use gpui_kit::*;
 use serde_json::Value;
@@ -44,7 +45,14 @@ impl SessionClient for SocketSessionClient {
         key: Option<&str>,
         cx: &App,
     ) -> Task<Result<Value, CallError>> {
-        let Some(socket) = SocketClient::try_global(cx) else {
+        let bulk =
+            feature == "attachments" || (feature == "rows" && matches!(method, "page" | "tool"));
+        let socket = if bulk {
+            SocketClient::try_bulk(cx)
+        } else {
+            SocketClient::try_global(cx)
+        };
+        let Some(socket) = socket else {
             return Task::ready(Err(CallError::Failed("The backend isn't running.".into())));
         };
         let call = socket.read(cx).call::<Value>(feature, method, args, key);

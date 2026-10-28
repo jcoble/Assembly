@@ -7,8 +7,10 @@ use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
 
 use super::list_entries::project_label;
-use super::session_row::ROW_HEIGHT;
 use super::status::Status;
+
+/// A project's header line: room for its + button.
+pub const PROJECT_HEIGHT: Pixels = px(28.);
 
 type OnNew = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
@@ -51,15 +53,14 @@ impl RenderOnce for ProjectHeader {
         );
         h_flex()
             .w_full()
-            .h(ROW_HEIGHT)
-            .items_end()
+            .h(PROJECT_HEIGHT)
+            .items_center()
             .justify_between()
             .gap_2()
             .pl_3()
             .pr_1()
             .child(
                 div()
-                    .pb_1()
                     .min_w_0()
                     .text_sm()
                     .font_weight(FontWeight::MEDIUM)

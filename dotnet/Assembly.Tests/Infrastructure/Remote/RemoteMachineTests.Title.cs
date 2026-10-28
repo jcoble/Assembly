@@ -41,7 +41,7 @@ public sealed partial class RemoteMachineTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var file = new TempDatabase();
         using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
-        var sessions = SessionStore.Open(db, TimeProvider.System);
+        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
         using var hub = new LiveHub(RowStore.Open(db));
         await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]));
         var session = await machine.CreateSessionAsync("claude", "https://github.com/o/r", CancellationToken.None);
@@ -58,7 +58,7 @@ public sealed partial class RemoteMachineTests
         if (remoteHelperTitle is not null)
         {
             using var boxDb = AppDatabase.Open(Path.Combine(_boxHome, "assembly.db"), TimeProvider.System, new global::Assembly.Infrastructure.Topics.Topics());
-            SessionStore.Open(boxDb, TimeProvider.System).SetTitle(session.SessionId, remoteHelperTitle, "helper");
+            SessionStore.Open(boxDb, TimeProvider.System, "checkouts").SetTitle(session.SessionId, remoteHelperTitle, "helper");
         }
         await agent.TextAsync("Hello");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");

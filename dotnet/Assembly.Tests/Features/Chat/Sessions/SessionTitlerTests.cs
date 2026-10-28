@@ -32,7 +32,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         _database = TestDatabase.Open(_db.Path);
         _rows = RowStore.Open(_database);
         _hub = new LiveHub(_rows);
-        _sessionStore = SessionStore.Open(_database, _time);
+        _sessionStore = SessionStore.Open(_database, _time, "checkouts");
         _session = _sessionStore.Create("claude", "https://github.com/o/r");
         _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
         _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
