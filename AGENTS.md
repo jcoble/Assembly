@@ -242,22 +242,38 @@ small things.
 
 ## Checking a feature
 
-- Check every feature with both Claude Code and Codex, on the desktop and on Workbox Test: `scripts/check4.sh`, with this
-  commit's backend running locally and its host deployed (`dotnet/scripts/workbox.sh serve`). It writes
-  `evidence/<commit>/four-way/`; commit that folder with the feature.
-- The plain check proves turns run, not that the feature works. A feature's lane writes its scenario,
-  `scripts/features/<feature>.sh` (see the README there), from the corrected spec. `scripts/check4.sh` runs every
-  scenario in every case, so a change that breaks a feature already landed fails its check. Keep a scenario short
-  (seconds, not minutes) so a full run stays cheap. `--feature <name>` runs one scenario for quick runs while
-  working; that run isn't evidence.
-- A lane may not call a feature checked without a passing summary for its commit. CI fails a push to main whose
-  code commits have none (`scripts/check-evidence.sh`). Never write or edit evidence by hand.
-- A change the owner can see or use also gets a feature check: open that feature in the app with real-looking data
-  (long names, many projects, large chats), use it as the task describes, and look for anything cut off, repeated or
-  empty. Include many worktrees too. Add a "Feature check" line with its Drive link to the PR.
-- UI proof uses the real native app with real test data, driven the way a person uses it. A browser preview is not
-  proof of the app. Use a headless browser at 1710x990 only for real web pages. The Mac window checks below remain
-  the Assembly procedure; there is no Assembly Linux Xvfb/native-driver procedure yet.
+Why this matters more than anything else here: tests, scenario scripts and reviews only show that the parts you
+thought of do what you expected. A feature is the whole app coming together: the backend, the socket, the window,
+layout, theme, timing, and real data from many sessions and machines. Everyone is confident in their own code, and
+things still go wrong in ways nobody expected. The only way to find them is to run the real app and use the feature
+the way a person would, thoroughly, every time. So the four-way UI check below is the proof a feature works.
+Nothing else stands in for it, however sure you are of the code.
+
+- **The four-way check.** Claude Code and Codex each test the feature in the real native app on the workbox: once
+  with the app's own backend there (local), and once on sessions on Workbox Test, connected from Settings >
+  Connections (remote). Four runs: Claude Code local, Claude Code remote, Codex local, Codex remote.
+- **Use it like a person.** Mouse and keyboard through the UI, nothing else. The native Linux build runs under Xvfb
+  at 1710x990 (`scripts/ui-check.sh start`, `shot <file>`, `stop`). Claude Code drives it with `assembly-native-ui`
+  (shot, click, key) and `xdotool` for typing and scrolling; Codex may use its computer-use tool. Open every
+  screenshot after each action; never assume a click worked. A browser preview, a socket script or a test is not
+  this check.
+- **What to look for.**
+  - Does it look right: proportional, in the app's theme and style, nothing cut off, overlapping, repeated or
+    empty. Use real-looking data: long names, many projects, worktrees and sessions, large chats.
+  - Does it work end to end: every part of the feature, not just the easiest path.
+  - Then leave the happy path: wrong or empty input, empty and very long lists, a slow or offline machine,
+    reconnecting, closing and reopening, restarting, doing things twice or out of order.
+  - Local and remote behave the same, and so do Claude Code and Codex.
+- **Report.** One table per run: what was tried, pass, FAIL or blocked, and the screenshot names. A run that can't be
+  done is blocked, with the exact error and a screenshot; never substitute a result. Fixes go back to the lane, and
+  all four runs happen again on the fixed commit. A lane may not call a feature done without all four passing on
+  its final commit.
+- **The regression check is not the four-way check.** `scripts/check4.sh` sends one turn per provider and machine and
+  runs every landed feature's short socket scenario (`scripts/features/<feature>.sh`, see the README there), so a
+  change that breaks something already landed is caught cheaply. Keep scenarios short (seconds). It writes
+  `evidence/<commit>/four-way/` (the folder keeps its old name); commit that folder with the feature, since CI fails a
+  push to main whose code commits have none (`scripts/check-evidence.sh`). Never write or edit evidence by hand. A
+  passing summary only says the pieces still connect; it says nothing about whether the feature works for a person.
 - Window screenshots before and after go to Google Drive with the `evidence` tool, never into this repo, and the PR
   and its task link to them (docs/evidence.md). `scripts/check4.sh window <commit> <file>...` records their names in
   the summary. Save files as `~/Workbox/screenshots/TSK-<id>-<what>-<before|after>.png`. On agent-workbox, run
