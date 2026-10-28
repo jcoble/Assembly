@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Time.Testing;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
@@ -14,12 +15,14 @@ public sealed partial class SessionHostTests
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
+        var closing = _time.WaitStarts(SharedAdapter.CloseLimit);
         await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
 
-        await TimeOutClose(runId);
+        await TimeOutClose(closing, runId);
         // No other session is on it, so it goes at once, not after the idle grace.
-        await Until(() => first.Disposed);
+        await first.Exited.WaitAsync(Wait);
+        Assert.True(first.Disposed);
 
         _host.Send("two");
         var second = await _launcher.NextAsync();
@@ -31,13 +34,17 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task A_close_after_a_stopped_resume_that_never_answers_retires_its_adapter_and_the_next_turn_resumes_on_a_fresh_one()
     {
-        _host.Send("one");
+        var one = _host.Send("one")!;
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
         await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.CloseAsync();
-        await Until(() => _host.ActiveRunId is null);
+        await Kinds(4);
+        Assert.Null(_host.ActiveRunId);
+        // The first close is over once its run is logged, so the wait watched for is the second close's.
+        await _log.WrittenAsync($"run {one}: ");
+        var closing = _time.WaitStarts(SharedAdapter.CloseLimit);
 
         var runId = _host.Send("two")!;
         var held = await first.ReadAsync("session/resume");
@@ -45,8 +52,9 @@ public sealed partial class SessionHostTests
         await first.ReplyAsync(held, "{}");
         await first.ReadAsync("session/close");
 
-        await TimeOutClose(runId);
-        await Until(() => first.Disposed);
+        await TimeOutClose(closing, runId);
+        await first.Exited.WaitAsync(Wait);
+        Assert.True(first.Disposed);
 
         _host.Send("three");
         var second = await _launcher.NextAsync();
@@ -63,13 +71,14 @@ public sealed partial class SessionHostTests
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
-        other.Send("b");
+        var otherRun = other.Send("b")!;
         await first.OpenAsync("acp-2");
         var otherPrompt = await first.ReadAsync("session/prompt");
 
+        var closing = _time.WaitStarts(SharedAdapter.CloseLimit);
         await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
-        await TimeOutClose(runId);
+        await TimeOutClose(closing, runId);
         var second = new FakeLink();
         bool? launchedAfterExit = null;
         _launcher.Launch = _ =>
@@ -85,8 +94,10 @@ public sealed partial class SessionHostTests
         Assert.False(first.Disposed);
         Assert.Equal(1, _launcher.Launches);
         await first.ReplyAsync(close, "{}");
-        await Until(() => other.ActiveRunId is null);
-        await Until(() => first.Disposed);
+        await _log.WrittenAsync($"run {otherRun}: ");
+        Assert.Null(other.ActiveRunId);
+        await first.Exited.WaitAsync(Wait);
+        Assert.True(first.Disposed);
 
         var resume = await second.StartAsync();
         Assert.True(launchedAfterExit);
@@ -107,9 +118,10 @@ public sealed partial class SessionHostTests
         await first.OpenAsync("acp-2");
         var otherPrompt = await first.ReadAsync("session/prompt");
 
+        var closing = _time.WaitStarts(SharedAdapter.CloseLimit);
         await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
-        await TimeOutClose(runId);
+        await TimeOutClose(closing, runId);
 
         // The other session keeps the retired adapter up, so the next open waits, until its turn is stopped.
         using var stop = new CancellationTokenSource();
@@ -121,7 +133,8 @@ public sealed partial class SessionHostTests
 
         await first.ReplyAsync(otherPrompt, """{"stopReason":"end_turn"}""");
         await first.CloseAsync();
-        await Until(() => first.Disposed);
+        await first.Exited.WaitAsync(Wait);
+        Assert.True(first.Disposed);
         await _adapter.ClosedAsync(FakeLink.AcpSessionId, CancellationToken.None);
         await other.StopForShutdownAsync();
     }
@@ -188,7 +201,7 @@ public sealed partial class SessionHostTests
     {
         await StoppedNewAsync();
 
-        var end = (await RowsUntil(row => row.Kind == "turn"))[^1];
+        var end = (await RowsThrough(row => row.Kind == "turn"))[^1];
         Assert.Equal("cancelled", end.Payload.GetProperty("state").GetString());
     }
 
@@ -196,7 +209,7 @@ public sealed partial class SessionHostTests
     public async Task A_send_right_after_a_stopped_new_session_goes_through_while_the_late_answer_is_still_out()
     {
         var (agent, _) = await StoppedNewAsync();
-        await RowsUntil(row => row.Kind == "turn");
+        await RowsThrough(row => row.Kind == "turn");
 
         Assert.NotNull(_host.Send("two"));
         await agent.ReadAsync("session/new");
@@ -206,7 +219,7 @@ public sealed partial class SessionHostTests
     public async Task A_late_answer_after_the_stopped_turn_ended_is_closed_before_the_adapter_is_shut_down()
     {
         var (agent, open) = await StoppedNewAsync();
-        await RowsUntil(row => row.Kind == "turn");
+        await RowsThrough(row => row.Kind == "turn");
 
         await agent.ReplyAsync(open, """{"sessionId":"acp-late"}""");
 
@@ -221,7 +234,7 @@ public sealed partial class SessionHostTests
     {
         await StoppedResumeAsync();
 
-        var end = (await RowsUntil(row => row.Kind == "turn"))[^1];
+        var end = (await RowsThrough(row => row.Kind == "turn"))[^1];
         Assert.Equal("cancelled", end.Payload.GetProperty("state").GetString());
     }
 
@@ -247,7 +260,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
-        await Until(() => _host.ActiveRunId is null);
+        Assert.Null(_host.ActiveRunId);
 
         var runId = _host.Send("two")!;
         await Kinds(2);
@@ -262,13 +275,11 @@ public sealed partial class SessionHostTests
     {
         var (adapter, link, _) = await HeldAdapterAsync();
 
+        var pumpWait = _time.WaitStarts(SharedAdapter.CloseLimit);
         var disposing = adapter.DisposeAsync().AsTask();
-        await Until(() =>
-        {
-            _time.Advance(SharedAdapter.CloseLimit);
-            return disposing.IsCompleted;
-        });
-        await disposing;
+        await pumpWait;
+        _time.Advance(SharedAdapter.CloseLimit);
+        await disposing.WaitAsync(Wait);
         Assert.Contains("shutdown: update pump for claude still running after 5 s", _log.ToString());
         await link.DisposeAsync();
     }
@@ -278,22 +289,19 @@ public sealed partial class SessionHostTests
     public async Task A_retired_adapters_last_release_waits_for_its_update_pump()
     {
         var (adapter, link, running) = await HeldAdapterAsync();
+        var closeWait = _time.WaitStarts(SharedAdapter.CloseLimit);
         var closing = adapter.CloseAsync(running, FakeLink.AcpSessionId);
         await link.ReadAsync("session/close");
-        await Until(() =>
-        {
-            _time.Advance(SharedAdapter.CloseLimit);
-            return closing.IsCompleted;
-        });
+        await closeWait;
+        _time.Advance(SharedAdapter.CloseLimit);
+        await Task.WhenAny(closing).WaitAsync(Wait);
         await Assert.ThrowsAsync<TimeoutException>(() => closing);
 
+        var pumpWait = _time.WaitStarts(SharedAdapter.CloseLimit);
         var releasing = adapter.ReleaseAsync(running);
-        await Until(() =>
-        {
-            _time.Advance(SharedAdapter.CloseLimit);
-            return releasing.IsCompleted;
-        });
-        await releasing;
+        await pumpWait;
+        _time.Advance(SharedAdapter.CloseLimit);
+        await releasing.WaitAsync(Wait);
         Assert.Contains("shutdown: update pump for claude still running after 5 s", _log.ToString());
         await adapter.DisposeAsync();
         await link.DisposeAsync();
@@ -319,15 +327,43 @@ public sealed partial class SessionHostTests
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    // Moves the clock past the close's limit until the run is logged as done, which is after its close. Once is enough
-    // unless the limit's timer started after the test saw session/close, so it moves again on each check. (The run is
-    // no longer active even before its close, so that can't be what it waits for.)
-    private Task TimeOutClose(string runId) =>
-        Until(() =>
+    // Moves the clock past the close's limit once the close's wait has started, and waits for the run to be logged as
+    // done, which is after its close. (The run is no longer active even before its close, so that can't be what it
+    // waits for.)
+    private async Task TimeOutClose(Task closeWait, string runId)
+    {
+        await closeWait;
+        _time.Advance(SharedAdapter.CloseLimit);
+        await _log.WrittenAsync($"run {runId}: ");
+    }
+
+    // The tests' clock: frozen unless a test moves it, and it says when a wait of a given length starts on it, so a
+    // test moves it only once the wait it means is there.
+    private sealed class WatchedClock() : FakeTimeProvider(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000))
+    {
+        private readonly List<(TimeSpan Length, TaskCompletionSource Started)> _watches = [];
+
+        // Done when the next wait of this length starts.
+        public Task WaitStarts(TimeSpan length)
         {
-            _time.Advance(SharedAdapter.CloseLimit);
-            return _log.ToString().Contains($"run {runId}: ");
-        });
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (_watches)
+                _watches.Add((length, started));
+            return started.Task.WaitAsync(Wait);
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = base.CreateTimer(callback, state, dueTime, period);
+            lock (_watches)
+            {
+                foreach (var watch in _watches.Where(watch => watch.Length == dueTime))
+                    watch.Started.TrySetResult();
+                _watches.RemoveAll(watch => watch.Length == dueTime);
+            }
+            return timer;
+        }
+    }
 
     // A second session of the same agent, on the same shared adapter.
     private SessionHost Other() =>
