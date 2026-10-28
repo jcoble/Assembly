@@ -52,6 +52,7 @@ public sealed partial class MachinesSocketTests
         public int TitleHits;
         public int SendHits;
         public int ConfigSets;
+        public Func<CancellationToken, Task>? BeforeConfig { get; set; }
         public int LiveOpen { get { lock (_liveOpen) return _liveOpen.Values.Sum(); } }
         // The most /live links any one session had open at once, and each session's first /live link, under _liveOpen.
         public int MostLiveAtOnce;
@@ -151,7 +152,11 @@ public sealed partial class MachinesSocketTests
                     ? Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json")
                     : Results.Text("boom", statusCode: AgentsStatus);
             });
-            _app.MapGet("/sessions/{id}/config", () => Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json"));
+            _app.MapGet("/sessions/{id}/config", async (HttpContext context) =>
+            {
+                if (BeforeConfig is not null) await BeforeConfig(context.RequestAborted);
+                return Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json");
+            });
             _app.MapPost("/sessions/{id}/config", () =>
             {
                 Interlocked.Increment(ref ConfigSets);

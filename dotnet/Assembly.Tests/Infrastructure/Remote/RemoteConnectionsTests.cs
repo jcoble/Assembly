@@ -12,6 +12,57 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed class RemoteConnectionsTests
 {
     [Fact]
+    public async Task Connecting_an_active_machine_preserves_in_flight_session_calls_and_routing()
+    {
+        using var file = new TempDatabase();
+        var topics = new Topics();
+        using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
+        using var hub = new LiveHub(RowStore.Open(db));
+        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        sessions.Add("existing", "codex", "repo", "box");
+        var session = sessions.Get("existing")!;
+        var machines = new MachineSet(new FakeMachine(null, sessions));
+        var status = new MachineStatus(topics, []);
+        var store = new MachineStore(db);
+        await using var stub = new MachinesSocketTests.StubRemote();
+        await stub.StartAsync();
+        var opens = 0;
+        var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
+        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+            feature, open: (profile, cancel) =>
+            {
+                Interlocked.Increment(ref opens);
+                return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name, stub.Address, "token"), new DisposalReceipt(disposed)));
+            });
+        store.Import(new("box", "host"));
+        await connections.ConnectionAsync("box", true, CancellationToken.None);
+        var active = machines.For(session);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        stub.BeforeConfig = async cancel =>
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(cancel);
+        };
+        var config = active.ConfigAsync(session, CancellationToken.None);
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await connections.ConnectionAsync("box", true, CancellationToken.None);
+            Assert.Same(active, machines.For(session));
+            Assert.Equal(1, opens);
+            Assert.False(disposed.Task.IsCompleted);
+        }
+        finally
+        {
+            release.TrySetResult();
+            Assert.Equal("remote", (await config).Choices["where"]);
+        }
+        Assert.Same(active, machines.For(session));
+    }
+
+    [Fact]
     public async Task Profiles_defaults_updates_and_removal_survive_reopening_SQLite()
     {
         using var file = new TempDatabase();

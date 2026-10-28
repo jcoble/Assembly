@@ -72,12 +72,18 @@ internal sealed class RemoteConnections : IAsyncDisposable
         {
             if (_disposed) return Task.CompletedTask;
             var previous = _pending.GetValueOrDefault(name);
-            previous.Stop?.Cancel();
+            if (!connect || !probe) previous.Stop?.Cancel();
             var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             var work = Task.Run(async () =>
             {
                 if (previous.Work is not null) await previous.Work;
                 previous.Stop?.Dispose();
+                if (connect && probe && _active.TryGetValue(name, out var active))
+                {
+                    try { await _feature.ConnectAsync(active.Machine, stop.Token); }
+                    catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+                    return;
+                }
                 await _feature.StopProbesAsync(name);
                 if (_active.TryRemove(name, out var old))
                 {
