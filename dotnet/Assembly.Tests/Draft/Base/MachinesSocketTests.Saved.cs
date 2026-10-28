@@ -5,6 +5,28 @@ namespace Assembly.Tests.Draft.Base;
 public sealed partial class MachinesSocketTests
 {
     [Fact]
+    public async Task Subscription_and_status_publication_do_not_wait_for_the_probe_lock()
+    {
+        var probes = typeof(Assembly.Application.Features.Chat.Sessions.MachinesFeature)
+            .GetField("_probes", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(_feature)!;
+        using var held = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var holding = Task.Run(() => { lock (probes) { held.Set(); release.Wait(); } });
+        held.Wait();
+        using var socket = await OpenAsync();
+        var subscription = SubAsync(socket, 1, "machines");
+        var tick = Task.Run(() => _feature.Tick(true));
+        var publication = Task.Run(() => _status.Reachable("box"));
+        try
+        {
+            await subscription.WaitAsync(Wait);
+            await publication.WaitAsync(Wait);
+        }
+        finally { release.Set(); await holding; }
+        await tick.WaitAsync(Wait);
+    }
+
+    [Fact]
     public async Task Saved_profiles_publish_metadata_and_keyed_null_on_removal()
     {
         using var socket = await OpenAsync();

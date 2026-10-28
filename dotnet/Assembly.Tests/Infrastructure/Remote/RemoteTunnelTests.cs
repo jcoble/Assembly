@@ -9,6 +9,31 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed class RemoteTunnelTests
 {
     [Fact]
+    public async Task Occupied_forward_port_fails_setup_and_stops_the_owned_process()
+    {
+        System.Net.Sockets.TcpListener? occupied = null;
+        RemoteTunnel? owned = null;
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            {
+                var opened = await RemoteTunnel.ConnectAsync("fake", 9797, "test/env", TextWriter.Null,
+                    start: port =>
+                    {
+                        occupied = new(System.Net.IPAddress.Loopback, port);
+                        occupied.Start();
+                        return owned = RemoteTunnel.Wrapped(["python3", "-c",
+                            $"import socket; s=socket.socket(); s.bind(('127.0.0.1',{port}))"], TextWriter.Null);
+                    }, readToken: _ => Task.FromResult("token"));
+                await opened.Tunnel.DisposeAsync();
+            });
+            Assert.NotNull(owned);
+            Assert.Equal(0, owned.Pid);
+        }
+        finally { occupied?.Stop(); if (owned is not null) await owned.DisposeAsync(); }
+    }
+
+    [Fact]
     public async Task It_runs_in_its_own_process_group_and_is_stopped_by_pid()
     {
         var tunnel = new RemoteTunnel("/usr/bin/perl", ["-e", "setpgrp(0, 0); exec @ARGV or die", "/bin/sleep", "30"], TextWriter.Null);
@@ -85,7 +110,7 @@ public sealed class RemoteTunnelTests
         async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> Open(string host) => await RemoteTunnel.ConnectAsync(host, 9797, "test/env", TextWriter.Null,
             start: port => RemoteTunnel.Wrapped(["python3", "-c", "from http.server import HTTPServer,BaseHTTPRequestHandler; " +
                 "exec(\"class H(BaseHTTPRequestHandler):\\n def do_GET(self):\\n  self.send_response(200); self.end_headers(); self.wfile.write(b'" + host + "')\\n def log_message(self,*args): pass\"); " +
-                $"HTTPServer(('127.0.0.1',{port}),H).serve_forever()"], TextWriter.Null),
+                $"server=HTTPServer(('127.0.0.1',{port}),H); import sys; print('debug1: Entering interactive session.',file=sys.stderr,flush=True); server.serve_forever()"], TextWriter.Null),
             readToken: _ => Task.FromResult("token"));
         var first = await Open("first");
         await using var stopFirst = first.Tunnel;

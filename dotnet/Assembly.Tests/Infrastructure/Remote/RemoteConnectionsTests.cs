@@ -11,6 +11,111 @@ namespace Assembly.Tests.Infrastructure.Remote;
 
 public sealed class RemoteConnectionsTests
 {
+    [Theory]
+    [InlineData("update")]
+    [InlineData("disconnect")]
+    [InlineData("remove")]
+    [InlineData("shutdown")]
+    public async Task Lifecycle_cancels_running_setup_even_with_a_connect_queued(string operation)
+    {
+        using var file = new TempDatabase();
+        var topics = new Topics();
+        using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
+        using var hub = new LiveHub(RowStore.Open(db));
+        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        var machines = new MachineSet(new FakeMachine(null, sessions));
+        var status = new MachineStatus(topics, []);
+        var store = new MachineStore(db);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleaned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
+        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+            feature, open: async (_, cancel) =>
+            {
+                if (started.Task.IsCompleted) throw new InvalidOperationException("replacement offline");
+                started.SetResult();
+                try { await release.Task.WaitAsync(cancel); }
+                catch (OperationCanceledException) when (cancel.IsCancellationRequested) { cancelled.TrySetResult(); throw; }
+                finally { cleaned.TrySetResult(); }
+                throw new InvalidOperationException("setup released");
+            });
+        store.Import(new("box", "host"));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var queued = connections.ConnectionAsync("box", true, CancellationToken.None);
+        Task transition;
+        if (operation == "update") { store.Import(new("box", "edited")); transition = connections.ReadyAsync("box"); }
+        else if (operation == "remove")
+        {
+            db.Writer.Write("test.remove", scope => { store.Remove(scope, "box"); return 0; });
+            transition = connections.ReadyAsync("box");
+        }
+        else transition = operation == "shutdown" ? connections.DisposeAsync().AsTask()
+            : connections.ConnectionAsync("box", false, CancellationToken.None);
+        try
+        {
+            await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await cleaned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await transition.WaitAsync(TimeSpan.FromSeconds(5));
+            await queued;
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Faulted_outbox_still_disposes_tunnels_and_allows_later_connect(bool shutdown)
+    {
+        using var file = new TempDatabase();
+        var topics = new Topics();
+        using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
+        using var hub = new LiveHub(RowStore.Open(db));
+        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        var machines = new MachineSet(new FakeMachine(null, sessions));
+        var status = new MachineStatus(topics, []);
+        var store = new MachineStore(db);
+        await using var stub = new MachinesSocketTests.StubRemote();
+        await stub.StartAsync();
+        var receipts = new List<TaskCompletionSource>();
+        using var log = new StringWriter();
+        await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
+        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, log,
+            feature, open: (profile, _) =>
+            {
+                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                receipts.Add(done);
+                return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name, stub.Address, "token"), new DisposalReceipt(done)));
+            });
+        store.Import(new("box", "host"));
+        await connections.ConnectionAsync("box", true, CancellationToken.None);
+        store.Import(new("other", "host"));
+        await connections.ReadyAsync("other");
+        // Inject the same completed task failure as an invalid JSON response, without waiting for a polling timer.
+        var active = (System.Collections.IEnumerable)typeof(RemoteConnections).GetField("_active",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(connections)!;
+        var entry = active.Cast<object>().Single(item => (string)item.GetType().GetProperty("Key")!.GetValue(item)! == "box");
+        var value = entry.GetType().GetProperty("Value")!.GetValue(entry)!;
+        var outbox = (RemoteOutbox)value.GetType().GetField("Item2")!.GetValue(value)!;
+        await ((CancellationTokenSource)typeof(RemoteOutbox).GetField("_stopping",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(outbox)!).CancelAsync();
+        await (Task)typeof(RemoteOutbox).GetField("_polling",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(outbox)!;
+        typeof(RemoteOutbox).GetField("_polling", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(outbox, Task.FromException(new System.Text.Json.JsonException("invalid outbox")));
+        await Assert.ThrowsAnyAsync<Exception>(() => shutdown ? connections.DisposeAsync().AsTask()
+            : connections.ConnectionAsync("box", false, CancellationToken.None));
+        Assert.True(receipts[0].Task.IsCompleted, "faulted outbox skipped tunnel disposal");
+        if (shutdown) Assert.True(receipts[1].Task.IsCompleted, "shutdown skipped another machine");
+        else
+        {
+            await connections.ConnectionAsync("box", true, CancellationToken.None);
+            Assert.NotNull(machines.Named("box"));
+            Assert.Contains("invalid outbox", log.ToString());
+        }
+    }
+
     [Fact]
     public async Task Connecting_an_active_machine_preserves_in_flight_session_calls_and_routing()
     {
@@ -130,7 +235,10 @@ public sealed class RemoteConnectionsTests
             Assert.Throws<MachineUnreachable>(() => machines.For(session));
             Assert.Equal("disconnected", status.Items.Single(item => item.Name == "box").Reason);
             Assert.NotNull(store.Get("box", CancellationToken.None));
+            for (var tick = 0; tick < 30; tick++) feature.Tick(true);
+            await connections.ReadyAsync("box");
             Assert.Equal(disconnectedOpens, opens);
+            Assert.Null(machines.Named("box"));
             store.Import(new("box", "second"));
             await connections.ConnectionAsync("box", true, CancellationToken.None);
             Assert.Equal("remote-run", await machines.For(session).SendAsync(session, "edited", null, CancellationToken.None));
@@ -217,6 +325,7 @@ public sealed class RemoteConnectionsTests
         await connections.ConnectionAsync("box", true, CancellationToken.None);
         await stub.LiveSeenAsync("running").WaitAsync(TimeSpan.FromSeconds(5));
         await stub.LiveSeenAsync("helper").WaitAsync(TimeSpan.FromSeconds(5));
+        var oldStatus = status.ForProbe("box");
         if (operation == "update")
         {
             store.Import(new("box", "edited"));
@@ -230,8 +339,6 @@ public sealed class RemoteConnectionsTests
         Assert.Equal(0, stub.LiveOpen);
         Assert.NotNull(sessions.Get("running"));
         Assert.Equal(2, rows.RowsAfter("running", 0).Count);
-        var oldStatus = status.Scope("box");
-        oldStatus.Stop();
         var before = status.Items;
         oldStatus.Unreachable("box", "stale callback");
         Assert.Same(before, status.Items);

@@ -22,6 +22,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
     private readonly TextWriter _log;
     private readonly CancellationTokenSource _stopping = new();
     private readonly Task _supervising;
+    private readonly TaskCompletionSource<bool> _forwardReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _pid;
     private int _disposed;
     // The wait before ssh starts again, while there is one: TryNow cuts it short.
@@ -61,7 +62,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
     public static RemoteTunnel ForSsh(string host, int localPort, int remotePort, TextWriter log) =>
         Wrapped(
             [
-                "ssh", "-N", "-n",
+                "ssh", "-v", "-N", "-n",
                 "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
                 "-L", $"127.0.0.1:{localPort}:127.0.0.1:{remotePort}", host,
             ],
@@ -84,6 +85,8 @@ public sealed class RemoteTunnel : IAsyncDisposable
             using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             limit.CancelAfter(TimeSpan.FromSeconds(15));
             var token = await (readToken is null ? ReadTokenAsync(host, tokenFile, limit.Token) : readToken(limit.Token));
+            if (!await tunnel._forwardReady.Task.WaitAsync(limit.Token))
+                throw new InvalidOperationException("ssh exited before establishing its forward");
             await WaitForPortAsync(localPort, TimeSpan.FromSeconds(15), limit.Token);
             log.WriteLine($"tunnel: {host} on 127.0.0.1:{localPort} (ssh pid {tunnel.Pid})");
             return (tunnel, new RemoteConfig(host, new Uri($"http://127.0.0.1:{localPort}"), token));
@@ -143,6 +146,18 @@ public sealed class RemoteTunnel : IAsyncDisposable
         }
     }
 
+    private async Task<string> ReadErrorsAsync(Process process)
+    {
+        var errors = new System.Text.StringBuilder();
+        while (await process.StandardError.ReadLineAsync() is { } line)
+        {
+            // With ExitOnForwardFailure, ssh reaches this point only after its local forwards bind.
+            if (line == "debug1: Entering interactive session.") _forwardReady.TrySetResult(true);
+            errors.AppendLine(line);
+        }
+        return errors.ToString();
+    }
+
     private async Task SuperviseAsync()
     {
         var backoff = TimeSpan.FromSeconds(1);
@@ -162,7 +177,7 @@ public sealed class RemoteTunnel : IAsyncDisposable
             Volatile.Write(ref _pid, process.Id);
             Starts++;
             var startedAt = DateTime.UtcNow;
-            var errors = process.StandardError.ReadToEndAsync();
+            var errors = ReadErrorsAsync(process);
             var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
             process.StandardInput.Close();
             try
@@ -177,6 +192,8 @@ public sealed class RemoteTunnel : IAsyncDisposable
                 await process.WaitForExitAsync(CancellationToken.None);
             }
             Volatile.Write(ref _pid, 0);
+            await errors;
+            _forwardReady.TrySetResult(false);
             if (_stopping.IsCancellationRequested)
             {
                 await output;

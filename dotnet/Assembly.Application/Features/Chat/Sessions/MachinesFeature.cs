@@ -30,7 +30,7 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
     private readonly Func<string, bool, CancellationToken, Task>? _connection;
     private readonly Dictionary<string, CancellationTokenSource> _probeStops = [];
     // Each remote's last probe, run off the tick's thread; a remote whose probe is still out gets no second. Guarded
-    // by itself, as are _stop, _ticks and _disposed.
+    // by itself, as are _stop and _disposed. The tick counter is atomic.
     private readonly Dictionary<string, Task> _probes = [];
     private CancellationTokenSource _stop = new();
     private int _ticks = Every - 1;
@@ -58,8 +58,7 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             if (key is not null)
                 throw new CallFailed("machines has no keys");
             // The first tick after a subscribe probes.
-            lock (_probes)
-                _ticks = Every - 1;
+            Interlocked.Exchange(ref _ticks, Every - 1);
             _startClock();
             return _store is null ? _status.Items : [_status.Items[0], .. _store.All(CancellationToken.None).Select(profile =>
                 (_status.Items.FirstOrDefault(item => item.Name == profile.Name) ?? MachineStore.Item(profile)) with
@@ -155,9 +154,9 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         lock (_probes)
         {
             // Disposed: no probe it wouldn't wait for.
-            if (++_ticks < Every || _disposed)
+            if (Interlocked.Increment(ref _ticks) < Every || _disposed)
                 return;
-            _ticks = 0;
+            Interlocked.Exchange(ref _ticks, 0);
             foreach (var machine in _machines.Remotes)
             {
                 if (_probes.TryGetValue(machine.Name!, out var probe) && !probe.IsCompleted)
