@@ -11,6 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
 
+use super::center_panes::CenterPanes;
 use super::default_layout::LAYOUT_VERSION;
 use super::layout_store::{LayoutStore, WriteLayout};
 use super::motion_skin::MotionSkin;
@@ -61,6 +62,7 @@ impl Frame {
             DockArea::new("assembly-shell", Some(LAYOUT_VERSION), window, cx)
                 .with_renderer(Rc::new(skin))
         });
+        CenterPanes::init(&dock, cx);
         let top_bar = cx.new(|cx| TopBar::new(dock.clone(), cx));
         // Any dock change (a layout change, zoom, a live edge drag, a resize) moves panes, so the terminal and
         // browser views are placed afresh, and the work panel follows the sessions column's edge.
