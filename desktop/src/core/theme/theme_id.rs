@@ -17,13 +17,6 @@ pub enum ThemeId {
     AyuLight,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "picked by the palette commands (on g0-host's registry) and preferences (the cut); until then only the default opens"
-    )
-)]
 impl ThemeId {
     /// The theme the app opens with, and the one an unknown id gives.
     pub const DEFAULT: ThemeId = ThemeId::Assembly;

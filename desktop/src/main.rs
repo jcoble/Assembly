@@ -21,6 +21,7 @@ use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::machines::Machines;
+use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::Sessions;
 use crate::core::theme::{self, theme_id::ThemeId};
@@ -37,6 +38,7 @@ fn main() {
             gpui_kit::init(cx);
             features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
             SelectedSession::init(cx);
+            Preferences::init(cx);
             features::session::view::session_pane::SessionPane::register(cx);
             features::sessions::sessions_pane::SessionsPane::register(cx);
             features::files::files_pane::FilesPane::register(cx);
@@ -49,6 +51,7 @@ fn main() {
             features::changes::changes_pane::ChangesPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
+            features::settings::init(cx);
             features::meter::start_if_on(cx);
             // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
             // the layout's read and write are taken out on that call.
@@ -67,7 +70,7 @@ fn main() {
                 gpui_kit::open_window(options, cx, |window, cx| {
                     theme::set(ThemeId::DEFAULT, window, cx);
                     let frame = cx.new(|cx| Frame::new(read_layout, write_layout, window, cx));
-                    cx.new(|_| WindowRoot::new(frame))
+                    cx.new(|cx| WindowRoot::new(frame, window, cx))
                 })
                 .expect("open the window");
                 cx.activate(true);
@@ -118,6 +121,7 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                             _ = socket.set(client.clone());
                             Sessions::start(cx);
                             Machines::start(cx);
+                            Preferences::start(cx);
                             if let Some(connected) = connected.take() {
                                 _ = connected.send(client);
                             }

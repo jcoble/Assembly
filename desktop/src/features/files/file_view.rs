@@ -16,6 +16,7 @@ use super::entry::FileChunk;
 use super::file_text::FileText;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
+use crate::core::state::preferences::Preferences;
 use crate::core::ui::center_panes::CenterPanes;
 
 #[cfg(test)]
@@ -24,8 +25,6 @@ mod tests;
 
 /// The pane's name in the saved layout.
 pub const FILE: &str = "File";
-const LINE: Pixels = px(20.);
-const TEXT: Pixels = px(13.);
 
 pub struct FileView {
     focus: FocusHandle,
@@ -36,6 +35,8 @@ pub struct FileView {
     pub(super) loading: Option<Task<()>>,
     started: bool,
     list: UniformListScrollHandle,
+    /// Redraws in the editor's face, size and line height when Settings changes them.
+    _preferences: Option<Subscription>,
 }
 
 impl FileView {
@@ -70,6 +71,8 @@ impl FileView {
             loading: None,
             started: false,
             list: UniformListScrollHandle::new(),
+            _preferences: Preferences::try_global(cx)
+                .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
         }
     }
 
@@ -101,13 +104,14 @@ impl FileView {
         }));
     }
 
-    /// One row, in the code font: the list measures its widest row on its own, outside the list's styles, so the font
-    /// is set here for that width to match what's drawn.
-    fn line(&self, ix: usize, gutter: Pixels, muted: Hsla, mono: SharedString) -> AnyElement {
+    /// One row, in the editor's text (`Preferences::editor_text`): the list measures its widest row on its own,
+    /// outside the list's styles, so the font is set here for that width to match what's drawn.
+    fn line(&self, ix: usize, gutter: Pixels, muted: Hsla, text: &EditorText) -> AnyElement {
+        let (font, size, line) = text.clone();
         h_flex()
-            .h(LINE)
-            .font_family(mono)
-            .text_size(TEXT)
+            .h(line)
+            .font_family(font)
+            .text_size(size)
             .child(
                 div()
                     .w(gutter)
@@ -126,6 +130,9 @@ impl FileView {
             .into_any_element()
     }
 }
+
+/// The editor's face, text size and line height.
+type EditorText = (SharedString, Pixels, Pixels);
 
 /// The key a file's tab opens under, so the same file opens once.
 fn key(session: &str, path: &str) -> String {
@@ -197,8 +204,10 @@ impl Render for FileView {
         } else {
             None
         };
+        // The numbers' column: 8 px a digit at the 13 px it was sized for, growing with the text.
         let digits = self.text.line_count.max(1).to_string().len() as f32;
-        let gutter = px(digits * 8. + 20.);
+        let size = f32::from(Preferences::editor_text(cx).1);
+        let gutter = px(digits * 8. * size / 13. + 20.);
         v_flex()
             .track_focus(&self.focus)
             .size_full()
@@ -224,11 +233,10 @@ impl Render for FileView {
                             {
                                 view.load_part(offset, cx);
                             }
-                            let theme = cx.theme();
-                            let (muted, mono) =
-                                (theme.muted_foreground, theme.mono_font_family.clone());
+                            let (muted, text) =
+                                (cx.theme().muted_foreground, Preferences::editor_text(cx));
                             range
-                                .map(|ix| view.line(ix, gutter, muted, mono.clone()))
+                                .map(|ix| view.line(ix, gutter, muted, &text))
                                 .collect()
                         }),
                     )
