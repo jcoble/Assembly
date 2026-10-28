@@ -129,6 +129,42 @@ public sealed class SessionRailTests : IDisposable
             childAfter = page.HelpersNext;
         } while (childAfter is not null);
         Assert.Equal(Enumerable.Reverse(helpers), seen);
+        var both = Read(limit: 1, expanded: zeta, helperLimit: 3);
+        Assert.Equal((1, 3), (both.Sessions.Count, both.Helpers.Count));
+        Assert.Equal("icons/asterisk.svg", Entry(both, mine).Icon);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BackgroundWorkRunsAfterItsTurnEnds(bool remote)
+    {
+        var session = Parent(machine: remote ? "workbox-test" : null);
+        var parent = Parent();
+        var helper = Helper(parent);
+        var seq = 0L;
+        void Add(string? item, string kind, object payload)
+        {
+            if (remote)
+                Assert.True(_hub.PublishCopy(new StoredRow(session, ++seq, "run-1", item, kind, JsonSerializer.SerializeToElement(payload), 1, PrevSeq: seq - 1)));
+            else
+                Rows(session, (item, kind, payload));
+        }
+        Add(null, RowKind.Turn, new { state = "started" });
+        Add("t1", RowKind.Task, new { state = "running" });
+        Add(null, RowKind.Turn, new { state = "finished" });
+        Rows(helper, (null, RowKind.Turn, new { state = "started" }), ("s1", RowKind.Subagent, new { state = "running" }),
+            (null, RowKind.Turn, new { state = "finished" }));
+
+        var rail = Read("running", expanded: parent);
+        Assert.Equal(new RailTotals(2, 2, 0), rail.Totals);
+        Assert.True(Entry(rail, session).Running);
+        Assert.True(rail.Helpers.Single().Running);
+
+        Add("t1", RowKind.Task, new { state = "completed" });
+        Rows(helper, ("s1", RowKind.Subagent, new { state = "completed" }));
+        Assert.Equal(new RailTotals(2, 0, 0), Read("running").Totals);
+        Assert.False(Read(expanded: parent).Helpers.Single().Running);
     }
 
     [Fact]
@@ -267,8 +303,8 @@ public sealed class SessionRailTests : IDisposable
     }
 
     private Rail Read(string tab = "all", string[]? providers = null, string[]? locations = null, string? filter = null,
-        RailCursor? after = null, int limit = 50, string? expanded = null, RailChildCursor? helpersAfter = null) =>
-        _sessions.Rail(new RailArgs(tab, providers, locations, filter, after, limit, expanded, helpersAfter));
+        RailCursor? after = null, int limit = 50, string? expanded = null, RailChildCursor? helpersAfter = null, int? helperLimit = null) =>
+        _sessions.Rail(new RailArgs(tab, providers, locations, filter, after, limit, expanded, helpersAfter, helperLimit ?? limit));
 
     /// <summary>Every parent, following each page's cursor from the first.</summary>
     private static List<string> Collect(Func<RailCursor?, Rail> read)

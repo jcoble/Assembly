@@ -57,7 +57,8 @@ internal sealed class SessionsFeature : IFeature
         {
             if (args.Tab is not ("all" or "running" or "needs"))
                 throw new CallFailed("expected all, running or needs");
-            return Task.FromResult(_store.Rail(args with { Limit = Math.Clamp(args.Limit, 1, ListLimit) }, call.Cancellation));
+            var bounded = args with { Limit = Math.Clamp(args.Limit, 1, ListLimit), HelperLimit = Math.Clamp(args.HelperLimit, 1, ListLimit) };
+            return Task.FromResult(_store.Rail(bounded, call.Cancellation));
         });
         // Only the database: no order key, as nothing outside it can hang.
         calls.Write(Topic, "read", SessionsJson.Default.ReadArgs, SessionsJson.Default.Done, (args, _) =>
@@ -120,11 +121,12 @@ internal sealed class SessionsFeature : IFeature
     /// <summary>
     /// A rail read: the tab (<c>all</c>, <c>running</c> or <c>needs</c>), the filters (empty means all; values are OR
     /// within one, AND across them), the parent page after <c>After</c>, and with <c>Expanded</c> that parent's helpers
-    /// after <c>HelpersAfter</c>. <c>Locations</c> holds <c>local</c> and <c>remote</c>; <c>Filter</c> matches a title
+    /// after <c>HelpersAfter</c>, each page up to its own limit. <c>Locations</c> holds <c>local</c> and <c>remote</c>; <c>Filter</c> matches a title
     /// or project.
     /// </summary>
     internal sealed record RailArgs(string Tab = "all", IReadOnlyList<string>? Providers = null, IReadOnlyList<string>? Locations = null,
-        string? Filter = null, RailCursor? After = null, int Limit = 50, string? Expanded = null, RailChildCursor? HelpersAfter = null);
+        string? Filter = null, RailCursor? After = null, int Limit = 50, string? Expanded = null, RailChildCursor? HelpersAfter = null,
+        int HelperLimit = 50);
 
     /// <summary>Where the next parent page starts: the last row's project label, repo, time and id.</summary>
     internal sealed record RailCursor(string Group, string RepoUrl, long UpdatedAt, string SessionId);
@@ -142,7 +144,7 @@ internal sealed class SessionsFeature : IFeature
     /// </summary>
     internal sealed record RailEntry(string SessionId, string Agent, string RepoUrl, string Group, bool GroupStart, string? Title,
         string? Machine, long UpdatedAt, long? CompletedAt, bool Running, bool NeedsYou, bool Failed, bool Unread, int Helpers,
-        string? AskSession, long? AskSeq, string? Branch, long? BranchAt);
+        string? AskSession, long? AskSeq, string? Branch, long? BranchAt, string Icon);
 
     /// <summary>The rail's read: totals, the providers to filter by, a parent page and the expanded parent's helper page.</summary>
     internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next,

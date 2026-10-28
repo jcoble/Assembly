@@ -120,10 +120,15 @@ internal static class Schema
             (SELECT MIN(a.seq) FROM rows a INDEXED BY rows_summary
              WHERE a.session_id = s.session_id AND {SummaryKinds} AND a.kind = 'ask' AND json_extract(a.payload, '$.state') = 'open'
                AND NOT EXISTS (SELECT 1 FROM rows b INDEXED BY rows_summary WHERE b.session_id = a.session_id AND {SummaryKinds}
-                               AND b.kind = 'ask' AND b.item_id = a.item_id AND b.seq > a.seq)) AS ask_seq
+                               AND b.kind = 'ask' AND b.item_id = a.item_id AND b.seq > a.seq)) AS ask_seq,
+            EXISTS (SELECT 1 FROM rows w INDEXED BY rows_summary
+             WHERE w.session_id = s.session_id AND {SummaryKinds} AND w.kind IN ('task', 'subagent')
+               AND json_extract(w.payload, '$.state') IN ('running', 'requires_action')
+               AND NOT EXISTS (SELECT 1 FROM rows l INDEXED BY rows_summary WHERE l.session_id = w.session_id AND {SummaryKinds}
+                               AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy
           FROM session_info s WHERE COALESCE(s.parent_session_id, s.session_id) IN (SELECT session_id FROM parents)),
         tops AS (
-          SELECT top, MAX(turn IS 'started') AS running, MAX(ask_seq IS NOT NULL) AS needs,
+          SELECT top, MAX(turn IS 'started' OR busy) AS running, MAX(ask_seq IS NOT NULL) AS needs,
             MAX(session_id = top AND turn IS 'failed') AS failed, COUNT(*) - 1 AS helpers
           FROM family GROUP BY top),
         asks AS (
@@ -142,7 +147,7 @@ internal static class Schema
         helpers AS (
           SELECT *, ROW_NUMBER() OVER (ORDER BY updated_at DESC, session_id DESC) AS n FROM family
           WHERE top = $expanded AND session_id <> top AND ($helperUpdated IS NULL OR (updated_at, session_id) < ($helperUpdated, $helperId))
-          ORDER BY n LIMIT $limit)
+          ORDER BY n LIMIT $helperLimit)
         SELECT 0, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, COALESCE(SUM(running), 0), COALESCE(SUM(needs), 0), 0, 0, COUNT(*),
           NULL, NULL, NULL, NULL FROM tops
         UNION ALL
@@ -160,7 +165,7 @@ internal static class Schema
           SELECT MAX(r.seq) FROM rows r INDEXED BY rows_item WHERE r.session_id = p.session_id AND r.item_id IS NULL AND r.kind = 'stats'
             AND COALESCE(json_extract(r.payload, '$.branch'), '') <> '')
         UNION ALL
-        SELECT 3, h.n, h.session_id, h.agent, h.repo_url, '', 0, h.title, h.machine, h.updated_at, h.completed_at, h.turn IS 'started',
+        SELECT 3, h.n, h.session_id, h.agent, h.repo_url, '', 0, h.title, h.machine, h.updated_at, h.completed_at, h.turn IS 'started' OR h.busy,
           h.ask_seq IS NOT NULL, h.turn IS 'failed', 0, 0, iif(h.ask_seq IS NULL, NULL, h.session_id), h.ask_seq, NULL, NULL
         FROM helpers h
         ORDER BY 1, 2;

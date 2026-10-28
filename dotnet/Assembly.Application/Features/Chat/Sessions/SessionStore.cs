@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Acp.V1;
 using Assembly.Application.Common.Database;
 
 using Assembly.Application.Features.Chat.Rows;
@@ -276,12 +277,13 @@ public sealed class SessionStore
             new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()), new SqlArg("$limit", args.Limit),
             new SqlArg("$group", args.After?.Group), new SqlArg("$repo", args.After?.RepoUrl), new SqlArg("$updated", args.After?.UpdatedAt),
             new SqlArg("$id", args.After?.SessionId), new SqlArg("$expanded", args.Expanded),
-            new SqlArg("$helperUpdated", args.HelpersAfter?.UpdatedAt), new SqlArg("$helperId", args.HelpersAfter?.SessionId));
+            new SqlArg("$helperUpdated", args.HelpersAfter?.UpdatedAt), new SqlArg("$helperId", args.HelpersAfter?.SessionId),
+            new SqlArg("$helperLimit", args.HelperLimit));
         var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
         var helpers = parts.Where(part => part.Part == 3).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
         return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
             sessions, sessions.Count == args.Limit ? new(sessions[^1].Group, sessions[^1].RepoUrl, sessions[^1].UpdatedAt, sessions[^1].SessionId) : null,
-            helpers, helpers.Count == args.Limit ? new(helpers[^1].UpdatedAt, helpers[^1].SessionId) : null);
+            helpers, helpers.Count == args.HelperLimit ? new(helpers[^1].UpdatedAt, helpers[^1].SessionId) : null);
     }
 
     // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a parent (2) or helper (3).
@@ -295,7 +297,7 @@ public sealed class SessionStore
             1 => row.Text(3),
             _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Long(6) == 1, Text(7), Text(8),
                 row.Long(9), Long(10), row.Long(11) == 1, row.Long(12) == 1, row.Long(13) == 1, row.Long(14) == 1, (int)row.Long(15),
-                Text(16), Long(17), Text(18), Long(19)),
+                Text(16), Long(17), Text(18), Long(19), ProviderGlyph.Of(row.Text(3))),
         };
     }
 
