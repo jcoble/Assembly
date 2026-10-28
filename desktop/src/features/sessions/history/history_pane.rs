@@ -1,7 +1,8 @@
 //! `HistoryPane` owns the drawer's History tab: the loaded sessions by project (`ProjectGroup`), each project folded
 //! at first with its count, and open, its sessions newest first, 25 at a time, each with its title, agent and age. A
-//! click on a session opens it, as the sessions column does. The tab groups what the sessions list has loaded; a line
-//! at its end loads the list's next page, Settled's too, as the sessions column's Settled does once it's opened. The ages count by the backend clock, held only while the tab is shown.
+//! click on a session opens it, as the sessions column does. The tab groups what the sessions list has loaded, again
+//! as the list changes while it's shown; a line at its end loads the list's next page, Settled's too, as the sessions
+//! column's Settled does once it's opened. The ages count by the backend clock, held only while the tab is shown.
 
 use std::collections::{HashMap, HashSet};
 
@@ -30,7 +31,7 @@ pub struct HistoryPane {
     focus: FocusHandle,
     /// `None` before the backend's first ready line.
     sessions: Option<Entity<Sessions>>,
-    /// The loaded sessions by project, regrouped only when the list changes, not on each clock tick.
+    /// The loaded sessions by project, regrouped when the list changes while the tab is shown, not on each tick.
     groups: Vec<ProjectGroup>,
     /// The projects opened, by `ProjectGroup::key`; the rest are folded.
     open: HashSet<Key>,
@@ -78,10 +79,13 @@ impl HistoryPane {
     /// Takes the sessions list once the backend's first ready line has started it.
     fn follow_sessions(&mut self, cx: &mut Context<Self>) {
         self.sessions = Sessions::try_global(cx);
-        self._sessions = self
-            .sessions
-            .as_ref()
-            .map(|sessions| cx.observe(sessions, |pane, _, cx| pane.regroup(cx)));
+        self._sessions = self.sessions.as_ref().map(|sessions| {
+            cx.observe(sessions, |pane, _, cx| {
+                if pane.active {
+                    pane.regroup(cx);
+                }
+            })
+        });
         self.hold_clock(cx);
         self.regroup(cx);
     }
@@ -161,6 +165,7 @@ impl BasePanel for HistoryPane {
             return;
         }
         self.hold_clock(cx);
+        self.regroup(cx);
     }
 }
 
@@ -200,13 +205,13 @@ impl Render for HistoryPane {
             ));
         };
         let sessions = sessions.read(cx);
-        if self.groups.is_empty() {
+        let older = sessions.has_next();
+        if self.groups.is_empty() && !older {
             return pane.child(note(
                 "history-note-empty",
                 "No past sessions yet. Sessions you have run appear here, grouped by project.",
             ));
         }
-        let older = sessions.has_next();
         let mut lines: Vec<AnyElement> = Vec::new();
         for (index, group) in self.groups.iter().enumerate() {
             let key = group.key();

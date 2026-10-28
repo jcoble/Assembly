@@ -60,6 +60,6 @@ project starts folded, with its count; a click opens or folds it. Open, it lists
 time, with a "Show 25 more" line while more are loaded, each row with its title, agent and age ("now", "5m", "3h",
 "2d", "1w", "1mo", "1y" by the backend clock, ticking only while the tab is shown). A click on a session opens it, as
 the sessions column does. A line at the end loads the list's next page while there is one: older open sessions, then
-Settled's (sessions-list#9), since History lists every session. With no sessions it
+Settled's (sessions-list#9), since History lists every session. With no sessions, and none left to load, it
 says they appear here; before the backend starts it says it's waiting. Every session has its own checkout, so there's
 no worktree level; sessions found in the agents' own folders, and resuming them, are parity map 12b to 12d.

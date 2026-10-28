@@ -1,5 +1,6 @@
 //! `ProjectGroup` is one project in the History tab: its folder or repo, its machine when it isn't this computer, and
-//! its loaded sessions newest first, copied, so a redraw finds each row's session without a search. Every session has its own checkout, so there's no worktree level under it.
+//! its loaded sessions newest first, copied, so a redraw finds each row's session without a search. Every session has
+//! its own checkout, so there's no worktree level under it.
 
 use crate::core::state::session_item::SessionItem;
 use crate::features::sessions::list_entries::project_label;

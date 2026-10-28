@@ -178,6 +178,14 @@ fn it_says_when_there_are_no_sessions_or_no_backend_yet(cx: &mut TestAppContext)
 
 // Pins: g0-shape#15
 #[gpui::test]
+fn with_no_open_sessions_the_line_still_loads_settled_ones(cx: &mut TestAppContext) {
+    let (_pane, cx) = open_with_older(Some(Vec::new()), false, true, cx);
+    assert!(drawn("history-older", cx));
+    assert!(!drawn("history-note-empty", cx));
+}
+
+// Pins: g0-shape#15
+#[gpui::test]
 fn before_the_backend_starts_it_says_so(cx: &mut TestAppContext) {
     let (_pane, cx) = open(None, cx);
     assert!(drawn("history-note-waiting", cx));
