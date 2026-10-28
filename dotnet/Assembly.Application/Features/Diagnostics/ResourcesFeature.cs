@@ -24,9 +24,9 @@ internal sealed class ResourcesFeature : IFeature
     private readonly Action _startClock;
     private readonly Func<IReadOnlyList<ProcessReading>> _read;
     private readonly TimeProvider _time;
-    // The last sample's CPU time per pid and when it was taken, and the item last sent; all null while nobody watches.
+    // The last sample's CPU time per process (pid and start time) and when it was taken, and the item last sent; all null while nobody watches.
     private readonly Lock _gate = new();
-    private Dictionary<int, TimeSpan>? _cpu;
+    private Dictionary<(int Pid, long Start), TimeSpan>? _cpu;
     private long _taken;
     private ResourceUsage? _sent;
     private int _ticks;
@@ -79,8 +79,8 @@ internal sealed class ResourcesFeature : IFeature
             _topics.Publish(Topic, Backend, JsonSerializer.Serialize(changed, ResourcesJson.Default.ResourceUsage));
     }
 
-    // CPU is each pid's time since the last sample, so a pid that exited adds nothing and a new one counts from its
-    // second sample. A smaller time than before is a reused pid, also nothing.
+    // CPU is each process's time since the last sample, so one that exited adds nothing and a new one counts from its
+    // second sample. A process is its pid and start time, so a pid used again by a new process is a new one.
     private ResourceUsage Sample(IReadOnlyList<ProcessReading> readings)
     {
         var now = _time.GetTimestamp();
@@ -88,10 +88,10 @@ internal sealed class ResourcesFeature : IFeature
         if (_cpu is { } before)
         {
             var used = readings.Sum(reading =>
-                before.TryGetValue(reading.Pid, out var then) && reading.Cpu > then ? (reading.Cpu - then).TotalSeconds : 0);
+                before.TryGetValue((reading.Pid, reading.Start), out var then) && reading.Cpu > then ? (reading.Cpu - then).TotalSeconds : 0);
             cpu = Math.Round(used / _time.GetElapsedTime(_taken, now).TotalSeconds * 100, 1);
         }
-        _cpu = readings.ToDictionary(reading => reading.Pid, reading => reading.Cpu);
+        _cpu = readings.ToDictionary(reading => (reading.Pid, reading.Start), reading => reading.Cpu);
         _taken = now;
         _ticks = 0;
         return new ResourceUsage(cpu, readings.Sum(reading => reading.MemoryBytes));

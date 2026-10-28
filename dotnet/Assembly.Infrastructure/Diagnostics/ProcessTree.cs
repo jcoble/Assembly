@@ -19,9 +19,9 @@ internal static class ProcessTree
         if (!OperatingSystem.IsLinux())
         {
             using var self = Process.GetCurrentProcess();
-            return [new ProcessReading(self.Id, self.TotalProcessorTime, self.WorkingSet64, 0)];
+            return [new ProcessReading(self.Id, self.TotalProcessorTime, self.WorkingSet64, StartTicks(self))];
         }
-        var stats = new Dictionary<int, (int Parent, TimeSpan Cpu)>();
+        var stats = new Dictionary<int, (int Parent, TimeSpan Cpu, long Start)>();
         foreach (var folder in Directory.EnumerateDirectories("/proc"))
             if (int.TryParse(Path.GetFileName(folder), NumberStyles.None, CultureInfo.InvariantCulture, out var pid) && Stat(pid) is { } stat)
                 stats[pid] = stat;
@@ -32,26 +32,28 @@ internal static class ProcessTree
         {
             // A process that exited since the scan, or that couldn't be read, is left out.
             if (stats.TryGetValue(pid, out var stat) && Resident(pid) is { } memory)
-                tree.Add(new ProcessReading(pid, stat.Cpu, memory, 0));
+                tree.Add(new ProcessReading(pid, stat.Cpu, memory, stat.Start));
             foreach (var child in children[pid])
                 next.Enqueue(child);
         }
         return tree;
     }
 
-    // The parent and the user plus system CPU time. The name in brackets may hold spaces, so fields count from the last
-    // ')': the state, then the parent, and user and system time 11 and 12 after the state.
-    private static (int Parent, TimeSpan Cpu)? Stat(int pid) =>
+    // The parent, the user plus system CPU time, and the start time. The name in brackets may hold spaces, so fields
+    // count from the last ')': the state, then the parent, user and system time 11 and 12 after the state, and the
+    // start time (in ticks since boot) 19 after it.
+    private static (int Parent, TimeSpan Cpu, long Start)? Stat(int pid) =>
         ReadOrNull($"/proc/{pid}/stat") is { } text ? ParseStat(text) : null;
 
     // A line cut short or garbled reads as nothing, so one process can't fail the whole sample.
-    internal static (int Parent, TimeSpan Cpu)? ParseStat(string text)
+    internal static (int Parent, TimeSpan Cpu, long Start)? ParseStat(string text)
     {
         try
         {
             var fields = text[(text.LastIndexOf(')') + 2)..].Split(' ');
             var ticks = long.Parse(fields[11], CultureInfo.InvariantCulture) + long.Parse(fields[12], CultureInfo.InvariantCulture);
-            return (int.Parse(fields[1], CultureInfo.InvariantCulture), TimeSpan.FromSeconds(ticks / TicksPerSecond));
+            return (int.Parse(fields[1], CultureInfo.InvariantCulture), TimeSpan.FromSeconds(ticks / TicksPerSecond),
+                long.Parse(fields[19], CultureInfo.InvariantCulture));
         }
         catch (Exception error) when (Garbled(error))
         {
@@ -71,6 +73,19 @@ internal static class ProcessTree
         catch (Exception error) when (Garbled(error))
         {
             return null;
+        }
+    }
+
+    // 0 when the system won't say.
+    private static long StartTicks(Process process)
+    {
+        try
+        {
+            return process.StartTime.Ticks;
+        }
+        catch (Exception error) when (error is InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            return 0;
         }
     }
 
