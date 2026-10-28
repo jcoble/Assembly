@@ -7,8 +7,9 @@ namespace Assembly.Application.Features.Diagnostics;
 /// <summary>
 /// The <c>resources</c> topic, key <c>backend</c>: the CPU and resident memory of the backend and every process under
 /// it, for the window's utility strip. It rides the backend clock rather than a timer of its own. A subscribe starts
-/// the clock and samples at once; after that every 5th tick samples, and a change goes out only when the CPU moves by
-/// 0.1 or the memory by 1 MiB. Ticks with nobody subscribed read nothing and forget the last sample, so the next
+/// the clock and is given the item last sent, if any: it never reads /proc itself, since it runs inside the topics'
+/// lock. The first tick with a subscriber and nothing sent yet samples and sends; after that every 5th tick samples,
+/// and a change goes out only when the CPU moves by 0.1 or the memory by 1 MiB. Ticks with nobody subscribed read nothing and forget the last sample, so the next
 /// subscriber starts a fresh window.
 /// </summary>
 internal sealed class ResourcesFeature : IFeature
@@ -47,7 +48,7 @@ internal sealed class ResourcesFeature : IFeature
                 throw new CallFailed($"resources has no {key}; it has {Backend}");
             _startClock();
             lock (_gate)
-                return [_sent ??= Sample()];
+                return _sent is { } sent ? [sent] : [];
         });
 
     /// <summary>Each second of the backend clock, with whether <c>resources</c> has a subscriber.</summary>
@@ -61,11 +62,16 @@ internal sealed class ResourcesFeature : IFeature
                 (_cpu, _sent) = (null, null);
                 return;
             }
-            if (++_ticks < Every)
+            if (++_ticks < Every && _sent is not null)
                 return;
-            var usage = Sample();
+        }
+        // Outside every lock: a subscribe that holds the topics' lock takes this one, and /proc is slow to scan.
+        var readings = _read();
+        lock (_gate)
+        {
+            var usage = Sample(readings);
             // Both CPU values are rounded to 0.1, so any difference is a move of at least 0.1.
-            if (usage.CpuPercent != _sent?.CpuPercent || Math.Abs(usage.MemoryBytes - (_sent?.MemoryBytes ?? 0)) >= MiB)
+            if (_sent is null || usage.CpuPercent != _sent.CpuPercent || Math.Abs(usage.MemoryBytes - _sent.MemoryBytes) >= MiB)
                 changed = _sent = usage;
         }
         // Outside the lock: the subscribe holds the topics' lock while it takes this one.
@@ -75,9 +81,8 @@ internal sealed class ResourcesFeature : IFeature
 
     // CPU is each pid's time since the last sample, so a pid that exited adds nothing and a new one counts from its
     // second sample. A smaller time than before is a reused pid, also nothing.
-    private ResourceUsage Sample()
+    private ResourceUsage Sample(IReadOnlyList<ProcessReading> readings)
     {
-        var readings = _read();
         var now = _time.GetTimestamp();
         double? cpu = null;
         if (_cpu is { } before)
