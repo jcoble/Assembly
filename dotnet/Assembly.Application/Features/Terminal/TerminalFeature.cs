@@ -6,7 +6,7 @@ namespace Assembly.Application.Features.Terminal;
 /// The terminal calls (<c>terminal/start</c>, <c>list</c>, <c>write</c>, <c>resize</c>, <c>read</c>, <c>close</c>) and
 /// the <c>terminal</c> rows topic: one terminal's output, keyed by its id, with byte offsets as seqs and its exit as
 /// the last row. Every machine serves it. Reads run side by side, so the window keeps one <c>write</c> in flight per
-/// terminal and sends what's typed meanwhile in the next. See <c>dotnet/notes/terminal-shape.md</c>.
+/// terminal and sends what's typed meanwhile in the next.
 /// </summary>
 internal sealed class TerminalFeature : IFeature
 {

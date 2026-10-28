@@ -28,12 +28,13 @@ internal sealed class UnixPtyStarter : IPtyStarter
         var slave = -1;
         try
         {
-            PtyNative.SetSize(master, request.Cols, request.Rows);
             // The backend holds the slave open too until the process ends, so the master can't read end of file before
             // perl has opened it.
             slave = PtyNative.open(slavePath, PtyNative.OpenFlags);
             if (slave < 0)
                 throw PtyNative.Failed($"opening {slavePath}");
+            // macOS refuses to size a pty whose slave isn't open yet.
+            PtyNative.SetSize(master, request.Cols, request.Rows);
             var start = new ProcessStartInfo("/usr/bin/perl") { UseShellExecute = false, WorkingDirectory = request.Cwd };
             foreach (var argument in (string[])["-e", Child, "--", slavePath, PtyNative.TiocSctty.ToString(CultureInfo.InvariantCulture), request.FileName, .. request.Arguments])
                 start.ArgumentList.Add(argument);

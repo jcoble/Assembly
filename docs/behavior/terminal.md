@@ -1,6 +1,6 @@
 Draft for Jesse to correct.
 
-- terminal#1: The terminal opens the account's login shell in the session's folder, or home until its checkout exists. A missing folder produces an error showing its path.
+- terminal#1: The terminal opens the shell named by the backend's SHELL setting (else /bin/sh) in the session's folder, or home until its checkout exists. A missing folder produces an error showing its path.
 - terminal#2: Typed and pasted bytes reach the program in order. Cancelling a write stops that writer before another write starts.
 - terminal#3: Output keeps its original bytes, including text split across reads.
 - terminal#4: Resizing changes the program's terminal size.
