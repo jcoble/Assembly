@@ -9,7 +9,7 @@
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine, CHECK4_AGENT: agent } =
   process.env;
 
-type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
+type Item = { sessionId: string; completedAt: number | null; settledAt: number | null; activeRunId: string | null };
 type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
 
 class Failed extends Error {}
@@ -23,9 +23,13 @@ const frames: Frame[] = [];
 /** Whether the sessionRail topic (sub 2) has named the session since the last `railChange`, and who waits for it. */
 let railNamed = false;
 let railHeard: (() => void) | undefined;
+/** The session's run as the keyed topic (sub 1) last showed it. */
+let activeRun: string | null | undefined;
 let next: (() => void) | undefined;
 socket.onmessage = (event) => {
   const got = JSON.parse(String(event.data)) as Frame & { key?: string };
+  const item = got.item ?? got.items?.find((entry) => entry.key === session)?.item;
+  if (got.sub === 1 && item?.sessionId === session) activeRun = item.activeRunId;
   if (got.sub === 2 && got.t === 'change' && got.key === session) {
     railNamed = true;
     railHeard?.();
@@ -185,21 +189,20 @@ async function main() {
   }
   console.log(`ok ${connect}`);
 
+  // On a remote, the case's turn can start after this point, so its run ending is what says it's over. Frames held
+  // from before are older than what `activeRun` shows.
   step = 'once its turn has ended, Running no longer lists the session';
-  await untilRail('running', step, 180_000, (page) => !listed(page));
+  if (activeRun) frames.length = 0;
+  if (activeRun) await frame((got) => sub(got) && got.t === 'change' && got.item?.activeRunId === null, 180_000, step);
+  await untilRail('running', step, 30_000, (page) => !listed(page));
   console.log(`ok ${step}`);
 
   // The case's turn started before this scenario could watch the rail, so it starts one of its own to see in Running.
   step = 'while a turn it starts runs, Running lists the session and counts it';
-  // A remote machine can still be closing the case's run after its turn has ended; until it has, the send is refused.
-  for (const end = Date.now() + 30_000; ; await new Promise((resolve) => setTimeout(resolve, 1_000))) {
-    const sent = ++ids;
-    socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session, text: 'Reply with only the word ok.' } }));
-    const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
-    if (started.t === 'result') break;
-    if (Date.now() >= end || !started.message?.includes("can't take a message yet"))
-      fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
-  }
+  const sent = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session, text: 'Reply with only the word ok.' } }));
+  const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
+  if (started.t !== 'result') fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
   await untilRail('running', step, 30_000, (page) => listed(page) && page.totals.running >= 1);
   console.log(`ok ${step}`);
   step = 'once that turn has ended, Running no longer lists the session';
