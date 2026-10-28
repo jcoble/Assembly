@@ -199,10 +199,15 @@ async function main() {
 
   // The case's turn started before this scenario could watch the rail, so it starts one of its own to see in Running.
   step = 'while a turn it starts runs, Running lists the session and counts it';
-  const sent = ++ids;
-  socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session, text: 'Reply with only the word ok.' } }));
-  const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
-  if (started.t !== 'result') fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
+  // A remote can still be closing the run after this machine has; until it has, the send is refused.
+  for (const end = Date.now() + 30_000; ; await new Promise((resolve) => setTimeout(resolve, 1_000))) {
+    const sent = ++ids;
+    socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session, text: 'Reply with only the word ok.' } }));
+    const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
+    if (started.t === 'result') break;
+    if (Date.now() >= end || !started.message?.includes("can't take a message yet"))
+      fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
+  }
   await untilRail('running', step, 30_000, (page) => listed(page) && page.totals.running >= 1);
   console.log(`ok ${step}`);
   step = 'once that turn has ended, Running no longer lists the session';
