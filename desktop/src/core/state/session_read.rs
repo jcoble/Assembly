@@ -61,6 +61,11 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         &self.shown
     }
 
+    /// The session what's shown, or the read on its way, is for.
+    pub fn session(&self) -> Option<&str> {
+        self.read_for.as_deref()
+    }
+
     pub fn reading(&self) -> bool {
         self.reading
     }
