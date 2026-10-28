@@ -20,7 +20,7 @@ internal sealed class RemoteFollower(
     Action<string, StoredRow> subagentCopied, TextWriter log, TimeProvider time) : IAsyncDisposable
 {
     // How long a socket may stay quiet, with nobody watching and no turn running, before it counts as caught up.
-    private static readonly TimeSpan Settled = TimeSpan.FromSeconds(2);
+    internal static readonly TimeSpan Settled = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
 
     // The sessions followed now; those watched again while followed, owed one more pass; and those given up on because

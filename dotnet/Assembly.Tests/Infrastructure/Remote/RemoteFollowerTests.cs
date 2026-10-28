@@ -145,14 +145,14 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         private int _made;
         public int Made => Volatile.Read(ref _made);
 
-        // Done once the follower's settle waits out a quiet link: its timer is due in the follower's 2 s.
+        // Done once the follower's settle waits out a quiet link: its timer is due in the follower's Settled.
         public TaskCompletionSource SettleTimerMade { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             Interlocked.Increment(ref _made);
             var timer = base.CreateTimer(callback, state, dueTime, period);
-            if (dueTime == TimeSpan.FromSeconds(2))
+            if (dueTime == RemoteFollower.Settled)
                 SettleTimerMade.TrySetResult();
             return timer;
         }
