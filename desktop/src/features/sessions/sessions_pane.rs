@@ -1,15 +1,23 @@
-//! `SessionsPane` draws the sessions list as a virtual list, newest first, loading the next page (`sessions/page`)
-//! as the reader nears its end, with the new-session form above it while it's open. It registers under the
-//! sessions pane's name, after the placeholders.
+//! `SessionsPane` draws the sessions list as a virtual list in the user's groups (Working, Done, Settled) and, inside
+//! each, by project, loading the next page (`sessions/page`) as the reader nears its end, with the new-session form
+//! above it while it's open. A row's menu moves its session to another group (`sessions/mark`). It registers under
+//! the sessions pane's name, after the placeholders.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::collections::HashMap;
+use std::rc::Rc;
 
-use super::new_session_form::{Created, NewSessionForm};
-use super::session_row::SessionRow;
+use super::group_header::GroupHeader;
+use super::list_entries::list_entries;
+use super::list_entry::ListEntry;
+use super::new_session_form::NewSessionForm;
+use super::project_header::ProjectHeader;
+use super::session_row::{OnMark, SessionRow};
+use super::status::Status;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::state::selected_session::SelectedSession;
@@ -23,7 +31,14 @@ pub struct SessionsPane {
     /// `None` before the backend's first ready line.
     sessions: Option<Entity<Sessions>>,
     /// The new-session form while it's open, with the subscription that closes it once it's made a session.
-    creating: Option<(Entity<NewSessionForm>, Subscription)>,
+    pub(super) creating: Option<(Entity<NewSessionForm>, Subscription)>,
+    /// Settled is folded until its header is clicked.
+    pub(super) settled_open: bool,
+    /// The marks on their way, each until its answer, by `next_mark`.
+    pub(super) marking: HashMap<u64, Task<()>>,
+    pub(super) next_mark: u64,
+    /// Why the last mark failed, until the next one starts.
+    pub(super) mark_error: Option<SharedString>,
     list: UniformListScrollHandle,
     _heard: Vec<Subscription>,
     /// The sessions list's and the socket's observers, once the backend's first ready line started them.
@@ -48,6 +63,10 @@ impl SessionsPane {
             focus: cx.focus_handle(),
             sessions: None,
             creating: None,
+            settled_open: false,
+            marking: HashMap::new(),
+            next_mark: 0,
+            mark_error: None,
             list: UniformListScrollHandle::new(),
             _heard: heard,
             _backend: Vec::new(),
@@ -69,18 +88,6 @@ impl SessionsPane {
             backend.push(cx.observe(&socket, |_, _, cx| cx.notify()));
         }
         self._backend = backend;
-        cx.notify();
-    }
-
-    fn toggle_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.creating.take().is_none() {
-            let form = cx.new(|cx| NewSessionForm::new(window, cx));
-            let made = cx.subscribe(&form, |pane, _, Created, cx| {
-                pane.creating = None;
-                cx.notify();
-            });
-            self.creating = Some((form, made));
-        }
         cx.notify();
     }
 }
@@ -155,16 +162,27 @@ impl Render for SessionsPane {
                     })
                     .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx))),
             );
+        let entries = Rc::new(self.sessions.as_ref().map_or_else(Vec::new, |sessions| {
+            list_entries(sessions.read(cx).items(), self.settled_open)
+        }));
+        let pane = cx.entity().downgrade();
+        let on_mark: OnMark = Rc::new(move |session_id, to, cx| {
+            pane.update(cx, |pane, cx| pane.mark(session_id, to, cx))
+                .ok();
+        });
+        let lines = entries.len();
         let list = uniform_list(
             "sessions",
-            count,
-            cx.processor(|pane, range: std::ops::Range<usize>, window, cx| {
+            lines,
+            cx.processor(move |pane, range: std::ops::Range<usize>, window, cx| {
                 let Some(sessions) = pane.sessions.clone() else {
                     return Vec::new();
                 };
                 // After a failure, only Retry asks again.
                 let failed = sessions.read(cx).older_error().is_some();
-                if !failed && range.end + LOAD_OLDER_WITHIN >= sessions.read(cx).items().len() {
+                // A list that ends in a folded Settled waits for it to open: older pages would only fill it unseen.
+                let folded = matches!(entries.last(), Some(ListEntry::Group { open: false, .. }));
+                if !failed && !folded && range.end + LOAD_OLDER_WITHIN >= entries.len() {
                     // Checked again when it runs: a page that failed since this was queued waits for Retry.
                     cx.on_next_frame(window, move |_, _, cx| {
                         sessions.update(cx, |sessions, cx| {
@@ -178,12 +196,50 @@ impl Render for SessionsPane {
                     .read(cx)
                     .session_id()
                     .map(String::from);
-                let sessions = pane.sessions.as_ref().map(|sessions| sessions.read(cx));
+                let items = pane.sessions.clone();
                 range
-                    .filter_map(|at| sessions.and_then(|sessions| sessions.items().get(at)))
-                    .map(|item| {
-                        let picked = selected.as_deref() == Some(item.session_id.as_str());
-                        SessionRow::of(item, picked)
+                    .filter_map(|at| entries.get(at).cloned())
+                    .filter_map(|entry| match entry {
+                        ListEntry::Group { status, open } => {
+                            let header = GroupHeader::new(status, open);
+                            Some(if status == Status::Settled {
+                                header
+                                    .on_toggle(cx.listener(|pane, _, _, cx| {
+                                        pane.settled_open = !pane.settled_open;
+                                        cx.notify();
+                                    }))
+                                    .into_any_element()
+                            } else {
+                                header.into_any_element()
+                            })
+                        }
+                        ListEntry::Project {
+                            status,
+                            folder,
+                            machine,
+                        } => {
+                            let (at, on) = (folder.clone(), machine.clone());
+                            Some(
+                                ProjectHeader::new(
+                                    status,
+                                    folder,
+                                    machine,
+                                    cx.listener(move |pane, _, window, cx| {
+                                        pane.new_in(&at, on.clone(), window, cx)
+                                    }),
+                                )
+                                .into_any_element(),
+                            )
+                        }
+                        ListEntry::Session(at) => {
+                            let item = items.as_ref()?.read(cx).items().get(at)?;
+                            let picked = selected.as_deref() == Some(item.session_id.as_str());
+                            Some(
+                                SessionRow::of(item, picked)
+                                    .on_mark(on_mark.clone())
+                                    .into_any_element(),
+                            )
+                        }
                     })
                     .collect()
             }),
@@ -206,6 +262,16 @@ impl Render for SessionsPane {
                         .text_sm()
                         .text_color(muted)
                         .child(empty_line(state.as_ref())),
+                )
+            })
+            .when_some(self.mark_error.clone(), |pane, error| {
+                pane.child(
+                    div()
+                        .px_3()
+                        .py_1()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(error),
                 )
             })
             .when_some(older_error, |pane, error| {

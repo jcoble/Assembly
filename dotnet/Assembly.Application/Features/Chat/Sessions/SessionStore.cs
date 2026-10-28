@@ -14,7 +14,7 @@ public sealed class SessionStore
     private const string Schema = """
         CREATE TABLE IF NOT EXISTS session_info(session_id TEXT PRIMARY KEY, agent TEXT NOT NULL, repo_url TEXT NOT NULL,
           title TEXT, acp_session_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, machine TEXT,
-          session_cost TEXT);
+          session_cost TEXT, completed_at INTEGER, settled_at INTEGER);
         CREATE INDEX IF NOT EXISTS session_info_updated ON session_info(updated_at);
         CREATE TABLE IF NOT EXISTS session_config(session_id TEXT PRIMARY KEY, options TEXT, choices TEXT NOT NULL DEFAULT '{}');
         CREATE TABLE IF NOT EXISTS agent_config(agent TEXT PRIMARY KEY, options TEXT NOT NULL);
@@ -25,7 +25,7 @@ public sealed class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, title_source";
+    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -42,6 +42,8 @@ public sealed class SessionStore
     // And one made before sessions were marked read starts with each read up to its last row, so none is unread.
     private const string HasReadSeq = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'read_seq';";
 
+    private const string HasCompletedAt = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'completed_at';";
+    private const string HasSettledAt = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'settled_at';";
     // And one made before titles had a source: each title it has came from its session's first message.
     private const string HasTitleSource = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'title_source';";
 
@@ -90,6 +92,10 @@ public sealed class SessionStore
                 if (!Missing(HasRows))
                     scope.Execute("UPDATE session_info SET read_seq = COALESCE((SELECT MAX(seq) FROM rows WHERE rows.session_id = session_info.session_id), 0);");
             }
+            if (Missing(HasCompletedAt))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN completed_at INTEGER;");
+            if (Missing(HasSettledAt))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN settled_at INTEGER;");
             if (Missing(HasTitleSource))
                 scope.Execute("ALTER TABLE session_info ADD COLUMN title_source TEXT;");
             if (Missing(HasMessageError))
@@ -342,6 +348,19 @@ public sealed class SessionStore
             Publish(scope, sessionId);
     }
 
+    /// <summary>Sets the user's mark without changing the session's place in the list; publishes only a changed mark.</summary>
+    internal void Mark(IWriteScope scope, string sessionId, string state)
+    {
+        var change = state switch
+        {
+            "working" => "SET completed_at = NULL, settled_at = NULL WHERE session_id = $id AND (completed_at IS NOT NULL OR settled_at IS NOT NULL)",
+            "done" => "SET completed_at = COALESCE(completed_at, $now), settled_at = NULL WHERE session_id = $id AND (completed_at IS NULL OR settled_at IS NOT NULL)",
+            _ => "SET completed_at = COALESCE(completed_at, $now), settled_at = COALESCE(settled_at, $now) WHERE session_id = $id AND (completed_at IS NULL OR settled_at IS NULL)"
+        };
+        if (scope.Execute($"UPDATE session_info {change};", new SqlArg("$id", sessionId), new SqlArg("$now", Now())) > 0)
+            Publish(scope, sessionId);
+    }
+
     /// <summary>Marks the session as just used, which puts it at the top of the list.</summary>
     public void Touch(string sessionId) =>
         Change(sessionId, "UPDATE session_info SET updated_at = $now WHERE session_id = $id;", ("$id", sessionId), ("$now", Now()));
@@ -375,7 +394,8 @@ public sealed class SessionStore
         new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4), row.Long(5),
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
-            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10), row.IsNull(11) ? null : row.Text(11));
+            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10),
+            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12), row.IsNull(13) ? null : row.Text(13));
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

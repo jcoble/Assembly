@@ -8,13 +8,14 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// that ended past what a window marked read; <c>NeedsAttention</c> is an open ask, or an unread turn with none running.
 /// </summary>
 public sealed record SessionItem(string SessionId, string Agent, string RepoUrl, string? Title, string? Machine, string? ParentSessionId,
-    string? AcpSessionId, long UpdatedAt, string State, string? ActiveRunId, bool PendingAsk, int Background, bool NeedsAttention, bool Unread)
+    string? AcpSessionId, long UpdatedAt, string State, string? ActiveRunId, bool PendingAsk, int Background, bool NeedsAttention, bool Unread,
+    long? CompletedAt, long? SettledAt)
 {
     public static SessionItem From(SessionInfo session, SessionSummary summary)
     {
         var unread = summary.EndSeq > session.ReadSeq;
         return new(session.SessionId, session.Agent, session.RepoUrl, session.Title, session.Machine, session.ParentSessionId, session.AcpSessionId,
             session.UpdatedAt, summary.State, summary.RunId, summary.PendingAsk, summary.Background,
-            summary.PendingAsk || (unread && summary.RunId is null), unread);
+            summary.PendingAsk || (unread && summary.RunId is null), unread, session.CompletedAt, session.SettledAt);
     }
 }

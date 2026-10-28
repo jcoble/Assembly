@@ -103,6 +103,20 @@ impl NewSessionForm {
         form
     }
 
+    /// Fills in a project's folder and machine, for its header's New session.
+    pub fn fill(
+        &mut self,
+        folder: &str,
+        machine: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let folder = folder.to_string();
+        self.folder
+            .update(cx, |input, cx| input.set_value(folder, window, cx));
+        self.pick_machine(machine, cx);
+    }
+
     fn pick_machine(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
         if self.machine != machine {
             (self.machine, self.agent, self.agents) = (machine, None, Vec::new());

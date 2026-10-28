@@ -1,12 +1,22 @@
 //! `SessionRow` is one session in the column: its title, agent and machine, with a still dot while it's working.
-//! Selected, it's marked; a click selects it.
+//! Selected, it's marked; a click selects it, and its right-click menu moves it to another group (`sessions/mark`).
 
+use std::rc::Rc;
+
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::status::Status;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::session_item::SessionItem;
+
+/// Every line of the list is this tall, headers too, as the virtual list needs one height.
+pub const ROW_HEIGHT: Pixels = px(48.);
+
+/// Moves a session to a group: the pane's `mark`.
+pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct SessionRow {
@@ -17,6 +27,8 @@ pub struct SessionRow {
     pub selected: bool,
     /// A run is going: the row has a still dot.
     pub working: bool,
+    pub status: Status,
+    on_mark: Option<OnMark>,
 }
 
 impl SessionRow {
@@ -27,7 +39,14 @@ impl SessionRow {
             place: item.place().into(),
             selected,
             working: item.active_run_id.is_some(),
+            status: Status::of(item),
+            on_mark: None,
         }
+    }
+
+    pub fn on_mark(mut self, on_mark: OnMark) -> Self {
+        self.on_mark = Some(on_mark);
+        self
     }
 }
 
@@ -35,11 +54,13 @@ impl RenderOnce for SessionRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let session_id = self.session_id.clone();
+        let (menu_id, status, on_mark) = (self.session_id.clone(), self.status, self.on_mark);
         v_flex()
             .id(SharedString::from(format!("session:{}", self.session_id)))
             .w_full()
+            .h(ROW_HEIGHT)
+            .justify_center()
             .px_3()
-            .py_2()
             .rounded(theme.radius)
             .cursor_pointer()
             .when(self.selected, |row| row.bg(theme.secondary))
@@ -70,6 +91,17 @@ impl RenderOnce for SessionRow {
                     .truncate()
                     .child(self.place),
             )
+            .context_menu(move |mut menu, _, _| {
+                for (label, to) in status.moves() {
+                    let (id, on_mark) = (menu_id.clone(), on_mark.clone());
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        if let Some(on_mark) = &on_mark {
+                            on_mark(id.clone(), to, cx)
+                        }
+                    }));
+                }
+                menu
+            })
     }
 }
 
