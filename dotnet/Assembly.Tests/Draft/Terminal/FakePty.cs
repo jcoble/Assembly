@@ -1,0 +1,57 @@
+using System.Threading.Channels;
+using Assembly.Application.Features.Terminal;
+
+namespace Assembly.Tests.Draft.Terminal;
+
+/// <summary>A PTY the test drives: what the program "writes" is <see cref="Emit"/>, its end is <see cref="End"/>.</summary>
+internal sealed class FakePty(PtyRequest request, int pid) : IPty
+{
+    private readonly Channel<byte[]> _output = Channel.CreateUnbounded<byte[]>();
+    private readonly TaskCompletionSource<int> _exited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public PtyRequest Request { get; } = request;
+    public List<byte[]> Written { get; } = [];
+    public List<(int Cols, int Rows)> Resizes { get; } = [];
+    public bool Disposed { get; private set; }
+
+    public bool HoldWrites { get; set; }
+    public TaskCompletionSource WriteEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public int Pid { get; } = pid;
+    public Task<int> Exited => _exited.Task;
+
+    public void Emit(params byte[] bytes) => _output.Writer.TryWrite(bytes);
+
+    /// <summary>The program ends: its output closes, then its exit.</summary>
+    public void End(int exit)
+    {
+        _output.Writer.TryComplete();
+        _exited.TrySetResult(exit);
+    }
+
+    public async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+    {
+        if (!await _output.Reader.WaitToReadAsync(cancellationToken))
+            return 0;
+        var bytes = await _output.Reader.ReadAsync(cancellationToken);
+        bytes.CopyTo(buffer);
+        return bytes.Length;
+    }
+
+    public async ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    {
+        WriteEntered.TrySetResult();
+        if (HoldWrites)
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        Written.Add(bytes.ToArray());
+    }
+
+    public void Resize(int cols, int rows) => Resizes.Add((cols, rows));
+
+    public ValueTask DisposeAsync()
+    {
+        Disposed = true;
+        End(137);
+        return ValueTask.CompletedTask;
+    }
+}
