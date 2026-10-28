@@ -137,21 +137,19 @@ public sealed partial class ChatSocketTests
         try
         {
             await holding.Task.WaitAsync(Wait);
-            var commit = Task.Run(() => Row(session, RowKind.Turn, null, """{"state":"started"}"""));
-            // A read that takes the hub's lock, on its own thread, still not done 100 ms after it started means the
-            // commit holds the lock, waiting on the writer.
-            Task<long> probe;
-            do
+            var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var commit = Task.Run(() =>
             {
-                var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                probe = Task.Factory.StartNew(() =>
-                {
-                    started.SetResult();
-                    return _hub.LastSeq(session);
-                }, TaskCreationOptions.LongRunning);
-                await started.Task.WaitAsync(Wait);
-            }
-            while (await Task.WhenAny(probe, Task.Delay(100)) == probe);
+                var batch = new RowBatch();
+                batch.Rows.Add(new NewRow("run-1", null, RowKind.Turn, JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
+                publishing.SetResult();
+                _hub.Publish(session, batch);
+            });
+            await publishing.Task.WaitAsync(Wait);
+            // Publish takes the hub's lock first thing, then waits on the held writer. A read that takes the hub's lock,
+            // started after that, is still waiting 200 ms on.
+            var probe = Task.Factory.StartNew(() => _hub.LastSeq(session), TaskCreationOptions.LongRunning);
+            await Assert.ThrowsAsync<TimeoutException>(() => probe.WaitAsync(TimeSpan.FromMilliseconds(200)));
             using var socket = await OpenAsync();
 
             await SendAsync(socket, """{"t":"sub","id":1,"topic":"sessions"}""");
