@@ -26,7 +26,10 @@ public sealed class Count
         }
     }
 
-    /// <summary>Done once the count is <paramref name="value"/>, now or after a change; fails after 10 s.</summary>
+    /// <summary>
+    /// Done once the count is <paramref name="value"/>, now or after a change; fails after 10 s. The count may have moved
+    /// on by the time the wait returns, so a test that means "exactly" asserts <see cref="Value"/> after it.
+    /// </summary>
     public Task ReachedAsync(int value)
     {
         var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

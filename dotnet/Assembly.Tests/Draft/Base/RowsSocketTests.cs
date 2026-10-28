@@ -290,6 +290,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         // The state's send holds, with the ten rows queued behind it, until the unsub has been read.
         socket.Receive("""{"t":"sub","id":1,"topic":"rows","key":"s","after":0}""");
         await socket.Sends.ReachedAsync(2);
+        Assert.Equal(2, socket.Sends.Value);
         socket.Receive("""{"t":"unsub","id":1}""");
         await socket.Receives.ReachedAsync(4);
         socket.Release();

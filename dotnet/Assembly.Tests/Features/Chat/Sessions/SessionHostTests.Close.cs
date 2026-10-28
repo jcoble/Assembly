@@ -42,13 +42,17 @@ public sealed partial class SessionHostTests
         await first.CloseAsync();
         await Kinds(4);
         Assert.Null(_host.ActiveRunId);
-        // The first close is over once its run is logged, so the wait watched for is the second close's.
+        // The first close is over once its run is logged.
         await _log.WrittenAsync($"run {one}: ");
-        var closing = _time.WaitStarts(SharedAdapter.CloseLimit);
 
         var runId = _host.Send("two")!;
         var held = await first.ReadAsync("session/resume");
+        // The stop's background work first waits up to the close limit for the late answer; once that wait has
+        // started, the next wait of that length is the close's.
+        var waitingForAnswer = _time.WaitStarts(SharedAdapter.CloseLimit);
         Assert.True(_host.Stop(runId));
+        await waitingForAnswer;
+        var closing = _time.WaitStarts(SharedAdapter.CloseLimit);
         await first.ReplyAsync(held, "{}");
         await first.ReadAsync("session/close");
 

@@ -30,6 +30,8 @@ public sealed class MachineProbeTests
         _time.Advance(TimeSpan.FromSeconds(5));
         for (var tick = 0; tick < 15; tick++)
             feature.Tick(true);
+        // Only the first probe is out while it's unanswered.
+        Assert.Equal(1, _far.Probes.Value);
 
         // Set off the test's thread, whose context would queue the probe's continuation: here it runs inside SetResult,
         // so the first probe has ended once this returns.

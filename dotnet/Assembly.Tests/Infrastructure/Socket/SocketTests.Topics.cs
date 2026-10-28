@@ -190,14 +190,18 @@ public sealed partial class SocketTests
         // It says so just before it takes the lock.
         rows.Add("b");
         var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var publisher = new Thread(() =>
         {
             publishing.SetResult();
             _topics.Publish("notes", "b", """{"text":"b"}""");
+            published.SetResult();
         })
         { IsBackground = true };
         publisher.Start();
         await publishing.Task.WaitAsync(Wait);
+        // The publish is blocked on the Topics lock while the state is read: still not done 200 ms on.
+        await Assert.ThrowsAsync<TimeoutException>(() => published.Task.WaitAsync(TimeSpan.FromMilliseconds(200)));
         gate.Set();
 
         Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"a","item":{"text":"a"}}]}""", await ReadAsync(socket));

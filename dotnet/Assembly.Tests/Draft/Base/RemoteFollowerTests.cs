@@ -104,8 +104,11 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
         _stub.DropVersion = true;
 
         _box.WatchRunning(["s1"], []);
-        // It logs why as it gives up; stopping the box then waits for the follow to end, and with it any try it started.
-        await _log.Reached.Task.WaitAsync(Wait);
+        // It logs why as it gives up.
+        await _log.GaveUp.Task.WaitAsync(Wait);
+
+        // No try in the backoff window (1 s) and some margin, while the follower still runs.
+        await Assert.ThrowsAsync<TimeoutException>(() => _stub.VersionHits.ReachedAsync(2).WaitAsync(TimeSpan.FromSeconds(1.5)));
         await StopBoxAsync();
 
         Assert.Equal(1, _stub.VersionHits.Value);
@@ -127,6 +130,9 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
 
         public TaskCompletionSource Reached { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // The line the follower writes as it gives up on an unreachable remote.
+        public TaskCompletionSource GaveUp { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public void Hold() => _open.Reset();
 
         public void Release() => _open.Set();
@@ -134,6 +140,8 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
         public override void WriteLine(string? value)
         {
             Reached.TrySetResult();
+            if (value?.Contains("didn't answer") == true)
+                GaveUp.TrySetResult();
             _open.Wait();
             base.WriteLine(value);
         }
