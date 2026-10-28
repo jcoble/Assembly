@@ -21,6 +21,9 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::row_update::RowUpdate;
 
+/// The most one `terminal/write` sends.
+const WRITE: usize = 1024 * 1024;
+
 /// `terminal/start`'s answer, as much of it as the window uses.
 #[derive(Deserialize)]
 struct Started {
@@ -161,7 +164,13 @@ impl TerminalPane {
         live._read = Some(cx.spawn(async move |pane, cx| {
             let piece = match read.await {
                 Outcome::Ok(piece) => piece,
-                _ => OutputPiece {
+                // The subscription carries on past the replay after a reconnect, so the rest would never come.
+                Outcome::Aborted => {
+                    let message = "The connection dropped. Show the terminal again to retry.";
+                    _ = pane.update(cx, |pane, cx| pane.fail(message.into(), cx));
+                    return;
+                }
+                Outcome::Failed(_) => OutputPiece {
                     offset: from,
                     data: String::new(),
                 },
@@ -214,7 +223,9 @@ impl TerminalPane {
         if live.queued.is_empty() {
             return;
         }
-        let data = STANDARD.encode(std::mem::take(&mut live.queued));
+        // A big paste goes a part at a time, under the backend's 4 MB frame.
+        let part = live.queued.len().min(WRITE);
+        let data = STANDARD.encode(live.queued.drain(..part).as_slice());
         let write = socket.read(cx).call::<serde_json::Value>(
             "terminal",
             "write",

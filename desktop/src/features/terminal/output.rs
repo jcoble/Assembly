@@ -73,7 +73,12 @@ impl Output {
         let mut bytes = decode(&piece.data);
         bytes.truncate((to - piece.offset).clamp(0, bytes.len() as i64) as usize);
         let end = piece.offset + bytes.len() as i64;
-        let mut out = self.take(piece.offset, end, bytes);
+        // A page that starts past the replay's end (the ring moved on) has nothing for the screen.
+        let mut out = if bytes.is_empty() {
+            Vec::new()
+        } else {
+            self.take(piece.offset, end, bytes)
+        };
         // Nothing more to read: the replay reached its end, or the ring has nothing past it (an empty page).
         if self.applied < to && end > piece.offset {
             return (out, Some(self.applied));

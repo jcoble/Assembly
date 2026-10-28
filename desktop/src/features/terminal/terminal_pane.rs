@@ -1,7 +1,7 @@
 //! `TerminalPane` is the bottom dock's Terminal tab: the selected session's terminal, drawn by GPUI in the pane (so
 //! menus, the palette and drags cover it as anything else), in the theme's monospace font and colors. It opens the
 //! terminal the first time it's drawn with a session selected, never while its dock is closed, and drops it on every
-//! session switch, when another tab comes to the front and when the pane is removed (terminal#5). Replaces
+//! session switch, when another tab comes to the front or the dock closes, and when the pane is removed (terminal#5). Replaces
 //! RightPanel.svelte's terminal slot and WorkspaceTerminal.svelte's view.
 
 use alacritty_terminal::term::TermMode;
@@ -142,7 +142,7 @@ impl BasePanel for TerminalPane {
         false
     }
 
-    /// Another tab came to the front: the view goes, the backend keeps the terminal.
+    /// Another tab came to the front, or the dock closed: the view goes, the backend keeps the terminal.
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         if !active {
             self.live = None;

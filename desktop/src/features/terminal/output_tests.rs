@@ -100,3 +100,14 @@ fn an_empty_page_ends_the_replay() {
     let (bytes, next) = output.page(piece(0, ""));
     assert_eq!((bytes, next), (b"x".to_vec(), None));
 }
+
+// Pins: terminal#5
+#[test]
+fn a_page_past_the_replays_end_keeps_the_held_rows() {
+    let mut output = Output::default();
+    output.jump(10);
+    output.row(row(10, "abc"));
+    output.row(row(13, "de"));
+    let (bytes, next) = output.page(piece(14, "eXYZ"));
+    assert_eq!((bytes, next), (b"abcde".to_vec(), None));
+}
