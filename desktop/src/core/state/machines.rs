@@ -59,15 +59,15 @@ impl Machines {
         self.machines.iter().map(|(_, machine)| machine)
     }
 
-    /// Whether the machine `name` didn't answer last time. This machine (`None`) and one the list doesn't have yet
-    /// aren't offline.
+    /// Whether the machine `name` didn't answer last time. This machine (`None`), one the list doesn't have yet and one
+    /// not probed yet aren't offline.
     pub fn offline(name: Option<&str>, cx: &App) -> bool {
         let Some(name) = name else {
             return false;
         };
         Machines::try_global(cx).is_some_and(|machines| {
             (machines.read(cx).machines())
-                .any(|held| held.name.as_deref() == Some(name) && !held.reachable)
+                .any(|held| held.name.as_deref() == Some(name) && held.didnt_answer())
         })
     }
 
@@ -114,6 +114,19 @@ mod tests {
             json!({"name": name, "kind": "remote", "reachable": reachable, "reason": null}),
         )
         .expect("a machine")
+    }
+
+    // A remote starts "not checked yet": up or down isn't known, so it isn't offline until a probe fails.
+    // Pins: sessions-list#11
+    #[test]
+    fn only_a_probe_that_failed_makes_a_machine_offline() {
+        let mut waiting = machine(Some("box"), false);
+        waiting.reason = Some("not checked yet".into());
+        assert!(!waiting.didnt_answer());
+        let mut down = machine(Some("box"), false);
+        down.reason = Some("ssh: connect refused".into());
+        assert!(down.didnt_answer());
+        assert!(!machine(Some("box"), true).didnt_answer());
     }
 
     // Pins: g0-socket#14
