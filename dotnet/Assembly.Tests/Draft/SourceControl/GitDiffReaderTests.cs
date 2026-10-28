@@ -107,13 +107,53 @@ public sealed class GitDiffReaderTests : IDisposable
 
     // Pins: scm#16
     [Fact]
-    public async Task Large_diff_stops_at_one_mebibyte_of_characters()
+    public async Task A_long_diff_stops_at_the_cap_across_both_parts()
     {
         await Init();
-        await File.WriteAllTextAsync(Path.Combine(_root, "tracked"), string.Concat(Enumerable.Repeat("a new line\n", 150000)));
+        await File.WriteAllTextAsync(Path.Combine(_root, "tracked"), string.Concat(Enumerable.Repeat("a staged line\n", 30000)));
+        await Git("add", "tracked");
+        await File.WriteAllTextAsync(Path.Combine(_root, "tracked"), string.Concat(Enumerable.Repeat("a working line\n", 30000)));
         var diff = await Read();
         Assert.True(diff.Truncated);
-        Assert.Equal(1024 * 1024, diff.Unstaged.Length);
+        Assert.Equal(GitDiffReader.Cap, diff.Staged.Length + diff.Unstaged.Length);
+        Assert.NotEmpty(diff.Unstaged);
+    }
+
+    // Pins: scm#14, scm#16
+    [Fact]
+    public async Task A_binary_working_file_keeps_its_staged_text_diff()
+    {
+        await Init();
+        await File.WriteAllTextAsync(Path.Combine(_root, "tracked"), "staged\n");
+        await Git("add", "tracked");
+        await File.WriteAllBytesAsync(Path.Combine(_root, "tracked"), [1, 0, 2]);
+        var diff = await Read();
+        Assert.True(diff.Binary);
+        Assert.Contains("+staged\n", diff.Staged);
+        Assert.Empty(diff.Unstaged);
+    }
+
+    // Pins: scm#14
+    [Fact]
+    public async Task An_untracked_name_with_pattern_characters_is_read_as_written()
+    {
+        await Init();
+        await File.WriteAllTextAsync(Path.Combine(_root, "a1.txt"), "tracked\n");
+        await Git("add", "a1.txt");
+        await Commit();
+        await File.WriteAllTextAsync(Path.Combine(_root, "a[1].txt"), "hello\n");
+        Assert.Contains("+hello\n", (await Read("a[1].txt")).Unstaged);
+    }
+
+    // Pins: scm#14
+    [Fact]
+    public async Task A_staged_deletion_is_only_in_the_staged_part()
+    {
+        await Init();
+        await Git("rm", "-q", "tracked");
+        var diff = await Read();
+        Assert.Contains("-old\n", diff.Staged);
+        Assert.Empty(diff.Unstaged);
     }
 
     // Pins: scm#17

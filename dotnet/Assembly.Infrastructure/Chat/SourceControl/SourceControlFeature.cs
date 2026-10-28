@@ -17,6 +17,8 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
         {
             var root = SessionPaths.RootOf(sessions, args.Session);
             var path = Path.GetRelativePath(root, SessionPaths.Resolve(root, args.Path));
+            if (path == ".")
+                throw new CallFailed("expected a file in the session's folder");
             var originalPath = args.OriginalPath is null ? null : Path.GetRelativePath(root, SessionPaths.Resolve(root, args.OriginalPath));
             return await new GitDiffReader(new GitCli()).ReadAsync(root, path, originalPath, call.Cancellation);
         });

@@ -127,6 +127,15 @@ public sealed class GitSocketTests : IAsyncLifetime
             args = new { session = session.SessionId, path = "../outside" }
         }));
         await AssertErrorAsync(socket, "that path is outside the session's folder");
+        await SendAsync(socket, JsonSerializer.Serialize(new
+        {
+            t = "call",
+            id = 3,
+            feature = "git",
+            method = "diff",
+            args = new { session = session.SessionId, path = "." }
+        }));
+        await AssertErrorAsync(socket, "expected a file in the session's folder");
     }
 
     // Pins: scm#6
