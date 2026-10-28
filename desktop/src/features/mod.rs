@@ -6,4 +6,5 @@ pub mod palette;
 pub mod session;
 pub mod sessions;
 pub mod shell;
+pub mod source_control;
 pub mod worktrees;

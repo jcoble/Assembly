@@ -27,7 +27,7 @@ scm#8 The pane changes nothing on disk.
 scm#9 The Source control tab shows the selected session's project's branch, or "detached" with its short commit id,
 and how many commits it's ahead of and behind its upstream, or that it has no upstream.
 scm#10 Changed files are in three lists, Staged, Changes and Untracked, each sorted by path. A file staged and then
-edited again is in both Staged and Changes. Each file shows git's letter for its change (M, A, D, R, U), and a renamed
-one its old path too.
+edited again is in both Staged and Changes. Each file shows a letter for its change (M, A, D or R, C for a conflict, U
+for untracked), and a renamed one its old path too.
 scm#11 At most 1000 files are listed, and the pane says how many more there are.
 scm#12 The Source control tab reads as the Worktrees tab does (scm#4, scm#6), and reading changes nothing on disk.

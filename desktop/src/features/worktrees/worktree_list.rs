@@ -1,9 +1,12 @@
 //! `WorktreeList` is one read of a project's worktrees: the rows the filter leaves, how many it hides (scm#5), and
 //! nothing else. Replaces worktreeManagerRows.ts's filterWorktreeRows.
 
+use serde::Deserialize;
+
 use super::worktree::Worktree;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Deserialized straight from `worktrees/list`'s `{worktrees}`.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct WorktreeList {
     /// In git's order, the main checkout first.
     pub worktrees: Vec<Worktree>,
