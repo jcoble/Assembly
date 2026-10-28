@@ -30,9 +30,9 @@ internal static class ProcessTree
         var next = new Queue<int>([Environment.ProcessId]);
         while (next.TryDequeue(out var pid))
         {
-            // A process that exited since the scan is left out.
-            if (Resident(pid) is { } memory)
-                tree.Add(new ProcessReading(pid, stats[pid].Cpu, memory, 0));
+            // A process that exited since the scan, or that couldn't be read, is left out.
+            if (stats.TryGetValue(pid, out var stat) && Resident(pid) is { } memory)
+                tree.Add(new ProcessReading(pid, stat.Cpu, memory, 0));
             foreach (var child in children[pid])
                 next.Enqueue(child);
         }
@@ -44,18 +44,38 @@ internal static class ProcessTree
     private static (int Parent, TimeSpan Cpu)? Stat(int pid) =>
         ReadOrNull($"/proc/{pid}/stat") is { } text ? ParseStat(text) : null;
 
+    // A line cut short or garbled reads as nothing, so one process can't fail the whole sample.
     internal static (int Parent, TimeSpan Cpu)? ParseStat(string text)
     {
-        var fields = text[(text.LastIndexOf(')') + 2)..].Split(' ');
-        var ticks = long.Parse(fields[11], CultureInfo.InvariantCulture) + long.Parse(fields[12], CultureInfo.InvariantCulture);
-        return (int.Parse(fields[1], CultureInfo.InvariantCulture), TimeSpan.FromSeconds(ticks / TicksPerSecond));
+        try
+        {
+            var fields = text[(text.LastIndexOf(')') + 2)..].Split(' ');
+            var ticks = long.Parse(fields[11], CultureInfo.InvariantCulture) + long.Parse(fields[12], CultureInfo.InvariantCulture);
+            return (int.Parse(fields[1], CultureInfo.InvariantCulture), TimeSpan.FromSeconds(ticks / TicksPerSecond));
+        }
+        catch (Exception error) when (Garbled(error))
+        {
+            return null;
+        }
     }
 
     // statm's second field is the resident size in pages.
-    private static long? Resident(int pid) =>
-        ReadOrNull($"/proc/{pid}/statm") is { } text
-            ? long.Parse(text.Split(' ')[1], CultureInfo.InvariantCulture) * Environment.SystemPageSize
-            : null;
+    private static long? Resident(int pid)
+    {
+        try
+        {
+            return ReadOrNull($"/proc/{pid}/statm") is { } text
+                ? long.Parse(text.Split(' ')[1], CultureInfo.InvariantCulture) * Environment.SystemPageSize
+                : null;
+        }
+        catch (Exception error) when (Garbled(error))
+        {
+            return null;
+        }
+    }
+
+    private static bool Garbled(Exception error) =>
+        error is FormatException or OverflowException or IndexOutOfRangeException or ArgumentOutOfRangeException;
 
     private static string? ReadOrNull(string path)
     {
@@ -63,7 +83,7 @@ internal static class ProcessTree
         {
             return File.ReadAllText(path);
         }
-        catch (IOException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return null;
         }

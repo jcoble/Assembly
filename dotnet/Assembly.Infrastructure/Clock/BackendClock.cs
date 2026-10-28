@@ -83,16 +83,30 @@ internal sealed class BackendClock : IFeature
                 }
                 if (idle)
                 {
-                    Ticked?.Invoke(false, false);
+                    Tell(false, false);
                     return;
                 }
                 if (watched)
                     _topics.Publish(Topic, Second, JsonSerializer.Serialize(Now(), ClockJson.Default.ClockTime));
-                Ticked?.Invoke(machinesWatched, resourcesWatched);
+                Tell(machinesWatched, resourcesWatched);
             }
         }
         catch (OperationCanceledException)
         {
+        }
+    }
+
+    // A handler that throws is logged, and the clock keeps ticking: left to end the loop, it would leave the clock
+    // marked running with no loop, so it would never start again.
+    private void Tell(bool machinesWatched, bool resourcesWatched)
+    {
+        try
+        {
+            Ticked?.Invoke(machinesWatched, resourcesWatched);
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"clock: a tick handler failed: {error.Message}");
         }
     }
 
