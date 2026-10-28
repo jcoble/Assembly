@@ -70,4 +70,27 @@ want="serve --port $((18797 + 90)) --home $data/mac --token-file $home/.config/a
 check "a lane: the backend starts on the lane's port, home and token file" '[ "$(cat "$args" 2>/dev/null)" = "$want" ]'
 [ "$failed" = "$before" ] || printf 'its output:\n%s\nthe backend got: %s\nwanted:          %s\nunder HOME:\n%s\n' \
   "$out" "$(cat "$args" 2>/dev/null)" "$want" "$(find "$home" -maxdepth 3 | head -30)"
+
+# The remote: a lane whose .lane has REMOTE starts the backend with --remote, its box port and its box token file; a
+# --remote on the command line replaces it; with neither there is no --remote.
+# serve_args <name> <.lane text> [serve arguments]: runs serve in a new lane worktree and prints the backend's arguments.
+serve_args() {
+  local name=$1 lane=$2 h=$tmp/home-$1 a=$tmp/args-$1
+  shift 2
+  mkdir -p "$h"
+  worktree "$name"
+  printf "$lane" >"$tmp/tree-$name/.lane"
+  mkdir -p "$stubs-$name" && cp "$stubs"/* "$stubs-$name"/ && sed "s|$args|$a|" "$stubs/dotnet" >"$stubs-$name/dotnet"
+  (cd "$tmp/tree-$name" && HOME=$h PATH=$stubs-$name:$PATH dotnet/scripts/desktop.sh serve "$@" >/dev/null 2>&1)
+  for _ in $(seq 50); do [ -s "$a" ] && break; sleep 0.1; done
+  cat "$a" 2>/dev/null
+}
+rtail() { echo "--remote-port $((9797 + 90)) --remote-token-file .config/assembly-dotnet-$1/env"; }
+got=$(serve_args rem 'LANE_NAME=rem\nLANE_NUMBER=9\nREMOTE=workbox-test\n')
+check "a REMOTE in .lane reaches the backend's command line" '[[ $got == *" --remote workbox-test $(rtail rem)" ]]'
+got=$(serve_args over 'LANE_NAME=over\nLANE_NUMBER=9\nREMOTE=workbox-test\n' --remote other-box)
+check "--remote overrides the .lane's REMOTE" '[[ $got == *" --remote other-box $(rtail over)" && $got != *workbox-test* ]]'
+got=$(serve_args none2 'LANE_NAME=none2\nLANE_NUMBER=9\n')
+check "with no remote set the backend gets no --remote" '[[ -n $got && $got != *--remote* ]]'
+[ "$failed" = 0 ] || printf 'the backend got: %s\n' "$got"
 exit "$failed"
