@@ -24,7 +24,7 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 3, "sessions", "page", """{"group":"bogus"}""");
         Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"expected open or settled"}""", await ReadAsync(socket));
 
-        _sessions.SetTitle(settled.SessionId, "Still published");
+        _sessions.SetTitle(settled.SessionId, "Still published", "prompt");
         Assert.Contains("\"title\":\"Still published\"", await ReadAsync(socket));
     }
 
