@@ -147,6 +147,33 @@ public sealed partial class ChatSocketTests
         Assert.StartsWith("""{"t":"result","id":2,""", await ReadAsync(socket));
     }
 
+    // Pins: g0-shape#13
+    // Each call counts once, by its newest row; a read, a command and a failed edit touched nothing.
+    [Fact]
+    public async Task Rows_files_sums_each_edited_files_lines_newest_first()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        void Tool(string item, string kind, string state, string? path, string lines = "") =>
+            Row(session, RowKind.Tool, item,
+                $$"""{"name":"{{kind}}","state":"{{state}}","path":{{(path is null ? "null" : $"\"{path}\"")}},"hasDetail":false,"kind":"{{kind}}"{{lines}}}""");
+        Tool("t1", "edit", "started", "a.rs");
+        Tool("t1", "edit", "completed", "a.rs", ""","added":3,"removed":1""");
+        Tool("t2", "read", "completed", "b.rs");
+        Tool("t3", "edit", "completed", "a.rs", ""","added":2""");
+        Tool("t4", "delete", "completed", "c.rs");
+        Tool("t5", "edit", "failed", "d.rs", ""","added":1""");
+        Tool("t6", "execute", "completed", null);
+        Tool("t7", "move", "completed", "e.rs");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "rows", "files", $$"""{"session":"{{session}}"}""");
+        Assert.Equal("""{"t":"result","id":1,"result":[{"path":"e.rs","added":0,"removed":0,"lastSeq":8},""" +
+            """{"path":"c.rs","added":0,"removed":0,"lastSeq":5},{"path":"a.rs","added":5,"removed":1,"lastSeq":4}]}""",
+            await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "files", """{"session":"nope"}""");
+        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
+    }
+
     // A page of an unknown session fails, as a tool call of an unknown session or item does.
     [Fact]
     public async Task Rows_page_and_tool_for_an_unknown_session_or_item()

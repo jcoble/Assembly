@@ -39,3 +39,8 @@ same with left side"). The drawer's are one rounded strip of icon pills, the old
 name on hover. The sessions column's are the old top tab row's text chips. A click shows that pane, a side tab still
 drags its pane anywhere (g0-shape#2), and a row too narrow for its tabs scrolls. Chat and the bottom dock keep the
 kit's tabs.
+g0-shape#13 The drawer's Context tab lists the files the selected session's tool calls edited, deleted or moved, newest
+first, each once with its file name, its folder and its lines added and removed (`rows/files`, parity map 11c). A
+failed call touched nothing. The tab reads the list when it's shown and when another session is picked while it's
+shown, and doesn't follow the live rows, as the old app's didn't. With no session picked it says to pick one; a read
+that fails says why.

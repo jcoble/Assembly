@@ -231,6 +231,25 @@ public sealed class RowStore
             reader => new StoredToolCall(Text(reader, 0), Text(reader, 1), Text(reader, 2), Text(reader, 3), Text(reader, 4)),
             new SqlArg("$session", sessionId), new SqlArg("$item", itemId)).FirstOrDefault();
 
+    /// <summary>
+    /// The files the session's tool calls edited, deleted or moved, newest first (<c>rows/files</c>). Each call counts once,
+    /// by its newest row, since a call writes one as it starts and another as it ends; a failed call touched nothing.
+    /// </summary>
+    public IReadOnlyList<FileTouched> FilesTouched(string sessionId) =>
+        Query(
+            """
+            SELECT json_extract(r.payload, '$.path'), SUM(COALESCE(json_extract(r.payload, '$.added'), 0)),
+              SUM(COALESCE(json_extract(r.payload, '$.removed'), 0)), MAX(r.seq)
+            FROM rows r
+            WHERE r.session_id = $session AND r.kind = 'tool'
+              AND json_extract(r.payload, '$.kind') IN ('edit', 'delete', 'move')
+              AND json_extract(r.payload, '$.state') <> 'failed' AND json_extract(r.payload, '$.path') IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM rows l WHERE l.session_id = r.session_id AND l.item_id = r.item_id AND l.kind = 'tool'
+                              AND l.seq > r.seq)
+            GROUP BY 1 ORDER BY 4 DESC;
+            """,
+            reader => new FileTouched(reader.Text(0), reader.Long(1), reader.Long(2), reader.Long(3)), new SqlArg("$session", sessionId));
+
     private static long NextSeq(IWriteScope scope, string sessionId) =>
         scope.QueryFirst("SELECT next_seq FROM sessions WHERE session_id = $session;", row => row.Long(0),
             new SqlArg("$session", sessionId));
