@@ -3,7 +3,9 @@
 //! FilesPanel.svelte tree and its Search tab, which searched names only.
 
 pub mod entry;
+pub mod file_text;
 pub mod file_tree;
+pub mod file_view;
 pub mod files_pane;
 pub mod search_pane;
 

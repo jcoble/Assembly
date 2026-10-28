@@ -58,7 +58,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _sessionStore.Add(childId, agent, parent.RepoUrl, _name, parentSessionId,
             helper: row.Payload.TryGetProperty("helper", out var helper) && helper.ValueKind == JsonValueKind.True);
         if (row.Payload.GetProperty("title").GetString() is { } title)
-            _sessionStore.SetTitle(childId, title);
+            _sessionStore.SetTitle(childId, title, "prompt");
     }
 
     public async Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken)
@@ -82,7 +82,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
             Body(("agent", agent), ("repoUrl", parent.RepoUrl), ("parentSessionId", parent.SessionId), ("title", title)), cancellationToken);
         var sessionId = created.GetProperty("sessionId").GetString()!;
         _sessionStore.Add(sessionId, agent, parent.RepoUrl, _name, parent.SessionId, helper: true);
-        _sessionStore.SetTitle(sessionId, title);
+        _sessionStore.SetTitle(sessionId, title, "prompt");
         return _sessionStore.Get(sessionId)!;
     }
 
@@ -221,15 +221,16 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status.Reachable(_name);
     }
 
-    // A finished turn may have named the session on the remote.
+    // A finished turn may have named the session on the remote, its utility model too. A title the user gave here is
+    // kept, and SetTitle keeps a helper title held here over a prompt one from the remote.
     private async Task RefreshAsync(string sessionId)
     {
         _turnEnded(sessionId);
         try
         {
             var session = await JsonAsync(HttpMethod.Get, $"/sessions/{sessionId}", null, CancellationToken.None);
-            if (Text(session, "title") is { } title && _sessionStore.Get(sessionId) is { Helper: false })
-                _sessionStore.SetTitle(sessionId, title);
+            if (Text(session, "title") is { } title && _sessionStore.Get(sessionId) is { Helper: false, TitleSource: not "user" })
+                _sessionStore.SetTitle(sessionId, title, Text(session, "titleSource") ?? "prompt");
             _sessionStore.Touch(sessionId);
         }
         catch (Exception error) when (error is MachineUnreachable or CallFailed)

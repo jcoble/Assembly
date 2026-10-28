@@ -32,7 +32,7 @@ public sealed partial class SessionHost
     // Called with the lock held: a kept session with nothing left on it closes.
     private void CloseIfDone()
     {
-        if (_kept is not { } kept || _turn is not null || _tasks.Count > 0 || _subagents.AnyRunning || _helpersWorking()
+        if (_kept is not { } kept || _turn is not null || _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking()
             || Now() < kept.TasksDueBy)
             return;
         _kept = null;
@@ -221,7 +221,7 @@ public sealed partial class SessionHost
                         Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
                         break;
                     case TitleChanged title when _sessionStore.Get(_sessionId) is { Helper: false }:
-                        _sessionStore.SetTitle(_sessionId, title.Title);
+                        _sessionStore.SetTitle(_sessionId, title.Title, "prompt");
                         break;
                     case ConfigOptionsChanged changed:
                         _sessionStore.SetConfigOptions(_sessionId, changed.Options.GetRawText());

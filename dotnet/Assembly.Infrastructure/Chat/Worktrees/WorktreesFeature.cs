@@ -12,14 +12,7 @@ internal sealed class WorktreesFeature(SessionStore sessions) : IFeature
     public void Register(ICallRegistry calls)
     {
         calls.Read("worktrees", "list", WorktreesJson.Default.Args, WorktreesJson.Default.WorktreeList, async (args, call) =>
-            new WorktreeList((await new WorktreeReader(new GitCli()).ReadAsync(RootOf(args.Session), call.Cancellation)).ToArray()));
-    }
-
-    private string RootOf(string sessionId)
-    {
-        var session = sessions.Get(sessionId) ?? throw new CallFailed("unknown session");
-        var root = sessions.Root(session) ?? throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");
-        return Directory.Exists(root) ? root : throw new CallFailed("this session's folder is made on its first message");
+            new WorktreeList((await new WorktreeReader(new GitCli()).ReadAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation)).ToArray()));
     }
 
     internal sealed record Args([property: JsonRequired] string Session);

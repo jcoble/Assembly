@@ -302,7 +302,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     public async Task A_title_read_that_fails_after_a_turn_leaves_the_title_and_the_follower_keeps_copying()
     {
         _sessions.Add("s1", "claude", "https://github.com/o/r", "box");
-        _sessions.SetTitle("s1", "kept");
+        _sessions.SetTitle("s1", "kept", "prompt");
         _stub.LiveRows =
         [
             Row("s1", 1, "r1", """{"state":"done"}"""),

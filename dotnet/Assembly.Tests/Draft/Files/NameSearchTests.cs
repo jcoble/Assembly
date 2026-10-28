@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Git;
 using Assembly.Infrastructure.Chat.Files;
 
 namespace Assembly.Tests.Draft.Files;
@@ -88,7 +89,7 @@ public sealed class NameSearchTests
         var read = 0;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
         {
-            await foreach (var _ in GitLines.ReadAsync(folder.Root, ["ls-files", "-z", "--others"], null, cancel.Token))
+            await foreach (var _ in new GitCli().ReadAsync(folder.Root, ["ls-files", "-z", "--others"], null, cancel.Token))
             {
                 if (++read == 1)
                     await cancel.CancelAsync();

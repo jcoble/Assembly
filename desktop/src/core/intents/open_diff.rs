@@ -7,4 +7,6 @@ use gpui_kit::*;
 pub struct OpenDiff {
     pub session_id: String,
     pub path: String,
+    /// A staged rename's old path, so its diff shows the rename.
+    pub original_path: Option<String>,
 }

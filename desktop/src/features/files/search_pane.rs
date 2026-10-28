@@ -14,11 +14,12 @@ use gpui_kit::*;
 use serde_json::json;
 
 use super::entry::{NameMatch, SearchPage};
+use super::file_view::FileView;
 use super::files_pane::{TREE_LINE, TREE_TEXT};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
-use crate::features::shell::default_layout::SEARCH;
+use crate::core::ui::pane_names::SEARCH;
 
 /// How long typing waits before it searches.
 pub const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -154,6 +155,7 @@ impl SearchPane {
         let (muted, accent, secondary) = (theme.muted_foreground, theme.accent, theme.secondary);
         let picked = self.selected.as_deref() == Some(found.path.as_str());
         let path = found.path.clone();
+        let folder_hit = found.is_directory;
         let folder = found
             .relative_path
             .rsplit_once('/')
@@ -185,8 +187,11 @@ impl SearchPane {
                     .text_color(muted)
                     .child(folder.to_string()),
             )
-            .on_click(cx.listener(move |pane, _, _, cx| {
+            .on_click(cx.listener(move |pane, _, window, cx| {
                 pane.selected = Some(path.clone());
+                if let (false, Some(session)) = (folder_hit, pane.session.clone()) {
+                    FileView::open(session, path.clone(), window, cx);
+                }
                 cx.notify();
             }))
             .into_any_element()

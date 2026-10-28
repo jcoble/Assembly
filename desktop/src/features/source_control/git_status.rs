@@ -59,13 +59,13 @@ impl ChangedFile {
     }
 
     /// Its letter in `section`, or `None` when it isn't in it. A file staged and then edited again is in both Staged
-    /// and Changes; a conflict is only in Changes, as C.
+    /// and Changes; a conflict is only in Changes, as "!", since git's C is a copy.
     fn letter_in(&self, section: Section) -> Option<char> {
         let letter = |side: &str| side.chars().next().filter(|&c| c != '.');
         match section {
             Section::Untracked => self.untracked().then_some('U'),
             _ if self.untracked() => None,
-            Section::Changes if self.conflicted() => Some('C'),
+            Section::Changes if self.conflicted() => Some('!'),
             Section::Staged if self.conflicted() => None,
             Section::Staged => letter(&self.index),
             Section::Changes => letter(&self.worktree),

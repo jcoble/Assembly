@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Git;
 using System.Runtime.CompilerServices;
 using Assembly.Application.Common.Calls;
 
@@ -41,9 +42,9 @@ public static class NameSearch
         // git lists a submodule's files only with --recurse-submodules, which it allows for tracked files alone.
         static async IAsyncEnumerable<string> Files(string root, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
-            await foreach (var file in GitLines.ReadAsync(root, ["ls-files", "-z", "--cached", "--recurse-submodules"], null, cancellationToken))
+            await foreach (var file in new GitCli().ReadAsync(root, ["ls-files", "-z", "--cached", "--recurse-submodules"], null, cancellationToken))
                 yield return file;
-            await foreach (var file in GitLines.ReadAsync(root, ["ls-files", "-z", "--others", "--exclude-standard"], null, cancellationToken))
+            await foreach (var file in new GitCli().ReadAsync(root, ["ls-files", "-z", "--others", "--exclude-standard"], null, cancellationToken))
                 yield return file;
         }
 

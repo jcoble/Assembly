@@ -100,6 +100,29 @@ impl Sessions {
         self.older_error.as_deref()
     }
 
+    /// Whether `load_next(true, …)` has a page left: the open sessions' next, or Settled's.
+    pub fn has_next(&self) -> bool {
+        self.older.is_some() || !self.settled_started || self.settled_next.is_some()
+    }
+
+    /// A list holding `items`, that follows nothing, for a view's tests: older open sessions past them when `older`,
+    /// and Settled's pages still to load when `settled`.
+    #[cfg(test)]
+    pub fn start_holding(items: Vec<SessionItem>, older: bool, settled: bool, cx: &mut App) {
+        let state = cx.new(|_| Sessions {
+            items,
+            older: older.then(|| (0, String::new())),
+            seeded: true,
+            _feed: Task::ready(()),
+            loading_older: None,
+            older_error: None,
+            settled_next: None,
+            settled_started: !settled,
+            loading_settled: None,
+        });
+        cx.set_global(GlobalSessions(state));
+    }
+
     /// Loads the next older page, once at a time; nothing when there are no more.
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
         let Some((before, before_id)) = &self.older else {

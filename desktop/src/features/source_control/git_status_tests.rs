@@ -47,13 +47,15 @@ fn files_go_in_staged_changes_and_untracked_sorted_with_their_letters() {
             file("new folder/x.txt", "?", "?"),
             file("both.rs", "U", "U"),
             file("added.rs", "A", "."),
+            file("copy.rs", "C", "."),
         ]),
-        6,
+        7,
     );
     assert_eq!(
         listed(&status, Section::Staged),
         vec![
             ('A', "added.rs".to_string()),
+            ('C', "copy.rs".to_string()),
             ('M', "src/a.rs".to_string()),
             ('M', "src/b.rs".to_string()),
         ]
@@ -61,7 +63,7 @@ fn files_go_in_staged_changes_and_untracked_sorted_with_their_letters() {
     assert_eq!(
         listed(&status, Section::Changes),
         vec![
-            ('C', "both.rs".to_string()),
+            ('!', "both.rs".to_string()),
             ('D', "gone.txt".to_string()),
             ('M', "src/a.rs".to_string()),
         ]

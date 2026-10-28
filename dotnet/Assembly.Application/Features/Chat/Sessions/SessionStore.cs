@@ -25,7 +25,7 @@ public sealed class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at";
+    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -44,6 +44,8 @@ public sealed class SessionStore
 
     private const string HasCompletedAt = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'completed_at';";
     private const string HasSettledAt = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'settled_at';";
+    // And one made before titles had a source: each title it has came from its session's first message.
+    private const string HasTitleSource = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'title_source';";
 
     private const string HasRows = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'rows';";
 
@@ -97,6 +99,8 @@ public sealed class SessionStore
                 scope.Execute("ALTER TABLE session_info ADD COLUMN completed_at INTEGER;");
             if (Missing(HasSettledAt))
                 scope.Execute("ALTER TABLE session_info ADD COLUMN settled_at INTEGER;");
+            if (Missing(HasTitleSource))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN title_source TEXT;");
             if (Missing(HasMessageError))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
             if (Missing(HasMessageAnswer))
@@ -259,8 +263,16 @@ public sealed class SessionStore
         return sessions.Count == limit ? new SessionPage(sessions, sessions[^1].UpdatedAt, sessions[^1].SessionId) : new SessionPage(sessions, null, null);
     }
 
-    public void SetTitle(string sessionId, string title) =>
-        Change(sessionId, "UPDATE session_info SET title = $title WHERE session_id = $id;", ("$id", sessionId), ("$title", title));
+    /// <summary>
+    /// Sets the title and where it came from: <c>prompt</c> (the first message or the agent), <c>helper</c> (the utility
+    /// model) or <c>user</c>. A helper title is kept over a later prompt one, and a user title over both; the check is in
+    /// the write, so a title arriving meanwhile can't slip past it.
+    /// </summary>
+    public void SetTitle(string sessionId, string title, string source) =>
+        Change(sessionId, $"UPDATE session_info SET title = $title, title_source = $source WHERE session_id = $id AND {Rank("$source")} >= {Rank("title_source")};",
+            ("$id", sessionId), ("$title", title), ("$source", source));
+
+    private static string Rank(string source) => $"(CASE {source} WHEN 'user' THEN 2 WHEN 'helper' THEN 1 ELSE 0 END)";
 
     public void SetAcpSession(string sessionId, string acpSessionId) =>
         Change(sessionId, "UPDATE session_info SET acp_session_id = $session WHERE session_id = $id;", ("$id", sessionId), ("$session", acpSessionId));
@@ -424,7 +436,7 @@ public sealed class SessionStore
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
             row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10),
-            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12));
+            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12), row.IsNull(13) ? null : row.Text(13));
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

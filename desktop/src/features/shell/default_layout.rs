@@ -10,14 +10,14 @@
 use gpui_kit::component::dock::{DockAreaState, DockPlacement, DockState, PanelInfo, PanelState};
 use gpui_kit::*;
 
+pub use crate::core::ui::pane_names::{FILES, SEARCH};
+
 /// The saved layout's version. A layout saved with another version opens the default instead, so raise it whenever
 /// the default's panes change, or old layouts never gain the new pane.
 pub const LAYOUT_VERSION: usize = 2;
 
 pub const SESSIONS: &str = "Sessions";
 pub const CHAT: &str = "Chat";
-pub const FILES: &str = "Files";
-pub const SEARCH: &str = "Search";
 pub const SOURCE_CONTROL: &str = "Source control";
 pub const AGENTS: &str = "Agents";
 pub const TASKS: &str = "Tasks";

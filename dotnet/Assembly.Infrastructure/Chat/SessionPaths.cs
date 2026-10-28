@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Infrastructure.Chat;
 
@@ -9,6 +10,15 @@ namespace Assembly.Infrastructure.Chat;
 /// </summary>
 public static class SessionPaths
 {
+    public static string RootOf(SessionStore sessions, string sessionId)
+    {
+        var session = sessions.Get(sessionId) ?? throw new CallFailed("unknown session");
+        if (session.Machine is not null)
+            throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");
+        var root = sessions.Root(session) ?? throw new CallFailed("this session has no folder");
+        return Directory.Exists(root) ? root : throw new CallFailed("this session's folder is made on its first message");
+    }
+
     public static string Resolve(string root, string relative)
     {
         root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));

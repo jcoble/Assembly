@@ -1,11 +1,11 @@
 // Files and Search over the socket (docs/behavior/files.md): for a local session, files/list answers the checkout's
-// top folder and files/search finds one of its files by name; for a session on Workbox Test, both say plainly that its
+// top folder, files/search finds one of its files by name and files/read reads it; for a session on Workbox Test, both say plainly that its
 // files can't be shown here yet. The desktop serves files in every case, so this talks to it (CHECK4_API).
 // node scripts/features/files.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_MACHINE set
 // (scripts/features/README.md). The token goes in the hello frame, never in argv or output.
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine } = process.env;
 
-type Frame = { t: string; id?: number; message?: string; result?: { entries?: Entry[]; matches?: Entry[]; nextCursor?: number | null } };
+type Frame = { t: string; id?: number; message?: string; result?: { entries?: Entry[]; matches?: Entry[]; nextCursor?: number | null; revision?: string; size?: number; binary?: boolean } };
 type Entry = { path: string; name: string; isDirectory: boolean; excluded?: boolean };
 
 class Failed extends Error {}
@@ -60,6 +60,11 @@ async function run() {
   if (!found.result?.matches?.some((match) => match.path === file.path))
     fail(`search finds ${file.path} by name, ignoring case`, JSON.stringify(found));
   console.log(`ok search finds ${file.path} by name, ignoring case`);
+
+  const read = await call('read', { path: file.path });
+  if (!/^[0-9a-f]{64}$/.test(read.result?.revision ?? '') || read.result?.size === undefined)
+    fail(`${file.path} reads with its size and revision`, JSON.stringify(read).slice(0, 300));
+  console.log(`ok ${file.path} reads with its size and revision (${read.result!.size} bytes${read.result!.binary ? ', binary' : ''})`);
 
   const out = await call('list', { dir: '..' });
   if (out.t !== 'error') fail('a path outside the folder is refused', JSON.stringify(out));

@@ -59,6 +59,22 @@ public sealed class RemoteTunnelTests
         await exited.Task.WaitAsync(Wait);
     }
 
+    // The window's Connect: a tunnel waiting out its backoff starts again now rather than after it.
+    // Pins: sessions-list#12
+    [Fact]
+    public async Task Try_now_cuts_the_wait_before_the_next_start_short()
+    {
+        var log = new SharedLog();
+        await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", "exit 3"], log);
+        await log.WrittenAsync("again in 4 s");
+        var waited = System.Diagnostics.Stopwatch.StartNew();
+
+        tunnel.TryNow();
+        await log.WrittenAsync("again in 8 s");
+
+        Assert.True(waited.Elapsed < TimeSpan.FromSeconds(2), $"it started again after {waited.Elapsed}");
+    }
+
     // ssh mustn't hold this process's stdout or stdin: after a hard exit here, an orphaned ssh would keep the window's
     // launcher from seeing the end of this process's output.
     [LinuxFact]

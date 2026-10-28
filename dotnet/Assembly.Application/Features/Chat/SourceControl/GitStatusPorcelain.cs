@@ -5,7 +5,7 @@ namespace Assembly.Application.Features.Chat.SourceControl;
 /// <summary>Reads porcelain v2 status, keeping paths intact and counting files beyond the display limit.</summary>
 public static class GitStatusPorcelain
 {
-    public static GitStatus Parse(string output)
+    public static async Task<GitStatus> ParseAsync(IAsyncEnumerable<string> records)
     {
         string? branch = null, head = null;
         var ahead = 0;
@@ -13,10 +13,10 @@ public static class GitStatusPorcelain
         var hasUpstream = false;
         var totalFiles = 0;
         var files = new List<ChangedFile>();
-        var entries = output.Split('\0');
-        for (var i = 0; i < entries.Length; i++)
+        await using var entries = records.GetAsyncEnumerator();
+        while (await entries.MoveNextAsync())
         {
-            var entry = entries[i];
+            var entry = entries.Current;
             if (entry.StartsWith("# branch.oid ", StringComparison.Ordinal))
                 head = entry[13..] is "(initial)" ? null : entry[13..];
             else if (entry.StartsWith("# branch.head ", StringComparison.Ordinal))
@@ -33,14 +33,17 @@ public static class GitStatusPorcelain
             else if (entry.Length > 0 && entry[0] is '1' or '2' or 'u' or '?')
             {
                 var kind = entry[0];
+                string? originalPath = null;
+                if (kind == '2' && await entries.MoveNextAsync())
+                    originalPath = entries.Current;
+                totalFiles++;
+                if (files.Count == 1000)
+                    continue;
                 // Limit the split to metadata fields so spaces inside a path survive.
                 var fields = entry.Split(' ', kind switch { '1' => 9, '2' => 10, 'u' => 11, _ => 2 });
-                var originalPath = kind == '2' ? entries[++i] : null;
-                totalFiles++;
                 // An unmerged entry's letters say how each side changed it (AA, DU, ...); it's a conflict either way.
                 var (index, worktree) = kind switch { '?' => ('?', '?'), 'u' => ('U', 'U'), _ => (fields[1][0], fields[1][1]) };
-                if (files.Count < 1000)
-                    files.Add(new ChangedFile(fields[^1], originalPath, index, worktree));
+                files.Add(new ChangedFile(fields[^1], originalPath, index, worktree));
             }
         }
         return new GitStatus(branch, head, hasUpstream ? ahead : 0, hasUpstream ? behind : 0,

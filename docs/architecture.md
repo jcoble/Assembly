@@ -35,7 +35,7 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
   the local and remote machines, and the files and native calls behind a feature (`Infrastructure/<Feature>/`).
   A session's folder on disk is `SessionStore.Root` (on its `sessions` item as `root`); anything that reads inside it
   turns a relative path into a full one with `Infrastructure/Chat/SessionPaths`, which refuses paths outside it.
-  `Infrastructure/Chat/Files/` lists and searches it for the window's Files and Search tabs.
+  `Infrastructure/Chat/Files/` lists, searches and reads it for the window's Files and Search tabs and its read-only file tabs.
 
 ## The hosts
 

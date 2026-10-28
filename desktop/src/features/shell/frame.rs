@@ -17,6 +17,7 @@ use super::motion_skin::MotionSkin;
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
 use crate::core::native_views::views::NativeViews;
+use crate::core::ui::center_panes::CenterPanes;
 
 /// The work panel's distance from the window's edges (the design system's `panel-gap`).
 const PANEL_GAP: Pixels = px(8.);
@@ -61,6 +62,7 @@ impl Frame {
             DockArea::new("assembly-shell", Some(LAYOUT_VERSION), window, cx)
                 .with_renderer(Rc::new(skin))
         });
+        CenterPanes::init(&dock, cx);
         let top_bar = cx.new(|cx| TopBar::new(dock.clone(), cx));
         // Any dock change (a layout change, zoom, a live edge drag, a resize) moves panes, so the terminal and
         // browser views are placed afresh, and the work panel follows the sessions column's edge.

@@ -10,6 +10,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::git_status::{GitStatus, Section};
+use crate::core::intents::open_diff::OpenDiff;
 use crate::core::state::session_read::{SessionRead, Shown};
 
 /// The pane's name in the saved layout (g0-shape's `SOURCE_CONTROL`).
@@ -41,8 +42,8 @@ impl SourceControlPane {
     }
 }
 
-/// The lists, each under its name and count; an empty one is left out.
-fn lists(status: &GitStatus, cx: &App) -> Div {
+/// The lists, each under its name and count; an empty one is left out. Picking a file opens its diff (scm#13).
+fn lists(status: &GitStatus, session: &str, cx: &App) -> Div {
     let theme = cx.theme();
     let muted = theme.muted_foreground;
     v_flex()
@@ -62,15 +63,31 @@ fn lists(status: &GitStatus, cx: &App) -> Div {
                 .child(files.len().to_string());
             let rows = files.into_iter().map(|(letter, file)| {
                 let color = match letter {
-                    'A' | 'U' => theme.success,
-                    'D' | 'C' => theme.danger,
+                    'A' | 'C' | 'U' => theme.success,
+                    'D' | '!' => theme.danger,
                     _ => theme.warning,
                 };
+                let open = OpenDiff {
+                    session_id: session.to_string(),
+                    path: file.path.clone(),
+                    original_path: file.original_path.clone(),
+                };
                 h_flex()
+                    .id(SharedString::from(format!(
+                        "{}:{}",
+                        section.label(),
+                        file.path
+                    )))
                     .h(px(24.))
                     .px_2()
                     .gap_2()
                     .text_sm()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .hover(|row| row.bg(theme.list_hover))
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(open.clone()), cx)
+                    })
                     .child(
                         div()
                             .flex_none()
@@ -118,9 +135,10 @@ impl Render for SourceControlPane {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let line = |text: String| div().px_3().text_sm().text_color(muted).child(text);
-        let (shown, reading) = {
+        let (shown, reading, session) = {
             let read = self.read.read(cx);
-            (read.shown().clone(), read.reading())
+            let session = read.session().unwrap_or_default().to_string();
+            (read.shown().clone(), read.reading(), session)
         };
         let header = h_flex()
             .px_3()
@@ -181,7 +199,7 @@ impl Render for SourceControlPane {
                     if status.files.is_empty() {
                         return pane.child(line("No changes.".into()));
                     }
-                    pane.child(lists(&status, cx))
+                    pane.child(lists(&status, &session, cx))
                 })
                 .when_some(status.more_line(), |pane, more| pane.child(line(more)))
                 .into_any_element(),

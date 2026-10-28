@@ -41,9 +41,12 @@ fn main() {
             features::sessions::sessions_pane::SessionsPane::register(cx);
             features::files::files_pane::FilesPane::register(cx);
             features::files::search_pane::SearchPane::register(cx);
+            features::files::file_view::FileView::register(cx);
             features::session::context::context_pane::ContextPane::register(cx);
+            features::sessions::history::history_pane::HistoryPane::register(cx);
             features::source_control::source_control_pane::SourceControlPane::register(cx);
             features::worktrees::worktrees_pane::WorktreesPane::register(cx);
+            features::changes::changes_pane::ChangesPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::meter::start_if_on(cx);

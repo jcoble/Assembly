@@ -1,0 +1,8 @@
+ok the header's keyed topic sends the session, with no parent session
+ok a working session carries its run (the column draws its dot)
+ok the run goes from the session when the turn ends (the dot goes)
+ok the first rows page has 7 rows, hasBefore and no active run
+ok an opened tool call reads its detail
+ok the Context tab lists the 0 files the session's tool calls changed
+ok the Context tab lists no attachments, on workbox-test
+ok the sessions column lists the session

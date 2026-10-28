@@ -231,3 +231,28 @@ fn while_its_machine_is_offline_nothing_is_sent_or_stopped(cx: &mut TestAppConte
     type_and_send(&composer, "hello", cx);
     assert_eq!(client.calls()[0].0, "send/send");
 }
+
+// Pins: sessions-list#12
+#[gpui::test]
+fn connect_asks_the_backend_to_reach_the_offline_machine_once_at_a_time(cx: &mut TestAppContext) {
+    let (composer, client, _events, cx) = open(cx);
+    composer.update(cx, |composer, cx| {
+        composer.connect(cx);
+        composer.set_offline(Some("box".into()), cx);
+        composer.connect(cx);
+        composer.connect(cx);
+    });
+    assert!(cx.update(|_, cx| composer.read(cx).connecting.is_some()));
+    cx.run_until_parked();
+    assert_eq!(
+        client.calls(),
+        [("machines/connect".to_string(), json!({ "machine": "box" }))],
+        "nothing while online, and one while it goes"
+    );
+    assert!(
+        cx.update(|_, cx| composer.read(cx).still_offline),
+        "it didn't answer, and the line says so"
+    );
+    composer.update(cx, |composer, cx| composer.set_offline(None, cx));
+    assert!(!cx.update(|_, cx| composer.read(cx).still_offline));
+}

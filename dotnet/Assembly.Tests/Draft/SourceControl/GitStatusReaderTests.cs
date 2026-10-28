@@ -10,7 +10,13 @@ public sealed class GitStatusReaderTests : IDisposable
     private readonly string _temp = Path.Combine(Path.GetTempPath(), "assembly-status-" + Guid.NewGuid());
     private readonly GitCli _git = new();
     private string Root => Path.Combine(_temp, "main");
-    private Task<string> Git(string folder, params string[] arguments) => _git.RunAsync(folder, arguments, CancellationToken.None);
+    private async Task<string> Git(string folder, params string[] arguments)
+    {
+        var records = new List<string>();
+        await foreach (var record in _git.ReadAsync(folder, arguments, null, CancellationToken.None))
+            records.Add(record);
+        return string.Join('\0', records);
+    }
     private Task<GitStatus> Read() => new GitStatusReader(_git).ReadAsync(Root, CancellationToken.None);
 
     private async Task Init()

@@ -12,17 +12,17 @@ public sealed class WorktreeReader(IGit git)
 {
     public async Task<IReadOnlyList<Worktree>> ReadAsync(string root, CancellationToken cancellationToken)
     {
-        var output = await git.RunAsync(root, ["worktree", "list", "--porcelain", "-z"], cancellationToken);
+        var output = await RecordsAsync(root, ["worktree", "list", "--porcelain", "-z"], cancellationToken);
         var rows = new List<Worktree>();
-        foreach (var entry in WorktreePorcelain.Parse(output))
+        foreach (var entry in WorktreePorcelain.Parse(string.Join('\0', output)))
         {
             var row = entry;
             if (!row.IsBare && !row.Prunable)
             {
                 try
                 {
-                    var status = await git.RunAsync(row.Path, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"], cancellationToken);
-                    row = row with { IsDirty = status.Length != 0 };
+                    var status = await RecordsAsync(row.Path, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"], cancellationToken);
+                    row = row with { IsDirty = status.Count != 0 };
                 }
                 // Git doesn't mark a locked worktree prunable when its folder is gone (an unplugged drive, say), so a
                 // locked one whose folder git can't enter keeps its marks without its status.
@@ -41,14 +41,21 @@ public sealed class WorktreeReader(IGit git)
     /// </summary>
     private async Task<Worktree> ReadHeadAsync(string root, Worktree row, CancellationToken cancellationToken)
     {
-        var count = await git.RunAsync(root, ["rev-list", "--count", row.Head!, "--not", "--remotes"], cancellationToken);
-        var log = await git.RunAsync(root, ["log", "-1", "--no-show-signature", "--format=%ct%x00%s", row.Head!], cancellationToken);
-        var separator = log.IndexOf('\0');
+        var count = await RecordsAsync(root, ["rev-list", "--count", row.Head!, "--not", "--remotes"], cancellationToken);
+        var log = await RecordsAsync(root, ["log", "-1", "--no-show-signature", "--format=%ct%x00%s", row.Head!], cancellationToken);
         return row with
         {
-            Unpushed = int.Parse(count.Trim(), CultureInfo.InvariantCulture),
-            HeadCommittedAt = long.Parse(log[..separator], CultureInfo.InvariantCulture) * 1000,
-            HeadSubject = log[(separator + 1)..].TrimEnd('\r', '\n')
+            Unpushed = int.Parse(count[0].Trim(), CultureInfo.InvariantCulture),
+            HeadCommittedAt = long.Parse(log[0], CultureInfo.InvariantCulture) * 1000,
+            HeadSubject = log[1].TrimEnd('\r', '\n')
         };
+    }
+
+    private async Task<List<string>> RecordsAsync(string folder, IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+    {
+        var records = new List<string>();
+        await foreach (var record in git.ReadAsync(folder, arguments, null, cancellationToken))
+            records.Add(record);
+        return records;
     }
 }

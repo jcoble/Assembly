@@ -100,6 +100,7 @@ internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machin
         json.WriteString("agent", session.Agent);
         json.WriteString("repoUrl", session.RepoUrl);
         json.WriteString("title", session.Title);
+        json.WriteString("titleSource", session.TitleSource);
         json.WriteString("machine", session.Machine);
         json.WriteString("parentSessionId", session.ParentSessionId);
         json.WriteString("acpSessionId", session.AcpSessionId);
