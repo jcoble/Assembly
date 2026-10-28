@@ -45,3 +45,10 @@ failed call touched nothing; a call that changed several files lists each with i
 shown, and doesn't follow the live rows, as the old app's didn't, so a remote session picked before its rows are
 copied here can list too few until the tab is shown again. With no session picked it says to pick one; a read that
 fails or is cancelled says why.
+
+g0-shape#14 Under Files touched, the Context tab lists the images the selected session's prompts carried, newest prompt
+first, each by the name it was attached with (`rows/attachments`, parity map 11d: each prompt's "Attached image:"
+lines, from this machine's copy of the session's rows). A click reads the image by its file name in the store and opens
+it full size, as Chat's chips do; one that won't open says why. A remote session's images stay on its machine, so its
+rows don't open and a note names the machine. With nothing attached it says images added to the message box are listed
+there; a read that fails says why. It reads when Files touched does.

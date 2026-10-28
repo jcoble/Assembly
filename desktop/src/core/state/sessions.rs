@@ -49,6 +49,20 @@ impl Sessions {
         cx.set_global(GlobalSessions(state));
     }
 
+    /// A list holding `items` that follows nothing, for a view's tests.
+    #[cfg(test)]
+    pub fn start_holding(items: Vec<SessionItem>, cx: &mut App) {
+        let state = cx.new(|_| Sessions {
+            items,
+            older: None,
+            seeded: true,
+            _feed: Task::ready(()),
+            loading_older: None,
+            older_error: None,
+        });
+        cx.set_global(GlobalSessions(state));
+    }
+
     /// The sessions list, once the socket client has started.
     pub fn try_global(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalSessions>()

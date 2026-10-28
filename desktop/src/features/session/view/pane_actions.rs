@@ -1,11 +1,8 @@
 //! The session pane's actions: what a row's button or link asks for, and reading an open tool call's detail.
 
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Instant;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -18,7 +15,7 @@ use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::tool::ToolDetail;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::grow::toggled;
-use crate::features::session::view::lightbox::open_lightbox;
+use crate::features::session::view::lightbox::{open_lightbox, read_image};
 use crate::features::session::view::session_action::SessionAction;
 
 impl SessionPane {
@@ -281,7 +278,7 @@ impl SessionPane {
 }
 
 impl SessionPane {
-    /// Reads an attached image piece by piece (`attachments/read`) and opens it full size.
+    /// Reads an attached image and opens it full size.
     fn show_image(
         &mut self,
         session: String,
@@ -294,46 +291,10 @@ impl SessionPane {
         self._loads.insert(
             task,
             cx.spawn_in(window, async move |pane, cx| {
-                let mut bytes: Vec<u8> = Vec::new();
-                let (mime, failed) = loop {
-                    let args = json!({ "session": session, "name": name, "offset": bytes.len() });
-                    let Ok(call) =
-                        cx.update(|_, cx| client.call("attachments", "read", args, None, cx))
-                    else {
-                        return;
-                    };
-                    let piece = match call.await {
-                        Ok(piece) => piece,
-                        Err(error) => break (String::new(), Some(error)),
-                    };
-                    let data = piece["data"].as_str().unwrap_or_default().to_string();
-                    let decoded = match cx
-                        .background_spawn(async move { STANDARD.decode(data) })
-                        .await
-                    {
-                        Ok(decoded) => decoded,
-                        Err(error) => {
-                            break (String::new(), Some(CallError::Failed(error.to_string())));
-                        }
-                    };
-                    bytes.extend(decoded.iter());
-                    let size = piece["size"].as_u64().unwrap_or_default() as usize;
-                    if decoded.is_empty() || bytes.len() >= size {
-                        break (piece["mime"].as_str().unwrap_or_default().to_string(), None);
-                    }
-                };
-                let format = ImageFormat::from_mime_type(&mime);
-                pane.update_in(cx, |pane, window, cx| match (failed, format) {
-                    (Some(error), _) => pane.say_failed("Couldn't open the image", error, cx),
-                    (None, Some(format)) => {
-                        let image = Arc::new(Image::from_bytes(format, bytes));
-                        open_lightbox(image, name.into(), window, cx);
-                    }
-                    (None, None) => pane.say_failed(
-                        "Couldn't open the image",
-                        CallError::Failed(format!("it isn't an image ({mime})")),
-                        cx,
-                    ),
+                let image = read_image(client, session, name.clone(), cx).await;
+                pane.update_in(cx, |pane, window, cx| match image {
+                    Ok(image) => open_lightbox(image, name.into(), window, cx),
+                    Err(error) => pane.say_failed("Couldn't open the image", error, cx),
                 })
                 .ok();
             }),
