@@ -122,6 +122,17 @@ fn a_crlf_file_shows_its_lines_without_the_carriage_return_and_knows_its_widest_
     assert_eq!(text.widest, 1);
 }
 
+// Pins: files#11
+#[test]
+fn the_widest_line_is_the_one_with_the_most_characters_not_bytes() {
+    let mut text = FileText::default();
+    text.start();
+    let accented = "\u{e9}".repeat(200);
+    let ascii = "a".repeat(300);
+    text.loaded(0, chunk(&format!("{accented}\n{ascii}\n"), "r1", None));
+    assert_eq!(text.widest, 1, "300 characters beat 200 two-byte ones");
+}
+
 // Pins: files#12
 #[test]
 fn after_a_failure_that_is_shown_nothing_more_is_asked_for() {

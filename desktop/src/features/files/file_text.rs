@@ -21,6 +21,8 @@ pub struct FileText {
     pub lines: Vec<String>,
     /// The longest line's index, which sets how far the view scrolls sideways.
     pub widest: usize,
+    /// The longest line's length in characters, not bytes: two-byte "é" is no wider than "a" in the code font.
+    widest_chars: usize,
     pub line_count: usize,
     pub binary: bool,
     pub error: Option<String>,
@@ -109,8 +111,10 @@ impl FileText {
             if (ix < last_part || ends_line) && self.lines[last].ends_with('\r') {
                 self.lines[last].pop();
             }
-            if self.lines[last].len() > self.lines[self.widest].len() {
+            let chars = self.lines[last].chars().count();
+            if chars > self.widest_chars {
                 self.widest = last;
+                self.widest_chars = chars;
             }
         }
         self.open_line = !ends_line;
