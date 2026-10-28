@@ -182,6 +182,61 @@ public sealed partial class SessionHostTests
         await agent.ReadAsync("session/resume");
     }
 
+    // The stop doesn't wait for the agent's late answer: the turn ends cancelled while session/new is still out.
+    [Fact]
+    public async Task A_new_session_stopped_before_its_answer_ends_the_turn_cancelled_at_once()
+    {
+        await StoppedNewAsync();
+
+        var end = (await RowsUntil(row => row.Kind == "turn"))[^1];
+        Assert.Equal("cancelled", end.Payload.GetProperty("state").GetString());
+    }
+
+    [Fact]
+    public async Task A_send_right_after_a_stopped_new_session_goes_through_while_the_late_answer_is_still_out()
+    {
+        var (agent, _) = await StoppedNewAsync();
+        await RowsUntil(row => row.Kind == "turn");
+
+        Assert.NotNull(_host.Send("two"));
+        await agent.ReadAsync("session/new");
+    }
+
+    [Fact]
+    public async Task A_late_answer_after_the_stopped_turn_ended_is_closed_before_the_adapter_is_shut_down()
+    {
+        var (agent, open) = await StoppedNewAsync();
+        await RowsUntil(row => row.Kind == "turn");
+
+        await agent.ReplyAsync(open, """{"sessionId":"acp-late"}""");
+
+        var close = await agent.ReadAsync("session/close");
+        Assert.Equal("acp-late", close.GetProperty("params").GetProperty("sessionId").GetString());
+        Assert.False(agent.Disposed);
+        await agent.ReplyAsync(close, "{}");
+    }
+
+    [Fact]
+    public async Task A_resume_stopped_before_its_answer_ends_the_turn_cancelled_at_once()
+    {
+        await StoppedResumeAsync();
+
+        var end = (await RowsUntil(row => row.Kind == "turn"))[^1];
+        Assert.Equal("cancelled", end.Payload.GetProperty("state").GetString());
+    }
+
+    // A first turn's session/new, held by the agent, and that turn stopped.
+    private async Task<(FakeLink Agent, JsonElement Open)> StoppedNewAsync()
+    {
+        var runId = _host.Send("one")!;
+        await Kinds(2);
+        var agent = await _launcher.NextAsync();
+        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        var open = await agent.ReadAsync("session/new");
+        Assert.True(_host.Stop(runId));
+        return (agent, open);
+    }
+
     // A second turn's resume, held by the agent, and that turn stopped.
     private async Task<(FakeLink Agent, JsonElement Resume)> StoppedResumeAsync()
     {
