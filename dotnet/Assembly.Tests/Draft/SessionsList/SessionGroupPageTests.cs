@@ -14,7 +14,7 @@ public sealed class SessionGroupPageTests : IDisposable
     public SessionGroupPageTests()
     {
         _database = TestDatabase.Open(_file.Path);
-        _sessions = SessionStore.Open(_database, _time);
+        _sessions = SessionStore.Open(_database, _time, "checkouts");
     }
 
     // Pins: sessions-list#9

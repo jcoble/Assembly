@@ -147,32 +147,11 @@ impl Sessions {
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
         match update {
             Update::State(items) => {
-                let first = !self.seeded;
-                self.seeded = true;
-                let full = items.len() >= NEWEST;
                 let state = items
                     .into_iter()
                     .filter_map(|(_, item)| read(item))
                     .collect();
-                let (changes, restart) = add_state(
-                    &mut self.items,
-                    &mut self.older,
-                    &mut self.older_error,
-                    &mut self.loading_older,
-                    first,
-                    state,
-                    full,
-                );
-                // A gap took the settled sessions with the rest, or a session was settled while disconnected: Settled's
-                // pages start again.
-                if restart {
-                    (
-                        self.settled_next,
-                        self.settled_started,
-                        self.loading_settled,
-                    ) = (None, false, None);
-                }
-                for change in changes {
+                for change in self.take_state(state) {
                     cx.emit(change);
                 }
             }
@@ -186,6 +165,34 @@ impl Sessions {
     }
 }
 
+impl Sessions {
+    /// Takes the topic's state: the first, or a reconnect's. A reconnect also starts Settled's pages again: anything
+    /// in it may have changed while disconnected, and a session may have been settled, so its held sessions are
+    /// dropped and the list loads its first page again as its end comes into view, if it's open.
+    fn take_state(&mut self, state: Vec<SessionItem>) -> Vec<SessionChange> {
+        let first = !self.seeded;
+        self.seeded = true;
+        if !first {
+            self.items.retain(|item| item.settled_at.is_none());
+            (
+                self.settled_next,
+                self.settled_started,
+                self.loading_settled,
+            ) = (None, false, None);
+        }
+        let full = state.len() >= NEWEST;
+        add_state(
+            &mut self.items,
+            &mut self.older,
+            &mut self.older_error,
+            &mut self.loading_older,
+            first,
+            state,
+            full,
+        )
+    }
+}
+
 fn read(item: Value) -> Option<SessionItem> {
     serde_json::from_value(item)
         .inspect_err(|error| eprintln!("sessions: an item that doesn't read: {error}"))
@@ -196,8 +203,7 @@ fn read(item: Value) -> Option<SessionItem> {
 /// one, after a reconnect, whose oldest is newer than the newest held open session leaves a gap: the held list is
 /// replaced and the pages start again from the state's oldest: an older page's error is cleared, and a page still
 /// loading is dropped, which cancels it, so it can't land in the new list. One that reaches the held list is merged,
-/// and a held open session missing from it is dropped. Also says whether Settled's pages start again: after a gap,
-/// or when a dropped session may have been settled.
+/// and a held open session missing from it is dropped (it was settled, or removed, while disconnected).
 fn add_state(
     items: &mut Vec<SessionItem>,
     older: &mut Option<(i64, String)>,
@@ -206,7 +212,7 @@ fn add_state(
     first: bool,
     state: Vec<SessionItem>,
     full: bool,
-) -> (Vec<SessionChange>, bool) {
+) -> Vec<SessionChange> {
     let key = |item: &SessionItem| (item.updated_at, item.session_id.clone());
     let oldest = state.iter().map(key).min();
     // The state holds only open sessions, so only they show a gap: a settled one may be newer than all of them. With
@@ -226,7 +232,6 @@ fn add_state(
         *loading_older = None;
     }
     // An open session the state's span should hold but doesn't was settled (or removed) while disconnected.
-    let held = items.len();
     if !first && !gap {
         items.retain(|item| {
             item.settled_at.is_some()
@@ -234,9 +239,7 @@ fn add_state(
                 || (full && oldest.as_ref().is_some_and(|oldest| key(item) < *oldest))
         });
     }
-    let dropped = items.len() < held;
-    let changes = state.into_iter().map(|item| upsert(items, item)).collect();
-    (changes, gap || dropped)
+    state.into_iter().map(|item| upsert(items, item)).collect()
 }
 
 /// Adds a page's sessions. One already held is skipped: the held copy came from the topic, whose changes are sent
@@ -429,13 +432,13 @@ mod tests {
     }
 
     // "a" was settled while disconnected, so the reconnect's open state doesn't hold it though its span does: it
-    // leaves Working and Done, and Settled's pages start again to bring it. "b" is older than the full state reaches.
+    // leaves Working and Done. "b" is older than the full state reaches.
     #[test]
     fn a_reconnect_drops_an_open_session_settled_while_disconnected() {
         let mut items = vec![session("x", 30), session("a", 20), session("b", 5)];
         let mut older = Some((5, "b".to_owned()));
         let state = vec![session("y", 40), session("x", 30), session("c", 10)];
-        let (_, restart) = add_state(
+        add_state(
             &mut items,
             &mut older,
             &mut None,
@@ -445,9 +448,8 @@ mod tests {
             true,
         );
         assert_eq!(ids(&items), ["y", "x", "c", "b"]);
-        assert!(restart);
         // A state short of the topic's 200 holds every open session, so one it lacks goes whatever its age.
-        let (_, restart) = add_state(
+        add_state(
             &mut items,
             &mut older,
             &mut None,
@@ -457,7 +459,6 @@ mod tests {
             false,
         );
         assert_eq!(ids(&items), ["y", "x"]);
-        assert!(restart);
     }
 
     // Every open session was settled before the disconnect, so none is held to measure a gap against: the open list
@@ -470,12 +471,36 @@ mod tests {
         }];
         let mut older = None;
         let state = vec![session("x", 30), session("y", 20)];
-        let (_, restart) = add_state(
+        add_state(
             &mut items, &mut older, &mut None, &mut None, false, state, true,
         );
         assert_eq!(ids(&items), ["x", "y"]);
         assert_eq!(older, Some((20, "y".to_owned())));
-        assert!(restart);
+    }
+
+    // Settled had loaded to its end. While disconnected, "s2" was settled and "s1" changed. The reconnect's open state
+    // is the same, yet Settled starts again: its held sessions go, and its first page brings both as they are now.
+    // Pins: sessions-list#9
+    #[test]
+    fn a_reconnect_starts_settled_again_even_when_the_open_sessions_are_the_same() {
+        let s1 = |at| SessionItem {
+            settled_at: Some(at),
+            ..session("s1", at)
+        };
+        let mut sessions = held(vec![session("a", 90), s1(10)], (0, "-"));
+        sessions.older = None;
+        sessions.settled_started = true;
+        sessions.take_state(vec![session("a", 90)]);
+        assert_eq!(ids(&sessions.items), ["a"]);
+        assert!(!sessions.settled_started && sessions.settled_next.is_none());
+
+        let s2 = SessionItem {
+            settled_at: Some(30),
+            ..session("s2", 30)
+        };
+        sessions.finish_settled(page(vec![s2, s1(20)], None));
+        assert_eq!(ids(&sessions.items), ["a", "s2", "s1"]);
+        assert_eq!(sessions.items[2].updated_at, 20);
     }
 
     // Pins: g0-socket#10
