@@ -41,11 +41,18 @@ public sealed partial class MachinesSocketTests
         public bool HangVersion { get; set; }
         public bool Pings { get; set; } = true;
         public string[] LiveRows { get; set; } = [];
+        public TaskCompletionSource VersionStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource VersionCancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private TaskCompletionSource _noLive = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task NoLiveAsync() { lock (_liveOpen) return _liveOpen.Values.Sum() == 0 ? Task.CompletedTask : _noLive.Task; }
         public int VersionHits;
         public int VersionAborted;
         public int AgentsHits;
         public int LiveHits;
         public int TitleHits;
+        public int SendHits;
+        public int ConfigSets;
+        public int LiveOpen { get { lock (_liveOpen) return _liveOpen.Values.Sum(); } }
         // The most /live links any one session had open at once, and each session's first /live link, under _liveOpen.
         public int MostLiveAtOnce;
         private readonly Dictionary<string, int> _liveOpen = [];
@@ -71,6 +78,7 @@ public sealed partial class MachinesSocketTests
             _app.MapGet("/version", async (HttpContext context) =>
             {
                 Interlocked.Increment(ref VersionHits);
+                VersionStarted.TrySetResult();
                 if (DropVersion)
                 {
                     context.Abort();
@@ -85,6 +93,7 @@ public sealed partial class MachinesSocketTests
                     catch (OperationCanceledException)
                     {
                         Interlocked.Increment(ref VersionAborted);
+                        VersionCancelled.TrySetResult();
                         return Results.Empty;
                     }
                 }
@@ -101,6 +110,7 @@ public sealed partial class MachinesSocketTests
                 var session = context.Request.Query["session"].ToString();
                 lock (_liveOpen)
                 {
+                    if (_liveOpen.Values.Sum() == 0) _noLive = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     MostLiveAtOnce = Math.Max(MostLiveAtOnce, _liveOpen[session] = _liveOpen.GetValueOrDefault(session) + 1);
                     Seen(session).TrySetResult();
                 }
@@ -123,7 +133,10 @@ public sealed partial class MachinesSocketTests
                 finally
                 {
                     lock (_liveOpen)
+                    {
                         _liveOpen[session]--;
+                        if (_liveOpen.Values.Sum() == 0) _noLive.TrySetResult();
+                    }
                 }
             });
             _app.MapGet("/agents", (HttpContext context) =>
@@ -137,6 +150,17 @@ public sealed partial class MachinesSocketTests
                 return AgentsStatus == 200
                     ? Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json")
                     : Results.Text("boom", statusCode: AgentsStatus);
+            });
+            _app.MapGet("/sessions/{id}/config", () => Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json"));
+            _app.MapPost("/sessions/{id}/config", () =>
+            {
+                Interlocked.Increment(ref ConfigSets);
+                return Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json");
+            });
+            _app.MapPost("/sessions/{id}/send", () =>
+            {
+                Interlocked.Increment(ref SendHits);
+                return Results.Text("""{"runId":"remote-run"}""", "application/json");
             });
             _app.MapPost("/runs/{id}/stop", () => Results.Text(StopStatus == 500 ? "boom" : "", statusCode: StopStatus));
             await _app.StartAsync();

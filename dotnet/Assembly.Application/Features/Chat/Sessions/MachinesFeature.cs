@@ -26,6 +26,9 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
     private readonly Action _startClock;
     private readonly TimeProvider _time;
     private readonly Action _tryTunnel;
+    private readonly MachineStore? _store;
+    private readonly Func<string, bool, CancellationToken, Task>? _connection;
+    private readonly Dictionary<string, CancellationTokenSource> _probeStops = [];
     // Each remote's last probe, run off the tick's thread; a remote whose probe is still out gets no second. Guarded
     // by itself, as are _stop, _ticks and _disposed.
     private readonly Dictionary<string, Task> _probes = [];
@@ -35,8 +38,12 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
 
     /// <param name="startClock">Starts the backend clock, whose ticks come back through <see cref="Tick"/>.</param>
     /// <param name="tryTunnel">Starts the remote's ssh tunnel again now if it's waiting to.</param>
-    public MachinesFeature(MachineSet machines, MachineStatus status, Action startClock, TimeProvider time, Action? tryTunnel = null)
+    public MachinesFeature(MachineSet machines, MachineStatus status, Action startClock, TimeProvider time, Action? tryTunnel = null, MachineStore? store = null,
+        Func<string, bool, CancellationToken, Task>? connection = null)
     {
+        _store = store;
+        if (store is not null) store.Status = status;
+        _connection = connection;
         _machines = machines;
         _status = status;
         _startClock = startClock;
@@ -54,8 +61,30 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             lock (_probes)
                 _ticks = Every - 1;
             _startClock();
-            return _status.Items;
+            return _store is null ? _status.Items : [_status.Items[0], .. _store.All(CancellationToken.None).Select(profile =>
+                (_status.Items.FirstOrDefault(item => item.Name == profile.Name) ?? MachineStore.Item(profile)) with
+                { Ssh = profile.Ssh, Port = profile.Port, TokenFile = profile.TokenFile })];
         });
+        if (_store is not null)
+        {
+            calls.Write(Feature, "set", SessionsJson.Default.SavedMachine, SessionsJson.Default.MachineItem, (args, _) =>
+                Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, MachineItem>>(scope =>
+                {
+                    _store.Set(scope, args);
+                    return MachineStore.Item(args);
+                }), args => "machine:" + args.Name);
+            calls.Write(Feature, "remove", SessionsJson.Default.NameArgs, SessionsJson.Default.Done, (args, _) =>
+                Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, SendFeature.Done>>(scope =>
+                {
+                    _store.Remove(scope, args.Name);
+                    return new(true);
+                }), args => "machine:" + args.Name);
+            calls.Read(Feature, "disconnect", SessionsJson.Default.NameArgs, SessionsJson.Default.MachineItem, async (args, call) =>
+            {
+                await _connection!(args.Name, false, call.Cancellation);
+                return _status.Items.First(item => item.Name == args.Name);
+            });
+        }
         calls.Read(Feature, "agents", SessionsJson.Default.AgentsArgs, SessionsJson.Default.AgentList, async (args, call) =>
         {
             // An empty name is this machine, as GET /agents?machine= takes it.
@@ -65,6 +94,11 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         // A read: it writes nothing here, so its up to 10 seconds hold up none of the socket's writes.
         calls.Read(Feature, "connect", SessionsJson.Default.ConnectArgs, SessionsJson.Default.MachineItem, async (args, call) =>
         {
+            if (_connection is not null)
+            {
+                await _connection(args.Machine, true, call.Cancellation);
+                return _status.Items.First(item => item.Name == args.Machine);
+            }
             var machine = _machines.Remotes.FirstOrDefault(remote => remote.Name == args.Machine) ?? throw new CallFailed("unknown remote machine");
             _tryTunnel();
             await ConnectAsync(machine, call.Cancellation);
@@ -72,8 +106,9 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         });
     }
 
-    private async Task ConnectAsync(IMachine machine, CancellationToken cancel)
+    internal async Task ConnectAsync(IMachine machine, CancellationToken cancel)
     {
+        var status = _status.ForProbe(machine.Name!);
         using var limit = new CancellationTokenSource(ConnectLimit, _time);
         using var either = CancellationTokenSource.CreateLinkedTokenSource(cancel, limit.Token);
         try
@@ -94,7 +129,7 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         }
         catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
         {
-            _status.Unreachable(machine.Name!, "didn't answer");
+            status.Unreachable(machine.Name!, "didn't answer");
         }
         catch (MachineUnreachable)
         {
@@ -127,13 +162,16 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             {
                 if (_probes.TryGetValue(machine.Name!, out var probe) && !probe.IsCompleted)
                     continue;
-                var stop = _stop.Token;
-                _probes[machine.Name!] = Task.Run(() => ProbeAsync(machine, stop));
+                if (_probeStops.Remove(machine.Name!, out var old)) old.Dispose();
+                var stop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+                _probeStops[machine.Name!] = stop;
+                var status = _status.ForProbe(machine.Name!);
+                _probes[machine.Name!] = Task.Run(() => ProbeAsync(machine, status, stop.Token));
             }
         }
     }
 
-    private async Task ProbeAsync(IMachine machine, CancellationToken stop)
+    private async Task ProbeAsync(IMachine machine, MachineStatus status, CancellationToken stop)
     {
         try
         {
@@ -143,12 +181,27 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         }
         catch (OperationCanceledException) when (!stop.IsCancellationRequested)
         {
-            _status.Unreachable(machine.Name!, "didn't answer");
+            status.Unreachable(machine.Name!, "didn't answer");
         }
         catch (Exception)
         {
             // The machine recorded what it saw, and a probe cancelled for nobody watching records nothing.
         }
+    }
+
+    public async Task StopProbesAsync(string name)
+    {
+        Task? probe;
+        CancellationTokenSource? stop;
+        lock (_probes)
+        {
+            _machines.Remove(name);
+            _probes.Remove(name, out probe);
+            _probeStops.Remove(name, out stop);
+        }
+        if (stop is not null) await stop.CancelAsync();
+        if (probe is not null) await probe;
+        stop?.Dispose();
     }
 
     /// <summary>Cancels the probes out and waits for them to end.</summary>
@@ -163,7 +216,11 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         }
         await stop.CancelAsync();
         await Task.WhenAll(probes);
+        foreach (var source in _probeStops.Values) source.Dispose();
+        stop.Dispose();
     }
+
+    internal sealed record NameArgs(string Name);
 
     internal sealed record AgentsArgs(string? Machine = null);
 

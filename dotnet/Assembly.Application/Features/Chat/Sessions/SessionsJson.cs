@@ -22,6 +22,8 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(ConfigFeature.SetArgs))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(MachineItem))]
+[JsonSerializable(typeof(SavedMachine))]
+[JsonSerializable(typeof(MachinesFeature.NameArgs))]
 [JsonSerializable(typeof(MachinesFeature.AgentsArgs))]
 [JsonSerializable(typeof(MachinesFeature.ConnectArgs))]
 [JsonSerializable(typeof(MachinesFeature.AgentList))]

@@ -79,6 +79,42 @@ public sealed class RemoteTunnelTests
         Assert.Contains("tunnel: ssh exited (3: own)", log.ToString());
     }
 
+    [Fact]
+    public async Task Same_remote_ports_have_independent_endpoints_and_reach_different_hosts()
+    {
+        async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> Open(string host) => await RemoteTunnel.ConnectAsync(host, 9797, "test/env", TextWriter.Null,
+            start: port => RemoteTunnel.Wrapped(["python3", "-c", "from http.server import HTTPServer,BaseHTTPRequestHandler; " +
+                "exec(\"class H(BaseHTTPRequestHandler):\\n def do_GET(self):\\n  self.send_response(200); self.end_headers(); self.wfile.write(b'" + host + "')\\n def log_message(self,*args): pass\"); " +
+                $"HTTPServer(('127.0.0.1',{port}),H).serve_forever()"], TextWriter.Null),
+            readToken: _ => Task.FromResult("token"));
+        var first = await Open("first");
+        await using var stopFirst = first.Tunnel;
+        var second = await Open("second");
+        await using var stopSecond = second.Tunnel;
+        Assert.NotEqual(first.Config.Address, second.Config.Address);
+        using var http = new HttpClient();
+        Assert.Equal("first", await http.GetStringAsync(first.Config.Address));
+        Assert.Equal("second", await http.GetStringAsync(second.Config.Address));
+    }
+
+    [Fact]
+    public async Task Cancelled_setup_stops_its_owned_process()
+    {
+        using var stop = new CancellationTokenSource();
+        var started = new TaskCompletionSource<RemoteTunnel>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connecting = RemoteTunnel.ConnectAsync("fake", 9797, "test/env", TextWriter.Null, stop.Token,
+            start: _ =>
+            {
+                var tunnel = RemoteTunnel.Wrapped(["/bin/sleep", "30"], TextWriter.Null);
+                started.SetResult(tunnel);
+                return tunnel;
+            }, readToken: async cancel => { await Task.Delay(Timeout.Infinite, cancel); return "token"; });
+        var owned = await started.Task;
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => connecting);
+        Assert.True(owned.Pid == 0 || kill(owned.Pid, 0) != 0);
+    }
+
     // It reads /proc, which macOS doesn't have.
     private sealed class LinuxFactAttribute : FactAttribute
     {
