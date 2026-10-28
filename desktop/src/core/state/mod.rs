@@ -1,7 +1,9 @@
 //! The facts the window shows, one owner each, kept current from the backend's topics and calls.
 
+pub mod appearance;
 pub mod machine;
 pub mod machines;
+pub mod number_setting;
 pub mod selected_session;
 pub mod session_change;
 pub mod session_item;
