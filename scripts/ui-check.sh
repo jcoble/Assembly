@@ -13,7 +13,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 . scripts/lane-env.sh
-[ "$LANE_NAME" = ui-check ] || { echo 'requires the ui-check lane' >&2; exit 1; }
 home=$DATA/ui-check
 state=$home/state
 export NUGET_HTTP_CACHE_PATH=$home/nuget-http-cache MSBUILDDISABLENODEREUSE=1
