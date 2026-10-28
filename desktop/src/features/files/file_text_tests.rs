@@ -1,7 +1,7 @@
 //! A file's text joins its parts into lines, asks for the next part only near the end, and starts over when the file
 //! changes between parts.
 
-use super::{FileText, NEAR_END};
+use super::{FileText, KEEPS_CHANGING, NEAR_END};
 use crate::features::files::entry::FileChunk;
 
 fn chunk(content: &str, revision: &str, next: Option<u64>) -> Result<FileChunk, String> {
@@ -145,4 +145,19 @@ fn a_crlf_split_between_parts_is_dropped_but_a_lone_carriage_return_at_a_part_en
     text.more(0);
     text.loaded(5, chunk("c", "r1", None));
     assert_eq!(text.lines, ["a", "b\rc"]);
+}
+
+// Pins: files#14
+#[test]
+fn a_file_that_changes_twice_while_read_stops_and_says_so() {
+    let mut text = FileText::default();
+    text.start();
+    text.loaded(0, chunk("a\n", "r1", Some(2)));
+    text.more(1);
+    assert_eq!(text.loaded(2, chunk("b\n", "r2", Some(4))), Some(0));
+    text.loaded(0, chunk("a\n", "r2", Some(2)));
+    text.more(1);
+    assert_eq!(text.loaded(2, chunk("b\n", "r3", Some(4))), None);
+    assert_eq!(text.error.as_deref(), Some(KEEPS_CHANGING));
+    assert_eq!(text.more(0), None, "nothing more is read");
 }

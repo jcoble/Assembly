@@ -1,13 +1,17 @@
 //! `FileText` is an open file's text as its parts come in (`files/read`): its lines, and what to ask for next. A part
 //! ends at a line end unless one line is longer than a part, so a part that doesn't end in a newline carries on the last
-//! line. A part from a changed file starts the text over from the top, and so does the first failed later part (the file
-//! may have shrunk); a second failure is shown.
+//! line. A part from a changed file starts the text over from the top, and so does a failed later part (the file may
+//! have shrunk), once: a second start-over would chase a file that keeps changing, so it stops and says so.
 
 use super::entry::FileChunk;
 
 #[cfg(test)]
 #[path = "file_text_tests.rs"]
 mod tests;
+
+/// What a file that changed twice while it was read says.
+pub const KEEPS_CHANGING: &str =
+    "This file keeps changing while it's read. Close its tab and open it again to read it fresh.";
 
 /// How close to the last line held the view may scroll before the next part is asked for.
 pub const NEAR_END: usize = 200;
@@ -27,7 +31,7 @@ pub struct FileText {
     loading: Option<u64>,
     /// The last part didn't end in a newline.
     open_line: bool,
-    /// A failed part has already started the text over once.
+    /// A changed file or a failed part has already started the text over once.
     restarted: bool,
 }
 
@@ -76,7 +80,13 @@ impl FileText {
             .as_ref()
             .is_some_and(|revision| *revision != chunk.revision)
         {
-            return Some(self.start_over());
+            if self.restarted {
+                self.failed(KEEPS_CHANGING.into());
+                return None;
+            }
+            self.start_over();
+            self.restarted = true;
+            return Some(0);
         }
         self.revision = Some(chunk.revision);
         self.line_count = chunk.line_count;
