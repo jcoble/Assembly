@@ -2,9 +2,10 @@
 
 Draft by Claude, not corrected by Jesse.
 
-The drawer's Worktrees pane first; Source control's status, diffs and branches get their lines when that pane is
-ported. Sources: the old app's Worktrees panel (mac-command-bar `tauri-svelte-preview/src/lib/shell/panels/worktrees/`,
-`list_project_worktrees` in docs/backend-commands.md), base#1, base#10 and g0-shape#10. Inspect, Remove and Archive
+The drawer's Worktrees pane, then Source control's status. Diffs, staging, commits and branches get their lines when
+they're ported. Sources: the old app's Worktrees panel (mac-command-bar `tauri-svelte-preview/src/lib/shell/panels/worktrees/`,
+`list_project_worktrees` in docs/backend-commands.md), its Source control panel
+(`shell/git/components/sourceControl/`, `project_git_status`), base#1, base#10 and g0-shape#10. Inspect, Remove and Archive
 (parity map 8b to 8d) are left for later lines, since they start sessions in a worktree folder.
 
 scm#1 The Worktrees tab lists every worktree of the selected session's project, the main checkout first, each named
@@ -23,3 +24,10 @@ git failure shows git's own message and a way to try again.
 scm#7 For a session on another machine, the worktrees are read on that machine. (Waits on the desktop forwarding
 calls to a remote's socket, plan C2.)
 scm#8 The pane changes nothing on disk.
+scm#9 The Source control tab shows the selected session's project's branch, or "detached" with its short commit id,
+and how many commits it's ahead of and behind its upstream, or that it has no upstream.
+scm#10 Changed files are in three lists, Staged, Changes and Untracked, each sorted by path. A file staged and then
+edited again is in both Staged and Changes. Each file shows git's letter for its change (M, A, D, R, U), and a renamed
+one its old path too.
+scm#11 At most 1000 files are listed, and the pane says how many more there are.
+scm#12 The Source control tab reads as the Worktrees tab does (scm#4, scm#6), and reading changes nothing on disk.
