@@ -9,7 +9,7 @@
 const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine, CHECK4_AGENT: agent } =
   process.env;
 
-type Item = { sessionId: string; completedAt: number | null; settledAt: number | null; activeRunId: string | null };
+type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
 type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
 
 class Failed extends Error {}
@@ -23,13 +23,9 @@ const frames: Frame[] = [];
 /** Whether the sessionRail topic (sub 2) has named the session since the last `railChange`, and who waits for it. */
 let railNamed = false;
 let railHeard: (() => void) | undefined;
-/** The session's run as the keyed topic (sub 1) last showed it. */
-let activeRun: string | null | undefined;
 let next: (() => void) | undefined;
 socket.onmessage = (event) => {
   const got = JSON.parse(String(event.data)) as Frame & { key?: string };
-  const item = got.item ?? got.items?.find((entry) => entry.key === session)?.item;
-  if (got.sub === 1 && item?.sessionId === session) activeRun = item.activeRunId;
   if (got.sub === 2 && got.t === 'change' && got.key === session) {
     railNamed = true;
     railHeard?.();
@@ -99,6 +95,12 @@ async function rail(tab: string, step: string): Promise<Rail> {
   return answer.result as Rail;
 }
 const listed = (page: Rail) => page.sessions.some((entry) => entry.sessionId === session);
+/** Whether the session has a run out, on whichever machine runs it. */
+async function runOut(step: string) {
+  const answer = await fetch(`${api}/sessions/${session}/rows?limit=1`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!answer.ok) fail(step, `its rows answered ${answer.status}`);
+  return ((await answer.json()) as { activeRunId: string | null }).activeRunId !== null;
+}
 
 /** Waits for sessionRail to name the session, at once if it has since the last wait, within `ms`. */
 function railChange(step: string, ms: number) {
@@ -189,11 +191,10 @@ async function main() {
   }
   console.log(`ok ${connect}`);
 
-  // On a remote, the case's turn can start after this point, so its run ending is what says it's over. Frames held
-  // from before are older than what `activeRun` shows.
+  // On a remote, the case's turn can start after this point, so its run ending is what says it's over.
   step = 'once its turn has ended, Running no longer lists the session';
-  if (activeRun) frames.length = 0;
-  if (activeRun) await frame((got) => sub(got) && got.t === 'change' && got.item?.activeRunId === null, 180_000, step);
+  for (const end = Date.now() + 180_000; await runOut(step); await new Promise((resolve) => setTimeout(resolve, 1_000)))
+    if (Date.now() >= end) fail(step, "the case's run didn't end within 180 s");
   await untilRail('running', step, 30_000, (page) => !listed(page));
   console.log(`ok ${step}`);
 
