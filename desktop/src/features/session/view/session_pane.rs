@@ -493,11 +493,12 @@ impl SessionPane {
             _ => {}
         }
         let context = self.view.context.map(|(_, used, size)| (used, size));
+        let running = active.is_some();
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
         });
-        self.tell_read(cx);
+        self.tell_read(running, cx);
         cx.notify();
     }
 

@@ -461,3 +461,27 @@ fn an_open_session_tells_the_backend_the_newest_row_shown_so_its_unread_dot_clea
     jump(&client, 2, cx);
     assert_eq!(client.reads()[3], json!({ "session": "s2", "seq": 2 }));
 }
+
+// A streamed reply sends no read: unread only changes when a turn ends.
+// Pins: sessions-list#10
+#[gpui::test]
+fn a_streaming_turn_sends_no_read_until_it_ends(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(3, "one")], false, Some("r1"))));
+    jump(&client, 3, cx);
+    live(
+        &client,
+        row(4, "turn", None, json!({ "state": "started" })),
+        cx,
+    );
+    live(&client, message(5, 0, &["a"]), cx);
+    live(&client, message(6, 1, &["b"]), cx);
+    assert!(client.reads().is_empty(), "{:?}", client.reads());
+    live(
+        &client,
+        row(7, "turn", None, json!({ "state": "finished" })),
+        cx,
+    );
+    assert_eq!(client.reads(), [json!({ "session": "s1", "seq": 7 })]);
+}

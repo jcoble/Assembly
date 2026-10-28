@@ -1,6 +1,7 @@
 //! While a session is open, the pane tells the backend the newest row it has shown (`sessions/read`), which clears the
-//! session's unread dot in the sessions list: once its first page lands and again as rows arrive while it stays open.
-//! A `Jump` (a reconnect) tells it again, in case a read was lost with the connection.
+//! session's unread dot in the sessions list: once its first page lands, and again when a turn ends while it stays
+//! open. Not while a turn runs: unread only changes at a turn's end, and a read per streamed row would be a write and a
+//! sessions update each time. A `Jump` (a reconnect) tells it again, in case a read was lost with the connection.
 
 use serde_json::json;
 
@@ -9,11 +10,12 @@ use gpui_kit::*;
 use super::SessionPane;
 
 impl SessionPane {
-    pub(super) fn tell_read(&mut self, cx: &mut Context<Self>) {
+    /// `running`: a turn is going in the open session.
+    pub(super) fn tell_read(&mut self, running: bool, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
             return;
         };
-        if self.view.newest <= self.read_to {
+        if running || self.view.newest <= self.read_to {
             return;
         }
         self.read_to = self.view.newest;
