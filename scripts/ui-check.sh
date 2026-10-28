@@ -56,7 +56,7 @@ JSON
     app= backend= xvfb=
     trap 'stop' EXIT
     : > "$home/display"
-    Xvfb -displayfd 3 -screen 0 1710x990x24 -nolisten tcp 3> "$home/display" > "$home/xvfb.log" 2>&1 &
+    setsid Xvfb -displayfd 3 -screen 0 1710x990x24 -nolisten tcp 3> "$home/display" > "$home/xvfb.log" 2>&1 &
     xvfb=$!
     printf 'xvfb=%s\n' "$xvfb" > "$state"
     for _ in {1..50}; do
@@ -67,7 +67,7 @@ JSON
     [ -s "$home/display" ]
     export DISPLAY=:$(cat "$home/display")
     printf 'DISPLAY=%s\n' "$DISPLAY" >> "$state"
-    nohup nice -n 10 "$DATA/target/debug/assembly-desktop" > "$home/app.log" 2>&1 &
+    setsid nohup nice -n 10 "$DATA/target/debug/assembly-desktop" > "$home/app.log" 2>&1 &
     app=$!
     printf 'app=%s\n' "$app" >> "$state"
     # Wait for this app's backend and native window, rather than assume a delay.
