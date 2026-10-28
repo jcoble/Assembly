@@ -83,7 +83,7 @@ async function page(group: string, step: string): Promise<string[]> {
   return result.sessions.map((item) => item.sessionId);
 }
 
-type Rail = { totals: { all: number; running: number; needsYou: number }; sessions: { sessionId: string; unread: boolean }[] };
+type Rail = { totals: { all: number; running: number; needsYou: number }; sessions: { sessionId: string }[] };
 /** The case's provider and location in one tab of the rail. */
 async function rail(tab: string, step: string): Promise<Rail> {
   const id = ++ids;
@@ -114,9 +114,9 @@ function railChange(step: string, ms: number) {
   });
 }
 /** Reads the tab again at each sessionRail change naming the session until `holds` takes the page, within `ms`. */
-async function untilRail(tab: string, step: string, ms: number, holds: (page: Rail) => boolean | Promise<boolean>) {
+async function untilRail(tab: string, step: string, ms: number, holds: (page: Rail) => boolean) {
   const end = Date.now() + ms;
-  while (!(await holds(await rail(tab, step)))) {
+  while (!holds(await rail(tab, step))) {
     if (Date.now() >= end) fail(step, `the rail didn't show it within ${Math.round(ms / 1000)} s`);
     await railChange(step, end - Date.now());
   }
@@ -148,15 +148,6 @@ async function main() {
   if (running.totals.running !== running.sessions.length || running.totals.all !== all.totals.all)
     fail(step, `Running lists ${running.sessions.length} of ${running.totals.running}; All is ${running.totals.all}`);
   console.log(`ok ${step}`);
-  // A short turn can end before the rail is read: then All shows its finished turn as unread, which proves it ran.
-  step = 'while its turn runs, Running lists the session and counts it';
-  let ended = false;
-  await untilRail('running', step, 30_000, async (page) => {
-    if (listed(page) && page.totals.running >= 1) return true;
-    ended = (await rail('all', step)).sessions.some((entry) => entry.sessionId === session && entry.unread);
-    return ended;
-  });
-  console.log(ended ? `ok ${step}: its turn had already ended, and All shows it unread` : `ok ${step}`);
   railNamed = false;
 
   const done = await mark('done', (item) => item.completedAt !== null, 'Mark done stamps completedAt');
@@ -195,6 +186,18 @@ async function main() {
   console.log(`ok ${connect}`);
 
   step = 'once its turn has ended, Running no longer lists the session';
+  await untilRail('running', step, 180_000, (page) => !listed(page));
+  console.log(`ok ${step}`);
+
+  // The case's turn started before this scenario could watch the rail, so it starts one of its own to see in Running.
+  step = 'while a turn it starts runs, Running lists the session and counts it';
+  const sent = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session, text: 'Reply with only the word ok.' } }));
+  const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
+  if (started.t !== 'result') fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
+  await untilRail('running', step, 30_000, (page) => listed(page) && page.totals.running >= 1);
+  console.log(`ok ${step}`);
+  step = 'once that turn has ended, Running no longer lists the session';
   await untilRail('running', step, 180_000, (page) => !listed(page));
   console.log(`ok ${step}`);
 }
