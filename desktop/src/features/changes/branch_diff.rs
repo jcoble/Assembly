@@ -18,10 +18,7 @@ impl BranchDiff {
     pub fn rows(&self) -> Vec<Row> {
         let mut rows = Vec::new();
         for file in files(&self.diff) {
-            // "diff --git a/old b/new": the path after the last " b/" is the file's name now.
-            let header = file.lines().next().unwrap_or_default();
-            let path = header.rsplit_once(" b/").map_or(header, |(_, path)| path);
-            rows.push(Row::Label(path.to_string()));
+            rows.push(Row::Label(name_of(file).to_string()));
             rows.extend(lines_of(file).into_iter().map(Row::Line));
         }
         rows
@@ -37,6 +34,25 @@ impl BranchDiff {
             notes.push(CUT);
         }
         notes
+    }
+}
+
+/// The file's name now: a rename's or copy's "to" line, or else X in "diff --git a/X b/X", which is the same name
+/// twice, so a folder named "a b" can't split it in the wrong place. A name git quotes is shown as git wrote it.
+fn name_of(file: &str) -> &str {
+    let to = file.lines().find_map(|line| {
+        line.strip_prefix("rename to ")
+            .or(line.strip_prefix("copy to "))
+    });
+    if let Some(to) = to {
+        return to;
+    }
+    let header = file.lines().next().unwrap_or_default();
+    let names = header.strip_prefix("diff --git a/").unwrap_or(header);
+    let half = names.len().saturating_sub(3) / 2;
+    match (names.get(..half), names.get(half..)) {
+        (Some(name), Some(rest)) if rest.strip_prefix(" b/") == Some(name) => name,
+        _ => header,
     }
 }
 

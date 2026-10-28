@@ -41,3 +41,13 @@ fn an_empty_branch_diff_says_so_and_a_cut_one_says_it_was_cut() {
     let cut = branch("diff --git a/a b/a\n@@ -1 +1 @@\n-a\n+b\n", true);
     assert_eq!(cut.notes(&cut.rows()), [CUT]);
 }
+
+// Pins: scm#18
+#[test]
+fn a_folder_with_b_slash_in_its_name_keeps_the_whole_path() {
+    let diff = "diff --git a/docs/a b/x.md b/docs/a b/x.md\n@@ -1 +1 @@\n-a\n+b\n";
+    assert_eq!(
+        branch(diff, false).rows()[0],
+        Row::Label("docs/a b/x.md".into())
+    );
+}
