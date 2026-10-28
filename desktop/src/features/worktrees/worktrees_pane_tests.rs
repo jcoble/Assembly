@@ -173,7 +173,7 @@ async fn it_reads_only_while_shown_and_follows_the_picked_session(cx: &mut TestA
     open.until("s3 read", |seen, _| seen.reads.len() >= 3).await;
     assert_eq!(open.seen.lock().unwrap().sessions(), vec!["s1", "s2", "s3"]);
 
-    // Shown again for the same session, it reads nothing; Refresh reads again.
+    // Shown again for the same session, it reads again, and so does Refresh.
     open.until(
         "s3 shown",
         |_, shown| matches!(shown, Shown::Read(list) if list.worktrees[0].path == "/r/s3"),
@@ -181,12 +181,14 @@ async fn it_reads_only_while_shown_and_follows_the_picked_session(cx: &mut TestA
     .await;
     open.show(false);
     open.show(true);
+    open.until("shown again", |seen, _| seen.reads.len() >= 4)
+        .await;
     open.pane.update(open.cx, |pane, cx| pane.refresh(cx));
-    open.until("refreshed", |seen, _| seen.reads.len() >= 4)
+    open.until("refreshed", |seen, _| seen.reads.len() >= 5)
         .await;
     assert_eq!(
         open.seen.lock().unwrap().sessions(),
-        vec!["s1", "s2", "s3", "s3"]
+        vec!["s1", "s2", "s3", "s3", "s3"]
     );
 }
 

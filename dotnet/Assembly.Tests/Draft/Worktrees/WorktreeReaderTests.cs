@@ -100,6 +100,22 @@ public sealed class WorktreeReaderTests : IDisposable
         Assert.False(row.Prunable);
     }
 
+    // Pins: scm#2, scm#3
+    [Fact]
+    public async Task Locked_worktree_with_its_folder_still_says_what_would_be_lost()
+    {
+        await Init();
+        var linked = Path.Combine(_temp, "locked");
+        await Git(Root, "worktree", "add", "-b", "locked", linked);
+        await Git(Root, "worktree", "lock", linked);
+        await File.WriteAllTextAsync(Path.Combine(linked, "draft"), "unsaved work");
+        var row = Assert.Single(await Read(), row => row.Path == linked);
+        Assert.True(row.Locked);
+        Assert.True(row.IsDirty);
+        Assert.Equal(1, row.Unpushed);
+        Assert.Equal("First subject", row.HeadSubject);
+    }
+
     // Pins: scm#2
     [Fact]
     public async Task Missing_unlocked_worktree_is_prunable_and_does_not_fail_the_list()

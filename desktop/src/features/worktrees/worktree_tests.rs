@@ -33,7 +33,6 @@ fn a_row_is_named_by_its_branch_or_as_detached_with_its_short_id() {
 #[test]
 fn a_clean_pushed_worktree_shows_no_warning() {
     assert!(texts(&worktree("/r/a", Some("a"))).is_empty());
-    assert!(worktree("/r/a", Some("a")).safe_to_remove());
 }
 
 // Pins: scm#2
@@ -57,7 +56,6 @@ fn a_row_says_what_would_be_lost_and_git_s_own_marks() {
         texts(&gone),
         vec![("Folder gone".to_string(), Tone::Danger)]
     );
-    assert!(!gone.safe_to_remove());
 }
 
 // Pins: scm#3
@@ -87,9 +85,5 @@ fn the_filter_matches_branch_or_folder_and_says_what_it_hides() {
     assert_eq!(
         list.hidden_line("scm").as_deref(),
         Some("2 worktrees are hidden by the filter.")
-    );
-    assert_eq!(
-        list.summary(),
-        "3 worktrees: 1 main checkout, 2 safe to remove"
     );
 }

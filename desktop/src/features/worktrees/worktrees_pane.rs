@@ -199,12 +199,12 @@ impl BasePanel for WorktreesPane {
         false
     }
 
-    /// Shown, it reads if what it shows is for another session; hidden, a read on its way stops and is made again
-    /// next time it's shown.
+    /// Shown, it reads again, since the worktrees may have changed while it was hidden; hidden, a read on its way
+    /// stops.
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.active = active;
         if active {
-            self.read(false, cx);
+            self.read(true, cx);
         } else if self.reading {
             self.reading = false;
             self._read = None;
@@ -224,25 +224,16 @@ impl Render for WorktreesPane {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let line = |text: String| div().px_3().text_sm().text_color(muted).child(text);
-        let summary = match &self.shown {
-            Shown::Read(list) => list.summary(),
-            _ => String::new(),
-        };
         let header = h_flex()
             .px_3()
             .py_2()
             .gap_2()
             .justify_between()
             .child(
-                v_flex()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(WORKTREES),
-                    )
-                    .child(div().text_xs().text_color(muted).truncate().child(summary)),
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(WORKTREES),
             )
             .child(
                 Button::new("worktrees-refresh")
