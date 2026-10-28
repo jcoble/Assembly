@@ -108,6 +108,20 @@ public sealed class FilesSocketTests : IAsyncLifetime
         Assert.Contains("unknown session", await ReadAsync(socket));
     }
 
+    // Pins: files#1
+    [Fact]
+    public void A_grandchild_works_in_the_top_session_s_folder_and_a_missing_parent_ends_the_walk()
+    {
+        var top = _sessions.Create("claude", "https://github.com/o/r");
+        var child = _sessions.Child(top, "acp-child", "Child");
+        var grandchild = _sessions.Helper(child, "claude", "Grandchild");
+        var expected = Path.Combine(_checkouts.FullName, top.SessionId);
+        Assert.Equal(expected, _sessions.Item(child).Root);
+        Assert.Equal(expected, _sessions.Item(grandchild).Root);
+        var orphan = _sessions.Helper(new Domain.Sessions.SessionInfo("gone", "claude", "https://github.com/o/r", null, null, 0), "claude", "Orphan");
+        Assert.Equal(Path.Combine(_checkouts.FullName, "gone"), _sessions.Item(orphan).Root);
+    }
+
     // Pins: files#10
     [Fact]
     public async Task A_helper_whose_parent_id_is_a_path_has_no_folder()

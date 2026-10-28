@@ -334,11 +334,23 @@ public sealed class SessionStore
     /// The session's folder on this machine, made on its first send, so it may not exist yet; null for a session that runs
     /// on another machine, or has no folder.
     /// </summary>
-    public string? Root(SessionInfo session) => session.Machine is null ? Folder(_checkouts, session) : null;
+    public string? Root(SessionInfo session) => session.Machine is null ? Folder(_checkouts, Top(session)) : null;
+
+    /// <summary>
+    /// The session at the top of <paramref name="session"/>'s parents, whose folder its children all work in: itself when it
+    /// has no parent; the walk stops at a parent that's missing or already passed.
+    /// </summary>
+    public SessionInfo Top(SessionInfo session)
+    {
+        var passed = new HashSet<string>(StringComparer.Ordinal) { session.SessionId };
+        while (session.ParentSessionId is { } parentId && passed.Add(parentId) && Get(parentId) is { } parent)
+            session = parent;
+        return session;
+    }
 
     /// <summary>
     /// A session's folder under <paramref name="checkouts"/>: its own, or for a child (a subagent, or a helper) its
-    /// parent's, which its agent works in.
+    /// parent's, which its agent works in. Callers pass the <see cref="Top"/> session, so a grandchild gets the top folder.
     /// </summary>
     /// Null when that id isn't one plain name: a parent id given as a path, or "..", would put the folder outside.
     public static string? Folder(string checkouts, SessionInfo session) =>

@@ -1,11 +1,12 @@
+using System.Runtime.CompilerServices;
 using Assembly.Application.Common.Calls;
 
 namespace Assembly.Infrastructure.Chat.Files;
 
 /// <summary>
 /// Finds files and folders whose name holds the query, ignoring case, over what git lists in the checkout (tracked
-/// and untracked files, not ignored ones; a folder counts once one of its files is listed). A page starts after
-/// <c>cursor</c> matches and stops the walk once it knows whether another page follows.
+/// files, including those in submodules, then untracked ones; not ignored ones; a folder counts once one of its files is
+/// listed). A page starts after <c>cursor</c> matches and stops the walk once it knows whether another page follows.
 /// </summary>
 public static class NameSearch
 {
@@ -23,7 +24,7 @@ public static class NameSearch
             return new SearchPage(matches, null, true);
         var folders = new HashSet<string>(StringComparer.Ordinal);
         var seen = 0;
-        await foreach (var file in GitLines.ReadAsync(root, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], null, cancellationToken))
+        await foreach (var file in Files(root, cancellationToken))
         {
             // Each folder on the way, the first time it's seen, then the file.
             for (var slash = file.IndexOf('/'); slash > 0; slash = file.IndexOf('/', slash + 1))
@@ -36,6 +37,15 @@ public static class NameSearch
                 return new SearchPage(matches, cursor + pageSize, false);
         }
         return new SearchPage(matches, null, true);
+
+        // git lists a submodule's files only with --recurse-submodules, which it allows for tracked files alone.
+        static async IAsyncEnumerable<string> Files(string root, [EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await foreach (var file in GitLines.ReadAsync(root, ["ls-files", "-z", "--cached", "--recurse-submodules"], null, cancellationToken))
+                yield return file;
+            await foreach (var file in GitLines.ReadAsync(root, ["ls-files", "-z", "--others", "--exclude-standard"], null, cancellationToken))
+                yield return file;
+        }
 
         // Counts a match and keeps it if it's on this page; true once one past the page shows another page follows.
         bool Matched(string path, bool isDirectory)

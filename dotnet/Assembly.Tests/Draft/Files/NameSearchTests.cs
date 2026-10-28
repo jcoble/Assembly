@@ -21,6 +21,18 @@ public sealed class NameSearchTests
         Assert.Contains(page.Matches, match => match is { Name: "Program.cs", RelativePath: "src/Program.cs" });
     }
 
+    // Pins: files#7
+    [Fact]
+    public async Task Files_inside_a_submodule_are_found()
+    {
+        using var inner = new GitFolder("needle.txt");
+        GitFolder.Commit(inner.Root);
+        using var folder = new GitFolder(Tree);
+        GitFolder.Run(folder.Root, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet", inner.Root, "sub");
+        var page = await NameSearch.PageAsync(folder.Root, "needle", 0, 50, CancellationToken.None);
+        Assert.Equal(["sub/needle.txt"], page.Matches.Select(match => match.RelativePath));
+    }
+
     // Pins: files#9
     [Fact]
     public async Task Pages_follow_the_cursor_without_repeats_until_complete()

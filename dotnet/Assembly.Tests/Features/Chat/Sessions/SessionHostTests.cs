@@ -528,6 +528,21 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         }
     }
 
+    [Fact]
+    public async Task A_grandchild_s_agent_works_in_the_top_session_s_checkout()
+    {
+        var child = _sessionStore.Child(_session, "acp-child", "Child");
+        var grandchild = _sessionStore.Helper(child, "claude", "Grandchild");
+        var host = new SessionHost(grandchild.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
+        Assert.NotNull(host.Send("hi"));
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.Equal([_session.SessionId], _launcher.CheckedOut);
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await Until(() => host.ActiveRunId is null);
+    }
+
     private static async Task<string> MessageTextAsync(LiveSubscription live)
     {
         while (true)
