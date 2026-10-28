@@ -198,6 +198,12 @@ Naming, wording, style, comments, test tidiness, unlikely edge cases, refactors 
 are not; leave them out. On a later push, check the earlier findings and what their fixes changed; don't look for new
 small things.
 
+Every reviewer, the review bot included, is also the final gate on the four-way check ("Checking a feature"). Read
+every run's report and open its evidence. Block the PR when the runs don't cover what the PR changes end to end, skip
+the off-happy-path cases that matter for this change, are missing any of the four runs or ran on a commit older than
+the head, when the screenshots don't show what the report claims, or when the look and theme don't match the rest of
+the app. Thin testing is a blocking finding, like a bug.
+
 ## Porting a feature: behavior list first, then pinned tests
 
 - Each feature lane first drafts the feature's behavior list, `docs/behavior/<lane>.md`: what the feature should do,
@@ -264,21 +270,25 @@ Nothing else stands in for it, however sure you are of the code.
   - Then leave the happy path: wrong or empty input, empty and very long lists, a slow or offline machine,
     reconnecting, closing and reopening, restarting, doing things twice or out of order.
   - Local and remote behave the same, and so do Claude Code and Codex.
-- **Report.** One table per run: what was tried, pass, FAIL or blocked, and the screenshot names. A run that can't be
-  done is blocked, with the exact error and a screenshot; never substitute a result. Fixes go back to the lane, and
-  all four runs happen again on the fixed commit. A lane may not call a feature done without all four passing on
-  its final commit.
+- **Report.** Each run writes a short report of exactly what it did, as numbered steps: what it clicked or typed, what
+  it expected, what it saw, and pass, FAIL or blocked. It lists the off-happy-path things it tried, and anything it
+  couldn't check and why. A run that can't be done is blocked, with the exact error and a screenshot; never
+  substitute a result.
+- **Evidence.** Per PR, at most 4 screenshots (before and after where it matters) and one video of 2 minutes or less.
+  They go to Google Drive with the `evidence` tool, never into this repo (docs/evidence.md): save them as
+  `~/Workbox/screenshots/TSK-<id>-<what>.png` (or `.mp4`), then on agent-workbox run
+  `evidence add <file> --task TSK-<id> --desc "<what it proves>"` and `evidence publish TSK-<id>`.
+  `scripts/check4.sh window <commit> <file>...` records their names in the summary.
+- **The PR table.** The PR body has one table with a row per run: tester, local or remote, commit, pass, FAIL or
+  blocked, and links to its screenshots and video. Each run's report goes under the table, so the reviewer reads it in
+  the PR. A blocked row shows the exact error. Fixes go back to the lane, and all four runs happen again on the fixed
+  commit. A lane may not call a feature done without all four passing on its final commit.
 - **The regression check is not the four-way check.** `scripts/check4.sh` sends one turn per provider and machine and
   runs every landed feature's short socket scenario (`scripts/features/<feature>.sh`, see the README there), so a
   change that breaks something already landed is caught cheaply. Keep scenarios short (seconds). It writes
   `evidence/<commit>/four-way/` (the folder keeps its old name); commit that folder with the feature, since CI fails a
   push to main whose code commits have none (`scripts/check-evidence.sh`). Never write or edit evidence by hand. A
   passing summary only says the pieces still connect; it says nothing about whether the feature works for a person.
-- Window screenshots before and after go to Google Drive with the `evidence` tool, never into this repo, and the PR
-  and its task link to them (docs/evidence.md). `scripts/check4.sh window <commit> <file>...` records their names in
-  the summary. Save files as `~/Workbox/screenshots/TSK-<id>-<what>-<before|after>.png`. On agent-workbox, run
-  `evidence add <file> --task TSK-<id> --desc "<what it proves>"`, then `evidence publish TSK-<id>`; put the links
-  in the PR and task. `docs/evidence.md` explains the tool's location and publishing steps.
 - Close every browser and app you opened, and verify their processes exited. Stop only your own recorded PIDs.
 - Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).
 - Real-window checks (the lag meter, memory) run on the Mac: pull the lane's branch into a Mac lane and run
