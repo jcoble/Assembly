@@ -7,7 +7,8 @@
 # nice -n 10 dotnet publish -c Release -o "$DATA/ui-check/backend" dotnet/Assembly.Desktop
 # Deploy this lane's Workbox Test host separately, with those exports still set:
 # dotnet/scripts/workbox.sh serve lane/ui-check
-# Connect only to Workbox Test in Settings > Connections; start doesn't connect.
+# Remote: Settings > Connections where the branch has it; before that, start with ASSEMBLY_REMOTE=workbox-test.
+# Connect only to Workbox Test.
 # With the printed DISPLAY exported, type: xdotool type --clearmodifiers 'text'
 # Scroll: xdotool click 5 (down), xdotool click 4 (up).
 set -euo pipefail
@@ -51,7 +52,7 @@ JSON
     export XDG_RUNTIME_DIR=$home/runtime XDG_CACHE_HOME=$home/cache XDG_DATA_HOME=$home/data
     export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
     export ASSEMBLY_BACKEND_DIR=$home/backend
-    unset ASSEMBLY_REMOTE WAYLAND_DISPLAY
+    unset WAYLAND_DISPLAY
     app= backend= xvfb=
     trap 'stop' EXIT
     : > "$home/display"
