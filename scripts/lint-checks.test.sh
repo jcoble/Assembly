@@ -97,6 +97,18 @@ for bad in '_ = RunAsync();' '_=RunAsync();' '_ = RunAsync ();' '    _ = Task.Ru
 done
 rm -rf "$r"
 
+r=$(repo_with 85-no-polling-in-tests.sh)
+mkdir -p "$r/dotnet/Assembly.Tests"
+for good in 'await Task.Delay(Timeout.Infinite, token);' 'await Assert.ThrowsAsync<TimeoutException>(() => done.WaitAsync(TimeSpan.FromMilliseconds(200)));'; do
+  echo "$good" >"$r/dotnet/Assembly.Tests/T.cs"
+  expect 0 "no polling in tests: passes: $good" "$r" 85-no-polling-in-tests.sh
+done
+for bad in 'await Task.Delay(10);' 'await Until(() => x);'; do
+  echo "$bad" >"$r/dotnet/Assembly.Tests/T.cs"
+  expect 1 "no polling in tests: fails on: $bad" "$r" 85-no-polling-in-tests.sh
+done
+rm -rf "$r"
+
 # The two .NET checks fail on a probe in a scratch copy. In the commit hook (LINT_STAGED_ONLY=1) each skips a commit
 # with no .NET file in it, and runs on a .cs change.
 r=$(dotnet_repo_with 50-dotnet-format.sh)
