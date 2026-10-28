@@ -61,7 +61,7 @@ public sealed class AppDatabaseTests : IDisposable
     public async Task A_rows_batch_and_a_session_write_at_the_same_time_both_commit()
     {
         var rows = RowStore.Open(_db);
-        var sessionStore = SessionStore.Open(_db, TimeProvider.System);
+        var sessionStore = SessionStore.Open(_db, TimeProvider.System, "checkouts");
         var payload = JsonSerializer.SerializeToElement(new { text = "x" });
         var batches = Task.Run(() =>
         {
