@@ -197,6 +197,16 @@ impl Render for SessionsPane {
                 if count > 0 {
                     return pane.child(list);
                 }
+                // Nothing open, but Settled's header stays, to open the archive.
+                if !self.entries.is_empty() {
+                    let line = match state {
+                        Some(ConnectionState::Connected { .. }) => "No open sessions.",
+                        _ => empty_line(state.as_ref()),
+                    };
+                    return pane
+                        .child(div().px_3().text_sm().text_color(muted).child(line))
+                        .child(list);
+                }
                 pane.child(
                     div()
                         .px_3()

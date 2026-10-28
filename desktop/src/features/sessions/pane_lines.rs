@@ -24,7 +24,8 @@ impl SessionsPane {
     /// next older page if the end is in view.
     pub(super) fn follow_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let entries = self.sessions.as_ref().map_or_else(Vec::new, |sessions| {
-            list_entries(sessions.read(cx).items(), self.settled_open)
+            let sessions = sessions.read(cx);
+            list_entries(sessions.items(), self.settled_open, sessions.loaded())
         });
         if entries != *self.entries {
             let (old, count) = changed_lines(&self.entries, &entries);

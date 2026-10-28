@@ -1,7 +1,7 @@
 //! `list_entries` lays the loaded sessions out as the list draws them: Working, Done, then Settled, each with its
 //! projects A to Z and each project's sessions newest first. Working or Done with no sessions is left out; Settled's
-//! header is always there once anything is, since its sessions load only once it's opened, and folded it keeps only
-//! its header. Replaces the old rail's `buildMyWorkGroups` (myWorkViewOptions.ts) with status and project
+//! header is always there once the list has loaded, since its sessions load only once it's opened, and folded it
+//! keeps only its header. Replaces the old rail's `buildMyWorkGroups` (myWorkViewOptions.ts) with status and project
 //! grouping both on, and without pinning, orchestrator or workflow sections.
 
 use std::collections::BTreeMap;
@@ -11,8 +11,8 @@ use super::list_entry::ListEntry;
 use super::status::Status;
 use crate::core::state::session_item::SessionItem;
 
-/// `items` is newest first, as `Sessions` holds them.
-pub fn list_entries(items: &[SessionItem], settled_open: bool) -> Vec<ListEntry> {
+/// `items` is newest first, as `Sessions` holds them; `loaded` once the list's first state is in.
+pub fn list_entries(items: &[SessionItem], settled_open: bool, loaded: bool) -> Vec<ListEntry> {
     let mut entries = Vec::new();
     for status in Status::ALL {
         // Keyed by the label first so projects read A to Z; the machine and folder keep two that share a label apart.
@@ -32,7 +32,7 @@ pub fn list_entries(items: &[SessionItem], settled_open: bool) -> Vec<ListEntry>
         }
         let open = status != Status::Settled || settled_open;
         if projects.is_empty() {
-            if status == Status::Settled && !items.is_empty() {
+            if status == Status::Settled && loaded {
                 entries.push(ListEntry::Group { status, open });
             }
             continue;

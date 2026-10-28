@@ -61,7 +61,7 @@ fn groups_come_in_order_with_projects_a_to_z_and_sessions_newest_first() {
         session("w3", "/home/me/zeta", None, None, None),
     ];
     assert_eq!(
-        list_entries(&items, false),
+        list_entries(&items, false, true),
         [
             ListEntry::Group {
                 status: Status::Working,
@@ -93,7 +93,7 @@ fn the_same_folder_on_two_machines_is_two_projects() {
         session("a", "/srv/app", Some("Workbox Test"), None, None),
         session("b", "/srv/app", None, None, None),
     ];
-    let entries = list_entries(&items, false);
+    let entries = list_entries(&items, false, true);
     assert_eq!(
         entries[1..entries.len() - 1],
         [
@@ -110,14 +110,14 @@ fn the_same_folder_on_two_machines_is_two_projects() {
 fn settled_starts_folded_to_its_header_and_opens() {
     let items = [session("s", "/r", None, Some(1), Some(2))];
     assert_eq!(
-        list_entries(&items, false),
+        list_entries(&items, false, true),
         [ListEntry::Group {
             status: Status::Settled,
             open: false
         }]
     );
     assert_eq!(
-        list_entries(&items, true),
+        list_entries(&items, true, true),
         [
             ListEntry::Group {
                 status: Status::Settled,
@@ -193,13 +193,21 @@ fn the_line_at_the_top_is_found_again_when_lines_change_around_it() {
 fn settleds_header_is_there_before_any_settled_session_has_loaded() {
     let items = [session("w", "/r", None, None, None)];
     assert_eq!(
-        list_entries(&items, false).last(),
+        list_entries(&items, false, true).last(),
         Some(&ListEntry::Group {
             status: Status::Settled,
             open: false
         })
     );
-    assert_eq!(list_entries(&[], false), []);
+    // With nothing open, Settled is still there to open; before the list loads, nothing is.
+    assert_eq!(
+        list_entries(&[], false, true),
+        [ListEntry::Group {
+            status: Status::Settled,
+            open: false
+        }]
+    );
+    assert_eq!(list_entries(&[], false, false), []);
 }
 
 fn summary(state: &str, run: Option<&str>, unread: bool) -> SessionItem {
