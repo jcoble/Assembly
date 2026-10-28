@@ -32,7 +32,7 @@ public sealed class ResourcesTests : IAsyncLifetime
     private readonly Channel<(bool Machines, bool Resources)> _ticks = Channel.CreateUnbounded<(bool, bool)>();
     private BackgroundWork _work = null!;
     private BackendClock _clock = null!;
-    private volatile ProcessReading[] _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB)];
+    private volatile ProcessReading[] _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB, 1)];
     private int _reads;
 
     public Task InitializeAsync()
@@ -49,21 +49,29 @@ public sealed class ResourcesTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _work.StopAsync(Wait);
 
+    // The subscribe reads nothing: /proc is read on the clock's tick, outside the topics' lock.
     [Fact]
-    public void The_first_sample_at_subscribe_has_no_cpu_yet_and_the_tree_s_memory()
+    public async Task The_first_sample_comes_on_the_first_tick_with_no_cpu_yet_and_the_tree_s_memory()
     {
-        _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB), new(200, TimeSpan.FromSeconds(3), 20 * MiB)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB, 1), new(200, TimeSpan.FromSeconds(3), 20 * MiB, 1)];
 
-        Assert.Equal(Item(null, 120 * MiB), Subscribe().State);
+        Subscribe();
+        Assert.Equal(0, _reads);
+        Assert.Equal(Item(null, 120 * MiB), await FirstAsync());
+        Assert.Equal(1, _reads);
+
+        // A later subscriber starts from the item last sent, still without a read.
+        Subscribe(Item(null, 120 * MiB));
         Assert.Equal(1, _reads);
     }
 
     [Fact]
     public async Task After_five_ticks_the_cpu_comes_from_each_process_s_time_since_the_last_sample()
     {
-        _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB), new(200, TimeSpan.FromSeconds(2), 20 * MiB)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB, 1), new(200, TimeSpan.FromSeconds(2), 20 * MiB, 1)];
         Subscribe();
-        _tree = [new(Backend, TimeSpan.FromSeconds(10.613), 100 * MiB), new(200, TimeSpan.FromSeconds(2.3), 20 * MiB)];
+        await FirstAsync();
+        _tree = [new(Backend, TimeSpan.FromSeconds(10.613), 100 * MiB, 1), new(200, TimeSpan.FromSeconds(2.3), 20 * MiB, 1)];
 
         for (var tick = 1; tick < 5; tick++)
             Assert.Equal((false, true), await TickAsync());
@@ -80,20 +88,21 @@ public sealed class ResourcesTests : IAsyncLifetime
     public async Task A_change_under_the_threshold_publishes_nothing_and_one_at_the_threshold_publishes()
     {
         Subscribe();
-        _tree = [new(Backend, TimeSpan.FromSeconds(10.5), 100 * MiB)];
+        await FirstAsync();
+        _tree = [new(Backend, TimeSpan.FromSeconds(10.5), 100 * MiB, 1)];
         await WindowAsync();
         Assert.Equal(Item(10, 100 * MiB), await ChangeAsync());
 
         // 10.04% rounds to the same 10.0, and memory moves by a byte less than 1 MiB.
-        _tree = [new(Backend, TimeSpan.FromSeconds(11.002), 101 * MiB - 1)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(11.002), 101 * MiB - 1, 1)];
         await WindowAsync();
         Assert.False(_changes.Reader.TryRead(out _));
 
-        _tree = [new(Backend, TimeSpan.FromSeconds(11.502), 101 * MiB)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(11.502), 101 * MiB, 1)];
         await WindowAsync();
         Assert.Equal(Item(10, 101 * MiB), await ChangeAsync());
 
-        _tree = [new(Backend, TimeSpan.FromSeconds(12.007), 101 * MiB)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(12.007), 101 * MiB, 1)];
         await WindowAsync();
         Assert.Equal(Item(10.1, 101 * MiB), await ChangeAsync());
         Assert.Equal(5, _reads);
@@ -112,7 +121,7 @@ public sealed class ResourcesTests : IAsyncLifetime
         await _time.Stopped.Reader.ReadAsync().AsTask().WaitAsync(Wait);
         Assert.Equal(0, _reads);
 
-        var resources = Subscribe().Subscription;
+        var resources = Subscribe();
         Assert.Equal((false, true), await TickAsync());
         _topics.Unsubscribe(resources);
         Assert.Equal((false, false), await TickAsync());
@@ -124,17 +133,58 @@ public sealed class ResourcesTests : IAsyncLifetime
     [Fact]
     public async Task A_child_that_exits_can_t_make_the_cpu_negative_and_a_new_one_counts_from_its_next_sample()
     {
-        _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB), new(200, TimeSpan.FromSeconds(50), 30 * MiB)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB, 1), new(200, TimeSpan.FromSeconds(50), 30 * MiB, 1)];
         Subscribe();
+        await FirstAsync();
 
-        _tree = [new(Backend, TimeSpan.FromSeconds(10.5), 100 * MiB), new(300, TimeSpan.FromSeconds(40), 10 * MiB)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(10.5), 100 * MiB, 1), new(300, TimeSpan.FromSeconds(40), 10 * MiB, 1)];
         await WindowAsync();
         Assert.Equal(Item(10, 110 * MiB), await ChangeAsync());
 
-        _tree = [new(Backend, TimeSpan.FromSeconds(11), 100 * MiB), new(300, TimeSpan.FromSeconds(40.25), 10 * MiB)];
+        _tree = [new(Backend, TimeSpan.FromSeconds(11), 100 * MiB, 1), new(300, TimeSpan.FromSeconds(40.25), 10 * MiB, 1)];
         await WindowAsync();
         Assert.Equal(Item(15, 110 * MiB), await ChangeAsync());
     }
+
+    // A pid the kernel gave to a new process is a different process: its CPU time isn't counted against the old one's.
+    [Fact]
+    public async Task A_reused_pid_with_another_start_time_adds_nothing_in_that_window()
+    {
+        _tree = [new(Backend, TimeSpan.FromSeconds(10), 100 * MiB, 1), new(200, TimeSpan.FromSeconds(1), 10 * MiB, 5)];
+        Subscribe();
+        await FirstAsync();
+
+        _tree = [new(Backend, TimeSpan.FromSeconds(10.5), 100 * MiB, 1), new(200, TimeSpan.FromSeconds(30), 10 * MiB, 9)];
+        await WindowAsync();
+
+        Assert.Equal(Item(10, 110 * MiB), await ChangeAsync());
+    }
+
+    // A tick handler that throws is logged, and the clock keeps ticking.
+    [Fact]
+    public async Task A_tick_handler_that_throws_once_does_not_stop_the_clock()
+    {
+        var thrown = 0;
+        _clock.Ticked += (_, _) =>
+        {
+            if (Interlocked.Increment(ref thrown) == 1)
+                throw new InvalidOperationException("a handler failed");
+        };
+        _topics.Subscribe("machines", null, _ => { }, (_, _) => { });
+        _clock.Start();
+
+        Assert.Equal((true, false), await TickAsync());
+        Assert.Equal((true, false), await TickAsync());
+    }
+
+    // One process's stat that is cut short or garbled reads as nothing, rather than failing the whole sample.
+    [Theory]
+    [InlineData("")]
+    [InlineData("4242 (sh)")]
+    [InlineData("4242 (sh) S 1 4242")]
+    [InlineData("4242 (sh) S one 4242 4242 0 -1 4194560 100 0 0 0 7 3 0 0 20 0 1 0 555 1000 100")]
+    public void A_truncated_or_garbled_stat_line_reads_as_nothing(string line) =>
+        Assert.Null(ProcessTree.ParseStat(line));
 
     [LinuxFact]
     public void The_real_reader_sums_this_process_and_lists_a_child_it_started()
@@ -149,6 +199,8 @@ public sealed class ResourcesTests : IAsyncLifetime
             // Each reading has its resident memory; a collection between two reads moves this process's, so no exact sum.
             Assert.All(tree.Where(reading => reading.Pid == Environment.ProcessId || reading.Pid == child.Id),
                 reading => Assert.True(reading.MemoryBytes > 0, $"pid {reading.Pid} reads {reading.MemoryBytes} bytes"));
+            // Each has its start time, so a pid used again by a new process isn't taken for the old one.
+            Assert.All(tree, reading => Assert.True(reading.Start > 0, $"pid {reading.Pid} has no start time"));
         }
         finally
         {
@@ -163,12 +215,21 @@ public sealed class ResourcesTests : IAsyncLifetime
         return _tree;
     }
 
-    private (string State, TopicSet.Subscription Subscription) Subscribe()
+    // Subscribes the way the socket does, and checks the state it's given: the item last sent, or none yet.
+    private TopicSet.Subscription Subscribe(string? sent = null)
     {
         IReadOnlyList<string> state = [];
         var subscription = _topics.Subscribe(ResourcesFeature.Topic, "backend", _ => state = _states.State(ResourcesFeature.Topic, "backend"),
             (_, json) => _changes.Writer.TryWrite(json));
-        return (Assert.Single(state), subscription);
+        Assert.Equal(sent is null ? [] : [sent], state);
+        return subscription;
+    }
+
+    // The first tick after a subscribe samples and publishes.
+    private async Task<string> FirstAsync()
+    {
+        Assert.Equal((false, true), await TickAsync());
+        return await ChangeAsync();
     }
 
     // Five ticks, the fifth of which samples.

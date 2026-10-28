@@ -19,7 +19,7 @@ internal static class ProcessTree
         if (!OperatingSystem.IsLinux())
         {
             using var self = Process.GetCurrentProcess();
-            return [new ProcessReading(self.Id, self.TotalProcessorTime, self.WorkingSet64)];
+            return [new ProcessReading(self.Id, self.TotalProcessorTime, self.WorkingSet64, 0)];
         }
         var stats = new Dictionary<int, (int Parent, TimeSpan Cpu)>();
         foreach (var folder in Directory.EnumerateDirectories("/proc"))
@@ -32,7 +32,7 @@ internal static class ProcessTree
         {
             // A process that exited since the scan is left out.
             if (Resident(pid) is { } memory)
-                tree.Add(new ProcessReading(pid, stats[pid].Cpu, memory));
+                tree.Add(new ProcessReading(pid, stats[pid].Cpu, memory, 0));
             foreach (var child in children[pid])
                 next.Enqueue(child);
         }
@@ -41,10 +41,11 @@ internal static class ProcessTree
 
     // The parent and the user plus system CPU time. The name in brackets may hold spaces, so fields count from the last
     // ')': the state, then the parent, and user and system time 11 and 12 after the state.
-    private static (int Parent, TimeSpan Cpu)? Stat(int pid)
+    private static (int Parent, TimeSpan Cpu)? Stat(int pid) =>
+        ReadOrNull($"/proc/{pid}/stat") is { } text ? ParseStat(text) : null;
+
+    internal static (int Parent, TimeSpan Cpu)? ParseStat(string text)
     {
-        if (ReadOrNull($"/proc/{pid}/stat") is not { } text)
-            return null;
         var fields = text[(text.LastIndexOf(')') + 2)..].Split(' ');
         var ticks = long.Parse(fields[11], CultureInfo.InvariantCulture) + long.Parse(fields[12], CultureInfo.InvariantCulture);
         return (int.Parse(fields[1], CultureInfo.InvariantCulture), TimeSpan.FromSeconds(ticks / TicksPerSecond));

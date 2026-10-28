@@ -238,6 +238,34 @@ public sealed partial class SessionHostTests
         Assert.Equal("cancelled", end.Payload.GetProperty("state").GetString());
     }
 
+    // The stopped resume's late answer is for the same ACP session the next send resumes, so the next send resumes it
+    // only once that late answer's close is done; otherwise the close would end the new turn's session.
+    [Fact]
+    public async Task A_send_after_a_stopped_resume_resumes_only_once_the_late_answer_is_closed()
+    {
+        var (agent, resume) = await StoppedResumeAsync();
+        await RowsThrough(row => row.Kind == "turn");
+        Assert.NotNull(_host.Send("three"));
+        await Kinds(2);
+
+        // Nothing reaches the agent while the late answer is still owed: the next open waits for it, so a second
+        // resume that went out at once shows up here. (The next open has no event of its own to wait on.)
+        var next = agent.NextMessageAsync();
+        await Assert.ThrowsAsync<TimeoutException>(() => next.WaitAsync(TimeSpan.FromMilliseconds(200)));
+        await agent.ReplyAsync(resume, "{}");
+
+        // The agent's next message is the late answer's close, not a second resume.
+        var close = await next.WaitAsync(Wait);
+        Assert.Equal("session/close", close.GetProperty("method").GetString());
+        await agent.ReplyAsync(close, "{}");
+        await agent.ReplyAsync(await agent.ReadAsync("session/resume"), "{}");
+        // No close for the session while its turn is open: its prompt is the next message.
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        Assert.Equal("finished", (await RowsThrough(row => row.Kind == "turn"))[^1].Payload.GetProperty("state").GetString());
+        Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
+    }
+
     // A first turn's session/new, held by the agent, and that turn stopped.
     private async Task<(FakeLink Agent, JsonElement Open)> StoppedNewAsync()
     {
