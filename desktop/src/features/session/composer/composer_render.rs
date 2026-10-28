@@ -131,18 +131,34 @@ impl Render for Composer {
         let root = self.slash_keys(div().relative().w_full().px_4().pt_1().pb_3(), cx);
         let theme = cx.theme();
         let offline = (self.offline.as_ref()).map(|machine| {
-            SharedString::from(format!(
-                "{machine} is offline. Send and Stop wait until it answers."
-            ))
+            SharedString::from(if self.still_offline {
+                format!("{machine} still isn't answering. Send and Stop wait until it does.")
+            } else {
+                format!("{machine} is offline. Send and Stop wait until it answers.")
+            })
         });
+        let connecting = self.connecting.is_some();
         root.when_some(offline, |root, line| {
             root.child(
-                div()
+                h_flex()
                     .px_1()
                     .pb_1()
+                    .gap_2()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(line),
+                    .child(line)
+                    .child(
+                        Button::new("composer:connect")
+                            .ghost()
+                            .compact()
+                            .label(if connecting {
+                                "Connecting…"
+                            } else {
+                                "Connect"
+                            })
+                            .disabled(connecting)
+                            .on_click(cx.listener(|composer, _, _, cx| composer.connect(cx))),
+                    ),
             )
         })
         .when_some(self.error.clone(), |root, error| {
