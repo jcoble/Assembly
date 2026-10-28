@@ -147,9 +147,11 @@ public sealed class DesktopBackend : IAsyncDisposable
         var clock = new BackendClock(topics, TimeProvider.System, work);
         var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
         clock.Ticked += (machinesWatched, _) => machinesFeature.Tick(machinesWatched);
+        var resources = new ResourcesFeature(topics, clock.Start, ProcessTree.Read, TimeProvider.System);
+        clock.Ticked += (_, resourcesWatched) => resources.Tick(resourcesWatched);
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
-                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
+                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature, resources,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new FilesFeature(sessionStore),
                 new WorktreesFeature(sessionStore),
