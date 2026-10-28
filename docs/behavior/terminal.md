@@ -3,7 +3,7 @@
 Draft by Claude, not corrected by Jesse.
 
 The terminal host is the backend half of W4 (plan section W, Sol P22). The backend owns each terminal's process and
-passes its bytes through untouched; the window emulates them with alacritty's VT parser and GPUI draws them in the pane. Source: mac-command-bar 2089290
+passes its bytes through untouched; the window emulates them with Ghostty's VT parser (libghostty-vt) and GPUI draws them in the pane. Source: mac-command-bar 2089290
 `tauri-svelte-preview/src-tauri/src/terminal/mod.rs`, a reference for details, not the source of truth.
 
 terminal#1 A terminal opens in a folder you name and runs your login shell there, or one command in it that exits when it's done. A folder that no longer exists fails with its path.

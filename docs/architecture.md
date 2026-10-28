@@ -16,7 +16,7 @@ here updates this file in the same commit. Every other commit says `Architecture
   native views (the browser's) in `core/native_views/`, the backend launcher in `core/backend/`, the palette's command list in
   `core/commands/`) and one folder per
   feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that. The terminal isn't a native view: GPUI
-  draws it from alacritty's VT parser (`features/terminal/`), fed the backend terminal host's bytes.
+  draws it from Ghostty's VT parser, libghostty-vt (`features/terminal/`), fed the backend terminal host's bytes.
 - `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
 
 ## The backend: a core in layers, the rest by feature

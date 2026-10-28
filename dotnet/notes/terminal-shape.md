@@ -7,7 +7,7 @@ changes the pre-implementation check asked for (listed at the end).
 ## What the backend does, and what it doesn't
 
 The backend starts each terminal's process on a pseudo-terminal (PTY), keeps its recent output, and passes bytes both
-ways. It never parses the output: no VT parser, no headless emulator, no UTF-8 decoding. The window's emulator (alacritty's VT parser) is
+ways. It never parses the output: no VT parser, no headless emulator, no UTF-8 decoding. The window's emulator (Ghostty's VT parser, libghostty-vt) is
 the only thing that reads escape sequences. The old app decoded every 8 KB read with `from_utf8_lossy`
 (`terminal/mod.rs:510`), which broke a character split across two reads; keeping bytes fixes that (terminal#3).
 
@@ -115,7 +115,7 @@ names; with no lists, every shell gets it, and a shell that refuses `-l` fails t
   and topics; nothing terminal-specific is needed there.
 - Agent tool terminals (ACP `terminal/*`) stay separate, as P22 says.
 - Closing a session's terminals when the session is deleted comes with that delete.
-- The window side is desktop/src/features/terminal/: alacritty's VT parser, drawn by GPUI in the bottom dock's Terminal tab.
+- The window side is desktop/src/features/terminal/: Ghostty's VT parser (libghostty-vt), drawn by GPUI in the bottom dock's Terminal tab.
 - Light themes (Rosé Pine Dawn, Ayu Light, later Assembly Light; coordinator, 2026-10-27): the terminal palette is
   read from the theme in the window, never hard-coded, with a light palette for each light theme. The backend's one
   part is `COLORFGBG=15;0`, which tells programs the background is dark: it should come from the window's theme

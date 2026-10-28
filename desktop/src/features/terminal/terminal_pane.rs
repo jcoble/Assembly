@@ -4,7 +4,6 @@
 //! session switch, when another tab comes to the front or the dock closes, and when the pane is removed (terminal#5). Replaces
 //! RightPanel.svelte's terminal slot and WorkspaceTerminal.svelte's view.
 
-use alacritty_terminal::term::TermMode;
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -93,7 +92,7 @@ impl TerminalPane {
             let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
                 return;
             };
-            if live.screen.mode().contains(TermMode::BRACKETED_PASTE) {
+            if live.screen.bracketed_paste() {
                 // Without its escapes, so pasted text can't end the paste early.
                 let text = text.replace('\x1b', "");
                 format!("\x1b[200~{text}\x1b[201~").into_bytes()
@@ -101,7 +100,7 @@ impl TerminalPane {
                 text.into_bytes()
             }
         } else {
-            let app_cursor = live.screen.mode().contains(TermMode::APP_CURSOR);
+            let app_cursor = live.screen.app_cursor();
             let Some(bytes) = key_bytes(keystroke, app_cursor) else {
                 return;
             };
@@ -178,7 +177,7 @@ impl Render for TerminalPane {
         let focused = self.focus.is_focused(window);
         let entity = cx.entity();
         let notice = |text: String| div().p_2().text_color(muted).child(text);
-        let body = match &self.live {
+        let body = match &mut self.live {
             None if self.selected.read(cx).session_id().is_none() => {
                 notice("Pick a session to open its terminal.".into()).into_any_element()
             }

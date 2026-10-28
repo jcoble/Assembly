@@ -1,8 +1,7 @@
-use alacritty_terminal::term::TermMode;
 use gpui_kit::component::Theme;
 
 use super::{Screen, Size};
-use crate::features::terminal::palette::Palette;
+use crate::features::terminal::palette::{Palette, hsla, rgb};
 
 fn screen() -> Screen {
     Screen::new(Size { cols: 20, rows: 4 })
@@ -21,7 +20,7 @@ fn theme() -> Theme {
     theme
 }
 
-fn text(screen: &Screen, line: usize) -> String {
+fn text(screen: &mut Screen, line: usize) -> String {
     screen.lines(&palette(), false)[line]
         .text
         .trim_end()
@@ -35,7 +34,7 @@ fn a_character_split_across_two_reads_draws_whole() {
     let bytes = "caf\u{e9}".as_bytes();
     screen.feed(&bytes[..4]);
     screen.feed(&bytes[4..]);
-    assert_eq!(text(&screen, 0), "caf\u{e9}");
+    assert_eq!(text(&mut screen, 0), "caf\u{e9}");
 }
 
 // Pins: terminal#11
@@ -46,8 +45,10 @@ fn colored_output_draws_in_the_themes_colors() {
     let palette = palette();
     let line = &screen.lines(&palette, false)[0];
     assert_eq!(line.runs[0].0, 3);
-    assert_eq!(line.runs[0].1.foreground, theme().colors.red);
-    assert_eq!(line.runs[1].1.foreground, palette.foreground);
+    // Through Ghostty, which keeps colors as 8-bit RGB.
+    let through = |color| hsla(rgb(color, palette.background));
+    assert_eq!(line.runs[0].1.foreground, through(theme().colors.red));
+    assert_eq!(line.runs[1].1.foreground, through(palette.foreground));
 }
 
 // Pins: terminal#2
@@ -57,12 +58,15 @@ fn a_programs_questions_are_answered_and_its_modes_read() {
     screen.feed(b"ab\x1b[6n");
     assert_eq!(screen.replies(), b"\x1b[1;3R");
     assert!(screen.replies().is_empty(), "each reply once");
-    screen.feed(b"\x1b[?1h\x1b[?2004h");
-    assert!(
-        screen
-            .mode()
-            .contains(TermMode::APP_CURSOR | TermMode::BRACKETED_PASTE)
+    screen.feed(b"\x1b[c");
+    assert_eq!(
+        screen.replies(),
+        b"\x1b[?62;22c",
+        "device attributes, as Ghostty answers"
     );
+    assert!(!screen.app_cursor() && !screen.bracketed_paste());
+    screen.feed(b"\x1b[?1h\x1b[?2004h");
+    assert!(screen.app_cursor() && screen.bracketed_paste());
 }
 
 // Pins: terminal#4

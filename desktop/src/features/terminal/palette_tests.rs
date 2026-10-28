@@ -1,8 +1,7 @@
-use alacritty_terminal::term::color::Colors;
-use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use gpui_kit::component::Theme;
+use libghostty_vt::style::RgbColor;
 
-use super::{Palette, hsla};
+use super::{Palette, rgb};
 
 fn palette() -> Palette {
     Palette::from_theme(&theme())
@@ -19,26 +18,15 @@ fn theme() -> Theme {
 
 // Pins: terminal#11
 #[test]
-fn the_text_background_and_cursor_are_the_themes() {
+fn the_text_background_cursor_and_ansi_colors_are_the_themes() {
     let theme = theme();
     let palette = palette();
-    let set = Colors::default();
+    assert_eq!(palette.foreground, theme.colors.foreground);
+    assert_eq!(palette.background, theme.colors.background);
+    assert_eq!(palette.cursor, theme.colors.caret);
     assert_eq!(
-        palette.color(Color::Named(NamedColor::Foreground), &set),
-        theme.colors.foreground
-    );
-    assert_eq!(
-        palette.color(Color::Named(NamedColor::Background), &set),
-        theme.colors.background
-    );
-    assert_eq!(
-        palette.color(Color::Named(NamedColor::Red), &set),
-        theme.colors.red
-    );
-    assert_eq!(
-        palette.color(Color::Indexed(1), &set),
-        theme.colors.red,
-        "indexes below 16 are the ANSI colors"
+        palette.colors[1],
+        rgb(theme.colors.red, theme.colors.background)
     );
 }
 
@@ -46,28 +34,14 @@ fn the_text_background_and_cursor_are_the_themes() {
 #[test]
 fn black_is_dark_and_white_light_in_any_theme() {
     let palette = palette();
-    let set = Colors::default();
-    let black = palette.color(Color::Named(NamedColor::Black), &set);
-    let white = palette.color(Color::Named(NamedColor::BrightWhite), &set);
-    assert!(black.l < white.l);
+    let (black, white) = (palette.colors[0], palette.colors[15]);
+    assert!(black.r < white.r);
 }
 
 // Pins: terminal#11
 #[test]
-fn the_256_color_cube_true_color_and_a_programs_own_color() {
+fn past_16_come_the_256_color_cube_and_grays() {
     let palette = palette();
-    let mut set = Colors::default();
-    let red = Rgb { r: 255, g: 0, b: 0 };
-    assert_eq!(palette.color(Color::Indexed(196), &set), hsla(red));
-    assert_eq!(
-        palette.color(Color::Indexed(232), &set),
-        hsla(Rgb { r: 8, g: 8, b: 8 })
-    );
-    let spec = Rgb { r: 1, g: 2, b: 3 };
-    assert_eq!(palette.color(Color::Spec(spec), &set), hsla(spec));
-    set[NamedColor::Red as usize] = Some(spec);
-    assert_eq!(
-        palette.color(Color::Named(NamedColor::Red), &set),
-        hsla(spec)
-    );
+    assert_eq!(palette.colors[196], RgbColor { r: 255, g: 0, b: 0 });
+    assert_eq!(palette.colors[232], RgbColor { r: 8, g: 8, b: 8 });
 }
