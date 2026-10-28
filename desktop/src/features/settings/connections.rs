@@ -163,6 +163,8 @@ impl SettingsPage {
     /// Adds a machine, or saves the one being edited, whose name stays as it is.
     fn machine_form(&self, cx: &mut Context<Self>) -> Div {
         let [name, ssh, port, token_file] = &self.machine_fields;
+        // What's typed during the form's save would be emptied when it's taken, never sent.
+        let saving = (self.machine_call.as_ref()).is_some_and(|(id, _)| id == "set");
         let editing = (self.machine_edits.editing.as_ref()).and_then(|edited| edited.name.clone());
         let failure = self.failure_about(None, cx);
         let title = match &editing {
@@ -200,16 +202,17 @@ impl SettingsPage {
                     .child(title),
             )
             .when(editing.is_none(), |form| {
-                form.child(field("Machine name", name, cx))
+                form.child(field("Machine name", name, saving, cx))
             })
-            .child(field("SSH destination", ssh, cx))
+            .child(field("SSH destination", ssh, saving, cx))
             .child(
                 h_flex()
                     .gap_3()
-                    .child(div().w(px(120.)).child(field("Port", port, cx)))
+                    .child(div().w(px(120.)).child(field("Port", port, saving, cx)))
                     .child(div().flex_1().child(field(
                         "Token file on the machine",
                         token_file,
+                        saving,
                         cx,
                     ))),
             )
@@ -357,8 +360,8 @@ fn confirm_remove(name: String, window: &mut Window, cx: &mut Context<SettingsPa
     });
 }
 
-/// One of the form's inputs, under its label.
-fn field(label: &'static str, state: &Entity<InputState>, cx: &App) -> Div {
+/// One of the form's inputs, under its label; a `locked` one takes no typing.
+fn field(label: &'static str, state: &Entity<InputState>, locked: bool, cx: &App) -> Div {
     v_flex()
         .gap_1()
         .child(
@@ -367,7 +370,7 @@ fn field(label: &'static str, state: &Entity<InputState>, cx: &App) -> Div {
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
-        .child(Input::new(state).small())
+        .child(Input::new(state).small().disabled(locked))
 }
 
 #[cfg(test)]

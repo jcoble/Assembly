@@ -1,4 +1,5 @@
-//! The Connections form against a fake backend: an edit follows its machine as the `machines` topic changes.
+//! The Connections form against a fake backend: what was typed is never lost to a save on its way, and an edit
+//! follows its machine as the `machines` topic changes.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -181,6 +182,35 @@ impl Page<'_> {
         self.changes = changes;
         draw(self.cx);
     }
+}
+
+// What was typed while a save is on its way would be wiped when the save comes back, never sent: the fields take
+// nothing until it does. A save the backend refuses leaves them as they were, to fix and try again.
+#[gpui::test]
+async fn the_form_takes_no_typing_while_its_save_is_on_its_way(cx: &mut TestAppContext) {
+    let backend = backend();
+    let mut page = editing_box(cx, &backend).await;
+    page.type_ssh("-b");
+    assert_eq!(page.ssh(), "host-a-b");
+
+    page.cx.update(|window, cx| {
+        page.page
+            .update(cx, |page, cx| page.save_machine(window, cx))
+    });
+    draw(page.cx);
+    page.type_ssh("X");
+    assert_eq!(page.ssh(), "host-a-b", "typing waits for the save");
+
+    page.backend_does("fail", "the refusal", |page| page.failure().is_some())
+        .await;
+    assert_eq!(page.failure().as_deref(), Some("Not saved: disk full."));
+    assert_eq!(page.edited().as_deref(), Some("box"));
+    page.type_ssh("c");
+    assert_eq!(
+        page.ssh(),
+        "host-a-bc",
+        "the fields are as they were, and take typing again"
+    );
 }
 
 // box stops answering mid-edit: what was typed stays. box removed elsewhere: the edit ends and says so, and the form
