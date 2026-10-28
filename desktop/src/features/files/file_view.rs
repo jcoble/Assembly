@@ -101,9 +101,13 @@ impl FileView {
         }));
     }
 
-    fn line(&self, ix: usize, gutter: Pixels, muted: Hsla) -> AnyElement {
+    /// One row, in the code font: the list measures its widest row on its own, outside the list's styles, so the font
+    /// is set here for that width to match what's drawn.
+    fn line(&self, ix: usize, gutter: Pixels, muted: Hsla, mono: SharedString) -> AnyElement {
         h_flex()
             .h(LINE)
+            .font_family(mono)
+            .text_size(TEXT)
             .child(
                 div()
                     .w(gutter)
@@ -115,6 +119,7 @@ impl FileView {
             )
             .child(
                 div()
+                    .debug_selector(move || format!("file-line-{ix}"))
                     .whitespace_nowrap()
                     .child(SharedString::from(self.text.lines[ix].clone())),
             )
@@ -178,20 +183,17 @@ impl Panel for FileView {
 impl Render for FileView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, danger, mono) = (
-            theme.muted_foreground,
-            theme.danger,
-            theme.mono_font_family.clone(),
-        );
-        let note = |text: String| div().px_3().py_2().text_sm().child(text);
+        let muted = theme.muted_foreground;
+        // Why a file isn't shown (too large, not text, refused, keeps changing) is a notice, not an alarm.
+        let note = |text: String| div().px_3().py_2().text_sm().text_color(muted).child(text);
         let status = if let Some(error) = &self.text.error {
-            Some(note(error.clone()).text_color(danger))
+            Some(note(error.clone()))
         } else if self.text.binary {
-            Some(note("This file isn't text, so it isn't shown.".into()).text_color(muted))
+            Some(note("This file isn't text, so it isn't shown.".into()))
         } else if self.text.lines.is_empty() && self.text.is_loading() {
-            Some(note("Loading…".into()).text_color(muted))
+            Some(note("Loading…".into()))
         } else if self.text.lines.is_empty() && self.started {
-            Some(note("This file is empty.".into()).text_color(muted))
+            Some(note("This file is empty.".into()))
         } else {
             None
         };
@@ -222,16 +224,18 @@ impl Render for FileView {
                             {
                                 view.load_part(offset, cx);
                             }
-                            let muted = cx.theme().muted_foreground;
-                            range.map(|ix| view.line(ix, gutter, muted)).collect()
+                            let theme = cx.theme();
+                            let (muted, mono) =
+                                (theme.muted_foreground, theme.mono_font_family.clone());
+                            range
+                                .map(|ix| view.line(ix, gutter, muted, mono.clone()))
+                                .collect()
                         }),
                     )
                     .track_scroll(&self.list)
                     .with_width_from_item(Some(self.text.widest))
                     .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                    .flex_1()
-                    .font_family(mono)
-                    .text_size(TEXT),
+                    .flex_1(),
                 )
             })
     }
