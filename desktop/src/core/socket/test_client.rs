@@ -11,6 +11,7 @@ use std::time::Duration;
 use futures_channel::mpsc::{UnboundedReceiver, unbounded};
 use futures_channel::oneshot;
 use futures_executor::block_on;
+use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::client_thread::ClientThread;
@@ -19,7 +20,7 @@ use super::endpoint::Endpoint;
 use super::event::Event;
 use super::fake_backend::{FakeBackend, Reply, hello};
 use super::outcome::Outcome;
-use super::row_update::RowUpdate;
+use super::row_update::{RowUpdate, rows_sink};
 use super::update::Update;
 
 /// How long a test waits for an event it expects.
@@ -153,14 +154,25 @@ impl TestClient {
     }
 
     pub fn rows_of(&self, session: &str, after: Option<i64>) -> UnboundedReceiver<RowUpdate> {
+        self.rows_on("rows", session, after)
+    }
+
+    /// Any rows topic's rows, by key, read into `R`.
+    pub fn rows_on<R: DeserializeOwned + Send + 'static>(
+        &self,
+        topic: &str,
+        key: &str,
+        after: Option<i64>,
+    ) -> UnboundedReceiver<RowUpdate<R>> {
         let (rows, receiver) = unbounded();
         let id = self.id();
         self.events
             .send(Event::SubscribeRows {
                 id,
-                session_id: session.into(),
+                topic: topic.into(),
+                key: key.into(),
                 after,
-                rows,
+                rows: rows_sink(rows),
             })
             .unwrap();
         receiver

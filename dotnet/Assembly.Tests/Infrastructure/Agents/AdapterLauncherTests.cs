@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Calls;
+using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
@@ -27,6 +29,25 @@ public sealed class AdapterLauncherTests : IDisposable
 
         Assert.Equal(parentFolder, helperFolder);
         Assert.True(File.Exists(Path.Combine(helperFolder, "notes.md")));
+    }
+
+    [Fact]
+    public void A_terminal_starts_in_a_local_session_s_checkout_and_a_remote_one_s_helper_can_t_open_here()
+    {
+        // Pins: terminal#1, terminal#12
+        using var db = new TempDatabase();
+        using var database = TestDatabase.Open(db.Path);
+        var checkouts = Path.Combine(_work, "checkouts");
+        var sessions = SessionStore.Open(database, TimeProvider.System, checkouts);
+        var local = sessions.Create("claude", "https://github.com/o/r");
+        var remote = sessions.Helper(sessions.Add("remote-1", "codex", "https://github.com/o/r", "Workbox Test"), "claude", "look");
+        var folder = AdapterLauncher.ExistingFolder(checkouts, sessions);
+
+        Assert.Null(folder(local.SessionId));
+        Directory.CreateDirectory(Path.Combine(checkouts, local.SessionId));
+        Assert.Equal(Path.Combine(checkouts, local.SessionId), folder(local.SessionId));
+        Assert.Null(folder("unknown"));
+        Assert.Contains("Workbox Test", Assert.Throws<CallFailed>(() => folder(remote.SessionId)).Message);
     }
 
     [Fact]

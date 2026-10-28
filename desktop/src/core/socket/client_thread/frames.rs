@@ -4,6 +4,8 @@
 
 use std::sync::atomic::Ordering;
 
+use serde_json::Value;
+
 use super::ClientThread;
 use crate::core::socket::call_failure::CallFailure;
 use crate::core::socket::error_code::ErrorCode;
@@ -27,8 +29,8 @@ impl ClientThread {
             } => {
                 if let Some(topic) = self.topics.remove(&id) {
                     eprintln!("socket: {} failed: {message}", topic.topic);
-                } else if self.rows.remove(&id).is_some() {
-                    eprintln!("socket: rows failed: {message}");
+                } else if let Some(rows) = self.rows.remove(&id) {
+                    eprintln!("socket: {} failed: {message}", rows.feed.topic);
                 } else if code == "cancelled" {
                     self.settle(id, Outcome::Aborted);
                 } else {
@@ -46,7 +48,7 @@ impl ClientThread {
                 } else if let (Some(rows), Some(seq)) = (self.rows.get_mut(&sub), seq)
                     && let Some(seq) = rows.feed.state(seq)
                 {
-                    let _ = rows.updates.unbounded_send(RowUpdate::Jump { seq });
+                    (rows.updates)(RowUpdate::Jump { seq });
                 }
             }
             InFrame::Change { sub, key, item } => {
@@ -58,10 +60,12 @@ impl ClientThread {
                 let Some(rows) = self.rows.get_mut(&sub) else {
                     return;
                 };
-                match rows.feed.step(row.seq, row.prev_seq) {
-                    RowStep::Pass => {
-                        let _ = rows.updates.unbounded_send(RowUpdate::Row(Box::new(row)));
-                    }
+                let Some(seq) = row.get("seq").and_then(Value::as_i64) else {
+                    return eprintln!("socket: a {} row has no seq", rows.feed.topic);
+                };
+                let prev_seq = row.get("prevSeq").and_then(Value::as_i64);
+                match rows.feed.step(seq, prev_seq) {
+                    RowStep::Pass => (rows.updates)(RowUpdate::Row(row)),
                     RowStep::Skip => {}
                     RowStep::Gap => self.resubscribe_rows(sub),
                 }

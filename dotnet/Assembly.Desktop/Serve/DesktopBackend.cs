@@ -26,7 +26,9 @@ using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
 using Assembly.Application.Features.Diagnostics;
+using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Clock;
+using Assembly.Infrastructure.Terminal;
 
 namespace Assembly.Desktop.Serve;
 
@@ -46,12 +48,14 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly FileStream _homeLock;
     private readonly DiagnosticsHost _diagnostics;
     private readonly MachinesFeature _machinesFeature;
+    private readonly TerminalHost _terminals;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteMachine? remote,
-        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature)
+        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals)
     {
         _homeLock = homeLock;
         _machinesFeature = machinesFeature;
+        _terminals = terminals;
         _remote = remote;
         _outbox = outbox;
         _db = db;
@@ -146,6 +150,8 @@ public sealed class DesktopBackend : IAsyncDisposable
 
         Uri? address = null;
         Action dropSockets = () => { };
+        var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
+            AdapterLauncher.ExistingFolder(Path.Combine(home, "sessions"), sessionStore));
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var clock = new BackendClock(topics, TimeProvider.System, work);
         var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
@@ -161,7 +167,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 {
                     hub.CloseSubscriptions();
                     dropSockets();
-                })]), port, out dropSockets, routes =>
+                }), new TerminalFeature(terminals)]), port, out dropSockets, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));
@@ -169,7 +175,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             page.Map(routes);
         });
         await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature, terminals);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -198,6 +204,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _app.DisposeAsync();
         // Before the remote, so no probe is still out on it.
         await _machinesFeature.DisposeAsync();
+        await _terminals.DisposeAsync();
         if (_outbox is not null)
             await _outbox.DisposeAsync();
         await _sessions.DisposeAsync();
