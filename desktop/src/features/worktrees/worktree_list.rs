@@ -1,5 +1,5 @@
 //! `WorktreeList` is one read of a project's worktrees: the rows the filter leaves, how many it hides (scm#5), and
-//! the header's summary. Replaces worktreeManagerRows.ts's filterWorktreeRows and summarizeWorktreeManager.
+//! nothing else. Replaces worktreeManagerRows.ts's filterWorktreeRows.
 
 use super::worktree::Worktree;
 
@@ -31,32 +31,5 @@ impl WorktreeList {
             1 => Some("1 worktree is hidden by the filter.".into()),
             hidden => Some(format!("{hidden} worktrees are hidden by the filter.")),
         }
-    }
-
-    /// "3 worktrees: 1 main checkout, 1 safe to remove, 1 needs a decision".
-    pub fn summary(&self) -> String {
-        let total = self.worktrees.len();
-        if total == 0 {
-            return "No worktrees".into();
-        }
-        let main = self.worktrees.iter().filter(|w| w.is_main).count();
-        let safe = self.worktrees.iter().filter(|w| w.safe_to_remove()).count();
-        let deciding = total - main - safe;
-        let mut parts = Vec::new();
-        if main > 0 {
-            parts.push(format!("{main} main checkout"));
-        }
-        if safe > 0 {
-            parts.push(format!("{safe} safe to remove"));
-        }
-        if deciding > 0 {
-            let verb = if deciding == 1 { "needs" } else { "need" };
-            parts.push(format!("{deciding} {verb} a decision"));
-        }
-        let head = format!(
-            "{total} {}",
-            if total == 1 { "worktree" } else { "worktrees" }
-        );
-        format!("{head}: {}", parts.join(", "))
     }
 }

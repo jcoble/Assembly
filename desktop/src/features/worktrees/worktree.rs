@@ -75,16 +75,6 @@ impl Worktree {
         marks
     }
 
-    /// Nothing here would be lost if it went: not the main checkout, its folder there, clean, pushed and not locked.
-    pub fn safe_to_remove(&self) -> bool {
-        !self.is_main
-            && !self.is_bare
-            && !self.prunable
-            && !self.is_dirty
-            && self.unpushed == 0
-            && !self.locked
-    }
-
     /// The head commit's line in the open row: short id and subject.
     pub fn head_line(&self) -> Option<String> {
         let head = short(self.head.as_deref()?);

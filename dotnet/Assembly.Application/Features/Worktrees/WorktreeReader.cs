@@ -1,4 +1,5 @@
 using System.Globalization;
+using Assembly.Application.Common.Calls;
 
 namespace Assembly.Application.Features.Worktrees;
 
@@ -15,26 +16,37 @@ public sealed class WorktreeReader(IGit git)
         foreach (var entry in WorktreePorcelain.Parse(output))
         {
             var row = entry;
-            // Locked folders may be absent too; git deliberately does not mark them prunable.
-            if (!row.IsBare && !row.Prunable && !row.Locked)
+            if (!row.IsBare && !row.Prunable)
             {
-                var status = await git.RunAsync(row.Path, ["status", "--porcelain=v1", "-z"], cancellationToken);
-                row = row with { IsDirty = status.Length != 0 };
-                if (row.Head is not null)
+                try
                 {
-                    var count = await git.RunAsync(row.Path, ["rev-list", "--count", "HEAD", "--not", "--remotes"], cancellationToken);
-                    var log = await git.RunAsync(row.Path, ["log", "-1", "--format=%ct%x00%s"], cancellationToken);
-                    var separator = log.IndexOf('\0');
-                    row = row with
-                    {
-                        Unpushed = int.Parse(count.Trim(), CultureInfo.InvariantCulture),
-                        HeadCommittedAt = long.Parse(log[..separator], CultureInfo.InvariantCulture) * 1000,
-                        HeadSubject = log[(separator + 1)..].TrimEnd('\r', '\n')
-                    };
+                    row = await ReadFolderAsync(row, cancellationToken);
+                }
+                // Git doesn't mark a locked worktree prunable when its folder is gone (an unplugged drive, say), so a
+                // locked one whose folder git can't enter keeps its marks without the folder's facts.
+                catch (CallFailed) when (row.Locked)
+                {
                 }
             }
             rows.Add(row);
         }
         return rows;
+    }
+
+    private async Task<Worktree> ReadFolderAsync(Worktree row, CancellationToken cancellationToken)
+    {
+        var status = await git.RunAsync(row.Path, ["status", "--porcelain=v1", "-z"], cancellationToken);
+        row = row with { IsDirty = status.Length != 0 };
+        if (row.Head is null)
+            return row;
+        var count = await git.RunAsync(row.Path, ["rev-list", "--count", "HEAD", "--not", "--remotes"], cancellationToken);
+        var log = await git.RunAsync(row.Path, ["log", "-1", "--format=%ct%x00%s"], cancellationToken);
+        var separator = log.IndexOf('\0');
+        return row with
+        {
+            Unpushed = int.Parse(count.Trim(), CultureInfo.InvariantCulture),
+            HeadCommittedAt = long.Parse(log[..separator], CultureInfo.InvariantCulture) * 1000,
+            HeadSubject = log[(separator + 1)..].TrimEnd('\r', '\n')
+        };
     }
 }
