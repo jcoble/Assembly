@@ -15,20 +15,24 @@ internal sealed class TerminalHost : IAsyncDisposable
     private readonly IPtyStarter _pty;
     private readonly ITopics _topics;
     private readonly TimeProvider _time;
+    private readonly Func<string, string?> _sessionFolder;
     private readonly Lock _lock = new();
     private readonly Dictionary<string, RunningTerminal> _terminals = [];
     private bool _stopped;
 
-    public TerminalHost(IPtyStarter pty, ITopics topics, TimeProvider time)
+    /// <param name="sessionFolder">A session's folder, once it exists, for a start with an owner and no folder.</param>
+    public TerminalHost(IPtyStarter pty, ITopics topics, TimeProvider time, Func<string, string?>? sessionFolder = null)
     {
         _pty = pty;
         _topics = topics;
         _time = time;
+        _sessionFolder = sessionFolder ?? (_ => null);
     }
 
     /// <summary>
     /// Starts a terminal in <see cref="StartArgs.Cwd"/>, or answers the owner's terminal while it still runs
-    /// (terminal#9). Fails with the folder's path when it doesn't exist (terminal#1).
+    /// (terminal#9). Fails with the folder's path when it doesn't exist (terminal#1). With no folder it starts in the
+    /// owner's session folder, or the home folder while that session has none yet (its first turn checks it out).
     /// </summary>
     public async Task<TerminalInfo> StartAsync(StartArgs args)
     {
@@ -52,7 +56,8 @@ internal sealed class TerminalHost : IAsyncDisposable
         };
         if (owner is not null)
             environment["ASSEMBLY_SESSION_ID"] = owner;
-        var cwd = args.Cwd.Trim();
+        var cwd = Blank(args.Cwd) ?? (owner is null ? null : _sessionFolder(owner))
+            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         // Only a session's shell is handed back; a command it runs (a Run, a sign-in) is a terminal of its own.
         var reusable = owner is not null && command is null;
         if (reusable && RunningShell(owner) is { } running)

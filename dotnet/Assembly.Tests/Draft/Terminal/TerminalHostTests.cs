@@ -130,6 +130,18 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task With_no_folder_it_starts_in_the_sessions_folder_or_home_until_the_session_has_one()
+    {
+        // Pins: terminal#1
+        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), id => id == "session-1" ? _folder : null);
+        await host.StartAsync(new StartArgs(Owner: "session-1"));
+        await host.StartAsync(new StartArgs(" ", Owner: "session-2"));
+
+        Assert.Equal(_folder, _pty.Started[0].Request.Cwd);
+        Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), _pty.Started[1].Request.Cwd);
+    }
+
+    [Fact]
     public async Task It_runs_a_login_shell_or_one_command_in_it_and_a_blank_command_is_none()
     {
         // Pins: terminal#1

@@ -56,7 +56,8 @@ public static class ServeRun
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         // Disposed after the app, so the host's terminals close when it stops (terminal#8).
-        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System);
+        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
+            AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
         await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new TerminalFeature(terminals)]), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));

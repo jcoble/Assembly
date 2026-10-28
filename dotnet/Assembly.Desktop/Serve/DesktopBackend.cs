@@ -143,7 +143,8 @@ public sealed class DesktopBackend : IAsyncDisposable
 
         Uri? address = null;
         Action dropSockets = () => { };
-        var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System);
+        var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
+            AdapterLauncher.ExistingFolder(Path.Combine(home, "sessions"), sessionStore));
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var clock = new BackendClock(topics, TimeProvider.System, work);
         var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
