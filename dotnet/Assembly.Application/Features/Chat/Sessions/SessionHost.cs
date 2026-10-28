@@ -69,7 +69,8 @@ public sealed partial class SessionHost : IPermissionPolicy
         CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
-        BackgroundWork work, Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null)
+        BackgroundWork work, Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null,
+        SessionTitler? titler = null)
     {
         _sessionClosed = sessionClosed;
         _helpersWorking = helpersWorking ?? (() => false);

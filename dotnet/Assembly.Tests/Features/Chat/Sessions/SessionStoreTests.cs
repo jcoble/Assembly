@@ -71,7 +71,7 @@ public sealed class SessionStoreTests : IDisposable
     public void Title_and_agent_session_are_kept()
     {
         var a = Create();
-        _sessionStore.SetTitle(a.SessionId, "Fix the build");
+        _sessionStore.SetTitle(a.SessionId, "Fix the build", "prompt");
         _sessionStore.SetAcpSession(a.SessionId, "acp-1");
 
         var saved = _sessionStore.Get(a.SessionId)!;

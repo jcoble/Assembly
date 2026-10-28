@@ -84,7 +84,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             sessionStore.SetAcpSession(sessionId, acp.SessionId);
             stages.Mark("session new");
             if (session.Title is null && Title(firstText) is { } title)
-                sessionStore.SetTitle(sessionId, title);
+                sessionStore.SetTitle(sessionId, title, "prompt");
             // A helper's title is its task, not the framed prompt it's sent.
             if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
             {

@@ -11,4 +11,5 @@ namespace Assembly.Domain.Sessions;
 /// milliseconds.
 /// </summary>
 public sealed record SessionInfo(string SessionId, string Agent, string RepoUrl, string? Title, string? AcpSessionId, long UpdatedAt,
-    string? Machine = null, decimal? SessionCost = null, string? ParentSessionId = null, bool Helper = false, long ReadSeq = 0);
+    string? Machine = null, decimal? SessionCost = null, string? ParentSessionId = null, bool Helper = false, long ReadSeq = 0,
+    string? TitleSource = null);

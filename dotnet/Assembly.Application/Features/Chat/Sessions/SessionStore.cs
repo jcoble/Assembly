@@ -246,7 +246,7 @@ public sealed class SessionStore
         return sessions.Count == limit ? new SessionPage(sessions, sessions[^1].UpdatedAt, sessions[^1].SessionId) : new SessionPage(sessions, null, null);
     }
 
-    public void SetTitle(string sessionId, string title) =>
+    public void SetTitle(string sessionId, string title, string source) =>
         Change(sessionId, "UPDATE session_info SET title = $title WHERE session_id = $id;", ("$id", sessionId), ("$title", title));
 
     public void SetAcpSession(string sessionId, string acpSessionId) =>

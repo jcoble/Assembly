@@ -221,7 +221,7 @@ public sealed partial class SessionHost
                         Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
                         break;
                     case TitleChanged title when _sessionStore.Get(_sessionId) is { Helper: false }:
-                        _sessionStore.SetTitle(_sessionId, title.Title);
+                        _sessionStore.SetTitle(_sessionId, title.Title, "prompt");
                         break;
                     case ConfigOptionsChanged changed:
                         _sessionStore.SetConfigOptions(_sessionId, changed.Options.GetRawText());

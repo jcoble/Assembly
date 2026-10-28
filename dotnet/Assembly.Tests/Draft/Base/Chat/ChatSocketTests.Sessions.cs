@@ -41,7 +41,7 @@ public sealed partial class ChatSocketTests
         await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{session.SessionId}}"}""");
         Assert.Contains($"\"sessionId\":\"{session.SessionId}\"", await ReadAsync(socket));
 
-        _sessions.SetTitle(session.SessionId, "Renamed");
+        _sessions.SetTitle(session.SessionId, "Renamed", "prompt");
         Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(socket));
     }
 
@@ -97,7 +97,7 @@ public sealed partial class ChatSocketTests
     public async Task Frames_carry_text_as_it_is()
     {
         var session = _sessions.Create("claude", "repo");
-        _sessions.SetTitle(session.SessionId, "Café's");
+        _sessions.SetTitle(session.SessionId, "Café's", "prompt");
         using var socket = await OpenAsync();
 
         await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{session.SessionId}}"}""");
@@ -119,8 +119,8 @@ public sealed partial class ChatSocketTests
         using var own = await OpenAsync();
         await SendAsync(own, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{helper.SessionId}}"}""");
         await ReadAsync(own);
-        _sessions.SetTitle(helper.SessionId, "Renamed");
-        _sessions.SetTitle(parent.SessionId, "Parent");
+        _sessions.SetTitle(helper.SessionId, "Renamed", "prompt");
+        _sessions.SetTitle(parent.SessionId, "Parent", "prompt");
 
         Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(own));
         using var change = JsonDocument.Parse(await ReadAsync(list));
@@ -154,7 +154,7 @@ public sealed partial class ChatSocketTests
     {
         var title = new string('a', Mb);
         for (var i = 0; i < 5; i++)
-            _sessions.SetTitle(_sessions.Create("claude", $"repo-{i}").SessionId, title);
+            _sessions.SetTitle(_sessions.Create("claude", $"repo-{i}").SessionId, title, "prompt");
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "sessions", "page", "{}");
