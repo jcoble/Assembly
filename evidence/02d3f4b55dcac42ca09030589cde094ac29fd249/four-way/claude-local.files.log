@@ -1,0 +1,4 @@
+ok the top folder is listed (2 entries)
+ok search finds README by name, ignoring case
+ok README reads with its size and revision (6 bytes)
+ok a path outside the folder is refused
