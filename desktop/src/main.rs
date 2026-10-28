@@ -40,6 +40,7 @@ fn main() {
             features::session::view::session_pane::SessionPane::register(cx);
             features::sessions::sessions_pane::SessionsPane::register(cx);
             features::terminal::terminal_pane::TerminalPane::register(cx);
+            features::session::context::context_pane::ContextPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::meter::start_if_on(cx);

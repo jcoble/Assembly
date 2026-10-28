@@ -1,12 +1,24 @@
-//! `SessionRow` is one session in the column: its title, agent and machine, with a still dot while it's working.
-//! Selected, it's marked; a click selects it.
+//! `SessionRow` is one session in the column: its title, agent and machine, and a still dot for what it's doing
+//! (its `Presence`). Selected, it's marked; a click selects it, and its right-click menu moves it to another group
+//! (`sessions/mark`).
 
+use std::rc::Rc;
+
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::presence::Presence;
+use super::status::Status;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::session_item::SessionItem;
+
+/// A session's line in the list.
+pub const ROW_HEIGHT: Pixels = px(48.);
+
+/// Moves a session to a group: the pane's `mark`.
+pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct SessionRow {
@@ -15,8 +27,10 @@ pub struct SessionRow {
     /// "claude · Workbox Test".
     pub place: SharedString,
     pub selected: bool,
-    /// A run is going: the row has a still dot.
-    pub working: bool,
+    /// What it's doing: every presence but Idle has a still dot.
+    pub presence: Presence,
+    pub status: Status,
+    on_mark: Option<OnMark>,
 }
 
 impl SessionRow {
@@ -26,8 +40,15 @@ impl SessionRow {
             title: item.title().into(),
             place: item.place().into(),
             selected,
-            working: item.active_run_id.is_some(),
+            presence: Presence::of(item),
+            status: Status::of(item),
+            on_mark: None,
         }
+    }
+
+    pub fn on_mark(mut self, on_mark: OnMark) -> Self {
+        self.on_mark = Some(on_mark);
+        self
     }
 }
 
@@ -35,11 +56,24 @@ impl RenderOnce for SessionRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let session_id = self.session_id.clone();
+        let dot = match self.presence {
+            Presence::NeedsYou => Some(theme.warning),
+            Presence::Working => Some(theme.primary),
+            Presence::Failed => Some(theme.danger),
+            Presence::Unread => Some(theme.muted_foreground),
+            Presence::Idle => None,
+        };
+        let place = match self.presence.word() {
+            Some(word) => format!("{} · {word}", self.place),
+            None => self.place.to_string(),
+        };
+        let (menu_id, status, on_mark) = (self.session_id.clone(), self.status, self.on_mark);
         v_flex()
             .id(SharedString::from(format!("session:{}", self.session_id)))
             .w_full()
+            .h(ROW_HEIGHT)
+            .justify_center()
             .px_3()
-            .py_2()
             .rounded(theme.radius)
             .cursor_pointer()
             .when(self.selected, |row| row.bg(theme.secondary))
@@ -52,24 +86,33 @@ impl RenderOnce for SessionRow {
             .child(
                 h_flex()
                     .gap_2()
-                    .when(self.working, |line| {
-                        line.child(
-                            div()
-                                .flex_none()
-                                .size(px(6.))
-                                .rounded_full()
-                                .bg(theme.primary),
-                        )
+                    .when_some(dot, |line, color| {
+                        line.child(div().flex_none().size(px(6.)).rounded_full().bg(color))
                     })
                     .child(div().text_sm().truncate().child(self.title)),
             )
             .child(
                 div()
                     .text_xs()
-                    .text_color(theme.muted_foreground)
+                    .text_color(match self.presence {
+                        Presence::NeedsYou => theme.warning,
+                        Presence::Failed => theme.danger,
+                        _ => theme.muted_foreground,
+                    })
                     .truncate()
-                    .child(self.place),
+                    .child(place),
             )
+            .context_menu(move |mut menu, _, _| {
+                for (label, to) in status.moves() {
+                    let (id, on_mark) = (menu_id.clone(), on_mark.clone());
+                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+                        if let Some(on_mark) = &on_mark {
+                            on_mark(id.clone(), to, cx)
+                        }
+                    }));
+                }
+                menu
+            })
     }
 }
 

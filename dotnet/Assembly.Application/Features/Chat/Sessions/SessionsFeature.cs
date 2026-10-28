@@ -51,6 +51,18 @@ internal sealed class SessionsFeature : IFeature
                 return new SendFeature.Done(true);
             });
         });
+        calls.Write(Topic, "mark", SessionsJson.Default.MarkArgs, SessionsJson.Default.Done, (args, _) =>
+        {
+            if (_store.Get(args.Session) is null)
+                throw new CallFailed("unknown session");
+            if (args.State is not ("working" or "done" or "settled"))
+                throw new CallFailed("expected working, done or settled");
+            return Task.FromResult<Func<IWriteScope, SendFeature.Done>>(scope =>
+            {
+                _store.Mark(scope, args.Session, args.State);
+                return new SendFeature.Done(true);
+            });
+        });
         // The machine's work runs before the write, which only answers: the store's own write publishes the new
         // session, so it goes out on this socket before the answer. It's keyed on its machine, so one that hangs holds
         // up only creates there.
@@ -80,4 +92,6 @@ internal sealed class SessionsFeature : IFeature
     internal sealed record Created(string SessionId);
 
     internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] long Seq);
+
+    internal sealed record MarkArgs([property: JsonRequired] string Session, [property: JsonRequired] string State);
 }

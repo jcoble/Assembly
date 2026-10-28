@@ -141,7 +141,15 @@ impl Sessions {
                     .into_iter()
                     .filter_map(|(_, item)| read(item))
                     .collect();
-                for change in add_state(&mut self.items, &mut self.older, first, state, full) {
+                for change in add_state(
+                    &mut self.items,
+                    &mut self.older,
+                    &mut self.older_error,
+                    &mut self.loading_older,
+                    first,
+                    state,
+                    full,
+                ) {
                     cx.emit(change);
                 }
             }
@@ -163,10 +171,13 @@ fn read(item: Value) -> Option<SessionItem> {
 
 /// Adds the topic's state (`full` when it holds the topic's 200). The first sets where older pages start. A later
 /// one, after a reconnect, whose oldest is newer than the newest held session leaves a gap: the held list is
-/// replaced and the pages start again from the state's oldest. One that reaches the held list is merged.
+/// replaced and the pages start again from the state's oldest: an older page's error is cleared, and a page still
+/// loading is dropped, which cancels it, so it can't land in the new list. One that reaches the held list is merged.
 fn add_state(
     items: &mut Vec<SessionItem>,
     older: &mut Option<(i64, String)>,
+    older_error: &mut Option<String>,
+    loading_older: &mut Option<Task<()>>,
     first: bool,
     state: Vec<SessionItem>,
     full: bool,
@@ -180,6 +191,8 @@ fn add_state(
     }
     if first || gap {
         *older = oldest.filter(|_| full);
+        *older_error = None;
+        *loading_older = None;
     }
     state.into_iter().map(|item| upsert(items, item)).collect()
 }
@@ -212,6 +225,10 @@ fn upsert(items: &mut Vec<SessionItem>, item: SessionItem) -> SessionChange {
         SessionChange::Added(id)
     }
 }
+
+#[cfg(test)]
+#[path = "sessions_load_tests.rs"]
+mod load_tests;
 
 #[cfg(test)]
 mod tests {
@@ -323,9 +340,31 @@ mod tests {
         let mut items = vec![session("a", 10), session("b", 5)];
         let mut older = Some((5, "b".to_owned()));
         let state = vec![session("x", 30), session("y", 20)];
-        add_state(&mut items, &mut older, false, state, true);
+        add_state(
+            &mut items, &mut older, &mut None, &mut None, false, state, true,
+        );
         assert_eq!(ids(&items), ["x", "y"]);
         assert_eq!(older, Some((20, "y".to_owned())));
+    }
+
+    // An older page failed before the reconnect. The gap restarts the pages, so that page's error no longer applies.
+    #[test]
+    fn a_reconnect_state_past_the_held_list_clears_the_older_page_error() {
+        let mut items = vec![session("a", 10), session("b", 5)];
+        let mut older = Some((5, "b".to_owned()));
+        let mut older_error =
+            Some("Couldn't load older sessions: the database is locked".to_owned());
+        let state = vec![session("x", 30), session("y", 20)];
+        add_state(
+            &mut items,
+            &mut older,
+            &mut older_error,
+            &mut None,
+            false,
+            state,
+            true,
+        );
+        assert_eq!(older_error, None);
     }
 
     // Pins: g0-socket#7, g0-socket#10
@@ -334,7 +373,9 @@ mod tests {
         let mut items = vec![session("a", 10), session("b", 5)];
         let mut older = Some((1, "z".to_owned()));
         let state = vec![session("x", 30), session("a", 10)];
-        add_state(&mut items, &mut older, false, state, true);
+        add_state(
+            &mut items, &mut older, &mut None, &mut None, false, state, true,
+        );
         assert_eq!(ids(&items), ["x", "a", "b"]);
         assert_eq!(older, Some((1, "z".to_owned())));
     }
