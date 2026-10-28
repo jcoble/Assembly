@@ -26,7 +26,7 @@ internal sealed class BackendClock : IFeature
     private bool _asked;
 
     /// <summary>Each tick, with whether <c>machines</c> has a subscriber; false on the tick that stops the clock too.</summary>
-    internal event Action<bool>? Ticked;
+    internal event Action<bool, bool>? Ticked;
 
     public BackendClock(TopicSet topics, TimeProvider time, BackgroundWork work)
     {
@@ -78,12 +78,12 @@ internal sealed class BackendClock : IFeature
                 }
                 if (idle)
                 {
-                    Ticked?.Invoke(false);
+                    Ticked?.Invoke(false, false);
                     return;
                 }
                 if (watched)
                     _topics.Publish(Topic, Second, JsonSerializer.Serialize(Now(), ClockJson.Default.ClockTime));
-                Ticked?.Invoke(machinesWatched);
+                Ticked?.Invoke(machinesWatched, false);
             }
         }
         catch (OperationCanceledException)

@@ -61,7 +61,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _work = new BackgroundWork(_time, TextWriter.Null);
         _clock = new BackendClock(topics, _time, _work);
         var feature = new MachinesFeature(machines, status, _clock.Start, _time);
-        _clock.Ticked += feature.Tick;
+        _clock.Ticked += (machinesWatched, _) => feature.Tick(machinesWatched);
         _clock.Register(calls);
         feature.Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
