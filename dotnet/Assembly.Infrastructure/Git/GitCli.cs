@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using Assembly.Application.Common.Calls;
-using Assembly.Application.Features.Worktrees;
+using Assembly.Application.Common.Git;
 
-namespace Assembly.Infrastructure.Worktrees;
+namespace Assembly.Infrastructure.Git;
 
 /// <summary>
 /// git in a folder, with no prompt for credentials and no optional locks, so a read never blocks on or takes the index

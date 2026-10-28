@@ -1,4 +1,4 @@
-namespace Assembly.Application.Features.Worktrees;
+namespace Assembly.Application.Common.Git;
 
 /// <summary>Runs git in a folder and answers stdout; a non-zero exit throws CallFailed with git's stderr.</summary>
 public interface IGit
