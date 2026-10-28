@@ -373,3 +373,38 @@ fn earlier_rows_keep_the_line_at_a_windows_start(cx: &mut TestAppContext) {
         }
     );
 }
+
+#[gpui::test]
+fn the_earlier_helpers_line_at_the_top_stays_there_when_its_parent_changes(
+    cx: &mut TestAppContext,
+) {
+    let (pane, cx) = open(cx);
+    // The parent and its newest helper change at once, so the lines between them are replaced too.
+    let held = |running: bool| {
+        let mut helpers = parents(0, 60);
+        helpers[59].running = running;
+        RailPage {
+            helper_start: 50,
+            ..page(
+                vec![RailEntry {
+                    running,
+                    ..test_entry("p", "/r")
+                }],
+                helpers,
+            )
+        }
+    };
+    answer(&pane, Some("p"), held(false), cx);
+    // The lines are the parent, Show earlier helpers, then the helpers; the reader is partly into the second.
+    let top = ListOffset {
+        item_ix: 1,
+        offset_in_item: px(4.),
+    };
+    let at =
+        |cx: &mut VisualTestContext| pane.read_with(cx, |pane, _| pane.lines.logical_scroll_top());
+    pane.update(cx, |pane, _| pane.lines.scroll_to(top));
+    draw(cx);
+    assert_eq!(at(cx), top);
+    answer(&pane, None, held(true), cx);
+    assert_eq!(at(cx), top);
+}

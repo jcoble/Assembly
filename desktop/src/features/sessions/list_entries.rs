@@ -47,7 +47,7 @@ pub fn changed_lines(old: &[ListEntry], new: &[ListEntry]) -> (Range<usize>, usi
 
 /// Where line `at` of `old` is in `new`, when it lies in the `changed` lines or new lines go in just before it (a
 /// splice would lose it, or leave an unscrolled list above it) and is still there, by its key: a row whose state
-/// changed is still the line it was.
+/// changed is still the line it was. The kind counts too: a parent and its helper lines share its id.
 pub fn same_line(
     old: &[ListEntry],
     new: &[ListEntry],
@@ -57,7 +57,9 @@ pub fn same_line(
     let line = old
         .get(at)
         .filter(|_| changed.start == at || changed.contains(&at))?;
-    new.iter().position(|entry| entry.key() == line.key())
+    let kind = std::mem::discriminant(line);
+    new.iter()
+        .position(|entry| std::mem::discriminant(entry) == kind && entry.key() == line.key())
 }
 
 /// What a project's header calls it: "owner/repo" for a GitHub URL, else the folder's last name.
