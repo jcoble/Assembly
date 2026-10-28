@@ -264,6 +264,42 @@ public sealed class SessionStore
     }
 
     /// <summary>
+    /// The rail's read (see <see cref="SessionsFeature.RailArgs"/>), in one statement: the totals, the providers, the
+    /// parent page and the expanded parent's helper page, each a part of <see cref="Chat.Schema.Rail"/>'s rows.
+    /// </summary>
+    internal SessionsFeature.Rail Rail(SessionsFeature.RailArgs args, CancellationToken cancel = default)
+    {
+        string? Json(IReadOnlyList<string>? values) =>
+            values is { Count: > 0 } ? JsonSerializer.Serialize(values, SessionsJson.Default.IReadOnlyListString) : null;
+        var parts = _db.Query(Chat.Schema.Rail, row => (Part: row.Long(0), Row: ReadRail(row)), cancel,
+            new SqlArg("$tab", args.Tab), new SqlArg("$providers", Json(args.Providers)), new SqlArg("$locations", Json(args.Locations)),
+            new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()), new SqlArg("$limit", args.Limit),
+            new SqlArg("$group", args.After?.Group), new SqlArg("$repo", args.After?.RepoUrl), new SqlArg("$updated", args.After?.UpdatedAt),
+            new SqlArg("$id", args.After?.SessionId), new SqlArg("$expanded", args.Expanded),
+            new SqlArg("$helperUpdated", args.HelpersAfter?.UpdatedAt), new SqlArg("$helperId", args.HelpersAfter?.SessionId));
+        var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
+        var helpers = parts.Where(part => part.Part == 3).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
+        return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
+            sessions, sessions.Count == args.Limit ? new(sessions[^1].Group, sessions[^1].RepoUrl, sessions[^1].UpdatedAt, sessions[^1].SessionId) : null,
+            helpers, helpers.Count == args.Limit ? new(helpers[^1].UpdatedAt, helpers[^1].SessionId) : null);
+    }
+
+    // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a parent (2) or helper (3).
+    private static object ReadRail(IRow row)
+    {
+        string? Text(int column) => row.IsNull(column) ? null : row.Text(column);
+        long? Long(int column) => row.IsNull(column) ? null : row.Long(column);
+        return row.Long(0) switch
+        {
+            0 => new SessionsFeature.RailTotals((int)row.Long(15), (int)row.Long(11), (int)row.Long(12)),
+            1 => row.Text(3),
+            _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Long(6) == 1, Text(7), Text(8),
+                row.Long(9), Long(10), row.Long(11) == 1, row.Long(12) == 1, row.Long(13) == 1, row.Long(14) == 1, (int)row.Long(15),
+                Text(16), Long(17), Text(18), Long(19)),
+        };
+    }
+
+    /// <summary>
     /// Sets the title and where it came from: <c>prompt</c> (the first message or the agent), <c>helper</c> (the utility
     /// model) or <c>user</c>. A helper title is kept over a later prompt one, and a user title over both; the check is in
     /// the write, so a title arriving meanwhile can't slip past it.
@@ -423,9 +459,13 @@ public sealed class SessionStore
     private void Publish(IWriteScope scope, string sessionId)
     {
         if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", sessionId)) is { } session)
+        {
             // The list holds top-level sessions only; a subagent's is opened from its parent.
             scope.Publish(SessionsFeature.Topic, sessionId, Item(session), SessionsJson.Default.SessionItem,
                 keyedOnly: session.ParentSessionId is not null);
+            // The rail draws helpers under their parent, so it hears every session's change.
+            scope.Publish(SessionsFeature.RailTopic, sessionId, new SessionsFeature.RailChange(sessionId), SessionsJson.Default.RailChange);
+        }
     }
 
     private List<SessionInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>
