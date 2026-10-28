@@ -5,6 +5,29 @@ namespace Assembly.Tests.Draft.Base.Chat;
 
 public sealed partial class ChatSocketTests
 {
+    // Pins: sessions-list#9
+    [Fact]
+    public async Task Sessions_state_is_open_and_pages_can_select_settled()
+    {
+        var open = _sessions.Create("claude", "open-repo");
+        var settled = _sessions.Create("claude", "settled-repo");
+        _db.Writer.Write("test.mark", scope => { _sessions.Mark(scope, settled.SessionId, "settled"); return 0; });
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"sessions"}""");
+        using (var state = JsonDocument.Parse(await ReadAsync(socket)))
+            Assert.Equal([open.SessionId], state.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("key").GetString()));
+
+        await CallAsync(socket, 2, "sessions", "page", """{"group":"settled"}""");
+        using (var answer = JsonDocument.Parse(await ReadAsync(socket)))
+            Assert.Equal([settled.SessionId], answer.RootElement.GetProperty("result").GetProperty("sessions").EnumerateArray()
+                .Select(item => item.GetProperty("sessionId").GetString()));
+        await CallAsync(socket, 3, "sessions", "page", """{"group":"bogus"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"expected open or settled"}""", await ReadAsync(socket));
+
+        _sessions.SetTitle(settled.SessionId, "Still published");
+        Assert.Contains("\"title\":\"Still published\"", await ReadAsync(socket));
+    }
+
     [Fact]
     public async Task The_sessions_topic_starts_with_the_newest_page_then_any_session_that_changes()
     {

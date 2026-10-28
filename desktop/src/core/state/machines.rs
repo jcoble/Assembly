@@ -111,7 +111,7 @@ mod tests {
 
     fn machine(name: Option<&str>, reachable: bool) -> Machine {
         serde_json::from_value(
-            json!({"name": name, "kind": "remote", "reachable": reachable, "reason": null}),
+            json!({"name": name, "kind": "remote", "reachable": reachable, "reason": null, "checked": true}),
         )
         .expect("a machine")
     }
@@ -121,11 +121,9 @@ mod tests {
     #[test]
     fn only_a_probe_that_failed_makes_a_machine_offline() {
         let mut waiting = machine(Some("box"), false);
-        waiting.reason = Some("not checked yet".into());
+        waiting.checked = false;
         assert!(!waiting.didnt_answer());
-        let mut down = machine(Some("box"), false);
-        down.reason = Some("ssh: connect refused".into());
-        assert!(down.didnt_answer());
+        assert!(machine(Some("box"), false).didnt_answer());
         assert!(!machine(Some("box"), true).didnt_answer());
     }
 

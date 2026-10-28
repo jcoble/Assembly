@@ -244,15 +244,18 @@ public sealed class SessionStore
     /// <paramref name="beforeId"/> among sessions used at that time; no id means none of them); subagents' sessions are
     /// opened from their parent.
     /// </summary>
-    public SessionPage List(long? before, int limit, CancellationToken cancel = default, string? beforeId = null)
+    /// <param name="settled">Only the settled sessions (true), only the open ones (false), or all (null).</param>
+    public SessionPage List(long? before, int limit, CancellationToken cancel = default, string? beforeId = null, bool? settled = null)
     {
         var sessions = _db.Query(
             $"""
             SELECT {Columns} FROM session_info
             WHERE (updated_at < $before OR (updated_at = $before AND session_id < $id)) AND parent_session_id IS NULL
+              AND ($settled IS NULL OR (settled_at IS NOT NULL) = $settled)
             ORDER BY updated_at DESC, session_id DESC LIMIT $limit;
             """,
-            ReadSession, cancel, Args([("$before", before ?? long.MaxValue), ("$id", beforeId ?? ""), ("$limit", limit)]));
+            ReadSession, cancel, Args([("$before", before ?? long.MaxValue), ("$id", beforeId ?? ""), ("$limit", limit),
+                ("$settled", settled is { } wanted ? (wanted ? 1 : 0) : null)]));
         return sessions.Count == limit ? new SessionPage(sessions, sessions[^1].UpdatedAt, sessions[^1].SessionId) : new SessionPage(sessions, null, null);
     }
 

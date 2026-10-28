@@ -16,7 +16,7 @@ use super::new_session_form::NewSessionForm;
 use super::presence::Presence;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
-use crate::core::state::machines::Machines;
+use crate::core::state::machines::{GlobalMachines, Machines};
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::{GlobalSessions, Sessions};
 
@@ -54,6 +54,7 @@ impl SessionsPane {
         let heard = vec![
             cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
             cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
+            cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_backend(cx)),
         ];
         // A scroll redraws the pane, and each draw checks whether the end is in view (`follow_entries`).
         let lines = ListState::new(0, ListAlignment::Top, px(200.));
@@ -196,6 +197,16 @@ impl Render for SessionsPane {
                 if count > 0 {
                     return pane.child(list);
                 }
+                // Nothing open, but Settled's header stays, to open the archive.
+                if !self.entries.is_empty() {
+                    let line = match state {
+                        Some(ConnectionState::Connected { .. }) => "No open sessions.",
+                        _ => empty_line(state.as_ref()),
+                    };
+                    return pane
+                        .child(div().px_3().text_sm().text_color(muted).child(line))
+                        .child(list);
+                }
                 pane.child(
                     div()
                         .px_3()
@@ -230,7 +241,10 @@ impl Render for SessionsPane {
                                 .label("Retry")
                                 .on_click(cx.listener(|pane, _, _, cx| {
                                     if let Some(sessions) = pane.sessions.clone() {
-                                        sessions.update(cx, |sessions, cx| sessions.load_older(cx));
+                                        let settled_open = pane.settled_open;
+                                        sessions.update(cx, |sessions, cx| {
+                                            sessions.load_next(settled_open, cx)
+                                        });
                                     }
                                 })),
                         ),
