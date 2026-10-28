@@ -56,8 +56,11 @@ public sealed partial class SessionHost : IPermissionPolicy
     private readonly Action<string>? _turnEnded;
     // Who to tell when this session's ACP session closes.
     private readonly Action<string>? _sessionClosed;
-    // Names the session once its first turn has ended.
+    // Names the session once a turn has ended normally after the open that gave it its first title.
     private readonly SessionTitler? _titler;
+    // Set when an open gave the session its first title, until a turn that ends normally starts the titler. Kept in
+    // memory only, so a session titled before a restart is never retitled. Guarded by _gate.
+    private bool _titlePending;
 
     /// <summary>A self-started run with no word from the agent this long, no tool running and no task open, ends.</summary>
     public const long QuietMs = 30_000;
@@ -442,8 +445,6 @@ public sealed partial class SessionHost : IPermissionPolicy
         var pump = kept?.Pump ?? Task.CompletedTask;
         var lost = false;
         var held = kept is not null;
-        // The turn that gave the session its first title is its first.
-        var first = false;
         Func<long, AgentEvent> end;
         try
         {
@@ -452,12 +453,12 @@ public sealed partial class SessionHost : IPermissionPolicy
                 await _session.WaitAsync(turn.Stopping.Token);
                 held = true;
                 session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token);
-                first = session.Titled;
                 updates = session.Adapter.Updates.For(session.AcpSessionId);
                 session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, this);
                 lock (_gate)
                 {
                     turn.Session = session;
+                    _titlePending |= session.Titled;
                     turn.Opened.TrySetResult();
                     Apply(new AgentStarted(Now(), session.Resumed, session.SavedCost, session.Model));
                 }
@@ -516,7 +517,9 @@ public sealed partial class SessionHost : IPermissionPolicy
                 toolsOpen = _converter.HasOpenTools;
                 var ended = end(Now());
                 Apply(ended);
-                title = first && ended is TurnEnded { StopReason: not "cancelled" };
+                title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };
+                if (title)
+                    _titlePending = false;
             }
             catch (Exception error)
             {

@@ -6,7 +6,7 @@ using Assembly.Domain.Rows;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
-/// Names a new session with the utility model, from its first exchange, once its first turn has ended normally. Its
+/// Names a new session with the utility model, from its first turn that ends normally and what that turn answered. Its
 /// answer replaces the title the first message gave, unless the session has been titled otherwise meanwhile.
 /// </summary>
 public sealed class SessionTitler(SessionStore sessionStore, RowStore rows, IUtilityModel model)
