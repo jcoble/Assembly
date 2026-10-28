@@ -452,8 +452,12 @@ fn an_open_session_tells_the_backend_the_newest_row_shown_so_its_unread_dot_clea
             json!({ "session": "s1", "seq": 6 })
         ]
     );
+    // A reconnect's jump tells it again: a read may have been lost with the connection.
+    client.queue_answer(Ok(page(vec![user(6, "three")], true, None)));
+    jump(&client, 6, cx);
+    assert_eq!(client.reads()[2], json!({ "session": "s1", "seq": 6 }));
     show(&pane, "s2", cx);
     client.queue_answer(Ok(page(vec![user(2, "other")], false, None)));
     jump(&client, 2, cx);
-    assert_eq!(client.reads()[2], json!({ "session": "s2", "seq": 2 }));
+    assert_eq!(client.reads()[3], json!({ "session": "s2", "seq": 2 }));
 }

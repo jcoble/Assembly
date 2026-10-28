@@ -1,5 +1,6 @@
 //! While a session is open, the pane tells the backend the newest row it has shown (`sessions/read`), which clears the
 //! session's unread dot in the sessions list: once its first page lands and again as rows arrive while it stays open.
+//! A `Jump` (a reconnect) tells it again, in case a read was lost with the connection.
 
 use serde_json::json;
 
@@ -18,8 +19,16 @@ impl SessionPane {
         self.read_to = self.view.newest;
         let args = json!({ "session": session, "seq": self.read_to });
         let call = self.client.call("sessions", "read", args, None, cx);
-        // A newer read replaces the older; like the other writes, it goes on when the reader switches away.
-        let task = cx.spawn(async move |_, _| _ = call.await);
-        self._writes.insert(format!("read {session}"), task);
+        // Each read runs to its answer (dropping one would cancel it) and, like the other writes, goes on when the
+        // reader switches away; it lets go of itself once answered.
+        let key = format!("read {session} {}", self.read_to);
+        let task = cx.spawn({
+            let key = key.clone();
+            async move |pane, cx| {
+                _ = call.await;
+                pane.update(cx, |pane, _| pane._writes.remove(&key)).ok();
+            }
+        });
+        self._writes.insert(key, task);
     }
 }

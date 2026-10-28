@@ -293,6 +293,7 @@ impl SessionPane {
             RowUpdate::Jump { seq } => {
                 self._page = None;
                 self.view = SessionView::default();
+                self.read_to = 0;
                 self.held = Some(Vec::new());
                 self.reveal = None;
                 self.reading.clear();
