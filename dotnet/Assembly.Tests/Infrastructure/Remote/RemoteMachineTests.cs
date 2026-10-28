@@ -22,6 +22,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private const string DesktopToken = "desktop-token";
     private const string BoxToken = "box-token";
     private const string Box = "workbox-test";
+    private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
 
     private readonly string _desktopHome = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
     private readonly string _boxHome = Directory.CreateTempSubdirectory("assembly-box-").FullName;
@@ -89,18 +90,23 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var prompt = await agent.ReadAsync("session/prompt");
         using (var watching = await OpenLiveAsync(_desktop!, DesktopToken, sessionId, after: 0))
             await ApiTests.ReadRowsAsync(watching, 2);
-        // The hub sends the rows before it applies their summary, which is what holds it.
-        await Until(() => _desktop!.ActivityHeld);
+        // The hub sends the rows before it applies their summary, which is what holds it; stopping the desktop waits
+        // for the follower that copied them, and so for that too.
+        var stopped = _desktop!;
+        await stopped.DisposeAsync();
+        Assert.True(stopped.ActivityHeld);
 
-        await _desktop!.DisposeAsync();
         await StartDesktopAsync();
-        Assert.True(_desktop.ActivityHeld);
+        Assert.True(_desktop!.ActivityHeld);
 
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         using var desktop = await OpenLiveAsync(_desktop, DesktopToken, sessionId, after: 0);
         await ApiTests.ReadUntilTurnEndsAsync(desktop);
-        await Until(() => !_desktop.ActivityHeld);
+        // As above: applied once the follower that copied the turn's end has stopped with the desktop.
+        await _desktop.DisposeAsync();
+        Assert.False(_desktop.ActivityHeld);
+        _desktop = null;
     }
 
     [Fact]
@@ -180,10 +186,10 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
 
         // Follow the helper here, and let its turn end.
         await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{helperId}/rows");
-        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, helperId)).Any(row => row.GetProperty("kind").GetString() == "user"));
+        await RowAsync(_desktop!, DesktopToken, helperId, row => row.GetProperty("kind").GetString() == "user");
         await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
-        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, parent)).Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
-            && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
+        await RowAsync(_desktop!, DesktopToken, parent, row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
 
         // The parent's turn ends, and it runs another.
         await parentAgent.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
@@ -191,10 +197,12 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await SendAsync(parent);
         await parentAgent.OpenAsync();
         await parentAgent.ReplyAsync(await parentAgent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
-        await Until(async () => (await RowsAsync(_box, BoxToken, parent)).Count(row => row.GetProperty("kind").GetString() == "turn"
-            && row.GetProperty("payload").GetProperty("state").GetString() == "finished") == 2);
+        var finished = 0;
+        await RowAsync(_box, BoxToken, parent, row => row.GetProperty("kind").GetString() == "turn"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "finished" && ++finished == 2);
         var box = await RowsAsync(_box, BoxToken, parent);
-        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, parent)).Max(row => row.GetProperty("seq").GetInt64()) >= box.Max(row => row.GetProperty("seq").GetInt64()));
+        var last = box.Max(row => row.GetProperty("seq").GetInt64());
+        await RowAsync(_desktop!, DesktopToken, parent, row => row.GetProperty("seq").GetInt64() >= last);
         var desktop = await RowsAsync(_desktop!, DesktopToken, parent);
 
         // Every row here is the box's copy, at the box's seq.
@@ -221,8 +229,10 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var helperAgent = await _boxLauncher.NextAsync();
         await helperAgent.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await helperAgent.ReadAsync("session/prompt");
+        // The desktop learns of the helper from its parent's row, before it stores the row.
+        await RowAsync(_desktop!, DesktopToken, parent, row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}");
         using var http = Client(_desktop!, DesktopToken);
-        await Until(async () => (await http.GetAsync($"/sessions/{helperId}")).StatusCode == HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync($"/sessions/{helperId}")).StatusCode);
         return (parent, parentAgent, parentPrompt, helperId, helperAgent, helperPrompt);
     }
 
@@ -276,10 +286,10 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         Assert.Contains("Which file?", question.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
         // As if the desktop stopped before telling the box: the box lists it again, and the desktop only tells it again.
         var boxDb = Path.Combine(_boxHome, "assembly.db");
-        await Until(() => DeliveredRun(boxDb, asked) is not null);
+        await WrittenAsync(boxDb, () => DeliveredRun(boxDb, asked) is not null);
         var run = DeliveredRun(boxDb, asked);
         ForgetDelivery(boxDb, asked);
-        await Until(() => DeliveredRun(boxDb, asked) == run);
+        await WrittenAsync(boxDb, () => DeliveredRun(boxDb, asked) == run);
         await Assert.ThrowsAsync<TimeoutException>(() => desktop.NextMessageAsync().WaitAsync(TimeSpan.FromSeconds(2)));
 
         // The parent's answer goes back to the box.
@@ -312,8 +322,8 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await box.StartAsync(acpSessionId: "acp-helper");
         await box.ReplyAsync(await box.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
         await desktop.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
-        await Until(async () => (await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{parent}/rows")).GetProperty("rows").EnumerateArray()
-            .Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
+        await RowAsync(_desktop!, DesktopToken, parent, row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
         await desktop.CloseAsync();
 
         // As if the helper sent it and ended before the desktop looked: no helper of the parent's is at work on the box now.
@@ -342,18 +352,16 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         var helperPrompt = await box.ReadAsync("session/prompt");
 
         // The row's Stop: refused until the helper's run has been copied here, then it reaches the box.
-        await Until(async () => (await http.PostAsync($"/sessions/{parent}/tasks/{helperId}/stop", null)).StatusCode == HttpStatusCode.OK);
+        await RowAsync(_desktop!, DesktopToken, helperId, row => row.GetProperty("kind").GetString() == "turn"
+            && row.GetProperty("payload").GetProperty("state").GetString() == "started");
+        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync($"/sessions/{parent}/tasks/{helperId}/stop", null)).StatusCode);
         var cancel = await box.ReadAsync("session/cancel");
         Assert.Equal("acp-helper", cancel.GetProperty("params").GetProperty("sessionId").GetString());
         await box.ReplyAsync(helperPrompt, """{"stopReason":"cancelled"}""");
 
-        await Until(async () =>
-        {
-            var rows = (await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{parent}/rows")).GetProperty("rows").EnumerateArray()
-                .Where(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}").ToList();
-            return rows.Count > 0 && rows[^1].GetProperty("payload") is var row
-                && row.GetProperty("state").GetString() == "idle" && row.TryGetProperty("stopReason", out var reason) && reason.GetString() == "cancelled";
-        });
+        await RowAsync(_desktop!, DesktopToken, parent, row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
+            && row.GetProperty("payload") is var helper && helper.GetProperty("state").GetString() == "idle"
+            && helper.TryGetProperty("stopReason", out var reason) && reason.GetString() == "cancelled");
     }
 
     [Fact]
@@ -476,13 +484,26 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         command.ExecuteNonQuery();
     }
 
-    private static Task Until(Func<bool> condition, TimeSpan? limit = null) => Until(() => Task.FromResult(condition()), limit);
-
-    private static async Task Until(Func<Task<bool>> condition, TimeSpan? limit = null)
+    // The first of the session's rows, from after the seq given, that matches: read on a live socket, each as it's stored.
+    private static async Task<JsonElement> RowAsync(DesktopBackend backend, string token, string sessionId, Func<JsonElement, bool> match, long after = 0)
     {
-        using var deadline = new CancellationTokenSource(limit ?? TimeSpan.FromSeconds(10));
-        while (!await condition())
-            await Task.Delay(50, deadline.Token);
+        using var socket = await OpenLiveAsync(backend, token, sessionId, after);
+        while (true)
+        {
+            var row = (await ApiTests.ReadRowsAsync(socket, 1))[0];
+            if (match(row))
+                return row;
+        }
+    }
+
+    // Done once the database shows what's asked, looked at again each time its write-ahead log is written.
+    private static async Task WrittenAsync(string database, Func<bool> shows)
+    {
+        using var watcher = new FileSystemWatcher(Path.GetDirectoryName(database)!, Path.GetFileName(database) + "-wal") { EnableRaisingEvents = true };
+        using var written = new SemaphoreSlim(0);
+        watcher.Changed += (_, _) => written.Release();
+        while (!shows())
+            Assert.True(await written.WaitAsync(Wait), "the database never showed it");
     }
 
     private async Task RunTurnOnBoxAsync()

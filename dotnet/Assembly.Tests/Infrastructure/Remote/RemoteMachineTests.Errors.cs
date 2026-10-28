@@ -50,7 +50,7 @@ public sealed partial class RemoteMachineTests
         Assert.Contains("answered 500", await ToolErrorAsync(desktop, parentToken, "send_message", new { sessionId = "s1", text = "Which file?" }));
 
         // s1 is a helper on the remote, so the outbox looks there, and logs the 500 instead of dying.
-        await Until(() => _log.ToString().Contains($"{Box} outbox: {Box} answered 500: outbox down"), TimeSpan.FromSeconds(20));
+        await _log.WrittenAsync($"{Box} outbox: {Box} answered 500: outbox down");
     }
 
     [Fact]
@@ -75,6 +75,6 @@ public sealed partial class RemoteMachineTests
         await using var desktop = await DesktopOnAsync(remote, home);
         await GetJsonAsync(desktop, DesktopToken, "/sessions/s1/rows");
 
-        await Until(() => _log.ToString().Contains($"remote session s1: {Box} answered 500"));
+        await _log.WrittenAsync($"remote session s1: {Box} answered 500");
     }
 }

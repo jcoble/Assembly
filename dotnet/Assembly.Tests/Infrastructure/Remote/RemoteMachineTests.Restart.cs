@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Assembly.Tests.Features.Chat.Sessions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -27,7 +29,7 @@ public sealed partial class RemoteMachineTests
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
-        await Until(async () => await HelperStateAsync(parent, helperId) == "running");
+        await HelperShowsAsync(parent, helperId, "running");
 
         // The desktop stops as if before it copied any of the helper's rows, and the helper finishes on the box meanwhile.
         await _desktop!.DisposeAsync();
@@ -35,7 +37,7 @@ public sealed partial class RemoteMachineTests
         await box.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         await StartDesktopAsync();
 
-        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        await HelperShowsAsync(parent, helperId, "idle");
     }
 
     [Fact]
@@ -48,7 +50,7 @@ public sealed partial class RemoteMachineTests
         ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
         await StartDesktopAsync();
 
-        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        await HelperShowsAsync(parent, helperId, "idle");
     }
 
     [Fact]
@@ -56,6 +58,7 @@ public sealed partial class RemoteMachineTests
     {
         var (parent, helperId, box) = await RemoteHelperIdleAsync();
         var before = (await RowsAsync(_desktop!, DesktopToken, parent)).Max(row => row.GetProperty("seq").GetInt64());
+        var helperBefore = (await RowsAsync(_box, BoxToken, helperId)).Max(row => row.GetProperty("seq").GetInt64());
 
         // The desktop stops as if just after send_message showed the helper running, before it copied the box's new turn.
         await _desktop!.DisposeAsync();
@@ -67,12 +70,12 @@ public sealed partial class RemoteMachineTests
         var secondPrompt = await box.ReadAsync("session/prompt");
         await StartDesktopAsync();
 
-        await Until(async () => (await RowsAsync(_desktop!, DesktopToken, helperId)).LastOrDefault(row => row.GetProperty("kind").GetString() == "turn")
-            is { } turn && turn.GetProperty("payload").GetProperty("state").GetString() == "started");
+        var turn = await RowAsync(_desktop!, DesktopToken, helperId, row => row.GetProperty("kind").GetString() == "turn", after: helperBefore);
+        Assert.Equal("started", turn.GetProperty("payload").GetProperty("state").GetString());
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
 
         await box.ReplyAsync(secondPrompt, """{"stopReason":"end_turn"}""");
-        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        await HelperShowsAsync(parent, helperId, "idle");
         Assert.Single(await RowsAsync(_desktop!, DesktopToken, parent), row => row.GetProperty("seq").GetInt64() > before
             && row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
     }
@@ -88,7 +91,7 @@ public sealed partial class RemoteMachineTests
         _desktop = await DesktopOnAsync(down, _desktopHome);
 
         // The follower gives up; only Resume or the stop button ends the row.
-        await Until(() => _log.ToString().Contains($"remote session {helperId}: {Box} answered 500"));
+        await _log.WrittenAsync($"remote session {helperId}: {Box} answered 500");
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
     }
 
@@ -123,7 +126,7 @@ public sealed partial class RemoteMachineTests
         });
         _desktop = await DesktopOnAsync(flaky, _desktopHome);
 
-        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        await HelperShowsAsync(parent, helperId, "idle");
         Assert.True(links >= 2);
     }
 
@@ -134,24 +137,25 @@ public sealed partial class RemoteMachineTests
 
         await _desktop!.DisposeAsync();
         ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
-        // Every /live opens and closes at once, so the follower never settles.
-        var links = 0;
+        // Every /live opens and closes at once, so the follower never settles. Each link's time is noted as it opens.
+        var links = Channel.CreateUnbounded<long>();
         await using var closing = await StubAsync(app =>
         {
             app.UseWebSockets();
             app.Map("/live", async (HttpContext context) =>
             {
-                Interlocked.Increment(ref links);
+                links.Writer.TryWrite(Stopwatch.GetTimestamp());
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
                 await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted);
             });
         });
         _desktop = await DesktopOnAsync(closing, _desktopHome);
 
-        // Backoff of 1 s, then 2 s: connects at about 0, 1 and 3 s.
-        await Until(() => Volatile.Read(ref links) >= 1);
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
-        Assert.InRange(Volatile.Read(ref links), 1, 3);
+        // Backoff of 1 s, then 2 s: connects at about 0, 1 and 3 s; at once each time would be three in no time.
+        var first = await NextLinkAsync(links);
+        await NextLinkAsync(links);
+        var third = await NextLinkAsync(links);
+        Assert.True(Stopwatch.GetElapsedTime(first, third) >= TimeSpan.FromSeconds(2.5), $"third connect after {Stopwatch.GetElapsedTime(first, third)}");
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
     }
 
@@ -162,14 +166,15 @@ public sealed partial class RemoteMachineTests
 
         await _desktop!.DisposeAsync();
         ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
-        // Every /live sends the next row and then closes: a healthy link, so the backoff stays at 1 s.
-        var links = 0;
+        // Every /live sends the next row and then closes: a healthy link, so the backoff stays at 1 s. Each link's time
+        // is noted as it opens.
+        var links = Channel.CreateUnbounded<long>();
         await using var progressing = await StubAsync(app =>
         {
             app.UseWebSockets();
             app.Map("/live", async (HttpContext context) =>
             {
-                Interlocked.Increment(ref links);
+                links.Writer.TryWrite(Stopwatch.GetTimestamp());
                 var after = long.Parse(context.Request.Query["after"]!, CultureInfo.InvariantCulture);
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
                 var row = $$$"""{"type":"row","row":{"sessionId":"{{{helperId}}}","seq":{{{after + 1}}},"runId":null,"itemId":null,"kind":"text","payload":{"text":"x"},"createdAt":1,"prevSeq":{{{after}}}}}""";
@@ -179,10 +184,12 @@ public sealed partial class RemoteMachineTests
         });
         _desktop = await DesktopOnAsync(progressing, _desktopHome);
 
-        // Connects at about 0, 1, 2 ... 6 s; doubling would give 0, 1 and 3.
-        await Until(() => Volatile.Read(ref links) >= 1);
-        await Task.Delay(TimeSpan.FromSeconds(6.5));
-        Assert.True(Volatile.Read(ref links) >= 5, $"{links} connects");
+        // Connects at about 0, 1, 2, 3 and 4 s; doubling would give 0, 1, 3, 7 and 15.
+        var first = await NextLinkAsync(links);
+        for (var link = 0; link < 3; link++)
+            await NextLinkAsync(links);
+        var fifth = await NextLinkAsync(links);
+        Assert.True(Stopwatch.GetElapsedTime(first, fifth) <= TimeSpan.FromSeconds(6.5), $"fifth connect after {Stopwatch.GetElapsedTime(first, fifth)}");
     }
 
     [Fact]
@@ -196,7 +203,7 @@ public sealed partial class RemoteMachineTests
         // Someone opens the helper's session before its follower settles; it stays open.
         using var watching = await OpenLiveAsync(_desktop!, DesktopToken, helperId, 0);
 
-        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        await HelperShowsAsync(parent, helperId, "idle");
         Assert.Equal(WebSocketState.Open, watching.State);
     }
 
@@ -215,11 +222,18 @@ public sealed partial class RemoteMachineTests
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
-        await Until(async () => await HelperStateAsync(parent, helperId) == "running");
+        await HelperShowsAsync(parent, helperId, "running");
         await box.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
-        await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
+        await HelperShowsAsync(parent, helperId, "idle");
         return (parent, helperId, box);
     }
+
+    // Done once the parent's row for the helper here shows the state.
+    private Task HelperShowsAsync(string parent, string helperId, string state) =>
+        RowAsync(_desktop!, DesktopToken, parent, row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
+            && row.GetProperty("payload").GetProperty("state").GetString() == state);
+
+    private static Task<long> NextLinkAsync(Channel<long> links) => links.Reader.ReadAsync().AsTask().WaitAsync(Wait);
 
     private async Task<string?> HelperStateAsync(string parent, string helperId) =>
         (await RowsAsync(_desktop!, DesktopToken, parent)).LastOrDefault(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}") is { } row
