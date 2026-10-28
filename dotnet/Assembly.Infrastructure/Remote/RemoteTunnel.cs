@@ -22,6 +22,8 @@ public sealed class RemoteTunnel : IAsyncDisposable
     private readonly CancellationTokenSource _stopping = new();
     private readonly Task _supervising;
     private int _pid;
+    // The wait before ssh starts again, while there is one: TryNow cuts it short.
+    private CancellationTokenSource? _waiting;
 
     public RemoteTunnel(string file, IReadOnlyList<string> args, TextWriter log)
     {
@@ -158,15 +160,40 @@ public sealed class RemoteTunnel : IAsyncDisposable
             Exited?.Invoke();
             await output;
             _log.WriteLine($"tunnel: ssh exited ({process.ExitCode}: {(await errors).Trim()}); again in {backoff.TotalSeconds:0} s");
-            try
+            using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(_stopping.Token))
             {
-                await Task.Delay(backoff, _stopping.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
+                Volatile.Write(ref _waiting, waiting);
+                try
+                {
+                    await Task.Delay(backoff, waiting.Token);
+                }
+                catch (OperationCanceledException) when (!_stopping.IsCancellationRequested)
+                {
+                    // TryNow: start again now.
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                finally
+                {
+                    Volatile.Write(ref _waiting, null);
+                }
             }
             backoff = TimeSpan.FromTicks(Math.Min(backoff.Ticks * 2, MaxBackoff.Ticks));
+        }
+    }
+
+    /// <summary>Starts ssh again now if it's waiting to (Connect); nothing while it runs.</summary>
+    public void TryNow()
+    {
+        try
+        {
+            Volatile.Read(ref _waiting)?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The wait ended as this read it.
         }
     }
 
