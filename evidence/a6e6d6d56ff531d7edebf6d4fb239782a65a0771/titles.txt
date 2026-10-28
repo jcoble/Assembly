@@ -1,0 +1,26 @@
+TI1: the utility model's real runs, and helper titles on the lane host (agent-workbox, 2026-10-28)
+
+1. The exact CLI commands, once each, from /tmp, with a short prompt on stdin (the brief's wrapper and a two-line
+   conversation about rail titles):
+
+   claude -p --safe-mode --no-session-persistence --tools "" --model claude-haiku-4-5 --output-format json
+     (ANTHROPIC_API_KEY unset; /home/blackcolours/.local/bin/claude)
+     exit 0; .result: Rail Show Session Titles
+
+   codex exec --sandbox read-only --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --model gpt-5.6-luna -
+     (OPENAI_API_KEY and CODEX_API_KEY unset; /home/blackcolours/.local/share/pnpm/bin/codex)
+     exit 0; stdout: Show Session Titles in Rail
+
+2. The four-way check's sessions on this commit (a6e6d6d), read afterwards with GET /sessions/{id} from the lane's
+   desktop backend (127.0.0.1:18807, base lane only). No utilityModel preference is saved, so the backend found
+   claude by its --version.
+
+   agent   machine        title                                                           titleSource
+   claude  local          Hostname command with verification check                        helper
+   claude  workbox-test   Hostname command output                                         prompt
+   codex   local          Hostname command execution test                                 helper
+   codex   workbox-test   Run the shell command hostname, then reply with only its ou…    prompt
+
+   The two local sessions carry the utility model's title, with source helper. The two on workbox-test still show
+   their prompt titles here. That's the known limit in the PR: the helper title is set on the remote, and the desktop
+   copies it after the session's next turn ends, until C2 relays the remote's sessions topic.
