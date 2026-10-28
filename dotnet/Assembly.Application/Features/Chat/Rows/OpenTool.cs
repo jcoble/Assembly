@@ -46,7 +46,7 @@ internal sealed class OpenTool(string itemId)
         var name = _fields.Name ?? _fields.Title ?? _fields.Kind ?? "Tool";
         var summary = ToolSummary.Of(_fields.Input) ?? _fields.Title;
         var line = new ToolPayload(name, state, summary == name ? null : summary, path, diff?.Added, diff?.Removed,
-            HasDetail: input is not null || output is not null || diff is not null, _fields.Kind);
+            HasDetail: input is not null || output is not null || diff is not null, _fields.Kind, diff is { Files.Count: > 1 } ? diff.Files : null);
 
         var lineJson = JsonSerializer.Serialize(line, RowJsonContext.Rows.ToolPayload);
         var changedLine = lineJson == _lastLine ? null : line;
