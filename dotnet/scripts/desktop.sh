@@ -7,6 +7,8 @@
 #                                        makes the DATA/fixtures/notes-repo test repo if it's missing, then starts the
 #                                        backend in the background; its log is DATA/mac/backend.log
 #   dotnet/scripts/desktop.sh stop           stops it, by the pid in DATA/mac/backend.pid
+#   dotnet/scripts/desktop.sh serve --remote <ssh alias>   starts it with that box as its remote; without the flag the
+#                                        remote is REMOTE from .lane, and with neither there is none
 #   AOT=1 dotnet/scripts/desktop.sh serve    the same, from a Native AOT build
 #   dotnet/scripts/desktop.sh kill-adapter   the lost-run check: SIGKILLs the backend's adapter, found as its child
 #                                        process by pid, never by name
@@ -21,7 +23,8 @@ pidfile=$home/backend.pid
 running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
 
 case "$mode" in
-  serve) ;;
+  serve)
+    if [ "${2:-}" = --remote ]; then REMOTE=${3:?--remote needs an ssh alias}; fi ;;
   stop)
     running || { echo "the backend isn't running" >&2; exit 1; }
     pid=$(cat "$pidfile")
@@ -69,7 +72,9 @@ else
   dotnet publish -v q --nologo -c Release -o "$bin" dotnet/Assembly.Desktop
 fi
 mkdir -p "$home"
-nohup "$bin/Assembly.Desktop" serve --port "$DESKTOP_PORT" --home "$home" --token-file "$TOKEN_FILE" >> "$home/backend.log" 2>&1 &
+remote=()
+[ -z "$REMOTE" ] || remote=(--remote "$REMOTE" --remote-port "$BOX_PORT" --remote-token-file "$BOX_TOKEN_FILE")
+nohup "$bin/Assembly.Desktop" serve --port "$DESKTOP_PORT" --home "$home" --token-file "$TOKEN_FILE" ${remote[@]+"${remote[@]}"} >> "$home/backend.log" 2>&1 &
 echo $! > "$pidfile"
 for _ in $(seq 50); do nc -z 127.0.0.1 "$DESKTOP_PORT" >/dev/null 2>&1 && break; sleep 0.2; done
 nc -z 127.0.0.1 "$DESKTOP_PORT" >/dev/null 2>&1 || { echo "the backend didn't open $DESKTOP_PORT; see $home/backend.log" >&2; tail -5 "$home/backend.log" >&2; exit 1; }
