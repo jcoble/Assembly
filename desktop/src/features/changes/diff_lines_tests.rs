@@ -57,6 +57,13 @@ fn a_rename_and_a_new_file_keep_git_s_lines_that_say_so() {
         line(Kind::Note, None, None, "new file mode 100644")
     );
     assert_eq!(added[2], line(Kind::Added, None, Some(1), "hi"));
+    assert_eq!(
+        lines_of("diff --git a/x b/x\nold mode 100644\nnew mode 100755\n"),
+        vec![
+            line(Kind::Note, None, None, "old mode 100644"),
+            line(Kind::Note, None, None, "new mode 100755"),
+        ]
+    );
 }
 
 // Pins: scm#15

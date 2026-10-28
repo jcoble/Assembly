@@ -45,7 +45,8 @@ some, whichever list the file was picked from. A renamed file's staged changes s
 file shows every line as added.
 scm#15 Each line shows its old and new line numbers, added lines in green and removed ones in red. Each run of
 changes starts with git's own `@@` line.
-scm#16 A binary file says there's no line-by-line comparison, and a file with no changes says so. A diff over 1 MiB
-is cut there and says it was cut. A conflicted file shows git's combined diff as it prints it.
+scm#16 A binary file says there's no line-by-line comparison, even when its other part has text, and a file with no
+changes says so. A diff too long to send whole is cut and says it was cut. A conflicted file shows git's combined diff
+as it prints it.
 scm#17 The diff is read when the file is picked and from the tab's Refresh button. Picking another file stops a read
 still on its way. Reading changes nothing on disk, and a path outside the session's folder is refused.

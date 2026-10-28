@@ -79,8 +79,12 @@ impl ChangesPane {
                 path: intent.path.clone(),
                 original_path: intent.original_path.clone(),
             };
-            // A click runs this while its window is being updated, so the window is updated once that's done.
-            if let Some(window) = cx.active_window() {
+            // A click runs this while its window is being updated, so the window is updated once that's done. A display
+            // with no window manager has no active window, so the app's one window stands in.
+            if let Some(window) = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+            {
                 cx.defer(move |cx| {
                     _ = window.update(cx, |_, window, cx| Self::open(picked, window, cx))
                 });
@@ -120,6 +124,8 @@ impl ChangesPane {
     fn show(&mut self, picked: Picked, cx: &mut Context<Self>) {
         self.picked = Some(picked);
         self.shown = Shown::Reading;
+        // Another file starts at its top.
+        self.list = UniformListScrollHandle::new();
         self.read(cx);
     }
 
@@ -188,6 +194,7 @@ impl ChangesPane {
         };
         h_flex()
             .h(LINE)
+            .min_w_full()
             .when_some(fill, |row, fill| row.bg(fill))
             .child(number(line.old))
             .child(number(line.new))
@@ -290,30 +297,33 @@ impl Render for ChangesPane {
             _ if self.picked.is_none() => pane,
             Shown::Reading => pane.child(note("Reading the diff…".into()).text_color(muted)),
             Shown::Failed(message) => pane.child(note(message.clone()).text_color(danger)),
-            Shown::Read { diff, .. } if diff.message().is_some() => {
-                pane.child(note(diff.message().unwrap_or_default().into()).text_color(muted))
-            }
             Shown::Read { diff, rows } => pane
-                .child(
-                    uniform_list(
-                        "changes-lines",
-                        rows.len(),
-                        cx.processor(move |pane, range: std::ops::Range<usize>, _, cx| {
-                            let Shown::Read { rows, .. } = &pane.shown else {
-                                return Vec::new();
-                            };
-                            range.map(|ix| ChangesPane::row(&rows[ix], cx)).collect()
-                        }),
+                .when(!rows.is_empty(), |pane| {
+                    pane.child(
+                        uniform_list(
+                            "changes-lines",
+                            rows.len(),
+                            cx.processor(move |pane, range: std::ops::Range<usize>, _, cx| {
+                                let Shown::Read { rows, .. } = &pane.shown else {
+                                    return Vec::new();
+                                };
+                                range.map(|ix| ChangesPane::row(&rows[ix], cx)).collect()
+                            }),
+                        )
+                        .track_scroll(&self.list)
+                        .with_horizontal_sizing_behavior(
+                            ListHorizontalSizingBehavior::Unconstrained,
+                        )
+                        .flex_1()
+                        .font_family(mono)
+                        .text_size(TEXT),
                     )
-                    .track_scroll(&self.list)
-                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                    .flex_1()
-                    .font_family(mono)
-                    .text_size(TEXT),
-                )
-                .when_some(diff.cut_line(), |pane, cut| {
-                    pane.child(note(cut.into()).text_color(muted))
-                }),
+                })
+                .children(
+                    diff.notes(rows)
+                        .into_iter()
+                        .map(|text| note(text.into()).text_color(muted)),
+                ),
         }
     }
 }

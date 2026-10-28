@@ -1,6 +1,6 @@
 //! `FileDiff` is one changed file's diff as `git/diff` answers it, with what the Changes tab makes of it: its rows,
-//! the staged part and the working tree part each under its own label when both have changes (scm#14), and the
-//! messages for a binary file, no changes and a cut diff (scm#16).
+//! the staged part and the working tree part each under its own label when both have lines to show (scm#14), and the
+//! notes for a binary file, no changes and a cut diff (scm#16).
 
 use serde::Deserialize;
 
@@ -24,33 +24,34 @@ pub enum Row {
 
 impl FileDiff {
     pub fn rows(&self) -> Vec<Row> {
-        let both = !self.staged.is_empty() && !self.unstaged.is_empty();
+        let parts: Vec<_> = [("Staged", &self.staged), ("Working tree", &self.unstaged)]
+            .into_iter()
+            .map(|(label, text)| (label, lines_of(text)))
+            .filter(|(_, lines)| !lines.is_empty())
+            .collect();
+        let both = parts.len() == 2;
         let mut rows = Vec::new();
-        for (label, text) in [("Staged", &self.staged), ("Working tree", &self.unstaged)] {
-            if text.is_empty() {
-                continue;
-            }
+        for (label, lines) in parts {
             if both {
                 rows.push(Row::Label(label));
             }
-            rows.extend(lines_of(text).into_iter().map(Row::Line));
+            rows.extend(lines.into_iter().map(Row::Line));
         }
         rows
     }
 
-    /// What the tab says in place of the lines, when there are none to show.
-    pub fn message(&self) -> Option<&'static str> {
+    /// What the tab says under its rows, or in their place when there are none.
+    pub fn notes(&self, rows: &[Row]) -> Vec<&'static str> {
+        let mut notes = Vec::new();
         if self.binary {
-            Some("Binary file, so there's no line-by-line comparison.")
-        } else if self.staged.is_empty() && self.unstaged.is_empty() {
-            Some("No changes.")
-        } else {
-            None
+            notes.push("Binary file, so there's no line-by-line comparison.");
+        } else if rows.is_empty() {
+            notes.push("No changes.");
         }
-    }
-
-    pub fn cut_line(&self) -> Option<&'static str> {
-        self.truncated.then_some("This diff is cut at 1 MiB.")
+        if self.truncated {
+            notes.push("This diff is too long to show in full; the rest is cut.");
+        }
+        notes
     }
 }
 

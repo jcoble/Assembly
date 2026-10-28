@@ -24,7 +24,9 @@ pub struct DiffLine {
 }
 
 /// The header lines worth keeping: what happened to the file.
-const NOTES: [&str; 6] = [
+const NOTES: [&str; 8] = [
+    "old mode",
+    "new mode",
     "rename from",
     "rename to",
     "copy from",
