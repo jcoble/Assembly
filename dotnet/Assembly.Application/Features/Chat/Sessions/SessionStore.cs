@@ -25,7 +25,7 @@ public sealed class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq";
+    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, title_source";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -41,6 +41,9 @@ public sealed class SessionStore
 
     // And one made before sessions were marked read starts with each read up to its last row, so none is unread.
     private const string HasReadSeq = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'read_seq';";
+
+    // And one made before titles had a source: each title it has came from its session's first message.
+    private const string HasTitleSource = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'title_source';";
 
     private const string HasRows = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'rows';";
 
@@ -87,6 +90,8 @@ public sealed class SessionStore
                 if (!Missing(HasRows))
                     scope.Execute("UPDATE session_info SET read_seq = COALESCE((SELECT MAX(seq) FROM rows WHERE rows.session_id = session_info.session_id), 0);");
             }
+            if (Missing(HasTitleSource))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN title_source TEXT;");
             if (Missing(HasMessageError))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
             if (Missing(HasMessageAnswer))
@@ -246,8 +251,10 @@ public sealed class SessionStore
         return sessions.Count == limit ? new SessionPage(sessions, sessions[^1].UpdatedAt, sessions[^1].SessionId) : new SessionPage(sessions, null, null);
     }
 
+    /// <summary>Sets the title and where it came from: <c>prompt</c> (the first message or the agent), <c>helper</c> (the utility model) or <c>user</c>.</summary>
     public void SetTitle(string sessionId, string title, string source) =>
-        Change(sessionId, "UPDATE session_info SET title = $title WHERE session_id = $id;", ("$id", sessionId), ("$title", title));
+        Change(sessionId, "UPDATE session_info SET title = $title, title_source = $source WHERE session_id = $id;",
+            ("$id", sessionId), ("$title", title), ("$source", source));
 
     public void SetAcpSession(string sessionId, string acpSessionId) =>
         Change(sessionId, "UPDATE session_info SET acp_session_id = $session WHERE session_id = $id;", ("$id", sessionId), ("$session", acpSessionId));
@@ -368,7 +375,7 @@ public sealed class SessionStore
         new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4), row.Long(5),
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
-            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10));
+            row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10), row.IsNull(11) ? null : row.Text(11));
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

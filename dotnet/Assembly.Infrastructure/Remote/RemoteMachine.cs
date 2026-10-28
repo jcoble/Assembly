@@ -221,15 +221,15 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status.Reachable(_name);
     }
 
-    // A finished turn may have named the session on the remote.
+    // A finished turn may have named the session on the remote, its utility model too. A title given here is kept.
     private async Task RefreshAsync(string sessionId)
     {
         _turnEnded(sessionId);
         try
         {
             var session = await JsonAsync(HttpMethod.Get, $"/sessions/{sessionId}", null, CancellationToken.None);
-            if (Text(session, "title") is { } title && _sessionStore.Get(sessionId) is { Helper: false })
-                _sessionStore.SetTitle(sessionId, title, "prompt");
+            if (Text(session, "title") is { } title && _sessionStore.Get(sessionId) is { Helper: false, TitleSource: not "user" })
+                _sessionStore.SetTitle(sessionId, title, Text(session, "titleSource") ?? "prompt");
             _sessionStore.Touch(sessionId);
         }
         catch (Exception error) when (error is MachineUnreachable or CallFailed)
