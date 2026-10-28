@@ -1,7 +1,7 @@
+using System.Text;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Application.Features.Chat.Rows;
-using Assembly.Domain.Rows;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -30,9 +30,12 @@ public sealed class SessionTitler(SessionStore sessionStore, RowStore rows, IUti
         await Task.Yield();
         if (!FromPrompt(sessionId))
             return;
-        var reply = string.Concat(rows.RunRows(sessionId, runId).Where(row => row.Kind == RowKind.Message)
-            .Select(row => PlainText.Of(row.Payload.GetProperty("blocks"))));
-        var answer = await model.CompleteAsync(Prompt($"{Cut(prompt, InputLength)}\n\n{Cut(reply, InputLength)}"), cancellationToken);
+        // The run's message rows one at a time, off the live hub's lock, until there's enough; its tool rows aren't loaded.
+        var reply = new StringBuilder();
+        for (var row = rows.RunMessageAfter(sessionId, runId, 0); row is not null && reply.Length < InputLength;
+             row = rows.RunMessageAfter(sessionId, runId, row.Seq))
+            reply.Append(PlainText.Of(row.Payload.GetProperty("blocks")));
+        var answer = await model.CompleteAsync(Prompt($"{Cut(prompt, InputLength)}\n\n{Cut(reply.ToString(), InputLength)}"), cancellationToken);
         if (Clean(answer) is { } title && FromPrompt(sessionId))
             sessionStore.SetTitle(sessionId, title, "helper");
     }

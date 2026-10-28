@@ -222,7 +222,9 @@ public sealed class RowStore
             reader => ReadRow(reader), new SqlArg("$session", sessionId), new SqlArg("$run", runId));
 
     /// <summary>The run's first message row after seq <paramref name="after"/>, or null when there's none.</summary>
-    public StoredRow? RunMessageAfter(string sessionId, string runId, long after) => null;
+    public StoredRow? RunMessageAfter(string sessionId, string runId, long after) =>
+        Query($"SELECT {Columns} FROM rows WHERE session_id = $session AND run_id = $run AND kind = 'message' AND seq > $after ORDER BY seq LIMIT 1;",
+            reader => ReadRow(reader), new SqlArg("$session", sessionId), new SqlArg("$run", runId), new SqlArg("$after", after)).FirstOrDefault();
 
     public StoredToolCall? ToolCall(string sessionId, string itemId) =>
         Query(
