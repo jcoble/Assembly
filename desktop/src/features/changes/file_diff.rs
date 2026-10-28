@@ -55,6 +55,17 @@ impl FileDiff {
     }
 }
 
+/// The row the list measures for its width, so a long line can be scrolled to its end.
+pub fn widest(rows: &[Row]) -> usize {
+    let width = |row: &Row| match row {
+        Row::Label(label) => label.len(),
+        Row::Line(line) => line.text.len(),
+    };
+    (0..rows.len())
+        .max_by_key(|&ix| width(&rows[ix]))
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 #[path = "file_diff_tests.rs"]
 mod tests;

@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::{FileDiff, Row};
+use super::{FileDiff, Row, widest};
 use crate::features::changes::diff_lines::Kind;
 
 fn diff(staged: &str, unstaged: &str, binary: bool, truncated: bool) -> FileDiff {
@@ -57,4 +57,13 @@ fn binary_empty_and_cut_diffs_say_so() {
     );
     assert!(notes(diff("", EDIT, false, false)).is_empty());
     assert_eq!(notes(diff("", EDIT, false, true)), [CUT]);
+}
+
+// Pins: scm#15
+#[test]
+fn the_widest_row_is_the_one_with_the_longest_text() {
+    let long = format!("@@ -1 +1 @@\n-a\n+{}\n", "x".repeat(400));
+    let rows = diff("", &long, false, false).rows();
+    assert_eq!(widest(&rows), 2);
+    assert_eq!(widest(&[]), 0);
 }

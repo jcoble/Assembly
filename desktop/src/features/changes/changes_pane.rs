@@ -13,7 +13,7 @@ use gpui_kit::*;
 use serde_json::{Value, json};
 
 use super::diff_lines::Kind;
-use super::file_diff::{FileDiff, Row};
+use super::file_diff::{FileDiff, Row, widest};
 use crate::core::intents::open_diff::OpenDiff;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
@@ -39,7 +39,11 @@ struct Picked {
 
 enum Shown {
     Reading,
-    Read { diff: FileDiff, rows: Vec<Row> },
+    Read {
+        diff: FileDiff,
+        rows: Vec<Row>,
+        widest: usize,
+    },
     Failed(String),
 }
 
@@ -148,10 +152,14 @@ impl ChangesPane {
             let outcome = call.await;
             _ = pane.update(cx, |pane, cx| {
                 pane.shown = match outcome {
-                    Outcome::Ok(diff) => Shown::Read {
-                        rows: diff.rows(),
-                        diff,
-                    },
+                    Outcome::Ok(diff) => {
+                        let rows = diff.rows();
+                        Shown::Read {
+                            widest: widest(&rows),
+                            rows,
+                            diff,
+                        }
+                    }
                     Outcome::Failed(failure) => Shown::Failed(failure.message),
                     // A newer read drops this task before its answer comes, so an abort here is the socket closing.
                     Outcome::Aborted => Shown::Failed("The connection dropped.".into()),
@@ -192,9 +200,13 @@ impl ChangesPane {
             Kind::Run | Kind::Note => ("", Some(theme.muted_foreground), None),
             Kind::Same => (" ", None, None),
         };
+        // The font is set on the row, not only on the list, so measuring the widest row on its own counts the same
+        // characters at the same width.
         h_flex()
             .h(LINE)
             .min_w_full()
+            .font_family(theme.mono_font_family.clone())
+            .text_size(TEXT)
             .when_some(fill, |row, fill| row.bg(fill))
             .child(number(line.old))
             .child(number(line.new))
@@ -297,7 +309,7 @@ impl Render for ChangesPane {
             _ if self.picked.is_none() => pane,
             Shown::Reading => pane.child(note("Reading the diff…".into()).text_color(muted)),
             Shown::Failed(message) => pane.child(note(message.clone()).text_color(danger)),
-            Shown::Read { diff, rows } => pane
+            Shown::Read { diff, rows, widest } => pane
                 .when(!rows.is_empty(), |pane| {
                     pane.child(
                         uniform_list(
@@ -311,6 +323,7 @@ impl Render for ChangesPane {
                             }),
                         )
                         .track_scroll(&self.list)
+                        .with_width_from_item(Some(*widest))
                         .with_horizontal_sizing_behavior(
                             ListHorizontalSizingBehavior::Unconstrained,
                         )
