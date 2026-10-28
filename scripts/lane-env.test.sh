@@ -27,10 +27,15 @@ expect 1 "another branch with no .lane stops"
 printf 'LANE_NAME=x\nLANE_NUMBER=2\n' >"$repo/.lane"
 expect 0 "another branch with a .lane gets the lane's values" "18817 9817 assembly-dotnet-x $HOME/assembly-dotnet-x assembly-dotnet-x"
 for lane in 'LANE_NAME=\nLANE_NUMBER=2' 'LANE_NAME=x' 'LANE_NAME=x\nLANE_NUMBER=0' 'LANE_NAME=x\nLANE_NUMBER=10' 'LANE_NAME=x\nLANE_NUMBER=a' \
-  'LANE_NAME=x/../assembly-dotnet\nLANE_NUMBER=2' 'LANE_NAME=-x\nLANE_NUMBER=2'; do
+  'LANE_NAME=x/../assembly-dotnet\nLANE_NUMBER=2' 'LANE_NAME=-x\nLANE_NUMBER=2' 'LANE_NAME=x\nLANE_NUMBER=2\nREMOTE=a/b' 'LANE_NAME=x\nLANE_NUMBER=2\nREMOTE=-oProxyCommand' \
+  'LANE_NAME=x\nLANE_NUMBER=2\nREMOTE=Box'; do
   printf "$lane\n" >"$repo/.lane"
   expect 1 "a .lane with $(printf "$lane" | tr '\n' ' ') stops"
 done
+printf 'LANE_NAME=x\nLANE_NUMBER=2\nREMOTE=workbox-test\n' >"$repo/.lane"
+expect 0 "a .lane with a REMOTE of letters, digits and dashes passes"
+printf 'LANE_NAME=x\nLANE_NUMBER=2\nREMOTE=\n' >"$repo/.lane"
+expect 0 "a .lane with an empty REMOTE passes"
 rm "$repo/.lane"
 git -C "$repo" checkout -q --detach
 expect 1 "a detached checkout with no .lane stops"
