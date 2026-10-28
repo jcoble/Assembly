@@ -36,7 +36,9 @@ public sealed class CheckpointTests : IDisposable
         Notes(100);
 
         // The checkpoint copies the WAL into the main file, after the write, on its own connection.
-        Assert.True(SpinWait.SpinUntil(() => new FileInfo(_file.Path).Length > before, TimeSpan.FromSeconds(5)));
+        Assert.NotNull(_writer!.Running);
+        Settle();
+        Assert.True(new FileInfo(_file.Path).Length > before);
     }
 
     [Fact]

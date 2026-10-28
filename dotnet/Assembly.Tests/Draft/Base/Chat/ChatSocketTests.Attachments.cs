@@ -131,15 +131,26 @@ public sealed partial class ChatSocketTests
         // Frames are read in order, so once this drop of no upload answers, the chunks are queued.
         await CallAsync(socket, 20, "attachments", "drop", """{"upload":"nope"}""");
         Assert.Equal([20], (await ReadAnswersAsync(socket, 1)).Keys);
+        // Each staging file the backend deletes from now on.
+        using var staging = new FileSystemWatcher(Staging) { EnableRaisingEvents = true };
+        var deleted = new SemaphoreSlim(0);
+        var uploadDeleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        staging.Deleted += (_, change) =>
+        {
+            if (change.Name == upload)
+                uploadDeleted.TrySetResult();
+            deleted.Release();
+        };
         socket.Abort();
         socket.Dispose();
         await _here.Cancelled.Task.WaitAsync(Wait);
 
         // Nothing marks the moment a close would drop it too early, so give that half a second to show. The held
         // commit's own file is there either way, so this watches the chunked upload's.
-        Assert.False(SpinWait.SpinUntil(() => !File.Exists(Path.Combine(Staging, upload)), TimeSpan.FromMilliseconds(500)));
+        await Assert.ThrowsAsync<TimeoutException>(() => uploadDeleted.Task.WaitAsync(TimeSpan.FromMilliseconds(500)));
         _box.Release();
-        Assert.True(SpinWait.SpinUntil(() => Directory.GetFiles(Staging).Length == 0, Wait));
+        while (Directory.GetFiles(Staging).Length > 0)
+            Assert.True(await deleted.WaitAsync(Wait), "the staging files were never deleted");
     }
 
     [Fact]

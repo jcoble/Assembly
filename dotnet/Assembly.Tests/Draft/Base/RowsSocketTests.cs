@@ -265,8 +265,8 @@ public sealed class RowsSocketTests : IAsyncLifetime
         _hub.Unwatched += session => unwatched.TrySetResult(session);
         var socket = await OpenAsync();
         await SendAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"s"}""");
-        for (var tries = 0; !_hub.HasSubscribers("s") && tries < 100; tries++)
-            await Task.Delay(20);
+        // The state is queued under the lock that registers the sub, so once it's read the sub is there.
+        Assert.StartsWith("""{"t":"state","sub":1""", await ReadAsync(socket));
         Assert.True(_hub.HasSubscribers("s"));
 
         socket.Abort();
@@ -289,9 +289,9 @@ public sealed class RowsSocketTests : IAsyncLifetime
 
         // The state's send holds, with the ten rows queued behind it, until the unsub has been read.
         socket.Receive("""{"t":"sub","id":1,"topic":"rows","key":"s","after":0}""");
-        await Until(() => socket.Sends >= 2);
+        await socket.Sends.ReachedAsync(2);
         socket.Receive("""{"t":"unsub","id":1}""");
-        await Until(() => socket.Receives >= 4);
+        await socket.Receives.ReachedAsync(4);
         socket.Release();
         socket.Receive("""{"t":"call","id":2,"feature":"nothing","method":"here","args":{}}""");
 
@@ -319,15 +319,6 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Assert.Equal(prevSeq, row.GetProperty("prevSeq").GetInt64());
     }
 
-    private static async Task Until(Func<bool> done)
-    {
-        for (var waited = TimeSpan.Zero; !done(); waited += TimeSpan.FromMilliseconds(10))
-        {
-            Assert.True(waited < Wait, "it didn't happen within 10 s");
-            await Task.Delay(10);
-        }
-    }
-
     // A resume doesn't call rows/page, so the sub itself starts the remote session's follower, as a page call does;
     // without it, rows the remote ran meanwhile would never be copied in.
     [Fact]
@@ -339,7 +330,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"rows","key":"{{session.SessionId}}","after":0}""");
         await ReadAsync(socket);
 
-        Assert.True(SpinWait.SpinUntil(() => _box.Asked.Contains($"watch {session.SessionId}"), Wait));
+        await _box.AskedAsync($"watch {session.SessionId}");
     }
 
     private Task<ClientWebSocket> OpenAsync() => ConnectAsync(_address);
@@ -381,11 +372,8 @@ public sealed class RowsSocketTests : IAsyncLifetime
         private readonly Channel<string> _in = Channel.CreateUnbounded<string>();
         private readonly Channel<string> _sent = Channel.CreateUnbounded<string>();
         private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _sends;
-        private int _receives;
-
-        public int Receives => Volatile.Read(ref _receives);
-        public int Sends => Volatile.Read(ref _sends);
+        public Count Receives { get; } = new();
+        public Count Sends { get; } = new();
         public override WebSocketCloseStatus? CloseStatus => null;
         public override string? CloseStatusDescription => null;
         public override WebSocketState State => WebSocketState.Open;
@@ -398,7 +386,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
 
         public override async Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
         {
-            Interlocked.Increment(ref _receives);
+            Receives.Add();
             if (!await _in.Reader.WaitToReadAsync(cancellationToken) || !_in.Reader.TryRead(out var text))
                 return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
             var count = Encoding.UTF8.GetBytes(text, buffer);
@@ -407,7 +395,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
 
         public override async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
         {
-            if (Interlocked.Increment(ref _sends) > 1)
+            if (Sends.Add() > 1)
                 await _released.Task;
             _sent.Writer.TryWrite(Encoding.UTF8.GetString(buffer));
         }

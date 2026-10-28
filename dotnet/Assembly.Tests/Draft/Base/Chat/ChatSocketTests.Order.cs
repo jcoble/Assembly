@@ -95,7 +95,8 @@ public sealed partial class ChatSocketTests
         await _here.Cancelled.Task.WaitAsync(Wait);
         _box.Release();
 
-        Assert.True(SpinWait.SpinUntil(() => { lock (_box.Asked) return _box.Asked.Count == 2; }, Wait));
+        await _box.AskedAsync($"send {session.SessionId} two");
+        Assert.Equal(2, _box.Asked.Count);
         Assert.Equal($"send {session.SessionId} two", _box.Asked[1]);
     }
 

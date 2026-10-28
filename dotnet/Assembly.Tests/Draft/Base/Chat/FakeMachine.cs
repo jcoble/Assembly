@@ -22,6 +22,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     /// <summary>Turns down a send, stop or answer, as a machine does when the turn or ask can't take it.</summary>
     public bool Refuses { get; set; }
     public List<string> Asked { get; } = [];
+    private readonly List<(string Text, TaskCompletionSource Seen)> _askWaits = [];
     public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Set when a held call reaches the machine.</summary>
@@ -96,12 +97,35 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken) =>
         Remote($"answer {askId} {answer.GetRawText()}", () => !Refuses, cancellationToken);
 
-    public void Watch(SessionInfo session) => Asked.Add($"watch {session.SessionId}");
+    public void Watch(SessionInfo session) => Ask($"watch {session.SessionId}");
+
+    /// <summary>Done once <paramref name="asked"/> is among <see cref="Asked"/>, now or later; fails after 10 s.</summary>
+    public Task AskedAsync(string asked)
+    {
+        var seen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (Asked)
+        {
+            if (Asked.Contains(asked))
+                seen.SetResult();
+            else
+                _askWaits.Add((asked, seen));
+        }
+        return seen.Task.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    private void Ask(string asked)
+    {
+        lock (Asked)
+        {
+            Asked.Add(asked);
+            foreach (var wait in _askWaits.Where(wait => wait.Text == asked))
+                wait.Seen.TrySetResult();
+        }
+    }
 
     private async Task<T> Remote<T>(string asked, Func<T> answer, CancellationToken cancellationToken)
     {
-        lock (Asked)
-            Asked.Add(asked);
+        Ask(asked);
         if (Down)
             throw new MachineUnreachable(name ?? "here", $"{name} is down");
         if (_held is { } held)
