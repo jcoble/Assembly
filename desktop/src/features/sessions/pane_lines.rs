@@ -7,7 +7,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 
 use super::group_header::GroupHeader;
-use super::list_entries::{changed_lines, list_entries, same_line, wants_older};
+use super::list_entries::{changed_lines, list_entries, same_line};
 use super::list_entry::ListEntry;
 use super::project_header::ProjectHeader;
 use super::session_row::{OnMark, SessionRow};
@@ -43,7 +43,8 @@ impl SessionsPane {
         cx.on_next_frame(window, |pane, _, cx| pane.page_if_near_end(cx));
     }
 
-    /// Loads the next older page while the end is in view, unless the last one failed (then only Retry asks again).
+    /// Loads the next page while the end is in view (the open sessions', then Settled's while it's open), unless the
+    /// last one failed (then only Retry asks again).
     fn page_if_near_end(&mut self, cx: &mut Context<Self>) {
         let Some(sessions) = self.sessions.clone() else {
             return;
@@ -52,9 +53,9 @@ impl SessionsPane {
             return;
         }
         let near = self.entries.len().saturating_sub(LOAD_OLDER_WITHIN);
-        let end_in_view = self.lines.item_is_below_viewport(near) == Some(false);
-        if wants_older(&self.entries, end_in_view) {
-            sessions.update(cx, |sessions, cx| sessions.load_older(cx));
+        if self.lines.item_is_below_viewport(near) == Some(false) {
+            let settled_open = self.settled_open;
+            sessions.update(cx, |sessions, cx| sessions.load_next(settled_open, cx));
         }
     }
 

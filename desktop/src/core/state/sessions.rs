@@ -1,10 +1,11 @@
-//! `Sessions` owns the sessions list: the `sessions` topic's newest 200, newest first (`updatedAt`, then id, as the
+//! `Sessions` owns the sessions list: the `sessions` topic's newest 200 open (unsettled) sessions, newest first (`updatedAt`, then id, as the
 //! backend orders them), each change upserted in place, and older pages from `sessions/page`. The page cursor is kept
 //! apart from the list: it starts at the oldest of the topic's first state and moves only with each page's
 //! `nextBefore`, so an item that changes without moving (a rename) can't skip the sessions past it. A reconnect's
 //! state that doesn't reach the newest held session (more than 200 changed meanwhile) replaces the list and starts
 //! the cursor again from its oldest. The backend keeps helper sessions off the topic and the pages. Each item that arrives or
-//! changes is emitted as a `SessionChange`, so the list can animate it.
+//! changes is emitted as a `SessionChange`, so the list can animate it. Settled, the archive, has pages of its own
+//! (`sessions_settled.rs`), loaded only once it's opened; every change, settled or not, still comes on the topic.
 
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -33,6 +34,10 @@ pub struct Sessions {
     loading_older: Option<Task<()>>,
     /// Why the last older page failed, until a page loads or a retry starts.
     older_error: Option<String>,
+    /// Where Settled's next page starts; `None` before its first or after its last (`settled_started` tells which).
+    settled_next: Option<(i64, String)>,
+    settled_started: bool,
+    loading_settled: Option<Task<()>>,
 }
 
 impl EventEmitter<SessionChange> for Sessions {}
@@ -75,6 +80,9 @@ impl Sessions {
             _feed: feed,
             loading_older: None,
             older_error: None,
+            settled_next: None,
+            settled_started: false,
+            loading_settled: None,
         }
     }
 
@@ -96,7 +104,7 @@ impl Sessions {
             return;
         }
         self.older_error = None;
-        let args = json!({"before": before, "beforeId": before_id, "limit": PAGE});
+        let args = json!({"before": before, "beforeId": before_id, "limit": PAGE, "group": "open"});
         let page = SocketClient::global(cx)
             .read(cx)
             .call::<SessionPage>(TOPIC, "page", args, None);
@@ -141,7 +149,7 @@ impl Sessions {
                     .into_iter()
                     .filter_map(|(_, item)| read(item))
                     .collect();
-                for change in add_state(
+                let (changes, gap) = add_state(
                     &mut self.items,
                     &mut self.older,
                     &mut self.older_error,
@@ -149,7 +157,16 @@ impl Sessions {
                     first,
                     state,
                     full,
-                ) {
+                );
+                // A gap took the settled sessions with the rest: Settled's pages start again.
+                if gap {
+                    (
+                        self.settled_next,
+                        self.settled_started,
+                        self.loading_settled,
+                    ) = (None, false, None);
+                }
+                for change in changes {
                     cx.emit(change);
                 }
             }
@@ -170,9 +187,10 @@ fn read(item: Value) -> Option<SessionItem> {
 }
 
 /// Adds the topic's state (`full` when it holds the topic's 200). The first sets where older pages start. A later
-/// one, after a reconnect, whose oldest is newer than the newest held session leaves a gap: the held list is
+/// one, after a reconnect, whose oldest is newer than the newest held open session leaves a gap: the held list is
 /// replaced and the pages start again from the state's oldest: an older page's error is cleared, and a page still
 /// loading is dropped, which cancels it, so it can't land in the new list. One that reaches the held list is merged.
+/// Also says whether there was a gap.
 fn add_state(
     items: &mut Vec<SessionItem>,
     older: &mut Option<(i64, String)>,
@@ -181,11 +199,13 @@ fn add_state(
     first: bool,
     state: Vec<SessionItem>,
     full: bool,
-) -> Vec<SessionChange> {
+) -> (Vec<SessionChange>, bool) {
     let key = |item: &SessionItem| (item.updated_at, item.session_id.clone());
     let oldest = state.iter().map(key).min();
+    // The state holds only open sessions, so only they show a gap: a settled one may be newer than all of them.
+    let newest_open = items.iter().find(|item| item.settled_at.is_none());
     let gap = !first
-        && matches!((&oldest, items.first()), (Some(oldest), Some(newest)) if *oldest > key(newest));
+        && matches!((&oldest, newest_open), (Some(oldest), Some(newest)) if *oldest > key(newest));
     if gap {
         items.clear();
     }
@@ -194,7 +214,8 @@ fn add_state(
         *older_error = None;
         *loading_older = None;
     }
-    state.into_iter().map(|item| upsert(items, item)).collect()
+    let changes = state.into_iter().map(|item| upsert(items, item)).collect();
+    (changes, gap)
 }
 
 /// Adds a page's sessions. One already held is skipped: the held copy came from the topic, whose changes are sent
@@ -225,6 +246,9 @@ fn upsert(items: &mut Vec<SessionItem>, item: SessionItem) -> SessionChange {
         SessionChange::Added(id)
     }
 }
+
+#[path = "sessions_settled.rs"]
+mod settled;
 
 #[cfg(test)]
 #[path = "sessions_load_tests.rs"]
@@ -258,6 +282,9 @@ mod tests {
             _feed: Task::ready(()),
             loading_older: None,
             older_error: None,
+            settled_next: None,
+            settled_started: false,
+            loading_settled: None,
         }
     }
 

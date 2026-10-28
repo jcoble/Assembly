@@ -1,6 +1,7 @@
 //! `list_entries` lays the loaded sessions out as the list draws them: Working, Done, then Settled, each with its
-//! projects A to Z and each project's sessions newest first. A group with no sessions is left out; a folded Settled
-//! keeps only its header. Replaces the old rail's `buildMyWorkGroups` (myWorkViewOptions.ts) with status and project
+//! projects A to Z and each project's sessions newest first. Working or Done with no sessions is left out; Settled's
+//! header is always there once anything is, since its sessions load only once it's opened, and folded it keeps only
+//! its header. Replaces the old rail's `buildMyWorkGroups` (myWorkViewOptions.ts) with status and project
 //! grouping both on, and without pinning, orchestrator or workflow sections.
 
 use std::collections::BTreeMap;
@@ -29,10 +30,13 @@ pub fn list_entries(items: &[SessionItem], settled_open: bool) -> Vec<ListEntry>
                     .push(item.session_id.clone());
             }
         }
+        let open = status != Status::Settled || settled_open;
         if projects.is_empty() {
+            if status == Status::Settled && !items.is_empty() {
+                entries.push(ListEntry::Group { status, open });
+            }
             continue;
         }
-        let open = status != Status::Settled || settled_open;
         entries.push(ListEntry::Group { status, open });
         if !open {
             continue;
@@ -73,12 +77,6 @@ pub fn same_line(
 ) -> Option<usize> {
     let line = old.get(at).filter(|_| changed.contains(&at))?;
     new.iter().position(|entry| entry == line)
-}
-
-/// Whether to load the next older page, given whether the list's end is in view or close to it. A list that ends in
-/// a folded Settled waits for it to open: older pages would only fill it unseen.
-pub fn wants_older(entries: &[ListEntry], end_in_view: bool) -> bool {
-    end_in_view && !matches!(entries.last(), Some(ListEntry::Group { open: false, .. }))
 }
 
 /// What a project's header calls it: "owner/repo" for a GitHub URL, else the folder's last name.

@@ -116,3 +116,105 @@ async fn a_gap_cancels_the_older_page_still_loading_and_its_page_never_lands(
         assert!(sessions.loading_older.is_none());
     });
 }
+
+fn item(id: &str, at: i64) -> Value {
+    json!({"sessionId": id, "agent": "claude", "repoUrl": "/r", "title": null, "machine": null,
+        "parentSessionId": null, "acpSessionId": null, "updatedAt": at, "settledAt": at, "summary": {}})
+}
+
+/// Three open sessions (fewer than 200, so nothing older), and Settled's pages: s1 with a cursor, then s2, the last.
+fn settled_backend(
+    pages: Arc<Mutex<Vec<Value>>>,
+    heard: impl Fn() + Send + 'static,
+) -> FakeBackend {
+    FakeBackend::start(move |frame| {
+        if let Some(replies) = hello(frame) {
+            return replies;
+        }
+        let id = frame["id"].clone();
+        let replies = match (frame["t"].as_str(), frame["method"].as_str()) {
+            (Some("sub"), _) => {
+                let items: Vec<Value> = ["a", "b", "c"]
+                    .iter()
+                    .map(|open| {
+                        json!({"key": open, "item": {"sessionId": open, "agent": "claude",
+                        "repoUrl": "/r", "title": null, "machine": null, "parentSessionId": null,
+                        "acpSessionId": null, "updatedAt": 900, "summary": {}}})
+                    })
+                    .collect();
+                vec![Reply::Frame(
+                    json!({"t": "state", "sub": id, "items": items}),
+                )]
+            }
+            (Some("call"), Some("page")) => {
+                let args = frame["args"].clone();
+                let page = match args.get("before") {
+                    None => {
+                        json!({"sessions": [item("s1", 50)], "nextBefore": 50, "nextBeforeId": "s1"})
+                    }
+                    Some(_) => {
+                        json!({"sessions": [item("s2", 40)], "nextBefore": null, "nextBeforeId": null})
+                    }
+                };
+                pages.lock().unwrap().push(args);
+                vec![Reply::Frame(
+                    json!({"t": "result", "id": id, "result": page}),
+                )]
+            }
+            _ => Vec::new(),
+        };
+        heard();
+        replies
+    })
+}
+
+// Pins: sessions-list#9
+#[gpui::test]
+async fn settled_loads_only_once_opened_a_page_at_a_time(cx: &mut TestAppContext) {
+    let pages = Arc::new(Mutex::new(Vec::new()));
+    let (changed, mut changes) = unbounded();
+    let tell = changed.clone();
+    let backend = settled_backend(pages.clone(), move || _ = tell.unbounded_send(()));
+    cx.executor().allow_parking();
+    let sessions = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let endpoint = Endpoint {
+            port: backend.port,
+            token: "secret".into(),
+        };
+        SocketClient::start(endpoint, cx);
+        cx.new(Sessions::new)
+    });
+    let tell = changed.clone();
+    let _heard = cx.update(|cx| cx.observe(&sessions, move |_, _| _ = tell.unbounded_send(())));
+    let held = |sessions: &gpui_kit::Entity<Sessions>, cx: &mut TestAppContext| {
+        sessions.read_with(cx, |sessions, _| sessions.items.len())
+    };
+    until("the first state", &mut changes, &changed, || {
+        held(&sessions, cx) == 3
+    })
+    .await;
+    // Folded, nothing more loads: the open sessions are all here.
+    sessions.update(cx, |sessions, cx| sessions.load_next(false, cx));
+    sessions.update(cx, |sessions, cx| sessions.load_next(true, cx));
+    until("Settled's first page", &mut changes, &changed, || {
+        held(&sessions, cx) == 4
+    })
+    .await;
+    sessions.update(cx, |sessions, cx| sessions.load_next(true, cx));
+    until("Settled's next page", &mut changes, &changed, || {
+        held(&sessions, cx) == 5
+    })
+    .await;
+    sessions.update(cx, |sessions, cx| sessions.load_next(true, cx));
+    cx.run_until_parked();
+    let pages = pages.lock().unwrap().clone();
+    assert_eq!(
+        pages,
+        [
+            json!({"limit": 50, "group": "settled"}),
+            json!({"limit": 50, "group": "settled", "before": 50, "beforeId": "s1"}),
+        ],
+        "the folded call asked for nothing, and none after the last page"
+    );
+}
