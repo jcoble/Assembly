@@ -23,7 +23,7 @@ internal sealed class UnixPty : IPty
     private readonly Process _process;
     private readonly Channel<byte[]> _output = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(4) { SingleReader = true, SingleWriter = true });
     private readonly Lock _lock = new();
-    private readonly Lock _writing = new();
+    private readonly SemaphoreSlim _writing = new(1);
     private readonly Thread _reader;
     private int _slave;
     private bool _disposed;
@@ -64,24 +64,35 @@ internal sealed class UnixPty : IPty
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        // A write blocks while the program isn't reading and the terminal's input is full, so it runs off the caller.
-        // A cancelled one answers at once, while its thread stays in write() until the program reads or the terminal
-        // closes; it stops at the next part then. One write at a time, so the next waits for it rather than mixing in.
-        await Task.Run(() => Using(fd =>
+        await _writing.WaitAsync(cancellationToken);
+        try
         {
-            lock (_writing)
+            // The worker only calls nonblocking write. Await it through cancellation too, so no native writer
+            // survives this request; the next writer cannot interleave with its accepted prefix.
+            await Task.Run(() => Using(fd =>
             {
                 var left = bytes.Span;
-                while (left.Length > 0 && !cancellationToken.IsCancellationRequested)
+                while (!left.IsEmpty)
                 {
-                    var part = Math.Min(left.Length, WriteSize);
-                    var wrote = PtyNative.write(fd, ref MemoryMarshal.GetReference(left), part);
-                    if (wrote < 0 && Marshal.GetLastPInvokeError() != PtyNative.EIntr)
-                        throw PtyNative.Failed("writing to the terminal");
-                    left = left[(int)Math.Max(wrote, 0)..];
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var wrote = PtyNative.write(fd, ref MemoryMarshal.GetReference(left), Math.Min(left.Length, WriteSize));
+                    if (wrote < 0)
+                    {
+                        var error = Marshal.GetLastPInvokeError();
+                        if (error == PtyNative.EAgain)
+                            PtyNative.Wait(fd, 4, 50); // POLLOUT; bounded so cancellation ends this worker.
+                        else if (error != PtyNative.EIntr)
+                            throw PtyNative.Failed("writing to the terminal");
+                    }
+                    else
+                        left = left[(int)wrote..];
                 }
-            }
-        }), CancellationToken.None).WaitAsync(cancellationToken);
+            }), CancellationToken.None);
+        }
+        finally
+        {
+            _writing.Release();
+        }
     }
 
     public void Resize(int cols, int rows)
@@ -176,8 +187,17 @@ internal sealed class UnixPty : IPty
             while (true)
             {
                 var read = PtyNative.read(fd, ref buffer[0], buffer.Length);
-                if (read < 0 && Marshal.GetLastPInvokeError() == PtyNative.EIntr)
-                    continue;
+                if (read < 0)
+                {
+                    var error = Marshal.GetLastPInvokeError();
+                    if (error == PtyNative.EAgain)
+                    {
+                        PtyNative.Wait(fd, 1, -1); // POLLIN; slave closure wakes the reader too.
+                        continue;
+                    }
+                    if (error == PtyNative.EIntr)
+                        continue;
+                }
                 // Linux answers EIO, not 0, once the last slave has closed: either way the output has ended.
                 if (read <= 0)
                     break;

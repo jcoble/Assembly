@@ -45,7 +45,8 @@ internal sealed class RunningTerminal : IAsyncDisposable
             throw new CallFailed("the terminal has ended");
         try
         {
-            await _pty.WriteAsync(bytes, cancellationToken);
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
+            await _pty.WriteAsync(bytes, stop.Token);
         }
         catch (ObjectDisposedException)
         {

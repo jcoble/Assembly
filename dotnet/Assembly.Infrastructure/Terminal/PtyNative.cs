@@ -9,6 +9,7 @@ namespace Assembly.Infrastructure.Terminal;
 internal static class PtyNative
 {
     public const int EIntr = 4;
+    public static int EAgain => Mac ? 35 : 11;
 
     private static readonly bool Mac = OperatingSystem.IsMacOS();
     private static readonly Lock PtsnameLock = new();
@@ -32,6 +33,16 @@ internal static class PtyNative
             _ = close(master);
             throw error;
         }
+        var enabled = 1;
+        var nonblocking = Mac && RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+            ? ioctl(master, 0x8004667eu, 0, 0, 0, 0, 0, 0, ref enabled)
+            : ioctl(master, Mac ? 0x8004667eu : 0x5421u, ref enabled);
+        if (nonblocking != 0)
+        {
+            var error = Failed("making the pty nonblocking");
+            _ = close(master);
+            throw error;
+        }
         // ptsname answers a static buffer, so its result is copied before another call can overwrite it.
         lock (PtsnameLock)
             return (master, Marshal.PtrToStringUTF8(ptsname(master)) ?? throw Failed("ptsname"));
@@ -48,6 +59,30 @@ internal static class PtyNative
         if (done != 0)
             throw Failed("resizing the pty");
     }
+
+    public static void Wait(int fd, short events, int milliseconds)
+    {
+        var descriptor = new PollFd { Fd = fd, Events = events };
+        if (poll(ref descriptor, 1, milliseconds) < 0 && Marshal.GetLastPInvokeError() != EIntr)
+            throw Failed("waiting for the terminal");
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PollFd
+    {
+        public int Fd;
+        public short Events;
+        public short Returned;
+    }
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int poll(ref PollFd descriptor, nuint count, int milliseconds);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int ioctl(int fd, nuint request, ref int enabled);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int ioctl(int fd, nuint request, nint x2, nint x3, nint x4, nint x5, nint x6, nint x7, ref int enabled);
 
     public static IOException Failed(string what) => new($"{what} failed: {Marshal.GetLastPInvokeErrorMessage()}");
 
