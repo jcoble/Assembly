@@ -64,7 +64,6 @@ public sealed class SessionTitlerTests : IAsyncDisposable
     public async Task A_helper_title_replaces_the_prompt_title_once()
     {
         var agent = await TurnAsync("Fix the titles on the rail", "I renamed them.");
-        Assert.Equal("Fix the titles on the rail", _sessionStore.Get(_session.SessionId)!.Title);
         await TurnAsync("And the tabs", "Done.", agent);
         await _work.StopAsync(TimeSpan.FromSeconds(5));
 
@@ -161,7 +160,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
 
         var session = _sessionStore.Get(_session.SessionId)!;
         Assert.Equal("Fix the titles on the rail", session.Title);
-        Assert.Null(session.TitleSource);
+        Assert.Equal("prompt", session.TitleSource);
         Assert.DoesNotContain("background title", _log.ToString());
         await host.StopForShutdownAsync();
     }

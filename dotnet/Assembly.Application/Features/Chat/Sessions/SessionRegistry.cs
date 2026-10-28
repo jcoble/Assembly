@@ -22,13 +22,14 @@ public sealed class SessionRegistry : IAsyncDisposable
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
     private readonly BackgroundWork _work;
+    private readonly SessionTitler? _titler;
     // Each helper session, by id, with the session whose agent started it.
     private readonly ConcurrentDictionary<string, string> _helperOf = new();
     // The last run a helper's prompt or message went into, before its rows reach here from another machine.
     private readonly ConcurrentDictionary<string, string> _helperRun = new();
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
-        BackgroundWork work, HelperLimits? limits = null)
+        BackgroundWork work, HelperLimits? limits = null, IUtilityModel? utilityModel = null)
     {
         _hub = hub;
         _sessionStore = sessionStore;
@@ -39,6 +40,7 @@ public sealed class SessionRegistry : IAsyncDisposable
         _time = time;
         _log = log;
         _work = work;
+        _titler = utilityModel is null ? null : new SessionTitler(sessionStore, hub, utilityModel);
     }
 
     /// <summary>The agents this machine can run.</summary>
@@ -52,7 +54,8 @@ public sealed class SessionRegistry : IAsyncDisposable
         {
             if (_sessionStore.Get(id) is { Helper: true, ParentSessionId: { } parent })
                 _helperOf[id] = parent;
-            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => HelpersWorking(id), Helpers.Row.TurnEnded, Helpers.Tokens.Revoke);
+            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => HelpersWorking(id), Helpers.Row.TurnEnded, Helpers.Tokens.Revoke,
+                _titler);
         });
 
     /// <summary>Whether a helper session the session's agent started has a turn running.</summary>

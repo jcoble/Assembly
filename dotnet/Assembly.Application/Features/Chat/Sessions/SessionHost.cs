@@ -56,6 +56,8 @@ public sealed partial class SessionHost : IPermissionPolicy
     private readonly Action<string>? _turnEnded;
     // Who to tell when this session's ACP session closes.
     private readonly Action<string>? _sessionClosed;
+    // Names the session once its first turn has ended.
+    private readonly SessionTitler? _titler;
 
     /// <summary>A self-started run with no word from the agent this long, no tool running and no task open, ends.</summary>
     public const long QuietMs = 30_000;
@@ -73,6 +75,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         SessionTitler? titler = null)
     {
         _sessionClosed = sessionClosed;
+        _titler = titler;
         _helpersWorking = helpersWorking ?? (() => false);
         _turnEnded = turnEnded;
         _sessionId = sessionId;
@@ -439,6 +442,8 @@ public sealed partial class SessionHost : IPermissionPolicy
         var pump = kept?.Pump ?? Task.CompletedTask;
         var lost = false;
         var held = kept is not null;
+        // The turn that gave the session its first title is its first.
+        var first = false;
         Func<long, AgentEvent> end;
         try
         {
@@ -447,6 +452,7 @@ public sealed partial class SessionHost : IPermissionPolicy
                 await _session.WaitAsync(turn.Stopping.Token);
                 held = true;
                 session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token);
+                first = session.Titled;
                 updates = session.Adapter.Updates.For(session.AcpSessionId);
                 session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, this);
                 lock (_gate)
@@ -493,6 +499,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         decimal? sessionCost;
         var keep = false;
         var toolsOpen = false;
+        var title = false;
         lock (_gate)
         {
             try
@@ -507,7 +514,9 @@ public sealed partial class SessionHost : IPermissionPolicy
                 // A tool call still running as the turn ends may be work the agent moved to the background
                 // and tells us of only after its answer (Codex's async_task_spawned can follow the prompt's result).
                 toolsOpen = _converter.HasOpenTools;
-                Apply(end(Now()));
+                var ended = end(Now());
+                Apply(ended);
+                title = first && ended is TurnEnded { StopReason: not "cancelled" };
             }
             catch (Exception error)
             {
@@ -528,6 +537,8 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
 
         _turnEnded?.Invoke(_sessionId);
+        if (title && _titler is { } titler)
+            _work.Start($"title {_sessionId}", stopping => titler.TitleAsync(_sessionId, text, turn.RunId, stopping));
         if (keep)
         {
             _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
