@@ -11,8 +11,6 @@ use serde_json::{Value, json};
 use super::listing::Listing;
 use super::{ContextPane, FileTouched, names};
 use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::session_item::SessionItem;
-use crate::core::state::sessions::Sessions;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::CallError;
 
@@ -104,7 +102,7 @@ fn click(selector: &'static str, cx: &mut VisualTestContext) {
 }
 
 fn one_prompt() -> Value {
-    json!([{ "seq": 1, "lines": "Attached image: /h/attachments/s1/9f.png (shot.png)" }])
+    json!({ "prompts": ["look\nAttached image: /h/attachments/s1/9f.png (shot.png)"] })
 }
 
 fn file(path: &str, added: i64, removed: i64) -> FileTouched {
@@ -224,10 +222,12 @@ fn a_file_shows_its_folder_below_the_one_every_file_shares() {
 fn the_shown_tab_lists_the_sessions_images_newest_prompt_first(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
     shown_with(
-        json!([
-            { "seq": 3, "lines": "Attached image: /h/a/s1/b.png (two.png)\nAttached image: /h/a/s1/c.png (three.png)" },
-            { "seq": 1, "lines": "Attached image: /h/a/s1/a.png (one.png)" },
-        ]),
+        json!({ "prompts": [
+            "both\nAttached image: /h/a/s1/b.png (two.png)\nAttached image: /h/a/s1/c.png (three.png)",
+            // Only a prompt's trailing lines name images: this one just mentions the words.
+            "what does Attached image: /h/a/s1/x.png (x.png) mean?",
+            "look\nAttached image: /h/a/s1/a.png (one.png)",
+        ] }),
         &pane,
         &client,
         cx,
@@ -261,9 +261,31 @@ fn the_shown_tab_lists_the_sessions_images_newest_prompt_first(cx: &mut TestAppC
 #[gpui::test]
 fn a_session_with_no_images_says_where_they_come_from(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
-    shown_with(json!([]), &pane, &client, cx);
+    shown_with(json!({ "prompts": [] }), &pane, &client, cx);
     assert_eq!(attachments(&pane, cx), Listing::Read(vec![]));
     assert!(cx.debug_bounds("attachments-note-empty").is_some());
+}
+
+// Pins: g0-shape#14
+#[gpui::test]
+fn a_failed_attachments_read_says_why_and_leaves_the_files(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    client.queue_answer(Ok(
+        json!([{ "path": "src/a.rs", "added": 1, "removed": 0, "lastSeq": 2 }]),
+    ));
+    client.queue_answer(Err(CallError::Failed("disk is full".into())));
+    pick(Some("s1"), cx);
+    shown(&pane, true, cx);
+    assert_eq!(
+        files(&pane, cx),
+        Listing::Read(vec![file("src/a.rs", 1, 0)])
+    );
+    assert_eq!(
+        attachments(&pane, cx),
+        Listing::Failed("disk is full".into())
+    );
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("attachments-note-failed").is_some());
 }
 
 // Pins: g0-shape#14
@@ -272,13 +294,20 @@ fn a_click_reads_the_image_by_its_file_name_and_opens_it_full_size(cx: &mut Test
     let (pane, client, cx) = open_in_root(cx);
     shown_with(one_prompt(), &pane, &client, cx);
 
+    // Two pieces, as a large image comes: the second starts where the first ended.
     client.queue_answer(Ok(
-        json!({ "data": "aGk=", "size": 2, "mime": "image/png" }),
+        json!({ "data": "aA==", "size": 2, "mime": "image/png" }),
+    ));
+    client.queue_answer(Ok(
+        json!({ "data": "aQ==", "size": 2, "mime": "image/png" }),
     ));
     click("attachment-/h/attachments/s1/9f.png", cx);
     assert_eq!(
         calls_of(&client, "attachments/read"),
-        [json!({ "session": "s1", "name": "9f.png", "offset": 0 })]
+        [
+            json!({ "session": "s1", "name": "9f.png", "offset": 0 }),
+            json!({ "session": "s1", "name": "9f.png", "offset": 1 }),
+        ]
     );
     assert!(
         cx.update(|window, cx| window.has_active_dialog(cx)),
@@ -288,32 +317,36 @@ fn a_click_reads_the_image_by_its_file_name_and_opens_it_full_size(cx: &mut Test
 
 // Pins: g0-shape#14
 #[gpui::test]
-fn an_image_that_wont_open_says_why(cx: &mut TestAppContext) {
+fn an_image_that_wont_open_says_why_until_another_session_is_picked(cx: &mut TestAppContext) {
     let (pane, client, cx) = open_in_root(cx);
     shown_with(one_prompt(), &pane, &client, cx);
 
     client.queue_answer(Err(CallError::Failed("no such attachment".into())));
     click("attachment-/h/attachments/s1/9f.png", cx);
     assert!(!cx.update(|window, cx| window.has_active_dialog(cx)));
-    assert_eq!(
-        pane.read_with(cx, |pane, _| pane.open_failed.clone()),
-        Some("no such attachment".into())
-    );
+    let failed =
+        |cx: &mut VisualTestContext| pane.read_with(cx, |pane, _| pane.open_failed.clone());
+    assert_eq!(failed(cx), Some("no such attachment".into()));
     assert!(cx.debug_bounds("attachments-open-failed").is_some());
+
+    client.queue_answer(Ok(json!([])));
+    client.queue_answer(Ok(json!({ "prompts": [] })));
+    pick(Some("s2"), cx);
+    assert_eq!(failed(cx), None, "another session doesn't keep it");
 }
 
 // Pins: g0-shape#14
 #[gpui::test]
 fn a_remote_sessions_images_dont_open_and_say_which_machine_has_them(cx: &mut TestAppContext) {
     let (pane, client, cx) = open_in_root(cx);
-    let item: SessionItem = serde_json::from_value(
-        json!({ "sessionId": "s1", "agent": "claude", "repoUrl": "/r",
-        "machine": "Workbox Test", "updatedAt": 1 }),
-    )
-    .expect("a session item");
-    cx.update(|_, cx| Sessions::start_holding(vec![item], cx));
-    shown_with(one_prompt(), &pane, &client, cx);
+    let mut answer = one_prompt();
+    answer["machine"] = json!("Workbox Test");
+    shown_with(answer, &pane, &client, cx);
 
+    assert_eq!(
+        pane.read_with(cx, |pane, _| pane.machine.clone()),
+        Some("Workbox Test".into())
+    );
     assert!(cx.debug_bounds("attachments-note-remote").is_some());
     click("attachment-/h/attachments/s1/9f.png", cx);
     assert!(

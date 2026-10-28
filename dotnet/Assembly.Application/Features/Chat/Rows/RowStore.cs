@@ -260,18 +260,19 @@ public sealed class RowStore
             new SqlArg("$session", sessionId));
 
     /// <summary>
-    /// The session's prompts that attached images, newest first (<c>rows/attachments</c>), each with only its lines from
-    /// the first "Attached image:" on: the composer puts them after the text, and they're the only record of the names.
+    /// The texts of the session's prompts that may have attached images, newest first (<c>rows/attachments</c>). The
+    /// composer puts an "Attached image:" line for each after the text, and they're the only record of the names; the
+    /// window keeps only the trailing ones, so a prompt that just mentions the words lists nothing.
     /// </summary>
-    public IReadOnlyList<PromptAttachments> Attachments(string sessionId, CancellationToken cancellationToken) =>
+    public IReadOnlyList<string> Attachments(string sessionId, CancellationToken cancellationToken) =>
         _db.Query(
             """
-            SELECT seq, substr(text, instr(text, 'Attached image: '))
+            SELECT text
             FROM (SELECT seq, json_extract(payload, '$.text') AS text FROM rows WHERE session_id = $session AND kind = 'user')
             WHERE instr(text, 'Attached image: ') > 0
             ORDER BY seq DESC;
             """,
-            reader => new PromptAttachments(reader.Long(0), reader.Text(1)), cancellationToken, new SqlArg("$session", sessionId));
+            reader => reader.Text(0), cancellationToken, new SqlArg("$session", sessionId));
 
     private static long NextSeq(IWriteScope scope, string sessionId) =>
         scope.QueryFirst("SELECT next_seq FROM sessions WHERE session_id = $session;", row => row.Long(0),

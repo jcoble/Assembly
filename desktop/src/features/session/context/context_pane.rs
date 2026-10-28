@@ -14,10 +14,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::sessions::Sessions;
 use crate::features::session::client::session_client::{CallError, SessionClient};
 use crate::features::session::client::socket_session_client::SocketSessionClient;
-use crate::features::session::composer::attachment::Attachment;
 use listing::Listing;
 
 /// The layout's name for the tab (default_layout.rs).
@@ -31,12 +29,6 @@ pub struct FileTouched {
     pub removed: i64,
 }
 
-/// One prompt's attachment lines, as `rows/attachments` sends them (RowsFeature.cs).
-#[derive(Deserialize)]
-struct PromptAttachments {
-    lines: String,
-}
-
 pub struct ContextPane {
     focus: FocusHandle,
     client: Rc<dyn SessionClient>,
@@ -45,6 +37,8 @@ pub struct ContextPane {
     files: Listing<FileTouched>,
     /// Each attached image's (path, name), newest prompt first.
     attachments: Listing<(String, String)>,
+    /// The machine that has a remote session's images, from the same read.
+    machine: Option<String>,
     /// Why the last image clicked didn't open.
     open_failed: Option<String>,
     _selected: Subscription,
@@ -69,6 +63,7 @@ impl ContextPane {
             active: false,
             files: Listing::Reading,
             attachments: Listing::Reading,
+            machine: None,
             open_failed: None,
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.read(cx)),
             _read: None,
@@ -79,8 +74,8 @@ impl ContextPane {
     /// Reads the selected session's files and attachments, if the tab is shown. A hidden tab drops the last session's
     /// lists, so the frame before it's shown again never draws them.
     fn read(&mut self, cx: &mut Context<Self>) {
-        (self.files, self.attachments, self.open_failed) =
-            (Listing::Reading, Listing::Reading, None);
+        (self.files, self.attachments, self.machine, self.open_failed) =
+            (Listing::Reading, Listing::Reading, None, None);
         (self._read, self._open) = (None, None);
         cx.notify();
         if !self.active {
@@ -101,17 +96,14 @@ impl ContextPane {
             self.client
                 .call("rows", "attachments", args, Some("rows/attachments"), cx);
         self._read = Some(cx.spawn(async move |pane, cx| {
-            let files = listing(files.await);
-            let attachments = listing::<PromptAttachments>(attachments.await);
+            let files = touched(files.await);
+            let attachments = attachments.await;
             pane.update(cx, |pane, cx| {
                 pane.files = files;
-                pane.attachments = attachments.map(|prompts| {
-                    prompts
-                        .iter()
-                        .flat_map(|prompt| Attachment::split_lines(&prompt.lines).1)
-                        .map(|(path, name, _)| (path, name))
-                        .collect()
-                });
+                (pane.attachments, pane.machine) = match attachments {
+                    Ok(answer) => attached(&answer),
+                    Err(error) => (Listing::Failed(error.reason()), None),
+                };
                 cx.notify();
             })
             .ok();
@@ -155,12 +147,7 @@ impl Panel for ContextPane {
 
 impl Render for ContextPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let session = SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(String::from);
-        let picked = session.is_some();
-        let remote = session.and_then(|session| machine_of(&session, cx));
+        let picked = SelectedSession::global(cx).read(cx).session_id().is_some();
         let theme = cx.theme();
         let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
         let note = |id: &'static str, text: SharedString| {
@@ -249,33 +236,19 @@ impl Render for ContextPane {
             .child(body)
             .when(picked, |pane| {
                 pane.child(div().h(px(8.)))
-                    .child(self.attachments_section(remote, cx))
+                    .child(self.attachments_section(cx))
             })
     }
 }
 
-/// Answers a list, or why it couldn't be read.
-fn listing<T: for<'de> Deserialize<'de>>(
-    answer: Result<serde_json::Value, CallError>,
-) -> Listing<T> {
+/// `rows/files`' answer, or why it couldn't be read.
+fn touched(answer: Result<serde_json::Value, CallError>) -> Listing<FileTouched> {
     match answer.and_then(|list| {
         serde_json::from_value(list).map_err(|error| CallError::Failed(error.to_string()))
     }) {
         Ok(list) => Listing::Read(list),
         Err(error) => Listing::Failed(error.reason()),
     }
-}
-
-/// The machine a remote session runs on; `None` for one on this computer, or one the list hasn't sent.
-fn machine_of(session: &str, cx: &App) -> Option<String> {
-    Sessions::try_global(cx)?
-        .read(cx)
-        .items()
-        .iter()
-        .find(|item| item.session_id == session)?
-        .machine
-        .clone()
-        .filter(|machine| !machine.is_empty())
 }
 
 /// Each file's name and its folder below the folder all the files share, which is usually the session's checkout: an
@@ -307,6 +280,7 @@ fn names(files: &[FileTouched]) -> Vec<(&str, &str)> {
 
 #[path = "attachments_section.rs"]
 mod attachments_section;
+use attachments_section::attached;
 #[path = "listing.rs"]
 mod listing;
 

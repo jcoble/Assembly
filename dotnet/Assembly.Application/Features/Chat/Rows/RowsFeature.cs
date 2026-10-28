@@ -85,11 +85,13 @@ internal sealed class RowsFeature : IFeature
             Task.FromResult(_sessions.Get(args.Session) is null
                 ? throw new CallFailed("unknown session")
                 : _store.FilesTouched(args.Session, call.Cancellation)));
-        // The Context tab's attachments: each prompt's image lines, from this machine's copy of the session's rows.
-        calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListPromptAttachments,
-            (args, call) => Task.FromResult(_sessions.Get(args.Session) is null
-                ? throw new CallFailed("unknown session")
-                : _store.Attachments(args.Session, call.Cancellation)));
+        // The Context tab's attachments: the prompts that name images, from this machine's copy of the session's rows,
+        // and the machine that has the images.
+        calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionAttachments, (args, call) =>
+        {
+            var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
+            return Task.FromResult(new SessionAttachments(session.Machine, _store.Attachments(args.Session, call.Cancellation)));
+        });
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.

@@ -7,14 +7,3 @@ pub enum Listing<T> {
     /// Why the read failed.
     Failed(String),
 }
-
-impl<T> Listing<T> {
-    /// The same read, with its list changed.
-    pub fn map<U>(self, change: impl FnOnce(Vec<T>) -> Vec<U>) -> Listing<U> {
-        match self {
-            Listing::Reading => Listing::Reading,
-            Listing::Read(list) => Listing::Read(change(list)),
-            Listing::Failed(why) => Listing::Failed(why),
-        }
-    }
-}

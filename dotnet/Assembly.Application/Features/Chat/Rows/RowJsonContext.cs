@@ -24,7 +24,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(RowsFeature.ToolDetail))]
 [JsonSerializable(typeof(RowsFeature.SessionArgs))]
 [JsonSerializable(typeof(IReadOnlyList<FileTouched>))]
-[JsonSerializable(typeof(IReadOnlyList<PromptAttachments>))]
+[JsonSerializable(typeof(SessionAttachments))]
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class RowJsonContext : JsonSerializerContext
 {

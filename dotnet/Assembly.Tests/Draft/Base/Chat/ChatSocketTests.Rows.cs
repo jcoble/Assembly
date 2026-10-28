@@ -203,23 +203,24 @@ public sealed partial class ChatSocketTests
     }
 
     // Pins: g0-shape#14
-    // A prompt names its images in trailing "Attached image:" lines; only those lines come back, newest prompt first.
+    // A prompt names its images in trailing "Attached image:" lines; the prompts that have them come back, newest first,
+    // with the machine that has the images when it isn't this one.
     [Fact]
-    public async Task Rows_attachments_lists_each_prompts_image_lines_newest_first()
+    public async Task Rows_attachments_lists_the_prompts_naming_images_newest_first_and_the_machine()
     {
         var session = _sessions.Create("claude", "repo").SessionId;
         Row(session, RowKind.User, null, """{"text":"look\nAttached image: /a/1.png (one.png)"}""");
         Row(session, RowKind.User, null, """{"text":"no images here"}""");
-        Row(session, RowKind.User, null,
-            """{"text":"both\nAttached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)"}""");
+        Row(session, RowKind.User, null, """{"text":"both\nAttached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)"}""");
+        var remote = _sessions.Add("r1", "claude", "repo", "Workbox Test").SessionId;
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "rows", "attachments", $$"""{"session":"{{session}}"}""");
-        Assert.Equal("""{"t":"result","id":1,"result":[""" +
-            """{"seq":3,"lines":"Attached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)"},""" +
-            """{"seq":1,"lines":"Attached image: /a/1.png (one.png)"}]}""", await ReadAsync(socket));
-        await CallAsync(socket, 2, "rows", "attachments", """{"session":"nope"}""");
-        Assert.Equal("""{"t":"error","id":2,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"result","id":1,"result":{"prompts":["both\nAttached image: /a/2.png (two.png)\nAttached image: /a/3.png (three.png)","look\nAttached image: /a/1.png (one.png)"]}}""", await ReadAsync(socket));
+        await CallAsync(socket, 2, "rows", "attachments", $$"""{"session":"{{remote}}"}""");
+        Assert.Equal("""{"t":"result","id":2,"result":{"machine":"Workbox Test","prompts":[]}}""", await ReadAsync(socket));
+        await CallAsync(socket, 3, "rows", "attachments", """{"session":"nope"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));
     }
 
     // A page of an unknown session fails, as a tool call of an unknown session or item does.

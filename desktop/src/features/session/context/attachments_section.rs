@@ -6,17 +6,17 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use serde_json::Value;
+
 use super::ContextPane;
 use super::listing::Listing;
 use crate::core::state::selected_session::SelectedSession;
+use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::view::lightbox::{open_lightbox, read_image};
 
 impl ContextPane {
-    pub(super) fn attachments_section(
-        &self,
-        remote: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    pub(super) fn attachments_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let remote = self.machine.clone();
         let theme = cx.theme();
         let (muted, hover, danger) = (theme.muted_foreground, theme.muted, theme.danger);
         let note = |id: &'static str, text: SharedString| {
@@ -124,4 +124,21 @@ impl ContextPane {
             .ok();
         }));
     }
+}
+
+/// `rows/attachments`' answer as each image's (path, name), newest prompt first, and the machine that has them. Only a
+/// prompt's trailing "Attached image:" lines name images, as Chat reads them.
+pub(super) fn attached(answer: &Value) -> (Listing<(String, String)>, Option<String>) {
+    let images = answer["prompts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .flat_map(|text| Attachment::split_lines(text).1)
+        .map(|(path, name, _)| (path, name))
+        .collect();
+    let machine = answer["machine"]
+        .as_str()
+        .filter(|machine| !machine.is_empty());
+    (Listing::Read(images), machine.map(String::from))
 }
