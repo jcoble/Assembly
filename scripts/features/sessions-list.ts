@@ -83,7 +83,7 @@ async function page(group: string, step: string): Promise<string[]> {
   return result.sessions.map((item) => item.sessionId);
 }
 
-type Rail = { totals: { all: number; running: number; needsYou: number }; sessions: { sessionId: string }[] };
+type Rail = { totals: { all: number; running: number; needsYou: number }; sessions: { sessionId: string; unread: boolean }[] };
 /** The case's provider and location in one tab of the rail. */
 async function rail(tab: string, step: string): Promise<Rail> {
   const id = ++ids;
@@ -114,9 +114,12 @@ function railChange(step: string, ms: number) {
   });
 }
 /** Reads the tab again at each sessionRail change naming the session until `holds` takes the page, within `ms`. */
-async function untilRail(tab: string, step: string, ms: number, holds: (page: Rail) => boolean) {
+async function untilRail(tab: string, step: string, ms: number, holds: (page: Rail) => boolean | Promise<boolean>) {
   const end = Date.now() + ms;
-  for (let page = await rail(tab, step); !holds(page); page = await rail(tab, step)) await railChange(step, end - Date.now());
+  while (!(await holds(await rail(tab, step)))) {
+    if (Date.now() >= end) fail(step, `the rail didn't show it within ${Math.round(ms / 1000)} s`);
+    await railChange(step, end - Date.now());
+  }
 }
 
 async function main() {
@@ -145,9 +148,15 @@ async function main() {
   if (running.totals.running !== running.sessions.length || running.totals.all !== all.totals.all)
     fail(step, `Running lists ${running.sessions.length} of ${running.totals.running}; All is ${running.totals.all}`);
   console.log(`ok ${step}`);
+  // A short turn can end before the rail is read: then All shows its finished turn as unread, which proves it ran.
   step = 'while its turn runs, Running lists the session and counts it';
-  await untilRail('running', step, 30_000, (page) => listed(page) && page.totals.running >= 1);
-  console.log(`ok ${step}`);
+  let ended = false;
+  await untilRail('running', step, 30_000, async (page) => {
+    if (listed(page) && page.totals.running >= 1) return true;
+    ended = (await rail('all', step)).sessions.some((entry) => entry.sessionId === session && entry.unread);
+    return ended;
+  });
+  console.log(ended ? `ok ${step}: its turn had already ended, and All shows it unread` : `ok ${step}`);
   railNamed = false;
 
   const done = await mark('done', (item) => item.completedAt !== null, 'Mark done stamps completedAt');
