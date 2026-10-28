@@ -177,9 +177,10 @@ impl TerminalPane {
             };
             _ = pane.update(cx, |pane, cx| {
                 let Some(live) = &mut pane.live else { return };
-                let (bytes, next) = live.output.page(piece);
-                // Old output's questions were answered when they were asked.
-                pane.show(bytes, false, cx);
+                let (replay, held, next) = live.output.page(piece);
+                // Old output's questions were answered when they were asked; the rows held meanwhile are new.
+                pane.show(replay, false, cx);
+                pane.show(held, true, cx);
                 if let Some(next) = next {
                     pane.read(next, cx);
                 }

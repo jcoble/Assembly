@@ -35,6 +35,22 @@ public sealed class UnixPtyTests
     }
 
     [Fact]
+    public async Task A_write_cancelled_while_the_program_isn_t_reading_stops_and_the_next_comes_after_it()
+    {
+        // Pins: terminal#2
+        await using var pty = Start("stty -echo -icanon; echo ready; sleep 2; perl -e '$SIG{ALRM} = sub { exit }; alarm 2; print $b while sysread STDIN, $b, 65536'; echo; echo end");
+        await ReadUntilAsync(pty, "ready");
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            pty.WriteAsync(Encoding.ASCII.GetBytes(new string('a', 1024 * 1024)), new CancellationTokenSource(300).Token).AsTask());
+        await pty.WriteAsync(Encoding.ASCII.GetBytes(new string('b', 64)), Cancel());
+
+        var typed = (await ReadUntilAsync(pty, "end")).Split("end")[0].Trim();
+        Assert.Matches("^a*b{64}$", typed);
+        Assert.True(typed.Length < 64 * 1024, $"the cancelled write stopped, but {typed.Length} bytes came");
+    }
+
+    [Fact]
     public async Task Ctrl_c_stops_the_program_because_the_terminal_is_its_own()
     {
         // Pins: terminal#2

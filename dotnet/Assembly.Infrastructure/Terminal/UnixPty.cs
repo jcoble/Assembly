@@ -17,11 +17,13 @@ namespace Assembly.Infrastructure.Terminal;
 internal sealed class UnixPty : IPty
 {
     private const int ReadSize = 16 * 1024;
+    private const int WriteSize = 4 * 1024;
 
     private readonly SafeFileHandle _master;
     private readonly Process _process;
     private readonly Channel<byte[]> _output = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(4) { SingleReader = true, SingleWriter = true });
     private readonly Lock _lock = new();
+    private readonly Lock _writing = new();
     private readonly Thread _reader;
     private int _slave;
     private bool _disposed;
@@ -63,19 +65,23 @@ internal sealed class UnixPty : IPty
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         // A write blocks while the program isn't reading and the terminal's input is full, so it runs off the caller.
+        // A cancelled one answers at once, while its thread stays in write() until the program reads or the terminal
+        // closes; it stops at the next part then. One write at a time, so the next waits for it rather than mixing in.
         await Task.Run(() => Using(fd =>
         {
-            var left = bytes.Span;
-            while (left.Length > 0)
+            lock (_writing)
             {
-                var wrote = PtyNative.write(fd, ref MemoryMarshal.GetReference(left), left.Length);
-                if (wrote < 0 && Marshal.GetLastPInvokeError() != PtyNative.EIntr)
-                    throw PtyNative.Failed("writing to the terminal");
-                left = left[(int)Math.Max(wrote, 0)..];
+                var left = bytes.Span;
+                while (left.Length > 0 && !cancellationToken.IsCancellationRequested)
+                {
+                    var part = Math.Min(left.Length, WriteSize);
+                    var wrote = PtyNative.write(fd, ref MemoryMarshal.GetReference(left), part);
+                    if (wrote < 0 && Marshal.GetLastPInvokeError() != PtyNative.EIntr)
+                        throw PtyNative.Failed("writing to the terminal");
+                    left = left[(int)Math.Max(wrote, 0)..];
+                }
             }
-        }), cancellationToken).WaitAsync(cancellationToken);
-        // A cancelled write's thread stays in write() until the program reads or the terminal closes; the call
-        // still answers now.
+        }), CancellationToken.None).WaitAsync(cancellationToken);
     }
 
     public void Resize(int cols, int rows)

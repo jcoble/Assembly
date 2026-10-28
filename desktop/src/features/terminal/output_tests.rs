@@ -48,14 +48,14 @@ fn a_new_view_reads_the_last_4_mb_then_the_rows_held_meanwhile_with_nothing_repe
         b"",
         "held while the replay reads"
     );
-    let (bytes, next) = output.page(piece(10, &"x".repeat(5)));
+    let (bytes, _, next) = output.page(piece(10, &"x".repeat(5)));
     assert_eq!((bytes.len(), next), (5, Some(15)));
     // The page ran on past the jump (output arrived since): only up to the jump comes from the replay.
     let rest = "y".repeat((REPLAY - 5) as usize) + "live";
-    let (bytes, next) = output.page(piece(15, &rest));
+    let (bytes, held, next) = output.page(piece(15, &rest));
     assert_eq!(next, None);
-    assert_eq!(bytes.len() as i64, REPLAY - 5 + 4);
-    assert!(bytes.ends_with(b"ylive"));
+    assert_eq!(bytes.len() as i64, REPLAY - 5);
+    assert_eq!(held, b"live", "the held rows come apart, as new output");
 }
 
 // Pins: terminal#5
@@ -72,7 +72,7 @@ fn a_jump_the_screen_already_has_reads_nothing() {
 fn trimmed_output_carries_on_from_what_the_ring_still_has() {
     let mut output = Output::default();
     assert_eq!(output.jump(100), Some(0));
-    let (bytes, next) = output.page(piece(60, &"z".repeat(40)));
+    let (bytes, _, next) = output.page(piece(60, &"z".repeat(40)));
     assert_eq!((bytes.len(), next), (40, None));
 }
 
@@ -97,8 +97,8 @@ fn an_empty_page_ends_the_replay() {
     let mut output = Output::default();
     output.jump(50);
     output.row(row(50, "x"));
-    let (bytes, next) = output.page(piece(0, ""));
-    assert_eq!((bytes, next), (b"x".to_vec(), None));
+    let (bytes, held, next) = output.page(piece(0, ""));
+    assert_eq!((bytes, held, next), (Vec::new(), b"x".to_vec(), None));
 }
 
 // Pins: terminal#5
@@ -108,6 +108,6 @@ fn a_page_past_the_replays_end_keeps_the_held_rows() {
     output.jump(10);
     output.row(row(10, "abc"));
     output.row(row(13, "de"));
-    let (bytes, next) = output.page(piece(14, "eXYZ"));
-    assert_eq!((bytes, next), (b"abcde".to_vec(), None));
+    let (bytes, held, next) = output.page(piece(14, "eXYZ"));
+    assert_eq!((bytes, held, next), (Vec::new(), b"abcde".to_vec(), None));
 }

@@ -64,30 +64,31 @@ impl Output {
         self.apply(row)
     }
 
-    /// A replay page: its new bytes, then the held rows' once the replay reaches its end, and the offset of the next
-    /// page while there's more to read.
-    pub fn page(&mut self, piece: OutputPiece) -> (Vec<u8>, Option<i64>) {
+    /// A replay page: its new bytes, the held rows' once the replay reaches its end (apart, since only they are new
+    /// output), and the offset of the next page while there's more to read.
+    pub fn page(&mut self, piece: OutputPiece) -> (Vec<u8>, Vec<u8>, Option<i64>) {
         let Some(to) = self.replay_to else {
-            return (Vec::new(), None);
+            return (Vec::new(), Vec::new(), None);
         };
         let mut bytes = decode(&piece.data);
         bytes.truncate((to - piece.offset).clamp(0, bytes.len() as i64) as usize);
         let end = piece.offset + bytes.len() as i64;
         // A page that starts past the replay's end (the ring moved on) has nothing for the screen.
-        let mut out = if bytes.is_empty() {
+        let replay = if bytes.is_empty() {
             Vec::new()
         } else {
             self.take(piece.offset, end, bytes)
         };
         // Nothing more to read: the replay reached its end, or the ring has nothing past it (an empty page).
         if self.applied < to && end > piece.offset {
-            return (out, Some(self.applied));
+            return (replay, Vec::new(), Some(self.applied));
         }
         self.replay_to = None;
+        let mut live = Vec::new();
         for row in std::mem::take(&mut self.held) {
-            out.extend(self.apply(row));
+            live.extend(self.apply(row));
         }
-        (out, None)
+        (replay, live, None)
     }
 
     fn apply(&mut self, row: OutputRow) -> Vec<u8> {
