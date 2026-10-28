@@ -14,6 +14,7 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Topics;
+using Assembly.Application.Features.Preferences;
 
 namespace Assembly.Remote.Serve;
 
@@ -42,10 +43,12 @@ public static class ServeRun
         using var hub = new LiveHub(store);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
-        var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
+        var agents = AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile));
+        var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions());
         // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
-        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work);
+        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
+            titler: new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"), new PreferenceStore(db), TimeProvider.System, Console.Out)));
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));

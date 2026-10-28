@@ -23,7 +23,8 @@ want=""
 # pnpm 12 fails on skipped build scripts, as in scripts/deploy.sh.
 # shellcheck disable=SC2086
 [ -z "$want" ] || (cd "$adapters" && pnpm add --config.strict-dep-builds=false $want) >&2
-ASSEMBLY_NODE=$(command -v node) ASSEMBLY_ADAPTERS=$adapters ASSEMBLY_USER_MCP=${ASSEMBLY_USER_MCP:-off} \
+ASSEMBLY_NODE=$(command -v node) ASSEMBLY_CLAUDE=$(command -v claude || true) ASSEMBLY_CODEX=$(command -v codex || true) \
+  ASSEMBLY_ADAPTERS=$adapters ASSEMBLY_USER_MCP=${ASSEMBLY_USER_MCP:-off} \
   ASSEMBLY_CLAUDEAI_MCP=${ASSEMBLY_CLAUDEAI_MCP:-off} python3 -I - > "$out" <<'PY'
 import json, os, tomllib
 codex = {"model": "gpt-5.6-luna", "tools": {"update_plan": {"enabled": True}}}
@@ -38,10 +39,15 @@ node, adapters = os.environ["ASSEMBLY_NODE"], os.environ["ASSEMBLY_ADAPTERS"]
 acp = lambda name: f"{adapters}/node_modules/@agentclientprotocol/{name}/dist/index.js"
 # No AIR opt-in for Claude Code: any one makes claude-agent-acp treat us as JetBrains AIR, which moves its
 # subagents off the standard child sessions. Its background work is read from what it sends any client.
-print(json.dumps([
+agents = [
     {"id": "claude", "name": "Claude Code", "command": node, "args": [acp("claude-agent-acp")],
      "env": claude_env},
     {"id": "codex", "name": "Codex", "command": node, "args": [acp("codex-acp")],
      "env": {"CODEX_CONFIG": json.dumps(codex)}, "air": ["sessionIndex", "asyncTasks"]},
-], indent=2))
+]
+# Each CLI's full path, for the utility model: a backend the Dock starts has only the system PATH.
+for agent in agents:
+    if cli := os.environ[f"ASSEMBLY_{agent['id'].upper()}"]:
+        agent["cli"] = cli
+print(json.dumps(agents, indent=2))
 PY
