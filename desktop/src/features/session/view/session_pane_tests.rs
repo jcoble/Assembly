@@ -434,3 +434,54 @@ fn the_composers_ring_shows_the_newest_context_report(cx: &mut TestAppContext) {
         "another session's ring waits for its own report"
     );
 }
+
+// Pins: sessions-list#10
+#[gpui::test]
+fn an_open_session_tells_the_backend_the_newest_row_shown_so_its_unread_dot_clears(
+    cx: &mut TestAppContext,
+) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(3, "one"), user(5, "two")], false, None)));
+    jump(&client, 5, cx);
+    live(&client, user(6, "three"), cx);
+    assert_eq!(
+        client.reads(),
+        [
+            json!({ "session": "s1", "seq": 5 }),
+            json!({ "session": "s1", "seq": 6 })
+        ]
+    );
+    // A reconnect's jump tells it again: a read may have been lost with the connection.
+    client.queue_answer(Ok(page(vec![user(6, "three")], true, None)));
+    jump(&client, 6, cx);
+    assert_eq!(client.reads()[2], json!({ "session": "s1", "seq": 6 }));
+    show(&pane, "s2", cx);
+    client.queue_answer(Ok(page(vec![user(2, "other")], false, None)));
+    jump(&client, 2, cx);
+    assert_eq!(client.reads()[3], json!({ "session": "s2", "seq": 2 }));
+}
+
+// A streamed reply sends no read: unread only changes when a turn ends.
+// Pins: sessions-list#10
+#[gpui::test]
+fn a_streaming_turn_sends_no_read_until_it_ends(cx: &mut TestAppContext) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(3, "one")], false, Some("r1"))));
+    jump(&client, 3, cx);
+    live(
+        &client,
+        row(4, "turn", None, json!({ "state": "started" })),
+        cx,
+    );
+    live(&client, message(5, 0, &["a"]), cx);
+    live(&client, message(6, 1, &["b"]), cx);
+    assert!(client.reads().is_empty(), "{:?}", client.reads());
+    live(
+        &client,
+        row(7, "turn", None, json!({ "state": "finished" })),
+        cx,
+    );
+    assert_eq!(client.reads(), [json!({ "session": "s1", "seq": 7 })]);
+}

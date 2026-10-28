@@ -7,6 +7,8 @@ pub mod list_entries;
 pub mod list_entry;
 pub mod new_session_form;
 mod pane_actions;
+mod pane_lines;
+pub mod presence;
 pub mod project_header;
 pub mod session_row;
 pub mod sessions_pane;
