@@ -1,12 +1,12 @@
 {
-  "commit": "1d73214569edacc8e1b959bd1433bf74d10fc9bc",
+  "commit": "b54fdaa32b689db7239f18d32d380820ac55847f",
   "lane": "terminal",
   "localMachine": "agent-workbox",
-  "startedAt": "2026-10-28T06:28:11Z",
-  "finishedAt": "2026-10-28T06:29:06Z",
+  "startedAt": "2026-10-28T06:37:09Z",
+  "finishedAt": "2026-10-28T06:38:10Z",
   "builtFrom": {
-    "local": "1d73214569edacc8e1b959bd1433bf74d10fc9bc",
-    "workboxTest": "1d73214569edacc8e1b959bd1433bf74d10fc9bc"
+    "local": "b54fdaa32b689db7239f18d32d380820ac55847f",
+    "workboxTest": "b54fdaa32b689db7239f18d32d380820ac55847f"
   },
   "features": [
     "files",
@@ -24,15 +24,15 @@
     {
       "agent": "claude",
       "machine": "local",
-      "sessionId": "60cfdcdc-fc5c-4249-8fc5-aeec6f7a96f3",
-      "runId": "2a82871b-e0df-459b-b7ad-289906fa497f",
-      "startedAt": "2026-10-28T06:28:13Z",
-      "finishedAt": "2026-10-28T06:28:23Z",
+      "sessionId": "676e72fe-641e-4c0e-bcbe-035ea9571062",
+      "runId": "50a295f2-7944-4ee8-a8ea-222857eafc0c",
+      "startedAt": "2026-10-28T06:37:10Z",
+      "finishedAt": "2026-10-28T06:37:30Z",
       "state": "finished",
       "reply": "agent-workbox\nfour-way-ok",
-      "acpSessionId": "8830088d-9620-4a01-b895-2a6352a6ad22",
+      "acpSessionId": "49e0d194-51e9-48a8-b488-f329a6eece89",
       "transcript": {
-        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-terminal-mac-sessions-60cfdcdc-fc5c-4249-8fc5-aeec6f7a96f3/8830088d-9620-4a01-b895-2a6352a6ad22.jsonl",
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-terminal-mac-sessions-676e72fe-641e-4c0e-bcbe-035ea9571062/49e0d194-51e9-48a8-b488-f329a6eece89.jsonl",
         "bytes": 341190
       },
       "rows": "claude-local.rows.json",
@@ -136,16 +136,16 @@
     {
       "agent": "claude",
       "machine": "workbox-test",
-      "sessionId": "d1aabfc4-8473-4968-91f9-5db0ffc4d6f1",
-      "runId": "2aab2ffc-3027-4c69-a602-f9f351b46421",
-      "startedAt": "2026-10-28T06:28:23Z",
-      "finishedAt": "2026-10-28T06:28:33Z",
+      "sessionId": "7b6131aa-e7d7-417d-be04-4afd7f2a930f",
+      "runId": "bc11b9f5-24b6-44ea-9615-97698dbd4b3a",
+      "startedAt": "2026-10-28T06:37:30Z",
+      "finishedAt": "2026-10-28T06:37:41Z",
       "state": "finished",
       "reply": "workbox-test\nfour-way-ok",
-      "acpSessionId": "e32e2231-8d83-4d0b-bf15-d1785d6997d5",
+      "acpSessionId": "ae936408-e014-40cf-bac8-3c14de3bbc31",
       "transcript": {
-        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-terminal-serve-sessions-d1aabfc4-8473-4968-91f9-5db0ffc4d6f1/e32e2231-8d83-4d0b-bf15-d1785d6997d5.jsonl",
-        "bytes": 193976
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-terminal-serve-sessions-7b6131aa-e7d7-417d-be04-4afd7f2a930f/ae936408-e014-40cf-bac8-3c14de3bbc31.jsonl",
+        "bytes": 193952
       },
       "rows": "claude-workbox-test.rows.json",
       "features": [
@@ -245,16 +245,16 @@
     {
       "agent": "codex",
       "machine": "local",
-      "sessionId": "a1fbfc80-8884-4026-8a2a-dd35e2a7ceb0",
-      "runId": "55c3781f-da44-4e01-9977-d5f490fa6a3d",
-      "startedAt": "2026-10-28T06:28:33Z",
-      "finishedAt": "2026-10-28T06:28:46Z",
+      "sessionId": "2e1e3468-c151-44a7-b215-50657abd5cda",
+      "runId": "83bff46a-b4d7-4951-82d2-bd50f6da8577",
+      "startedAt": "2026-10-28T06:37:41Z",
+      "finishedAt": "2026-10-28T06:37:54Z",
       "state": "finished",
       "reply": "agent-workbox\nfour-way-ok",
-      "acpSessionId": "01a18132-38e2-7211-8375-8fe2a1045f02",
+      "acpSessionId": "01a1813a-970c-73f3-8b7d-935f7c874b8f",
       "transcript": {
-        "path": "/home/blackcolours/.codex/sessions/2026/10/28/rollout-2026-10-28T02-28-34-01a18132-38e2-7211-8375-8fe2a1045f02.jsonl",
-        "bytes": 157287
+        "path": "/home/blackcolours/.codex/sessions/2026/10/28/rollout-2026-10-28T02-37-43-01a1813a-970c-73f3-8b7d-935f7c874b8f.jsonl",
+        "bytes": 156841
       },
       "rows": "codex-local.rows.json",
       "features": [
@@ -277,7 +277,7 @@
             "ok a save is answered",
             "ok a save reaches another socket's subscription",
             "ok a later subscription gets the saved value",
-            "ok a cancelled save is all or nothing (it had committed)"
+            "ok a cancelled save is all or nothing (cancelled)"
           ]
         },
         {
@@ -285,10 +285,10 @@
           "pass": true,
           "exitCode": 0,
           "steps": [
-            "ok the socket from 0 sent 12 rows",
+            "ok the socket from 0 sent 14 rows",
             "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
-            "ok the socket reaches the newest row (13)",
-            "ok the socket from 6 starts at 7 with prevSeq 6"
+            "ok the socket reaches the newest row (15)",
+            "ok the socket from 7 starts at 8 with prevSeq 7"
           ]
         },
         {
@@ -322,7 +322,7 @@
             "ok the header's keyed topic sends the session, with no parent session",
             "ok a working session carries its run (the column draws its dot)",
             "ok the run goes from the session when the turn ends (the dot goes)",
-            "ok the first rows page has 8 rows, hasBefore and no active run",
+            "ok the first rows page has 9 rows, hasBefore and no active run",
             "ok an opened tool call reads its detail",
             "ok the Context tab lists the 0 files the session's tool calls changed",
             "ok the Context tab lists no attachments, on this machine",
@@ -357,16 +357,16 @@
     {
       "agent": "codex",
       "machine": "workbox-test",
-      "sessionId": "d41eede0-5067-4e7c-8d83-9e627d2090d4",
-      "runId": "1edb6de4-9d24-4341-95ec-f4098a9fe49b",
-      "startedAt": "2026-10-28T06:28:46Z",
-      "finishedAt": "2026-10-28T06:29:06Z",
+      "sessionId": "3b4e6f62-4bc7-407b-9d09-6d1b39ba1569",
+      "runId": "613aebcd-102e-4c72-83b0-ffdb968b83ea",
+      "startedAt": "2026-10-28T06:37:54Z",
+      "finishedAt": "2026-10-28T06:38:10Z",
       "state": "finished",
       "reply": "workbox-test\nfour-way-ok",
-      "acpSessionId": "01a18132-69af-7d73-98b1-22d32b56f38f",
+      "acpSessionId": "01a1813a-c5ea-79f2-9b48-5e2c2418155c",
       "transcript": {
-        "path": "/home/blackcolours/.codex/sessions/2026/10/28/rollout-2026-10-28T06-28-47-01a18132-69af-7d73-98b1-22d32b56f38f.jsonl",
-        "bytes": 74798
+        "path": "/home/blackcolours/.codex/sessions/2026/10/28/rollout-2026-10-28T06-37-55-01a1813a-c5ea-79f2-9b48-5e2c2418155c.jsonl",
+        "bytes": 72855
       },
       "rows": "codex-workbox-test.rows.json",
       "features": [
@@ -394,9 +394,9 @@
           "pass": true,
           "exitCode": 0,
           "steps": [
-            "ok the socket from 0 sent 16 rows",
+            "ok the socket from 0 sent 17 rows",
             "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
-            "ok the socket reaches the newest row (17)",
+            "ok the socket reaches the newest row (18)",
             "ok the socket from 8 starts at 9 with prevSeq 8"
           ]
         },
