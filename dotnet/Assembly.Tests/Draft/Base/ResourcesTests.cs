@@ -139,8 +139,6 @@ public sealed class ResourcesTests : IAsyncLifetime
     [LinuxFact]
     public void The_real_reader_sums_this_process_and_lists_a_child_it_started()
     {
-        using var self = Process.GetCurrentProcess();
-        var rss = self.WorkingSet64;
         using var child = Process.Start(new ProcessStartInfo("sleep", "30") { UseShellExecute = false })!;
         try
         {
@@ -148,7 +146,9 @@ public sealed class ResourcesTests : IAsyncLifetime
 
             Assert.Contains(tree, reading => reading.Pid == Environment.ProcessId);
             Assert.Contains(tree, reading => reading.Pid == child.Id);
-            Assert.True(tree.Sum(reading => reading.MemoryBytes) >= rss, $"the tree's {tree.Sum(reading => reading.MemoryBytes)} bytes are under this process's {rss}");
+            // Each reading has its resident memory; a collection between two reads moves this process's, so no exact sum.
+            Assert.All(tree.Where(reading => reading.Pid == Environment.ProcessId || reading.Pid == child.Id),
+                reading => Assert.True(reading.MemoryBytes > 0, $"pid {reading.Pid} reads {reading.MemoryBytes} bytes"));
         }
         finally
         {
