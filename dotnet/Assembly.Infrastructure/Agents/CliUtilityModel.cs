@@ -16,10 +16,13 @@ namespace Assembly.Infrastructure.Agents;
 internal sealed class CliUtilityModel : IUtilityModel
 {
     private const int OutputLimit = 64 * 1024;
+    private const int ErrorsKept = 300;
     private static readonly TimeSpan RunLimit = TimeSpan.FromSeconds(120);
 
     private readonly Cli[] _clis;
-    private readonly Lazy<Cli?> _found;
+    private readonly SemaphoreSlim _checking = new(1, 1);
+    private bool _checked;
+    private Cli? _found;
     private readonly PreferenceStore _preferences;
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
@@ -38,7 +41,6 @@ internal sealed class CliUtilityModel : IUtilityModel
                 ["exec", "--sandbox", "read-only", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--model", "gpt-5.6-luna", "-"],
                 ["OPENAI_API_KEY", "CODEX_API_KEY"], Json: false),
         ];
-        _found = new(() => _clis.FirstOrDefault(cli => Runs(cli.File)));
     }
 
     // One signed-in CLI: how to run it, and the API keys it must not see.
@@ -47,7 +49,7 @@ internal sealed class CliUtilityModel : IUtilityModel
     public async Task<string?> CompleteAsync(string prompt, CancellationToken cancellationToken)
     {
         var setting = Setting();
-        var cli = setting == "off" ? null : _clis.FirstOrDefault(known => known.Name == setting) ?? _found.Value;
+        var cli = setting == "off" ? null : _clis.FirstOrDefault(known => known.Name == setting) ?? await FoundAsync(cancellationToken);
         if (cli is null)
         {
             _log.WriteLine("utility model: none set up, so sessions keep the title their first message gave");
@@ -77,7 +79,7 @@ internal sealed class CliUtilityModel : IUtilityModel
         string errors;
         using (either.Token.Register(() => ProcessGroup.Kill(process.Id)))
         {
-            var stderr = process.StandardError.ReadToEndAsync(CancellationToken.None);
+            var stderr = KeepStartAsync(process.StandardError);
             try
             {
                 await process.StandardInput.WriteAsync(prompt);
@@ -98,7 +100,7 @@ internal sealed class CliUtilityModel : IUtilityModel
         cancellationToken.ThrowIfCancellationRequested();
         var failure = limit.IsCancellationRequested ? $"no answer in {RunLimit.TotalSeconds:0} s"
             : read > OutputLimit ? "an answer over 64 KiB"
-            : process.ExitCode != 0 ? $"exit {process.ExitCode}: {string.Concat(errors.Trim().Take(300))}"
+            : process.ExitCode != 0 ? $"exit {process.ExitCode}: {errors.Trim()}"
             : null;
         var raw = Encoding.UTF8.GetString(output, 0, Math.Min(read, OutputLimit));
         var answer = failure is null ? (cli.Json ? Result(raw) : raw.Trim()) : null;
@@ -136,24 +138,72 @@ internal sealed class CliUtilityModel : IUtilityModel
         }
     }
 
-    private static bool Runs(string cli)
+    // The first CLI whose --version runs, checked once; a check a stop cut short is made again next time.
+    private async Task<Cli?> FoundAsync(CancellationToken cancellationToken)
     {
+        await _checking.WaitAsync(cancellationToken);
         try
         {
-            using var process = Process.Start(new ProcessStartInfo(cli, ["--version"])
+            if (!_checked)
+            {
+                foreach (var cli in _clis)
+                    if (await RunsAsync(cli.File, cancellationToken))
+                    {
+                        _found = cli;
+                        break;
+                    }
+                _checked = true;
+            }
+            return _found;
+        }
+        finally
+        {
+            _checking.Release();
+        }
+    }
+
+    private async Task<bool> RunsAsync(string cli, CancellationToken cancellationToken)
+    {
+        Process process;
+        try
+        {
+            process = Process.Start(new ProcessStartInfo(cli, ["--version"])
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
             })!;
-            if (process.WaitForExit(TimeSpan.FromSeconds(10)))
-                return process.ExitCode == 0;
-            process.Kill(entireProcessTree: true);
-            return false;
         }
         catch (Win32Exception)
         {
             return false;
         }
+
+        using (process)
+        {
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(10), _time);
+            using var either = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, limit.Token);
+            try
+            {
+                await process.WaitForExitAsync(either.Token);
+                return process.ExitCode == 0;
+            }
+            catch (OperationCanceledException)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync(CancellationToken.None);
+                cancellationToken.ThrowIfCancellationRequested();
+                return false;
+            }
+        }
+    }
+
+    // The first few hundred characters of a stream, read to its end, so a noisy CLI can't fill memory.
+    private static async Task<string> KeepStartAsync(StreamReader reader)
+    {
+        var kept = new char[ErrorsKept];
+        var length = await reader.ReadBlockAsync(kept, CancellationToken.None);
+        await reader.BaseStream.CopyToAsync(Stream.Null, CancellationToken.None);
+        return new string(kept, 0, length);
     }
 }

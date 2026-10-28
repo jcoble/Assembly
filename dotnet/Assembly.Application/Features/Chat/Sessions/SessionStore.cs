@@ -257,10 +257,16 @@ public sealed class SessionStore
         return sessions.Count == limit ? new SessionPage(sessions, sessions[^1].UpdatedAt, sessions[^1].SessionId) : new SessionPage(sessions, null, null);
     }
 
-    /// <summary>Sets the title and where it came from: <c>prompt</c> (the first message or the agent), <c>helper</c> (the utility model) or <c>user</c>.</summary>
+    /// <summary>
+    /// Sets the title and where it came from: <c>prompt</c> (the first message or the agent), <c>helper</c> (the utility
+    /// model) or <c>user</c>. A helper title is kept over a later prompt one, and a user title over both; the check is in
+    /// the write, so a title arriving meanwhile can't slip past it.
+    /// </summary>
     public void SetTitle(string sessionId, string title, string source) =>
-        Change(sessionId, "UPDATE session_info SET title = $title, title_source = $source WHERE session_id = $id;",
+        Change(sessionId, $"UPDATE session_info SET title = $title, title_source = $source WHERE session_id = $id AND {Rank("$source")} >= {Rank("title_source")};",
             ("$id", sessionId), ("$title", title), ("$source", source));
+
+    private static string Rank(string source) => $"(CASE {source} WHEN 'user' THEN 2 WHEN 'helper' THEN 1 ELSE 0 END)";
 
     public void SetAcpSession(string sessionId, string acpSessionId) =>
         Change(sessionId, "UPDATE session_info SET acp_session_id = $session WHERE session_id = $id;", ("$id", sessionId), ("$session", acpSessionId));

@@ -220,7 +220,7 @@ public sealed partial class SessionHost
                         // What the child asks (a permission, a question) AcpClient sends to this session's policy, as its parent's.
                         Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
                         break;
-                    case TitleChanged title when _sessionStore.Get(_sessionId) is { Helper: false, TitleSource: null or "prompt" }:
+                    case TitleChanged title when _sessionStore.Get(_sessionId) is { Helper: false }:
                         _sessionStore.SetTitle(_sessionId, title.Title, "prompt");
                         break;
                     case ConfigOptionsChanged changed:

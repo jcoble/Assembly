@@ -221,7 +221,8 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status.Reachable(_name);
     }
 
-    // A finished turn may have named the session on the remote, its utility model too. A title given here is kept.
+    // A finished turn may have named the session on the remote, its utility model too. A title the user gave here is
+    // kept, and SetTitle keeps a helper title held here over a prompt one from the remote.
     private async Task RefreshAsync(string sessionId)
     {
         _turnEnded(sessionId);
