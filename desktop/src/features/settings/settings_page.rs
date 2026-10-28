@@ -71,7 +71,7 @@ impl SettingsPage {
         });
     }
 
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Search settings")
@@ -115,10 +115,12 @@ impl SettingsPage {
                 page.follow_preferences(window, cx)
             }));
         }
-        subscriptions.push(cx.observe_global::<GlobalMachines>(|page, cx| {
-            page.follow_machines(cx);
-            cx.notify();
-        }));
+        subscriptions.push(
+            cx.observe_global_in::<GlobalMachines>(window, |page, window, cx| {
+                page.follow_machines(window, cx);
+                cx.notify();
+            }),
+        );
         let (ui_fonts, code_fonts) = fonts::installed(cx);
         let mut page = Self {
             search,
@@ -131,15 +133,22 @@ impl SettingsPage {
             machine_call: None,
             _subscriptions: subscriptions,
         };
-        page.follow_machines(cx);
+        page.follow_machines(window, cx);
         page
     }
 
-    /// Redraws as the machines list changes.
-    fn follow_machines(&mut self, cx: &mut Context<Self>) {
+    /// Redraws as the machines list changes, and ends an edit whose machine went or changed elsewhere, emptying the
+    /// form. Not while the form's own save is on its way: its change is the one coming back.
+    fn follow_machines(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(machines) = Machines::try_global(cx) {
-            self._subscriptions
-                .push(cx.observe(&machines, |_, _, cx| cx.notify()));
+            let followed = cx.observe_in(&machines, window, |page, machines, window, cx| {
+                let saving = (page.machine_call.as_ref()).is_some_and(|(id, _)| id == "set");
+                if !saving && page.machine_edits.follow(machines.read(cx).machines()) {
+                    page.clear_machine_fields(window, cx);
+                }
+                cx.notify();
+            });
+            self._subscriptions.push(followed);
         }
     }
 

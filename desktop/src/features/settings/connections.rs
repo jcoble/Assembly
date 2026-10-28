@@ -113,7 +113,8 @@ impl SettingsPage {
     /// A remote's buttons: Connect or Disconnect, Edit, and Remove after a confirm.
     fn machine_actions(&self, machine: Machine, cx: &mut Context<Self>) -> Div {
         let name = machine.name.clone().unwrap_or_default();
-        let editing = self.machine_edits.editing.as_ref() == Some(&name);
+        let editing = (self.machine_edits.editing.as_ref())
+            .is_some_and(|edited| edited.name.as_ref() == Some(&name));
         let (method, label, args, doing) = if machine.reachable {
             (
                 "disconnect",
@@ -162,7 +163,7 @@ impl SettingsPage {
     /// Adds a machine, or saves the one being edited, whose name stays as it is.
     fn machine_form(&self, cx: &mut Context<Self>) -> Div {
         let [name, ssh, port, token_file] = &self.machine_fields;
-        let editing = self.machine_edits.editing.clone();
+        let editing = (self.machine_edits.editing.as_ref()).and_then(|edited| edited.name.clone());
         let failure = self.failure_about(None, cx);
         let title = match &editing {
             Some(name) => format!("Edit {name}"),
@@ -244,7 +245,7 @@ impl SettingsPage {
     }
 
     fn edit_machine(&mut self, machine: &Machine, window: &mut Window, cx: &mut Context<Self>) {
-        self.machine_edits.editing = machine.name.clone();
+        self.machine_edits.editing = Some(machine.clone());
         self.machine_edits.failure = None;
         let values = [
             machine.name.clone(),
@@ -260,7 +261,7 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn clear_machine_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn clear_machine_fields(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for field in &self.machine_fields {
             field.update(cx, |field, cx| field.set_value("", window, cx));
         }
@@ -272,7 +273,8 @@ impl SettingsPage {
             .machine_fields
             .each_ref()
             .map(|field| field.read(cx).value());
-        let name = (self.machine_edits.editing.clone()).unwrap_or(name.to_string());
+        let edited = (self.machine_edits.editing.as_ref()).and_then(|edited| edited.name.clone());
+        let name = edited.unwrap_or(name.to_string());
         match set_args(&name, &ssh, &port, &token_file) {
             Ok(args) => self.machine_call(None, "set", args, "Not saved", window, cx),
             Err(why) => {
@@ -367,3 +369,7 @@ fn field(label: &'static str, state: &Entity<InputState>, cx: &App) -> Div {
         )
         .child(Input::new(state).small())
 }
+
+#[cfg(test)]
+#[path = "connections_tests.rs"]
+mod tests;

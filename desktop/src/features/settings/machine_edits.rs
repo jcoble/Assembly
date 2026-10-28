@@ -5,11 +5,12 @@
 use serde_json::{Value, json};
 
 use crate::core::socket::outcome::Outcome;
+use crate::core::state::machine::Machine;
 
 #[derive(Default)]
 pub(super) struct MachineEdits {
-    /// The saved machine the form edits; `None` adds one.
-    pub editing: Option<String>,
+    /// The saved machine the form edits, as it was when the edit began; `None` adds one.
+    pub editing: Option<Machine>,
     /// The last call that failed, in plain words, with the machine whose row made it (`None` for the form).
     pub failure: Option<(Option<String>, String)>,
 }
@@ -31,6 +32,32 @@ impl MachineEdits {
         };
         self.failure = Some((about, format!("{doing}: {}.", why.trim_end_matches('.'))));
         false
+    }
+
+    /// Follows the machines list while no save of the form's is on its way: an edit whose machine is gone, or was
+    /// reached another way (its SSH destination, port or token file changed), ends and says why, so its Save can't
+    /// bring the machine back or undo that change. Whether a machine answers doesn't touch the edit. Says whether it
+    /// ended.
+    pub fn follow<'a>(&mut self, machines: impl IntoIterator<Item = &'a Machine>) -> bool {
+        let Some(edited) = &self.editing else {
+            return false;
+        };
+        let name = edited.name.clone().unwrap_or_default();
+        let why = match machines.into_iter().find(|held| held.name == edited.name) {
+            None => format!("Edit ended: {name} was removed, so nothing was saved."),
+            Some(held)
+                if (&held.ssh, held.port, &held.token_file)
+                    != (&edited.ssh, edited.port, &edited.token_file) =>
+            {
+                format!(
+                    "Edit ended: {name} was changed elsewhere, so nothing was saved. Edit it again to see how it's reached now."
+                )
+            }
+            Some(_) => return false,
+        };
+        self.editing = None;
+        self.failure = Some((None, why));
+        true
     }
 }
 
