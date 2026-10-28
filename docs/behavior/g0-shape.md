@@ -42,5 +42,6 @@ kit's tabs.
 g0-shape#13 The drawer's Context tab lists the files the selected session's tool calls edited, deleted or moved, newest
 first, each once with its file name, its folder and its lines added and removed (`rows/files`, parity map 11c). A
 failed call touched nothing. The tab reads the list when it's shown and when another session is picked while it's
-shown, and doesn't follow the live rows, as the old app's didn't. With no session picked it says to pick one; a read
-that fails says why.
+shown, and doesn't follow the live rows, as the old app's didn't, so a remote session picked before its rows are
+copied here can list too few until the tab is shown again. With no session picked it says to pick one; a read that
+fails or is cancelled says why.

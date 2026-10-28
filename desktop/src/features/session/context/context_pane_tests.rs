@@ -103,6 +103,11 @@ fn a_hidden_tab_reads_nothing_and_a_pick_while_shown_reads_again(cx: &mut TestAp
     shown(&pane, false, cx);
     pick(Some("s3"), cx);
     assert_eq!(reads(&client).len(), 2, "hidden again, it reads nothing");
+    assert_eq!(
+        files(&pane, cx),
+        Files::Reading,
+        "nor keeps the last session's list"
+    );
     client.queue_answer(Ok(json!([])));
     shown(&pane, true, cx);
     assert_eq!(
@@ -124,7 +129,7 @@ fn with_no_session_picked_it_reads_nothing_and_says_pick_one(cx: &mut TestAppCon
 
 // Pins: g0-shape#13
 #[gpui::test]
-fn a_failed_read_says_why_and_an_aborted_one_says_nothing(cx: &mut TestAppContext) {
+fn a_failed_or_cancelled_read_says_why(cx: &mut TestAppContext) {
     let (pane, client, cx) = open(cx);
     client.queue_answer(Err(CallError::Failed("disk is full".into())));
     pick(Some("s1"), cx);
@@ -133,7 +138,8 @@ fn a_failed_read_says_why_and_an_aborted_one_says_nothing(cx: &mut TestAppContex
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert!(cx.debug_bounds("context-note-failed").is_some());
 
+    // As the socket closing answers a waiting call: nothing reads again, so it mustn't stay on "Reading".
     client.queue_answer(Err(CallError::Aborted));
     pick(Some("s2"), cx);
-    assert_eq!(files(&pane, cx), Files::Reading);
+    assert_eq!(files(&pane, cx), Files::Failed("it was cancelled".into()));
 }

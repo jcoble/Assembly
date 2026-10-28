@@ -15,7 +15,9 @@ use serde_json::json;
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::session_client::{CallError, SessionClient};
 use crate::features::session::client::socket_session_client::SocketSessionClient;
-use crate::features::shell::default_layout::CONTEXT;
+
+/// The layout's name for the tab (default_layout.rs).
+const CONTEXT: &str = "Context";
 
 /// One file, as `rows/files` sends it (RowsFeature.cs).
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -63,14 +65,15 @@ impl ContextPane {
         }
     }
 
-    /// Reads the selected session's files, if the tab is shown.
+    /// Reads the selected session's files, if the tab is shown. A hidden tab drops the last session's list, so the
+    /// frame before it's shown again never draws it.
     fn read(&mut self, cx: &mut Context<Self>) {
-        if !self.active {
-            return;
-        }
         self.files = Files::Reading;
         self._read = None;
         cx.notify();
+        if !self.active {
+            return;
+        }
         let Some(session) = SelectedSession::global(cx)
             .read(cx)
             .session_id()
@@ -92,7 +95,6 @@ impl ContextPane {
             pane.update(cx, |pane, cx| {
                 pane.files = match answer {
                     Ok(files) => Files::Read(files),
-                    Err(CallError::Aborted) => return,
                     Err(error) => Files::Failed(error.reason()),
                 };
                 cx.notify();
