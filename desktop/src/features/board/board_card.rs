@@ -144,6 +144,8 @@ pub fn card(
     let body = open.then(|| detail(pane, &task.creator_session_id, window, cx));
     v_flex()
         .id(ElementId::Integer(ix as u64))
+        .w_full()
+        .px_3()
         .pb_2()
         .child(
             v_flex()
