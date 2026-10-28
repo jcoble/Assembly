@@ -1,119 +1,206 @@
-//! `SessionRow` is one session in the column: its title, agent and machine, and a still dot for what it's doing
-//! (its `Presence`). Selected, it's marked; a click selects it, and its right-click menu moves it to another group
-//! (`sessions/mark`).
+//! `SessionRow` is one session in the rail. A parent shows its title over its provider, machine, recorded branch, age
+//! and helpers, with its state in a pill; one with helpers has a chevron that shows or hides them. A helper sits
+//! indented under its parent on one line, with its state as a word. A click opens the row's own session, a helper's
+//! too; a parent's right-click menu moves it between Working and Done or settles it (`sessions/mark`).
 
 use std::rc::Rc;
 
+use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::history::age::age;
 use super::presence::Presence;
+use super::rail_page::RailEntry;
 use super::status::Status;
-use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::session_item::SessionItem;
-
-/// A session's line in the list.
-pub const ROW_HEIGHT: Pixels = px(48.);
 
 /// Moves a session to a group: the pane's `mark`.
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
+/// Opens a session (the pane's `open`), or shows or hides a parent's helpers: given the row's session id.
+pub type OnSession = Rc<dyn Fn(String, &mut Window, &mut App)>;
+
+/// What a row needs from the pane besides its entry: its place, and what its clicks do.
+#[derive(Clone)]
+pub struct RowContext {
+    pub selected: bool,
+    /// Its machine didn't answer last time (`Machines::offline`).
+    pub offline: bool,
+    /// Its helpers show under it.
+    pub expanded: bool,
+    /// The backend clock's last tick, for its age.
+    pub now: Option<i64>,
+    pub on_open: OnSession,
+    pub on_toggle: OnSession,
+    pub on_mark: OnMark,
+}
 
 #[derive(IntoElement)]
 pub struct SessionRow {
-    pub session_id: String,
-    pub title: SharedString,
-    /// "claude · Workbox Test".
-    pub place: SharedString,
-    pub selected: bool,
-    /// What it's doing: every presence but Offline and Idle has a still dot.
-    pub presence: Presence,
-    pub status: Status,
-    on_mark: Option<OnMark>,
+    entry: RailEntry,
+    helper: bool,
+    context: RowContext,
 }
 
 impl SessionRow {
-    /// `offline`: whether its machine didn't answer last time (`Machines::offline`).
-    pub fn of(item: &SessionItem, selected: bool, offline: bool) -> SessionRow {
+    pub fn new(entry: RailEntry, helper: bool, context: RowContext) -> Self {
         SessionRow {
-            session_id: item.session_id.clone(),
-            title: item.title().into(),
-            place: item.place().into(),
-            selected,
-            presence: Presence::of(item, offline),
-            status: Status::of(item),
-            on_mark: None,
+            entry,
+            helper,
+            context,
         }
     }
+}
 
-    pub fn on_mark(mut self, on_mark: OnMark) -> Self {
-        self.on_mark = Some(on_mark);
-        self
+/// The line under a parent's title: "claude · Workbox Test · lane/rail · 2m · 3 helpers", with "offline" when its
+/// machine isn't answering. Helpers are counted only while they're hidden.
+pub fn subtitle(entry: &RailEntry, now: Option<i64>, offline: bool, expanded: bool) -> String {
+    let mut parts = vec![
+        entry.agent.clone(),
+        entry.machine.clone().unwrap_or_else(|| "This Mac".into()),
+    ];
+    parts.extend(entry.branch.clone().filter(|branch| !branch.is_empty()));
+    parts.extend(now.map(|now| age(now, entry.updated_at)));
+    match entry.helpers {
+        0 => {}
+        _ if expanded => {}
+        1 => parts.push("1 helper".into()),
+        n => parts.push(format!("{n} helpers")),
     }
+    if offline {
+        parts.push("offline".into());
+    }
+    parts.join(" · ")
 }
 
 impl RenderOnce for SessionRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let session_id = self.session_id.clone();
-        let dot = match self.presence {
-            Presence::NeedsYou => Some(theme.warning),
-            Presence::Working => Some(theme.primary),
-            Presence::Failed => Some(theme.danger),
-            Presence::Unread => Some(theme.muted_foreground),
-            Presence::Offline | Presence::Idle => None,
+        let RowContext {
+            selected,
+            offline,
+            expanded,
+            now,
+            on_open,
+            on_toggle,
+            on_mark,
+        } = self.context;
+        let presence = Presence::of(&self.entry);
+        let tint = match presence {
+            Presence::NeedsYou => theme.warning,
+            Presence::Working => theme.primary,
+            Presence::Failed => theme.danger,
+            Presence::Done => theme.success,
+            Presence::Unread | Presence::Idle => theme.muted_foreground,
         };
-        let place = match self.presence.word() {
-            Some(word) => format!("{} · {word}", self.place),
-            None => self.place.to_string(),
+        let title = match self.entry.title.as_deref().map(str::trim) {
+            Some(title) if !title.is_empty() => title.to_string(),
+            _ => self.entry.group.clone(),
         };
-        let (menu_id, status, on_mark) = (self.session_id.clone(), self.status, self.on_mark);
-        v_flex()
-            .id(SharedString::from(format!("session:{}", self.session_id)))
-            .w_full()
-            .h(ROW_HEIGHT)
-            .justify_center()
-            .px_3()
-            .rounded(theme.radius)
-            .cursor_pointer()
-            .when(self.selected, |row| row.bg(theme.secondary))
-            .hover(|row| row.bg(theme.muted))
-            .on_click(move |_, _, cx| {
-                let id = session_id.clone();
-                SelectedSession::global(cx)
-                    .update(cx, |selected, cx| selected.select(Some(id), cx));
-            })
+        let id = self.entry.session_id.clone();
+        let opened = id.clone();
+        let chevron = (!self.helper && self.entry.helpers > 0).then(|| {
+            let id = id.clone();
+            div()
+                .id(SharedString::from(format!("helpers:{id}")))
+                .cursor_pointer()
+                .child(
+                    Icon::new(if expanded {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .xsmall()
+                    .text_color(theme.muted_foreground),
+                )
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    on_toggle(id.clone(), window, cx);
+                })
+        });
+        let helper = self.helper;
+        let word = presence.word().map(|word| {
+            h_flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .text_xs()
+                .text_color(tint)
+                .when(!helper, |pill| {
+                    pill.h(px(20.))
+                        .px_2()
+                        .rounded_full()
+                        .border_1()
+                        .border_color(tint.opacity(0.4))
+                        .bg(tint.opacity(0.12))
+                        .child(div().size(px(6.)).rounded_full().bg(tint))
+                })
+                .child(word)
+        });
+        let unread = (presence == Presence::Unread).then(|| {
+            div()
+                .flex_none()
+                .size(px(6.))
+                .rounded_full()
+                .bg(theme.muted_foreground)
+        });
+        let text = v_flex()
+            .flex_1()
+            .min_w_0()
             .child(
                 h_flex()
                     .gap_2()
-                    .when_some(dot, |line, color| {
-                        line.child(div().flex_none().size(px(6.)).rounded_full().bg(color))
-                    })
-                    .child(div().text_sm().truncate().child(self.title)),
+                    .children(unread)
+                    .child(div().text_sm().truncate().child(title)),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(match self.presence {
-                        Presence::NeedsYou => theme.warning,
-                        Presence::Failed => theme.danger,
-                        _ => theme.muted_foreground,
-                    })
-                    .truncate()
-                    .child(place),
-            )
-            .context_menu(move |mut menu, _, _| {
-                for (label, to) in status.moves() {
-                    let (id, on_mark) = (menu_id.clone(), on_mark.clone());
-                    menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
-                        if let Some(on_mark) = &on_mark {
-                            on_mark(id.clone(), to, cx)
-                        }
-                    }));
-                }
-                menu
+            .when(!helper, |text| {
+                text.child(
+                    div()
+                        .text_xs()
+                        .truncate()
+                        .text_color(if offline {
+                            theme.warning
+                        } else {
+                            theme.muted_foreground
+                        })
+                        .child(subtitle(&self.entry, now, offline, expanded)),
+                )
+            });
+        let selector = format!("session-{id}");
+        let row = h_flex()
+            .id(SharedString::from(format!("session:{id}")))
+            .debug_selector(move || selector.clone())
+            .w_full()
+            .min_h(if helper { px(30.) } else { px(48.) })
+            .gap_2()
+            .py_1()
+            .pr_2()
+            .pl(if helper { px(32.) } else { px(6.) })
+            .rounded(theme.radius_lg)
+            .cursor_pointer()
+            .when(selected, |row| row.bg(theme.secondary))
+            .hover(|row| row.bg(theme.muted))
+            .on_click(move |_, window, cx| on_open(opened.clone(), window, cx))
+            .when(!helper, |row| {
+                row.child(div().flex_none().w(px(14.)).children(chevron))
             })
+            .child(text)
+            .children(word);
+        if helper {
+            return row.into_any_element();
+        }
+        let status = Status::of(self.entry.completed_at);
+        row.context_menu(move |mut menu, _, _| {
+            for (label, to) in status.moves() {
+                let (id, on_mark) = (id.clone(), on_mark.clone());
+                menu = menu.item(
+                    PopupMenuItem::new(label).on_click(move |_, _, cx| on_mark(id.clone(), to, cx)),
+                );
+            }
+            menu
+        })
+        .into_any_element()
     }
 }
 

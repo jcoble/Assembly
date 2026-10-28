@@ -1,38 +1,32 @@
-//! `ProjectHeader` heads one project inside a group: its name, its machine when it isn't this computer, and a New
-//! session button that opens the new-session form with the project's folder and machine filled in.
+//! `ProjectHeader` heads one project in the rail: the label the backend gave it, quiet and small, and a New session
+//! button that opens the new-session form with the project's folder and its first session's machine filled in.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::*;
 
-use super::list_entries::project_label;
-use super::status::Status;
-
 /// A project's header line: room for its + button.
-pub const PROJECT_HEIGHT: Pixels = px(28.);
+pub const PROJECT_HEIGHT: Pixels = px(30.);
 
 type OnNew = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct ProjectHeader {
-    status: Status,
-    folder: String,
-    machine: Option<String>,
+    label: String,
+    repo_url: String,
     on_new: OnNew,
 }
 
 impl ProjectHeader {
     pub fn new(
-        status: Status,
-        folder: String,
-        machine: Option<String>,
+        label: String,
+        repo_url: String,
         on_new: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         ProjectHeader {
-            status,
-            folder,
-            machine,
+            label,
+            repo_url,
             on_new: Box::new(on_new),
         }
     }
@@ -41,20 +35,10 @@ impl ProjectHeader {
 impl RenderOnce for ProjectHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let name = match &self.machine {
-            Some(machine) => format!("{} · {machine}", project_label(&self.folder)),
-            None => project_label(&self.folder).to_string(),
-        };
-        let id = format!(
-            "project:{}:{}:{}",
-            self.status.wire(),
-            self.machine.as_deref().unwrap_or(""),
-            self.folder
-        );
         h_flex()
             .w_full()
             .h(PROJECT_HEIGHT)
-            .items_center()
+            .items_end()
             .justify_between()
             .gap_2()
             .pl_3()
@@ -62,16 +46,17 @@ impl RenderOnce for ProjectHeader {
             .child(
                 div()
                     .min_w_0()
-                    .text_sm()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.foreground)
+                    .pb_1()
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
                     .truncate()
-                    .child(name),
+                    .child(self.label.to_uppercase()),
             )
             .child(
-                Button::new(SharedString::from(id))
+                Button::new(SharedString::from(format!("project:{}", self.repo_url)))
                     .ghost()
-                    .compact()
+                    .xsmall()
                     .icon(IconName::Plus)
                     .tooltip("New session in this project")
                     .on_click(self.on_new),

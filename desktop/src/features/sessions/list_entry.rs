@@ -1,21 +1,30 @@
-//! `ListEntry` is one line of the grouped sessions list: a group's header, a project's header inside it, or a
-//! session (by its id).
+//! `ListEntry` is one line of the sessions column, in the backend's order: a project's heading, a parent session, one
+//! of the expanded parent's helpers, or the line that loads more of them.
 
-use super::status::Status;
+use super::rail_page::RailEntry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ListEntry {
-    /// `open` is false only for a folded Settled.
-    Group {
-        status: Status,
-        open: bool,
-    },
-    /// A project inside a group: its folder (the session's repo or folder until sessions carry a project) on its
-    /// machine (`None` for this computer).
+    /// The heading before a project's first parent in the tab: its label, its repo, and that parent's machine, which
+    /// the heading's New session fills in.
     Project {
-        status: Status,
-        folder: String,
+        label: String,
+        repo_url: String,
         machine: Option<String>,
     },
-    Session(String),
+    Session(RailEntry),
+    Helper(RailEntry),
+    /// The expanded parent (by id) has more helpers than are loaded.
+    MoreHelpers(String),
+}
+
+impl ListEntry {
+    /// What the line is, whatever it shows now: the list finds the line at its top again by it.
+    pub fn key(&self) -> &str {
+        match self {
+            ListEntry::Project { repo_url, .. } => repo_url,
+            ListEntry::Session(entry) | ListEntry::Helper(entry) => &entry.session_id,
+            ListEntry::MoreHelpers(parent) => parent,
+        }
+    }
 }

@@ -1,53 +1,45 @@
-//! `Presence` is what a session's row shows of what it's doing, from the summary the backend keeps on its item
-//! (step 1c) and the machines list: its machine isn't answering, it needs you (an open question or permission), it's
-//! working, its last turn failed, a turn ended that you haven't seen, or nothing. The first that holds wins, in that
-//! order.
+//! `Presence` is what a rail row says its session is doing, from the backend's read (a parent's counts its helpers):
+//! it needs you (an open question or permission), it's working, its last turn failed, the user marked it done, a
+//! turn ended that you haven't seen, or nothing. The first that holds wins, in that order. A machine that isn't
+//! answering doesn't change it: the row keeps the last state it knew and says it's offline beside it.
 
-use gpui_kit::App;
-
-use crate::core::state::machines::Machines;
-use crate::core::state::session_item::SessionItem;
+use super::rail_page::RailEntry;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presence {
-    Offline,
     NeedsYou,
     Working,
     Failed,
+    Done,
     Unread,
     Idle,
 }
 
 impl Presence {
-    /// `offline`: whether the session's machine didn't answer last time (`Machines::offline`).
-    pub fn of(item: &SessionItem, offline: bool) -> Presence {
-        if offline {
-            Presence::Offline
-        } else if item.state == "waiting" {
+    pub fn of(entry: &RailEntry) -> Presence {
+        if entry.needs_you {
             Presence::NeedsYou
-        } else if item.active_run_id.is_some() {
+        } else if entry.running {
             Presence::Working
-        } else if item.state == "failed" {
+        } else if entry.failed {
             Presence::Failed
-        } else if item.unread {
+        } else if entry.completed_at.is_some() {
+            Presence::Done
+        } else if entry.unread {
             Presence::Unread
         } else {
             Presence::Idle
         }
     }
 
-    /// The session's presence now, with its machine's state from the machines list.
-    pub fn now(item: &SessionItem, cx: &App) -> Presence {
-        Presence::of(item, Machines::offline(item.machine.as_deref(), cx))
-    }
-
-    /// The word the row adds after its agent and machine, for the ones that ask something of you or explain a gap.
+    /// The word on the row's pill, for the states that have one.
     pub fn word(self) -> Option<&'static str> {
         match self {
-            Presence::Offline => Some("offline"),
-            Presence::NeedsYou => Some("needs you"),
-            Presence::Failed => Some("failed"),
-            _ => None,
+            Presence::NeedsYou => Some("Needs you"),
+            Presence::Working => Some("Working"),
+            Presence::Failed => Some("Failed"),
+            Presence::Done => Some("Done"),
+            Presence::Unread | Presence::Idle => None,
         }
     }
 }

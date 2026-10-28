@@ -1,132 +1,97 @@
 use serde_json::json;
 
 use super::{changed_lines, list_entries, project_label, same_line};
-use crate::core::state::session_item::SessionItem;
+use crate::core::socket::outcome::Outcome;
 use crate::features::sessions::list_entry::ListEntry;
+use crate::features::sessions::rail_page::{Rail, RailEntry, RailPage, test_entry};
 use crate::features::sessions::status::Status;
 
-fn session(
-    id: &str,
-    repo: &str,
-    machine: Option<&str>,
-    done: Option<i64>,
-    settled: Option<i64>,
-) -> SessionItem {
-    serde_json::from_value(
-        json!({ "sessionId": id, "agent": "claude", "repoUrl": repo, "title": null,
-        "machine": machine, "parentSessionId": null, "acpSessionId": null, "updatedAt": 1,
-        "completedAt": done, "settledAt": settled }),
-    )
-    .unwrap()
-}
-
-fn project(status: Status, folder: &str, machine: Option<&str>) -> ListEntry {
-    ListEntry::Project {
-        status,
-        folder: folder.into(),
-        machine: machine.map(Into::into),
+fn parent(id: &str, repo: &str, group_start: bool) -> RailEntry {
+    RailEntry {
+        group_start,
+        ..test_entry(id, repo)
     }
 }
 
-// Pins: sessions-list#1
-#[test]
-fn a_session_without_stamps_is_working_and_the_settled_stamp_wins() {
-    assert_eq!(
-        Status::of(&session("a", "/r", None, None, None)),
-        Status::Working
-    );
-    assert_eq!(
-        Status::of(&session("a", "/r", None, Some(1), None)),
-        Status::Done
-    );
-    assert_eq!(
-        Status::of(&session("a", "/r", None, Some(1), Some(2))),
-        Status::Settled
-    );
-    // An item from a backend without the stamps reads as working.
-    let old: SessionItem = serde_json::from_value(json!({ "sessionId": "a", "agent": "claude", "repoUrl": "/r",
-        "title": null, "machine": null, "parentSessionId": null, "acpSessionId": null, "updatedAt": 1 }))
-    .unwrap();
-    assert_eq!(Status::of(&old), Status::Working);
+fn page(sessions: Vec<RailEntry>, helpers: Vec<RailEntry>, more_helpers: bool) -> RailPage {
+    RailPage {
+        totals: Default::default(),
+        agents: vec![],
+        sessions,
+        next: None,
+        helpers,
+        helpers_next: more_helpers
+            .then(|| serde_json::from_value(json!({ "updatedAt": 1, "sessionId": "h2" })).unwrap()),
+    }
 }
 
-// Pins: sessions-list#1, sessions-list#6
+/// A rail holding `page`, as the backend answered it.
+fn rail_with(page: RailPage, expanded: Option<&str>) -> Rail {
+    let mut rail = Rail::default();
+    let (id, _) = match expanded {
+        Some(parent) => rail.toggle_expanded(parent),
+        None => rail.changed().unwrap(),
+    };
+    assert_eq!(rail.finish(id, Outcome::Ok(page)), None);
+    rail
+}
+
+fn heading(repo: &str) -> ListEntry {
+    ListEntry::Project {
+        label: repo.into(),
+        repo_url: repo.into(),
+        machine: None,
+    }
+}
+
 #[test]
-fn groups_come_in_order_with_projects_a_to_z_and_sessions_newest_first() {
-    // Newest first, as Sessions holds them.
-    let items = [
-        session("w1", "/home/me/zeta", None, None, None),
-        session("d1", "/home/me/alpha", None, Some(5), None),
-        session("w2", "https://github.com/o/Beta", None, None, None),
-        session("w3", "/home/me/zeta", None, None, None),
-    ];
+fn lines_keep_the_backends_order_with_a_heading_where_it_starts_a_project() {
+    // The backend's order, not the window's: "zeta" before "alpha" stays so.
+    let (z1, z2, a1) = (
+        parent("z1", "/zeta", true),
+        parent("z2", "/zeta", false),
+        parent("a1", "/alpha", true),
+    );
+    let rail = rail_with(
+        page(vec![z1.clone(), z2.clone(), a1.clone()], vec![], false),
+        None,
+    );
     assert_eq!(
-        list_entries(&items, false, true),
+        list_entries(&rail),
         [
-            ListEntry::Group {
-                status: Status::Working,
-                open: true
-            },
-            project(Status::Working, "https://github.com/o/Beta", None),
-            ListEntry::Session("w2".into()),
-            project(Status::Working, "/home/me/zeta", None),
-            ListEntry::Session("w1".into()),
-            ListEntry::Session("w3".into()),
-            ListEntry::Group {
-                status: Status::Done,
-                open: true
-            },
-            project(Status::Done, "/home/me/alpha", None),
-            ListEntry::Session("d1".into()),
-            ListEntry::Group {
-                status: Status::Settled,
-                open: false
-            },
+            heading("/zeta"),
+            ListEntry::Session(z1),
+            ListEntry::Session(z2),
+            heading("/alpha"),
+            ListEntry::Session(a1),
         ]
     );
 }
 
-// Pins: sessions-list#6
 #[test]
-fn the_same_folder_on_two_machines_is_two_projects() {
-    let items = [
-        session("a", "/srv/app", Some("Workbox Test"), None, None),
-        session("b", "/srv/app", None, None, None),
-    ];
-    let entries = list_entries(&items, false, true);
+fn the_expanded_parents_helpers_sit_under_it_with_a_line_for_more() {
+    let (p, q) = (parent("p", "/r", true), parent("q", "/r", false));
+    let helper = test_entry("h1", "/r");
+    let rail = rail_with(
+        page(vec![p.clone(), q.clone()], vec![helper.clone()], true),
+        Some("p"),
+    );
     assert_eq!(
-        entries[1..entries.len() - 1],
+        list_entries(&rail),
         [
-            project(Status::Working, "/srv/app", None),
-            ListEntry::Session("b".into()),
-            project(Status::Working, "/srv/app", Some("Workbox Test")),
-            ListEntry::Session("a".into()),
+            heading("/r"),
+            ListEntry::Session(p.clone()),
+            ListEntry::Helper(helper.clone()),
+            ListEntry::MoreHelpers("p".into()),
+            ListEntry::Session(q.clone()),
         ]
     );
-}
-
-// Pins: sessions-list#7
-#[test]
-fn settled_starts_folded_to_its_header_and_opens() {
-    let items = [session("s", "/r", None, Some(1), Some(2))];
-    assert_eq!(
-        list_entries(&items, false, true),
-        [ListEntry::Group {
-            status: Status::Settled,
-            open: false
-        }]
+    // The last helper page leaves no line to load more.
+    let rail = rail_with(
+        page(vec![p.clone(), q.clone()], vec![helper.clone()], false),
+        Some("p"),
     );
-    assert_eq!(
-        list_entries(&items, true, true),
-        [
-            ListEntry::Group {
-                status: Status::Settled,
-                open: true
-            },
-            project(Status::Settled, "/r", None),
-            ListEntry::Session("s".into()),
-        ]
-    );
+    assert_eq!(list_entries(&rail)[3], ListEntry::Session(q));
 }
 
 #[test]
@@ -139,16 +104,17 @@ fn a_project_is_named_by_its_repo_or_its_folders_last_name() {
 // Pins: sessions-list#2
 #[test]
 fn the_row_menu_moves_a_session_to_the_other_two_groups() {
-    for status in Status::ALL {
+    for status in [Status::Working, Status::Done, Status::Settled] {
         let targets: Vec<Status> = status.moves().iter().map(|(_, to)| *to).collect();
         assert!(!targets.contains(&status));
         assert_eq!(targets.len(), 2);
     }
-    assert_eq!(Status::Settled.moves()[0], ("Unsettle", Status::Done));
+    assert_eq!(Status::of(None), Status::Working);
+    assert_eq!(Status::of(Some(5)), Status::Done);
 }
 
 fn line(id: &str) -> ListEntry {
-    ListEntry::Session(id.into())
+    ListEntry::Session(test_entry(id, "/r"))
 }
 
 #[test]
@@ -190,59 +156,14 @@ fn the_line_at_the_top_is_found_again_when_lines_change_around_it() {
 }
 
 #[test]
-fn settleds_header_is_there_before_any_settled_session_has_loaded() {
-    let items = [session("w", "/r", None, None, None)];
-    assert_eq!(
-        list_entries(&items, false, true).last(),
-        Some(&ListEntry::Group {
-            status: Status::Settled,
-            open: false
-        })
-    );
-    // With nothing open, Settled is still there to open; before the list loads, nothing is.
-    assert_eq!(
-        list_entries(&[], false, true),
-        [ListEntry::Group {
-            status: Status::Settled,
-            open: false
-        }]
-    );
-    assert_eq!(list_entries(&[], false, false), []);
-}
-
-fn summary(state: &str, run: Option<&str>, unread: bool) -> SessionItem {
-    serde_json::from_value(
-        json!({ "sessionId": "a", "agent": "claude", "repoUrl": "/r", "title": null,
-        "machine": null, "parentSessionId": null, "acpSessionId": null, "updatedAt": 1,
-        "state": state, "activeRunId": run, "unread": unread }),
-    )
-    .unwrap()
-}
-
-#[test]
-fn a_row_shows_needs_you_first_then_working_failed_and_unread() {
-    use crate::features::sessions::presence::Presence;
-    // An open ask comes while a run goes: it needs you.
-    assert_eq!(
-        Presence::of(&summary("waiting", Some("r"), true), false),
-        Presence::NeedsYou
-    );
-    assert_eq!(
-        Presence::of(&summary("running", Some("r"), true), false),
-        Presence::Working
-    );
-    assert_eq!(
-        Presence::of(&summary("failed", None, true), false),
-        Presence::Failed
-    );
-    assert_eq!(
-        Presence::of(&summary("idle", None, true), false),
-        Presence::Unread
-    );
-    assert_eq!(
-        Presence::of(&summary("idle", None, false), false),
-        Presence::Idle
-    );
-    assert_eq!(Presence::NeedsYou.word(), Some("needs you"));
-    assert_eq!(Presence::Unread.word(), None);
+fn a_row_whose_state_changed_is_still_the_line_at_the_top() {
+    // "b" started running: its line changed, but it's the same session, so the reader stays on it.
+    let old = [line("a"), line("b"), line("c")];
+    let running = ListEntry::Session(RailEntry {
+        running: true,
+        ..test_entry("b", "/r")
+    });
+    let new = [line("a2"), line("a"), running, line("c")];
+    let (changed, _) = changed_lines(&old, &new);
+    assert_eq!(same_line(&old, &new, &changed, 1), Some(2));
 }

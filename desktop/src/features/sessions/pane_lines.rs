@@ -1,32 +1,28 @@
-//! The sessions pane's list: its lines follow the grouped sessions (only the lines that changed are re-measured, so
-//! the list keeps its place), each line draws as a group's header, a project's header or a session's row, and older
-//! pages load while the list's end is in view.
+//! The sessions pane's list: its lines follow the rail's answer (only the lines that changed are re-measured, so the
+//! list keeps its place), each line draws as a project's header, a parent's row, a helper's row or the line that
+//! loads more helpers, and the next parent page loads while the list's end is in view.
 
 use std::rc::Rc;
 
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
-use super::group_header::GroupHeader;
 use super::list_entries::{changed_lines, list_entries, same_line};
 use super::list_entry::ListEntry;
 use super::project_header::ProjectHeader;
-use super::session_row::{OnMark, SessionRow};
+use super::session_row::{OnMark, OnSession, RowContext, SessionRow};
 use super::sessions_pane::SessionsPane;
-use super::status::Status;
 use crate::core::state::machines::Machines;
 use crate::core::state::selected_session::SelectedSession;
 
-/// Load the next older page when the line this far from the end is in view.
+/// Load the next page when the line this far from the end is in view.
 const LOAD_OLDER_WITHIN: usize = 20;
 
 impl SessionsPane {
-    /// Lays the sessions out again, telling the list which lines changed, and, once this frame is drawn, loads the
-    /// next older page if the end is in view.
+    /// Lays the rail out again, telling the list which lines changed, and, once this frame is drawn, loads the next
+    /// page if the end is in view.
     pub(super) fn follow_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.sessions.as_ref().map_or_else(Vec::new, |sessions| {
-            let sessions = sessions.read(cx);
-            list_entries(sessions.items(), self.settled_open, sessions.loaded())
-        });
+        let entries = list_entries(&self.rail);
         if entries != *self.entries {
             let (old, count) = changed_lines(&self.entries, &entries);
             // A splice moves a place inside the changed lines to their start, so the line at the top stays in view
@@ -44,19 +40,15 @@ impl SessionsPane {
         cx.on_next_frame(window, |pane, _, cx| pane.page_if_near_end(cx));
     }
 
-    /// Loads the next page while the end is in view (the open sessions', then Settled's while it's open), unless the
-    /// last one failed (then only Retry asks again).
+    /// Loads the next page while the end is in view, unless the last read failed (then only Retry asks again).
     fn page_if_near_end(&mut self, cx: &mut Context<Self>) {
-        let Some(sessions) = self.sessions.clone() else {
-            return;
-        };
-        if sessions.read(cx).older_error().is_some() {
+        if self.rail.error.is_some() {
             return;
         }
         let near = self.entries.len().saturating_sub(LOAD_OLDER_WITHIN);
         if self.lines.item_is_below_viewport(near) == Some(false) {
-            let settled_open = self.settled_open;
-            sessions.update(cx, |sessions, cx| sessions.load_next(settled_open, cx));
+            let read = self.rail.more();
+            self.send(read, cx);
         }
     }
 
@@ -66,7 +58,7 @@ impl SessionsPane {
         cx: &mut Context<Self>,
     ) -> impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static {
         let entries = self.entries.clone();
-        let sessions = self.sessions.clone();
+        let (expanded, now) = (self.rail.expanded.clone(), self.now);
         let pane = cx.entity().downgrade();
         let on_mark: OnMark = {
             let pane = pane.clone();
@@ -75,54 +67,76 @@ impl SessionsPane {
                     .ok();
             })
         };
+        let on_open: OnSession = {
+            let pane = pane.clone();
+            Rc::new(move |session_id, window, cx| {
+                pane.update(cx, |pane, cx| pane.open(session_id, window, cx))
+                    .ok();
+            })
+        };
+        let on_toggle: OnSession = {
+            let pane = pane.clone();
+            Rc::new(move |session_id, _, cx| {
+                pane.update(cx, |pane, cx| {
+                    let read = pane.rail.toggle_expanded(&session_id);
+                    pane.send(Some(read), cx);
+                })
+                .ok();
+            })
+        };
         move |at, _, cx| {
             let Some(entry) = entries.get(at).cloned() else {
                 return Empty.into_any_element();
             };
+            let row = |entry: &super::rail_page::RailEntry, cx: &App| RowContext {
+                selected: SelectedSession::global(cx).read(cx).session_id()
+                    == Some(&entry.session_id),
+                offline: Machines::offline(entry.machine.as_deref(), cx),
+                expanded: expanded.as_deref() == Some(entry.session_id.as_str()),
+                now,
+                on_open: on_open.clone(),
+                on_toggle: on_toggle.clone(),
+                on_mark: on_mark.clone(),
+            };
             match entry {
-                ListEntry::Group { status, open } => {
-                    let header = GroupHeader::new(status, open);
-                    if status != Status::Settled {
-                        return header.into_any_element();
-                    }
-                    let pane = pane.clone();
-                    header
-                        .on_toggle(move |_, _, cx| {
-                            pane.update(cx, |pane, cx| {
-                                pane.settled_open = !pane.settled_open;
-                                cx.notify();
-                            })
-                            .ok();
-                        })
-                        .into_any_element()
-                }
                 ListEntry::Project {
-                    status,
-                    folder,
+                    label,
+                    repo_url,
                     machine,
                 } => {
-                    let (pane, at, on) = (pane.clone(), folder.clone(), machine.clone());
-                    ProjectHeader::new(status, folder, machine, move |_, window, cx| {
-                        pane.update(cx, |pane, cx| pane.new_in(&at, on.clone(), window, cx))
+                    let (pane, at) = (pane.clone(), repo_url.clone());
+                    ProjectHeader::new(label, repo_url, move |_, window, cx| {
+                        pane.update(cx, |pane, cx| pane.new_in(&at, machine.clone(), window, cx))
                             .ok();
                     })
                     .into_any_element()
                 }
-                ListEntry::Session(id) => {
-                    let selected = SelectedSession::global(cx).read(cx).session_id() == Some(&id);
-                    let item = sessions.as_ref().and_then(|sessions| {
-                        let items = sessions.read(cx).items();
-                        items.iter().find(|item| item.session_id == id).cloned()
-                    });
-                    match item {
-                        Some(item) => {
-                            let offline = Machines::offline(item.machine.as_deref(), cx);
-                            SessionRow::of(&item, selected, offline)
-                                .on_mark(on_mark.clone())
-                                .into_any_element()
-                        }
-                        None => Empty.into_any_element(),
-                    }
+                ListEntry::Session(entry) => {
+                    let context = row(&entry, cx);
+                    SessionRow::new(entry, false, context).into_any_element()
+                }
+                ListEntry::Helper(entry) => {
+                    let context = row(&entry, cx);
+                    SessionRow::new(entry, true, context).into_any_element()
+                }
+                ListEntry::MoreHelpers(parent) => {
+                    let pane = pane.clone();
+                    div()
+                        .id(SharedString::from(format!("more-helpers:{parent}")))
+                        .pl(px(52.))
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .cursor_pointer()
+                        .child("Show more helpers")
+                        .on_click(move |_, _, cx| {
+                            pane.update(cx, |pane, cx| {
+                                let read = pane.rail.more_helpers();
+                                pane.send(read, cx);
+                            })
+                            .ok();
+                        })
+                        .into_any_element()
                 }
             }
         }
