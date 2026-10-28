@@ -325,7 +325,7 @@ public sealed class SessionStore
 
     /// <summary>
     /// The session's folder on this machine, made on its first send, so it may not exist yet; null for a session that runs
-    /// on another machine.
+    /// on another machine, or has no folder.
     /// </summary>
     public string? Root(SessionInfo session) => session.Machine is null ? Folder(_checkouts, session) : null;
 
@@ -333,7 +333,11 @@ public sealed class SessionStore
     /// A session's folder under <paramref name="checkouts"/>: its own, or for a child (a subagent, or a helper) its
     /// parent's, which its agent works in.
     /// </summary>
-    public static string Folder(string checkouts, SessionInfo session) => Path.Combine(checkouts, session.ParentSessionId ?? session.SessionId);
+    /// Null when that id isn't one plain name: a parent id given as a path, or "..", would put the folder outside.
+    public static string? Folder(string checkouts, SessionInfo session) =>
+        (session.ParentSessionId ?? session.SessionId) is var id && id is not ("" or "." or "..") && Path.GetFileName(id) == id
+            ? Path.Combine(checkouts, id)
+            : null;
 
     /// <summary>
     /// Marks the session read up to <paramref name="seq"/>, or its last row if that's lower, publishing its item; a seq

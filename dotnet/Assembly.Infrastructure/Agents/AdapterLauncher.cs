@@ -32,7 +32,7 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
 
     public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
     {
-        var folder = SessionStore.Folder(checkouts, session);
+        var folder = SessionStore.Folder(checkouts, session) ?? throw new InvalidOperationException($"{session.SessionId} has no folder");
         await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
         stages.Mark("clone");
         return folder;

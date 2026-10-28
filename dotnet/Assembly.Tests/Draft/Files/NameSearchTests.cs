@@ -38,6 +38,18 @@ public sealed class NameSearchTests
 
     // Pins: files#7
     [Fact]
+    public async Task A_file_deleted_from_disk_but_still_in_git_s_index_isn_t_found()
+    {
+        using var folder = new GitFolder(Tree);
+        GitFolder.Commit(folder.Root);
+        File.Delete(Path.Combine(folder.Root, "docs", "PROGRAM.md"));
+        var page = await NameSearch.PageAsync(folder.Root, "program", 0, 50, CancellationToken.None);
+        Assert.DoesNotContain(page.Matches, match => match.Path.StartsWith("docs", StringComparison.Ordinal));
+        Assert.Equal(3, page.Matches.Count);
+    }
+
+    // Pins: files#7
+    [Fact]
     public async Task A_search_with_nothing_to_find_is_complete_and_empty()
     {
         using var folder = new GitFolder(Tree);

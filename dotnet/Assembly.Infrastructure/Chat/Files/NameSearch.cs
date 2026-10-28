@@ -43,6 +43,10 @@ public static class NameSearch
             var name = path[(path.LastIndexOf('/') + 1)..];
             if (!name.Contains(query, StringComparison.OrdinalIgnoreCase))
                 return false;
+            // git's index still lists a file deleted but not staged; only what's on disk counts.
+            var full = Path.Combine(root, path);
+            if (isDirectory ? !Directory.Exists(full) : !File.Exists(full))
+                return false;
             seen++;
             if (seen <= cursor)
                 return false;

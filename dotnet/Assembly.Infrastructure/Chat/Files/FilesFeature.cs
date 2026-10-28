@@ -25,7 +25,9 @@ internal sealed class FilesFeature(SessionStore sessions) : IFeature
     private string RootOf(string sessionId)
     {
         var session = sessions.Get(sessionId) ?? throw new CallFailed("unknown session");
-        var root = sessions.Root(session) ?? throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");
+        if (session.Machine is not null)
+            throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");
+        var root = sessions.Root(session) ?? throw new CallFailed("this session has no folder");
         return Directory.Exists(root) ? root : throw new CallFailed("this session's folder is made on its first message");
     }
 

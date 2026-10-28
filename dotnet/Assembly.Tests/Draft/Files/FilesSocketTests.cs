@@ -108,6 +108,26 @@ public sealed class FilesSocketTests : IAsyncLifetime
         Assert.Contains("unknown session", await ReadAsync(socket));
     }
 
+    // Pins: files#10
+    [Fact]
+    public async Task A_helper_whose_parent_id_is_a_path_has_no_folder()
+    {
+        var outside = Directory.CreateTempSubdirectory("files-outside-");
+        try
+        {
+            var helper = _sessions.Helper(new Domain.Sessions.SessionInfo(outside.FullName, "claude", "https://github.com/o/r", null, null, 0),
+                "claude", "Helper");
+            Assert.Null(_sessions.Item(helper).Root);
+            using var socket = await OpenAsync();
+            await CallAsync(socket, 1, "list", $$"""{"session":"{{helper.SessionId}}"}""");
+            Assert.Contains("has no folder", await ReadAsync(socket));
+        }
+        finally
+        {
+            outside.Delete(recursive: true);
+        }
+    }
+
     private async Task<ClientWebSocket> OpenAsync()
     {
         var socket = new ClientWebSocket();
