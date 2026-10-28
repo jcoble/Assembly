@@ -10,13 +10,15 @@ use serde_json::{Value, json};
 
 use super::super::board_pane::BoardPane;
 use super::super::board_payload::{
-    BoardAnswerValue, BoardChange, BoardPageResult, BoardQuestion, BoardTaskResult,
+    BoardAnswerResult, BoardAnswerValue, BoardChange, BoardCounts, BoardEvent, BoardMetrics,
+    BoardPageResult, BoardQuestion, BoardSummary, BoardTask, BoardTaskArgs, BoardTaskResult,
 };
 use super::{BoardState, question_id};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
+use crate::core::socket::update::Update;
 
 fn task(key: &str, state: &str) -> Value {
     json!({"machineId": "local", "taskKey": key, "creatorSessionId": "s1", "project": "Assembly",
@@ -61,6 +63,33 @@ fn question(machine: &str, generation: i32, answer: Value) -> Value {
         "prompt": "Merge now?", "recommendation": "Merge now", "askedAt": 3000, "answer": answer,
         "answeredAt": null, "answerKey": null, "deliveryClientId": null, "deliveryTurnId": null,
         "deliveryState": "none", "acceptedRevision": null})
+}
+
+/// `task(key, state)` as the window reads it.
+fn read_task(key: &str, state: &str) -> BoardTask {
+    BoardTask {
+        machine_id: "local".into(),
+        task_key: key.into(),
+        creator_session_id: "s1".into(),
+        project: "Assembly".into(),
+        title: format!("Task {key}"),
+        summary: "Working".into(),
+        state: state.into(),
+        task_url: None,
+        pr_url: None,
+        started_at: 1000,
+        ended_at: None,
+    }
+}
+
+const NO_METRICS: &str = r#"{"stepsDone": null, "stepsFailed": null, "stepsSkipped": null, "files": null, "tools": null}"#;
+
+/// Task t1's detail, with one open question at `generation` and nothing more to page.
+fn detail(generation: i32) -> BoardTaskResult {
+    serde_json::from_value(json!({"task": task("t1", "running"),
+        "questions": [question("local", generation, Value::Null)], "feed": [],
+        "metrics": serde_json::from_str::<Value>(NO_METRICS).unwrap(), "nextBeforeSeq": null, "nextQuestionCursor": null}))
+    .expect("a detail")
 }
 
 fn text(text: &str) -> BoardAnswerValue {
@@ -152,7 +181,7 @@ fn answer_uses_displayed_generation_and_source() {
         serde_json::from_value(question("Workbox Test", 3, Value::Null)).unwrap();
     let mut state = BoardState::default();
     let args = state.answer(&q, text("Ship it"));
-    assert!(!args.answer_key.is_empty());
+    uuid::Uuid::parse_str(&args.answer_key).expect("the backend takes only a GUID answer key");
     assert_eq!(
         serde_json::to_value(&args).unwrap(),
         json!({"machineId": "Workbox Test", "taskKey": "t1", "questionKey": "q1", "generation": 3,
@@ -176,49 +205,158 @@ fn failed_answer_preserves_draft() {
         state.answer(&q, text("Wait for review")).answer_key,
         first.answer_key
     );
+    // A reask is a new generation: the same answer to it is a new attempt, so the old key can't conflict with it.
+    let reasked: BoardQuestion = serde_json::from_value(question("local", 2, Value::Null)).unwrap();
+    state.answer_failed(&question_id(&q), "Workbox Test is offline".into());
+    let again = state.answer(&reasked, text("Wait for review"));
+    assert_eq!(again.generation, 2);
+    assert_ne!(again.answer_key, first.answer_key);
+    uuid::Uuid::parse_str(&again.answer_key).expect("a GUID");
 }
 
+// A question answered or asked again while the socket was down: the topic's state after the reconnect reads the
+// expanded card's first detail page again, so its old generation isn't left to answer.
+// Pins: board#8
+#[test]
+fn reconnect_rereads_the_expanded_card() {
+    let mut state = BoardState::default();
+    let read = state.select("local", "t1").expect("the detail read");
+    state.apply_detail(&read, detail(1));
+    let (page, again) = state.heard(Update::State(Vec::new()));
+    assert!(page.is_some(), "the cards weren't read again");
+    let again = again.expect("the expanded card's detail read again");
+    assert_eq!(again, read);
+    state.apply_detail(&again, detail(2));
+    assert_eq!(state.detail.as_ref().unwrap().questions[0].generation, 2);
+}
+
+// Every field the window keeps, filled and null, compared whole, so a missing, misnamed or mistyped one fails.
 // Pins: board#5
 #[test]
 fn payload_decodes_empty_and_populated_results() {
-    let empty: BoardPageResult = serde_json::from_value(json!({"items": [],
-        "counts": {"total": 3, "running": 1, "needsYou": 0, "terminal": 2}, "nextCursor": null, "watermarks": []}))
+    let counts = json!({"total": 3, "running": 1, "needsYou": 0, "terminal": 2});
+    let counted = BoardCounts {
+        total: 3,
+        running: 1,
+        needs_you: 0,
+        terminal: 2,
+    };
+    let empty: BoardPageResult = serde_json::from_value(
+        json!({"items": [], "counts": counts, "nextCursor": null, "watermarks": []}),
+    )
     .expect("an empty page");
-    assert!(empty.items.is_empty() && empty.next_cursor.is_none());
-    assert_eq!((empty.counts.total, empty.counts.terminal), (3, 2));
+    let none = BoardPageResult {
+        items: Vec::new(),
+        counts: counted.clone(),
+        next_cursor: None,
+    };
+    assert_eq!(empty, none);
 
-    let answered = question("local", 2, json!({"kind": "text", "text": "Merge now"}));
-    let detail: BoardTaskResult = serde_json::from_value(json!({"task": task("t1", "failed"),
-        "questions": [question("local", 1, Value::Null), answered],
-        "feed": [{"machineId": "local", "seq": 7, "taskKey": "t1", "kind": "task_reported", "occurredAt": 5000,
-            "task": task("t1", "failed"), "questions": [], "changedPaths": ["a.rs", "b.rs"]},
-            {"machineId": "local", "seq": 6, "taskKey": "t1", "kind": "question_asked", "occurredAt": 4000,
-            "task": task("t1", "running"), "questions": [], "changedPaths": null}],
-        "metrics": {"stepsDone": null, "stepsFailed": null, "stepsSkipped": null, "files": 2, "tools": null},
-        "nextBeforeSeq": 6, "nextQuestionCursor": null}))
-    .expect("a populated detail");
-    assert_eq!(detail.feed[0].task.state, "failed");
-    assert!(detail.feed[0].task.ended_at.is_none() && detail.feed[0].task.pr_url.is_none());
-    assert!(detail.questions[0].answer.is_none());
-    assert_eq!(detail.questions[1].answer, Some(text("Merge now")));
-    assert_eq!(
-        detail.feed[0].changed_paths.as_deref().map(<[String]>::len),
-        Some(2)
+    let mut ended = task("t2", "failed");
+    (ended["taskUrl"], ended["prUrl"], ended["endedAt"]) =
+        (json!("https://tasks/2"), json!("https://pr/2"), json!(9000));
+    let mut read_ended = read_task("t2", "failed");
+    (read_ended.task_url, read_ended.pr_url, read_ended.ended_at) = (
+        Some("https://tasks/2".into()),
+        Some("https://pr/2".into()),
+        Some(9000),
     );
-    assert!(detail.feed[1].changed_paths.is_none());
+    let mut metrics: Value = serde_json::from_str(NO_METRICS).unwrap();
+    metrics["files"] = json!(4);
+    let page: BoardPageResult = serde_json::from_value(json!({"items": [summary("t1", "running"),
+        {"task": ended, "attentionGroup": 0, "questionCount": 2, "metrics": metrics}],
+        "counts": counts, "nextCursor": "c1", "watermarks": [{"machineId": "local", "seq": 4}]}))
+    .expect("a page");
+    let items = vec![
+        BoardSummary {
+            task: read_task("t1", "running"),
+            attention_group: 1,
+            question_count: 0,
+            metrics: BoardMetrics { files: None },
+        },
+        BoardSummary {
+            task: read_ended.clone(),
+            attention_group: 0,
+            question_count: 2,
+            metrics: BoardMetrics { files: Some(4) },
+        },
+    ];
+    let next_cursor = Some("c1".into());
     assert_eq!(
-        (detail.next_before_seq, detail.next_question_cursor),
-        (Some(6), None)
+        page,
+        BoardPageResult {
+            items,
+            counts: counted,
+            next_cursor
+        }
+    );
+
+    let mut approved = question("Workbox Test", 2, json!({"kind": "approve", "text": null}));
+    (
+        approved["kind"],
+        approved["recommendation"],
+        approved["deliveryState"],
+    ) = (json!("approval"), Value::Null, json!("delivered"));
+    let read: BoardTaskResult = serde_json::from_value(json!({"task": ended,
+        "questions": [question("local", 1, Value::Null), approved],
+        "feed": [{"machineId": "local", "seq": 7, "taskKey": "t2", "kind": "task_reported", "occurredAt": 5000,
+            "task": ended, "questions": [], "changedPaths": ["a.rs"]}],
+        "metrics": metrics, "nextBeforeSeq": 6, "nextQuestionCursor": "q2"}))
+    .expect("a populated detail");
+    let open = BoardQuestion {
+        machine_id: "local".into(),
+        task_key: "t1".into(),
+        question_key: "q1".into(),
+        generation: 1,
+        kind: "text".into(),
+        prompt: "Merge now?".into(),
+        recommendation: Some("Merge now".into()),
+        answer: None,
+        delivery_state: "none".into(),
+    };
+    let answered = BoardQuestion {
+        machine_id: "Workbox Test".into(),
+        generation: 2,
+        kind: "approval".into(),
+        recommendation: None,
+        answer: Some(BoardAnswerValue {
+            kind: "approve".into(),
+            text: None,
+        }),
+        delivery_state: "delivered".into(),
+        ..open.clone()
+    };
+    let event = BoardEvent {
+        kind: "task_reported".into(),
+        occurred_at: 5000,
+        task: read_ended,
+    };
+    let full = BoardTaskResult {
+        questions: vec![open, answered],
+        feed: vec![event],
+        next_before_seq: Some(6),
+        next_question_cursor: Some("q2".into()),
+    };
+    assert_eq!(read, full);
+    let bare = detail(1);
+    assert_eq!(
+        (bare.next_before_seq, bare.next_question_cursor),
+        (None, None)
     );
 
     let change: BoardChange = serde_json::from_value(
         json!({"machineId": "Workbox Test", "taskKey": "t1", "revision": 4, "seq": 9}),
     )
     .expect("a change");
-    assert_eq!(
-        (change.machine_id.as_str(), change.task_key.as_str()),
-        ("Workbox Test", "t1")
-    );
+    let changed = BoardChange {
+        machine_id: "Workbox Test".into(),
+        task_key: "t1".into(),
+    };
+    assert_eq!(change, changed);
+    let _: BoardAnswerResult =
+        serde_json::from_value(json!({"machineId": "local", "taskKey": "t1",
+        "questionKey": "q1", "generation": 1, "answerKey": "k", "acceptedRevision": 4}))
+        .expect("an answer result");
     let args = super::super::board_payload::BoardPageArgs {
         project: None,
         state: None,
@@ -228,6 +366,16 @@ fn payload_decodes_empty_and_populated_results() {
         serde_json::to_value(args).unwrap(),
         json!({"project": null, "state": null, "cursor": null})
     );
+    let args = BoardTaskArgs {
+        machine_id: "Workbox Test".into(),
+        task_key: "t1".into(),
+        before_seq: Some(6),
+        question_cursor: None,
+    };
+    assert_eq!(
+        serde_json::to_value(args).unwrap(),
+        json!({"machineId": "Workbox Test", "taskKey": "t1", "beforeSeq": 6, "questionCursor": null})
+    );
 }
 
 /// What the backend saw: each sub's id by topic, the card detail call's id, and each unsub and cancel.
@@ -236,11 +384,13 @@ struct Seen {
     board: Option<Value>,
     clock: Option<Value>,
     detail: Option<Value>,
+    failed_filter: bool,
     unsubs: Vec<Value>,
     cancels: Vec<Value>,
 }
 
-/// The board topic's state is empty, its first page is one running card, and the card's detail never answers.
+/// The board topic's state is empty, its first page is one running card, the failed filter's read fails, and the
+/// card's detail never answers.
 fn backend(seen: Arc<Mutex<Seen>>, heard: impl Fn() + Send + 'static) -> FakeBackend {
     FakeBackend::start(move |frame| {
         if let Some(replies) = hello(frame) {
@@ -260,6 +410,12 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: impl Fn() + Send + 'static) -> FakeBac
             (Some("sub"), Some("clock"), _) => {
                 seen.clock = Some(id);
                 Vec::new()
+            }
+            (Some("call"), _, Some("page")) if frame["args"]["state"] == "failed" => {
+                seen.failed_filter = true;
+                vec![Reply::Frame(
+                    json!({"t": "error", "id": id, "code": "failed", "message": "down", "machine": null}),
+                )]
             }
             (Some("call"), _, Some("page")) => {
                 let page = page_json(&["t1".to_string()], None);
@@ -314,6 +470,23 @@ async fn closing_board_drops_owned_work(cx: &mut TestAppContext) {
             cx.run_until_parked();
             let seen = seen.lock().unwrap();
             seen.board.is_some() && seen.clock.is_some()
+        },
+    )
+    .await;
+    // A filter shows no card until its read lands, so the clock goes at once, even when that read fails.
+    pane.update(cx, |pane, cx| pane.filter(Some("failed"), cx));
+    until(
+        "the clock released by a failed filter read",
+        &mut changes,
+        &changed,
+        || {
+            cx.run_until_parked();
+            let seen = seen.lock().unwrap();
+            seen.failed_filter
+                && seen
+                    .clock
+                    .as_ref()
+                    .is_some_and(|id| seen.unsubs.contains(id))
         },
     )
     .await;

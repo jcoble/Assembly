@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardTask {
     pub machine_id: String,
@@ -26,7 +26,7 @@ pub struct BoardAnswerValue {
     pub text: Option<String>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardQuestion {
     pub machine_id: String,
@@ -40,21 +40,20 @@ pub struct BoardQuestion {
     pub delivery_state: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardEvent {
     pub kind: String,
     pub occurred_at: i64,
     pub task: BoardTask,
-    pub changed_paths: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct BoardMetrics {
     pub files: Option<i64>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardSummary {
     pub task: BoardTask,
@@ -63,7 +62,7 @@ pub struct BoardSummary {
     pub metrics: BoardMetrics,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardCounts {
     pub total: i64,
@@ -72,7 +71,7 @@ pub struct BoardCounts {
     pub terminal: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardPageResult {
     pub items: Vec<BoardSummary>,
@@ -80,7 +79,7 @@ pub struct BoardPageResult {
     pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardTaskResult {
     pub questions: Vec<BoardQuestion>,
@@ -90,7 +89,7 @@ pub struct BoardTaskResult {
 }
 
 /// The `board` topic's item: which card changed. It carries no page; the window reads one.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardChange {
     pub machine_id: String,
@@ -125,3 +124,7 @@ pub struct BoardAnswerArgs {
     pub answer_key: String,
     pub answer: BoardAnswerValue,
 }
+
+/// The answer's acceptance. The window reads none of its fields; decoding it checks the call answered with one.
+#[derive(Debug, Deserialize)]
+pub struct BoardAnswerResult {}

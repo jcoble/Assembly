@@ -179,11 +179,16 @@ fn detail(
             )
         });
     let body = v_flex().gap_2().pt_1();
+    // The session link shows whether or not the detail could be read: it's the way back when it can't.
+    let link = h_flex().child(open_session);
     if let Some(message) = pane.detail_failed.clone() {
-        return body.child(div().text_sm().text_color(cx.theme().danger).child(message));
+        let error = div().text_sm().text_color(cx.theme().danger).child(message);
+        return body.child(error).child(link);
     }
     let Some(detail) = pane.state.detail.as_ref() else {
-        return body.child(div().text_sm().text_color(muted).child("Reading…"));
+        return body
+            .child(div().text_sm().text_color(muted).child("Reading…"))
+            .child(link);
     };
     let (questions, more_questions) = (
         detail.questions.clone(),
@@ -221,5 +226,5 @@ fn detail(
     .when(more_questions, |body| body.child(show_questions))
     .child(feed)
     .when(earlier, |body| body.child(show_events))
-    .child(h_flex().child(open_session))
+    .child(link)
 }

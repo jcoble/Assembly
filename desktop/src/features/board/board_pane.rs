@@ -19,7 +19,8 @@ use serde_json::Value;
 use super::OpenBoard;
 use super::board_card::{self, STATES};
 use super::board_payload::{
-    BoardAnswerValue, BoardChange, BoardPageResult, BoardQuestion, BoardTaskArgs, BoardTaskResult,
+    BoardAnswerResult, BoardAnswerValue, BoardPageResult, BoardQuestion, BoardTaskArgs,
+    BoardTaskResult,
 };
 use super::board_state::{BoardState, PageRead, QuestionId, question_id};
 use crate::core::clock::backend_clock::BackendClock;
@@ -27,7 +28,6 @@ use crate::core::clock::tick::Tick;
 use crate::core::commands::command_registry::CommandRegistry;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
-use crate::core::socket::update::Update;
 use crate::core::state::machines::Machines;
 use crate::core::ui::center_panes::CenterPanes;
 
@@ -102,21 +102,16 @@ impl BoardPane {
         pane
     }
 
-    /// The topic's state (at subscribe and after a reconnect) and each change read the cards again; a change to the
-    /// expanded card reads its detail again too.
+    /// The topic's state (at subscribe and after a reconnect) and each change read the cards again; the state and a
+    /// change to the expanded card read its detail again too.
     fn listen(&mut self, socket: Entity<SocketClient>, cx: &mut Context<Self>) {
         let mut topic = socket.read(cx).subscribe("board", None);
         self._topic = Some(cx.spawn(async move |pane, cx| {
             while let Ok(update) = topic.updates.recv().await {
                 let heard = pane.update(cx, |pane, cx| {
-                    let read = pane.state.changed();
-                    pane.read_page(read, cx);
-                    if let Update::Change { item, .. } = update
-                        && let Ok(change) = serde_json::from_value::<BoardChange>(item)
-                    {
-                        let read = pane.state.refresh_detail(&change);
-                        pane.read_detail(read, cx);
-                    }
+                    let (page, detail) = pane.state.heard(update);
+                    pane.read_page(page, cx);
+                    pane.read_detail(detail, cx);
                 });
                 if heard.is_err() {
                     return;
@@ -239,9 +234,11 @@ impl BoardPane {
         self.read_detail(read, cx);
     }
 
-    fn filter(&mut self, filter: Option<&str>, cx: &mut Context<Self>) {
+    pub(super) fn filter(&mut self, filter: Option<&str>, cx: &mut Context<Self>) {
         let read = self.state.set_filter(filter.map(String::from));
         self.list.reset(0);
+        // No card shows until the read lands, so the clock goes now, even if that read fails.
+        self.hold_clock(cx);
         self.read_page(Some(read), cx);
         cx.notify();
     }
@@ -268,7 +265,7 @@ impl BoardPane {
         let value = serde_json::to_value(&args).unwrap_or_default();
         let call = socket
             .read(cx)
-            .call::<Value>("board", "answer", value, None);
+            .call::<BoardAnswerResult>("board", "answer", value, None);
         let sent = id.clone();
         let task = cx.spawn(async move |pane, cx| {
             let outcome = call.await;

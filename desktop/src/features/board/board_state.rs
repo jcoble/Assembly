@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use crate::core::socket::update::Update;
+
 use super::board_payload::{
     BoardAnswerArgs, BoardAnswerValue, BoardChange, BoardCounts, BoardPageArgs, BoardPageResult,
     BoardQuestion, BoardSummary, BoardTaskArgs, BoardTaskResult,
@@ -23,10 +25,12 @@ pub struct PageRead {
     pub args: BoardPageArgs,
 }
 
-/// A question's answer on its way, or the one that failed, with the key a second send of the same answer reuses.
+/// A question's answer on its way, or the one that failed, with the key a second send of the same answer to the same
+/// generation reuses.
 #[derive(Default)]
 pub struct Draft {
     pub value: Option<BoardAnswerValue>,
+    pub generation: i32,
     pub answer_key: String,
     pub sending: bool,
     pub error: Option<String>,
@@ -48,7 +52,6 @@ pub struct BoardState {
     pub selected: Option<(String, String)>,
     pub detail: Option<BoardTaskResult>,
     pub drafts: HashMap<QuestionId, Draft>,
-    named: u64,
 }
 
 pub fn question_id(q: &BoardQuestion) -> QuestionId {
@@ -150,6 +153,18 @@ impl BoardState {
         self.detail_read(None, None)
     }
 
+    /// The topic's update reads the cards again. The topic's state (after a reconnect) reads the expanded card's first
+    /// detail page again too, as a change to that card does, since it may have been answered or asked again meanwhile.
+    pub fn heard(&mut self, update: Update) -> (Option<PageRead>, Option<BoardTaskArgs>) {
+        let detail = match update {
+            Update::State(_) => self.detail_read(None, None),
+            Update::Change { item, .. } => serde_json::from_value::<BoardChange>(item)
+                .ok()
+                .and_then(|change| self.refresh_detail(&change)),
+        };
+        (self.changed(), detail)
+    }
+
     /// The expanded card's detail read again, when `change` is for it.
     pub fn refresh_detail(&self, change: &BoardChange) -> Option<BoardTaskArgs> {
         let (machine, task) = self.selected.as_ref()?;
@@ -202,16 +217,18 @@ impl BoardState {
         }
     }
 
-    /// The answer to `q` as shown: its own machine, task, question and generation. The same answer sent again after a
-    /// failure keeps its key; a different one gets a new key.
+    /// The answer to `q` as shown: its own machine, task, question and generation. The same answer to the same
+    /// generation sent again after a failure keeps its key; a different answer or generation gets a new GUID key.
     pub fn answer(&mut self, q: &BoardQuestion, value: BoardAnswerValue) -> BoardAnswerArgs {
         let draft = self.drafts.entry(question_id(q)).or_default();
-        if draft.value.as_ref() != Some(&value) || draft.answer_key.is_empty() {
-            self.named += 1;
-            let ms = chrono::Utc::now().timestamp_millis();
-            draft.answer_key = format!("{ms}-{}-{}", std::process::id(), self.named);
+        if draft.value.as_ref() != Some(&value)
+            || draft.generation != q.generation
+            || draft.answer_key.is_empty()
+        {
+            draft.answer_key = uuid::Uuid::new_v4().to_string();
         }
-        (draft.value, draft.sending, draft.error) = (Some(value.clone()), true, None);
+        (draft.value, draft.generation) = (Some(value.clone()), q.generation);
+        (draft.sending, draft.error) = (true, None);
         BoardAnswerArgs {
             machine_id: q.machine_id.clone(),
             task_key: q.task_key.clone(),

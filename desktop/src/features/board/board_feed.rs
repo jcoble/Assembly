@@ -1,5 +1,5 @@
-//! The expanded card's feed: one line per event, newest first, with its time, what happened and the summary it
-//! carried. A report shows the state it moved the task to.
+//! The expanded card's feed: one entry per event, newest first, with its time, what happened and the summary it
+//! carried, in full. A report shows the state it moved the task to.
 
 use chrono::{Local, TimeZone};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -23,13 +23,8 @@ pub fn feed(events: &[BoardEvent], cx: &App) -> Div {
             "answer_delivery_unknown" => "Delivery unknown",
             other => other,
         };
-        let said = match &event.changed_paths {
-            Some(paths) if !paths.is_empty() => {
-                format!("{} · {} files changed", event.task.summary, paths.len())
-            }
-            _ => event.task.summary.clone(),
-        };
         h_flex()
+            .items_start()
             .gap_2()
             .text_xs()
             .child(div().w(px(64.)).flex_none().text_color(muted).child(time))
@@ -40,6 +35,6 @@ pub fn feed(events: &[BoardEvent], cx: &App) -> Div {
                     .text_color(muted)
                     .child(what.to_string()),
             )
-            .child(div().min_w_0().truncate().child(said))
+            .child(div().flex_1().min_w_0().child(event.task.summary.clone()))
     }))
 }
