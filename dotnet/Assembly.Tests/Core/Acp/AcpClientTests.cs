@@ -105,6 +105,21 @@ public sealed class AcpClientTests
     }
 
     [Fact]
+    public async Task Board_reporting_does_not_wait_for_a_permission_answer()
+    {
+        var agent = new FakeAgent();
+        await using var client = Connect(agent, new WaitUntilCancelledPolicy());
+        var turn = client.PromptAsync("s1", "report progress", CancellationToken.None);
+        var prompt = await agent.ReadAsync();
+
+        await agent.SendAsync("""{"jsonrpc":"2.0","id":"board","method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"t1","title":"mcp__assembly__board_update"},"options":[{"optionId":"no","name":"No","kind":"reject_once"},{"optionId":"once","name":"Yes","kind":"allow_once"}]}}""");
+        var answer = await agent.ReadAsync().WaitAsync(Wait);
+        Assert.Equal("once", answer.GetProperty("result").GetProperty("outcome").GetProperty("optionId").GetString());
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await turn.WaitAsync(Wait);
+    }
+
+    [Fact]
     public async Task Cancel_settles_an_open_permission_request_as_cancelled()
     {
         var agent = new FakeAgent();
