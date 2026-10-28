@@ -51,8 +51,8 @@ public sealed partial class SessionHost : IPermissionPolicy
     private bool _shuttingDown;
     // The subagents the agent runs as child sessions. Guarded by _gate.
     private readonly Subagents _subagents;
-    // Whether a helper session this session's agent started is at work; and who to tell when a turn here ends.
-    private readonly Func<bool> _helpersWorking;
+    // Whether a session this session's agent started is at work; and who to tell when a turn here ends.
+    private readonly Func<bool> _startedWorking;
     private readonly Action<string>? _turnEnded;
     // Who to tell when this session's ACP session closes.
     private readonly Action<string>? _sessionClosed;
@@ -71,12 +71,12 @@ public sealed partial class SessionHost : IPermissionPolicy
         CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
-        BackgroundWork work, Func<bool>? helpersWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null,
+        BackgroundWork work, Func<bool>? startedWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null,
         SessionTitler? titler = null)
     {
         _sessionClosed = sessionClosed;
         _titler = titler;
-        _helpersWorking = helpersWorking ?? (() => false);
+        _startedWorking = startedWorking ?? (() => false);
         _turnEnded = turnEnded;
         _sessionId = sessionId;
         _hub = hub;
@@ -529,7 +529,7 @@ public sealed partial class SessionHost : IPermissionPolicy
                 _turn = null;
                 turn.Opened.TrySetResult();
                 // Background work still going keeps the session, and with it the work, alive.
-                var working = _tasks.Count > 0 || _subagents.AnyRunning || _helpersWorking();
+                var working = _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking();
                 keep = session is not null && updates is not null && !lost && !_shuttingDown && (working || toolsOpen);
                 if (keep)
                     _kept = new KeptSession(session!, updates!, pump, ticking, ticks, TasksDueBy: working ? 0 : Now() + TaskGraceMs);
@@ -557,11 +557,11 @@ public sealed partial class SessionHost : IPermissionPolicy
     }
 
     // Called with the lock held.
-    /// <summary>A helper session's row in this session, as it stands now.</summary>
-    internal void Show(SubagentShown helper)
+    /// <summary>The row in this session of a session its agent started, as it stands now.</summary>
+    internal void Show(SubagentShown started)
     {
         lock (_gate)
-            Apply(helper);
+            Apply(started);
     }
 
     private void Apply(AgentEvent agentEvent) => _hub.Publish(_sessionId, _converter.Apply(agentEvent));

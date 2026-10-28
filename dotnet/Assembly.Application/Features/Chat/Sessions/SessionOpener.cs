@@ -90,7 +90,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             var title = session.Title is null ? Title(firstText) : null;
             if (title is not null)
                 sessionStore.SetTitle(sessionId, title, "prompt");
-            // A helper's title is its task, not the framed prompt it's sent.
+            // A started session's title is its task, not the framed prompt it's sent.
             if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
             {
                 // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.

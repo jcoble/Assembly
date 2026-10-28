@@ -32,7 +32,7 @@ public sealed partial class SessionHost
     // Called with the lock held: a kept session with nothing left on it closes.
     private void CloseIfDone()
     {
-        if (_kept is not { } kept || _turn is not null || _tasks.Count > 0 || _subagents.AnyRunning || _helpersWorking()
+        if (_kept is not { } kept || _turn is not null || _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking()
             || Now() < kept.TasksDueBy)
             return;
         _kept = null;
