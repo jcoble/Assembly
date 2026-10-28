@@ -169,42 +169,45 @@ impl Render for ContextPane {
                 "context-note-empty",
                 "No files yet. Files this session edits are listed here, newest first.".into(),
             ),
-            Files::Read(files) => v_flex().children(files.iter().map(|file| {
-                let (folder, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
-                let selector = format!("touched-file-{}", file.path);
-                h_flex()
-                    .debug_selector(move || selector)
-                    .h(px(28.))
-                    .px_2()
-                    .gap_2()
-                    .rounded(px(6.))
-                    .hover(|row| row.bg(accent))
-                    .child(div().min_w_0().truncate().child(name.to_string()))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(muted)
-                            .child(folder.to_string()),
-                    )
-                    .when(file.added > 0, |row| {
-                        row.child(
+            Files::Read(files) => v_flex().children(files.iter().zip(names(files)).map(
+                |(file, (name, folder))| {
+                    let selector = format!("touched-file-{}", file.path);
+                    h_flex()
+                        .debug_selector(move || selector)
+                        .h(px(28.))
+                        .px_2()
+                        .gap_2()
+                        .rounded(px(6.))
+                        .hover(|row| row.bg(accent))
+                        .child(div().min_w_0().truncate().child(name.to_string()))
+                        .child(
                             div()
-                                .flex_none()
-                                .text_color(success)
-                                .child(format!("+{}", file.added)),
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                // A path's end says more than its start.
+                                .text_ellipsis_start()
+                                .text_color(muted)
+                                .child(folder.to_string()),
                         )
-                    })
-                    .when(file.removed > 0, |row| {
-                        row.child(
-                            div()
-                                .flex_none()
-                                .text_color(danger)
-                                .child(format!("-{}", file.removed)),
-                        )
-                    })
-            })),
+                        .when(file.added > 0, |row| {
+                            row.child(
+                                div()
+                                    .flex_none()
+                                    .text_color(success)
+                                    .child(format!("+{}", file.added)),
+                            )
+                        })
+                        .when(file.removed > 0, |row| {
+                            row.child(
+                                div()
+                                    .flex_none()
+                                    .text_color(danger)
+                                    .child(format!("-{}", file.removed)),
+                            )
+                        })
+                },
+            )),
         };
         let count = match &self.files {
             Files::Read(files) if picked && !files.is_empty() => Some(files.len()),
@@ -231,6 +234,33 @@ impl Render for ContextPane {
             )
             .child(body)
     }
+}
+
+/// Each file's name and its folder below the folder all the files share, which is usually the session's checkout: an
+/// agent sends whole paths. A lone file shows no folder.
+fn names(files: &[FileTouched]) -> Vec<(&str, &str)> {
+    fn folder(path: &str) -> &str {
+        path.rsplit_once('/').map_or("", |(folder, _)| folder)
+    }
+    let mut shared = files.first().map_or("", |file| folder(&file.path));
+    for file in files {
+        while !shared.is_empty()
+            && !file
+                .path
+                .strip_prefix(shared)
+                .is_some_and(|rest| rest.starts_with('/'))
+        {
+            shared = folder(shared);
+        }
+    }
+    files
+        .iter()
+        .map(|file| {
+            let rest = file.path[shared.len()..].trim_start_matches('/');
+            let (folder, name) = rest.rsplit_once('/').unwrap_or(("", rest));
+            (name, folder)
+        })
+        .collect()
 }
 
 #[cfg(test)]

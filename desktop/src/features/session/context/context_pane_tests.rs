@@ -7,7 +7,7 @@ use gpui_kit::component::dock::BasePanel as _;
 use gpui_kit::{Entity, VisualTestContext};
 use serde_json::{Value, json};
 
-use super::{ContextPane, FileTouched, Files};
+use super::{ContextPane, FileTouched, Files, names};
 use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::fake_client::FakeClient;
 use crate::features::session::client::session_client::CallError;
@@ -142,4 +142,21 @@ fn a_failed_or_cancelled_read_says_why(cx: &mut TestAppContext) {
     client.queue_answer(Err(CallError::Aborted));
     pick(Some("s2"), cx);
     assert_eq!(files(&pane, cx), Files::Failed("it was cancelled".into()));
+}
+
+// Pins: g0-shape#13
+#[test]
+fn a_file_shows_its_folder_below_the_one_every_file_shares() {
+    let files = [
+        file("/w/s1/src/main.rs", 3, 0),
+        file("/w/s1/docs/todo.md", 3, 0),
+        file("/w/s1/notes.txt", 2, 1),
+    ];
+    assert_eq!(
+        names(&files),
+        [("main.rs", "src"), ("todo.md", "docs"), ("notes.txt", "")]
+    );
+    assert_eq!(names(&[file("/w/s1/src/main.rs", 1, 0)]), [("main.rs", "")]);
+    let apart = [file("/w/s1/a.rs", 1, 0), file("/w/s10/b.rs", 1, 0)];
+    assert_eq!(names(&apart), [("a.rs", "s1"), ("b.rs", "s10")]);
 }
