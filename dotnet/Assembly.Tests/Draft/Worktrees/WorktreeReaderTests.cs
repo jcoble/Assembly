@@ -67,6 +67,8 @@ public sealed class WorktreeReaderTests : IDisposable
         Assert.False(Assert.Single(await Read()).IsDirty);
         await File.WriteAllTextAsync(Path.Combine(Root, "untracked"), "new content");
         Assert.True(Assert.Single(await Read()).IsDirty);
+        await Git(Root, "config", "status.showUntrackedFiles", "no");
+        Assert.True(Assert.Single(await Read()).IsDirty);
     }
 
     // Pins: scm#2
@@ -118,13 +120,16 @@ public sealed class WorktreeReaderTests : IDisposable
 
     // Pins: scm#2
     [Fact]
-    public async Task Missing_unlocked_worktree_is_prunable_and_does_not_fail_the_list()
+    public async Task Missing_unlocked_worktree_is_prunable_and_still_says_what_would_be_lost()
     {
         await Init();
         var linked = Path.Combine(_temp, "gone");
         await Git(Root, "worktree", "add", "-b", "gone", linked);
         Directory.Delete(linked, recursive: true);
-        Assert.True(Assert.Single(await Read(), row => row.Path == linked).Prunable);
+        var row = Assert.Single(await Read(), row => row.Path == linked);
+        Assert.True(row.Prunable);
+        Assert.Equal(1, row.Unpushed);
+        Assert.Equal("First subject", row.HeadSubject);
     }
 
     // Pins: scm#8

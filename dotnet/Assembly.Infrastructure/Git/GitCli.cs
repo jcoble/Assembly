@@ -37,7 +37,6 @@ public sealed class GitCli : IGit
         {
             git.Kill(entireProcessTree: true);
             await git.WaitForExitAsync(CancellationToken.None);
-            await stdout;
             throw;
         }
 

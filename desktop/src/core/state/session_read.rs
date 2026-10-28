@@ -106,6 +106,8 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
         }
         self.read_for = Some(session.clone());
         let Some(socket) = SocketClient::try_global(cx) else {
+            self.reading = false;
+            self._read = None;
             self.shown = Shown::Failed("The backend isn't running.".into());
             cx.notify();
             return;
@@ -128,7 +130,8 @@ impl<T: DeserializeOwned + 'static> SessionRead<T> {
                         Ok(answer) => Shown::Read(answer),
                         Err(error) => Shown::Failed(format!("The answer didn't read: {error}")),
                     },
-                    Outcome::Aborted => return,
+                    // A newer read drops this task before its answer comes, so an abort here is the socket closing.
+                    Outcome::Aborted => Shown::Failed("The connection dropped.".into()),
                     Outcome::Failed(failure) => Shown::Failed(failure.message),
                 };
                 cx.notify();

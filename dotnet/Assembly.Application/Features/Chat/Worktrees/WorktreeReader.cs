@@ -5,8 +5,8 @@ using Assembly.Application.Common.Git;
 namespace Assembly.Application.Features.Chat.Worktrees;
 
 /// <summary>
-/// A project's worktrees, read with git in its root: the list, then each folder's status, unpushed count and head
-/// commit. It only reads (scm#8): GitCli sets GIT_OPTIONAL_LOCKS=0, so status never rewrites the index.
+/// A project's worktrees, read with git in its root: the list, then each folder's status and each head's unpushed count
+/// and commit. It only reads (scm#8): GitCli sets GIT_OPTIONAL_LOCKS=0, so status never rewrites the index.
 /// </summary>
 public sealed class WorktreeReader(IGit git)
 {
@@ -21,27 +21,28 @@ public sealed class WorktreeReader(IGit git)
             {
                 try
                 {
-                    row = await ReadFolderAsync(row, cancellationToken);
+                    var status = await git.RunAsync(row.Path, ["status", "--porcelain=v1", "-z", "--untracked-files=normal"], cancellationToken);
+                    row = row with { IsDirty = status.Length != 0 };
                 }
                 // Git doesn't mark a locked worktree prunable when its folder is gone (an unplugged drive, say), so a
-                // locked one whose folder git can't enter keeps its marks without the folder's facts.
+                // locked one whose folder git can't enter keeps its marks without its status.
                 catch (CallFailed) when (row.Locked)
                 {
                 }
             }
-            rows.Add(row);
+            rows.Add(row.Head is null ? row : await ReadHeadAsync(root, row, cancellationToken));
         }
         return rows;
     }
 
-    private async Task<Worktree> ReadFolderAsync(Worktree row, CancellationToken cancellationToken)
+    /// <summary>
+    /// The listed head's unpushed count and commit, read in the root, since the commits are shared: a worktree whose
+    /// folder is gone still says what would be lost, and a commit made since the list doesn't mix into the row.
+    /// </summary>
+    private async Task<Worktree> ReadHeadAsync(string root, Worktree row, CancellationToken cancellationToken)
     {
-        var status = await git.RunAsync(row.Path, ["status", "--porcelain=v1", "-z"], cancellationToken);
-        row = row with { IsDirty = status.Length != 0 };
-        if (row.Head is null)
-            return row;
-        var count = await git.RunAsync(row.Path, ["rev-list", "--count", "HEAD", "--not", "--remotes"], cancellationToken);
-        var log = await git.RunAsync(row.Path, ["log", "-1", "--format=%ct%x00%s"], cancellationToken);
+        var count = await git.RunAsync(root, ["rev-list", "--count", row.Head!, "--not", "--remotes"], cancellationToken);
+        var log = await git.RunAsync(root, ["log", "-1", "--no-show-signature", "--format=%ct%x00%s", row.Head!], cancellationToken);
         var separator = log.IndexOf('\0');
         return row with
         {

@@ -57,6 +57,15 @@ public sealed class GitStatusPorcelainTests
 
     // Pins: scm#9
     [Fact]
+    public void Upstream_branch_deleted_on_the_remote_counts_as_no_upstream()
+    {
+        // Git names the upstream but prints no branch.ab when the remote branch is gone.
+        var status = GitStatusPorcelain.Parse($"# branch.oid {new string('c', 40)}\0# branch.head main\0# branch.upstream origin/main\0");
+        Assert.False(status.HasUpstream);
+    }
+
+    // Pins: scm#9
+    [Fact]
     public void Initial_branch_has_no_commit()
     {
         var status = GitStatusPorcelain.Parse("# branch.oid (initial)\0# branch.head main\0");
