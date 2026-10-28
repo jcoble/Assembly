@@ -38,6 +38,15 @@ public sealed class DirectoryListingTests
         Assert.Equal(("src/Program.cs", "Program.cs", false), (entry.Path, entry.Name, entry.IsDirectory));
     }
 
+    // Pins: files#3
+    [Fact]
+    public async Task Entries_inside_an_ignored_folder_are_excluded_too()
+    {
+        using var folder = new GitFolder(Tree);
+        var listing = await DirectoryListing.ListAsync(folder.Root, "bin", includeExcluded: true, CancellationToken.None);
+        Assert.Equal(["bin/app.dll (excluded)"], listing.Entries.Select(Shape));
+    }
+
     // Pins: files#10
     [Fact]
     public async Task A_link_is_listed_but_never_as_a_folder()

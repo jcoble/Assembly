@@ -65,8 +65,7 @@ public sealed class FilesSocketTests : IAsyncLifetime
         var session = _sessions.Create("claude", "https://github.com/o/r");
         var root = _sessions.Item(session).Root!;
         Assert.Equal(Path.Combine(_checkouts.FullName, session.SessionId), root);
-        Directory.CreateDirectory(Path.Combine(root, "src"));
-        File.WriteAllText(Path.Combine(root, "a.txt"), "");
+        GitFolder.Fill(root, "src/", "a.txt");
         using var socket = await OpenAsync();
         await CallAsync(socket, 1, "list", $$"""{"session":"{{session.SessionId}}","dir":""}""");
         var answer = await ReadAsync(socket);

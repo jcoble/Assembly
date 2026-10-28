@@ -54,4 +54,22 @@ public sealed class NameSearchTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             NameSearch.PageAsync(folder.Root, "program", 0, 50, new CancellationToken(canceled: true)));
     }
+
+    // Pins: files#8
+    [Fact]
+    public async Task A_walk_cancelled_partway_stops_and_says_so()
+    {
+        using var folder = new GitFolder([.. Enumerable.Range(0, 3000).Select(i => $"d{i % 30}/f{i:D4}.txt")]);
+        using var cancel = new CancellationTokenSource();
+        var read = 0;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in GitLines.ReadAsync(folder.Root, ["ls-files", "-z", "--others"], null, cancel.Token))
+            {
+                if (++read == 1)
+                    await cancel.CancelAsync();
+            }
+        });
+        Assert.Equal(1, read);
+    }
 }
