@@ -1,5 +1,6 @@
 using System.Globalization;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Git;
 
 namespace Assembly.Application.Features.Worktrees;
 

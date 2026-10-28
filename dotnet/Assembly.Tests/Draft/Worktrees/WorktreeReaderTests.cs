@@ -1,6 +1,6 @@
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Worktrees;
-using Assembly.Infrastructure.Worktrees;
+using Assembly.Infrastructure.Git;
 
 namespace Assembly.Tests.Draft.Worktrees;
 
