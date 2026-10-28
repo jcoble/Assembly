@@ -1,4 +1,4 @@
-//! What `files/list` and `files/search` answer (dotnet/Assembly.Infrastructure/Chat/Files/). Paths are from the
+//! What `files/list`, `files/search` and `files/read` answer (dotnet/Assembly.Infrastructure/Chat/Files/). Paths are from the
 //! session's folder, with `/` between names.
 
 use serde::Deserialize;
@@ -36,4 +36,17 @@ pub struct SearchPage {
     pub matches: Vec<NameMatch>,
     /// Null once the search is complete.
     pub next_cursor: Option<u32>,
+}
+
+/// A part of a file's text from where it was asked: the whole file's size, revision (SHA-256) and line count, and where
+/// the next part starts, or `None` at the end. A binary file has no content.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileChunk {
+    pub content: String,
+    pub size: u64,
+    pub revision: String,
+    pub line_count: usize,
+    pub binary: bool,
+    pub next_offset: Option<u64>,
 }

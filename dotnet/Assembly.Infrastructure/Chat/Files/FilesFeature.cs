@@ -5,9 +5,9 @@ using Assembly.Application.Features.Chat.Sessions;
 namespace Assembly.Infrastructure.Chat.Files;
 
 /// <summary>
-/// A session's folder over the socket: <c>files/list</c> answers one folder of it and <c>files/search</c> a page of
-/// the files and folders whose name holds a query. Paths are from the session's folder (its <c>root</c> on the sessions
-/// topic); nothing outside it is read. Both are reads, so a cancel, the 30 s limit or the socket closing stops them.
+/// A session's folder over the socket: <c>files/list</c> answers one folder of it, <c>files/search</c> a page of
+/// the files and folders whose name holds a query, and <c>files/read</c> a part of one file's text. Paths are from the session's folder (its <c>root</c> on the sessions
+/// topic); nothing outside it is read. All are reads, so a cancel, the 30 s limit or the socket closing stops them.
 /// A session on another machine has no folder here yet.
 /// </summary>
 internal sealed class FilesFeature(SessionStore sessions) : IFeature
@@ -20,17 +20,23 @@ internal sealed class FilesFeature(SessionStore sessions) : IFeature
             DirectoryListing.ListAsync(SessionPaths.RootOf(sessions, args.Session), args.Dir, args.IncludeExcluded, call.Cancellation));
         calls.Read(Feature, "search", FilesJson.Default.SearchArgs, FilesJson.Default.SearchPage, (args, call) =>
             NameSearch.PageAsync(SessionPaths.RootOf(sessions, args.Session), args.Query, args.Cursor, args.PageSize, call.Cancellation));
+        calls.Read(Feature, "read", FilesJson.Default.ReadArgs, FilesJson.Default.FileChunk, (args, call) =>
+            FileRead.ReadAsync(SessionPaths.RootOf(sessions, args.Session), args.Path, args.Offset, call.Cancellation));
     }
 
     internal sealed record ListArgs([property: JsonRequired] string Session, string Dir = "", bool IncludeExcluded = false);
 
     internal sealed record SearchArgs([property: JsonRequired] string Session, [property: JsonRequired] string Query, int Cursor = 0,
         int PageSize = 100);
+
+    internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] string Path, long Offset = 0);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(FilesFeature.ListArgs))]
 [JsonSerializable(typeof(FilesFeature.SearchArgs))]
+[JsonSerializable(typeof(FilesFeature.ReadArgs))]
+[JsonSerializable(typeof(FileChunk))]
 [JsonSerializable(typeof(FileListing))]
 [JsonSerializable(typeof(SearchPage))]
 internal sealed partial class FilesJson : JsonSerializerContext;

@@ -1,12 +1,13 @@
 // The sessions list's groups (docs/behavior/sessions-list.md) over the socket, as the window's row menu uses them:
 // sessions/mark moves the case's session to Done, Settled and back to Working, and each move reaches the keyed
-// sessions topic with its stamps. It ends with the session back in Working, where it started. node
+// sessions topic with its stamps. It ends with the session back in Working, where it started. On the remote, Connect
+// (machines/connect) reaches it and answers it reachable; on this machine, there's nothing to connect to. node
 // scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN and CHECK4_SESSION set (scripts/features/README.md).
 // The token goes in the hello frame, never in argv or output.
-const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session } = process.env;
+const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine } = process.env;
 
 type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
-type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item };
+type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
 
 class Failed extends Error {}
 function fail(step: string, why: string): never {
@@ -61,6 +62,16 @@ async function mark(state: string, moved: (item: Item) => boolean, step: string)
   return got.item!;
 }
 
+/** The ids on the newest page of one group, `open` or `settled`. */
+async function page(group: string, step: string): Promise<string[]> {
+  const id = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id, feature: 'sessions', method: 'page', args: { group, limit: 200 } }));
+  const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 10_000, step);
+  if (answer.t !== 'result') fail(step, `it failed: ${answer.message ?? JSON.stringify(answer)}`);
+  const result = answer.result as { sessions: Item[] };
+  return result.sessions.map((item) => item.sessionId);
+}
+
 async function main() {
   await new Promise((resolve, reject) => {
     socket.onopen = resolve;
@@ -85,8 +96,24 @@ async function main() {
   if (settled.completedAt !== done.completedAt) fail('Settle keeps the done time', `it moved to ${settled.completedAt}`);
   console.log('ok Settle stamps settledAt and keeps the done time');
 
+  const step = 'a settled session pages with Settled, not with the open ones';
+  if (!(await page('settled', step)).includes(session)) fail(step, "Settled's page doesn't have it");
+  if ((await page('open', step)).includes(session)) fail(step, 'the open page still has it');
+  console.log(`ok ${step}`);
+
   await mark('working', (item) => item.completedAt === null && item.settledAt === null, 'Back to working clears both stamps');
   console.log('ok Back to working clears both stamps');
+
+  const connect = machine === 'local' ? 'Connect has no remote to reach here' : 'Connect reaches the remote';
+  const id = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id, feature: 'machines', method: 'connect', args: { machine } }));
+  const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 15_000, connect);
+  if (machine === 'local') {
+    if (answer.t !== 'error' || !answer.message?.includes('unknown remote machine')) fail(connect, JSON.stringify(answer));
+  } else if (answer.t !== 'result' || (answer.result as { reachable: boolean }).reachable !== true) {
+    fail(connect, JSON.stringify(answer));
+  }
+  console.log(`ok ${connect}`);
 }
 
 main()

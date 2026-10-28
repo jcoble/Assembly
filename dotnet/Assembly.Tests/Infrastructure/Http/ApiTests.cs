@@ -160,11 +160,13 @@ public sealed class ApiTests : IAsyncLifetime
     public async Task One_session_is_read_by_id()
     {
         var sessionId = await CreateSessionAsync();
-        _sessionStore.SetTitle(sessionId, "Fix the build");
+        _sessionStore.SetTitle(sessionId, "Fix the build", "user");
 
         var session = await GetJsonAsync($"/sessions/{sessionId}");
         Assert.Equal(sessionId, session.GetProperty("sessionId").GetString());
         Assert.Equal("Fix the build", session.GetProperty("title").GetString());
+        // A desktop copying the title keeps where it came from.
+        Assert.Equal("user", session.GetProperty("titleSource").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await _http.GetAsync("/sessions/nope")).StatusCode);
     }
 

@@ -41,6 +41,10 @@ pub struct Composer {
     running: Option<String>,
     /// The open session's machine while it isn't answering: Send and Stop wait for it.
     offline: Option<String>,
+    /// Connect's `machines/connect` while it goes.
+    connecting: Option<Task<()>>,
+    /// Connect answered and the machine still didn't, until it answers or the session's machine changes.
+    still_offline: bool,
     /// How full the agent's context window is, from the session's newest report.
     meter: Option<ContextMeter>,
     /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
@@ -96,6 +100,8 @@ impl Composer {
             error: None,
             running: None,
             offline: None,
+            connecting: None,
+            still_offline: false,
             meter: None,
             retry_ids: HashMap::new(),
             named: 0,
@@ -173,8 +179,33 @@ impl Composer {
     pub fn set_offline(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
         if self.offline != machine {
             self.offline = machine;
+            (self.connecting, self.still_offline) = (None, false);
             cx.notify();
         }
+    }
+
+    /// Connect: asks the backend to reach the offline machine now (`machines/connect`, up to 10 seconds). One that
+    /// answers comes back through the machines list; one that doesn't says so.
+    fn connect(&mut self, cx: &mut Context<Self>) {
+        let Some(machine) = self.offline.clone().filter(|_| self.connecting.is_none()) else {
+            return;
+        };
+        let call = (self.client).call(
+            "machines",
+            "connect",
+            json!({ "machine": machine }),
+            None,
+            cx,
+        );
+        self.connecting = Some(cx.spawn(async move |composer, cx| {
+            _ = call.await;
+            _ = composer.update(cx, |composer, cx| {
+                composer.connecting = None;
+                composer.still_offline = composer.offline.is_some();
+                cx.notify();
+            });
+        }));
+        cx.notify();
     }
 
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.

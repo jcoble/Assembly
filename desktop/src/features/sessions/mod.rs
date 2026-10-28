@@ -3,6 +3,7 @@
 //! and the spike's sessions/panel.rs.
 
 pub mod group_header;
+pub mod history;
 pub mod list_entries;
 pub mod list_entry;
 pub mod new_session_form;

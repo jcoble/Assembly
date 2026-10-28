@@ -6,8 +6,12 @@ using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
-/// <summary>A session's ACP session, open on the shared adapter. <c>SavedCost</c> is the total its agent reported at its last clean close.</summary>
-internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, string AcpSessionId, bool Resumed, decimal? SavedCost, string? Model = null);
+/// <summary>
+/// A session's ACP session, open on the shared adapter. <c>SavedCost</c> is the total its agent reported at its last
+/// clean close. <c>Titled</c> is set when this open gave the session its first title, from the turn's message.
+/// </summary>
+internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, string AcpSessionId, bool Resumed, decimal? SavedCost, string? Model = null,
+    bool Titled = false);
 
 /// <summary>
 /// Opens a session's ACP session on its agent's shared adapter, in the session's checkout: its earlier session,
@@ -57,6 +61,13 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             {
                 resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken);
                 stages.Mark("session resume");
+                // A helper title was made after the agent last saw the session, so the agent is told it here.
+                if (running.Init.CanRenameSessions && session is { TitleSource: "helper", Title: { } helperTitle })
+                {
+                    await running.Link.Client.RenameSessionAsync(previous, helperTitle, cancellationToken);
+                    stages.Mark("session rename");
+                }
+
                 var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
                 return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
             }
@@ -83,9 +94,10 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         {
             sessionStore.SetAcpSession(sessionId, acp.SessionId);
             stages.Mark("session new");
-            if (session.Title is null && Title(firstText) is { } title)
-                sessionStore.SetTitle(sessionId, title);
-            // A helper's title is its task, not the framed prompt it's sent.
+            var title = session.Title is null ? Title(firstText) : null;
+            if (title is not null)
+                sessionStore.SetTitle(sessionId, title, "prompt");
+            // A started session's title is its task, not the framed prompt it's sent.
             if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
             {
                 // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.
@@ -96,7 +108,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             if (acp.ConfigOptions.ValueKind == JsonValueKind.Array)
                 sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
             var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);
-            return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen);
+            return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen, Titled: title is not null);
         }
         catch (Exception)
         {

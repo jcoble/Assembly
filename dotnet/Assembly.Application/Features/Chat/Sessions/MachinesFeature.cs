@@ -7,7 +7,9 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// The machines a new session can run on, over the socket (plan C1): the <c>machines</c> topic sends each one and
 /// whether it answered last time, and <c>machines/agents</c> answers the agents a machine (this one when left out) can
 /// run. While the topic has a subscriber, the backend clock's ticks probe each remote: on the first tick after a
-/// subscribe, then every 15th.
+/// subscribe, then every 15th. <c>machines/connect</c> is the window's Connect button: it starts the ssh tunnel again
+/// at once if it's waiting to, and probes that remote now, again while nothing answers (the tunnel may be starting),
+/// for up to 10 seconds; it answers the machine's item.
 /// </summary>
 internal sealed class MachinesFeature : IFeature, IAsyncDisposable
 {
@@ -16,11 +18,14 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
 
     private const int Every = 15;
     private static readonly TimeSpan ProbeLimit = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ConnectLimit = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan ConnectAgain = TimeSpan.FromMilliseconds(500);
 
     private readonly MachineSet _machines;
     private readonly MachineStatus _status;
     private readonly Action _startClock;
     private readonly TimeProvider _time;
+    private readonly Action _tryTunnel;
     // Each remote's last probe, run off the tick's thread; a remote whose probe is still out gets no second. Guarded
     // by itself, as are _stop, _ticks and _disposed.
     private readonly Dictionary<string, Task> _probes = [];
@@ -29,12 +34,14 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
     private bool _disposed;
 
     /// <param name="startClock">Starts the backend clock, whose ticks come back through <see cref="Tick"/>.</param>
-    public MachinesFeature(MachineSet machines, MachineStatus status, Action startClock, TimeProvider time)
+    /// <param name="tryTunnel">Starts the remote's ssh tunnel again now if it's waiting to.</param>
+    public MachinesFeature(MachineSet machines, MachineStatus status, Action startClock, TimeProvider time, Action? tryTunnel = null)
     {
         _machines = machines;
         _status = status;
         _startClock = startClock;
         _time = time;
+        _tryTunnel = tryTunnel ?? (() => { });
     }
 
     public void Register(ICallRegistry calls)
@@ -55,6 +62,44 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
             var machine = _machines.Named(args.Machine is { Length: > 0 } name ? name : null) ?? throw new CallFailed("unknown machine");
             return new AgentList([.. (await machine.AgentsAsync(call.Cancellation)).Select(agent => new Agent(agent.Id, agent.Name))]);
         });
+        // A read: it writes nothing here, so its up to 10 seconds hold up none of the socket's writes.
+        calls.Read(Feature, "connect", SessionsJson.Default.ConnectArgs, SessionsJson.Default.MachineItem, async (args, call) =>
+        {
+            var machine = _machines.Remotes.FirstOrDefault(remote => remote.Name == args.Machine) ?? throw new CallFailed("unknown remote machine");
+            _tryTunnel();
+            await ConnectAsync(machine, call.Cancellation);
+            return _status.Items.First(item => item.Name == machine.Name);
+        });
+    }
+
+    private async Task ConnectAsync(IMachine machine, CancellationToken cancel)
+    {
+        using var limit = new CancellationTokenSource(ConnectLimit, _time);
+        using var either = CancellationTokenSource.CreateLinkedTokenSource(cancel, limit.Token);
+        try
+        {
+            while (true)
+            {
+                try
+                {
+                    await machine.ProbeAsync(either.Token);
+                    return;
+                }
+                // An answer it can't use (another row format, a refused token) won't change by asking again.
+                catch (MachineUnreachable error) when (error.InnerException is HttpRequestException)
+                {
+                }
+                await Task.Delay(ConnectAgain, _time, either.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            _status.Unreachable(machine.Name!, "didn't answer");
+        }
+        catch (MachineUnreachable)
+        {
+            // The machine recorded what it saw.
+        }
     }
 
     /// <summary>Each second of the backend clock, with whether <c>machines</c> has a subscriber. Nobody left watching cancels the probes out.</summary>
@@ -121,6 +166,8 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
     }
 
     internal sealed record AgentsArgs(string? Machine = null);
+
+    internal sealed record ConnectArgs(string Machine);
 
     internal sealed record Agent(string Id, string Name);
 

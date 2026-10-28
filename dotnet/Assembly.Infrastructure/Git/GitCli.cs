@@ -28,6 +28,8 @@ public sealed class GitCli : IGit
         start.ArgumentList.Add(folder);
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GIT_OPTIONAL_LOCKS"] = "0";
+        // English messages, so a caller can tell one failure from another.
+        start.Environment["LC_ALL"] = "C";
         foreach (var argument in arguments)
             start.ArgumentList.Add(argument);
         using var git = Process.Start(start) ?? throw new InvalidOperationException("Could not start git.");
@@ -86,14 +88,12 @@ public sealed class GitCli : IGit
                 await stdin.WriteAsync(line);
                 await stdin.WriteAsync('\0');
             }
+            // Closing flushes what's buffered, so it too meets a git that has stopped.
+            stdin.Close();
         }
         catch (IOException)
         {
-            // git stopped reading: it was killed, and the read says why.
-        }
-        finally
-        {
-            stdin.Close();
+            // git stopped reading: it failed or was killed, and the read says why.
         }
     }
 

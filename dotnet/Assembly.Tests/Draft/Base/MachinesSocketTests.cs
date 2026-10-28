@@ -31,7 +31,7 @@ namespace Assembly.Tests.Draft.Base;
 public sealed partial class MachinesSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
-    private const string Local = """{"name":null,"kind":"local","reachable":true,"reason":null}""";
+    private const string Local = """{"name":null,"kind":"local","reachable":true,"reason":null,"checked":true}""";
     private static readonly DateTimeOffset Start = new(2026, 10, 27, 12, 0, 0, TimeSpan.Zero);
 
     private readonly TempDatabase _file = new();
@@ -299,7 +299,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     public async Task A_title_read_that_fails_after_a_turn_leaves_the_title_and_the_follower_keeps_copying()
     {
         _sessions.Add("s1", "claude", "https://github.com/o/r", "box");
-        _sessions.SetTitle("s1", "kept");
+        _sessions.SetTitle("s1", "kept", "prompt");
         _stub.LiveRows =
         [
             Row(1, "r1", """{"state":"done"}"""),
@@ -403,8 +403,9 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         Assert.Equal(expected, outcome);
     }
 
+    // Pins: sessions-list#11 (checked is false only before the first probe answers or fails)
     private static string Box(bool reachable, string? reason) =>
-        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}}}""";
+        $$"""{"name":"box","kind":"remote","reachable":{{(reachable ? "true" : "false")}},"reason":{{(reason is null ? "null" : $"\"{reason}\"")}},"checked":{{(reason == "not checked yet" ? "false" : "true")}}}""";
 
     private static string List(long sub, string box) =>
         $$$"""{"t":"state","sub":{{{sub}}},"items":[{"key":"local","item":{{{Local}}}},{"key":"box","item":{{{box}}}}]}""";

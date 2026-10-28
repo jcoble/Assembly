@@ -1,5 +1,6 @@
 //! `list_entries` lays the loaded sessions out as the list draws them: Working, Done, then Settled, each with its
-//! projects A to Z and each project's sessions newest first. A group with no sessions is left out; a folded Settled
+//! projects A to Z and each project's sessions newest first. Working or Done with no sessions is left out; Settled's
+//! header is always there once the list has loaded, since its sessions load only once it's opened, and folded it
 //! keeps only its header. Replaces the old rail's `buildMyWorkGroups` (myWorkViewOptions.ts) with status and project
 //! grouping both on, and without pinning, orchestrator or workflow sections.
 
@@ -10,8 +11,8 @@ use super::list_entry::ListEntry;
 use super::status::Status;
 use crate::core::state::session_item::SessionItem;
 
-/// `items` is newest first, as `Sessions` holds them.
-pub fn list_entries(items: &[SessionItem], settled_open: bool) -> Vec<ListEntry> {
+/// `items` is newest first, as `Sessions` holds them; `loaded` once the list's first state is in.
+pub fn list_entries(items: &[SessionItem], settled_open: bool, loaded: bool) -> Vec<ListEntry> {
     let mut entries = Vec::new();
     for status in Status::ALL {
         // Keyed by the label first so projects read A to Z; the machine and folder keep two that share a label apart.
@@ -29,10 +30,13 @@ pub fn list_entries(items: &[SessionItem], settled_open: bool) -> Vec<ListEntry>
                     .push(item.session_id.clone());
             }
         }
+        let open = status != Status::Settled || settled_open;
         if projects.is_empty() {
+            if status == Status::Settled && loaded {
+                entries.push(ListEntry::Group { status, open });
+            }
             continue;
         }
-        let open = status != Status::Settled || settled_open;
         entries.push(ListEntry::Group { status, open });
         if !open {
             continue;
@@ -73,12 +77,6 @@ pub fn same_line(
 ) -> Option<usize> {
     let line = old.get(at).filter(|_| changed.contains(&at))?;
     new.iter().position(|entry| entry == line)
-}
-
-/// Whether to load the next older page, given whether the list's end is in view or close to it. A list that ends in
-/// a folded Settled waits for it to open: older pages would only fill it unseen.
-pub fn wants_older(entries: &[ListEntry], end_in_view: bool) -> bool {
-    end_in_view && !matches!(entries.last(), Some(ListEntry::Group { open: false, .. }))
 }
 
 /// What a project's header calls it: "owner/repo" for a GitHub URL, else the folder's last name.

@@ -5,6 +5,29 @@ namespace Assembly.Tests.Draft.Base.Chat;
 
 public sealed partial class ChatSocketTests
 {
+    // Pins: sessions-list#9
+    [Fact]
+    public async Task Sessions_state_is_open_and_pages_can_select_settled()
+    {
+        var open = _sessions.Create("claude", "open-repo");
+        var settled = _sessions.Create("claude", "settled-repo");
+        _db.Writer.Write("test.mark", scope => { _sessions.Mark(scope, settled.SessionId, "settled"); return 0; });
+        using var socket = await OpenAsync();
+        await SendAsync(socket, """{"t":"sub","id":1,"topic":"sessions"}""");
+        using (var state = JsonDocument.Parse(await ReadAsync(socket)))
+            Assert.Equal([open.SessionId], state.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("key").GetString()));
+
+        await CallAsync(socket, 2, "sessions", "page", """{"group":"settled"}""");
+        using (var answer = JsonDocument.Parse(await ReadAsync(socket)))
+            Assert.Equal([settled.SessionId], answer.RootElement.GetProperty("result").GetProperty("sessions").EnumerateArray()
+                .Select(item => item.GetProperty("sessionId").GetString()));
+        await CallAsync(socket, 3, "sessions", "page", """{"group":"bogus"}""");
+        Assert.Equal("""{"t":"error","id":3,"code":"failed","message":"expected open or settled"}""", await ReadAsync(socket));
+
+        _sessions.SetTitle(settled.SessionId, "Still published", "prompt");
+        Assert.Contains("\"title\":\"Still published\"", await ReadAsync(socket));
+    }
+
     [Fact]
     public async Task The_sessions_topic_starts_with_the_newest_page_then_any_session_that_changes()
     {
@@ -41,7 +64,7 @@ public sealed partial class ChatSocketTests
         await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{session.SessionId}}"}""");
         Assert.Contains($"\"sessionId\":\"{session.SessionId}\"", await ReadAsync(socket));
 
-        _sessions.SetTitle(session.SessionId, "Renamed");
+        _sessions.SetTitle(session.SessionId, "Renamed", "prompt");
         Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(socket));
     }
 
@@ -97,7 +120,7 @@ public sealed partial class ChatSocketTests
     public async Task Frames_carry_text_as_it_is()
     {
         var session = _sessions.Create("claude", "repo");
-        _sessions.SetTitle(session.SessionId, "Café's");
+        _sessions.SetTitle(session.SessionId, "Café's", "prompt");
         using var socket = await OpenAsync();
 
         await SendAsync(socket, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{session.SessionId}}"}""");
@@ -119,8 +142,8 @@ public sealed partial class ChatSocketTests
         using var own = await OpenAsync();
         await SendAsync(own, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{helper.SessionId}}"}""");
         await ReadAsync(own);
-        _sessions.SetTitle(helper.SessionId, "Renamed");
-        _sessions.SetTitle(parent.SessionId, "Parent");
+        _sessions.SetTitle(helper.SessionId, "Renamed", "prompt");
+        _sessions.SetTitle(parent.SessionId, "Parent", "prompt");
 
         Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(own));
         using var change = JsonDocument.Parse(await ReadAsync(list));
@@ -154,7 +177,7 @@ public sealed partial class ChatSocketTests
     {
         var title = new string('a', Mb);
         for (var i = 0; i < 5; i++)
-            _sessions.SetTitle(_sessions.Create("claude", $"repo-{i}").SessionId, title);
+            _sessions.SetTitle(_sessions.Create("claude", $"repo-{i}").SessionId, title, "prompt");
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "sessions", "page", "{}");
