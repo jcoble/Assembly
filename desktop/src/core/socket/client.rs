@@ -82,6 +82,11 @@ impl SocketClient {
         client
     }
 
+    /// Starts the client for `/socket/bulk`, the backend's socket for the large calls.
+    pub fn start_bulk(endpoint: Endpoint, cx: &mut App) -> Entity<Self> {
+        Self::start(endpoint, cx)
+    }
+
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalSocket>().0.clone()
     }

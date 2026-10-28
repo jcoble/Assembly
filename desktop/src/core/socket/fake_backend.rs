@@ -1,6 +1,7 @@
 //! `FakeBackend` is a test-only stand-in for the backend's `/socket`, so the client's rules are tested without .NET.
 //! Each frame the client sends, and each pong, goes to `seen` in order, and to the test's `answer`, which returns what
 //! the backend sends back. `answer` is shared by every connection, so it can tell a first hello from a later one.
+//! Each frame also goes to `on`, with the path its connection asked for (`/socket` or `/socket/bulk`).
 
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -10,6 +11,7 @@ use std::thread;
 use serde_json::{Value, json};
 
 use super::test_client::DEADLINE;
+use tungstenite::handshake::server::{Request, Response};
 use tungstenite::protocol::CloseFrame;
 use tungstenite::protocol::frame::coding::CloseCode;
 use tungstenite::{Bytes, Message, WebSocket};
@@ -31,6 +33,8 @@ pub struct FakeBackend {
     pub port: u16,
     /// Every frame the client sent, and `{"t":"pong"}` for each pong.
     pub seen: Receiver<Value>,
+    /// Every frame the client sent, with its connection's path.
+    pub on: Receiver<(String, Value)>,
     /// One for each socket the client closed or dropped.
     pub closed: Receiver<()>,
 }
@@ -40,16 +44,22 @@ impl FakeBackend {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind the fake backend");
         let port = listener.local_addr().expect("its port").port();
         let (seen_tx, seen) = mpsc::channel();
+        let (on_tx, on) = mpsc::channel();
         let (closed_tx, closed) = mpsc::channel();
         let answer: Answer = Arc::new(Mutex::new(answer));
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let (seen_tx, closed_tx, answer) =
-                    (seen_tx.clone(), closed_tx.clone(), answer.clone());
-                thread::spawn(move || serve(stream, seen_tx, closed_tx, answer));
+                let seen = (seen_tx.clone(), on_tx.clone());
+                let (closed_tx, answer) = (closed_tx.clone(), answer.clone());
+                thread::spawn(move || serve(stream, seen, closed_tx, answer));
             }
         });
-        Self { port, seen, closed }
+        Self {
+            port,
+            seen,
+            on,
+            closed,
+        }
     }
 
     /// The next frame the client sent; panics if none comes within the deadline.
@@ -73,9 +83,25 @@ pub fn hello(frame: &Value) -> Option<Vec<Reply>> {
     })
 }
 
-fn serve(stream: TcpStream, seen: Sender<Value>, closed: Sender<()>, answer: Answer) {
+/// A port nothing listens on, so a socket to it can't open.
+pub fn unused_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a port");
+    listener.local_addr().expect("its port").port()
+}
+
+fn serve(
+    stream: TcpStream,
+    (seen, on): (Sender<Value>, Sender<(String, Value)>),
+    closed: Sender<()>,
+    answer: Answer,
+) {
     let raw = stream.try_clone().expect("clone the stream");
-    let Ok(mut socket) = tungstenite::accept(stream) else {
+    let mut path = String::new();
+    let opened = tungstenite::accept_hdr(stream, |request: &Request, response: Response| {
+        path = request.uri().path().to_string();
+        Ok(response)
+    });
+    let Ok(mut socket) = opened else {
         return;
     };
     loop {
@@ -91,6 +117,7 @@ fn serve(stream: TcpStream, seen: Sender<Value>, closed: Sender<()>, answer: Ans
             Ok(_) => continue,
         };
         let replies = (answer.lock().expect("the answer"))(&frame);
+        let _ = on.send((path.clone(), frame.clone()));
         if seen.send(frame).is_err() {
             return;
         }

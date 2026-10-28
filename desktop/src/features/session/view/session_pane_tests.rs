@@ -258,6 +258,46 @@ fn rows_that_arrive_before_the_first_page_wait_for_it(cx: &mut TestAppContext) {
     assert_eq!(blocks, 3, "the page's first two blocks and the live third");
 }
 
+// The page comes on the bulk socket and the live rows on the main one, so the page may answer after live rows newer
+// than it. The page is cut at the `Jump`'s seq and the rows after it wait for it, so arrival order doesn't matter: the
+// result has every row once, in seq order, and the page's run that a later row ended isn't counted as going.
+#[gpui::test]
+fn a_page_that_answers_after_newer_live_rows_leaves_no_gap_and_no_duplicate(
+    cx: &mut TestAppContext,
+) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    let rows = vec![user(3, "one"), user(4, "two"), message(5, 0, &["a", "b"])];
+    client.queue_answer(Ok(page(rows, false, Some("r1"))));
+    let later = [
+        message(6, 2, &["c"]),
+        user(7, "three"),
+        row(8, "turn", None, json!({ "state": "finished" })),
+    ];
+    cx.update(|_, cx| {
+        client.push(RowUpdate::Jump { seq: 5 }, cx);
+        for row in later {
+            let row: Row = serde_json::from_value(row).unwrap();
+            client.push(RowUpdate::Row(Box::new(row)), cx);
+        }
+    });
+    cx.run_until_parked();
+    assert_eq!(keys(&pane, cx), ["seq:3", "seq:4", "message:m1", "seq:7"]);
+    let (blocks, active) = cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        let blocks = match &pane.view.items[2].kind {
+            ItemKind::Message { blocks, .. } => blocks.len(),
+            _ => 0,
+        };
+        (blocks, pane.view.active_run(pane.known_run.as_deref()))
+    });
+    assert_eq!(
+        blocks, 3,
+        "the page's two blocks and the live third, once each"
+    );
+    assert_eq!(active, None, "the live turn row ended the page's run");
+}
+
 // Pins: g0-session#2
 #[gpui::test]
 fn a_failed_older_page_is_not_asked_for_again_by_itself(cx: &mut TestAppContext) {

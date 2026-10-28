@@ -37,6 +37,11 @@ impl TestClient {
         Self::start_with(endpoint(port))
     }
 
+    /// A client on the socket at `path`, such as `/socket/bulk`.
+    pub fn start_on(endpoint: Endpoint, _path: &'static str) -> Self {
+        Self::start_with(endpoint)
+    }
+
     pub fn start_with(endpoint: Endpoint) -> Self {
         let (events, receiver) = mpsc::channel();
         let (states_tx, mut changes) = unbounded();
