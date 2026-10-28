@@ -2,6 +2,9 @@
 //! fact has one owner for, the backend clock's subscriber (`core/clock/`), the theme and the registries. A root module
 //! named `core` hides the `core` crate in `main.rs` only: write `::core::` there.
 
+pub mod assets;
+#[cfg(test)]
+mod assets_tests;
 pub mod backend;
 // Unused until the panes read the state.
 #[expect(

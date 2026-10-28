@@ -29,7 +29,7 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
         var topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _hub = new LiveHub(RowStore.Open(_db), topics: topics);
-        _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, SessionStore.Open(_db, TimeProvider.System), _log,
+        _box = new RemoteMachine("box", _stub.Address, "box-token", _hub, SessionStore.Open(_db, TimeProvider.System, "checkouts"), _log,
             new MachineStatus(topics, ["box"]));
     }
 
@@ -59,17 +59,19 @@ public sealed class RemoteFollowerTests : IAsyncLifetime
     [Fact]
     public async Task Watches_at_the_same_moment_start_one_follower()
     {
-        // Pings keep every link from settling, so no owed second pass opens while the test counts.
-        _stub.Pings = true;
         var ids = Enumerable.Range(0, 40).Select(n => $"s{n}").ToArray();
+        // An open run keeps every link from settling, so no owed second pass opens while the test counts.
+        foreach (var id in ids)
+            _hub.PublishCopy(new StoredRow(id, 1, "r1", null, "turn", JsonDocument.Parse("""{"state":"started"}""").RootElement, 1, PrevSeq: 0));
         foreach (var id in ids)
         {
             using var ready = new Barrier(8);
-            var watches = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+            // Own threads, so the eight blocked at the barrier don't starve the pool the follower runs on.
+            var watches = Enumerable.Range(0, 8).Select(_ => Task.Factory.StartNew(() =>
             {
                 ready.SignalAndWait();
                 _box.WatchRunning([id], []);
-            })).ToArray();
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)).ToArray();
             await Task.WhenAll(watches);
         }
 

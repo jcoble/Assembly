@@ -185,6 +185,21 @@ public sealed class RowStoreTests : IDisposable
     }
 
     [Fact]
+    public void A_run_s_messages_are_read_one_at_a_time_without_its_tool_rows()
+    {
+        _store.Commit("t", Rows(Message("m1"), Tool("t1", "completed", "ls"), Tool("t2", "completed", "ls"), Message("m2")));
+        _store.Commit("t", Rows(new NewRow("run-2", "m3", RowKind.Message, Payload("""{"blocks":[]}"""), 1)));
+
+        var first = _store.RunMessageAfter("t", "run-1", 0);
+        Assert.NotNull(first);
+        var second = _store.RunMessageAfter("t", "run-1", first.Seq);
+        Assert.NotNull(second);
+
+        Assert.Equal(("m1", "m2"), (first.ItemId, second.ItemId));
+        Assert.Null(_store.RunMessageAfter("t", "run-1", second.Seq));
+    }
+
+    [Fact]
     public void A_page_read_for_a_caller_who_has_gone_stops_with_nothing_read()
     {
         CommitFixture("acp/tools.jsonl");

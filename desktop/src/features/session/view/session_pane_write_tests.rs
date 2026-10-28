@@ -90,7 +90,8 @@ async fn an_answer_still_reaches_the_backend_when_the_reader_switches_at_once(
             port: backend.port,
             token: "secret".into(),
         };
-        SocketClient::start(endpoint, cx);
+        SocketClient::start(endpoint.clone(), cx);
+        SocketClient::start_bulk(endpoint, cx);
     });
     let (pane, cx) =
         cx.add_window_view(|window, cx| SessionPane::new(Rc::new(SocketSessionClient), window, cx));

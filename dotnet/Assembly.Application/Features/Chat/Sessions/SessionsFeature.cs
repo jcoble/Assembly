@@ -8,8 +8,9 @@ namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
 /// The sessions over the socket (plan C1): the <c>sessions</c> topic, whose state is the newest
-/// <see cref="ListLimit"/> sessions (or, with a key, that one), with an upsert for every change to any session, so one
-/// that wakes up moves into the list; <c>sessions/page</c> for older ones; <c>sessions/create</c>; and
+/// <see cref="ListLimit"/> open (unsettled) sessions (or, with a key, that one), with an upsert for every change to any
+/// session, settled or not, so one that wakes up moves into the list; <c>sessions/page</c> for older ones, all or one
+/// group (<c>open</c> or <c>settled</c>: the window loads Settled, the user's archive, only once it's opened); <c>sessions/create</c>; and
 /// <c>sessions/read</c>, which marks a session read up to a seq. Each item carries its summary from memory, so the
 /// state, read under the Topics lock, reads no rows.
 /// </summary>
@@ -33,11 +34,18 @@ internal sealed class SessionsFeature : IFeature
     {
         calls.Topic(Topic, SessionsJson.Default.SessionItem, session => session.SessionId, (key, call) =>
             key is null
-                ? [.. _store.List(null, ListLimit, call.Cancellation).Sessions.Select(_store.Item)]
+                ? [.. _store.List(null, ListLimit, call.Cancellation, settled: false).Sessions.Select(_store.Item)]
                 : _store.Get(key) is { } session ? [_store.Item(session)] : []);
         calls.Read(Topic, "page", SessionsJson.Default.PageArgs, SessionsJson.Default.Page, (args, call) =>
         {
-            var page = _store.List(args.Before, Math.Clamp(args.Limit, 1, ListLimit), call.Cancellation, args.BeforeId);
+            bool? settled = args.Group switch
+            {
+                null => null,
+                "open" => false,
+                "settled" => true,
+                _ => throw new CallFailed("expected open or settled")
+            };
+            var page = _store.List(args.Before, Math.Clamp(args.Limit, 1, ListLimit), call.Cancellation, args.BeforeId, settled);
             return Task.FromResult(new Page([.. page.Sessions.Select(_store.Item)], page.NextBefore, page.NextBeforeId));
         });
         // Only the database: no order key, as nothing outside it can hang.
@@ -48,6 +56,18 @@ internal sealed class SessionsFeature : IFeature
             return Task.FromResult<Func<IWriteScope, SendFeature.Done>>(scope =>
             {
                 _store.MarkRead(scope, args.Session, args.Seq);
+                return new SendFeature.Done(true);
+            });
+        });
+        calls.Write(Topic, "mark", SessionsJson.Default.MarkArgs, SessionsJson.Default.Done, (args, _) =>
+        {
+            if (_store.Get(args.Session) is null)
+                throw new CallFailed("unknown session");
+            if (args.State is not ("working" or "done" or "settled"))
+                throw new CallFailed("expected working, done or settled");
+            return Task.FromResult<Func<IWriteScope, SendFeature.Done>>(scope =>
+            {
+                _store.Mark(scope, args.Session, args.State);
                 return new SendFeature.Done(true);
             });
         });
@@ -69,8 +89,11 @@ internal sealed class SessionsFeature : IFeature
         }, args => $"machine {args.Machine}");
     }
 
-    /// <summary>A page after the cursor: <c>before</c> and <c>beforeId</c> are the last page's <c>nextBefore</c> and <c>nextBeforeId</c>.</summary>
-    internal sealed record PageArgs(long? Before = null, int Limit = 50, string? BeforeId = null);
+    /// <summary>
+    /// A page after the cursor: <c>before</c> and <c>beforeId</c> are the last page's <c>nextBefore</c> and
+    /// <c>nextBeforeId</c>; <c>group</c> is <c>open</c>, <c>settled</c> or left out for all.
+    /// </summary>
+    internal sealed record PageArgs(long? Before = null, int Limit = 50, string? BeforeId = null, string? Group = null);
 
     internal sealed record Page(IReadOnlyList<SessionItem> Sessions, long? NextBefore, string? NextBeforeId);
 
@@ -80,4 +103,6 @@ internal sealed class SessionsFeature : IFeature
     internal sealed record Created(string SessionId);
 
     internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] long Seq);
+
+    internal sealed record MarkArgs([property: JsonRequired] string Session, [property: JsonRequired] string State);
 }

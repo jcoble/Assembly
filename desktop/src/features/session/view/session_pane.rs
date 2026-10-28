@@ -1,12 +1,11 @@
 //! `SessionPane` owns the open session: the selected session's id (from the selected-session state lane g0-socket
 //! owns), its `SessionView`, the rows subscription and the loads it started, the timeline and the composer. Opening
 //! another session drops the old subscription and loads, so a stale load stops. While a session is on screen it
-//! tells the backend the newest seq shown (`sessions/read`, once the base lane's session summaries land). It registers under the chat pane's
+//! tells the backend the newest seq shown (`sessions/read`, pane_read.rs). It registers under the chat pane's
 //! name through the core registry (lane g0-host, names from lane g0-shape), never by importing another feature.
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
 use gpui_kit::base::motion::{Presence, Transition};
-use gpui_kit::component::dock::{panel_handle, register_panel};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -17,19 +16,19 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use super::ask_row::AskForm;
-use super::grow::{GROW, faded, grow, toggled, turn};
+use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
-use crate::core::intents::open_session::OpenSession;
-use crate::core::state::selected_session::SelectedSession;
+use crate::core::state::machines::GlobalMachines;
+use crate::core::theme::grow::{GROW, faded};
+use crate::core::ui::expand_row::ExpandRow;
 use crate::features::session::client::session_client::{
     CallError, RowUpdate, RowsSink, SessionClient,
 };
-use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
-use crate::features::session::model::entries::Entry;
+use crate::features::session::model::entries::{Entry, entry_key};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::follow::FollowEvent;
 use crate::features::session::model::item::ItemKind;
@@ -77,7 +76,11 @@ pub struct SessionPane {
     live_since: Option<(String, i64)>,
     /// Tool calls whose detail is being read, by item key, with the state it's read for.
     reading: HashMap<String, ToolState>,
-    /// What's growing open or shut (an item's key, or `fold:<run>`), and whether its next frame is asked for.
+    /// Each tool call, thinking and question's row that opens in place, by item key, and what the pane hears from it.
+    expands: HashMap<String, (Entity<ExpandRow>, Subscription)>,
+    /// The questions last drawn open, by item key: one answered since shuts the next time it's drawn.
+    open_asks: HashSet<String>,
+    /// The folds growing open or shut (`fold:<run>`), and whether their next frame is asked for.
     growing: HashSet<String>,
     grow_asked: bool,
     /// The clock's ticks, only while a turn runs.
@@ -102,48 +105,18 @@ pub struct SessionPane {
     _loads: HashMap<String, Task<()>>,
     /// The writes they started (an answer, a Stop), kept the same way; these go on when the reader switches away.
     _writes: HashMap<String, Task<()>>,
+    /// The newest seq told to the backend as read, for the open session.
+    read_to: i64,
     /// The selected session, followed once the pane is registered.
     _selected: Option<Subscription>,
+    /// Hears the machines list start, then follows it, for the open session's machine (pane_machine.rs).
+    _machines_started: Subscription,
+    _machines: Option<Subscription>,
     /// The composer's events and the timeline's scrolling.
     _heard: [Subscription; 3],
 }
 
 impl SessionPane {
-    /// Registers the session pane as the layout's Chat pane, over the socket client, showing the selected session.
-    /// It runs after the placeholders register, since the last registration for a name wins. The pane also owns
-    /// the open session intent, which selects that session.
-    pub fn register(cx: &mut App) {
-        register_panel(cx, "Chat", |_, window, cx| {
-            panel_handle(cx.new(|cx| {
-                let mut pane = SessionPane::new(Rc::new(SocketSessionClient), window, cx);
-                let selected = SelectedSession::global(cx);
-                pane._selected = Some(cx.observe_in(
-                    &selected,
-                    window,
-                    |pane, selected, window, cx| pane.show_selected(selected, window, cx),
-                ));
-                pane.show_selected(selected, window, cx);
-                pane
-            }))
-        });
-        cx.on_action(|intent: &OpenSession, cx| {
-            let id = Some(intent.id.clone());
-            SelectedSession::global(cx).update(cx, |selected, cx| selected.select(id, cx));
-        });
-    }
-
-    /// Opens the selected session, or shows none.
-    fn show_selected(
-        &mut self,
-        selected: Entity<SelectedSession>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(session) = selected.read(cx).session_id().map(String::from) {
-            self.open(session, window, cx);
-        }
-    }
-
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pane = cx.weak_entity();
         let on_action: OnAction = {
@@ -157,12 +130,14 @@ impl SessionPane {
             let Some(pane) = pane.upgrade() else {
                 return div().into_any_element();
             };
-            pane.update(cx, |pane, cx| pane.make_form(entry, window, cx));
-            let (row, fresh, fold) = {
-                let pane = pane.read(cx);
-                let row = pane.row(entry, &pane.on_action, cx);
-                (row, pane.fresh_key(entry), pane.open_fold_of(entry))
-            };
+            let (row, fresh, fold) = pane.update(cx, |pane, cx| {
+                pane.make_form(entry, window, cx);
+                (
+                    pane.row(entry, cx),
+                    pane.fresh_key(entry),
+                    pane.open_fold_of(entry),
+                )
+            });
             let row = match fresh {
                 Some(key) => fade_in(key, row, window, cx),
                 None => row,
@@ -195,7 +170,7 @@ impl SessionPane {
         let header = cx.new(|_| Header::default());
         let heard = [
             cx.subscribe(&composer, |pane, _, event, cx| match event {
-                ComposerEvent::Sending { .. } => pane
+                ComposerEvent::Sending => pane
                     .timeline
                     .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx)),
                 ComposerEvent::Sent { session, run_id }
@@ -210,9 +185,13 @@ impl SessionPane {
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
                 pane.load_older(cx)
             }),
-            cx.observe(&header, |_, _, cx| cx.notify()),
+            cx.observe(&header, |pane, _, cx| {
+                pane.tell_offline(cx);
+                cx.notify()
+            }),
         ];
-        SessionPane {
+        let machines = cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
+        let mut pane = SessionPane {
             client,
             focus: cx.focus_handle(),
             session: None,
@@ -234,6 +213,8 @@ impl SessionPane {
             now: None,
             live_since: None,
             reading: HashMap::new(),
+            expands: HashMap::new(),
+            open_asks: HashSet::new(),
             growing: HashSet::new(),
             grow_asked: false,
             _clock: None,
@@ -247,8 +228,13 @@ impl SessionPane {
             _page: None,
             _loads: HashMap::new(),
             _writes: HashMap::new(),
+            read_to: 0,
             _heard: heard,
-        }
+            _machines_started: machines,
+            _machines: None,
+        };
+        pane.follow_machines(cx);
+        pane
     }
 
     /// Shows a session: subscribes to its rows first, then, on the `Jump` that says its seq, loads the page below
@@ -264,12 +250,15 @@ impl SessionPane {
         self._page = None;
         self._loads.clear();
         self.view = SessionView::default();
+        self.read_to = 0;
         self.held = Some(Vec::new());
         self.open_folds.clear();
         self.kept.clear();
         self.fresh.clear();
         self.forms.clear();
         self.reading.clear();
+        self.expands.clear();
+        self.open_asks.clear();
         self.growing.clear();
         self.reveal = None;
         self.plan_open = false;
@@ -316,6 +305,7 @@ impl SessionPane {
             RowUpdate::Jump { seq } => {
                 self._page = None;
                 self.view = SessionView::default();
+                self.read_to = 0;
                 self.held = Some(Vec::new());
                 self.reveal = None;
                 self.reading.clear();
@@ -344,19 +334,7 @@ impl SessionPane {
                 ItemKind::Message { blocks, .. } if item.key == key => Some(Reveal::chars(blocks)),
                 _ => None,
             });
-        // An ask that was open when its answer arrives shrinks from now.
-        let asked = self.view.items.iter().any(|item| {
-            item.key == key
-                && matches!(&item.kind, ItemKind::Ask { ask, .. } if ask.state == "open")
-        });
         let change = self.view.apply(row);
-        if let (true, Change::Updated(at)) = (asked, change)
-            && matches!(&self.view.items[at].kind, ItemKind::Ask { ask, .. } if ask.state != "open")
-        {
-            let kept = self.kept.entry(key.clone()).or_default();
-            kept.toggled_at = Some(toggled(false, kept.toggled_at, Instant::now(), GROW));
-            self.start_growing(key.clone(), cx);
-        }
         if let (Change::Appended, Some(item)) = (change, self.view.items.last()) {
             let now = Instant::now();
             self.fresh
@@ -464,21 +442,30 @@ impl SessionPane {
 
     /// Draws the item at `at` again, measured again, with the entries as they are.
     fn redraw(&mut self, at: usize, cx: &mut Context<Self>) {
-        let key = &self.view.items[at].key;
+        let key = entry_key(&self.view.items[at], self.live_run());
         self.timeline
-            .update(cx, |timeline, cx| timeline.redraw_row(key, cx));
+            .update(cx, |timeline, cx| timeline.redraw_row(&key, cx));
     }
 
-    /// Works the timeline's entries out again from the view, and tells the composer the run going now.
+    /// The run going now, as the entries were last worked out.
+    fn live_run(&self) -> Option<&str> {
+        self.live_since.as_ref().map(|(run, _)| run.as_str())
+    }
+
+    /// Works the timeline's entries out again from the view, and tells the composer the run going now and the newest
+    /// context report.
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
         let active = self.view.active_run(self.known_run.as_deref());
         let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
+        // An item changed in place is measured again, and a running turn's card on any change: a step can arrive in
+        // it live or on an older page.
         let changed = match change {
-            Change::Updated(at) => Some(self.view.items[at].key.clone()),
+            Change::Updated(at) => Some(entry_key(&self.view.items[at], active.as_deref())),
             _ => None,
-        };
+        }
+        .or_else(|| active.is_some().then(|| Entry::Working.key(&[])));
         let (items, loading) = (&self.view.items, self.loading);
-        let entries = Entry::all(items, &folds, &self.open_folds, loading, active.is_some());
+        let entries = Entry::all(items, &folds, &self.open_folds, loading, active.as_deref());
         self.folds = folds;
         self.timeline.update(cx, |timeline, cx| {
             let keyed = entries
@@ -487,12 +474,20 @@ impl SessionPane {
                 .collect();
             timeline.set_entries(keyed, changed.as_deref(), cx);
         });
+        // The turn row's time once it's loaded (the backend's clock, as the steps' are); until then when the pane first
+        // saw the run, on the backend clock if it's ticking.
+        let started = active
+            .as_deref()
+            .and_then(|run| self.view.run_started_at(run));
         if self.live_since.as_ref().map(|(run, _)| run) != active.as_ref() {
             self.live_since = active.clone().map(|run| {
-                let at = self.view.run_started_at(&run);
-                let since = at.unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-                (run, since)
+                let seen = self
+                    .now
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+                (run, started.unwrap_or(seen))
             });
+        } else if let (Some((_, since)), Some(started)) = (&mut self.live_since, started) {
+            *since = started;
         }
         match (active.is_some(), self._clock.is_some()) {
             (true, false) => {
@@ -509,8 +504,13 @@ impl SessionPane {
             (false, true) => (self._clock, self.now, self.plan_open) = (None, None, false),
             _ => {}
         }
-        self.composer
-            .update(cx, |composer, cx| composer.set_running(active, cx));
+        let context = self.view.context.map(|(_, used, size)| (used, size));
+        let running = active.is_some();
+        self.composer.update(cx, |composer, cx| {
+            composer.set_running(active, cx);
+            composer.set_context(context, cx);
+        });
+        self.tell_read(running, cx);
         cx.notify();
     }
 
@@ -531,6 +531,12 @@ impl SessionPane {
 
 #[path = "pane_actions.rs"]
 mod actions;
+#[path = "pane_expand.rs"]
+mod expand;
+#[path = "pane_machine.rs"]
+mod machine;
+#[path = "pane_read.rs"]
+mod read;
 #[path = "pane_render.rs"]
 mod render;
 #[path = "pane_reveal.rs"]
@@ -555,6 +561,9 @@ const PAGE_ROWS: usize = 100;
 #[cfg(test)]
 #[path = "session_pane_action_tests.rs"]
 mod action_tests;
+#[cfg(test)]
+#[path = "session_pane_activity_tests.rs"]
+mod activity_tests;
 #[cfg(test)]
 #[path = "session_pane_real_switch_tests.rs"]
 mod real_switch_tests;

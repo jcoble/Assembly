@@ -6,13 +6,14 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
 use super::SessionPane;
+use crate::features::session::model::activity;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::markdown_text::markdown_of;
-use crate::features::session::model::turn_line::{checkout_line, turn_line};
+use crate::features::session::model::turn_line::checkout_line;
+use crate::features::session::view::activity_card::ActivityCard;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::ItemRow;
-use crate::features::session::view::session_action::OnAction;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
@@ -29,7 +30,8 @@ impl SessionPane {
         Some((key.clone(), kept.open, kept.toggled_at))
     }
 
-    pub(super) fn row(&self, entry: &Entry, on_action: &OnAction, cx: &App) -> AnyElement {
+    pub(super) fn row(&mut self, entry: &Entry, cx: &mut Context<Self>) -> AnyElement {
+        let on_action = &self.on_action.clone();
         let muted = cx.theme().muted_foreground;
         let now = self
             .now
@@ -37,6 +39,14 @@ impl SessionPane {
         match entry {
             Entry::Loading => line("Loading older messages…", muted),
             Entry::Item(at) => {
+                // Only a row that opens in place needs its own copy, for the pane's `&mut` while it's made.
+                let opens = matches!(
+                    self.view.items[*at].kind,
+                    ItemKind::Tool { .. } | ItemKind::Thinking { .. } | ItemKind::Ask { .. }
+                );
+                let expand = opens
+                    .then(|| self.view.items[*at].clone())
+                    .and_then(|item| self.expand_of(&item, None, cx));
                 let item = &self.view.items[*at];
                 let mut shown = item.clone();
                 if let ItemKind::Message { blocks, .. } = &mut shown.kind
@@ -50,10 +60,7 @@ impl SessionPane {
                     session: self.session.clone().unwrap_or_default().into(),
                     copy: self.copy_text(item),
                     checkout: self.checkout(item),
-                    form: match &item.kind {
-                        ItemKind::Ask { ask_id, .. } => self.forms.get(ask_id).cloned(),
-                        _ => None,
-                    },
+                    expand,
                     now,
                     on_action: on_action.clone(),
                 }
@@ -81,9 +88,20 @@ impl SessionPane {
                 None => div().into_any_element(),
             },
             Entry::Working => {
-                let (run, since) = self.live_since.clone().unzip();
-                let stats = run.and_then(|run| self.view.stats.get(&run));
-                line(turn_line(stats, since.or(Some(now)), now), muted)
+                let Some((run, since)) = self.live_since.clone() else {
+                    return div().into_any_element();
+                };
+                let steps = activity::steps(&self.view.items, &run, since, now);
+                let footer = activity::footer(steps.len(), now - since);
+                let steps = steps
+                    .into_iter()
+                    .filter_map(|step| {
+                        let item = self.view.items[step.at].clone();
+                        let tool = matches!(item.kind, ItemKind::Tool { .. });
+                        tool.then(|| self.expand_of(&item, Some(step.took_ms), cx))?
+                    })
+                    .collect();
+                ActivityCard { steps, footer }.into_any_element()
             }
         }
     }

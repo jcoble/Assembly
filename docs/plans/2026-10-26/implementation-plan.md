@@ -383,6 +383,9 @@ Each part has one implementation, registered in DI, and features reach it only t
 
 - **Endpoint.** The page opens `ws://127.0.0.1:<port>/socket` and connects nowhere else. The desktop backend opens the
   same endpoint on each remote host, through the SSH tunnel (phase C2). Both machines speak the same protocol.
+- **The bulk socket (BS1).** A second endpoint, `ws://127.0.0.1:<port>/socket/bulk`, with the same frames, hello and
+  dispatcher, carries only the large calls: `attachments/*`, `rows/page` and `rows/tool`. Those are served only there,
+  and every other call and every topic only on `/socket`, so a big upload or page never holds up live traffic.
 - **Frame format.** Every frame is one JSON text message with a `t` field naming its type. The JSON uses
   source-generated serialization (`SocketJson.cs`), so it works under AOT.
 
@@ -489,6 +492,10 @@ runs through `db.Writer` when the feature is built. `ICallRegistry` has no schem
 - The backend's token reaches the handler, and from there everything it awaits (rule 5).
 - Closing the socket cancels every read still running on it. It never cancels a queued write (5.9).
 - A forwarded call to a remote machine sends `cancel` on the machine socket (phase C2).
+- Only `session/cancel`, sent by an explicit Stop, reaches the agent. A socket cancel or the 30-second limit only stops
+  our wait, because neither adapter honours `$/cancel_request` (probe 2026-10-27,
+  `dotnet/notes/acp-cancel-probe.md`). So a load (`session/new` or `session/resume`) cancelled after it was sent is
+  closed on the agent once its late answer arrives (C3).
 
 ### 5.4 Errors on the page
 
@@ -1437,6 +1444,15 @@ drafting its behavior list (`docs/behavior/<feature>.md`) for Jesse to correct. 
 code brought over piece by piece. Sol's step numbers are given so his
 catalogue stays the reference.
 
+### Status (2026-10-27): `app/` is frozen
+
+GPUI's `desktop/` replaces `app/` (decided 2026-10-27). No step moves `app/` onto the socket: it keeps `call.ts`,
+`api.ts` and `/live` as they are now, and is deleted whole at the cut. The steps above and below that move `app/`
+onto the socket (the page halves of B7, B8 and B10, and C1's page side) aren't built for it. `app/src/lib/socket.ts`
+stays, unused, until then. On the backend, the HTTP routes only `app/` uses (`FeatureCalls`, the chat routes,
+`/live` and `/page/<method>`) go at the cut with `app/`; the routes the remote client uses (`RemoteMachine` and
+`RemoteFollower`) go in C2, as written.
+
 ### C. Chat on the socket
 
 - **C1. Sessions, rows, sends and config** (Sol P03, P07, P12, P14).
@@ -1728,11 +1744,31 @@ catalogue stays the reference.
       byte over the limit is refused; cancelling midway leaves nothing linked.
   - **Proof:** check4 with `rows.sh`, `sessions.sh` and `config.sh`, each a one-line `.sh` that runs its `.ts`, and
     the chat used in the window on the Mac.
+- **BS1. A bulk socket for the large calls.**
+  - **Why:** a 20 MB upload or a big rows page shared the window's one socket with every call, topic and live row.
+  - **Backend (BS1a):** `/socket/bulk`, mapped beside `/socket` as an exact route, takes the same hello and token, and
+    runs on the same dispatcher. A call registers as bulk or not (`attachments/begin`, `chunk`, `commit`, `drop`,
+    `read`, `rows/page` and `rows/tool` are bulk), and is served only on its own socket; one on the wrong socket, or
+    any `sub` on bulk, answers `not_found`. Order keys, `MaxOpen` and drop-on-close are per connection, so a session's
+    attachment writes no longer queue behind its send and config; the window sends only after each commit answers
+    its path. A commit that only gets its turn after its bulk socket closed fails without saving: the window that
+    started it is gone, and a reconnect starts a fresh upload, so its bytes would go to no one. Other queued writes
+    still commit, as 5.9 says.
+  - **Window (BS1b):** a second socket client opened at startup beside the main one, on the same code, which
+    reconnects the same way; the session client sends the bulk calls to it. While it's down, those calls fail as
+    they do today. Chunks stay base64 JSON; binary chunk frames are BS2.
+  - **Tests:** a call on the wrong socket; main answering `config/get` and streaming rows while a 20 MB upload's
+    commit is held on bulk; a bulk socket closed mid-upload, with a commit queued, leaving no staging file and no
+    save; `/socket/other` refused through the real `ApiServer`.
 - **C2. One socket per remote machine** (Sol P11, P13).
   - **Files:** `Infrastructure/Remote/RemoteMachine.cs` becomes a socket client of the remote's `/socket`, and
     `RemoteFollower.cs` becomes one subscription per session on that socket. The remote's sessions topic is relayed,
     which brings sessions made on the remote into the list (base#11, Jesse's call). `RemoteOutbox.cs` polling becomes
     a subscription.
+  - **The machine link is a pair, as on the desktop (BS1):** one live socket and one bulk socket per machine. Today
+    attachments go to a remote as `POST /sessions/{id}/attachments` and tool detail as `GET
+    /sessions/{id}/tools/{item}` (`RemoteMachine.cs:133-148`); older rows come from the desktop's own copy
+    (`RemoteFollower`), not the remote.
   - **Deleted:** the chat HTTP routes the remote client called, and `LiveSocket.cs`. The last commit adds
     `scripts/lint.d/40-one-dispatcher.sh`, with zero exceptions (section 9.2).
   - **Kept, as parity with the old app (base#2, base#3):** starting from saved machines, opening while one is down,

@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::outcome;
+use super::{asked, outcome};
 use crate::features::session::rows::ask::AskPayload;
 
 fn ask(state: &str, answer: Option<Value>) -> AskPayload {
@@ -54,5 +54,37 @@ fn submit_sends_what_was_picked_and_typed_leaving_out_the_empty_fields() {
     assert_eq!(
         AskForm::content(&picked, texts),
         json!({ "action": "accept", "content": { "zone": "east", "note": "hi" } })
+    );
+}
+
+// Opened again once answered, a question shows what it asked: each field, its hint and its choices.
+// Pins: g0-session#16
+#[test]
+fn a_settled_question_still_says_what_it_asked() {
+    let question: AskPayload = serde_json::from_value(json!({
+        "kind": "question",
+        "state": "answered",
+        "options": [],
+        "answer": { "action": "accept", "content": { "color": "red" } },
+        "schema": { "type": "object", "properties": {
+            "color": { "type": "string", "title": "Color", "description": "Pick one", "enum": ["red", "blue"] },
+            "note": { "type": "string" }
+        } }
+    }))
+    .unwrap();
+    assert_eq!(
+        asked(&question),
+        [
+            (
+                "Color".to_string(),
+                Some("Pick one".to_string()),
+                "red, blue".to_string()
+            ),
+            ("note".to_string(), None, String::new()),
+        ]
+    );
+    assert!(
+        asked(&ask("answered", None)).is_empty(),
+        "a permission has no fields"
     );
 }

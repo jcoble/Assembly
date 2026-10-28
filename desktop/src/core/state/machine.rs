@@ -11,4 +11,14 @@ pub struct Machine {
     pub reachable: bool,
     /// Why it didn't answer, when it didn't.
     pub reason: Option<String>,
+    /// False for a remote until its first probe answers or fails: until then it's neither up nor down.
+    #[serde(default)]
+    pub checked: bool,
+}
+
+impl Machine {
+    /// A probe found it down; one not probed yet hasn't failed to answer.
+    pub fn didnt_answer(&self) -> bool {
+        self.checked && !self.reachable
+    }
 }

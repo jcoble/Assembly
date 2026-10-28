@@ -1,23 +1,21 @@
 //! The session pane's actions: what a row's button or link asks for, and reading an open tool call's detail.
 
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Instant;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
 use super::SessionPane;
 use crate::core::intents::open_session::OpenSession;
+use crate::core::theme::grow::GROW;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
-use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::ToolDetail;
 use crate::features::session::view::ask_row::AskForm;
-use crate::features::session::view::grow::{GROW, toggled};
-use crate::features::session::view::lightbox::open_lightbox;
+use crate::features::session::view::grow::toggled;
+use crate::features::session::view::lightbox::{open_lightbox, read_image};
 use crate::features::session::view::session_action::SessionAction;
 
 impl SessionPane {
@@ -47,14 +45,9 @@ impl SessionPane {
             SessionAction::Toggle { key } => {
                 let kept = self.kept.entry(key.clone()).or_default();
                 kept.open = !kept.open;
-                // From where the body is: its ease may have started when its first detail came, after the click.
-                kept.toggled_at = Some(toggled(kept.open, kept.grown_at(), Instant::now(), GROW));
-                kept.shown_at = None;
                 if let Some(at) = self.view.items.iter().position(|item| item.key == key) {
                     self.refresh(Change::Updated(at), cx);
-                    self.read_detail_if_stale(at, cx);
                 }
-                self.start_growing(key, cx);
             }
             SessionAction::RetryPage => {
                 if let Some(before) = self.retry_first {
@@ -180,16 +173,9 @@ impl SessionPane {
                     });
                     match detail {
                         Ok(detail) => {
-                            let kept = pane.kept.entry(key.clone()).or_default();
-                            // The first detail of a call just opened grows in from now, as it had nothing to show.
-                            let first = kept.detail.is_none() && kept.open;
-                            if first {
-                                kept.shown_at = Some(Instant::now());
-                            }
-                            kept.detail = Some((state, detail));
-                            if first {
-                                pane.growing.insert(key.clone());
-                            }
+                            // A call opened before its first detail came grows into it now (its ExpandRow).
+                            pane.kept.entry(key.clone()).or_default().detail =
+                                Some((state, Rc::new(detail)));
                             if let Some(at) =
                                 pane.view.items.iter().position(|item| item.key == key)
                             {
@@ -205,14 +191,14 @@ impl SessionPane {
         );
     }
 
-    /// Starts `key`'s ease (an item's key, or `fold:<run>`): the next draw runs its frames, unless they're running.
+    /// Starts a fold's ease (`fold:<run>`): the next draw runs its frames, unless they're running.
     pub(super) fn start_growing(&mut self, key: String, cx: &mut Context<Self>) {
         self.growing.insert(key);
         cx.notify();
     }
 
-    /// One frame of the rows growing: the list measures each again, so the rows below slide with it. An ease that's
-    /// done is dropped, and a fold that has shut takes its work off the list.
+    /// One frame of the folds growing: the list measures each one's work again, so the rows below slide with it. An
+    /// ease that's done is dropped, and a fold that has shut takes its work off the list.
     pub(super) fn grow_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.grow_asked = false;
         let (now, still) = (Instant::now(), cx.reduce_motion());
@@ -222,15 +208,13 @@ impl SessionPane {
             let kept = self.kept.get(&key);
             let moving = !still
                 && kept
-                    .and_then(Kept::grown_at)
+                    .and_then(|kept| kept.toggled_at)
                     .is_some_and(|at| now.duration_since(at) < GROW);
-            let rows = match key
+            let rows: Vec<String> = key
                 .strip_prefix("fold:")
                 .and_then(|run| self.folds.get(run))
-            {
-                Some(fold) => fold.work.iter().cloned().collect(),
-                None => vec![key.clone()],
-            };
+                .map(|fold| fold.work.iter().cloned().collect())
+                .unwrap_or_default();
             self.timeline.update(cx, |timeline, cx| {
                 rows.iter().for_each(|row| timeline.redraw_row(row, cx))
             });
@@ -294,7 +278,7 @@ impl SessionPane {
 }
 
 impl SessionPane {
-    /// Reads an attached image piece by piece (`attachments/read`) and opens it full size.
+    /// Reads an attached image and opens it full size.
     fn show_image(
         &mut self,
         session: String,
@@ -307,46 +291,10 @@ impl SessionPane {
         self._loads.insert(
             task,
             cx.spawn_in(window, async move |pane, cx| {
-                let mut bytes: Vec<u8> = Vec::new();
-                let (mime, failed) = loop {
-                    let args = json!({ "session": session, "name": name, "offset": bytes.len() });
-                    let Ok(call) =
-                        cx.update(|_, cx| client.call("attachments", "read", args, None, cx))
-                    else {
-                        return;
-                    };
-                    let piece = match call.await {
-                        Ok(piece) => piece,
-                        Err(error) => break (String::new(), Some(error)),
-                    };
-                    let data = piece["data"].as_str().unwrap_or_default().to_string();
-                    let decoded = match cx
-                        .background_spawn(async move { STANDARD.decode(data) })
-                        .await
-                    {
-                        Ok(decoded) => decoded,
-                        Err(error) => {
-                            break (String::new(), Some(CallError::Failed(error.to_string())));
-                        }
-                    };
-                    bytes.extend(decoded.iter());
-                    let size = piece["size"].as_u64().unwrap_or_default() as usize;
-                    if decoded.is_empty() || bytes.len() >= size {
-                        break (piece["mime"].as_str().unwrap_or_default().to_string(), None);
-                    }
-                };
-                let format = ImageFormat::from_mime_type(&mime);
-                pane.update_in(cx, |pane, window, cx| match (failed, format) {
-                    (Some(error), _) => pane.say_failed("Couldn't open the image", error, cx),
-                    (None, Some(format)) => {
-                        let image = Arc::new(Image::from_bytes(format, bytes));
-                        open_lightbox(image, name.into(), window, cx);
-                    }
-                    (None, None) => pane.say_failed(
-                        "Couldn't open the image",
-                        CallError::Failed(format!("it isn't an image ({mime})")),
-                        cx,
-                    ),
+                let image = read_image(client, session, name.clone(), cx).await;
+                pane.update_in(cx, |pane, window, cx| match image {
+                    Ok(image) => open_lightbox(image, name.into(), window, cx),
+                    Err(error) => pane.say_failed("Couldn't open the image", error, cx),
                 })
                 .ok();
             }),

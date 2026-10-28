@@ -135,3 +135,25 @@ async fn the_agents_load_again_on_a_machines_change_only_after_a_dropped_load(
     form.read_with(cx, |form, _| assert!(form.loading && !form.retry_agents));
     settled(&form, cx, |form| !form.loading).await;
 }
+
+// A project header's + fills the form with its folder and machine; the machine's agents load for it.
+// Pins: sessions-list#8
+#[gpui::test]
+async fn a_projects_new_session_fills_its_folder_and_machine(cx: &mut TestAppContext) {
+    let Some(backend) = RealBackend::start() else {
+        return;
+    };
+    let (form, cx) = opened(&backend, cx).await;
+    form.update_in(cx, |form, window, cx| {
+        form.fill("/srv/app", Some("Workbox Test".into()), window, cx)
+    });
+    form.read_with(cx, |form, cx| {
+        assert_eq!(form.folder.read(cx).value(), "/srv/app");
+        assert_eq!(form.machine.as_deref(), Some("Workbox Test"));
+    });
+    // This backend has no such machine, so its agents load fails and says so.
+    settled(&form, cx, |form| !form.loading).await;
+    form.read_with(cx, |form, _| {
+        assert!(form.error.contains("unknown machine"), "{}", form.error)
+    });
+}

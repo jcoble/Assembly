@@ -22,13 +22,14 @@ public sealed class SessionRegistry : IAsyncDisposable
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
     private readonly BackgroundWork _work;
-    // Each helper session, by id, with the session whose agent started it.
-    private readonly ConcurrentDictionary<string, string> _helperOf = new();
+    private readonly SessionTitler? _titler;
+    // Each session another session's agent started, by id, with the session whose agent started it.
+    private readonly ConcurrentDictionary<string, string> _startedBy = new();
     // The last run a helper's prompt or message went into, before its rows reach here from another machine.
     private readonly ConcurrentDictionary<string, string> _helperRun = new();
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
-        BackgroundWork work, HelperLimits? limits = null)
+        BackgroundWork work, HelperLimits? limits = null, SessionTitler? titler = null)
     {
         _hub = hub;
         _sessionStore = sessionStore;
@@ -39,6 +40,7 @@ public sealed class SessionRegistry : IAsyncDisposable
         _time = time;
         _log = log;
         _work = work;
+        _titler = titler;
     }
 
     /// <summary>The agents this machine can run.</summary>
@@ -51,13 +53,14 @@ public sealed class SessionRegistry : IAsyncDisposable
         _hosts.GetOrAdd(sessionId, id =>
         {
             if (_sessionStore.Get(id) is { Helper: true, ParentSessionId: { } parent })
-                _helperOf[id] = parent;
-            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => HelpersWorking(id), Helpers.Row.TurnEnded, Helpers.Tokens.Revoke);
+                _startedBy[id] = parent;
+            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => StartedWorking(id), Helpers.Row.TurnEnded, Helpers.Tokens.Revoke,
+                _titler);
         });
 
-    /// <summary>Whether a helper session the session's agent started has a turn running.</summary>
-    public bool HelpersWorking(string sessionId) =>
-        _helperOf.Any(pair => pair.Value == sessionId && Working(pair.Key));
+    /// <summary>Whether a session the session's agent started has a turn running.</summary>
+    public bool StartedWorking(string sessionId) =>
+        _startedBy.Any(pair => pair.Value == sessionId && Working(pair.Key));
 
     /// <summary>
     /// A helper the session's agent started, here or on another machine, and the run its prompt or a message went
@@ -65,7 +68,7 @@ public sealed class SessionRegistry : IAsyncDisposable
     /// </summary>
     public void TrackHelper(string helperId, string parentId, string runId)
     {
-        _helperOf[helperId] = parentId;
+        _startedBy[helperId] = parentId;
         _helperRun[helperId] = runId;
     }
 

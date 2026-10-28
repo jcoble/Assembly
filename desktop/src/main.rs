@@ -30,8 +30,8 @@ use crate::features::palette::palette_view::PaletteView;
 fn main() {
     // On macOS GPUI's default keeps the app running with no window open.
     gpui_kit::application()
-        // The kit's icons, such as the dock toggles; without them every icon draws blank.
-        .with_assets(gpui_kit::assets::Assets)
+        // The kit's icons, such as the dock toggles, and the window's own; without them every icon draws blank.
+        .with_assets(crate::core::assets::AppAssets)
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
@@ -39,6 +39,14 @@ fn main() {
             SelectedSession::init(cx);
             features::session::view::session_pane::SessionPane::register(cx);
             features::sessions::sessions_pane::SessionsPane::register(cx);
+            features::files::files_pane::FilesPane::register(cx);
+            features::files::search_pane::SearchPane::register(cx);
+            features::files::file_view::FileView::register(cx);
+            features::session::context::context_pane::ContextPane::register(cx);
+            features::sessions::history::history_pane::HistoryPane::register(cx);
+            features::source_control::source_control_pane::SourceControlPane::register(cx);
+            features::worktrees::worktrees_pane::WorktreesPane::register(cx);
+            features::changes::changes_pane::ChangesPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::meter::start_if_on(cx);
@@ -98,9 +106,15 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                 move |port, token, cx| {
                     let endpoint = Endpoint { port, token };
                     match socket.get() {
-                        Some(client) => client.read(cx).reconnect(endpoint),
+                        Some(client) => {
+                            if let Some(bulk) = SocketClient::try_bulk(cx) {
+                                bulk.read(cx).reconnect(endpoint.clone());
+                            }
+                            client.read(cx).reconnect(endpoint)
+                        }
                         None => {
-                            let client = SocketClient::start(endpoint, cx);
+                            let client = SocketClient::start(endpoint.clone(), cx);
+                            SocketClient::start_bulk(endpoint, cx);
                             _ = socket.set(client.clone());
                             Sessions::start(cx);
                             Machines::start(cx);

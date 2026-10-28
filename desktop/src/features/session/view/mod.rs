@@ -2,6 +2,7 @@
 //! plan card above the composer. Rows are `RenderOnce` and read their item and its `Kept`; their buttons send a
 //! `SessionAction` to the pane, and only the pane and the timeline own state.
 
+pub mod activity_card;
 pub mod ask_row;
 pub mod grow;
 pub mod header;
@@ -13,6 +14,7 @@ pub mod plan_card;
 pub mod sent_message;
 pub mod session_action;
 pub mod session_pane;
+pub mod step_row;
 pub mod subagent_card;
 pub mod task_card;
 pub mod timeline;

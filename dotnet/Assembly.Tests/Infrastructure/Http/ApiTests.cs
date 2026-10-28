@@ -52,7 +52,7 @@ public sealed class ApiTests : IAsyncLifetime
         _database = TestDatabase.Open(_db.Path);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
-        _sessionStore = SessionStore.Open(_database, _time);
+        _sessionStore = SessionStore.Open(_database, _time, "checkouts");
         _sessions = new SessionRegistry(_hub, _sessionStore, _launcher, TimeProvider.System, TextWriter.Null, new BackgroundWork(TimeProvider.System, TextWriter.Null));
         var attachments = new AttachmentStore(Path.Combine(_work, "attachments"));
         var machines = new MachineSet(new LocalMachine(_hub, _sessionStore, _sessions, attachments));
@@ -160,11 +160,13 @@ public sealed class ApiTests : IAsyncLifetime
     public async Task One_session_is_read_by_id()
     {
         var sessionId = await CreateSessionAsync();
-        _sessionStore.SetTitle(sessionId, "Fix the build");
+        _sessionStore.SetTitle(sessionId, "Fix the build", "user");
 
         var session = await GetJsonAsync($"/sessions/{sessionId}");
         Assert.Equal(sessionId, session.GetProperty("sessionId").GetString());
         Assert.Equal("Fix the build", session.GetProperty("title").GetString());
+        // A desktop copying the title keeps where it came from.
+        Assert.Equal("user", session.GetProperty("titleSource").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await _http.GetAsync("/sessions/nope")).StatusCode);
     }
 

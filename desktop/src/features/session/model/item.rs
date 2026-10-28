@@ -13,6 +13,8 @@ pub struct Item {
     pub key: String,
     pub run_id: Option<String>,
     pub kind: ItemKind,
+    /// When its newest row was written, on the backend's clock: a page carries only that row.
+    pub at: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]

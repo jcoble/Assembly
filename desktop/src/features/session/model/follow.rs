@@ -16,6 +16,13 @@ pub enum FollowEvent {
     /// A user item arrived, with its key.
     UserItem(String),
     /// The reader scrolled before the prompt arrived: it stays where they put it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the timeline doesn't tell the reader's scrolling from the list's own yet, so a sent prompt still goes to the top after the reader scrolls"
+        )
+    )]
     ReaderInput,
 }
 

@@ -11,6 +11,9 @@ using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
+using Assembly.Infrastructure.Chat.Files;
+using Assembly.Infrastructure.Chat.Worktrees;
+using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
@@ -71,10 +74,11 @@ public sealed class DesktopBackend : IAsyncDisposable
 
     /// <summary>
     /// Starts it; with <paramref name="remote"/>, that machine's sessions are shown too and new ones can run there, and
-    /// <paramref name="tunnel"/>'s exits mark it unreachable.
+    /// <paramref name="tunnel"/>'s exits mark it unreachable. With <paramref name="utilityClis"/>, those CLIs run the utility
+    /// model that names new sessions.
     /// </summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
-        RemoteTunnel? tunnel = null)
+        RemoteTunnel? tunnel = null, (string Claude, string Codex)? utilityClis = null)
     {
         Directory.CreateDirectory(home);
         // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
@@ -82,7 +86,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         var homeLock = HomeLock.Take(home);
         try
         {
-            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel);
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis);
         }
         catch
         {
@@ -92,18 +96,19 @@ public sealed class DesktopBackend : IAsyncDisposable
     }
 
     private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
-        RemoteConfig? remote, RemoteTunnel? tunnel)
+        RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
         // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
         // before the API starts, so no session makes a checkout in sessions/ first.
-        AdapterLauncher.MoveOldCheckouts(home, Path.Combine(home, "sessions"), log);
+        var checkouts = Path.Combine(home, "sessions");
+        AdapterLauncher.MoveOldCheckouts(home, checkouts, log);
         var store = RowStore.Open(db);
         // Filled before recovery, whose closing rows go through the hub and so update it.
         var summaries = SessionSummaries.Load(store);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System, summaries);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
         // App Nap is held while any session has a run open, here or on a remote.
         var diagnostics = new DiagnosticsHost(Path.Combine(home, "soak-results"));
         var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
@@ -118,7 +123,9 @@ public sealed class DesktopBackend : IAsyncDisposable
         // Loading the summaries tells nobody: a remote's run left open holds it from the start.
         diagnostics.HoldActivity(summaries.AnyRunOpen);
         var work = new BackgroundWork(TimeProvider.System, log);
-        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work);
+        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, titler: utilityClis is { } clis
+            ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log))
+            : null);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
         var status = new MachineStatus(topics, remote is null ? [] : [remote.Name]);
         var remoteMachine = remote is null ? null : new RemoteMachine(remote.Name, remote.Address, remote.Token, hub, sessionStore, log, status,
@@ -141,12 +148,15 @@ public sealed class DesktopBackend : IAsyncDisposable
         Action dropSockets = () => { };
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var clock = new BackendClock(topics, TimeProvider.System, work);
-        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
+        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, () => tunnel?.TryNow());
         clock.Ticked += machinesFeature.Tick;
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
+                new FilesFeature(sessionStore),
+                new WorktreesFeature(sessionStore),
+                new SourceControlFeature(sessionStore),
                 new DiagnosticsFeature(diagnostics, () =>
                 {
                     hub.CloseSubscriptions();

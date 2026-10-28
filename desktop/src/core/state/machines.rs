@@ -18,7 +18,8 @@ pub struct Machines {
     _feed: Task<()>,
 }
 
-struct GlobalMachines(Entity<Machines>);
+/// Set once the socket client has started; observing it tells a view the list is there.
+pub(crate) struct GlobalMachines(Entity<Machines>);
 
 impl Global for GlobalMachines {}
 
@@ -56,6 +57,18 @@ impl Machines {
 
     pub fn machines(&self) -> impl Iterator<Item = &Machine> {
         self.machines.iter().map(|(_, machine)| machine)
+    }
+
+    /// Whether the machine `name` didn't answer last time. This machine (`None`), one the list doesn't have yet and one
+    /// not probed yet aren't offline.
+    pub fn offline(name: Option<&str>, cx: &App) -> bool {
+        let Some(name) = name else {
+            return false;
+        };
+        Machines::try_global(cx).is_some_and(|machines| {
+            (machines.read(cx).machines())
+                .any(|held| held.name.as_deref() == Some(name) && held.didnt_answer())
+        })
     }
 
     fn apply(&mut self, update: Update, cx: &mut Context<Self>) {
@@ -98,9 +111,20 @@ mod tests {
 
     fn machine(name: Option<&str>, reachable: bool) -> Machine {
         serde_json::from_value(
-            json!({"name": name, "kind": "remote", "reachable": reachable, "reason": null}),
+            json!({"name": name, "kind": "remote", "reachable": reachable, "reason": null, "checked": true}),
         )
         .expect("a machine")
+    }
+
+    // A remote starts "not checked yet": up or down isn't known, so it isn't offline until a probe fails.
+    // Pins: sessions-list#11
+    #[test]
+    fn only_a_probe_that_failed_makes_a_machine_offline() {
+        let mut waiting = machine(Some("box"), false);
+        waiting.checked = false;
+        assert!(!waiting.didnt_answer());
+        assert!(machine(Some("box"), false).didnt_answer());
+        assert!(!machine(Some("box"), true).didnt_answer());
     }
 
     // Pins: g0-socket#14

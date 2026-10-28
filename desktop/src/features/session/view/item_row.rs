@@ -6,15 +6,13 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::ask_row::{AskForm, AskRow};
-use super::grow::{band, chevron, faded, grow, turn};
+use super::grow::chevron;
 use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
 use super::sent_message::SentMessage;
-use super::session_action::{OnAction, SessionAction};
+use super::session_action::OnAction;
 use super::subagent_card::SubagentCard;
 use super::task_card::TaskCard;
-use super::tool_row::ToolRow;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::kept::Kept;
@@ -31,14 +29,14 @@ pub struct ItemRow {
     pub copy: Option<SharedString>,
     /// "Checkout changed · main@1a2b3c4 → feat@5d6e7f8" above a prompt whose run started elsewhere.
     pub checkout: Option<String>,
-    /// An open question's form.
-    pub form: Option<AskForm>,
+    /// What the pane drew for a tool call, thinking or a question: the `ExpandRow` it keeps for it (pane_expand.rs).
+    pub expand: Option<AnyElement>,
     pub now: i64,
     pub on_action: OnAction,
 }
 
 impl RenderOnce for ItemRow {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let key = self.item.key.clone();
@@ -83,50 +81,9 @@ impl RenderOnce for ItemRow {
                 })
                 .children(meta(at, self.copy.clone()))
                 .into_any_element(),
-            ItemKind::Thinking { text, done } => {
-                let on_action = self.on_action.clone();
-                let toggle_key = key.clone();
-                let open = self.kept.open;
-                let toggled_at = self.kept.toggled_at;
-                let turned = turn(open, toggled_at, window, cx);
-                let faded = faded(turned.0);
-                let column = v_flex().gap_1();
-                band(column, turned.0, cx)
-                    .text_sm()
-                    .text_color(muted)
-                    .child(
-                        h_flex()
-                            .id(SharedString::from(format!("{key}:toggle")))
-                            .gap_2()
-                            .cursor_pointer()
-                            .on_click(move |_, window, cx| {
-                                let key = toggle_key.clone();
-                                on_action(SessionAction::Toggle { key }, window, cx)
-                            })
-                            .child(chevron(turned.0))
-                            .child(if done { "Thought" } else { "Thinking" }),
-                    )
-                    .when(open || turned.1, |column| {
-                        let body = div().italic().child(text);
-                        column.child(grow(
-                            format!("{key}:grow").into(),
-                            turned,
-                            open,
-                            faded,
-                            body,
-                            window,
-                            cx,
-                        ))
-                    })
-                    .into_any_element()
+            ItemKind::Thinking { .. } | ItemKind::Tool { .. } | ItemKind::Ask { .. } => {
+                self.expand.unwrap_or_else(|| div().into_any_element())
             }
-            ItemKind::Tool { tool, .. } => ToolRow {
-                key: key.clone(),
-                tool,
-                kept: self.kept,
-                on_action: self.on_action.clone(),
-            }
-            .into_any_element(),
             ItemKind::Error { message, code } => {
                 match Notice::of_error(&message, code.as_deref()) {
                     Some(notice) => v_flex()
@@ -146,14 +103,6 @@ impl RenderOnce for ItemRow {
                     None => div().into_any_element(),
                 }
             }
-            ItemKind::Ask { ask_id, ask } => AskRow {
-                ask_id,
-                ask,
-                toggled_at: self.kept.toggled_at,
-                form: self.form,
-                on_action: self.on_action.clone(),
-            }
-            .into_any_element(),
             ItemKind::Task { task_id, task } => TaskCard {
                 task_id,
                 task,
@@ -184,4 +133,25 @@ impl RenderOnce for ItemRow {
         };
         div().w_full().px_4().py_1().child(body)
     }
+}
+
+/// Thinking's line: a chevron turned `grown` of the way, and "Thinking" until it's done, then "Thought".
+pub fn thinking_title(done: bool, grown: f32, cx: &App) -> AnyElement {
+    h_flex()
+        .gap_2()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child(chevron(grown))
+        .child(if done { "Thought" } else { "Thinking" })
+        .into_any_element()
+}
+
+/// What thinking shows open: its text.
+pub fn thinking_body(text: SharedString, cx: &App) -> AnyElement {
+    div()
+        .text_sm()
+        .italic()
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+        .into_any_element()
 }

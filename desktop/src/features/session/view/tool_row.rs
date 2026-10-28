@@ -1,14 +1,14 @@
-//! `ToolRow` draws a tool call: its mark (running, done or failed), title, summary and line counts, and, opened, its
-//! command, output tail and diff from `rows/tool`. The detail is read when it opens and again only when the call's
-//! state changes (an edit's diff once the edit finishes). A long diff shows its first lines until shown in full.
-//! Replaces chat/Tool.svelte and chat/tools/tool.ts.
+//! `ToolRow` draws a tool call: its step line (`StepRow`: sign, title, summary, line counts), and, opened as an
+//! `ExpandRow` (pane_expand.rs), the command it ran, its output tail and diff from `rows/tool`. The detail is read
+//! when it opens and again only when the call's state changes (an edit's diff once the edit finishes). A long diff
+//! shows its first lines until shown in full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
 
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::grow::{band, chevron, faded, grow, turn};
 use super::session_action::{OnAction, SessionAction};
+use super::step_row::{StepRow, StepState};
 use crate::features::session::model::fold::Fold;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::rows::tool::{ToolDetail, ToolPayload, ToolState};
@@ -19,12 +19,14 @@ pub const DIFF_SHOWN: usize = 12;
 /// The most output lines an open tool shows, from its end.
 pub const OUTPUT_TAIL: usize = 200;
 
-#[derive(IntoElement)]
+#[derive(Clone)]
 pub struct ToolRow {
     /// The item's key, which its toggle sends.
     pub key: String,
     pub tool: ToolPayload,
     pub kept: Kept,
+    /// It's in the running turn's activity card, with how long it has run: only there does a started call spin.
+    pub took_ms: Option<i64>,
     pub on_action: OnAction,
 }
 
@@ -36,6 +38,22 @@ pub fn diff_lines(diff: &str, all: bool) -> (Vec<&str>, usize) {
     }
     let hidden = lines.len() - DIFF_SHOWN;
     (lines[..DIFF_SHOWN].to_vec(), hidden)
+}
+
+/// The command a call ran, from its arguments' JSON: what an open tool shows of its input. Other arguments show nothing,
+/// as in the web app.
+pub fn command_of(input: &str) -> Option<String> {
+    let input: serde_json::Value = serde_json::from_str(input).ok()?;
+    let command = ["command", "cmd"]
+        .into_iter()
+        .find_map(|key| input.get(key))?;
+    if let Some(text) = command.as_str() {
+        return Some(text.to_string());
+    }
+    // Codex sends a command as its argv, as ToolSummary.cs reads it.
+    let argv = command.as_array()?.iter().map(serde_json::Value::as_str);
+    argv.collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join(" "))
 }
 
 /// The output's last `OUTPUT_TAIL` lines.
@@ -55,78 +73,51 @@ pub fn output_tail(output: &str) -> &str {
     }
 }
 
-impl RenderOnce for ToolRow {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, success, danger) = (theme.muted_foreground, theme.success, theme.danger);
-        let mark = match self.tool.state {
-            ToolState::Started => "…",
-            ToolState::Completed => "✓",
-            ToolState::Failed => "✗",
-        };
-        let open = self.kept.open && self.tool.has_detail;
-        let toggled_at = self.kept.toggled_at;
-        let chevron = self
-            .tool
-            .has_detail
-            .then(|| chevron(turn(open, toggled_at, window, cx).0));
-        let turned = turn(open, self.kept.grown_at(), window, cx);
-        let faded = faded(turned.0);
-        let theme = cx.theme();
-        let (key, on_action) = (self.key.clone(), self.on_action.clone());
-        let line = h_flex()
-            .id(SharedString::from(format!("{}:line", self.key)))
-            .gap_2()
-            .text_sm()
-            .text_color(muted)
-            .when(self.tool.has_detail, |line| {
-                line.cursor_pointer().on_click(move |_, window, cx| {
-                    on_action(SessionAction::Toggle { key: key.clone() }, window, cx)
-                })
-            })
-            .children(chevron)
-            .child(mark)
-            .child(
-                div()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.foreground)
-                    .child(Fold::tool_title(&self.tool.name)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(self.tool.summary.clone().unwrap_or_default()),
-            )
-            .when_some(self.tool.added.filter(|n| *n > 0), |line, added| {
-                line.child(div().text_color(success).child(format!("+{added}")))
-            })
-            .when_some(self.tool.removed.filter(|n| *n > 0), |line, removed| {
-                line.child(div().text_color(danger).child(format!("-{removed}")))
-            });
-        let detail = self
-            .kept
-            .detail
-            .as_ref()
-            .filter(|_| open || turned.1)
-            .map(|(_, detail)| self.detail(detail, cx));
-        let detail = detail.map(|detail| {
-            let id = format!("{}:grow", self.key).into();
-            grow(id, turned, open, faded, detail, window, cx)
-        });
-        let column = v_flex().gap_1().child(line).children(detail);
-        // Lit as its body grows: not while an opened call's first detail is still on its way.
-        let lit = if self.kept.detail.is_some() {
-            turned.0
-        } else {
-            0.
-        };
-        band(column, lit, cx)
-    }
-}
-
 impl ToolRow {
+    /// Its step line: sign, title, summary, line counts and time, with a chevron turned `chevron` of the way for a call
+    /// that opens.
+    pub fn line(&self, chevron: Option<f32>, cx: &App) -> StepRow {
+        let theme = cx.theme();
+        let (success, danger) = (theme.success, theme.danger);
+        let state = match self.tool.state {
+            ToolState::Started if self.took_ms.is_some() => StepState::Running,
+            ToolState::Started => StepState::Unfinished,
+            ToolState::Completed => StepState::Done,
+            ToolState::Failed => StepState::Failed,
+        };
+        let tags = [
+            self.tool
+                .added
+                .filter(|n| *n > 0)
+                .map(|added| div().text_color(success).child(format!("+{added}"))),
+            self.tool
+                .removed
+                .filter(|n| *n > 0)
+                .map(|removed| div().text_color(danger).child(format!("-{removed}"))),
+        ]
+        .into_iter()
+        .flatten()
+        .map(IntoElement::into_any_element)
+        .collect();
+        StepRow {
+            id: SharedString::from(format!("{}:line", self.key)),
+            state,
+            title: Fold::tool_title(&self.tool.name).into(),
+            summary: self.tool.summary.clone().map(Into::into),
+            tags,
+            took_ms: self.took_ms,
+            chevron,
+        }
+    }
+
+    /// What it shows open: its detail once read, nothing before.
+    pub fn body(&self, cx: &App) -> AnyElement {
+        match &self.kept.detail {
+            Some((_, detail)) => self.detail(detail, cx).into_any_element(),
+            None => div().into_any_element(),
+        }
+    }
+
     fn detail(&self, detail: &ToolDetail, cx: &App) -> Div {
         let theme = cx.theme();
         let block = || {
@@ -139,8 +130,8 @@ impl ToolRow {
                 .overflow_x_hidden()
         };
         let mut column = v_flex().gap_1().pl_5();
-        if let Some(input) = detail.input.as_deref().filter(|input| !input.is_empty()) {
-            column = column.child(block().child(input.to_string()));
+        if let Some(command) = detail.input.as_deref().and_then(command_of) {
+            column = column.child(block().child(command));
         }
         if let Some(output) = detail.output.as_deref().filter(|output| !output.is_empty()) {
             column = column.child(block().child(output_tail(output).to_string()));
