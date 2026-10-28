@@ -1,13 +1,14 @@
 // The sessions list's groups (docs/behavior/sessions-list.md) over the socket, as the window's row menu uses them:
 // sessions/mark moves the case's session to Done, Settled and back to Working, and each move reaches the keyed
 // sessions topic with its stamps. It ends with the session back in Working, where it started. The rail
-// (sessions/rail) lists it under its provider and location with totals that count it, under Running while its turn
-// runs and not once it has ended, drops it while it's settled, and the sessionRail topic names it when it moves. On the remote, Connect
+// (sessions/rail) lists it under its provider and location with totals that count it, drops it while it's settled,
+// and the sessionRail topic names it when it moves. A session of the scenario's own, started while it watches the
+// rail, is under Running while its one turn runs and not once it has ended. On the remote, Connect
 // (machines/connect) reaches it and answers it reachable; on this machine, there's nothing to connect to. node
-// scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_RUN set (scripts/features/README.md).
+// scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_REPO set (scripts/features/README.md).
 // The token goes in the hello frame, never in argv or output.
-const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_RUN: run } = process.env;
-const { CHECK4_MACHINE: machine, CHECK4_AGENT: agent } = process.env;
+const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine, CHECK4_AGENT: agent } =
+  process.env;
 
 type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
 type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
@@ -20,13 +21,14 @@ function fail(step: string, why: string): never {
 
 const socket = new WebSocket(`${api!.replace(/^http/, 'ws')}/socket`);
 const frames: Frame[] = [];
-/** Whether the sessionRail topic (sub 2) has named the session since the last `railChange`, and who waits for it. */
+/** Whether the sessionRail topic (sub 2) has named `watched` since the last `railChange`, and who waits for it. */
+let watched = session;
 let railNamed = false;
 let railHeard: (() => void) | undefined;
 let next: (() => void) | undefined;
 socket.onmessage = (event) => {
   const got = JSON.parse(String(event.data)) as Frame & { key?: string };
-  if (got.sub === 2 && got.t === 'change' && got.key === session) {
+  if (got.sub === 2 && got.t === 'change' && got.key === watched) {
     railNamed = true;
     railHeard?.();
   }
@@ -94,16 +96,11 @@ async function rail(tab: string, step: string): Promise<Rail> {
   if (answer.t !== 'result') fail(step, `it failed: ${answer.message ?? JSON.stringify(answer)}`);
   return answer.result as Rail;
 }
-const listed = (page: Rail) => page.sessions.some((entry) => entry.sessionId === session);
-/** Whether the case's turn has ended, as check4 tells it: its run has a turn row past started. */
-async function caseTurnEnded(step: string) {
-  const answer = await fetch(`${api}/sessions/${session}/rows?limit=500`, { headers: { Authorization: `Bearer ${token}` } });
-  if (!answer.ok) fail(step, `its rows answered ${answer.status}`);
-  const { rows } = (await answer.json()) as { rows: { runId: string | null; kind: string; payload: { state?: string } }[] };
-  return rows.some((row) => row.runId === run && row.kind === 'turn' && row.payload.state !== 'started');
-}
+const listed = (page: Rail, id = session) => page.sessions.some((entry) => entry.sessionId === id);
+/** Running counts what it lists. */
+const counted = (page: Rail) => page.totals.running === page.sessions.length;
 
-/** Waits for sessionRail to name the session, at once if it has since the last wait, within `ms`. */
+/** Waits for sessionRail to name `watched`, at once if it has since the last wait, within `ms`. */
 function railChange(step: string, ms: number) {
   return new Promise<void>((resolve) => {
     const timer = setTimeout(() => {
@@ -192,28 +189,24 @@ async function main() {
   }
   console.log(`ok ${connect}`);
 
-  // On a remote, the case's turn can start after this point, so its turn row ending is what says it's over.
-  step = 'once its turn has ended, Running no longer lists the session';
-  for (const end = Date.now() + 180_000; !(await caseTurnEnded(step)); await new Promise((resolve) => setTimeout(resolve, 1_000)))
-    if (Date.now() >= end) fail(step, "the case's run didn't end within 180 s");
-  await untilRail('running', step, 30_000, (page) => !listed(page));
+  // The case's turn started before this scenario could watch the rail, so a session of its own takes one turn.
+  step = "while its own session's turn runs, Running lists and counts it";
+  const created = ++ids;
+  const where = machine === 'local' ? null : machine;
+  const args = { agent, repoUrl: process.env.CHECK4_REPO, machine: where, parentSessionId: null, title: null };
+  socket.send(JSON.stringify({ t: 'call', id: created, feature: 'sessions', method: 'create', args }));
+  const made = await frame((got) => got.id === created && (got.t === 'result' || got.t === 'error'), 30_000, step);
+  if (made.t !== 'result') fail(step, `it wasn't created: ${made.message ?? JSON.stringify(made)}`);
+  const own = (made.result as { sessionId: string }).sessionId;
+  [watched, railNamed] = [own, false];
+  const sent = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session: own, text: 'Reply with only the word ok.' } }));
+  const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
+  if (started.t !== 'result') fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
+  await untilRail('running', step, 60_000, (page) => listed(page, own) && counted(page));
   console.log(`ok ${step}`);
-
-  // The case's turn started before this scenario could watch the rail, so it starts one of its own to see in Running.
-  step = 'while a turn it starts runs, Running lists the session and counts it';
-  // A remote can still be closing the run after this machine has; until it has, the send is refused.
-  for (const end = Date.now() + 30_000; ; await new Promise((resolve) => setTimeout(resolve, 1_000))) {
-    const sent = ++ids;
-    socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session, text: 'Reply with only the word ok.' } }));
-    const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
-    if (started.t === 'result') break;
-    if (Date.now() >= end || !started.message?.includes("can't take a message yet"))
-      fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
-  }
-  await untilRail('running', step, 30_000, (page) => listed(page) && page.totals.running >= 1);
-  console.log(`ok ${step}`);
-  step = 'once that turn has ended, Running no longer lists the session';
-  await untilRail('running', step, 180_000, (page) => !listed(page));
+  step = 'once that turn has ended, Running no longer lists it';
+  await untilRail('running', step, 180_000, (page) => !listed(page, own) && counted(page));
   console.log(`ok ${step}`);
 }
 
