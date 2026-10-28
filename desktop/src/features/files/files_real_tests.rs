@@ -56,13 +56,30 @@ async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> (RealBacke
         panic!("the session wasn't made");
     };
     let id = created["sessionId"].as_str().unwrap().to_string();
-    let Outcome::Ok(page) = call("page", json!({ "limit": 10 }), cx).await else {
-        panic!("no sessions page");
-    };
-    let root = page["sessions"][0]["root"]
-        .as_str()
-        .expect("the session's root")
-        .to_string();
+    // The session made here, by its id, read again until its root shows: under load a page can come before it.
+    let mut last = Value::Null;
+    let mut root = None;
+    for _ in 0..50 {
+        let Outcome::Ok(page) = call("page", json!({ "limit": 10 }), cx).await else {
+            panic!("no sessions page");
+        };
+        root = page["sessions"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|item| item["sessionId"] == id.as_str())
+            .and_then(|item| item["root"].as_str())
+            .map(String::from);
+        if root.is_some() {
+            break;
+        }
+        last = page;
+        cx.background_executor
+            .timer(Duration::from_millis(100))
+            .await;
+    }
+    let root =
+        root.unwrap_or_else(|| panic!("session {id} never showed its root; last page: {last}"));
     fill(Path::new(&root), files);
     cx.update(|cx| {
         SelectedSession::global(cx).update(cx, |selected, cx| selected.select(Some(id), cx))
