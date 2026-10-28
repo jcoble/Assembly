@@ -50,6 +50,8 @@ pub struct SessionsPane {
     /// The list's lines as last drawn, and the list's own state (heights measured, where it's scrolled).
     pub(super) entries: Rc<Vec<ListEntry>>,
     pub(super) lines: ListState,
+    /// The drawn lines start at the tab's real start, not a window's further down.
+    pub(super) from_start: bool,
     /// The backend clock's last tick, kept once a minute, for the rows' ages.
     pub(super) now: Option<i64>,
     _heard: Vec<Subscription>,
@@ -93,6 +95,7 @@ impl SessionsPane {
             filter,
             entries: Rc::new(Vec::new()),
             lines: ListState::new(0, ListAlignment::Top, px(200.)),
+            from_start: true,
             now: None,
             _heard: heard,
             feed: None,

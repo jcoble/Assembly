@@ -27,9 +27,10 @@ impl SessionsPane {
         if entries != *self.entries {
             let (old, count) = changed_lines(&self.entries, &entries);
             // A splice moves a place inside the changed lines to their start, so the line at the top stays in view
-            // by its identity instead. Unscrolled, the list stays at its top and shows what came in.
+            // by its identity instead. Unscrolled at the tab's real start, the list stays there and shows what came
+            // in; at the start of a window further down, it keeps its line.
             let top = self.lines.logical_scroll_top();
-            let kept = (top != ListOffset::default())
+            let kept = (top != ListOffset::default() || !self.from_start)
                 .then(|| same_line(&self.entries, &entries, &old, top.item_ix))
                 .flatten();
             self.lines.splice(old, count);
@@ -37,6 +38,7 @@ impl SessionsPane {
                 self.lines.scroll_to(ListOffset { item_ix, ..top });
             }
             self.entries = Rc::new(entries);
+            self.from_start = self.rail.ahead == 0;
         }
         cx.on_next_frame(window, |pane, _, cx| pane.page_if_near_end(cx));
     }
@@ -44,6 +46,16 @@ impl SessionsPane {
     /// Loads the next page while the end is in view, and the rows before the held ones while their start is,
     /// unless the last read failed (then only Retry asks again).
     fn page_if_near_end(&mut self, cx: &mut Context<Self>) {
+        let top = self.lines.logical_scroll_top().item_ix;
+        let view = self.entries[top.min(self.entries.len())..]
+            .iter()
+            .find_map(|line| match line {
+                ListEntry::Session(entry) | ListEntry::Helper(entry) => {
+                    Some(entry.session_id.clone())
+                }
+                _ => None,
+            });
+        self.rail.look_at(view);
         if self.rail.error.is_some() {
             return;
         }
@@ -51,7 +63,7 @@ impl SessionsPane {
         if self.lines.item_is_below_viewport(near) == Some(false) {
             let read = self.rail.more();
             self.send(read, cx);
-        } else if self.lines.logical_scroll_top().item_ix < LOAD_OLDER_WITHIN {
+        } else if top < LOAD_OLDER_WITHIN {
             let read = self.rail.earlier();
             self.send(read, cx);
         }
@@ -124,26 +136,38 @@ impl SessionsPane {
                     let context = row(&entry, cx);
                     SessionRow::new(entry, true, context).into_any_element()
                 }
-                ListEntry::MoreHelpers(parent) => {
-                    let pane = pane.clone();
-                    div()
-                        .id(SharedString::from(format!("more-helpers:{parent}")))
-                        .pl(px(52.))
-                        .py_1()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .cursor_pointer()
-                        .child("Show more helpers")
-                        .on_click(move |_, _, cx| {
-                            pane.update(cx, |pane, cx| {
-                                let read = pane.rail.more_helpers();
-                                pane.send(read, cx);
-                            })
-                            .ok();
-                        })
-                        .into_any_element()
-                }
+                ListEntry::MoreHelpers(parent) => helpers_line(&pane, false, &parent, cx),
+                ListEntry::EarlierHelpers(parent) => helpers_line(&pane, true, &parent, cx),
             }
         }
     }
+}
+
+/// The line under the held helpers that loads more of them, or above them that loads the earlier ones.
+fn helpers_line(
+    pane: &WeakEntity<SessionsPane>,
+    earlier: bool,
+    parent: &str,
+    cx: &App,
+) -> AnyElement {
+    let (pane, which) = (pane.clone(), if earlier { "earlier" } else { "more" });
+    div()
+        .id(SharedString::from(format!("{which}-helpers:{parent}")))
+        .pl(px(52.))
+        .py_1()
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .cursor_pointer()
+        .child(format!("Show {which} helpers"))
+        .on_click(move |_, _, cx| {
+            pane.update(cx, |pane, cx| {
+                let read = match earlier {
+                    true => pane.rail.earlier_helpers(),
+                    false => pane.rail.more_helpers(),
+                };
+                pane.send(read, cx);
+            })
+            .ok();
+        })
+        .into_any_element()
 }

@@ -22,6 +22,8 @@ fn page(sessions: Vec<RailEntry>, helpers: Vec<RailEntry>, more_helpers: bool) -
         helpers,
         helpers_next: more_helpers
             .then(|| serde_json::from_value(json!({ "updatedAt": 1, "sessionId": "h2" })).unwrap()),
+        start: 0,
+        helper_start: 0,
     }
 }
 

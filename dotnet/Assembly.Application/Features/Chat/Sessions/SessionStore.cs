@@ -272,18 +272,21 @@ public sealed class SessionStore
     {
         string? Json(IReadOnlyList<string>? values) =>
             values is { Count: > 0 } ? JsonSerializer.Serialize(values, SessionsJson.Default.IReadOnlyListString) : null;
-        var parts = _db.Query(Chat.Schema.Rail, row => (Part: row.Long(0), Row: ReadRail(row)), cancel,
+        var parts = _db.Query(Chat.Schema.Rail, row => (Part: row.Long(0), N: (int)row.Long(1), Row: ReadRail(row)), cancel,
             new SqlArg("$tab", args.Tab), new SqlArg("$providers", Json(args.Providers)), new SqlArg("$locations", Json(args.Locations)),
             new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()), new SqlArg("$limit", args.Limit),
             new SqlArg("$group", args.After?.Group), new SqlArg("$repo", args.After?.RepoUrl), new SqlArg("$updated", args.After?.UpdatedAt),
             new SqlArg("$id", args.After?.SessionId), new SqlArg("$expanded", args.Expanded),
             new SqlArg("$helperUpdated", args.HelpersAfter?.UpdatedAt), new SqlArg("$helperId", args.HelpersAfter?.SessionId),
-            new SqlArg("$helperLimit", args.HelperLimit));
+            new SqlArg("$helperLimit", args.HelperLimit), new SqlArg("$anchor", args.Anchor), new SqlArg("$above", args.Above),
+            new SqlArg("$helperAnchor", args.HelperAnchor), new SqlArg("$helperAbove", args.HelperAbove));
+        // The rows before each page, from its first row's place in the whole tab or child list.
+        int Start(long part) => parts.FirstOrDefault(row => row.Part == part) is { Row: not null } first ? first.N - 1 : 0;
         var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
         var helpers = parts.Where(part => part.Part == 3).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
         return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
             sessions, sessions.Count == args.Limit ? new(sessions[^1].Group, sessions[^1].RepoUrl, sessions[^1].UpdatedAt, sessions[^1].SessionId) : null,
-            helpers, helpers.Count == args.HelperLimit ? new(helpers[^1].UpdatedAt, helpers[^1].SessionId) : null);
+            helpers, helpers.Count == args.HelperLimit ? new(helpers[^1].UpdatedAt, helpers[^1].SessionId) : null, Start(2), Start(3));
     }
 
     // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a parent (2) or helper (3).

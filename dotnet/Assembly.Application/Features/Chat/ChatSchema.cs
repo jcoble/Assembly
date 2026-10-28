@@ -139,14 +139,20 @@ internal static class Schema
             ROW_NUMBER() OVER (PARTITION BY p.repo_url ORDER BY p.updated_at DESC, p.session_id DESC) = 1 AS group_start
           FROM parents p JOIN tops t ON t.top = p.session_id
           WHERE $tab = 'all' OR ($tab = 'running' AND t.running) OR ($tab = 'needs' AND t.needs)),
+        ranked AS (SELECT *, ROW_NUMBER() OVER (ORDER BY lower(label), repo_url, updated_at DESC, session_id DESC) AS n FROM listed),
         page AS (
-          SELECT *, ROW_NUMBER() OVER (ORDER BY lower(label), repo_url, updated_at DESC, session_id DESC) AS n FROM listed
-          WHERE $group IS NULL OR (lower(label), repo_url) > (lower($group), $repo)
-            OR ((lower(label), repo_url) = (lower($group), $repo) AND (updated_at, session_id) < ($updated, $id))
+          SELECT n, session_id, agent, repo_url, label, group_start, title, machine, updated_at, completed_at, read_seq,
+            running, needs, failed, helpers FROM ranked
+          WHERE CASE WHEN $anchor IN (SELECT session_id FROM ranked) THEN n >= (SELECT n FROM ranked WHERE session_id = $anchor) - $above
+            ELSE $group IS NULL OR (lower(label), repo_url) > (lower($group), $repo)
+              OR ((lower(label), repo_url) = (lower($group), $repo) AND (updated_at, session_id) < ($updated, $id)) END
           ORDER BY n LIMIT $limit),
+        kids AS (
+          SELECT *, ROW_NUMBER() OVER (ORDER BY updated_at DESC, session_id DESC) AS n FROM family WHERE top = $expanded AND session_id <> top),
         helpers AS (
-          SELECT *, ROW_NUMBER() OVER (ORDER BY updated_at DESC, session_id DESC) AS n FROM family
-          WHERE top = $expanded AND session_id <> top AND ($helperUpdated IS NULL OR (updated_at, session_id) < ($helperUpdated, $helperId))
+          SELECT n, session_id, agent, repo_url, title, machine, updated_at, completed_at, turn, busy, ask_seq FROM kids
+          WHERE CASE WHEN $helperAnchor IN (SELECT session_id FROM kids) THEN n >= (SELECT n FROM kids WHERE session_id = $helperAnchor) - $helperAbove
+            ELSE $helperUpdated IS NULL OR (updated_at, session_id) < ($helperUpdated, $helperId) END
           ORDER BY n LIMIT $helperLimit)
         SELECT 0, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, COALESCE(SUM(running), 0), COALESCE(SUM(needs), 0), 0, 0, COUNT(*),
           NULL, NULL, NULL, NULL FROM tops

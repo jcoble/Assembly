@@ -19,6 +19,9 @@ pub fn list_entries(rail: &Rail) -> Vec<ListEntry> {
         }
         entries.push(ListEntry::Session(entry.clone()));
         if rail.expanded.as_deref() == Some(entry.session_id.as_str()) {
+            if rail.helpers_ahead > 0 {
+                entries.push(ListEntry::EarlierHelpers(entry.session_id.clone()));
+            }
             entries.extend(rail.helpers.iter().cloned().map(ListEntry::Helper));
             if rail.has_more_helpers() {
                 entries.push(ListEntry::MoreHelpers(entry.session_id.clone()));
@@ -42,15 +45,18 @@ pub fn changed_lines(old: &[ListEntry], new: &[ListEntry]) -> (Range<usize>, usi
     (start..old.len() - end, new.len() - start - end)
 }
 
-/// Where line `at` of `old` is in `new`, when it lies in the `changed` lines (a splice would lose it) and is still
-/// there, by its key: a row whose state changed is still the line it was.
+/// Where line `at` of `old` is in `new`, when it lies in the `changed` lines or new lines go in just before it (a
+/// splice would lose it, or leave an unscrolled list above it) and is still there, by its key: a row whose state
+/// changed is still the line it was.
 pub fn same_line(
     old: &[ListEntry],
     new: &[ListEntry],
     changed: &Range<usize>,
     at: usize,
 ) -> Option<usize> {
-    let line = old.get(at).filter(|_| changed.contains(&at))?;
+    let line = old
+        .get(at)
+        .filter(|_| changed.start == at || changed.contains(&at))?;
     new.iter().position(|entry| entry.key() == line.key())
 }
 

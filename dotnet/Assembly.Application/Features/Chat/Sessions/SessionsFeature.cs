@@ -121,12 +121,14 @@ internal sealed class SessionsFeature : IFeature
     /// <summary>
     /// A rail read: the tab (<c>all</c>, <c>running</c> or <c>needs</c>), the filters (empty means all; values are OR
     /// within one, AND across them), the parent page after <c>After</c>, and with <c>Expanded</c> that parent's helpers
-    /// after <c>HelpersAfter</c>, each page up to its own limit. <c>Locations</c> holds <c>local</c> and <c>remote</c>; <c>Filter</c> matches a title
+    /// after <c>HelpersAfter</c>, each page up to its own limit. A read again names the row the reader is on
+    /// (<c>Anchor</c>, <c>HelperAnchor</c>) and how many held rows sit above it; its page starts that many rows before
+    /// the row's place now, wherever it moved, and falls back to the cursor once the row left. <c>Locations</c> holds <c>local</c> and <c>remote</c>; <c>Filter</c> matches a title
     /// or project.
     /// </summary>
     internal sealed record RailArgs(string Tab = "all", IReadOnlyList<string>? Providers = null, IReadOnlyList<string>? Locations = null,
         string? Filter = null, RailCursor? After = null, int Limit = 50, string? Expanded = null, RailChildCursor? HelpersAfter = null,
-        int HelperLimit = 50);
+        int HelperLimit = 50, string? Anchor = null, int Above = 0, string? HelperAnchor = null, int HelperAbove = 0);
 
     /// <summary>Where the next parent page starts: the last row's project label, repo, time and id.</summary>
     internal sealed record RailCursor(string Group, string RepoUrl, long UpdatedAt, string SessionId);
@@ -148,7 +150,7 @@ internal sealed class SessionsFeature : IFeature
 
     /// <summary>The rail's read: totals, the providers to filter by, a parent page and the expanded parent's helper page.</summary>
     internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next,
-        IReadOnlyList<RailEntry> Helpers, RailChildCursor? HelpersNext);
+        IReadOnlyList<RailEntry> Helpers, RailChildCursor? HelpersNext, int Start = 0, int HelperStart = 0);
 
     /// <summary>A committed change to a session, parent or helper, on the <c>sessionRail</c> topic: read the rail again.</summary>
     internal sealed record RailChange(string SessionId);

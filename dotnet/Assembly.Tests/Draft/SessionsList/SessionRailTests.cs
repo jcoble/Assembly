@@ -134,6 +134,41 @@ public sealed class SessionRailTests : IDisposable
         Assert.Equal("icons/asterisk.svg", Entry(both, mine).Icon);
     }
 
+    [Fact]
+    public void AReadAgainKeepsTheReadersRowWhereverItMoved()
+    {
+        // 250 parents of one project, newest first; the reader's row is the 231st, with 130 held above it.
+        var parents = Enumerable.Range(0, 250).Select(_ => Parent()).Reverse().ToArray();
+        var reader = parents[230];
+        var held = Read(anchor: reader, above: 130, limit: 200);
+        Assert.Equal((100, reader), (held.Start, held.Sessions[130].SessionId));
+
+        // It moves ahead of every row held before it.
+        _time.Advance(TimeSpan.FromSeconds(1));
+        _sessions.Touch(reader);
+        var moved = Read(anchor: reader, above: 130, limit: 200);
+        Assert.Equal((0, reader), (moved.Start, moved.Sessions[0].SessionId));
+
+        // 60 sessions start ahead of it: it stays at the same place in what's read.
+        var row = parents[200];
+        for (var i = 0; i < 60; i++)
+            Parent();
+        Assert.Equal(row, Read(anchor: row, above: 149, limit: 200).Sessions[149].SessionId);
+
+        // A row that left the tab: the read falls back to the cursor.
+        Assert.Equal(parents[1], Read(anchor: "gone", after: Cursor(Entry(Read(limit: 200), parents[0])), limit: 1).Sessions.Single().SessionId);
+    }
+
+    [Fact]
+    public void HelpersPastTheTwoHundredthKeepTheReadersHelper()
+    {
+        var parent = Parent();
+        var helpers = Enumerable.Range(0, 250).Select(_ => Helper(parent)).Reverse().ToArray();
+        var read = Read(expanded: parent, helperAnchor: helpers[230], helperAbove: 150, helperLimit: 200);
+        Assert.Equal((80, helpers[230]), (read.HelperStart, read.Helpers[150].SessionId));
+        Assert.Equal(170, read.Helpers.Count);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -303,8 +338,12 @@ public sealed class SessionRailTests : IDisposable
     }
 
     private Rail Read(string tab = "all", string[]? providers = null, string[]? locations = null, string? filter = null,
-        RailCursor? after = null, int limit = 50, string? expanded = null, RailChildCursor? helpersAfter = null, int? helperLimit = null) =>
-        _sessions.Rail(new RailArgs(tab, providers, locations, filter, after, limit, expanded, helpersAfter, helperLimit ?? limit));
+        RailCursor? after = null, int limit = 50, string? expanded = null, RailChildCursor? helpersAfter = null, int? helperLimit = null,
+        string? anchor = null, int above = 0, string? helperAnchor = null, int helperAbove = 0) =>
+        _sessions.Rail(new RailArgs(tab, providers, locations, filter, after, limit, expanded, helpersAfter, helperLimit ?? limit,
+            anchor, above, helperAnchor, helperAbove));
+
+    private static RailCursor Cursor(RailEntry entry) => new(entry.Group, entry.RepoUrl, entry.UpdatedAt, entry.SessionId);
 
     /// <summary>Every parent, following each page's cursor from the first.</summary>
     private static List<string> Collect(Func<RailCursor?, Rail> read)

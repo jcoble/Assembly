@@ -14,8 +14,9 @@ pub enum ListEntry {
     },
     Session(RailEntry),
     Helper(RailEntry),
-    /// The expanded parent (by id) has more helpers than are loaded.
+    /// The expanded parent (by id) has more helpers than are loaded, after or before the held ones.
     MoreHelpers(String),
+    EarlierHelpers(String),
 }
 
 impl ListEntry {
@@ -24,7 +25,7 @@ impl ListEntry {
         match self {
             ListEntry::Project { repo_url, .. } => repo_url,
             ListEntry::Session(entry) | ListEntry::Helper(entry) => &entry.session_id,
-            ListEntry::MoreHelpers(parent) => parent,
+            ListEntry::MoreHelpers(parent) | ListEntry::EarlierHelpers(parent) => parent,
         }
     }
 }

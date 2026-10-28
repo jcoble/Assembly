@@ -2,10 +2,9 @@
 //! providers to filter by, a page of parents in the backend's order and the expanded parent's helpers. `Rail` is the
 //! sessions column's read: the tab and filters it asks for, what it holds, and its one read at a time. A change while
 //! a read is out reads again once it answers; a new tab or filter reads at once, and the older read's answer is
-//! dropped. It holds a window of the tab's parents, at most `KEEP` once the reader has scrolled past them: the rows
-//! after `after`, a position in the backend's order. A read again keeps that position, asks for a page more than it
-//! holds so a session new ahead of the reader doesn't push the reader's row out, and reads the expanded parent's
-//! helpers up to their own limit. Scrolling down past `KEEP` lets the first rows go; scrolling back up reads them
+//! dropped. It holds a window of the tab's parents, and of the expanded parent's helpers, at most `KEEP` of each once
+//! the reader has gone past them. A read again names the row in view and how many held rows sit above it, so the
+//! backend's page keeps it wherever it moved; scrolling past `KEEP` lets the first rows go, and going back reads them
 //! again. The window never counts, sorts or groups: it draws what the backend sent.
 
 use serde::{Deserialize, Serialize};
@@ -111,17 +110,23 @@ pub struct RailPage {
     pub next: Option<RailCursor>,
     pub helpers: Vec<RailEntry>,
     pub helpers_next: Option<RailChildCursor>,
+    /// How many of the tab's parents, and of the expanded parent's helpers, come before the page.
+    #[serde(default)]
+    pub start: usize,
+    #[serde(default)]
+    pub helper_start: usize,
 }
 
 /// Which read is out: what's held again (a change, a new tab, filter or expanded parent), the next parent page, the
-/// page before what's held, or the expanded parent's next helper page (with the held parents again, as the backend
-/// reads both at once).
+/// page before what's held, or the expanded parent's next or earlier helper page (with the held parents again, as the
+/// backend reads both at once).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Read {
     Top,
     More,
     Earlier,
     Helpers,
+    EarlierHelpers,
 }
 
 /// A read to send: its number, which its answer is matched by, and the call's args.
@@ -142,9 +147,11 @@ pub struct Rail {
     pub helpers: Vec<RailEntry>,
     next: Option<RailCursor>,
     helpers_next: Option<RailChildCursor>,
-    /// Where the held parents start: after this one, or at the top. `earlier` are the starts before it.
-    after: Option<RailCursor>,
-    earlier: Vec<Option<RailCursor>>,
+    /// How many of the tab's parents, and of the expanded parent's helpers, come before the held ones.
+    pub ahead: usize,
+    pub helpers_ahead: usize,
+    /// The parent or helper at the top of the view, which a read again keeps.
+    view: Option<String>,
     /// Why the last read failed, until one answers.
     pub error: Option<String>,
     /// A first read has answered.
@@ -196,7 +203,7 @@ impl Rail {
         self.expanded =
             (self.expanded.as_deref() != Some(session_id)).then(|| session_id.to_owned());
         self.helpers.clear();
-        self.helpers_next = None;
+        (self.helpers_next, self.helpers_ahead) = (None, 0);
         self.start(Read::Top)
     }
 
@@ -207,11 +214,17 @@ impl Rail {
 
     /// The parents before the held ones, when the reader scrolled past some and nothing's out.
     pub fn earlier(&mut self) -> Option<Request> {
-        if self.reading.is_some() || self.earlier.is_empty() {
-            return None;
-        }
-        self.after = self.earlier.pop().flatten();
-        Some(self.start(Read::Earlier))
+        (self.reading.is_none() && self.ahead > 0).then(|| self.start(Read::Earlier))
+    }
+
+    /// The expanded parent's helpers before the held ones.
+    pub fn earlier_helpers(&mut self) -> Option<Request> {
+        (self.reading.is_none() && self.helpers_ahead > 0).then(|| self.start(Read::EarlierHelpers))
+    }
+
+    /// The parent or helper at the top of the view.
+    pub fn look_at(&mut self, session_id: Option<String>) {
+        self.view = session_id;
     }
 
     pub fn has_more_helpers(&self) -> bool {
@@ -248,34 +261,37 @@ impl Rail {
         if read == Read::More {
             self.sessions.extend(page.sessions);
             self.next = page.next;
-            if self.sessions.len() > KEEP {
-                let gone: Vec<RailEntry> =
-                    self.sessions.drain(..self.sessions.len() - KEEP).collect();
-                self.earlier
-                    .push(self.after.replace(cursor(&gone[gone.len() - 1])));
-            }
+            self.ahead += trim(&mut self.sessions);
             return;
         }
-        self.sessions = page.sessions;
-        self.next = page.next;
+        (self.sessions, self.next, self.ahead) = (page.sessions, page.next, page.start);
         if read == Read::Earlier && self.sessions.len() > KEEP {
             self.sessions.truncate(KEEP);
             self.next = Some(cursor(&self.sessions[KEEP - 1]));
         }
+        self.helpers_next = page.helpers_next;
         if read == Read::Helpers {
             self.helpers.extend(page.helpers);
-        } else {
-            self.helpers = page.helpers;
+            self.helpers_ahead += trim(&mut self.helpers);
+            return;
         }
-        self.helpers_next = page.helpers_next;
+        (self.helpers, self.helpers_ahead) = (page.helpers, page.helper_start);
+        if read == Read::EarlierHelpers && self.helpers.len() > KEEP {
+            self.helpers.truncate(KEEP);
+            let last = &self.helpers[KEEP - 1];
+            self.helpers_next = Some(RailChildCursor {
+                updated_at: last.updated_at,
+                session_id: last.session_id.clone(),
+            });
+        }
     }
 
     /// A new tab or filter: what's held was for the old one.
     fn requery(&mut self) -> Request {
         self.sessions.clear();
         self.helpers.clear();
-        (self.next, self.helpers_next, self.after) = (None, None, None);
-        self.earlier.clear();
+        (self.next, self.helpers_next, self.view) = (None, None, None);
+        (self.ahead, self.helpers_ahead) = (0, 0);
         self.start(Read::Top)
     }
 
@@ -288,18 +304,71 @@ impl Rail {
 
     fn args(&self, read: Read) -> Value {
         let (more, helpers) = (read == Read::More, read == Read::Helpers);
+        // A helper in view keeps its parent too.
+        let in_helpers =
+            (self.helpers.iter()).any(|entry| Some(&entry.session_id) == self.view.as_ref());
+        let parent_view = if in_helpers {
+            self.expanded.as_ref()
+        } else {
+            self.view.as_ref()
+        };
+        let parent = keep(
+            &self.sessions,
+            parent_view,
+            self.ahead,
+            read == Read::Earlier,
+        );
+        let helper = keep(
+            &self.helpers,
+            self.view.as_ref(),
+            self.helpers_ahead,
+            read == Read::EarlierHelpers,
+        );
+        let (anchor, above) = parent.filter(|_| !more).unzip();
+        let (helper_anchor, helper_above) = helper.filter(|_| !helpers).unzip();
         json!({
             "tab": self.tab.wire(),
             "providers": self.providers,
             "locations": self.locations,
             "filter": (!self.filter.is_empty()).then_some(&self.filter),
-            "after": if more { self.next.as_ref() } else { self.after.as_ref() },
+            // Once the row in view has left the tab, the page starts after where it was.
+            "after": if more { self.next.clone() } else { anchor.map(cursor) },
             "limit": if more { PAGE } else { (self.sessions.len() + PAGE).min(MOST) },
+            "anchor": anchor.map(|entry| &entry.session_id),
+            "above": above.unwrap_or(0),
             "expanded": if more { None } else { self.expanded.as_ref() },
             "helpersAfter": if helpers { self.helpers_next.as_ref() } else { None },
-            "helperLimit": if helpers { PAGE } else { self.helpers.len().clamp(PAGE, MOST) },
+            "helperLimit": if helpers { PAGE } else { (self.helpers.len() + PAGE).min(MOST) },
+            "helperAnchor": helper_anchor.map(|entry| &entry.session_id),
+            "helperAbove": helper_above.unwrap_or(0),
         })
     }
+}
+
+/// The held row a read keeps and how many held rows to keep above it: the one in view, else the first; for the rows
+/// before the held ones, the first with a page above it. None reads from the start, for a window there already.
+fn keep<'a>(
+    held: &'a [RailEntry],
+    view: Option<&String>,
+    ahead: usize,
+    earlier: bool,
+) -> Option<(&'a RailEntry, usize)> {
+    let at = (held.iter())
+        .position(|entry| Some(&entry.session_id) == view)
+        .filter(|_| !earlier);
+    match at {
+        _ if earlier => held.first().map(|entry| (entry, PAGE)),
+        Some(at) if at > 0 || ahead > 0 => Some((&held[at], at)),
+        None if ahead > 0 => held.first().map(|entry| (entry, 0)),
+        _ => None,
+    }
+}
+
+/// Lets the first rows go past `KEEP`, and says how many went.
+fn trim(held: &mut Vec<RailEntry>) -> usize {
+    let gone = held.len().saturating_sub(KEEP);
+    held.drain(..gone);
+    gone
 }
 
 /// Where a parent sits in the backend's order, to read after it.
