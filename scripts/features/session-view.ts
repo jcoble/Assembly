@@ -104,7 +104,7 @@ async function main() {
 
   // Its attachments: the check's prompt attaches nothing, and a remote session's answer names the machine with them.
   const attached = await call('rows', 'attachments', { session }, "the Context tab reads the session's attachments");
-  if (!Array.isArray(attached.prompts) || attached.prompts.length !== 0 || (attached.machine ?? null) !== (item!.machine ?? null))
+  if (!Array.isArray(attached.prompts) || attached.prompts.length !== 0 || attached.more !== false || (attached.machine ?? null) !== (item!.machine ?? null))
     fail("the Context tab's attachments are none, on the session's machine", `it answered ${JSON.stringify(attached)}`);
   console.log(`ok the Context tab lists no attachments, on ${attached.machine ?? 'this machine'}`);
 
