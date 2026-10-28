@@ -14,10 +14,17 @@ pub enum Row<'a> {
         open: bool,
     },
     /// The folder above is loading.
-    Loading { depth: usize },
-    Failed { depth: usize, message: &'a str },
+    Loading {
+        depth: usize,
+    },
+    Failed {
+        depth: usize,
+        message: &'a str,
+    },
     /// The folder above held more than the backend answers at once.
-    Truncated { depth: usize },
+    Truncated {
+        depth: usize,
+    },
 }
 
 /// The root folder is "", as `files/list` takes it.
@@ -32,28 +39,66 @@ pub struct FileTree {
 impl FileTree {
     /// Starts loading the root and returns it, for the pane to load.
     pub fn start(&mut self) -> &'static str {
-        todo!()
+        *self = Self::default();
+        self.loading.insert(String::new());
+        ""
     }
 
     /// Opens or closes a folder. Opening one that isn't loaded starts loading it and returns it; closing one drops
     /// its load, so the pane drops its call.
     pub fn toggle(&mut self, dir: &str) -> Option<String> {
-        todo!()
-    }
-
-    /// Whether `dir` is still loading, so the pane keeps its call only while it is.
-    pub fn is_loading(&self, dir: &str) -> bool {
-        todo!()
+        if self.open.remove(dir) {
+            self.loading.remove(dir);
+            return None;
+        }
+        self.open.insert(dir.to_string());
+        if self.loaded.contains_key(dir) {
+            return None;
+        }
+        self.failed.remove(dir);
+        self.loading.insert(dir.to_string());
+        Some(dir.to_string())
     }
 
     /// Takes a folder's answer; one for a folder no longer loading is dropped.
     pub fn loaded(&mut self, dir: &str, answer: Result<FileListing, String>) {
-        todo!()
+        if !self.loading.remove(dir) {
+            return;
+        }
+        match answer {
+            Ok(listing) => {
+                self.loaded.insert(dir.to_string(), listing);
+            }
+            Err(message) => {
+                self.failed.insert(dir.to_string(), message);
+            }
+        }
     }
 
     /// The lines to draw: the root's entries, each open folder's under it.
     pub fn rows(&self) -> Vec<Row<'_>> {
-        todo!()
+        let mut rows = Vec::new();
+        self.push(&mut rows, "", 0);
+        rows
+    }
+
+    fn push<'a>(&'a self, rows: &mut Vec<Row<'a>>, dir: &str, depth: usize) {
+        if self.loading.contains(dir) {
+            rows.push(Row::Loading { depth });
+        } else if let Some(message) = self.failed.get(dir) {
+            rows.push(Row::Failed { depth, message });
+        } else if let Some(listing) = self.loaded.get(dir) {
+            for entry in &listing.entries {
+                let open = entry.is_directory && self.open.contains(&entry.path);
+                rows.push(Row::Entry { entry, depth, open });
+                if open {
+                    self.push(rows, &entry.path, depth + 1);
+                }
+            }
+            if listing.truncated {
+                rows.push(Row::Truncated { depth });
+            }
+        }
     }
 }
 

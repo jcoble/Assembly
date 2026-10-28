@@ -6,3 +6,6 @@ pub mod entry;
 pub mod file_tree;
 pub mod files_pane;
 pub mod search_pane;
+
+#[cfg(test)]
+mod files_real_tests;

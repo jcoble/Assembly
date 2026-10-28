@@ -57,7 +57,10 @@ fn opening_a_folder_loads_it_once_and_closing_hides_it() {
     tree.loaded("", listing(vec![entry("src", true), entry("a.txt", false)]));
     assert_eq!(tree.toggle("src"), Some("src".to_string()));
     assert_eq!(shape(&tree), ["src/ v", "  …", "a.txt"]);
-    tree.loaded("src", listing(vec![entry("src/lib", true), entry("src/main.rs", false)]));
+    tree.loaded(
+        "src",
+        listing(vec![entry("src/lib", true), entry("src/main.rs", false)]),
+    );
     assert_eq!(shape(&tree), ["src/ v", "  lib/", "  main.rs", "a.txt"]);
     assert_eq!(tree.toggle("src"), None);
     assert_eq!(shape(&tree), ["src/", "a.txt"]);
@@ -82,7 +85,10 @@ fn a_failed_folder_says_why_under_it_and_opening_it_again_retries() {
     tree.loaded("", listing(vec![entry("src", true)]));
     tree.toggle("src");
     tree.loaded("src", Err("that path goes through a link".into()));
-    assert_eq!(shape(&tree), ["src/ v", "  ! that path goes through a link"]);
+    assert_eq!(
+        shape(&tree),
+        ["src/ v", "  ! that path goes through a link"]
+    );
     tree.toggle("src");
     assert_eq!(tree.toggle("src"), Some("src".to_string()));
 }

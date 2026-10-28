@@ -34,6 +34,6 @@ pub struct NameMatch {
 #[serde(rename_all = "camelCase")]
 pub struct SearchPage {
     pub matches: Vec<NameMatch>,
+    /// Null once the search is complete.
     pub next_cursor: Option<u32>,
-    pub complete: bool,
 }
