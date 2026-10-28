@@ -1,8 +1,7 @@
-//! The right side of the Settings page: the shown section's title and Reset section, then its rows in their cards,
+//! The right side of the Settings page: the shown section's title, then its rows in their cards,
 //! each row a title and one-line description with its control on the right, or its slider underneath.
 
-use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
@@ -54,29 +53,14 @@ impl SettingsPage {
             );
         };
         let cards = search::cards(query, section.id);
-        let resettable = matches!(section.id, "appearance" | "editor" | "terminal");
         let id = section.id;
         let mut column = column.child(
             h_flex()
                 .h(px(32.))
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(px(15.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.foreground)
-                        .child(section.label),
-                )
-                .when(resettable, |title| {
-                    title.child(
-                        Button::new("reset-section")
-                            .ghost()
-                            .small()
-                            .icon(IconName::RotateCcw)
-                            .label("Reset section")
-                            .on_click(cx.listener(move |_, _, _, cx| reset(id, cx))),
-                    )
-                }),
+                .text_size(px(15.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.foreground)
+                .child(section.label),
         );
         if let Some(failure) = Preferences::failure(cx) {
             column = column.child(
@@ -225,22 +209,6 @@ fn number_row(id: &str) -> Option<NumberSetting> {
         "terminal-line-height" => TERMINAL_LINE_HEIGHT,
         _ => return None,
     })
-}
-
-/// Saves every setting of the section as reset (null), so each reads as its default.
-fn reset(section: &str, cx: &mut App) {
-    let keys: &[&'static str] = match section {
-        "appearance" => &[THEME, UI_FONT, CODE_FONT, UI_FONT_SIZE.key],
-        "editor" => &[EDITOR_FONT, EDITOR_FONT_SIZE.key, EDITOR_LINE_HEIGHT.key],
-        _ => &[
-            TERMINAL_FONT,
-            TERMINAL_FONT_SIZE.key,
-            TERMINAL_LINE_HEIGHT.key,
-        ],
-    };
-    for key in keys {
-        Preferences::save(key, Value::Null, cx);
-    }
 }
 
 fn font_choices(fonts: &[SharedString], current: &str) -> Vec<(Value, SharedString, bool)> {
