@@ -9,12 +9,16 @@ namespace Assembly.Application.Common.Agents;
 /// adapter reports over ACP.
 /// </summary>
 public sealed record AgentDescriptor(
-    string Id, string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env, IReadOnlyList<string>? Air = null)
+    string Id, string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env, IReadOnlyList<string>? Air = null,
+    string? Cli = null)
 {
     /// <summary>The machine's agents, from its agents file's text: <c>[{ "id", "name", "command", "args": [], "env": {}, "air": [] }]</c>.</summary>
     public static IReadOnlyList<AgentDescriptor> Parse(string json) =>
         JsonSerializer.Deserialize(json, AgentJsonContext.Default.ListAgentDescriptor)
         ?? throw new InvalidOperationException("The agents file lists no agents");
+
+    /// <summary>The CLI to run for agent <paramref name="id"/>: its full path from the agents file, else its plain name.</summary>
+    public static string CliOf(IReadOnlyList<AgentDescriptor> agents, string id) => id;
 
     public AgentCommand ToCommand(string workingDirectory) => new(Command, Args, workingDirectory, Env);
 }

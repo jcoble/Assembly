@@ -47,7 +47,7 @@ public static class ServeRun
         // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
         await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
-            utilityModel: new CliUtilityModel("claude", "codex", new PreferenceStore(db), TimeProvider.System, Console.Out));
+            titler: new SessionTitler(sessionStore, store, new CliUtilityModel("claude", "codex", new PreferenceStore(db), TimeProvider.System, Console.Out)));
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));

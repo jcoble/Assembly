@@ -9,7 +9,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// Names a new session with the utility model, from its first exchange, once its first turn has ended normally. Its
 /// answer replaces the title the first message gave, unless the session has been titled otherwise meanwhile.
 /// </summary>
-public sealed class SessionTitler(SessionStore sessionStore, LiveHub hub, IUtilityModel model)
+public sealed class SessionTitler(SessionStore sessionStore, RowStore rows, IUtilityModel model)
 {
     /// <summary>How much of the first message, and of the reply, the model is given.</summary>
     public const int InputLength = 1000;
@@ -30,7 +30,7 @@ public sealed class SessionTitler(SessionStore sessionStore, LiveHub hub, IUtili
         await Task.Yield();
         if (!FromPrompt(sessionId))
             return;
-        var reply = string.Concat(hub.RunRows(sessionId, runId).Where(row => row.Kind == RowKind.Message)
+        var reply = string.Concat(rows.RunRows(sessionId, runId).Where(row => row.Kind == RowKind.Message)
             .Select(row => PlainText.Of(row.Payload.GetProperty("blocks"))));
         var answer = await model.CompleteAsync(Prompt($"{Cut(prompt, InputLength)}\n\n{Cut(reply, InputLength)}"), cancellationToken);
         if (Clean(answer) is { } title && FromPrompt(sessionId))

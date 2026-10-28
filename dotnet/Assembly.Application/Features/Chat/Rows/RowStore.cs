@@ -221,6 +221,9 @@ public sealed class RowStore
         Query($"SELECT {Columns} FROM rows WHERE session_id = $session AND run_id = $run ORDER BY seq;",
             reader => ReadRow(reader), new SqlArg("$session", sessionId), new SqlArg("$run", runId));
 
+    /// <summary>The run's first message row after seq <paramref name="after"/>, or null when there's none.</summary>
+    public StoredRow? RunMessageAfter(string sessionId, string runId, long after) => null;
+
     public StoredToolCall? ToolCall(string sessionId, string itemId) =>
         Query(
             """

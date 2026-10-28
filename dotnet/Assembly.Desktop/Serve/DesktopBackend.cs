@@ -119,8 +119,8 @@ public sealed class DesktopBackend : IAsyncDisposable
         // Loading the summaries tells nobody: a remote's run left open holds it from the start.
         diagnostics.HoldActivity(summaries.AnyRunOpen);
         var work = new BackgroundWork(TimeProvider.System, log);
-        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, utilityModel: utilityClis is { } clis
-            ? new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log)
+        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, titler: utilityClis is { } clis
+            ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log))
             : null);
         var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
         var status = new MachineStatus(topics, remote is null ? [] : [remote.Name]);

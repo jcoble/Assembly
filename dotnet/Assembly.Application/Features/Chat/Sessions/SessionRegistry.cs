@@ -29,7 +29,7 @@ public sealed class SessionRegistry : IAsyncDisposable
     private readonly ConcurrentDictionary<string, string> _helperRun = new();
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
-        BackgroundWork work, HelperLimits? limits = null, IUtilityModel? utilityModel = null)
+        BackgroundWork work, HelperLimits? limits = null, SessionTitler? titler = null)
     {
         _hub = hub;
         _sessionStore = sessionStore;
@@ -40,7 +40,7 @@ public sealed class SessionRegistry : IAsyncDisposable
         _time = time;
         _log = log;
         _work = work;
-        _titler = utilityModel is null ? null : new SessionTitler(sessionStore, hub, utilityModel);
+        _titler = titler;
     }
 
     /// <summary>The agents this machine can run.</summary>
