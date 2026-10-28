@@ -79,6 +79,23 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         }
     }
 
+    /// <summary>One more place on <paramref name="running"/>, which the caller already holds one on; <see cref="ReleaseAsync"/> gives it back.</summary>
+    internal async Task HoldAsync(RunningAdapter running)
+    {
+        await _gate.WaitAsync();
+        try
+        {
+            if (_retired.TryGetValue(running, out var left))
+                _retired[running] = left + 1;
+            else
+                _sessions++;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     /// <summary>
     /// A session from <see cref="GetAsync"/> is closed (or never opened). The last one starts the idle grace, or, on a
     /// retired adapter, stops it.

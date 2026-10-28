@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Agents;
@@ -18,7 +19,7 @@ internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, s
 /// <see cref="SharedAdapter.ReleaseAsync"/>; its next open waits for an adapter retired by its timed-out close to exit. <paramref name="mcpServers"/> gives a session's ACP session the MCP servers it joins.
 /// </summary>
 public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
-    Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
+    BackgroundWork work, Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
 {
     /// <summary>The longest title a first message gives a new session.</summary>
     public const int TitleLength = 60;
@@ -108,9 +109,9 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     }
 
     // Neither adapter honours a request's cancel, so a session/new or session/resume goes out on a token the cancel
-    // doesn't cut: a cancel after it went out waits for the answer and closes the session the agent opened. That delays
-    // the cancel by up to twice the close limit: the wait for the answer, then the close.
-    private static async Task<T> AnsweredAsync<T>(
+    // doesn't cut. A cancel after it went out ends the open at once; background work holds a place on the adapter,
+    // waits for the late answer and closes the session the agent opened, so the adapter isn't shut down under it.
+    private async Task<T> AnsweredAsync<T>(
         SharedAdapter adapter, RunningAdapter running, string sessionId, Task<T> opening, Func<T, string> acpSessionId,
         CancellationToken cancellationToken)
     {
@@ -120,17 +121,25 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            try
+            await adapter.HoldAsync(running);
+            work.Start("close late open " + sessionId, async stopping =>
             {
-                var late = acpSessionId(await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, CancellationToken.None));
-                running.Updates.Forget(late);
-                await CloseQuietlyAsync(adapter, running, late);
-                Console.Error.WriteLine($"session {sessionId}: closed {late}, which answered after the open was cancelled");
-            }
-            catch (Exception error) when (error is TimeoutException or JsonRpcException or IOException or ObjectDisposedException)
-            {
-                // No answer in time, or none at all: a session it opened lives until the adapter exits. An error opened none.
-            }
+                try
+                {
+                    var late = acpSessionId(await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, stopping));
+                    running.Updates.Forget(late);
+                    await CloseQuietlyAsync(adapter, running, late);
+                    Console.Error.WriteLine($"session {sessionId}: closed {late}, which answered after the open was cancelled");
+                }
+                catch (Exception error) when (error is TimeoutException or JsonRpcException or IOException or ObjectDisposedException)
+                {
+                    // No answer in time, or none at all: a session it opened lives until the adapter exits. An error opened none.
+                }
+                finally
+                {
+                    await adapter.ReleaseAsync(running);
+                }
+            });
             throw;
         }
     }
