@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::{changed_lines, list_entries, project_label, wants_older};
+use super::{changed_lines, list_entries, project_label, same_line, wants_older};
 use crate::core::state::session_item::SessionItem;
 use crate::features::sessions::list_entry::ListEntry;
 use crate::features::sessions::status::Status;
@@ -172,6 +172,19 @@ fn only_the_lines_between_what_both_share_change() {
 }
 
 // Pins: sessions-list#9
+#[test]
+fn the_line_at_the_top_is_found_again_when_lines_change_around_it() {
+    // An older page adds a session above the reader's line and one below it: the whole span is replaced.
+    let old = [line("a"), line("b"), line("c")];
+    let new = [line("a"), line("a2"), line("b"), line("c"), line("c2")];
+    let (changed, _) = changed_lines(&old, &new);
+    assert_eq!(changed, 1..3);
+    assert_eq!(same_line(&old, &new, &changed, 1), Some(2));
+    // Outside the changed lines the splice keeps the place itself; a line that's gone isn't found.
+    assert_eq!(same_line(&old, &new, &changed, 0), None);
+    assert_eq!(same_line(&old, &[line("a"), line("c")], &(1..2), 1), None);
+}
+
 #[test]
 fn a_list_ending_in_a_folded_settled_holds_back_older_pages() {
     let folded = [

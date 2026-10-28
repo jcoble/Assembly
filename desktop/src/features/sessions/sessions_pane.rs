@@ -54,12 +54,8 @@ impl SessionsPane {
             cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
             cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
         ];
+        // A scroll redraws the pane, and each draw checks whether the end is in view (`follow_entries`).
         let lines = ListState::new(0, ListAlignment::Top, px(200.));
-        // Scrolling near the end asks for the next older page.
-        let pane = cx.entity().downgrade();
-        lines.set_scroll_handler(move |_, _, cx| {
-            pane.update(cx, |pane, cx| pane.page_if_near_end(cx)).ok();
-        });
         let mut pane = SessionsPane {
             focus: cx.focus_handle(),
             sessions: None,

@@ -7,7 +7,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 
 use super::group_header::GroupHeader;
-use super::list_entries::{changed_lines, list_entries, wants_older};
+use super::list_entries::{changed_lines, list_entries, same_line, wants_older};
 use super::list_entry::ListEntry;
 use super::project_header::ProjectHeader;
 use super::session_row::{OnMark, SessionRow};
@@ -20,21 +20,30 @@ const LOAD_OLDER_WITHIN: usize = 20;
 
 impl SessionsPane {
     /// Lays the sessions out again, telling the list which lines changed, and, once this frame is drawn, loads the
-    /// next older page if the end is in view: a list too short to scroll never sends a scroll.
+    /// next older page if the end is in view.
     pub(super) fn follow_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let entries = self.sessions.as_ref().map_or_else(Vec::new, |sessions| {
             list_entries(sessions.read(cx).items(), self.settled_open)
         });
         if entries != *self.entries {
             let (old, count) = changed_lines(&self.entries, &entries);
+            // A splice moves a place inside the changed lines to their start, so the line at the top stays in view
+            // by its identity instead. Unscrolled, the list stays at its top and shows what came in.
+            let top = self.lines.logical_scroll_top();
+            let kept = (top != ListOffset::default())
+                .then(|| same_line(&self.entries, &entries, &old, top.item_ix))
+                .flatten();
             self.lines.splice(old, count);
+            if let Some(item_ix) = kept {
+                self.lines.scroll_to(ListOffset { item_ix, ..top });
+            }
             self.entries = Rc::new(entries);
         }
         cx.on_next_frame(window, |pane, _, cx| pane.page_if_near_end(cx));
     }
 
     /// Loads the next older page while the end is in view, unless the last one failed (then only Retry asks again).
-    pub(super) fn page_if_near_end(&mut self, cx: &mut Context<Self>) {
+    fn page_if_near_end(&mut self, cx: &mut Context<Self>) {
         let Some(sessions) = self.sessions.clone() else {
             return;
         };

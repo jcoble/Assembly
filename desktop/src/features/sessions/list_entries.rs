@@ -63,6 +63,18 @@ pub fn changed_lines(old: &[ListEntry], new: &[ListEntry]) -> (Range<usize>, usi
     (start..old.len() - end, new.len() - start - end)
 }
 
+/// Where line `at` of `old` is in `new`, when it lies in the `changed` lines (a splice would lose it) and is still
+/// there.
+pub fn same_line(
+    old: &[ListEntry],
+    new: &[ListEntry],
+    changed: &Range<usize>,
+    at: usize,
+) -> Option<usize> {
+    let line = old.get(at).filter(|_| changed.contains(&at))?;
+    new.iter().position(|entry| entry == line)
+}
+
 /// Whether to load the next older page, given whether the list's end is in view or close to it. A list that ends in
 /// a folded Settled waits for it to open: older pages would only fill it unseen.
 pub fn wants_older(entries: &[ListEntry], end_in_view: bool) -> bool {
