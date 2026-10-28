@@ -1,5 +1,5 @@
 using Assembly.Application.Common.Calls;
-using Assembly.Application.Features.SourceControl;
+using Assembly.Application.Features.Chat.SourceControl;
 using Assembly.Infrastructure.Git;
 
 namespace Assembly.Tests.Draft.SourceControl;

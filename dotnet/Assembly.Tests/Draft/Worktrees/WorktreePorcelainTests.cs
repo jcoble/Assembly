@@ -1,4 +1,4 @@
-using Assembly.Application.Features.Worktrees;
+using Assembly.Application.Features.Chat.Worktrees;
 
 namespace Assembly.Tests.Draft.Worktrees;
 

@@ -2,7 +2,7 @@ using System.Globalization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Git;
 
-namespace Assembly.Application.Features.Worktrees;
+namespace Assembly.Application.Features.Chat.Worktrees;
 
 /// <summary>
 /// A project's worktrees, read with git in its root: the list, then each folder's status, unpushed count and head
