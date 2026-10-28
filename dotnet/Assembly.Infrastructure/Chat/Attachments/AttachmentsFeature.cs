@@ -81,7 +81,7 @@ internal sealed class AttachmentsFeature : IFeature
                 opened = _uploads.Values.FirstOrDefault(upload => ReferenceEquals(upload.Opener, call));
             if (opened is not null)
                 Drop(opened);
-        });
+        }, bulk: true);
         calls.Write(Feature, "chunk", AttachmentsJson.Default.ChunkArgs, AttachmentsJson.Default.Received, async (args, call) =>
         {
             var upload = Find(args.Upload, call.Connection);
@@ -104,12 +104,15 @@ internal sealed class AttachmentsFeature : IFeature
             }
             var written = upload.Written;
             return _ => new Received(written);
-        }, args => OrderOf(args.Upload), (args, call) => DropIfOpen(args.Upload, call.Connection));
+        }, args => OrderOf(args.Upload), (args, call) => DropIfOpen(args.Upload, call.Connection), bulk: true);
         calls.Write(Feature, "commit", AttachmentsJson.Default.CommitArgs, AttachmentsJson.Default.Saved, async (args, call) =>
         {
             var upload = Find(args.Upload, call.Connection);
             try
             {
+                // The window that started it is gone, and a reconnect starts a fresh upload, so its bytes go to no machine.
+                if (call.Closed.IsCancellationRequested)
+                    throw new CallFailed("the socket closed before the commit ran");
                 if (upload.Written != upload.Size)
                     throw new CallFailed($"the upload has {upload.Written} of its {upload.Size} bytes");
                 var bytes = await File.ReadAllBytesAsync(upload.Path, call.Cancellation);
@@ -122,13 +125,13 @@ internal sealed class AttachmentsFeature : IFeature
             {
                 Drop(upload);
             }
-        }, args => OrderOf(args.Upload), (args, call) => DropIfOpen(args.Upload, call.Connection));
+        }, args => OrderOf(args.Upload), (args, call) => DropIfOpen(args.Upload, call.Connection), bulk: true);
         // For an upload the window gave up on with no call in flight. An unknown or dropped upload is fine.
         calls.Write(Feature, "drop", AttachmentsJson.Default.DropArgs, AttachmentsJson.Default.Dropped, (args, call) =>
         {
             DropIfOpen(args.Upload, call.Connection);
             return Task.FromResult<Func<IWriteScope, Dropped>>(_ => new Dropped(true));
-        }, args => OrderOf(args.Upload));
+        }, args => OrderOf(args.Upload), bulk: true);
         calls.Read(Feature, "read", AttachmentsJson.Default.ReadArgs, AttachmentsJson.Default.Piece, async (args, call) =>
         {
             var type = AttachmentStore.TypeOfName(args.Name) ?? throw new CallFailed("not an attachment name");
@@ -142,7 +145,7 @@ internal sealed class AttachmentsFeature : IFeature
             var data = new byte[Math.Min(ChunkBytes, file.Length - args.Offset)];
             await file.ReadExactlyAsync(data, call.Cancellation);
             return new Piece(data, file.Length, type.ContentType);
-        });
+        }, bulk: true);
         // Runs once the socket's queued chunks have all run, so none writes to a file after it's deleted.
         calls.Closed(connection =>
         {

@@ -24,7 +24,11 @@ gpui_kit::assets::icon_assets!(
         GitFork,
         CirclePlay,
         Gauge,
-        RotateCcwClock
+        RotateCcwClock,
+        Folder,
+        FolderOpen,
+        File,
+        ChevronDown
     ]
 );
 

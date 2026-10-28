@@ -41,6 +41,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
     private SocketEndpoint _endpoint = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
+    private Uri _bulkAddress = null!;
 
     public async Task InitializeAsync()
     {
@@ -49,7 +50,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         var store = _store = RowStore.Open(_db);
         _hub = new LiveHub(store, topics: topics);
         _calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        var sessions = _sessions = SessionStore.Open(_db, TimeProvider.System);
+        var sessions = _sessions = SessionStore.Open(_db, TimeProvider.System, "checkouts");
         _box = new FakeMachine("box", sessions);
         new RowsFeature(_hub, store, sessions, new MachineSet(new FakeMachine(null, sessions), _box)).Register(_calls);
         var builder = WebApplication.CreateSlimBuilder();
@@ -60,9 +61,13 @@ public sealed class RowsSocketTests : IAsyncLifetime
         _endpoint = new SocketEndpoint("rows-token", _calls, "test-machine", TimeProvider.System);
         _app.Map("/socket", _endpoint.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(_endpoint.CloseAll);
+        var bulk = new SocketEndpoint("rows-token", _calls, "test-machine", TimeProvider.System, bulk: true);
+        _app.Map("/socket/bulk", bulk.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         _address = new Uri($"ws://{http.Authority}/socket");
+        _bulkAddress = new Uri($"ws://{http.Authority}/socket/bulk");
     }
 
     public async Task DisposeAsync()
@@ -228,7 +233,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
         var s = _sessions.Create("claude", "repo").SessionId;
         Commit(s, 5);
         var expected = _hub.Page(s, 5, 2);
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"{{{s}}}","before":5,"limit":2}}""");
 
@@ -244,7 +249,7 @@ public sealed class RowsSocketTests : IAsyncLifetime
     {
         var s = _sessions.Create("claude", "repo").SessionId;
         Commit(s, RowsFeature.PageLimit + 1);
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"{{{s}}}","before":999999,"limit":100000}}""");
 
@@ -337,10 +342,15 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Assert.True(SpinWait.SpinUntil(() => _box.Asked.Contains($"watch {session.SessionId}"), Wait));
     }
 
-    private async Task<ClientWebSocket> OpenAsync()
+    private Task<ClientWebSocket> OpenAsync() => ConnectAsync(_address);
+
+    // The socket for the large calls, rows/page among them.
+    private Task<ClientWebSocket> OpenBulkAsync() => ConnectAsync(_bulkAddress);
+
+    private static async Task<ClientWebSocket> ConnectAsync(Uri address)
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(_address, CancellationToken.None);
+        await socket.ConnectAsync(address, CancellationToken.None);
         await SendAsync(socket, """{"t":"hello","token":"rows-token","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadAsync(socket));
         return socket;

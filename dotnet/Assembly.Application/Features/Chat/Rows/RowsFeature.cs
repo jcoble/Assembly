@@ -28,6 +28,13 @@ internal sealed class RowsFeature : IFeature
     /// <summary>The most bytes of a tool call's output, and of its diff, that <c>rows/tool</c> sends.</summary>
     public const int ToolCap = 1024 * 1024;
 
+    /// <summary>
+    /// The most prompts <c>rows/attachments</c> sends, and the characters of each one's end: its "Attached image:" lines
+    /// are last. Even escaped at 6 bytes a character that's under 2.5 MB, inside the socket's 4 MB answer.
+    /// </summary>
+    public const int AttachmentPrompts = 50;
+    public const int AttachmentTail = 8192;
+
     private readonly LiveHub _hub;
     private readonly RowStore _store;
     private readonly SessionStore _sessions;
@@ -67,7 +74,7 @@ internal sealed class RowsFeature : IFeature
             var machine = _machines.Named(session.Machine);
             machine?.Watch(session);
             return Task.FromResult(PageJson(page, machine?.ActiveRun(session)));
-        });
+        }, bulk: true);
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {
             var tool = _sessions.Get(args.Session) is { } session
@@ -79,12 +86,21 @@ internal sealed class RowsFeature : IFeature
             var (diff, diffBytes) = Cut(tool.Diff);
             return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, output != tool.Output || diff != tool.Diff,
                 outputBytes, diffBytes);
-        });
+        }, bulk: true);
         // The drawer's Context tab: what the session's tool calls changed, from this machine's copy of its rows.
-        calls.Read(Topic, "files", RowJsonContext.Rows.FilesArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
+        calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
             Task.FromResult(_sessions.Get(args.Session) is null
                 ? throw new CallFailed("unknown session")
                 : _store.FilesTouched(args.Session, call.Cancellation)));
+        // The Context tab's attachments: the prompts that name images, from this machine's copy of the session's rows,
+        // and the machine that has the images.
+        calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionAttachments, (args, call) =>
+        {
+            var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
+            var prompts = _store.Attachments(args.Session, AttachmentPrompts + 1, AttachmentTail, call.Cancellation);
+            return Task.FromResult(new SessionAttachments(session.Machine, [.. prompts.Take(AttachmentPrompts)],
+                prompts.Count > AttachmentPrompts));
+        });
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.
@@ -130,7 +146,7 @@ internal sealed class RowsFeature : IFeature
 
     internal sealed record ToolArgs([property: JsonRequired] string Session, [property: JsonRequired] string Item);
 
-    internal sealed record FilesArgs([property: JsonRequired] string Session);
+    internal sealed record SessionArgs([property: JsonRequired] string Session);
 
     /// <summary>
     /// An opened tool row's detail. Its output and diff are cut at <see cref="ToolCap"/> bytes each, with

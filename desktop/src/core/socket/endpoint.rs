@@ -3,6 +3,7 @@
 
 use std::fmt;
 
+#[derive(Clone)]
 pub struct Endpoint {
     pub port: u16,
     pub token: String,

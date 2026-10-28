@@ -7,9 +7,10 @@ namespace Assembly.Infrastructure.Socket;
 /// <summary>
 /// <c>WS /socket</c>: the one socket the page opens (plan 5.1). The token guard lets it through, since a browser can't
 /// set a header on a socket; its <c>hello</c> carries the token instead. <paramref name="machine"/> is the name the
-/// <c>welcome</c> gives, this host's.
+/// <c>welcome</c> gives, this host's. With <paramref name="bulk"/> it is <c>WS /socket/bulk</c> instead, the page's second
+/// socket, which serves only the large calls and no topics.
 /// </summary>
-internal sealed class SocketEndpoint(string token, SocketDispatcher calls, string machine, TimeProvider time)
+internal sealed class SocketEndpoint(string token, SocketDispatcher calls, string machine, TimeProvider time, bool bulk = false)
 {
     private readonly byte[] _token = Encoding.UTF8.GetBytes(token);
     private readonly CancellationTokenSource _stopping = new();
@@ -27,7 +28,7 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
         // Linked before the accept, so a drop while it's accepted still ends it.
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, _stopping.Token, Volatile.Read(ref _drop).Token);
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
-        await new SocketConnection(socket, calls, time).RunAsync(_token, machine, stopping.Token);
+        await new SocketConnection(socket, calls, time, bulk).RunAsync(_token, machine, stopping.Token);
     }
 
     /// <summary>Closes every socket, as the host starts stopping, so it doesn't wait on them.</summary>
