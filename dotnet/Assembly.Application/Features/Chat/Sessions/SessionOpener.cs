@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Acp.JsonRpc;
@@ -28,11 +29,17 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     /// <summary>The longest title a first message gives a new session.</summary>
     public const int TitleLength = 60;
 
+    // Each session whose stopped resume is still owed its late answer, until that answer's close is done. The late
+    // answer is for the same ACP id the next open resumes, so its close would end the next turn's session.
+    private readonly ConcurrentDictionary<string, Task> _lateCloses = new();
+
     internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken)
     {
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
         var folder = await launcher.CheckoutAsync(sessionStore.Top(session), stages, cancellationToken);
         var adapter = adapters(session.Agent);
+        if (_lateCloses.TryGetValue(sessionId, out var lateClose))
+            await lateClose.WaitAsync(cancellationToken);
         await adapter.ClosedAsync(session.AcpSessionId, cancellationToken);
         var running = await adapter.GetAsync(stages, cancellationToken);
         try
@@ -60,7 +67,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             ResumeSessionResponse? resumed = null;
             try
             {
-                resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken);
+                resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken, resume: true);
                 stages.Mark("session resume");
                 // A helper title was made after the agent last saw the session, so the agent is told it here.
                 if (running.Init.CanRenameSessions && session is { TitleSource: "helper", Title: { } helperTitle })
@@ -125,7 +132,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     // waits for the late answer and closes the session the agent opened, so the adapter isn't shut down under it.
     private async Task<T> AnsweredAsync<T>(
         SharedAdapter adapter, RunningAdapter running, string sessionId, Task<T> opening, Func<T, string> acpSessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool resume = false)
     {
         try
         {
@@ -134,6 +141,9 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await adapter.HoldAsync(running);
+            var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (resume)
+                _lateCloses[sessionId] = closed.Task;
             work.Start("close late open " + sessionId, async stopping =>
             {
                 try
@@ -149,7 +159,15 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
                 }
                 finally
                 {
-                    await adapter.ReleaseAsync(running);
+                    try
+                    {
+                        await adapter.ReleaseAsync(running);
+                    }
+                    finally
+                    {
+                        _lateCloses.TryRemove(KeyValuePair.Create(sessionId, closed.Task));
+                        closed.TrySetResult();
+                    }
                 }
             });
             throw;
