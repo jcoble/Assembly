@@ -61,12 +61,45 @@ public sealed class DirectoryListingTests
 
     // Pins: files#10
     [Fact]
-    public async Task A_link_is_listed_but_never_as_a_folder()
+    public async Task A_link_to_a_folder_lists_as_a_folder_but_listing_it_is_refused()
     {
         using var folder = new GitFolder("src/");
         Directory.CreateSymbolicLink(Path.Combine(folder.Root, "up"), Path.GetTempPath());
         var listing = await DirectoryListing.ListAsync(folder.Root, "", includeExcluded: false, CancellationToken.None);
-        Assert.Equal(["src/", "up"], listing.Entries.Select(Shape));
+        Assert.Equal(["src/", "up/"], listing.Entries.Select(Shape));
+        var failed = await Assert.ThrowsAsync<Application.Common.Calls.CallFailed>(() =>
+            DirectoryListing.ListAsync(folder.Root, "up", includeExcluded: false, CancellationToken.None));
+        Assert.Contains("goes through a link", failed.Message);
+    }
+
+    // Pins: files#3, files#10
+    [Fact]
+    public async Task A_link_to_a_folder_beside_ignored_entries_leaves_them_marked()
+    {
+        using var folder = new GitFolder(Tree);
+        Directory.CreateSymbolicLink(Path.Combine(folder.Root, "up"), Path.GetTempPath());
+        var listing = await DirectoryListing.ListAsync(folder.Root, "", includeExcluded: true, CancellationToken.None);
+        Assert.Contains("bin/ (excluded)", listing.Entries.Select(Shape));
+        Assert.Contains("b.log (excluded)", listing.Entries.Select(Shape));
+        Assert.Contains("up/", listing.Entries.Select(Shape));
+    }
+
+    // Pins: files#17
+    [Fact]
+    public async Task A_folder_that_is_not_a_git_repo_lists_with_nothing_excluded()
+    {
+        var root = Directory.CreateTempSubdirectory("files-plain-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "a.txt"), "x");
+            Directory.CreateDirectory(Path.Combine(root, "src"));
+            var listing = await DirectoryListing.ListAsync(root, "", includeExcluded: true, CancellationToken.None);
+            Assert.Equal(["src/", "a.txt"], listing.Entries.Select(Shape));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     // Pins: files#4
