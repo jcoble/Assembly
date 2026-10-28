@@ -17,7 +17,7 @@ use super::file_tree::{FileTree, Row};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
-use crate::features::shell::default_layout::FILES;
+use crate::core::ui::pane_names::FILES;
 
 /// The design system's `tree` type: 15 px text on 26 px lines.
 pub const TREE_TEXT: Pixels = px(15.);

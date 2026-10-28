@@ -18,7 +18,7 @@ use super::files_pane::{TREE_LINE, TREE_TEXT};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::selected_session::SelectedSession;
-use crate::features::shell::default_layout::SEARCH;
+use crate::core::ui::pane_names::SEARCH;
 
 /// How long typing waits before it searches.
 pub const DEBOUNCE: Duration = Duration::from_millis(150);
