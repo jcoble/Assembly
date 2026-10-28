@@ -31,12 +31,13 @@ use super::event::Event;
 use super::open_failure::OpenFailure;
 use super::out_frame::OutFrame;
 use super::outcome::Outcome;
-use super::row_update::RowsSink;
+use super::row_update::RowUpdate;
 use super::rows_feed::RowsFeed;
 use super::update::Update;
 
 mod frames;
 
+const ROWS: &str = "rows";
 /// While `Disconnected` it tries again after a wait that doubles from the first to the longest; a `Reconnect` (the
 /// backend's ready line) tries at once. A connection's first frame starts the waits over.
 const FIRST_WAIT: Duration = Duration::from_millis(500);
@@ -77,7 +78,7 @@ struct Topic {
 struct Rows {
     handle: u64,
     feed: RowsFeed,
-    updates: RowsSink,
+    updates: UnboundedSender<RowUpdate>,
 }
 
 impl ClientThread {
@@ -201,14 +202,12 @@ impl ClientThread {
             }
             Event::SubscribeRows {
                 id,
-                topic,
-                key,
+                session_id,
                 after,
                 rows,
             } => {
                 let feed = RowsFeed {
-                    topic,
-                    key,
+                    session_id,
                     last_seq: after,
                 };
                 self.rows.insert(
@@ -339,15 +338,11 @@ impl ClientThread {
         let Some(rows) = self.rows.get(&id) else {
             return;
         };
-        let (topic, key, after) = (
-            rows.feed.topic.clone(),
-            rows.feed.key.clone(),
-            rows.feed.last_seq,
-        );
+        let (session, after) = (rows.feed.session_id.clone(), rows.feed.last_seq);
         self.send(&OutFrame::Sub {
             id,
-            topic: &topic,
-            key: Some(&key),
+            topic: ROWS,
+            key: Some(&session),
             after,
         });
     }

@@ -104,15 +104,6 @@ jobs:
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Dir::Cache::Archives=$HOME/.apt-archives install -y build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev \
             libxcb1-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev clang cmake
           sudo chown -R "$USER" ~/.apt-archives
-      # The terminal's VT parser (libghostty-vt) is built from Ghostty's source by Zig, the version its build asks for,
-      # from ziglang.org and checked against the release's published SHA-256.
-      - name: Install Zig 0.15.2
-        timeout-minutes: 5
-        run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/zig.tar.xz" https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz
-          echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
-          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/zig-x86_64-linux-0.15.2" >> "$GITHUB_PATH"
       # The socket tests against the real backend start this build's binary (core/socket/real_backend.rs). With
       # ASSEMBLY_REAL_BACKEND set, a backend that isn't built fails them rather than letting them pass empty.
       - uses: actions/setup-dotnet@v4

@@ -13,10 +13,9 @@ here updates this file in the same commit. Every other commit says `Architecture
   talks to Tauri or adds window, document or media-query listeners.
 - `desktop/`: the window in Rust on GPUI Kit, which replaces `shell/` and `app/` in G0 of the GPUI switch plan. A
   small `src/core/` (with the one socket client in `core/socket/`, the one owner of
-  native views (the browser's) in `core/native_views/`, the backend launcher in `core/backend/`, the palette's command list in
+  native views in `core/native_views/`, the backend launcher in `core/backend/`, the palette's command list in
   `core/commands/`) and one folder per
-  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that. The terminal isn't a native view: GPUI
-  draws it from Ghostty's VT parser, libghostty-vt (`features/terminal/`), fed the backend terminal host's bytes.
+  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that.
 - `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
 
 ## The backend: a core in layers, the rest by feature

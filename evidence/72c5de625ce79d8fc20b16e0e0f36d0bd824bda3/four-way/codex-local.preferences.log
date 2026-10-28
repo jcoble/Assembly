@@ -1,4 +1,0 @@
-ok a save is answered
-ok a save reaches another socket's subscription
-ok a later subscription gets the saved value
-ok a cancelled save is all or nothing (it had committed)
