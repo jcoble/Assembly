@@ -2,8 +2,8 @@
 
 use gpui::TestAppContext;
 use gpui_kit::{
-    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _,
-    Window, div, px,
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window,
+    div, px,
 };
 
 use super::entry::NameMatch;
@@ -45,7 +45,9 @@ fn a_long_folder_ends_inside_the_pane(cx: &mut TestAppContext) {
         Host(pane)
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
-    let folder = cx.debug_bounds("search-folder").expect("the folder is drawn");
+    let folder = cx
+        .debug_bounds("search-folder")
+        .expect("the folder is drawn");
     assert!(
         folder.right() <= px(WIDTH),
         "the folder runs to {:?}, past the pane's {WIDTH} px",
