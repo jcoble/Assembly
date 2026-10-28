@@ -490,6 +490,19 @@ async fn closing_board_drops_owned_work(cx: &mut TestAppContext) {
         },
     )
     .await;
+    // Back to All: a running card shows again, so a fresh clock is held, and closing must be what releases it.
+    let released = seen.lock().unwrap().clock.clone();
+    pane.update(cx, |pane, cx| pane.filter(None, cx));
+    until("a fresh clock held for All", &mut changes, &changed, || {
+        cx.run_until_parked();
+        let seen = seen.lock().unwrap();
+        seen.clock != released
+            && seen
+                .clock
+                .as_ref()
+                .is_some_and(|id| !seen.unsubs.contains(id))
+    })
+    .await;
     pane.update(cx, |pane, cx| pane.select("local", "t1", cx));
     until(
         "the card's detail read sent",
