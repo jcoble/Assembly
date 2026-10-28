@@ -143,6 +143,68 @@ public sealed partial class SessionHostTests
         await other.StopForShutdownAsync();
     }
 
+    // A stop never waits on the adapter's gate, which another session's launch can hold for seconds.
+    [Fact]
+    public async Task A_stopped_open_ends_its_turn_at_once_while_another_session_launches_the_adapter()
+    {
+        var stoppedSession = _sessionStore.Create("claude", "https://github.com/o/r").SessionId;
+        var stopped = new SessionHost(stoppedSession, _hub, _sessionStore, _opener, _time, _log, _work);
+        using var stoppedRows = _hub.Subscribe(stoppedSession, after: 0);
+        var launching = Other();
+        var runId = _host.Send("one")!;
+        var first = await _launcher.NextAsync();
+        await first.StartAsync();
+        var prompt = await first.ReadAsync("session/prompt");
+        var stoppedRun = stopped.Send("b")!;
+        var held = await first.ReadAsync("session/new");
+
+        // The first session's close times out, which retires the first adapter with the held open still on it.
+        var closing = _time.WaitStarts(SharedAdapter.CloseLimit);
+        await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await first.ReadAsync("session/close");
+        await TimeOutClose(closing, runId);
+
+        // A third session's send launches a fresh adapter, and holds the adapter's gate while it does.
+        var launched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var link = new TaskCompletionSource<IAgentLink>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _launcher.Launch = _ =>
+        {
+            launched.TrySetResult();
+            return link.Task;
+        };
+        launching.Send("c");
+        await launched.Task.WaitAsync(Wait);
+
+        var second = new FakeLink();
+        try
+        {
+            Assert.True(stopped.Stop(stoppedRun));
+            var end = (await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started", stoppedRows))[^1];
+            Assert.Equal("cancelled", end.Payload.GetProperty("state").GetString());
+            Assert.False(link.Task.IsCompleted);
+        }
+        finally
+        {
+            link.TrySetResult(second);
+        }
+
+        // The launch finishes and its session's turn runs.
+        await second.StartAsync();
+        await second.ReplyAsync(await second.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
+        await second.CloseAsync();
+        // The late answer is closed on the first adapter, which ends only once the stopped open's one place is given back.
+        await first.ReplyAsync(held, """{"sessionId":"acp-late"}""");
+        var close = await first.ReadAsync("session/close");
+        Assert.Equal("acp-late", close.GetProperty("params").GetProperty("sessionId").GetString());
+        Assert.False(first.Disposed);
+        await first.ReplyAsync(close, "{}");
+        await first.Exited.WaitAsync(Wait);
+        Assert.True(first.Disposed);
+        Assert.False(second.Disposed);
+        await stopped.StopForShutdownAsync();
+        await launching.StopForShutdownAsync();
+    }
+
     // Neither adapter honours a request's cancel, so a session/new stopped after it went out is still opened there.
     [Fact]
     public async Task A_new_session_stopped_before_its_answer_is_closed_once_the_late_answer_arrives()
