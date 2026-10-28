@@ -1,7 +1,7 @@
 //! `SessionPane` owns the open session: the selected session's id (from the selected-session state lane g0-socket
 //! owns), its `SessionView`, the rows subscription and the loads it started, the timeline and the composer. Opening
 //! another session drops the old subscription and loads, so a stale load stops. While a session is on screen it
-//! tells the backend the newest seq shown (`sessions/read`, once the base lane's session summaries land). It registers under the chat pane's
+//! tells the backend the newest seq shown (`sessions/read`, pane_read.rs). It registers under the chat pane's
 //! name through the core registry (lane g0-host, names from lane g0-shape), never by importing another feature.
 //! Replaces Conversation.svelte and the spike's session/panel.rs.
 
@@ -104,6 +104,8 @@ pub struct SessionPane {
     _loads: HashMap<String, Task<()>>,
     /// The writes they started (an answer, a Stop), kept the same way; these go on when the reader switches away.
     _writes: HashMap<String, Task<()>>,
+    /// The newest seq told to the backend as read, for the open session.
+    read_to: i64,
     /// The selected session, followed once the pane is registered.
     _selected: Option<Subscription>,
     /// The composer's events and the timeline's scrolling.
@@ -218,6 +220,7 @@ impl SessionPane {
             _page: None,
             _loads: HashMap::new(),
             _writes: HashMap::new(),
+            read_to: 0,
             _heard: heard,
         }
     }
@@ -235,6 +238,7 @@ impl SessionPane {
         self._page = None;
         self._loads.clear();
         self.view = SessionView::default();
+        self.read_to = 0;
         self.held = Some(Vec::new());
         self.open_folds.clear();
         self.kept.clear();
@@ -492,6 +496,7 @@ impl SessionPane {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
         });
+        self.tell_read(cx);
         cx.notify();
     }
 
@@ -514,6 +519,8 @@ impl SessionPane {
 mod actions;
 #[path = "pane_expand.rs"]
 mod expand;
+#[path = "pane_read.rs"]
+mod read;
 #[path = "pane_render.rs"]
 mod render;
 #[path = "pane_reveal.rs"]

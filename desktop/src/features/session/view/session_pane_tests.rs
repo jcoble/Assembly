@@ -434,3 +434,26 @@ fn the_composers_ring_shows_the_newest_context_report(cx: &mut TestAppContext) {
         "another session's ring waits for its own report"
     );
 }
+
+// Pins: sessions-list#10
+#[gpui::test]
+fn an_open_session_tells_the_backend_the_newest_row_shown_so_its_unread_dot_clears(
+    cx: &mut TestAppContext,
+) {
+    let (pane, client, cx) = open(cx);
+    show(&pane, "s1", cx);
+    client.queue_answer(Ok(page(vec![user(3, "one"), user(5, "two")], false, None)));
+    jump(&client, 5, cx);
+    live(&client, user(6, "three"), cx);
+    assert_eq!(
+        client.reads(),
+        [
+            json!({ "session": "s1", "seq": 5 }),
+            json!({ "session": "s1", "seq": 6 })
+        ]
+    );
+    show(&pane, "s2", cx);
+    client.queue_answer(Ok(page(vec![user(2, "other")], false, None)));
+    jump(&client, 2, cx);
+    assert_eq!(client.reads()[2], json!({ "session": "s2", "seq": 2 }));
+}
