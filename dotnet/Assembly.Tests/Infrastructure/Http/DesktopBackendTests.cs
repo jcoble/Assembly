@@ -81,7 +81,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal(JsonValueKind.Null, (await GetJsonAsync($"/sessions/{sessionId}")).GetProperty("machine").ValueKind);
         Assert.True(File.Exists(Path.Combine(_home, "assembly.db")));
         await agent.CloseAsync();
-        await Until(() => _log.ToString().Contains($"session {sessionId} run {runId}: initialize "));
+        await _log.WrittenAsync($"session {sessionId} run {runId}: initialize ");
     }
 
     // App Nap is held while a turn runs, by the backend from its rows, with no window calls.
@@ -98,8 +98,9 @@ public sealed class DesktopBackendTests : IAsyncLifetime
 
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
 
-        await Until(() => !_backend.ActivityHeld);
+        // The session is closed after its turn's end is saved, which lets it go.
         await agent.CloseAsync();
+        Assert.False(_backend.ActivityHeld);
     }
 
     [Fact]
@@ -251,7 +252,8 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
 
         Assert.Matches("^[0-9a-f]{40}$", (await GetJsonAsync("/version")).GetProperty("commit").GetString());
-        await Until(() => GetJsonAsync($"/sessions/{sessionId}").Result.GetProperty("acpSessionId").ValueKind == JsonValueKind.String);
+        // Saved as the session opened, before its prompt went out.
+        Assert.Equal(JsonValueKind.String, (await GetJsonAsync($"/sessions/{sessionId}")).GetProperty("acpSessionId").ValueKind);
         await agent.CloseAsync();
     }
 
@@ -365,12 +367,15 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     public async Task A_stop_ends_the_adapter_and_the_background_work_and_frees_the_home_and_port(bool stdinCloses)
     {
         var prompted = Path.Combine(_home, "prompted");
+        using var watcher = new FileSystemWatcher(_home, "prompted") { EnableRaisingEvents = true };
+        var marked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        watcher.Created += (_, _) => marked.TrySetResult();
         AgentConnection? adapter = null;
         _launcher.Launch = _ => Task.FromResult<IAgentLink>(adapter = AgentConnection.Start(
             new AgentCommand("/usr/bin/perl", ["-e", FakeAdapter, prompted], _home), new UnclaimedPermissions(), TranscriptLog.Discard()));
         var sessionId = await CreateSessionAsync();
         var runId = await SendAsync(sessionId);
-        await Until(() => File.Exists(prompted));
+        await marked.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var port = _backend.Address.Port;
 
         if (stdinCloses)
@@ -471,16 +476,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         }
 
         Assert.NotEqual(WebSocketState.Open, socket.State);
-    }
-
-    private static async Task Until(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!condition())
-        {
-            Assert.True(DateTime.UtcNow < deadline, "timed out");
-            await Task.Delay(10);
-        }
     }
 
     private async Task DisposeBackendAsync()
