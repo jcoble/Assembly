@@ -160,6 +160,7 @@ impl SearchPane {
             .map_or("", |(folder, _)| folder);
         h_flex()
             .id(ix)
+            .w_full()
             .h(TREE_LINE)
             .px_2()
             .gap_2()
@@ -176,6 +177,7 @@ impl SearchPane {
             )))
             .child(
                 div()
+                    .debug_selector(|| "search-folder".into())
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()

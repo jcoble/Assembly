@@ -9,3 +9,5 @@ pub mod search_pane;
 
 #[cfg(test)]
 mod files_real_tests;
+#[cfg(test)]
+mod search_pane_tests;
