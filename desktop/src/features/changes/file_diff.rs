@@ -15,10 +15,13 @@ pub struct FileDiff {
     pub truncated: bool,
 }
 
-/// One row of the tab's list.
+/// The note under a diff that was cut.
+pub const CUT: &str = "This diff is too long to show in full; the rest is cut.";
+
+/// One row of the tab's list: a part's or a file's name, or a line.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Row {
-    Label(&'static str),
+    Label(String),
     Line(DiffLine),
 }
 
@@ -33,7 +36,7 @@ impl FileDiff {
         let mut rows = Vec::new();
         for (label, lines) in parts {
             if both {
-                rows.push(Row::Label(label));
+                rows.push(Row::Label(label.into()));
             }
             rows.extend(lines.into_iter().map(Row::Line));
         }
@@ -49,7 +52,7 @@ impl FileDiff {
             notes.push("No changes.");
         }
         if self.truncated {
-            notes.push("This diff is too long to show in full; the rest is cut.");
+            notes.push(CUT);
         }
         notes
     }
