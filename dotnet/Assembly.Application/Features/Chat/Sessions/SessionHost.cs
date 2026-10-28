@@ -218,9 +218,6 @@ public sealed partial class SessionHost : IPermissionPolicy
             turn = _turn;
         if (turn is null)
             return Send(text, clientId);
-        // A turn still opening takes the message once its session is open.
-        if (turn.Session is null)
-            await turn.Opened.Task.WaitAsync(cancellationToken);
         if (turn.Session is not { } session || !session.Adapter.Init.CanSteer)
             return null;
 
