@@ -9,13 +9,19 @@ use super::assets::AppAssets;
 #[test]
 fn the_window_has_every_icon_it_draws() {
     // The kit's own ChevronRight, and the window's own: the Home button's house, a question's marks, an unfinished
-    // step, the drawer's tabs.
+    // step, the drawer's tabs, the composer's Send, Stop and Attach, and an attached image's chip.
     for icon in [
         IconName::ChevronRight,
         IconName::House,
         IconName::CircleQuestionMark,
         IconName::ShieldQuestionMark,
         IconName::Dot,
+        IconName::ArrowUp,
+        IconName::Square,
+        IconName::Paperclip,
+        IconName::X,
+        IconName::Image,
+        IconName::CircleAlert,
         IconName::GitBranch,
         IconName::ListChecks,
         IconName::GitFork,

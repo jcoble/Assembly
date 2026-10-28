@@ -1,21 +1,21 @@
 //! `Composer` owns the draft (a multi-line kit input: Enter sends, Shift-Enter adds a line) and each session's unsent
 //! draft while the window runs. Send is `send/send` with the draft and a clientId, which a retry of the same text
 //! reuses. While a turn runs, a send steers it and a Stop button beside the draft stops it (`send/stop` with the run
-//! id). It holds the attachments and the "/" menu's state for when those are drawn; nothing
-//! attaches images, draws the menus or draws the context ring yet, and a sent prompt isn't shown as pending before its
-//! row arrives. Replaces Composer.svelte.
+//! id). The ring beside Send shows how much of the agent's context window is left (context_ring.rs), and the agent's
+//! own menus and "/" commands come from its config (composer_config.rs). Images attach by drop, paste or the picker
+//! and upload at once (composer_attach.rs); a send waits until each has uploaded. A sent prompt isn't shown as pending
+//! before its row arrives. Drawn in composer_render.rs. Replaces Composer.svelte.
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::input::{InputEvent, TextareaState};
 use gpui_kit::*;
 use serde_json::json;
 
+use super::agent_config::AgentConfig;
 use super::attachment::{Attachment, AttachmentState};
+use super::context_meter::ContextMeter;
 use crate::features::session::client::session_client::SessionClient;
 
 pub struct Composer {
@@ -25,16 +25,32 @@ pub struct Composer {
     /// The other sessions' unsent drafts, by session id.
     drafts: HashMap<String, String>,
     attachments: Vec<Attachment>,
+    /// Each attachment's upload while it goes, by its id; a chip removed drops its upload.
+    uploads: HashMap<u64, Task<()>>,
+    /// How many attachments this composer has named, for the next id.
+    attached: u64,
     /// The "/" menu's highlighted row, or `None` while it's closed or Esc hid it.
     slash_selected: Option<usize>,
+    /// Keeps the highlighted row in sight as the keys move it.
+    slash_scroll: ScrollHandle,
+    /// The agent's menus and commands for this session, once read.
+    config: Option<AgentConfig>,
+    /// Why the last pick failed, above the box until the next works or the session changes.
+    error: Option<SharedString>,
     /// The run going now, which Stop stops.
     running: Option<String>,
+    /// How full the agent's context window is, from the session's newest report.
+    meter: Option<ContextMeter>,
     /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
     /// the agent the backend answers its run instead of starting another.
     retry_ids: HashMap<String, (String, String)>,
     /// How many sends this composer has named, for the next clientId.
     named: u64,
+    /// Counts each pick's start and answer; a config read that saw it change answers what came before.
+    picks: u64,
     _enter: Subscription,
+    /// The config read going now.
+    _config: Option<Task<()>>,
     /// Sends and Stops still going; finished ones are let go at the next.
     _tasks: Vec<Task<()>>,
 }
@@ -55,22 +71,34 @@ impl Composer {
                 .submit_on_enter(true)
                 .placeholder("Message")
         });
-        let enter = cx.subscribe_in(&draft, window, |composer, _, event, window, cx| {
-            if let InputEvent::PressEnter { shift: false, .. } = event {
-                composer.send(window, cx);
-            }
-        });
+        let enter = cx.subscribe_in(
+            &draft,
+            window,
+            |composer, _, event, window, cx| match event {
+                InputEvent::PressEnter { shift: false, .. } => composer.send(window, cx),
+                InputEvent::Change => composer.draft_changed(cx),
+                _ => {}
+            },
+        );
         Composer {
             client,
             session: None,
             draft,
             drafts: HashMap::new(),
             attachments: Vec::new(),
+            uploads: HashMap::new(),
+            attached: 0,
             slash_selected: None,
+            slash_scroll: ScrollHandle::new(),
+            config: None,
+            error: None,
             running: None,
+            meter: None,
             retry_ids: HashMap::new(),
             named: 0,
+            picks: 0,
             _enter: enter,
+            _config: None,
             _tasks: Vec::new(),
         }
     }
@@ -99,15 +127,43 @@ impl Composer {
             .update(cx, |draft, cx| draft.set_value(text, window, cx));
         self.session = session;
         self.attachments.clear();
+        self.uploads.clear();
         self.slash_selected = None;
+        (self.config, self.error, self._config) = (None, None, None);
+        self.read_config(cx);
         cx.notify();
     }
 
+    /// The run going now; when one ends, the agent's menus are read again.
     pub fn set_running(&mut self, run: Option<String>, cx: &mut Context<Self>) {
         if self.running != run {
+            let ended = run.is_none();
             self.running = run;
+            if ended {
+                self.read_config(cx);
+            }
             cx.notify();
         }
+    }
+
+    /// The newest context report as (used, size), or `None` before the agent sends one.
+    pub fn set_context(&mut self, context: Option<(i64, i64)>, cx: &mut Context<Self>) {
+        let meter = context.and_then(|(used, size)| ContextMeter::of(used, size));
+        if self.meter != meter {
+            self.meter = meter;
+            cx.notify();
+        }
+    }
+
+    #[cfg(test)]
+    pub fn meter(&self) -> Option<&ContextMeter> {
+        self.meter.as_ref()
+    }
+
+    /// Every attached image has uploaded.
+    fn all_saved(&self) -> bool {
+        (self.attachments.iter())
+            .all(|attachment| matches!(attachment.state, AttachmentState::Saved { .. }))
     }
 
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
@@ -122,21 +178,19 @@ impl Composer {
         self._tasks.push(cx.spawn(async move |_, _| _ = call.await));
     }
 
-    /// Sends the draft once every attachment has uploaded.
+    /// Sends the draft once every attachment has uploaded; one whose upload failed is removed first.
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(session) = self.session.clone() else {
             return;
         };
         let typed = self.draft.read(cx).value().trim().to_string();
-        let uploading = self
-            .attachments
-            .iter()
-            .any(|attachment| matches!(attachment.state, AttachmentState::Uploading));
-        if uploading || (typed.is_empty() && self.attachments.is_empty()) {
+        if !self.all_saved() || (typed.is_empty() && self.attachments.is_empty()) {
             return;
         }
         let text = Attachment::with_lines(&typed, &self.attachments);
-        self.attachments.clear();
+        let attached = std::mem::take(&mut self.attachments);
+        self.uploads.clear();
+        (self.slash_selected, self.error) = (None, None);
         self.draft
             .update(cx, |draft, cx| draft.set_value("", window, cx));
         cx.emit(ComposerEvent::Sending);
@@ -165,18 +219,23 @@ impl Composer {
                             }
                         }
                         // It didn't go out, or the socket closed before it answered (`Aborted`: a send has no key,
-                        // so nothing else takes its place): it comes back to its session's draft, unless something
-                        // new was typed there, and a resend keeps its clientId in case the first did land.
+                        // so nothing else takes its place): it comes back to its session's draft with its images,
+                        // unless something new was typed there, and a resend keeps its clientId in case the first
+                        // did land. Images don't follow a draft to another session.
                         Err(_) => {
                             composer
                                 .retry_ids
                                 .insert(session.clone(), (text, client_id));
                             if composer.session.as_ref() != Some(&session) {
                                 composer.drafts.entry(session).or_insert(typed);
-                            } else if composer.draft.read(cx).value().is_empty() {
+                            } else if composer.draft.read(cx).value().is_empty()
+                                && composer.attachments.is_empty()
+                            {
                                 composer
                                     .draft
                                     .update(cx, |draft, cx| draft.set_value(typed, window, cx));
+                                composer.attachments = attached;
+                                cx.notify();
                             }
                         }
                     })
@@ -190,26 +249,12 @@ const DRAFT_ROWS: usize = 10;
 
 impl EventEmitter<ComposerEvent> for Composer {}
 
-impl Render for Composer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let stop = cx.listener(|composer, _, _, cx| composer.stop(cx));
-        let pill = cx.theme().radius_full();
-        h_flex()
-            .w_full()
-            .gap_2()
-            .items_end()
-            .child(div().flex_1().child(Textarea::new(&self.draft)))
-            .when(self.running.is_some(), |row| {
-                row.child(
-                    Button::new("composer:stop")
-                        .primary()
-                        .rounded(pill)
-                        .label("Stop")
-                        .on_click(stop),
-                )
-            })
-    }
-}
+#[path = "composer_attach.rs"]
+mod attach;
+#[path = "composer_config.rs"]
+mod config;
+#[path = "composer_render.rs"]
+mod render;
 
 #[cfg(test)]
 #[path = "composer_view_tests.rs"]

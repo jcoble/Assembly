@@ -1,12 +1,13 @@
-//! `Attachment` is an image attached to the draft: its name, type and size for the chip, and where its upload is.
+//! `Attachment` is an image attached to the draft: its name and size for the chip, and where its upload is.
 //! G0 makes no thumbnails; a sent message's lines may still name one, from the old app. A sent message carries each as an "Attached image: <path> (<name>) thumbnail: <path>" line after the
 //! text, which the history reads back. Only png, jpeg, gif and webp up to 20 MB attach. Replaces attachments.ts.
 
 use gpui_kit::*;
 
 pub struct Attachment {
+    /// Which chip it is while the draft holds it, so a finished upload finds its own.
+    pub id: u64,
     pub name: SharedString,
-    pub mime: &'static str,
     pub size: u64,
     pub state: AttachmentState,
 }
@@ -27,6 +28,18 @@ impl Attachment {
             return Some("not a supported image");
         }
         (size > MAX_BYTES).then_some("larger than 20 MB")
+    }
+
+    /// The image type a file's name says, by its extension; `None` for anything else.
+    pub fn mime_of(name: &str) -> Option<&'static str> {
+        let (_, extension) = name.rsplit_once('.')?;
+        match extension.to_ascii_lowercase().as_str() {
+            "png" => Some("image/png"),
+            "jpg" | "jpeg" => Some("image/jpeg"),
+            "gif" => Some("image/gif"),
+            "webp" => Some("image/webp"),
+            _ => None,
+        }
     }
 
     /// The draft with one reference line per saved attachment after it.
