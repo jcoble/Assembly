@@ -61,6 +61,13 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             {
                 resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken);
                 stages.Mark("session resume");
+                // A helper title was made after the agent last saw the session, so the agent is told it here.
+                if (running.Init.CanRenameSessions && session is { TitleSource: "helper", Title: { } helperTitle })
+                {
+                    await running.Link.Client.RenameSessionAsync(previous, helperTitle, cancellationToken);
+                    stages.Mark("session rename");
+                }
+
                 var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
                 return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
             }
