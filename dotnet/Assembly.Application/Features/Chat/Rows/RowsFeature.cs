@@ -81,10 +81,15 @@ internal sealed class RowsFeature : IFeature
                 outputBytes, diffBytes);
         });
         // The drawer's Context tab: what the session's tool calls changed, from this machine's copy of its rows.
-        calls.Read(Topic, "files", RowJsonContext.Rows.FilesArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
+        calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
             Task.FromResult(_sessions.Get(args.Session) is null
                 ? throw new CallFailed("unknown session")
                 : _store.FilesTouched(args.Session, call.Cancellation)));
+        // The Context tab's attachments: each prompt's image lines, from this machine's copy of the session's rows.
+        calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListPromptAttachments,
+            (args, call) => Task.FromResult(_sessions.Get(args.Session) is null
+                ? throw new CallFailed("unknown session")
+                : _store.Attachments(args.Session, call.Cancellation)));
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.
@@ -130,7 +135,7 @@ internal sealed class RowsFeature : IFeature
 
     internal sealed record ToolArgs([property: JsonRequired] string Session, [property: JsonRequired] string Item);
 
-    internal sealed record FilesArgs([property: JsonRequired] string Session);
+    internal sealed record SessionArgs([property: JsonRequired] string Session);
 
     /// <summary>
     /// An opened tool row's detail. Its output and diff are cut at <see cref="ToolCap"/> bytes each, with
