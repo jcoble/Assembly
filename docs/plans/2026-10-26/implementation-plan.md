@@ -489,6 +489,10 @@ runs through `db.Writer` when the feature is built. `ICallRegistry` has no schem
 - The backend's token reaches the handler, and from there everything it awaits (rule 5).
 - Closing the socket cancels every read still running on it. It never cancels a queued write (5.9).
 - A forwarded call to a remote machine sends `cancel` on the machine socket (phase C2).
+- Only `session/cancel`, sent by an explicit Stop, reaches the agent. A socket cancel or the 30-second limit only stops
+  our wait, because neither adapter honours `$/cancel_request` (probe 2026-10-27,
+  `dotnet/notes/acp-cancel-probe.md`). So a load (`session/new` or `session/resume`) cancelled after it was sent is
+  closed on the agent once its late answer arrives (C3).
 
 ### 5.4 Errors on the page
 

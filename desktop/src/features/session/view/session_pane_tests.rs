@@ -284,11 +284,7 @@ fn a_sent_prompt_goes_to_the_top_once_it_arrives(cx: &mut TestAppContext) {
     cx.update(|_, cx| timeline.update(cx, |timeline, cx| timeline.scroll_to_row(0, cx)));
     cx.run_until_parked();
     let composer = cx.update(|_, cx| pane.read(cx).composer.clone());
-    cx.update(|_, cx| {
-        composer.update(cx, |_, cx| {
-            cx.emit(ComposerEvent::Sending { text: "hi".into() })
-        })
-    });
+    cx.update(|_, cx| composer.update(cx, |_, cx| cx.emit(ComposerEvent::Sending)));
     live(&client, user(31, "hi"), cx);
     // The list stops where its end fills the window, so the prompt sits as high as the rows allow.
     assert!(top(&pane, cx) > 0, "the view went to the prompt");

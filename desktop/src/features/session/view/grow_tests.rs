@@ -2,7 +2,8 @@ use std::time::{Duration, Instant};
 
 use gpui::TestAppContext;
 
-use super::{FADE_AFTER, GROW, ease, faded, progress, toggled, turn};
+use super::{ease, progress, toggled, turn};
+use crate::core::theme::grow::{FADE_AFTER, GROW, faded};
 
 const EASE: Duration = Duration::from_millis(200);
 

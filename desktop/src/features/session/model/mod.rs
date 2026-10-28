@@ -1,6 +1,9 @@
 //! What the timeline draws, worked out from the rows: plain data and functions with no GPUI, so tests run them
 //! directly. Ported from rows/store.ts and session/*.ts.
 
+pub mod activity;
+#[cfg(test)]
+mod activity_tests;
 pub mod change;
 pub mod entries;
 #[cfg(test)]

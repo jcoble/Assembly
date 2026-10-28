@@ -25,6 +25,9 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     /// <summary>How long a session's close is given before its adapter is retired.</summary>
     public static readonly TimeSpan CloseLimit = TimeSpan.FromSeconds(5);
 
+    /// <summary>The clock its limits are timed on.</summary>
+    internal TimeProvider Time => time;
+
     private static readonly Implementation ClientInfo = new("assembly-backend", "0.1.0");
 
     private readonly SemaphoreSlim _gate = new(1, 1);

@@ -12,6 +12,7 @@ fn item(key: &str, kind: ItemKind) -> Item {
         key: key.into(),
         run_id: Some("r1".into()),
         kind,
+        at: 0,
     }
 }
 
@@ -72,7 +73,7 @@ fn a_closed_fold_shows_one_heading_where_its_first_hidden_item_was() {
         &folds(&["th", "before"]),
         &HashSet::new(),
         false,
-        false,
+        None,
     );
     assert_eq!(keys(&items, &entries), ["u", "fold:r1", "reply"]);
     assert_eq!(
@@ -90,7 +91,7 @@ fn a_closed_fold_shows_one_heading_where_its_first_hidden_item_was() {
 fn an_open_fold_keeps_its_heading_and_shows_its_work_under_it() {
     let items = items();
     let open = HashSet::from(["r1".to_string()]);
-    let entries = Entry::all(&items, &folds(&["th", "before"]), &open, false, false);
+    let entries = Entry::all(&items, &folds(&["th", "before"]), &open, false, None);
     assert_eq!(
         keys(&items, &entries),
         ["u", "fold:r1", "th", "before", "reply"]
@@ -106,7 +107,7 @@ fn a_closed_fold_that_hides_the_end_of_a_reply_says_so() {
         &folds(&["th", "before"]),
         &HashSet::new(),
         false,
-        false,
+        None,
     );
     assert_eq!(
         entries[1],
@@ -122,7 +123,7 @@ fn a_closed_fold_that_hides_the_end_of_a_reply_says_so() {
 #[test]
 fn the_loading_line_goes_first_and_the_working_line_last() {
     let items = items();
-    let entries = Entry::all(&items, &HashMap::new(), &HashSet::new(), true, true);
+    let entries = Entry::all(&items, &HashMap::new(), &HashSet::new(), true, Some("r1"));
     assert_eq!(
         keys(&items, &entries),
         ["line:loading", "u", "th", "before", "reply", "line:working"]
@@ -142,6 +143,32 @@ fn a_cancelled_runs_error_is_left_out_unless_it_ends_a_reply() {
         )
     };
     let items = vec![note("a"), cancelled("e1"), note("b"), cancelled("e2")];
-    let entries = Entry::all(&items, &HashMap::new(), &HashSet::new(), false, false);
+    let entries = Entry::all(&items, &HashMap::new(), &HashSet::new(), false, None);
     assert_eq!(keys(&items, &entries), ["a", "b", "e2"]);
+}
+
+// Pins: g0-session#12
+#[test]
+fn a_running_turns_tool_calls_draw_in_its_card_not_as_rows() {
+    let tool = |key: &str, run: &str| Item {
+        run_id: Some(run.into()),
+        ..item(
+            key,
+            ItemKind::Tool {
+                item_id: key.into(),
+                tool: serde_json::from_value(
+                    serde_json::json!({ "name": "Bash", "state": "started", "hasDetail": false }),
+                )
+                .unwrap(),
+            },
+        )
+    };
+    let mut items = items();
+    items.push(tool("old", "r0"));
+    items.push(tool("t1", "r1"));
+    let entries = Entry::all(&items, &HashMap::new(), &HashSet::new(), false, Some("r1"));
+    assert_eq!(
+        keys(&items, &entries),
+        ["u", "th", "before", "reply", "old", "line:working"]
+    );
 }

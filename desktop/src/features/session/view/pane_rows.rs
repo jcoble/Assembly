@@ -6,13 +6,16 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
 use super::SessionPane;
+use crate::features::session::model::activity;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::markdown_text::markdown_of;
-use crate::features::session::model::turn_line::{checkout_line, turn_line};
+use crate::features::session::model::turn_line::checkout_line;
+use crate::features::session::view::activity_card::ActivityCard;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::ItemRow;
 use crate::features::session::view::session_action::OnAction;
+use crate::features::session::view::tool_row::ToolRow;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
@@ -81,9 +84,29 @@ impl SessionPane {
                 None => div().into_any_element(),
             },
             Entry::Working => {
-                let (run, since) = self.live_since.clone().unzip();
-                let stats = run.and_then(|run| self.view.stats.get(&run));
-                line(turn_line(stats, since.or(Some(now)), now), muted)
+                let Some((run, since)) = self.live_since.clone() else {
+                    return div().into_any_element();
+                };
+                let steps = activity::steps(&self.view.items, &run, since, now);
+                let footer = activity::footer(steps.len(), now - since);
+                let steps = steps
+                    .into_iter()
+                    .filter_map(|step| {
+                        let item = &self.view.items[step.at];
+                        let ItemKind::Tool { tool, .. } = &item.kind else {
+                            return None;
+                        };
+                        let row = ToolRow {
+                            key: item.key.clone(),
+                            tool: tool.clone(),
+                            kept: self.kept.get(&item.key).cloned().unwrap_or_default(),
+                            took_ms: Some(step.took_ms),
+                            on_action: on_action.clone(),
+                        };
+                        Some(row.into_any_element())
+                    })
+                    .collect();
+                ActivityCard { steps, footer }.into_any_element()
             }
         }
     }
