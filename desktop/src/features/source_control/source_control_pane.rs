@@ -62,8 +62,8 @@ fn lists(status: &GitStatus, cx: &App) -> Div {
                 .child(files.len().to_string());
             let rows = files.into_iter().map(|(letter, file)| {
                 let color = match letter {
-                    'A' | 'U' => theme.success,
-                    'D' | 'C' => theme.danger,
+                    'A' | 'C' | 'U' => theme.success,
+                    'D' | '!' => theme.danger,
                     _ => theme.warning,
                 };
                 h_flex()
