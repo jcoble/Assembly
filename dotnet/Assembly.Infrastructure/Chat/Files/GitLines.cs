@@ -76,14 +76,12 @@ internal static class GitLines
                 await stdin.WriteAsync(line);
                 await stdin.WriteAsync('\0');
             }
+            // Closing flushes what's buffered, so it too meets a git that has stopped.
+            stdin.Close();
         }
         catch (IOException)
         {
-            // git stopped reading: it was killed, and the read says why.
-        }
-        finally
-        {
-            stdin.Close();
+            // git stopped reading: it failed or was killed, and the read says why.
         }
     }
 
