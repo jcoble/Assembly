@@ -17,11 +17,19 @@ fn session(active_run: Option<&str>) -> SessionItem {
 #[test]
 fn a_working_session_has_a_still_dot() {
     assert_eq!(
-        SessionRow::of(&session(Some("r1")), false).presence,
+        SessionRow::of(&session(Some("r1")), false, false).presence,
         Presence::Working
     );
     assert_eq!(
-        SessionRow::of(&session(None), false).presence,
+        SessionRow::of(&session(None), false, false).presence,
         Presence::Idle
     );
+}
+
+// Pins: sessions-list#11
+#[test]
+fn a_session_on_a_machine_that_isnt_answering_shows_offline_first() {
+    let row = SessionRow::of(&session(Some("r1")), false, true);
+    assert_eq!(row.presence, Presence::Offline);
+    assert_eq!(row.presence.word(), Some("offline"));
 }

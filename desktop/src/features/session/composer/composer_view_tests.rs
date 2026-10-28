@@ -208,3 +208,26 @@ fn finished_sends_are_let_go(cx: &mut TestAppContext) {
     }
     assert_eq!(cx.update(|_, cx| composer.read(cx)._tasks.len()), 1);
 }
+
+// Pins: sessions-list#11
+#[gpui::test]
+fn while_its_machine_is_offline_nothing_is_sent_or_stopped(cx: &mut TestAppContext) {
+    let (composer, client, _events, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx);
+        composer.set_running(Some("r1".into()), cx);
+        composer.set_offline(Some("box".into()), cx);
+        composer.stop(cx);
+    });
+    type_and_send(&composer, "hello", cx);
+    assert!(client.calls().is_empty(), "{:?}", client.calls());
+    assert_eq!(
+        draft(&composer, cx),
+        "hello",
+        "the draft waits for the machine"
+    );
+    client.queue_answer(Ok(json!({ "runId": "r2" })));
+    composer.update(cx, |composer, cx| composer.set_offline(None, cx));
+    type_and_send(&composer, "hello", cx);
+    assert_eq!(client.calls()[0].0, "send/send");
+}

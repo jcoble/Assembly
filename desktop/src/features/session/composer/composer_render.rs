@@ -1,8 +1,8 @@
 //! How the composer draws, to the approved look (the mockup canvas's board 4): one box on the raised ground with the
 //! design system's radius-xl corners: attached images' chips, the draft, and a footer with Attach and the agent's menus
 //! as pills on the left, then the context ring, Stop while a turn runs and the round Send, which is the one solid
-//! button and is dimmed while there's nothing to send or an image hasn't uploaded. Files dropped anywhere on the box
-//! light its edge. The "/" list floats just above the box, and why something failed sits above it.
+//! button and is dimmed while there's nothing to send, an image hasn't uploaded or the session's machine is offline
+//! (which a line above the box says; Stop is dimmed then too). Files dropped anywhere on the box light its edge. The "/" list floats just above the box, and why something failed sits above it.
 
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -31,6 +31,7 @@ impl Render for Composer {
         let empty = self.draft.read(cx).value().trim().is_empty() && self.attachments.is_empty();
         let waiting = !self.all_saved();
         let running = self.running.is_some();
+        let offline = self.offline.is_some();
         let composer = cx.weak_entity();
         let on_select: OnSelect = Rc::new(move |id, value, _, cx| {
             _ = composer.update(cx, |composer, cx| {
@@ -73,6 +74,7 @@ impl Render for Composer {
                         .icon(Glyph::Square)
                         .rounded(pill)
                         .with_size(ROUND_BUTTON)
+                        .disabled(offline)
                         .tooltip("Stop")
                         .on_click(cx.listener(|composer, _, _, cx| composer.stop(cx))),
                 )
@@ -83,7 +85,7 @@ impl Render for Composer {
                     .icon(Glyph::ArrowUp)
                     .rounded(pill)
                     .with_size(ROUND_BUTTON)
-                    .disabled(empty || waiting)
+                    .disabled(empty || waiting || offline)
                     .tooltip(if running { "Steer" } else { "Send" })
                     .on_click(cx.listener(|composer, _, window, cx| composer.send(window, cx))),
             );
@@ -128,7 +130,22 @@ impl Render for Composer {
             });
         let root = self.slash_keys(div().relative().w_full().px_4().pt_1().pb_3(), cx);
         let theme = cx.theme();
-        root.when_some(self.error.clone(), |root, error| {
+        let offline = (self.offline.as_ref()).map(|machine| {
+            SharedString::from(format!(
+                "{machine} is offline. Send and Stop wait until it answers."
+            ))
+        });
+        root.when_some(offline, |root, line| {
+            root.child(
+                div()
+                    .px_1()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(line),
+            )
+        })
+        .when_some(self.error.clone(), |root, error| {
             root.child(
                 div()
                     .px_1()

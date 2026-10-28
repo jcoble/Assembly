@@ -20,6 +20,11 @@ pub struct Header {
 }
 
 impl Header {
+    /// The open session's machine, once the topic has sent it; `None` for this one.
+    pub fn machine(&self) -> Option<&str> {
+        (self.item.as_ref()?.machine.as_deref()).filter(|machine| !machine.is_empty())
+    }
+
     /// Follows `session`, or shows nothing.
     pub fn show(&mut self, session: Option<String>, cx: &mut Context<Self>) {
         (self.item, self._feed) = (None, None);
