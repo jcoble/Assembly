@@ -1,7 +1,7 @@
 //! `CenterPanes` opens a pane in the center's tab row, beside Chat, for any feature: a file, a diff, later an editor or
 //! a browser. Each pane is opened under a stable key, so opening the same key again brings its tab forward instead of
 //! adding a second one. The tab's chip shows the pane's `Panel::title`. The dock holds the pane's only handle, so
-//! closing its tab drops the view and the tasks it holds. Frame sets it up with the window's dock.
+//! closing its tab drops the view and the tasks it holds. The shell's Frame sets it up with the window's dock.
 
 use std::collections::HashMap;
 

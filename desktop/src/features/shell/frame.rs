@@ -11,13 +11,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
 
-use super::center_panes::CenterPanes;
 use super::default_layout::LAYOUT_VERSION;
 use super::layout_store::{LayoutStore, WriteLayout};
 use super::motion_skin::MotionSkin;
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
 use crate::core::native_views::views::NativeViews;
+use crate::core::ui::center_panes::CenterPanes;
 
 /// The work panel's distance from the window's edges (the design system's `panel-gap`).
 const PANEL_GAP: Pixels = px(8.);
