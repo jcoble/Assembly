@@ -143,6 +143,16 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_session_this_machine_doesn_t_run_gets_no_terminal_even_with_a_folder()
+    {
+        // Pins: terminal#12
+        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(), _ => throw new CallFailed("on another machine"));
+
+        await Assert.ThrowsAsync<CallFailed>(() => host.StartAsync(new StartArgs(_folder, Owner: "remote-1")));
+        Assert.Empty(_pty.Started);
+    }
+
+    [Fact]
     public async Task It_runs_a_login_shell_or_one_command_in_it_and_a_blank_command_is_none()
     {
         // Pins: terminal#1

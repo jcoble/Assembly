@@ -20,7 +20,7 @@ internal sealed class TerminalHost : IAsyncDisposable
     private readonly Dictionary<string, RunningTerminal> _terminals = [];
     private bool _stopped;
 
-    /// <param name="sessionFolder">A session's folder, once it exists, for a start with an owner and no folder.</param>
+    /// <param name="sessionFolder">A session's folder, once it exists, for a start with an owner and no folder. It throws for a session this machine doesn't run, which fails the start.</param>
     public TerminalHost(IPtyStarter pty, ITopics topics, TimeProvider time, Func<string, string?>? sessionFolder = null)
     {
         _pty = pty;
@@ -56,8 +56,9 @@ internal sealed class TerminalHost : IAsyncDisposable
         };
         if (owner is not null)
             environment["ASSEMBLY_SESSION_ID"] = owner;
-        var cwd = Blank(args.Cwd) ?? (owner is null ? null : _sessionFolder(owner))
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        // Asked whatever the folder, since it refuses a session this machine doesn't run.
+        var sessionFolder = owner is null ? null : _sessionFolder(owner);
+        var cwd = Blank(args.Cwd) ?? sessionFolder ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         // Only a session's shell is handed back; a command it runs (a Run, a sign-in) is a terminal of its own.
         var reusable = owner is not null && command is null;
         if (reusable && RunningShell(owner) is { } running)

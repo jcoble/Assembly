@@ -14,7 +14,7 @@ terminal#5 Switching sessions disposes the terminal's view in the window, every 
 terminal#6 A terminal keeps at most 16 MB of output; past that it drops the oldest down to 12 MB. A slow window can't make it keep more.
 terminal#7 When the program exits, the window sees all of its output first, then its exit code (a signal shows as 128 plus its number). An exited terminal keeps its output readable until you close it.
 terminal#8 Closing a terminal ends its program and everything the program started, and lets go of its output. Quitting the app or stopping a remote host closes every terminal it started.
-terminal#9 A session asks for its terminal again and gets the one it already has while that one is still running. Once it has ended, the next ask closes it and starts a new one.
+terminal#9 A session asks for its terminal again and gets the one it already has while that one is still running. Once it has ended, the next ask closes it and starts a new one. A session's shell otherwise lives until the backend stops.
 terminal#10 A terminal on a remote machine behaves the same as one on this computer.
 terminal#11 The terminal draws in the theme's monospace font and its colors, light themes included: the text, background and cursor are the theme's, and the 16 ANSI colors are its base colors.
 terminal#12 The bottom dock's Terminal tab shows the selected session's terminal, opened the first time the tab is shown with that session, never while the dock is closed. It starts in the session's folder, or the home folder until the session's first turn has checked one out. A session on another machine, or a helper of one, says its terminal can't be opened here yet.
