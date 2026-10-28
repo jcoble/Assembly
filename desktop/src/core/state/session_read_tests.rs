@@ -1,15 +1,14 @@
-//! When the Worktrees pane reads (scm#4), and what it shows with no session or a git failure (scm#6), on the socket
-//! client against `FakeBackend`.
+//! When a tab's read of the selected session runs (scm#4), and what it shows with no session or a git failure
+//! (scm#6), on the socket client against `FakeBackend`. The answers are `worktrees/list`'s shape.
 
 use std::sync::{Arc, Mutex};
 
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
-use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{Entity, VisualTestContext};
+use gpui_kit::{AppContext as _, Entity};
 use serde_json::{Value, json};
 
-use super::{Shown, WorktreesPane};
+use super::{SessionRead, Shown};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
@@ -78,11 +77,11 @@ fn listed(session: &str) -> Value {
 }
 
 struct Open<'a> {
-    pane: Entity<WorktreesPane>,
+    read: Entity<SessionRead<Value>>,
     seen: Arc<Mutex<Seen>>,
     changes: UnboundedReceiver<()>,
     changed: UnboundedSender<()>,
-    cx: &'a mut VisualTestContext,
+    cx: &'a mut TestAppContext,
     _heard: gpui_kit::Subscription,
     _backend: FakeBackend,
 }
@@ -103,11 +102,11 @@ fn open(cx: &mut TestAppContext) -> Open<'_> {
             cx,
         );
     });
-    let (pane, cx) = cx.add_window_view(WorktreesPane::new);
+    let read = cx.new(|cx| SessionRead::<Value>::new("worktrees", "list", cx));
     let tell = changed.clone();
-    let heard = cx.update(|_, cx| cx.observe(&pane, move |_, _| _ = tell.unbounded_send(())));
+    let heard = cx.update(|cx| cx.observe(&read, move |_, _| _ = tell.unbounded_send(())));
     Open {
-        pane,
+        read,
         seen,
         changes,
         changed,
@@ -119,7 +118,7 @@ fn open(cx: &mut TestAppContext) -> Open<'_> {
 
 impl Open<'_> {
     fn select(&mut self, session: Option<&str>) {
-        self.cx.update(|_, cx| {
+        self.cx.update(|cx| {
             SelectedSession::global(cx).update(cx, |selected, cx| {
                 selected.select(session.map(Into::into), cx)
             })
@@ -128,22 +127,21 @@ impl Open<'_> {
     }
 
     fn show(&mut self, active: bool) {
-        self.pane.update_in(self.cx, |pane, window, cx| {
-            pane.set_active(active, window, cx)
-        });
+        self.read
+            .update(self.cx, |read, cx| read.set_active(active, cx));
         self.cx.run_until_parked();
     }
 
-    fn shown(&mut self) -> Shown {
-        self.cx.update(|_, cx| self.pane.read(cx).shown.clone())
+    fn shown(&mut self) -> Shown<Value> {
+        self.cx.update(|cx| self.read.read(cx).shown().clone())
     }
 
-    async fn until(&mut self, what: &str, mut done: impl FnMut(&Seen, &Shown) -> bool) {
-        let (pane, seen) = (self.pane.clone(), self.seen.clone());
+    async fn until(&mut self, what: &str, mut done: impl FnMut(&Seen, &Shown<Value>) -> bool) {
+        let (read, seen) = (self.read.clone(), self.seen.clone());
         let cx = &mut *self.cx;
         until(what, &mut self.changes, &self.changed, || {
             cx.run_until_parked();
-            let shown = cx.update(|_, cx| pane.read(cx).shown.clone());
+            let shown = cx.update(|cx| read.read(cx).shown().clone());
             done(&seen.lock().unwrap(), &shown)
         })
         .await;
@@ -173,17 +171,17 @@ async fn it_reads_only_while_shown_and_follows_the_picked_session(cx: &mut TestA
     open.until("s3 read", |seen, _| seen.reads.len() >= 3).await;
     assert_eq!(open.seen.lock().unwrap().sessions(), vec!["s1", "s2", "s3"]);
 
-    // Shown again for the same session, it reads again, and so does Refresh.
+    // Shown<Value> again for the same session, it reads again, and so does Refresh.
     open.until(
         "s3 shown",
-        |_, shown| matches!(shown, Shown::Read(list) if list.worktrees[0].path == "/r/s3"),
+        |_, shown| matches!(shown, Shown::Read(list) if list["worktrees"][0]["path"] == "/r/s3"),
     )
     .await;
     open.show(false);
     open.show(true);
     open.until("shown again", |seen, _| seen.reads.len() >= 4)
         .await;
-    open.pane.update(open.cx, |pane, cx| pane.refresh(cx));
+    open.read.update(open.cx, |read, cx| read.refresh(cx));
     open.until("refreshed", |seen, _| seen.reads.len() >= 5)
         .await;
     assert_eq!(

@@ -1,8 +1,7 @@
-//! `WorktreesPane` is the drawer's Worktrees tab: the selected session's project's worktrees from `worktrees/list`.
-//! It reads when the tab comes into view, when the selected session changes while it's shown, and from Refresh, and
-//! never while hidden; hiding it or picking another session stops the read on its way (scm#4). Each row grows in
-//! place to show its folder and head commit. It changes nothing on disk (scm#8). Replaces WorktreesPanel.svelte and
-//! worktreeManagerService.ts. Inspect, Remove and Archive aren't ported yet.
+//! `WorktreesPane` is the drawer's Worktrees tab: the selected session's project's worktrees from `worktrees/list`,
+//! read only while the tab is shown (`SessionRead`, scm#4). Each row grows in place to show its folder and head
+//! commit. It changes nothing on disk (scm#8). Replaces WorktreesPanel.svelte and worktreeManagerService.ts. Inspect,
+//! Remove and Archive aren't ported yet.
 
 use std::collections::HashMap;
 
@@ -12,50 +11,22 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde::Deserialize;
-use serde_json::{Value, json};
 
 use super::worktree::Worktree;
 use super::worktree_list::WorktreeList;
 use super::worktree_row;
-use crate::core::socket::client::SocketClient;
-use crate::core::socket::outcome::Outcome;
-use crate::core::state::selected_session::SelectedSession;
+use crate::core::state::session_read::{SessionRead, Shown};
 use crate::core::ui::expand_row::ExpandRow;
 
 /// The pane's name in the saved layout (g0-shape's `WORKTREES`).
 const WORKTREES: &str = "Worktrees";
 
-/// What the pane shows.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Shown {
-    /// No session is selected (scm#6).
-    NoSession,
-    /// The first read for this session is on its way.
-    Reading,
-    Read(WorktreeList),
-    /// Git's own message, or why the call failed (scm#6).
-    Failed(String),
-}
-
-#[derive(Deserialize)]
-struct Listed {
-    worktrees: Vec<Worktree>,
-}
-
 pub struct WorktreesPane {
     focus: FocusHandle,
-    /// The tab is the drawer's shown one and the drawer is open.
-    active: bool,
-    /// The session the shown list, or the read on its way, is for.
-    read_for: Option<String>,
-    shown: Shown,
-    reading: bool,
+    read: Entity<SessionRead<WorktreeList>>,
     filter: Entity<InputState>,
     /// Each row's grow-in-place, by worktree path, kept across reads so an open row stays open.
     rows: HashMap<String, Entity<ExpandRow>>,
-    /// The read on its way; dropping it cancels the call on the backend.
-    _read: Option<Task<()>>,
     _heard: Vec<Subscription>,
 }
 
@@ -68,14 +39,11 @@ impl WorktreesPane {
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let read = cx.new(|cx| SessionRead::new("worktrees", "list", cx));
         let filter =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter by branch or folder"));
         let heard = vec![
-            cx.observe(&SelectedSession::global(cx), |pane, _, cx| {
-                if pane.active {
-                    pane.read(false, cx);
-                }
-            }),
+            cx.observe(&read, |_, _, cx| cx.notify()),
             cx.subscribe(&filter, |_, _, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     cx.notify();
@@ -84,76 +52,11 @@ impl WorktreesPane {
         ];
         Self {
             focus: cx.focus_handle(),
-            active: false,
-            read_for: None,
-            shown: Shown::NoSession,
-            reading: false,
+            read,
             filter,
             rows: HashMap::new(),
-            _read: None,
             _heard: heard,
         }
-    }
-
-    /// Reads the list again (the Refresh button, and Try again after a failure).
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.read(true, cx);
-    }
-
-    /// Reads the selected session's worktrees, unless they're already shown or on their way and `again` isn't set.
-    fn read(&mut self, again: bool, cx: &mut Context<Self>) {
-        let selected = SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(String::from);
-        let Some(session) = selected else {
-            self.read_for = None;
-            self.reading = false;
-            self._read = None;
-            self.shown = Shown::NoSession;
-            cx.notify();
-            return;
-        };
-        let same = self.read_for.as_deref() == Some(session.as_str());
-        if same && !again && !matches!(self.shown, Shown::Failed(_)) {
-            return;
-        }
-        if !same {
-            self.shown = Shown::Reading;
-            self.rows.clear();
-        }
-        self.read_for = Some(session.clone());
-        let Some(socket) = SocketClient::try_global(cx) else {
-            self.shown = Shown::Failed("The backend isn't running.".into());
-            cx.notify();
-            return;
-        };
-        // Keyed, so a newer read answers this one Aborted and cancels it on the backend.
-        let call = socket.read(cx).call::<Value>(
-            "worktrees",
-            "list",
-            json!({ "session": session }),
-            Some("worktrees/list"),
-        );
-        self.reading = true;
-        self._read = Some(cx.spawn(async move |pane, cx| {
-            let outcome = call.await;
-            _ = pane.update(cx, |pane, cx| {
-                pane.reading = false;
-                pane.shown = match outcome {
-                    Outcome::Ok(result) => match serde_json::from_value::<Listed>(result) {
-                        Ok(listed) => Shown::Read(WorktreeList {
-                            worktrees: listed.worktrees,
-                        }),
-                        Err(error) => Shown::Failed(format!("The worktrees didn't read: {error}")),
-                    },
-                    Outcome::Aborted => return,
-                    Outcome::Failed(failure) => Shown::Failed(failure.message),
-                };
-                cx.notify();
-            });
-        }));
-        cx.notify();
     }
 
     /// The row for `worktree`, made the first time it's drawn and given this read's facts after.
@@ -199,17 +102,8 @@ impl BasePanel for WorktreesPane {
         false
     }
 
-    /// Shown, it reads again, since the worktrees may have changed while it was hidden; hidden, a read on its way
-    /// stops.
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
-        self.active = active;
-        if active {
-            self.read(true, cx);
-        } else if self.reading {
-            self.reading = false;
-            self._read = None;
-            self.read_for = None;
-        }
+        self.read.update(cx, |read, cx| read.set_active(active, cx));
     }
 }
 
@@ -224,6 +118,12 @@ impl Render for WorktreesPane {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let line = |text: String| div().px_3().text_sm().text_color(muted).child(text);
+        let (shown, reading) = {
+            let read = self.read.read(cx);
+            (read.shown().clone(), read.reading())
+        };
+        let refresh =
+            cx.listener(|pane, _, _, cx| pane.read.update(cx, |read, cx| read.refresh(cx)));
         let header = h_flex()
             .px_3()
             .py_2()
@@ -239,15 +139,11 @@ impl Render for WorktreesPane {
                 Button::new("worktrees-refresh")
                     .ghost()
                     .compact()
-                    .label(if self.reading {
-                        "Reading…"
-                    } else {
-                        "Refresh"
-                    })
-                    .disabled(self.reading || self.shown == Shown::NoSession)
-                    .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx))),
+                    .label(if reading { "Reading…" } else { "Refresh" })
+                    .disabled(reading || shown == Shown::NoSession)
+                    .on_click(refresh),
             );
-        let body = match self.shown.clone() {
+        let body = match shown {
             Shown::NoSession => {
                 line("Pick a session to see its project's worktrees.".into()).into_any_element()
             }
@@ -262,7 +158,9 @@ impl Render for WorktreesPane {
                         .ghost()
                         .compact()
                         .label("Try again")
-                        .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx))),
+                        .on_click(cx.listener(|pane, _, _, cx| {
+                            pane.read.update(cx, |read, cx| read.refresh(cx))
+                        })),
                 )
                 .into_any_element(),
             Shown::Read(list) => {
@@ -301,7 +199,3 @@ impl Render for WorktreesPane {
             .child(body)
     }
 }
-
-#[cfg(test)]
-#[path = "worktrees_pane_tests.rs"]
-mod tests;
