@@ -23,5 +23,6 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(MachineItem))]
 [JsonSerializable(typeof(MachinesFeature.AgentsArgs))]
+[JsonSerializable(typeof(MachinesFeature.ConnectArgs))]
 [JsonSerializable(typeof(MachinesFeature.AgentList))]
 internal sealed partial class SessionsJson : JsonSerializerContext;

@@ -154,7 +154,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             AdapterLauncher.ExistingFolder(Path.Combine(home, "sessions"), sessionStore));
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var clock = new BackendClock(topics, TimeProvider.System, work);
-        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System);
+        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, () => tunnel?.TryNow());
         clock.Ticked += machinesFeature.Tick;
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
             [new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),

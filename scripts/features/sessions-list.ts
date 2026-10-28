@@ -1,9 +1,10 @@
 // The sessions list's groups (docs/behavior/sessions-list.md) over the socket, as the window's row menu uses them:
 // sessions/mark moves the case's session to Done, Settled and back to Working, and each move reaches the keyed
-// sessions topic with its stamps. It ends with the session back in Working, where it started. node
+// sessions topic with its stamps. It ends with the session back in Working, where it started. On the remote, Connect
+// (machines/connect) reaches it and answers it reachable; on this machine, there's nothing to connect to. node
 // scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN and CHECK4_SESSION set (scripts/features/README.md).
 // The token goes in the hello frame, never in argv or output.
-const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session } = process.env;
+const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine } = process.env;
 
 type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
 type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
@@ -102,6 +103,17 @@ async function main() {
 
   await mark('working', (item) => item.completedAt === null && item.settledAt === null, 'Back to working clears both stamps');
   console.log('ok Back to working clears both stamps');
+
+  const connect = machine === 'local' ? 'Connect has no remote to reach here' : 'Connect reaches the remote';
+  const id = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id, feature: 'machines', method: 'connect', args: { machine } }));
+  const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 15_000, connect);
+  if (machine === 'local') {
+    if (answer.t !== 'error' || !answer.message?.includes('unknown remote machine')) fail(connect, JSON.stringify(answer));
+  } else if (answer.t !== 'result' || (answer.result as { reachable: boolean }).reachable !== true) {
+    fail(connect, JSON.stringify(answer));
+  }
+  console.log(`ok ${connect}`);
 }
 
 main()
