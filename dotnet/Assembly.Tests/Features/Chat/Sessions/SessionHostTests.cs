@@ -18,7 +18,8 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
     private readonly TempDatabase _db = new();
     // Frozen unless a test moves it, so no clock tick fires by surprise.
-    private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
+    private readonly WatchedClock _time = new();
+    private readonly global::Assembly.Infrastructure.Topics.Topics _topics = new();
     private readonly AppDatabase _database;
     private readonly RowStore _store;
     private readonly LiveHub _hub;
@@ -34,7 +35,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
     public SessionHostTests()
     {
-        _database = TestDatabase.Open(_db.Path);
+        _database = AppDatabase.Open(_db.Path, TimeProvider.System, _topics);
         _store = RowStore.Open(_database);
         _hub = new LiveHub(_store);
         _sessionStore = SessionStore.Open(_database, _time, "checkouts");
@@ -91,8 +92,8 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.CloseAsync();
 
         // The clock is frozen, so every stage is 0 ms in; the fake launcher marks no clone or adapter start.
-        // The line is written from the turn's own task, text first, then the newline.
-        await Until(() => _log.ToString().EndsWith(Environment.NewLine, StringComparison.Ordinal));
+        // The line is written from the turn's own task, in one write that ends with the newline.
+        await _log.WrittenAsync(Environment.NewLine);
         Assert.Equal($"session {_session.SessionId} run {runId}: initialize 0 ms, session new 0 ms, first update 0 ms, answer 0 ms, session close 0 ms{Environment.NewLine}", _log.ToString());
     }
 
@@ -169,7 +170,8 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
 
-        await Until(() => _sessionStore.Get(_session.SessionId)?.Title == title);
+        await TitledAsync(title);
+        Assert.Equal(title, _sessionStore.Get(_session.SessionId)?.Title);
     }
 
     [Fact]
@@ -259,8 +261,10 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
         // The agent leaves plan mode itself.
         await agent.UpdateAsync($$"""{"sessionUpdate":"config_option_update","configOptions":{{Options("opus", "low")}}}""");
-        await Until(() => _sessionStore.Config(_session.SessionId).Options?.Contains("\"currentValue\":\"default\"") == true);
+        // The update is read before the turn's end.
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        Assert.Contains("\"currentValue\":\"default\"", _sessionStore.Config(_session.SessionId).Options);
         await agent.CloseAsync();
     }
 
@@ -300,7 +304,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         // The agent took it after all and says so; the update is read before the turn's end.
         await agent.UpdateAsync($$"""{"sessionUpdate":"config_option_update","configOptions":{{Options("opus", "low", "plan")}}}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
         Assert.Contains("\"currentValue\":\"plan\"", _sessionStore.Config(_session.SessionId).Options);
         await agent.CloseAsync();
     }
@@ -493,11 +497,11 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.CloseAsync();
     }
     // Rows up to and including the first that matches.
-    private async Task<List<StoredRow>> RowsUntil(Func<StoredRow, bool> last)
+    private async Task<List<StoredRow>> RowsThrough(Func<StoredRow, bool> last, LiveSubscription? live = null)
     {
         var rows = new List<StoredRow>();
         do
-            rows.Add(await _live.Rows.ReadAsync().AsTask().WaitAsync(Wait));
+            rows.Add(await (live ?? _live).Rows.ReadAsync().AsTask().WaitAsync(Wait));
         while (!last(rows[^1]));
         return rows;
     }
@@ -534,13 +538,15 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var child = _sessionStore.Child(_session, "acp-child", "Child");
         var grandchild = _sessionStore.Helper(child, "claude", "Grandchild");
         var host = new SessionHost(grandchild.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
+        using var live = _hub.Subscribe(grandchild.SessionId, after: 0);
         Assert.NotNull(host.Send("hi"));
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.Equal([_session.SessionId], _launcher.CheckedOut);
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await Until(() => host.ActiveRunId is null);
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started", live);
+        Assert.Null(host.ActiveRunId);
     }
 
     private static async Task<string> MessageTextAsync(LiveSubscription live)
@@ -564,13 +570,6 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     }
 
     private async Task<List<string>> Kinds(int count) => (await Rows(count)).Select(row => row.Kind).ToList();
-
-    private static async Task Until(Func<bool> condition)
-    {
-        using var deadline = new CancellationTokenSource(Wait);
-        while (!condition())
-            await Task.Delay(10, deadline.Token);
-    }
 
     public async ValueTask DisposeAsync()
     {

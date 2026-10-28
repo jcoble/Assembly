@@ -22,7 +22,7 @@ public sealed partial class SessionHostTests
 
         // With no prompt running, the agent goes on by itself: a run of its own, with no message of the user's.
         await agent.TextAsync("It printed finished.", "m2");
-        var started = await RowsUntil(row => row.Kind == "delta");
+        var started = await RowsThrough(row => row.Kind == "delta");
         Assert.Equal(["turn", "delta"], started.Select(row => row.Kind));
         var selfRun = started[0].RunId!;
         Assert.NotEqual(runId, selfRun);
@@ -32,7 +32,7 @@ public sealed partial class SessionHostTests
 
         // Claude's tag on the cycle's usage ends the run, and the untracked task with it; then the session closes.
         await agent.UpdateAsync(TaskNotification);
-        var end = await RowsUntil(row => row.Kind == "turn");
+        var end = await RowsThrough(row => row.Kind == "turn");
         Assert.Equal(["context", "task", "message", "stats", "turn"], end.Select(row => row.Kind));
         Assert.Equal("completed", end[1].Payload.GetProperty("state").GetString());
         Assert.Equal(runId, end[1].RunId);
@@ -48,7 +48,7 @@ public sealed partial class SessionHostTests
         var (agent, runId) = await StartClaudeBackgroundAsync();
 
         agent.Crash();
-        var task = (await RowsUntil(row => row.Kind == "task"))[^1];
+        var task = (await RowsThrough(row => row.Kind == "task"))[^1];
         Assert.Equal((runId, "stopped"), (task.RunId, task.Payload.GetProperty("state").GetString()));
         // The session takes sends again, on a new adapter.
         Assert.NotNull(_host.Send("again"));
@@ -60,7 +60,7 @@ public sealed partial class SessionHostTests
     {
         var (agent, _) = await StartClaudeBackgroundAsync();
         await agent.TextAsync("It finished.", "m2");
-        await RowsUntil(row => row.Kind == "delta");
+        await RowsThrough(row => row.Kind == "delta");
 
         var steering = _host.SteerAsync("next", null, CancellationToken.None);
         var steer = await agent.ReadAsync("_session/steering");
@@ -85,11 +85,11 @@ public sealed partial class SessionHostTests
         // Straight to the prompt: the session is still open, so nothing is opened or resumed.
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        var end = await RowsUntil(row => row.Kind == "turn");
+        var end = await RowsThrough(row => row.Kind == "turn");
         Assert.Equal(next, end[^1].RunId);
 
         await agent.UpdateAsync(TaskNotification);
-        Assert.Equal("completed", (await RowsUntil(row => row.Kind == "task"))[^1].Payload.GetProperty("state").GetString());
+        Assert.Equal("completed", (await RowsThrough(row => row.Kind == "task"))[^1].Payload.GetProperty("state").GetString());
         await agent.CloseAsync();
     }
 
@@ -103,12 +103,12 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"sleep 15","kind":"execute","status":"in_progress"}""");
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_spawned","asyncTaskId":"t1","name":"sleep 15","canStop":true,"toolCallId":"t1"}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
 
         // Codex's end of the task names no task, then the tool call it ran in finishes.
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_state_update","asyncTaskId":"t1","state":"completed"}""");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed"}""");
-        var late = await RowsUntil(row => row.Kind == "tool");
+        var late = await RowsThrough(row => row.Kind == "tool");
         Assert.Equal(["task", "tool"], late.Select(row => row.Kind));
         Assert.All(late, row => Assert.Equal(runId, row.RunId));
         Assert.Equal("""{"name":"sleep 15","state":"completed","canStop":false,"toolCallId":"t1"}""", late[0].Payload.GetRawText());
@@ -125,11 +125,11 @@ public sealed partial class SessionHostTests
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"sleep 15","kind":"execute","status":"in_progress"}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
-        await Until(() => _log.ToString().Contains("kept open"));
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        await _log.WrittenAsync("kept open");
 
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_spawned","asyncTaskId":"t1","name":"sleep 15","canStop":true,"toolCallId":"t1"}""");
-        var task = (await RowsUntil(row => row.Kind == "task"))[^1];
+        var task = (await RowsThrough(row => row.Kind == "task"))[^1];
         Assert.Equal((runId, "running"), (task.RunId, task.Payload.GetProperty("state").GetString()));
         _time.Advance(TimeSpan.FromMilliseconds(SessionHost.TaskGraceMs));
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_state_update","asyncTaskId":"t1","state":"completed"}""");
@@ -145,9 +145,9 @@ public sealed partial class SessionHostTests
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"ls","kind":"execute","status":"in_progress"}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
         // Kept for the grace, so the clock moves only once the grace's deadline is set.
-        await Until(() => _log.ToString().Contains("kept open"));
+        await _log.WrittenAsync("kept open");
 
         _time.Advance(TimeSpan.FromMilliseconds(SessionHost.TaskGraceMs));
         await agent.CloseAsync();
@@ -161,7 +161,7 @@ public sealed partial class SessionHostTests
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_spawned","asyncTaskId":"x1","name":"sleep 15","canStop":true,"toolCallId":"t1"}""");
-        var task = (await RowsUntil(row => row.Kind == "task"))[^1];
+        var task = (await RowsThrough(row => row.Kind == "task"))[^1];
         Assert.Equal("task:x1", task.ItemId);
         Assert.Equal("""{"name":"sleep 15","state":"running","canStop":true,"toolCallId":"t1"}""", task.Payload.GetRawText());
 
@@ -173,7 +173,7 @@ public sealed partial class SessionHostTests
         Assert.True(await stopping.WaitAsync(Wait));
 
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_state_update","asyncTaskId":"x1","state":"cancelled"}""");
-        Assert.Equal("stopped", (await RowsUntil(row => row.Kind == "task"))[^1].Payload.GetProperty("state").GetString());
+        Assert.Equal("stopped", (await RowsThrough(row => row.Kind == "task"))[^1].Payload.GetProperty("state").GetString());
         Assert.False(await _host.StopTaskAsync("x1", CancellationToken.None));
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
@@ -188,16 +188,16 @@ public sealed partial class SessionHostTests
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_spawned","asyncTaskId":"x1","name":"sleep 15","canStop":false}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
 
         await agent.TextAsync("Waiting on it.", "m2");
-        var selfRun = (await RowsUntil(row => row.Kind == "delta"))[0].RunId;
+        var selfRun = (await RowsThrough(row => row.Kind == "delta"))[0].RunId;
         // The task's end doesn't end the run; the agent never says its cycle is over.
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_state_update","asyncTaskId":"x1","state":"completed"}""");
-        await RowsUntil(row => row.Kind == "task");
+        await RowsThrough(row => row.Kind == "task");
 
         _time.Advance(TimeSpan.FromMilliseconds(SessionHost.QuietMs));
-        var end = await RowsUntil(row => row.Kind == "turn");
+        var end = await RowsThrough(row => row.Kind == "turn");
         Assert.Equal(selfRun, end[^1].RunId);
         Assert.Equal("finished", end[^1].Payload.GetProperty("state").GetString());
         Assert.Contains("no word from the agent for 30 s", _log.ToString());
@@ -213,14 +213,14 @@ public sealed partial class SessionHostTests
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"async_task_spawned","asyncTaskId":"x1","name":"sleep 15","canStop":true}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
 
         var shutdown = _host.CloseKeptForShutdownAsync();
         var stop = await agent.ReadAsync("_session/async_task/stop");
         await agent.ReplyAsync(stop, """{"stopped":true}""");
         await agent.CloseAsync();
         await shutdown.WaitAsync(Wait);
-        Assert.Equal("stopped", (await RowsUntil(row => row.Kind == "task"))[^1].Payload.GetProperty("state").GetString());
+        Assert.Equal("stopped", (await RowsThrough(row => row.Kind == "task"))[^1].Payload.GetProperty("state").GetString());
     }
 
     private const string TaskNotification =
@@ -247,7 +247,7 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"subagent_update","sessionId":"child1","state":{"state":"idle","stopReason":"end_turn"}}""");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"task1","status":"completed"}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        var rows = await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
 
         // Announced, nested once its prompt names the Task call, then idle; all in the run that started it.
         var subagent = rows.Where(row => row.Kind == "subagent").ToList();
@@ -283,7 +283,7 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"hb1","status":"completed","rawOutput":[{"type":"text","text":"{\"success\":true,\"message\":\"Report delivered to your caller.\"}"}]}""", "child1");
         await agent.UpdateAsync("""{"sessionUpdate":"subagent_update","sessionId":"child1","state":{"state":"idle","stopReason":"end_turn"}}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        var rows = await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
 
         var child = rows.First(row => row.Kind == "subagent").Payload.GetProperty("sessionId").GetString()!;
         var childRows = _store.RowsAfter(child, 0);
@@ -301,7 +301,7 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync(ChildAnnounced);
         await agent.UpdateAsync(ChildPrompt, "child1");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await Until(() => _log.ToString().Contains("kept open"));
+        await _log.WrittenAsync("kept open");
 
         var stopping = _host.StopTaskAsync("child1", CancellationToken.None);
         var cancel = await agent.ReadAsync("session/cancel");
@@ -324,11 +324,11 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync(ChildAnnounced);
         await agent.UpdateAsync(ChildPrompt, "child1");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await Until(() => _log.ToString().Contains("kept open"));
+        await _log.WrittenAsync("kept open");
 
         await agent.RequestAsync(7, "session/request_permission",
             """{"sessionId":"child1","toolCall":{"toolCallId":"t9","title":"wc -l notes.txt"},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]}""");
-        var card = await RowsUntil(row => row.Kind == "ask");
+        var card = await RowsThrough(row => row.Kind == "ask");
 
         Assert.Equal("general-purpose: wc -l notes.txt", card[^1].Payload.GetProperty("title").GetString());
         Assert.True(_host.Answer(card[^1].ItemId!["ask:".Length..], JsonDocument.Parse("""{"optionId":"yes"}""").RootElement));
@@ -347,12 +347,12 @@ public sealed partial class SessionHostTests
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"sleep 15","kind":"execute","status":"pending"}""");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":"Command running in background with ID: b1. Output is being written to: /tmp/b1"}""");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        var rows = await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
         var task = Assert.Single(rows, row => row.Kind == "task");
         Assert.Equal(runId, task.RunId);
         Assert.Equal("""{"name":"Background command","state":"running","canStop":false,"toolCallId":"t1"}""", task.Payload.GetRawText());
         Assert.Equal("finished", rows[^1].Payload.GetProperty("state").GetString());
-        await Until(() => _log.ToString().Contains("kept open"));
+        await _log.WrittenAsync("kept open");
         return (agent, runId);
     }
 

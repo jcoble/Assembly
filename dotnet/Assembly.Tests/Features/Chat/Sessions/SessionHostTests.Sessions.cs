@@ -34,7 +34,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
-        await Until(() => _host.ActiveRunId is null);
+        Assert.Null(_host.ActiveRunId);
 
         // The same ACP session is resumed, so the closed turn's late update shares its id with the next turn's. It
         // arrives after the resume request, before the answer.
@@ -61,7 +61,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
-        await Until(() => _host.ActiveRunId is null);
+        Assert.Null(_host.ActiveRunId);
 
         // The resumed session's own update, sent the moment it answers, as claude-agent-acp sends its commands. This
         // can't force the client's threads into the losing order; AcpClientTests pins the order itself.
@@ -85,7 +85,7 @@ public sealed partial class SessionHostTests
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
-        await Until(() => _host.ActiveRunId is null);
+        Assert.Null(_host.ActiveRunId);
         await _host.SetConfigAsync("mode", "plan", CancellationToken.None);
 
         // The resume succeeds, then the turn is stopped while the session's choices are still being applied.
@@ -96,7 +96,8 @@ public sealed partial class SessionHostTests
         Assert.True(_host.Stop(runId));
         Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
         await agent.TextAsync("stray", messageId: "stray");
-        await Until(() => _host.ActiveRunId is null);
+        var stopped = await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() != "started");
+        Assert.Null(_host.ActiveRunId);
 
         _host.Send("three");
         var third = await agent.ReadAsync("session/resume");
@@ -105,7 +106,7 @@ public sealed partial class SessionHostTests
         await agent.TextAsync("fresh", messageId: "fresh");
         await agent.ReplyAsync(thirdPrompt, """{"stopReason":"end_turn"}""");
 
-        var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        var rows = stopped.Concat(await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished")).ToList();
         Assert.Contains(rows, row => row.ItemId == "fresh");
         Assert.DoesNotContain(rows, row => row.ItemId == "stray");
     }
@@ -119,30 +120,31 @@ public sealed partial class SessionHostTests
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
-        await Until(() => _host.ActiveRunId is null);
+        await Kinds(4);
+        Assert.Null(_host.ActiveRunId);
         // The close's answer is handled before the clock moves, or the jump would time the close out.
-        await Until(() => _log.ToString().Contains("session close"));
+        await _log.WrittenAsync("session close");
 
         // Inside the grace the next turn finds it warm.
         _time.Advance(SharedAdapter.IdleGrace - TimeSpan.FromSeconds(1));
-        _host.Send("two");
+        // The first grace's wait has started by now (the log line comes after it), so this is the second's.
+        var grace = _time.WaitStarts(SharedAdapter.IdleGrace);
+        var runId = _host.Send("two")!;
         await agent.OpenAsync();
         var second = await agent.ReadAsync("session/prompt");
         await agent.ReplyAsync(second, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
-        await Until(() => _host.ActiveRunId is null);
-        await Until(() => _log.ToString().Split("session close").Length == 3);
+        await Kinds(4);
+        Assert.Null(_host.ActiveRunId);
+        await _log.WrittenAsync($"run {runId}: ");
+        Assert.Equal(3, _log.ToString().Split("session close").Length);
         Assert.False(agent.Disposed);
 
-        // The grace starts once the close's answer is in, so the clock moves on in steps until the adapter stops.
-        var waited = TimeSpan.Zero;
-        await Until(() =>
-        {
-            _time.Advance(TimeSpan.FromSeconds(5));
-            waited += TimeSpan.FromSeconds(5);
-            return agent.Disposed;
-        });
-        Assert.True(waited >= SharedAdapter.IdleGrace);
+        // The grace starts once the close's answer is in, and the adapter stops once it has run its length.
+        await grace;
+        _time.Advance(SharedAdapter.IdleGrace);
+        await agent.Exited.WaitAsync(Wait);
+        Assert.True(agent.Disposed);
         Assert.Equal(1, _launcher.Launches);
     }
 
@@ -163,7 +165,8 @@ public sealed partial class SessionHostTests
         await agent.TextAsync("b");
         // The title is a marker: once it's saved, "b" has been read and held.
         await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"marker"}""");
-        await Until(() => _sessionStore.Get(_session.SessionId)!.Title == "marker");
+        await TitledAsync("marker");
+        Assert.Equal("marker", _sessionStore.Get(_session.SessionId)!.Title);
         Assert.False(_live.Rows.TryRead(out _));
 
         _time.Advance(TimeSpan.FromMilliseconds(100));
@@ -205,23 +208,26 @@ public sealed partial class SessionHostTests
     [Fact]
     public async Task Each_turn_resumes_the_closed_session_and_costs_what_its_total_grew_past_the_saved_one()
     {
-        _host.Send("one");
+        var one = _host.Send("one")!;
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         await CostAsync(agent, 0.20m);
         Assert.Equal(0.20m, (await Stats()).GetProperty("costUsd").GetDecimal());
         await agent.CloseAsync();
-        await Until(() => _sessionStore.Get(_session.SessionId)!.SessionCost == 0.20m);
+        // The total is saved after the close, before the run's line is logged.
+        await _log.WrittenAsync($"run {one}: ");
+        Assert.Equal(0.20m, _sessionStore.Get(_session.SessionId)!.SessionCost);
 
         // The same adapter: no new launch and no initialize, just the session reopened. The agent reports its
         // total on from where the closed session left it.
-        _host.Send("two");
+        var two = _host.Send("two")!;
         var open = await agent.OpenAsync();
         Assert.Equal("session/resume", open.GetProperty("method").GetString());
         await CostAsync(agent, 0.32m);
         Assert.Equal(0.12m, (await Stats()).GetProperty("costUsd").GetDecimal());
         await agent.CloseAsync();
-        await Until(() => _sessionStore.Get(_session.SessionId)!.SessionCost == 0.32m);
+        await _log.WrittenAsync($"run {two}: ");
+        Assert.Equal(0.32m, _sessionStore.Get(_session.SessionId)!.SessionCost);
         Assert.Equal(1, _launcher.Launches);
     }
 
@@ -329,8 +335,9 @@ public sealed partial class SessionHostTests
         agent.BreakInput();
 
         Assert.True(_host.Stop(runId));
-        await Until(() => _log.ToString().Contains($"background cancel {runId}: "));
-        await Until(() => _work.Running == 0);
+        await _log.WrittenAsync($"background cancel {runId}: ");
+        // The cancel has failed by now, so the stop only waits for it to end, and none is left running.
+        Assert.Equal(0, await _work.StopAsync(Wait).WaitAsync(Wait));
     }
 
     // Inside the idle grace, disposing the adapter ends its idle wait and waits for it. The idle wait's end is held on
@@ -434,7 +441,8 @@ public sealed partial class SessionHostTests
         await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"Say hello"}""");
 
-        await Until(() => _sessionStore.Get(_session.SessionId)!.Title == "Say hello");
+        await TitledAsync("Say hello");
+        Assert.Equal("Say hello", _sessionStore.Get(_session.SessionId)!.Title);
     }
 
     [Fact]
@@ -443,9 +451,33 @@ public sealed partial class SessionHostTests
         _host.Send("hi");
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
-        await agent.ReadAsync("session/prompt");
+        var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync("""{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"context","description":"Show context usage","input":null}]}""");
 
-        await Until(() => _sessionStore.Config(_session.SessionId).Commands?.Contains("\"context\"") == true);
+        // The update is read before the turn's end.
+        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await RowsThrough(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        Assert.Contains("\"context\"", _sessionStore.Config(_session.SessionId).Commands);
+    }
+
+    // Done once the session's stored title is title: already, or when its list item is published with it.
+    private async Task TitledAsync(string title)
+    {
+        var titled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var subscription = _topics.Subscribe(SessionsFeature.Topic, _session.SessionId, _ => { }, (_, json) =>
+        {
+            if (JsonDocument.Parse(json).RootElement.TryGetProperty("title", out var stored) && stored.ToString() == title)
+                titled.TrySetResult();
+        });
+        try
+        {
+            if (_sessionStore.Get(_session.SessionId)?.Title == title)
+                titled.TrySetResult();
+            await titled.Task.WaitAsync(Wait);
+        }
+        finally
+        {
+            _topics.Unsubscribe(subscription);
+        }
     }
 }
