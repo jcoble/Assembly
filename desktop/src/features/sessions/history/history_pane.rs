@@ -1,7 +1,7 @@
 //! `HistoryPane` owns the drawer's History tab: the loaded sessions by project (`ProjectGroup`), each project folded
 //! at first with its count, and open, its sessions newest first, 25 at a time, each with its title, agent and age. A
 //! click on a session opens it, as the sessions column does. The tab groups what the sessions list has loaded; a line
-//! at its end loads the list's next older page. The ages count by the backend clock, held only while the tab is shown.
+//! at its end loads the list's next page, Settled's too, as the sessions column's Settled does once it's opened. The ages count by the backend clock, held only while the tab is shown.
 
 use std::collections::{HashMap, HashSet};
 
@@ -30,6 +30,8 @@ pub struct HistoryPane {
     focus: FocusHandle,
     /// `None` before the backend's first ready line.
     sessions: Option<Entity<Sessions>>,
+    /// The loaded sessions by project, regrouped only when the list changes, not on each clock tick.
+    groups: Vec<ProjectGroup>,
     /// The projects opened, by `ProjectGroup::key`; the rest are folded.
     open: HashSet<Key>,
     /// How many of a project's sessions show, past the first `WINDOW`.
@@ -60,6 +62,7 @@ impl HistoryPane {
         let mut pane = HistoryPane {
             focus: cx.focus_handle(),
             sessions: None,
+            groups: Vec::new(),
             open: HashSet::new(),
             shown: HashMap::new(),
             active: false,
@@ -78,8 +81,15 @@ impl HistoryPane {
         self._sessions = self
             .sessions
             .as_ref()
-            .map(|sessions| cx.observe(sessions, |_, _, cx| cx.notify()));
+            .map(|sessions| cx.observe(sessions, |pane, _, cx| pane.regroup(cx)));
         self.hold_clock(cx);
+        self.regroup(cx);
+    }
+
+    fn regroup(&mut self, cx: &mut Context<Self>) {
+        self.groups = self.sessions.as_ref().map_or(Vec::new(), |sessions| {
+            ProjectGroup::all(sessions.read(cx).items())
+        });
         cx.notify();
     }
 
@@ -116,9 +126,10 @@ impl HistoryPane {
         cx.notify();
     }
 
-    fn load_older(&mut self, cx: &mut Context<Self>) {
+    /// History lists every session, so Settled's pages load after the open ones'.
+    fn load_next(&mut self, cx: &mut Context<Self>) {
         if let Some(sessions) = &self.sessions {
-            sessions.update(cx, |sessions, cx| sessions.load_older(cx));
+            sessions.update(cx, |sessions, cx| sessions.load_next(true, cx));
         }
     }
 }
@@ -189,17 +200,15 @@ impl Render for HistoryPane {
             ));
         };
         let sessions = sessions.read(cx);
-        let groups = ProjectGroup::all(sessions.items());
-        if groups.is_empty() {
+        if self.groups.is_empty() {
             return pane.child(note(
                 "history-note-empty",
                 "No past sessions yet. Sessions you have run appear here, grouped by project.",
             ));
         }
-        let older = sessions.has_older();
-        let item = |id: &str| sessions.items().iter().find(|item| item.session_id == id);
+        let older = sessions.has_next();
         let mut lines: Vec<AnyElement> = Vec::new();
-        for (index, group) in groups.iter().enumerate() {
+        for (index, group) in self.groups.iter().enumerate() {
             let key = group.key();
             let open = self.open.contains(&key);
             let header = format!("history-project-{}", group.folder);
@@ -243,9 +252,8 @@ impl Render for HistoryPane {
                 continue;
             }
             let shown = self.shown.get(&key).copied().unwrap_or(WINDOW);
-            for id in group.sessions.iter().take(shown) {
-                let Some(item) = item(id) else { continue };
-                let picked = selected.as_deref() == Some(id.as_str());
+            for item in group.sessions.iter().take(shown) {
+                let picked = selected.as_deref() == Some(item.session_id.as_str());
                 lines.push(history_row(item, self.now, picked, cx).into_any_element());
             }
             if group.sessions.len() > shown {
@@ -283,9 +291,9 @@ impl Render for HistoryPane {
                     .cursor_pointer()
                     .text_color(muted)
                     .hover(|line| line.text_color(theme.foreground))
-                    .on_click(cx.listener(|pane, _, _, cx| pane.load_older(cx)))
+                    .on_click(cx.listener(|pane, _, _, cx| pane.load_next(cx)))
                     .child(match failed {
-                        Some(why) => format!("Couldn't load older sessions: {why}. Try again"),
+                        Some(why) => format!("{why}. Try again"),
                         None => "Load older sessions".into(),
                     }),
             )

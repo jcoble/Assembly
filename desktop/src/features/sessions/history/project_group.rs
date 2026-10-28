@@ -1,15 +1,15 @@
 //! `ProjectGroup` is one project in the History tab: its folder or repo, its machine when it isn't this computer, and
-//! its loaded sessions newest first. Every session has its own checkout, so there's no worktree level under it.
+//! its loaded sessions newest first, copied, so a redraw finds each row's session without a search. Every session has its own checkout, so there's no worktree level under it.
 
 use crate::core::state::session_item::SessionItem;
 use crate::features::sessions::list_entries::project_label;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ProjectGroup {
     pub folder: String,
     pub machine: Option<String>,
-    /// Session ids, newest first.
-    pub sessions: Vec<String>,
+    /// Newest first.
+    pub sessions: Vec<SessionItem>,
 }
 
 impl ProjectGroup {
@@ -22,11 +22,11 @@ impl ProjectGroup {
                 .iter_mut()
                 .find(|group| group.folder == item.repo_url && group.machine == machine)
             {
-                Some(group) => group.sessions.push(item.session_id.clone()),
+                Some(group) => group.sessions.push(item.clone()),
                 None => groups.push(ProjectGroup {
                     folder: item.repo_url.clone(),
                     machine,
-                    sessions: vec![item.session_id.clone()],
+                    sessions: vec![item.clone()],
                 }),
             }
         }

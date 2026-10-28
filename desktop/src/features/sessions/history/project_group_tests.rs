@@ -14,7 +14,11 @@ fn session(id: &str, folder: &str, machine: Option<&str>) -> SessionItem {
 }
 
 fn ids(group: &ProjectGroup) -> Vec<&str> {
-    group.sessions.iter().map(String::as_str).collect()
+    group
+        .sessions
+        .iter()
+        .map(|item| item.session_id.as_str())
+        .collect()
 }
 
 // Pins: g0-shape#15

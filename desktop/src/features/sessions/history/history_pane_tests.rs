@@ -14,18 +14,19 @@ fn open(
     items: Option<Vec<SessionItem>>,
     cx: &mut TestAppContext,
 ) -> (Entity<HistoryPane>, &mut VisualTestContext) {
-    open_with_older(items, false, cx)
+    open_with_older(items, false, false, cx)
 }
 
 fn open_with_older(
     items: Option<Vec<SessionItem>>,
     older: bool,
+    settled: bool,
     cx: &mut TestAppContext,
 ) -> (Entity<HistoryPane>, &mut VisualTestContext) {
     cx.update(gpui_kit::init);
     cx.update(SelectedSession::init);
     if let Some(items) = items {
-        cx.update(|cx| Sessions::start_holding(items, older, cx));
+        cx.update(|cx| Sessions::start_holding(items, older, settled, cx));
     }
     let (pane, cx) = cx.add_window_view(|_, cx| HistoryPane::new(cx));
     draw(cx);
@@ -150,7 +151,14 @@ fn a_tick_draws_each_sessions_age_and_hiding_the_tab_drops_it(cx: &mut TestAppCo
 // Pins: g0-shape#15
 #[gpui::test]
 fn a_line_at_the_end_loads_older_sessions_while_there_are_some(cx: &mut TestAppContext) {
-    let (_pane, cx) = open_with_older(Some(two_projects()), true, cx);
+    let (_pane, cx) = open_with_older(Some(two_projects()), true, false, cx);
+    assert!(drawn("history-older", cx));
+}
+
+// Pins: g0-shape#15
+#[gpui::test]
+fn with_the_open_sessions_loaded_the_line_stays_for_settled_ones(cx: &mut TestAppContext) {
+    let (_pane, cx) = open_with_older(Some(two_projects()), false, true, cx);
     assert!(drawn("history-older", cx));
 }
 
