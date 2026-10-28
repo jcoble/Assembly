@@ -12,6 +12,8 @@ using Assembly.Infrastructure.Mcp;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Files;
+using Assembly.Infrastructure.Chat.Worktrees;
+using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
@@ -150,6 +152,8 @@ public sealed class DesktopBackend : IAsyncDisposable
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new FilesFeature(sessionStore),
+                new WorktreesFeature(sessionStore),
+                new SourceControlFeature(sessionStore),
                 new DiagnosticsFeature(diagnostics, () =>
                 {
                     hub.CloseSubscriptions();
