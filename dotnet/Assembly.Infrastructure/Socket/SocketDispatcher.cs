@@ -32,13 +32,13 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     private readonly List<Action<string>> _closedHooks = [];
 
     public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
-        Func<TArgs, CallContext, Task<TResult>> handler) =>
+        Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false) =>
         _calls.Add($"{feature}/{method}", new Call(Writes: false, json => json.Deserialize(args),
-            async (value, call) => JsonSerializer.SerializeToElement(await handler((TArgs)value, call), result)));
+            async (value, call) => JsonSerializer.SerializeToElement(await handler((TArgs)value, call), result), Bulk: bulk));
 
     public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
         Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
-        Action<TArgs, CallContext>? failed = null)
+        Action<TArgs, CallContext>? failed = null, bool bulk = false)
     {
         var name = $"{feature}/{method}";
         _calls.Add(name, new Call(Writes: true, json => json.Deserialize(args), async (value, call) =>
@@ -65,7 +65,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 }
                 throw;
             }
-        }, order is null ? null : value => order((TArgs)value)));
+        }, order is null ? null : value => order((TArgs)value), bulk));
     }
 
     public void Save<TValue>(string feature, JsonTypeInfo<TValue> value, Action<string, TValue, IWriteScope> save)
@@ -119,6 +119,11 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// </summary>
     internal TopicSet.Subscription? Subscribe(InFrame frame, long id, SocketConnection connection)
     {
+        if (connection.Bulk)
+        {
+            connection.Send(Error(id, "not_found", "there are no topics on /socket/bulk"));
+            return null;
+        }
         if (!_topics.TryGetValue(frame.Topic!, out var topic))
         {
             connection.Send(Error(id, "not_found", $"there's no topic {frame.Topic}"));
@@ -129,7 +134,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             connection.Send(Error(id, "bad_args", $"{frame.Topic} needs a key"));
             return null;
         }
-        var context = new CallContext(connection.Closed, connection.Id);
+        var context = new CallContext(connection.Closed, connection.Id, connection.Closed);
         TopicSet.Subscription? self = null;
         Func<string?, string, ReadOnlyMemory<byte>?>? change = null;
         try
@@ -203,6 +208,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         var name = $"{frame.Feature}/{frame.Method}";
         if (!_calls.TryGetValue(name, out var call))
             return Error(id, "not_found", $"there's no call {name}");
+        if (call.Bulk != connection.Bulk)
+            return Error(id, "not_found", call.Bulk ? $"{name} is on /socket/bulk" : $"{name} is on /socket");
         object args;
         try
         {
@@ -220,7 +227,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         using var token = call.Writes
             ? CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token)
             : CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token, connection.Closed);
-        var context = new CallContext(token.Token, connection.Id);
+        var context = new CallContext(token.Token, connection.Id, connection.Closed);
         try
         {
             // A write joins its key's queue, or else its socket's, now, in arrival order; a read runs off the receive
@@ -384,5 +391,5 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         Action<string, CallContext>? Opened = null);
 
     private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync,
-        Func<object, string?>? Order = null);
+        Func<object, string?>? Order = null, bool Bulk = false);
 }

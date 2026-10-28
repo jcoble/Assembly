@@ -37,12 +37,19 @@ impl TestClient {
         Self::start_with(endpoint(port))
     }
 
-    pub fn start_with(endpoint: Endpoint) -> Self {
+    /// A client on the socket at `path`, such as `/socket/bulk`.
+    pub fn start_on(endpoint: Endpoint, path: &'static str) -> Self {
         let (events, receiver) = mpsc::channel();
         let (states_tx, mut changes) = unbounded();
         let ids = Arc::new(AtomicU64::new(0));
-        let thread =
-            ClientThread::spawn(endpoint, receiver, events.clone(), states_tx, ids.clone());
+        let thread = ClientThread::spawn(
+            endpoint,
+            path,
+            receiver,
+            events.clone(),
+            states_tx,
+            ids.clone(),
+        );
         // The state channel is async; a thread hands each state on to one the test can wait on with a deadline.
         let (forward, states) = mpsc::channel();
         thread::spawn(move || {
@@ -58,6 +65,10 @@ impl TestClient {
             ids,
             thread: Some(thread),
         }
+    }
+
+    pub fn start_with(endpoint: Endpoint) -> Self {
+        Self::start_on(endpoint, "/socket")
     }
 
     pub fn id(&self) -> u64 {

@@ -14,7 +14,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         _box.Running = "run-3";
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "page", $$"""{"session":"{{session.SessionId}}"}""");
 
@@ -28,7 +28,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         _box.Tool = new StoredToolCall("ls", "-la", "a.txt", null, null);
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
         Assert.Equal(
@@ -49,7 +49,7 @@ public sealed partial class ChatSocketTests
         var output = new string('a', 3 * RowsFeature.ToolCap);
         var diff = new string('é', RowsFeature.ToolCap);
         _here.Tool = new StoredToolCall("cat", null, output, diff, null);
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
 
@@ -67,7 +67,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         _box.Hold();
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
         await _box.Reached.Task.WaitAsync(Wait);
@@ -82,7 +82,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         _box.Hold();
-        var socket = await OpenAsync();
+        var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
         await _box.Reached.Task.WaitAsync(Wait);
@@ -97,7 +97,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         _box.Hold();
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
         await _box.Reached.Task.WaitAsync(Wait);
@@ -113,7 +113,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Create("claude", "repo");
         _here.Tool = new StoredToolCall("cat", new string('a', 5 * Mb), null, null, null);
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
 
@@ -127,7 +127,7 @@ public sealed partial class ChatSocketTests
         var text = new string('a', Mb);
         for (var i = 0; i < 5; i++)
             Row(session, RowKind.Message, $"m{i}", $$"""{"text":"{{text}}"}""");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "page", $$"""{"session":"{{session}}"}""");
 
@@ -140,7 +140,7 @@ public sealed partial class ChatSocketTests
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
         _box.Down = true;
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
         Assert.Equal("""{"t":"error","id":1,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
@@ -255,7 +255,7 @@ public sealed partial class ChatSocketTests
     public async Task Rows_page_and_tool_for_an_unknown_session_or_item()
     {
         var session = _sessions.Create("claude", "repo");
-        using var socket = await OpenAsync();
+        using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "page", """{"session":"nope"}""");
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadAsync(socket));

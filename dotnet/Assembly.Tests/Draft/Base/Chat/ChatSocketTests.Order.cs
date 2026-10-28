@@ -81,7 +81,7 @@ public sealed partial class ChatSocketTests
 
         // A read is cancelled by its socket closing, and a closing socket cancels in the reverse order the calls came,
         // so once this one, sent first, is cancelled, the backend has seen the close and would have cancelled the sends.
-        await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{local.SessionId}}","item":"t1"}""");
+        await CallAsync(socket, 1, "config", "get", $$"""{"session":"{{local.SessionId}}"}""");
         await _here.Reached.Task.WaitAsync(Wait);
         await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"one"}""");
         await _box.Reached.Task.WaitAsync(Wait);

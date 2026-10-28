@@ -14,10 +14,13 @@ function fail(step: string, why: string): never {
   throw new Failed();
 }
 
+// The window's two sockets: the large calls (attachments, rows/page and rows/tool) go on /socket/bulk, the rest on
+// /socket. Their frames land in one list; call ids tell them apart.
 const socket = new WebSocket(`${api!.replace(/^http/, 'ws')}/socket`);
+const bulk = new WebSocket(`${api!.replace(/^http/, 'ws')}/socket/bulk`);
 const frames: Frame[] = [];
 let next: (() => void) | undefined;
-socket.onmessage = (event) => {
+socket.onmessage = bulk.onmessage = (event) => {
   frames.push(JSON.parse(String(event.data)));
   next?.();
 };
@@ -46,19 +49,23 @@ function frame(wanted: (frame: Frame) => boolean, ms: number, step: string) {
 let ids = 10;
 async function call(feature: string, method: string, args: object, step: string) {
   const id = ++ids;
-  socket.send(JSON.stringify({ t: 'call', id, feature, method, args }));
+  const large = feature === 'attachments' || (feature === 'rows' && (method === 'page' || method === 'tool'));
+  (large ? bulk : socket).send(JSON.stringify({ t: 'call', id, feature, method, args }));
   const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 30_000, step);
   if (answer.t !== 'result') fail(step, `it failed: ${answer.message ?? JSON.stringify(answer)}`);
   return answer.result;
 }
 
 async function main() {
-  await new Promise((resolve, reject) => {
-    socket.onopen = resolve;
-    socket.onerror = () => reject(new Error('the socket failed to open'));
-  });
-  socket.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
-  await frame((got) => got.t === 'welcome', 10_000, 'hello is answered with welcome');
+  for (const [opened, path] of [[socket, '/socket'], [bulk, '/socket/bulk']] as const) {
+    await new Promise((resolve, reject) => {
+      if (opened.readyState === WebSocket.OPEN) return resolve(undefined);
+      opened.onopen = resolve;
+      opened.onerror = () => reject(new Error(`${path} failed to open`));
+    });
+    opened.send(JSON.stringify({ t: 'hello', token, protocol: 1 }));
+    await frame((got) => got.t === 'welcome', 10_000, `${path}'s hello is answered with welcome`);
+  }
 
   socket.send(JSON.stringify({ t: 'sub', id: 1, topic: 'sessions', key: session }));
   const sub = (got: Frame) => got.sub === 1 || got.id === 1;

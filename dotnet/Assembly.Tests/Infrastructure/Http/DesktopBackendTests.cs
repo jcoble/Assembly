@@ -146,18 +146,32 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     public async Task The_desktops_drop_ends_every_open_socket()
     {
         using var other = await OpenSocketAsync();
+        using var bulk = await OpenSocketAsync("/socket/bulk");
         using var socket = await OpenSocketAsync();
 
         await SendTextAsync(socket, """{"t":"call","id":1,"feature":"diagnostics","method":"drop","args":{}}""");
 
         await SocketTests.AssertEndsAsync(other);
+        await SocketTests.AssertEndsAsync(bulk);
         await SocketTests.AssertEndsAsync(socket);
     }
 
-    private async Task<ClientWebSocket> OpenSocketAsync()
+    // The large calls' socket takes the same hello; any other path under /socket is no socket, even with the token.
+    [Fact]
+    public async Task Socket_bulk_takes_a_hello_and_another_path_under_socket_is_refused()
+    {
+        using var bulk = await OpenSocketAsync("/socket/bulk");
+        using var other = new ClientWebSocket();
+        other.Options.SetRequestHeader("Authorization", $"Bearer {Token}");
+
+        await Assert.ThrowsAsync<WebSocketException>(() =>
+            other.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket/other"), CancellationToken.None));
+    }
+
+    private async Task<ClientWebSocket> OpenSocketAsync(string path = "/socket")
     {
         var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}{path}"), CancellationToken.None);
         await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
         return socket;
@@ -207,7 +221,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     public async Task The_socket_takes_the_desktops_attachments()
     {
         using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket/bulk"), CancellationToken.None);
         await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
 

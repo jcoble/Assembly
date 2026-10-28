@@ -40,8 +40,13 @@ pub(super) struct Connection {
 }
 
 impl Connection {
-    /// Opens the socket and waits for its welcome; an error if it can't. Then starts its reader.
-    pub fn open(endpoint: &Endpoint, events: Sender<Event>) -> Result<Self, OpenFailure> {
+    /// Opens the socket at `path` (`/socket`, or `/socket/bulk` for the large calls) and waits for its welcome; an
+    /// error if it can't. Then starts its reader.
+    pub fn open(
+        endpoint: &Endpoint,
+        path: &str,
+        events: Sender<Event>,
+    ) -> Result<Self, OpenFailure> {
         let stream = TcpStream::connect(("127.0.0.1", endpoint.port)).map_err(failed)?;
         // A backend that takes the connection but never welcomes it (wedged, or another process on the port) would
         // hold the client thread, and every call waiting on it, for good: opening gets a bound. Reads lose it after
@@ -49,7 +54,7 @@ impl Connection {
         stream.set_read_timeout(Some(OPENING)).map_err(failed)?;
         stream.set_write_timeout(Some(OPENING)).map_err(failed)?;
         let read_half = stream.try_clone().map_err(failed)?;
-        let url = format!("ws://127.0.0.1:{}/socket", endpoint.port);
+        let url = format!("ws://127.0.0.1:{}{path}", endpoint.port);
         let stream = Bounded {
             stream,
             deadline: None,

@@ -59,6 +59,7 @@ async fn clicking_across_real_sessions_shows_only_the_last_ones_messages(cx: &mu
     let (socket, _heard) = cx.update(|cx| {
         gpui_kit::init(cx);
         let socket = SocketClient::start(backend.endpoint(), cx);
+        SocketClient::start_bulk(backend.endpoint(), cx);
         let heard = cx.observe(&socket, move |_, _| _ = tell.unbounded_send(()));
         (socket, heard)
     });

@@ -74,7 +74,7 @@ internal sealed class RowsFeature : IFeature
             var machine = _machines.Named(session.Machine);
             machine?.Watch(session);
             return Task.FromResult(PageJson(page, machine?.ActiveRun(session)));
-        });
+        }, bulk: true);
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {
             var tool = _sessions.Get(args.Session) is { } session
@@ -86,7 +86,7 @@ internal sealed class RowsFeature : IFeature
             var (diff, diffBytes) = Cut(tool.Diff);
             return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, output != tool.Output || diff != tool.Diff,
                 outputBytes, diffBytes);
-        });
+        }, bulk: true);
         // The drawer's Context tab: what the session's tool calls changed, from this machine's copy of its rows.
         calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
             Task.FromResult(_sessions.Get(args.Session) is null
