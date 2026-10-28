@@ -24,11 +24,12 @@ public static class DesktopServe
         }
 
         var token = TokenFile.ReadOrCreate(options.TokenFile);
-        var launcher = new AdapterLauncher(AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)), options.Checkouts, new UnclaimedPermissions());
+        var agents = AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile));
+        var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions());
         var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, options.RemotePort, options.RemoteTokenFile, Console.Out) : (null, null);
         await using var stopTunnel = tunnel;
         await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out, remote, tunnel,
-            utilityClis: ("claude", "codex"));
+            utilityClis: (AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex")));
         // The window's launcher waits for this line's "listening on " prefix: it comes once /socket takes a hello and
         // the MCP url is set. A failed or hung tunnel, or a port in use, never prints it, so the launcher also watches
         // the exit and limits its wait.
