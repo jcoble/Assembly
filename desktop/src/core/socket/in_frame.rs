@@ -31,9 +31,10 @@ pub(super) enum InFrame {
         key: String,
         item: Value,
     },
+    /// One row, as its topic sends it; its `seq` and `prevSeq` are read by the client thread.
     Rows {
         sub: u64,
-        row: super::row::Row,
+        row: Value,
     },
 }
 

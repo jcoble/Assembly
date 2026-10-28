@@ -18,7 +18,7 @@ use super::connection_state::ConnectionState;
 use super::endpoint::Endpoint;
 use super::event::Event;
 use super::pending_call::PendingCall;
-use super::row_update::RowUpdate;
+use super::row_update::{RowUpdate, rows_sink};
 use super::topic_subscription::TopicSubscription;
 use super::update::Update;
 
@@ -141,14 +141,24 @@ impl SocketClient {
         session_id: &str,
         after: Option<i64>,
     ) -> TopicSubscription<RowUpdate> {
+        self.subscribe_seq("rows", session_id, after)
+    }
+
+    /// Any rows topic's rows after `after`, by its key, read into `R`, with the same seq checks as `subscribe_rows`.
+    pub fn subscribe_seq<R: DeserializeOwned + Send + 'static>(
+        &self,
+        topic: &str,
+        key: &str,
+        after: Option<i64>,
+    ) -> TopicSubscription<RowUpdate<R>> {
         let id = self.id();
         let (rows, receiver) = unbounded();
-        let session_id = session_id.into();
         let _ = self.events.send(Event::SubscribeRows {
             id,
-            session_id,
+            topic: topic.into(),
+            key: key.into(),
             after,
-            rows,
+            rows: rows_sink(rows),
         });
         TopicSubscription::new(id, self.events.clone(), receiver)
     }

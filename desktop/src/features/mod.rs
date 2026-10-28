@@ -5,3 +5,4 @@ pub mod palette;
 pub mod session;
 pub mod sessions;
 pub mod shell;
+pub mod terminal;
