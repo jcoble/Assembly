@@ -21,10 +21,11 @@ public static class GitStatusPorcelain
                 head = entry[13..] is "(initial)" ? null : entry[13..];
             else if (entry.StartsWith("# branch.head ", StringComparison.Ordinal))
                 branch = entry[14..] is "(detached)" ? null : entry[14..];
-            else if (entry.StartsWith("# branch.upstream ", StringComparison.Ordinal))
-                hasUpstream = true;
+            // Git names an upstream that was deleted on the remote but prints no branch.ab for it, so only the counts
+            // say there is one to compare with.
             else if (entry.StartsWith("# branch.ab ", StringComparison.Ordinal))
             {
+                hasUpstream = true;
                 var counts = entry[12..].Split(' ');
                 ahead = int.Parse(counts[0][1..], CultureInfo.InvariantCulture);
                 behind = int.Parse(counts[1][1..], CultureInfo.InvariantCulture);

@@ -33,7 +33,8 @@ impl Seen {
     }
 }
 
-/// Answers a list for any session but `slow`, which it never answers, and `bad`, which fails as git does.
+/// Answers a list for any session but `slow`, which it never answers, `bad`, which fails as git does, and `dropped`,
+/// whose read drops the connection.
 fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
     FakeBackend::start(move |frame| {
         if let Some(replies) = hello(frame) {
@@ -50,6 +51,7 @@ fn backend(seen: Arc<Mutex<Seen>>, heard: UnboundedSender<()>) -> FakeBackend {
                 seen.reads.push((session.clone(), id.clone()));
                 match session.as_str() {
                     "slow" => Vec::new(),
+                    "dropped" => vec![Reply::Drop],
                     "bad" => vec![Reply::Frame(
                         json!({"t": "error", "id": id, "code": "failed", "message": GIT_SAYS}),
                     )],
@@ -225,4 +227,19 @@ async fn with_no_session_it_reads_nothing_and_asks_for_one(cx: &mut TestAppConte
     open.show(true);
     assert_eq!(open.shown(), Shown::NoSession);
     assert!(open.seen.lock().unwrap().reads.is_empty());
+}
+
+// Pins: scm#6
+#[gpui::test]
+async fn a_dropped_connection_says_so_instead_of_reading_forever(cx: &mut TestAppContext) {
+    let mut open = open(cx);
+    open.select(Some("dropped"));
+    open.show(true);
+    open.until("drop shown", |_, shown| matches!(shown, Shown::Failed(_)))
+        .await;
+    assert_eq!(
+        open.shown(),
+        Shown::Failed("The connection dropped.".into())
+    );
+    assert!(!open.cx.update(|cx| open.read.read(cx).reading()));
 }
