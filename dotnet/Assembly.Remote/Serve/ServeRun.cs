@@ -59,7 +59,8 @@ public static class ServeRun
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
-        await using var board = new BoardTools(sessionStore, machines, boardTransitions, boardQueries, CancellationToken.None);
+        using var hostStop = new CancellationTokenSource();
+        await using var board = new BoardTools(sessionStore, machines, boardTransitions, boardQueries, hostStop.Token);
         var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync);
 
         // Sessions here join this machine's MCP server, on the API's port.
@@ -71,7 +72,15 @@ public static class ServeRun
         Console.WriteLine($"token: in {options.TokenFile}");
         if (closed > 0)
             Console.WriteLine($"closed {closed} turn(s) the last run left unfinished");
-        await app.RunAsync();
+        using var stopping = app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
+        try
+        {
+            await app.RunAsync();
+        }
+        finally
+        {
+            await hostStop.CancelAsync();
+        }
         return 0;
     }
 }

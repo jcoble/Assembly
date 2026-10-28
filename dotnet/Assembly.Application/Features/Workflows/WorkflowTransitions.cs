@@ -167,10 +167,14 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
     public void Recover()
     {
         // Selection is SQL; each pending delivery becomes its own complete source event.
-        var pending = db.Query("SELECT " + WorkflowQueries.QuestionRow + " FROM board_questions q WHERE machine_id='local' AND delivery_state='pending';",
-            r => JsonSerializer.Deserialize(r.Text(0), WorkflowSchema.Default.BoardQuestion)!, CancellationToken.None);
-        foreach (var q in pending)
-            Settle(new("local", q.TaskKey, q.QuestionKey, q.Generation, q.AnswerKey!, q.Answer!), "delivery_unknown", null);
+        while (true)
+        {
+            var pending = db.Query("SELECT " + WorkflowQueries.QuestionRow + " FROM board_questions q WHERE machine_id='local' AND delivery_state='pending' LIMIT 100;",
+                r => JsonSerializer.Deserialize(r.Text(0), WorkflowSchema.Default.BoardQuestion)!, CancellationToken.None);
+            if (pending.Count == 0) return;
+            foreach (var q in pending)
+                Settle(new("local", q.TaskKey, q.QuestionKey, q.Generation, q.AnswerKey!, q.Answer!), "delivery_unknown", null);
+        }
     }
 
     public void Apply(BoardEvent item, string machine) => db.Writer.Write("board.replay", scope =>

@@ -83,12 +83,56 @@ public sealed class BoardToolsTests
         await using var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var args = f.Answer();
-        var accepted = await tools.AnswerAsync(args, CancellationToken.None);
+        machine.Hold();
+        var sending = tools.AnswerAsync(args, CancellationToken.None);
+        await machine.Reached.Task;
+        Assert.Equal(Assert.Single(f.Detail().Questions).DeliveryClientId, machine.SentClientId);
+        machine.Release();
+        var accepted = await sending;
         Assert.Equal(accepted, await tools.AnswerAsync(args, CancellationToken.None));
         Assert.Single(machine.Asked);
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(f.Answer(), CancellationToken.None));
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(args with { Answer = new("text", "Different") }, CancellationToken.None));
         Assert.Equal("board-answer/" + args.AnswerKey, Assert.Single(f.Detail().Questions).DeliveryClientId);
+    }
+
+    [Fact]
+    public async Task HostStopCancelsHeldDeliveryAfterCallerLeaves()
+    {
+        using var f = new BoardQueryTests.Fixture();
+        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        var session = sessions.Create("codex", "project");
+        var machine = new FakeMachine(null, sessions);
+        machine.Hold();
+        using var hostStop = new CancellationTokenSource();
+        using var caller = new CancellationTokenSource();
+        var tools = new BoardTools(sessions, new MachineSet(machine), f.Transitions, f.Queries, hostStop.Token);
+        tools.Update(session.SessionId, f.Report(question: f.Ask()));
+        var sending = tools.AnswerAsync(f.Answer(), caller.Token);
+        await machine.Reached.Task;
+        await caller.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sending);
+        Assert.False(machine.Cancelled.Task.IsCompleted);
+        Assert.Equal("pending", Assert.Single(f.Detail().Questions).DeliveryState);
+        await hostStop.CancelAsync();
+        await machine.Cancelled.Task;
+        await tools.DisposeAsync();
+        Assert.Equal("delivery_unknown", Assert.Single(f.Detail().Questions).DeliveryState);
+    }
+
+    [Fact]
+    public void RecoverySettlesMoreThanOneBatch()
+    {
+        using var f = new BoardQueryTests.Fixture();
+        for (var i = 0; i < 205; i++)
+        {
+            var key = $"task-{i}";
+            f.Update(key, question: f.Ask());
+            f.Transitions.Answer(f.Answer() with { TaskKey = key });
+        }
+        f.Transitions.Recover();
+        for (var i = 0; i < 205; i++)
+            Assert.Equal("delivery_unknown", Assert.Single(f.Detail($"task-{i}").Questions).DeliveryState);
     }
 
     [Fact]

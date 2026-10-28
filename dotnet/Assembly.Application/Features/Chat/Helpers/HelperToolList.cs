@@ -9,7 +9,6 @@ public sealed class HelperToolList(SessionStore sessionStore, IReadOnlyList<Help
 {
     public void WriteTools(Utf8JsonWriter json)
     {
-        json.WriteStartArray("tools");
         foreach (var tool in tools)
         {
             json.WriteStartObject();
@@ -36,7 +35,6 @@ public sealed class HelperToolList(SessionStore sessionStore, IReadOnlyList<Help
             json.WriteEndObject();
             json.WriteEndObject();
         }
-        json.WriteEndArray();
     }
 
     /// <summary>Runs a tool for the agent of <paramref name="callerId"/>.</summary>

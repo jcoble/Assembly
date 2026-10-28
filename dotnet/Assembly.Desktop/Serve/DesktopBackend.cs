@@ -41,6 +41,7 @@ public sealed class DesktopBackend : IAsyncDisposable
 {
     private readonly AppDatabase _db;
     private readonly BoardTools _board;
+    private readonly CancellationTokenSource _hostStop;
     private readonly RemoteWorkflowMirror? _boardMirror;
     private readonly Topics _topics;
     private readonly Topics.Subscription? _boardMachines;
@@ -55,10 +56,11 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly MachinesFeature _machinesFeature;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteMachine? remote,
-        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines)
+        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop)
     {
         _homeLock = homeLock;
         _board = board;
+        _hostStop = hostStop;
         _boardMirror = boardMirror;
         _topics = topics;
         _boardMachines = boardMachines;
@@ -149,7 +151,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
             : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
         sessions.Helpers.Delivery.Machines = machines;
-        var board = new BoardTools(sessionStore, machines, boardTransitions, boardQueries, CancellationToken.None);
+        var hostStop = new CancellationTokenSource();
+        var board = new BoardTools(sessionStore, machines, boardTransitions, boardQueries, hostStop.Token);
         var boardMirror = remote is null ? null : new RemoteWorkflowMirror(remote, boardQueries, boardTransitions,
             () => status.Unreachable(remote.Name, "Board connection closed"));
         var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
@@ -198,8 +201,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             new DebugRoutes(hub).Map(routes);
             page.Map(routes);
         });
+        app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
         await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature, board, boardMirror, topics, boardMachines);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature, board, boardMirror, topics, boardMachines, hostStop);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -224,11 +228,13 @@ public sealed class DesktopBackend : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await _hostStop.CancelAsync();
         await _app.StopAsync();
         await _app.DisposeAsync();
         if (_boardMachines is not null) _topics.Unsubscribe(_boardMachines);
         if (_boardMirror is not null) await _boardMirror.DisposeAsync();
         await _board.DisposeAsync();
+        _hostStop.Dispose();
         // Before the remote, so no probe is still out on it.
         await _machinesFeature.DisposeAsync();
         if (_outbox is not null)

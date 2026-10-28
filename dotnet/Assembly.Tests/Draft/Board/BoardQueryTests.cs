@@ -111,7 +111,10 @@ public sealed class BoardQueryTests(Xunit.Abstractions.ITestOutputHelper output)
         f.Time.Advance(TimeSpan.FromSeconds(3));
         f.Update(state: "completed");
         var end = f.Detail().Task.EndedAt;
+        Assert.NotNull(end);
+        Assert.Equal(4000, end);
         f.Time.Advance(TimeSpan.FromSeconds(4));
+        f.Update(state: "completed");
         Assert.Equal(end, f.Detail().Task.EndedAt);
         f.Update();
         Assert.Null(f.Detail().Task.EndedAt);

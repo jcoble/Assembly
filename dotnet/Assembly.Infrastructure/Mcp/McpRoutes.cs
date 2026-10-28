@@ -63,16 +63,8 @@ internal sealed class McpRoutes(HelperSessions helpers, BoardTools? board = null
             case "tools/list":
                 await ResultAsync(context, id, json =>
                 {
-                    using var bytes = new MemoryStream();
-                    using (var writer = new Utf8JsonWriter(bytes))
-                    {
-                        writer.WriteStartObject();
-                        helpers.Tools.WriteTools(writer);
-                        writer.WriteEndObject();
-                    }
-                    using var existing = JsonDocument.Parse(bytes.ToArray());
                     json.WriteStartArray("tools");
-                    foreach (var tool in existing.RootElement.GetProperty("tools").EnumerateArray()) tool.WriteTo(json);
+                    helpers.Tools.WriteTools(json);
                     board?.WriteTool(json);
                     json.WriteEndArray();
                 });
