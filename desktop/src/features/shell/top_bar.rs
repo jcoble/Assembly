@@ -1,7 +1,7 @@
 //! `TopBar` owns the title row above the panes, on the rail: the round Home button, which keeps the open sessions column's width so the
-//! dividers line up, also while the column's edge is dragged. The dock's own tab bars are the tabs, and the kit draws
-//! the sessions, drawer and bottom dock toggles in them. Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
-//! `window-chrome` markup in routes/+page.svelte.
+//! dividers line up, also while the column's edge is dragged, and the Board button beside it, which opens the Build
+//! Board. The dock's own tab bars are the tabs, and the kit draws the sessions, drawer and bottom dock toggles in them.
+//! Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the `window-chrome` markup in routes/+page.svelte.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -46,6 +46,7 @@ impl Render for TopBar {
             h_flex()
                 .w(sessions.max(MIN_HOME_WIDTH))
                 .h_full()
+                .gap_2()
                 .pl(px(80.))
                 .child(
                     Button::new("home")
@@ -54,6 +55,19 @@ impl Render for TopBar {
                         .rounded(cx.theme().radius_full())
                         .with_size(HOME_SIZE)
                         .tooltip("Home"),
+                )
+                .child(
+                    Button::new("board")
+                        .ghost()
+                        .small()
+                        .label("Board")
+                        .tooltip("Build Board")
+                        .on_click(|_, window, cx| {
+                            // By name, so the shell doesn't reach into the board feature's folder.
+                            if let Ok(open) = cx.build_action("board::OpenBoard", None) {
+                                window.dispatch_action(open, cx);
+                            }
+                        }),
                 ),
         )
     }
