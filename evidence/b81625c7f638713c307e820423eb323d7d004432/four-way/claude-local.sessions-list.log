@@ -1,0 +1,10 @@
+ok a new session is in Working
+ok the rail lists the session under its provider and location, and its totals count it
+ok Mark done stamps completedAt
+ok sessionRail names the session when it moves
+ok Settle stamps settledAt and keeps the done time
+ok a settled session pages with Settled, not with the open ones
+ok a settled session leaves the rail
+ok Back to working clears both stamps
+ok back in Working, it is in the rail again
+ok Connect has no remote to reach here
