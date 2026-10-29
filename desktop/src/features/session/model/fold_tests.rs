@@ -190,7 +190,7 @@ fn a_started_session_is_not_counted_as_a_provider_subagent() {
             subagent: serde_json::from_value(payload.clone()).unwrap(),
         },
     );
-    assert_eq!(summary(&[started.clone()]), "Worked");
+    assert_eq!(summary(std::slice::from_ref(&started)), "Worked");
     payload.as_object_mut().unwrap().remove("helper");
     let provider = item(
         "p",
