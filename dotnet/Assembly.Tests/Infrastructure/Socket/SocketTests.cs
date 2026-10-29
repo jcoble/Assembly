@@ -109,7 +109,7 @@ public sealed partial class SocketTests : IAsyncLifetime
 
         await SendAsync(socket, """{"t":"hello","token":"socket-token","protocol":1}""");
 
-        Assert.Equal("""{"t":"welcome","protocol":1,"machine":"test-machine"}""", await ReadAsync(socket));
+        Assert.Equal($$"""{"t":"welcome","protocol":1,"machine":"test-machine","format":{{Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion}}}""", await ReadAsync(socket));
     }
 
     // Pins: base#10

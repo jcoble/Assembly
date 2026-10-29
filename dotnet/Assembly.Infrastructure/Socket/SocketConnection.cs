@@ -161,7 +161,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             await CloseAsync((WebSocketCloseStatus)4401, "unauthorized");
         else
         {
-            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine), SocketJson.Default.WelcomeFrame),
+            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion), SocketJson.Default.WelcomeFrame),
                 WebSocketMessageType.Text, endOfMessage: true, stopping);
             return true;
         }

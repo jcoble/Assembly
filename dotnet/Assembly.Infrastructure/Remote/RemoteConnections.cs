@@ -123,6 +123,9 @@ internal sealed class RemoteConnections : IAsyncDisposable
                         _machines.Set(remote);
                         remote.WatchRunning(followed.Concat(_store.RunningTurns(name)), _store.RunningHelpers(name));
                         if (probe) await _feature.ConnectAsync(remote, stop.Token);
+                        else
+                            try { await remote.ProbeAsync(stop.Token); }
+                            catch (MachineUnreachable) { }
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
                     catch (Exception error) { scoped.Unreachable(name, error.Message); }

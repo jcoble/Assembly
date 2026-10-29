@@ -57,7 +57,9 @@ the desktop's first is preferences (B7). The socket exists from plan step B4, an
 page still uses `app/src/lib/call.ts` and `Assembly.Infrastructure/Http/`, their HTTP path, until its own switch, and
 the `/live` socket carries the page's rows. A remote session's rows reach the desktop over the machine socket instead
 (the `rows` topic and the bounded `rows/after` read on the remote's `/socket`), reopened on the backend clock when it
-drops. The only other HTTP is `/mcp`, which the agents use.
+drops. The machine socket also carries agent listing, session and helper creation, sends, run control and config
+calls. Its welcome checks the row format before the machine is reachable, and its `sessions` topic pushes titles
+and activity into the desktop's session store and summaries. The only other HTTP is `/mcp`, which the agents use.
 
 ## Where a new feature goes
 

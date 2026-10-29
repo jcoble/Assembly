@@ -7,7 +7,7 @@ namespace Assembly.Infrastructure.Socket;
 internal sealed record InFrame(string? T, string? Token, int? Protocol, long? Id, string? Feature, string? Method, JsonElement Args,
     string? Topic, string? Key, long? After);
 
-internal sealed record WelcomeFrame(int Protocol, string Machine)
+internal sealed record WelcomeFrame(int Protocol, string Machine, int Format)
 {
     [JsonPropertyOrder(-1)]
     public string T => "welcome";

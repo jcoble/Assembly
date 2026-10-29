@@ -47,8 +47,9 @@ public static class ServeRun
         var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
         boardTransitions.Recover();
         var store = RowStore.Open(db);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts);
-        using var hub = new LiveHub(store, topics: topics);
+        var summaries = SessionSummaries.Load(store);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts, summaries);
+        using var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: sessionStore.PublishSummary);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var agents = AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile));
@@ -69,7 +70,8 @@ public static class ServeRun
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines)], board), options.Port, out _,
+        await using var machineCalls = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");
