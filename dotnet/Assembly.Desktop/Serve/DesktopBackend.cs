@@ -167,8 +167,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             });
         connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
         // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
-        if (remote is not null) await connections.ReadyAsync(remote.Name);
-        var startup = connections.StartupSnapshot(savedRemote?.Name ?? remote?.Name);
+        var startupName = savedRemote?.Name ?? remote?.Name;
+        if (startupName is not null) await connections.ReadyAsync(startupName);
+        var startup = connections.StartupSnapshot(startupName);
         var hostStop = new CancellationTokenSource();
         var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
         var boardMirror = startup is { } connected ? new RemoteWorkflowMirror(connected.Config, boardQueries, boardTransitions,
