@@ -1,0 +1,4 @@
+ok worktrees/list answers the main checkout first
+ok git/status answers the branch and changed files
+ok git/diff answers a file's staged and working tree diffs
+ok git/branchDiff answers the branch against its base, or says there is none

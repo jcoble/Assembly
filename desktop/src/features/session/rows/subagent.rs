@@ -15,4 +15,6 @@ pub struct SubagentPayload {
     pub error: Option<String>,
     pub can_stop: bool,
     pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub helper: bool,
 }

@@ -181,14 +181,36 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
 }
 
 #[test]
+fn a_started_session_is_not_counted_as_a_provider_subagent() {
+    let mut payload = json!({ "sessionId": "c1", "title": "Review", "state": "idle", "canStop": false, "helper": true });
+    let started = item(
+        "s",
+        ItemKind::Subagent {
+            acp_session_id: "s1".into(),
+            subagent: serde_json::from_value(payload.clone()).unwrap(),
+        },
+    );
+    assert_eq!(summary(std::slice::from_ref(&started)), "Worked");
+    payload.as_object_mut().unwrap().remove("helper");
+    let provider = item(
+        "p",
+        ItemKind::Subagent {
+            acp_session_id: "p1".into(),
+            subagent: serde_json::from_value(payload).unwrap(),
+        },
+    );
+    assert_eq!(summary(&[started, provider]), "Ran a subagent");
+}
+
+#[test]
 fn the_assembly_mcp_server_tools_read_as_words_in_the_row_and_the_summary() {
     assert_eq!(
         Fold::tool_title("mcp__assembly__start_session"),
-        "Started a helper"
+        "Started a session"
     );
     assert_eq!(
         Fold::tool_title("mcp.assembly.message_status"),
-        "Checked a helper's answer"
+        "Checked a session's answer"
     );
     assert_eq!(
         Fold::tool_title("mcp__other__start_session"),
@@ -219,6 +241,6 @@ fn the_assembly_mcp_server_tools_read_as_words_in_the_row_and_the_summary() {
     ];
     assert_eq!(
         summary(&calls),
-        "Ran a command, started a helper, checked answers 2 times, listed sessions"
+        "Ran a command, started a session, checked answers 2 times, listed sessions"
     );
 }

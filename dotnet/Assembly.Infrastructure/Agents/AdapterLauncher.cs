@@ -1,5 +1,6 @@
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Transcript;
@@ -37,6 +38,19 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
         stages.Mark("clone");
         return folder;
     }
+
+    /// <summary>
+    /// A session's checkout folder, once it exists: what its terminal starts in. Fails for a session on another
+    /// machine (a helper is on its parent's): its folder is there, and its terminal can't be reached from here yet.
+    /// </summary>
+    public static Func<string, string?> ExistingFolder(string checkouts, SessionStore sessions) => id =>
+        sessions.Get(id) switch
+        {
+            { Machine: { Length: > 0 } machine } => throw new CallFailed($"The terminal for a session on {machine} can't be opened here yet."),
+            { } session when SessionStore.Folder(checkouts, sessions.Top(session)) is { } folder && Directory.Exists(folder) => folder,
+            null => throw new CallFailed($"Unknown terminal owner: {id}"),
+            _ => null,
+        };
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {

@@ -1,7 +1,8 @@
 //! `SourceControlPane` is the drawer's Source control tab: the selected session's project's branch and changed files
 //! from `git/status`, read only while the tab is shown (`SessionRead`, scm#12). The files are in Staged, Changes and
-//! Untracked, each with its letter (scm#10). Replaces SourceControlPanel.svelte's status lists. Staging, commits,
-//! diffs and branches aren't ported yet.
+//! Untracked, each with its letter (scm#10). Picking a file opens its diff, and Branch diff opens the branch's diff
+//! against its base (scm#13, scm#18). Replaces SourceControlPanel.svelte's status lists. Staging, commits and
+//! branches aren't ported yet.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
@@ -10,6 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::git_status::{GitStatus, Section};
+use crate::core::intents::open_branch_diff::OpenBranchDiff;
 use crate::core::intents::open_diff::OpenDiff;
 use crate::core::state::session_read::{SessionRead, Shown};
 
@@ -188,12 +190,30 @@ impl Render for SourceControlPane {
                 .overflow_y_scroll()
                 .px_1()
                 .child(
-                    div()
+                    h_flex()
                         .px_2()
                         .pb_2()
-                        .text_sm()
-                        .truncate()
-                        .child(status.branch_line()),
+                        .gap_2()
+                        .justify_between()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .text_sm()
+                                .truncate()
+                                .child(status.branch_line()),
+                        )
+                        .child({
+                            let open = OpenBranchDiff {
+                                session_id: session.clone(),
+                            };
+                            Button::new("source-control-branch-diff")
+                                .ghost()
+                                .compact()
+                                .label("Branch diff")
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(Box::new(open.clone()), cx)
+                                })
+                        }),
                 )
                 .map(|pane| {
                     if status.files.is_empty() {

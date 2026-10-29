@@ -11,7 +11,7 @@ public sealed class ListSessionsTool(SessionRegistry sessions, Reachability reac
     public override string Name => "list_sessions";
 
     public override string Description =>
-        "The sessions you can message: your parent, your helpers, their siblings, and other open sessions on this machine.";
+        "The sessions you can message: the session that started you, sessions you started, their siblings, and other open sessions on this machine.";
 
     public override (string Name, string Description, bool Required)[] Parameters => [];
 

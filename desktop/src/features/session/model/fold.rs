@@ -83,8 +83,10 @@ impl Fold {
                     thinking += 1;
                     continue;
                 }
-                ItemKind::Subagent { .. } => {
-                    subagents += 1;
+                ItemKind::Subagent { subagent, .. } => {
+                    if !subagent.helper {
+                        subagents += 1;
+                    }
                     continue;
                 }
                 ItemKind::Tool { tool, .. } => tool,
@@ -125,11 +127,11 @@ impl Fold {
             counted(fetches, "fetched a page", "fetched {} pages"),
             counted(others, "used a tool", "used {} tools"),
             counted(subagents, "ran a subagent", "ran {} subagents"),
-            counted(started, "started a helper", "started {} helpers"),
+            counted(started, "started a session", "started {} sessions"),
             counted(sent, "sent a message", "sent {} messages"),
             counted(
                 checked,
-                "checked a helper's answer",
+                "checked a session's answer",
                 "checked answers {} times",
             ),
             counted(listed, "listed sessions", "listed sessions {} times"),
@@ -159,9 +161,9 @@ impl Fold {
 /// The Assembly MCP server's tools, with their row titles: Claude Code calls them `mcp__assembly__<tool>`, Codex
 /// `mcp.assembly.<tool>`. The summary counts them in this order.
 const HELPERS: [(&str, &str); 4] = [
-    ("start_session", "Started a helper"),
+    ("start_session", "Started a session"),
     ("send_message", "Sent a message"),
-    ("message_status", "Checked a helper's answer"),
+    ("message_status", "Checked a session's answer"),
     ("list_sessions", "Listed sessions"),
 ];
 

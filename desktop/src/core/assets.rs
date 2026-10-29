@@ -34,7 +34,9 @@ gpui_kit::assets::icon_assets!(
         Server,
         Download,
         Sparkles,
-        Puzzle
+        Puzzle,
+        Rocket,
+        ListFilter
     ]
 );
 

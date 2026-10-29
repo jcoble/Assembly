@@ -1,0 +1,5 @@
+ok terminal starts on the local owning backend
+ok live output and replay contain the same bytes
+ok input reaches the program, resize reaches the PTY, and exit follows output
+ok close removes the terminal and its replay
+ok unknown and remote owners are refused with and without a folder, leaving no terminal
