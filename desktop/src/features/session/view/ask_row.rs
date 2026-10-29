@@ -83,6 +83,15 @@ pub fn settled(ask: &AskPayload) -> String {
     }
 }
 
+/// A title on one line, as a tool line is (`Fold::tool_words`): a title of several lines (a heredoc command) shows its
+/// first, ending in "…".
+pub fn one_line(text: &str) -> String {
+    match text.trim_end().split_once('\n') {
+        Some((first, _)) => format!("{}…", first.trim_end()),
+        None => text.trim_end().to_string(),
+    }
+}
+
 /// What a question asked, for its settled card: each field's label, its hint, and its choices joined ("" for text).
 pub fn asked(ask: &AskPayload) -> Vec<(String, Option<String>, String)> {
     let fields = ask.schema.as_ref().and_then(AskSchema::of);
@@ -179,7 +188,7 @@ impl AskRow {
         } else {
             "Question"
         };
-        let title = self.ask.title.clone().unwrap_or_else(|| kind.to_string());
+        let title = one_line(self.ask.title.as_deref().unwrap_or(kind));
         if !open {
             let word = settled(&self.ask);
             let crossed = self.ask.state == "cancelled" || word == "Denied";

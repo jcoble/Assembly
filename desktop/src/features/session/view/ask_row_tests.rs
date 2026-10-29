@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{asked, outcome, settled};
+use super::{asked, one_line, outcome, settled};
 use crate::features::session::rows::ask::AskPayload;
 
 fn ask(state: &str, answer: Option<Value>) -> AskPayload {
@@ -102,4 +102,16 @@ fn an_answered_permission_reads_allowed_or_denied() {
     assert_eq!(settled(&ask("cancelled", None)), "Cancelled");
     let skipped = ask("answered", Some(json!({ "action": "decline" })));
     assert_eq!(settled(&skipped), "Skipped");
+}
+
+// An approval for a multi-line command (a heredoc) is one line, as a tool line is: its first line, ending in "…".
+// Pins: g0-session#16
+#[test]
+fn a_multi_line_title_shows_its_first_line() {
+    assert_eq!(
+        one_line("cat > here.txt <<EOF\nalpha\nbeta\nEOF"),
+        "cat > here.txt <<EOF…"
+    );
+    assert_eq!(one_line("ls -la\n"), "ls -la");
+    assert_eq!(one_line("Write notes.txt"), "Write notes.txt");
 }
