@@ -65,16 +65,17 @@ pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &A
     (grown, moving)
 }
 
-/// An open row's card edge, coming in as it grows: shut, `row` keeps its place; open, the card is the column's width
-/// and its content sits 8 px in.
+/// An open question's card, coming in as it grows: shut, `row` keeps its place; open, the card is the column's width,
+/// as the mock's `.confirm`: 12 px corners, an edge, a shade lighter than the panel, its content 14 px in.
 pub fn band(row: Div, grown: f32, cx: &App) -> Div {
     let theme = cx.theme();
-    row.px_2()
-        .py_1()
-        .mx(px(-8.) * (1. - grown))
-        .rounded(theme.radius_lg)
+    row.px(px(14.))
+        .py(px(6.) * grown)
+        .mx(px(-14.) * (1. - grown))
+        .rounded(px(12.))
         .border_1()
         .border_color(theme.border.opacity(grown))
+        .bg(theme.group_box.opacity(0.5 * grown))
 }
 
 /// `body` growing in place: while it moves, cut to `grown` of the height it was last measured at (0 before the first

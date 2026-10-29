@@ -207,24 +207,33 @@ impl AskRow {
                 .child(div().min_w_0().truncate().child(title))
                 .child(chevron(grown));
         }
+        // The mock's `.confirm` title: a 15 px warning mark, the title at medium weight; "Needs you" and the chevron
+        // that shuts it at the right.
         let mark = if self.ask.kind == "permission" {
-            Glyph::ShieldQuestionMark
+            Glyph::TriangleAlert
         } else {
             Glyph::CircleQuestionMark
         };
         h_flex()
             .h(px(28.))
             .gap_2()
-            .text_sm()
-            .child(chevron(grown))
-            .child(Icon::new(mark).xsmall().text_color(theme.warning))
-            .child(div().flex_1().min_w_0().truncate().child(title))
+            .text_size(px(13.))
+            .child(Icon::new(mark).size(px(15.)).text_color(theme.warning))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(title),
+            )
             .child(
                 div()
                     .text_xs()
                     .text_color(theme.muted_foreground)
                     .child("Needs you"),
             )
+            .child(chevron(grown).text_color(theme.muted_foreground))
     }
 
     /// The message and what answers it, under the title; a settled one's message and fields, with nothing to answer.
@@ -236,7 +245,9 @@ impl AskRow {
             let action = Rc::new(action);
             Button::new(SharedString::from(format!("ask:{ask_id}:{id}")))
                 .compact()
-                .rounded(theme.radius)
+                .h(px(28.))
+                .px(px(12.))
+                .rounded(px(8.))
                 .label(label)
                 .on_click(move |_, window, cx| on_action(action.as_ref().clone(), window, cx))
         };
@@ -244,18 +255,14 @@ impl AskRow {
             ask_id: ask_id.clone(),
             answer,
         };
+        // The mock's `.confirm` body: the reason muted at 12.5 px under the title, in line with it.
         let mut column = v_flex()
             .gap_2()
-            .pl(px(24.))
-            .pr_2()
-            .pb_2()
-            .text_sm()
+            .pl(px(23.))
+            .pb_1()
+            .text_size(px(12.5))
             .when_some(self.ask.message.clone(), |column, message| {
-                column.child(
-                    div()
-                        .text_color(theme.foreground.opacity(0.9))
-                        .child(message),
-                )
+                column.child(div().text_color(theme.muted_foreground).child(message))
             });
         // Settled, it shows what it asked (each field and its choices) with nothing to answer.
         if self.ask.state != "open" {
@@ -268,14 +275,16 @@ impl AskRow {
             }
             return column;
         }
+        // A permission's options at the card's right, as the mock's Deny and Allow: allowing once solid, the rest
+        // outlined.
         let Some(form) = &self.form else {
-            let mut row = h_flex().gap_2().flex_wrap();
+            let mut row = h_flex().gap(px(6.)).flex_wrap().justify_end();
             for option in &self.ask.options {
                 let pick = answer(json!({ "optionId": option.option_id }));
                 let choice = button(&option.option_id, option.name.clone(), pick);
                 row = row.child(match option.kind.as_str() {
-                    "allow_once" => choice.primary(),
-                    _ => choice.secondary(),
+                    "allow_once" => choice.primary().font_weight(FontWeight::SEMIBOLD),
+                    _ => choice.outline().h(px(26.)).px(px(10.)),
                 });
             }
             return column.child(row);
