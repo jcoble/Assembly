@@ -1,4 +1,4 @@
-use super::{DIFF_SHOWN, OUTPUT_TAIL, command_of, diff_lines, output_tail};
+use super::{DIFF_SHOWN, OUTPUT_TAIL, command_of, diff_lines, output_tail, short_path};
 
 fn numbered(count: usize) -> String {
     (1..=count).map(|n| format!("{n}\n")).collect()
@@ -48,4 +48,14 @@ fn a_codex_shell_call_shows_its_argv_as_one_command() {
         Some("ls -la".to_string())
     );
     assert_eq!(command_of(r#"{"command":["bash",1]}"#), None);
+}
+
+// Pins: g0-session#13
+#[test]
+fn a_tool_line_shows_the_last_two_parts_of_its_path() {
+    let long = "/home/me/.local/share/assembly/sessions/s-1/notes/plan.md";
+    assert_eq!(short_path(long), "notes/plan.md");
+    assert_eq!(short_path(r"C:\work\desktop\main.rs"), "desktop/main.rs");
+    assert_eq!(short_path("/a.rs"), "a.rs");
+    assert_eq!(short_path("notes/plan.md"), "notes/plan.md");
 }

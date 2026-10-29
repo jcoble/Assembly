@@ -57,6 +57,15 @@ pub fn command_of(input: &str) -> Option<String> {
         .map(|parts| parts.join(" "))
 }
 
+/// A path's last two parts ("notes/plan.md"), for a tool line: the call doesn't say what folder it ran in.
+pub fn short_path(path: &str) -> String {
+    let parts: Vec<&str> = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    parts[parts.len().saturating_sub(2)..].join("/")
+}
+
 /// The output's last `OUTPUT_TAIL` lines.
 pub fn output_tail(output: &str) -> &str {
     let mut at = output.len();
@@ -100,10 +109,15 @@ impl ToolRow {
         .flatten()
         .map(IntoElement::into_any_element)
         .collect();
+        // A summary that is the call's path shows it short.
+        let summary = match (&self.tool.summary, &self.tool.path) {
+            (Some(summary), Some(path)) if summary == path => Some(short_path(path)),
+            (summary, _) => summary.clone(),
+        };
         let (title, summary) = Fold::tool_words(
             &self.tool.name,
             self.tool.kind.as_deref(),
-            self.tool.summary.as_deref(),
+            summary.as_deref(),
         );
         StepRow {
             id: SharedString::from(format!("{}:line", self.key)),
