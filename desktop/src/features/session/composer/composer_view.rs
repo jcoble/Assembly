@@ -47,6 +47,8 @@ pub struct Composer {
     still_offline: bool,
     /// How full the agent's context window is, from the session's newest report.
     meter: Option<ContextMeter>,
+    /// The branch the session's newest turn started on, shown in the footer; `None` before its first turn.
+    branch: Option<String>,
     /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
     /// the agent the backend answers its run instead of starting another.
     retry_ids: HashMap<String, (String, String)>,
@@ -83,6 +85,8 @@ impl Composer {
             |composer, _, event, window, cx| match event {
                 InputEvent::PressEnter { shift: false, .. } => composer.send(window, cx),
                 InputEvent::Change => composer.draft_changed(cx),
+                // The box's edge shows only while the draft has focus.
+                InputEvent::Focus | InputEvent::Blur => cx.notify(),
                 _ => {}
             },
         );
@@ -103,6 +107,7 @@ impl Composer {
             connecting: None,
             still_offline: false,
             meter: None,
+            branch: None,
             retry_ids: HashMap::new(),
             named: 0,
             picks: 0,
@@ -160,6 +165,14 @@ impl Composer {
         let meter = context.and_then(|(used, size)| ContextMeter::of(used, size));
         if self.meter != meter {
             self.meter = meter;
+            cx.notify();
+        }
+    }
+
+    /// The branch the newest turn started on (model/turn_line.rs `latest_branch`).
+    pub fn set_branch(&mut self, branch: Option<String>, cx: &mut Context<Self>) {
+        if self.branch != branch {
+            self.branch = branch;
             cx.notify();
         }
     }

@@ -3,6 +3,7 @@
 //! when it opens and again only when the call's state changes (an edit's diff once the edit finishes). A long diff
 //! shows its first lines until shown in full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
 
+use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -99,11 +100,21 @@ impl ToolRow {
         .flatten()
         .map(IntoElement::into_any_element)
         .collect();
+        let (title, summary) = Fold::tool_words(
+            &self.tool.name,
+            self.tool.kind.as_deref(),
+            self.tool.summary.as_deref(),
+        );
         StepRow {
             id: SharedString::from(format!("{}:line", self.key)),
             state,
-            title: Fold::tool_title(&self.tool.name).into(),
-            summary: self.tool.summary.clone().map(Into::into),
+            // The timeline's line shows what kind of call it was; the activity card keeps its done and failed marks.
+            glyph: self
+                .took_ms
+                .is_none()
+                .then(|| glyph(self.tool.kind.as_deref())),
+            title: title.into(),
+            summary: summary.map(Into::into),
             tags,
             took_ms: self.took_ms,
             chevron,
@@ -122,14 +133,19 @@ impl ToolRow {
         let theme = cx.theme();
         let block = || {
             div()
-                .p_2()
+                .px_3()
+                .py_2()
                 .rounded(theme.radius)
-                .bg(theme.muted)
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.group_box)
                 .font_family(theme.mono_font_family.clone())
                 .text_xs()
                 .overflow_x_hidden()
         };
-        let mut column = v_flex().gap_1().pl_5();
+        let mut column = (v_flex().gap_2().ml(px(6.)).pl(px(16.)))
+            .border_l_1()
+            .border_color(theme.border);
         if let Some(command) = detail.input.as_deref().and_then(command_of) {
             column = column.child(block().child(command));
         }
@@ -177,6 +193,18 @@ impl ToolRow {
             );
         }
         column
+    }
+}
+
+/// A call's icon on its line, by its ACP kind.
+fn glyph(kind: Option<&str>) -> Glyph {
+    match kind {
+        Some("execute") => Glyph::SquareTerminal,
+        Some("edit" | "delete" | "move") => Glyph::Pencil,
+        Some("read") => Glyph::FileText,
+        Some("search") => Glyph::Search,
+        Some("fetch") => Glyph::Globe,
+        _ => Glyph::Wrench,
     }
 }
 

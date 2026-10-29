@@ -19,6 +19,9 @@ use crate::features::session::model::kept::Kept;
 use crate::features::session::model::notices::Notice;
 use crate::features::session::model::turn_line::turn_line;
 
+/// The chat column's widest, centred in the pane (the reading measure); the composer keeps to it too.
+pub const CHAT_COLUMN: Pixels = px(700.);
+
 #[derive(IntoElement)]
 pub struct ItemRow {
     pub item: Item,
@@ -40,9 +43,12 @@ impl RenderOnce for ItemRow {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let key = self.item.key.clone();
+        // Each row its own hover group, so its copy button and time show only under the pointer.
+        let group = SharedString::from(format!("{key}:meta"));
         let meta = |at: i64, copy: Option<SharedString>| {
             copy.map(|copy| MessageMeta {
                 key: key.clone(),
+                group: group.clone(),
                 copy,
                 at,
                 now: self.now,
@@ -131,27 +137,41 @@ impl RenderOnce for ItemRow {
                 .child(format!("[{kind}]"))
                 .into_any_element(),
         };
-        div().w_full().px_4().py_1().child(body)
+        div()
+            .group(group.clone())
+            .w_full()
+            .max_w(CHAT_COLUMN)
+            .mx_auto()
+            .px_4()
+            .py_1()
+            // The reading style, 14 on 22; a line that sets its own size keeps the same proportion.
+            .text_size(px(14.))
+            .line_height(relative(22. / 14.))
+            .child(body)
     }
 }
 
-/// Thinking's line: a chevron turned `grown` of the way, and "Thinking" until it's done, then "Thought".
+/// Thinking's line: "Thinking" until it's done, then "Thought", and a chevron after it turned `grown` of the way.
 pub fn thinking_title(done: bool, grown: f32, cx: &App) -> AnyElement {
     h_flex()
         .gap_2()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
-        .child(chevron(grown))
         .child(if done { "Thought" } else { "Thinking" })
+        .child(chevron(grown))
         .into_any_element()
 }
 
-/// What thinking shows open: its text.
+/// What thinking shows open: its text, hanging from a rule under the title.
 pub fn thinking_body(text: SharedString, cx: &App) -> AnyElement {
+    let theme = cx.theme();
     div()
+        .ml(px(6.))
+        .pl(px(16.))
+        .border_l_1()
+        .border_color(theme.border)
         .text_sm()
-        .italic()
-        .text_color(cx.theme().muted_foreground)
+        .text_color(theme.muted_foreground)
         .child(text)
         .into_any_element()
 }

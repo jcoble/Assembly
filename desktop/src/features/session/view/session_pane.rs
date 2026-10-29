@@ -35,6 +35,7 @@ use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::model::reveal::Reveal;
 use crate::features::session::model::session_view::{SessionView, key_of};
+use crate::features::session::model::turn_line::latest_branch;
 use crate::features::session::rows::row::Row;
 use crate::features::session::rows::row_page::RowPage;
 use crate::features::session::rows::tool::ToolState;
@@ -506,9 +507,11 @@ impl SessionPane {
         }
         let context = self.view.context.map(|(_, used, size)| (used, size));
         let running = active.is_some();
+        let branch = latest_branch(&self.view.stats);
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
+            composer.set_branch(branch, cx);
         });
         self.tell_read(running, cx);
         cx.notify();

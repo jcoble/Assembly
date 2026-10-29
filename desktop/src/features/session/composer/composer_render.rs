@@ -1,13 +1,14 @@
 //! How the composer draws, to the approved look (the mockup canvas's board 4): one box on the raised ground with the
-//! design system's radius-xl corners: attached images' chips, the draft, and a footer with Attach and the agent's menus
-//! as pills on the left, then the context ring, Stop while a turn runs and the round Send, which is the one solid
-//! button and is dimmed while there's nothing to send, an image hasn't uploaded or the session's machine is offline
+//! design system's radius-xl corners and no edge until the draft has focus: attached images' chips, the draft, and a
+//! footer with Attach and the agent's menus as outlined buttons on the left, then the branch the newest turn started
+//! on, the context ring, Stop while a turn runs and the round Send, which is the one solid button and is dimmed while
+//! there's nothing to send, an image hasn't uploaded or the session's machine is offline
 //! (which a line above the box says; Stop is dimmed then too). Files dropped anywhere on the box light its edge. The "/" list floats just above the box, and why something failed sits above it.
 
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -18,6 +19,7 @@ use crate::features::session::composer::attachment_chip::AttachmentChip;
 use crate::features::session::composer::config_menu::{ConfigMenu, OnSelect};
 use crate::features::session::composer::context_ring::ContextRing;
 use crate::features::session::composer::slash_list::SlashList;
+use crate::features::session::view::item_row::CHAT_COLUMN;
 
 /// The design system's `radius-xl`, the composer's corners.
 const BOX_RADIUS: Pixels = px(20.);
@@ -25,9 +27,21 @@ const BOX_RADIUS: Pixels = px(20.);
 const ROUND_BUTTON: Pixels = px(30.);
 
 impl Render for Composer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focused = self.draft.read(cx).focus_handle(cx).is_focused(window);
         let theme = cx.theme();
         let pill = theme.radius_full();
+        let branch = self.branch.clone().map(|branch| {
+            h_flex()
+                .gap_1()
+                .min_w_0()
+                .max_w(px(160.))
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(11.5))
+                .text_color(theme.muted_foreground)
+                .child(Icon::new(Glyph::GitBranch).size(px(12.)))
+                .child(div().min_w_0().truncate().child(branch))
+        });
         let empty = self.draft.read(cx).value().trim().is_empty() && self.attachments.is_empty();
         let waiting = !self.all_saved();
         let running = self.running.is_some();
@@ -54,7 +68,7 @@ impl Render for Composer {
             .gap_1p5()
             .child(
                 Button::new("composer:attach")
-                    .ghost()
+                    .outline()
                     .small()
                     .icon(Glyph::Paperclip)
                     .rounded(pill)
@@ -65,6 +79,7 @@ impl Render for Composer {
             )
             .children(menus)
             .child(div().flex_1())
+            .children(branch)
             .when_some(self.meter.clone(), |foot, meter| {
                 foot.child(ContextRing { meter })
             })
@@ -128,7 +143,8 @@ impl Render for Composer {
                     .update(cx, |composer, cx| composer.pasted(item, cx))
                     .unwrap_or(false)
             });
-        let root = self.slash_keys(div().relative().w_full().px_4().pt_1().pb_3(), cx);
+        let root = div().relative().w_full().max_w(CHAT_COLUMN).mx_auto();
+        let root = self.slash_keys(root.px_4().pt_1().pb_3(), cx);
         let theme = cx.theme();
         let offline = (self.offline.as_ref()).map(|machine| {
             SharedString::from(if self.still_offline {
@@ -191,7 +207,11 @@ impl Render for Composer {
                 .rounded(BOX_RADIUS)
                 .bg(theme.group_box)
                 .border_1()
-                .border_color(theme.border)
+                .border_color(if focused {
+                    theme.ring
+                } else {
+                    transparent_black()
+                })
                 .drag_over::<ExternalPaths>(|style, _, _, cx| {
                     style.border_color(cx.theme().drag_border)
                 })

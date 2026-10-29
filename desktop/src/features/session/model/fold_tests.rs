@@ -107,7 +107,7 @@ fn a_finished_turn_folds_its_work_not_its_prompt_reply_open_card_or_running_task
     let work: HashSet<String> = ["th", "before", "t1", "t2", "t3"].map(String::from).into();
     assert_eq!(fold.work, work);
     assert_eq!(fold.reply.as_deref(), Some("reply"));
-    assert_eq!(fold.summary, "Edited a file, ran a command");
+    assert_eq!(fold.summary, "ran a command · edited a file");
     assert_eq!(fold.duration_ms, Some(12_000));
 }
 
@@ -135,7 +135,7 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
         tool("d", "execute", json!({})),
         tool("e", "execute", json!({})),
     ];
-    assert_eq!(summary(&edits), "Edited 2 files, ran 3 commands");
+    assert_eq!(summary(&edits), "ran 3 commands · edited 2 files");
     let mixed = [
         tool("a", "read", json!({})),
         tool("b", "search", json!({})),
@@ -143,12 +143,12 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
     ];
     assert_eq!(
         summary(&mixed),
-        "Read a file, ran a command, searched once, 1 call failed"
+        "ran a command · read a file · searched once · 1 call failed"
     );
     // A command stopped mid-run reads failed; it still ran.
     assert_eq!(
         summary(&[tool("a", "execute", json!({ "state": "failed" }))]),
-        "Ran a command, 1 call failed"
+        "ran a command · 1 call failed"
     );
     let subagent = serde_json::from_value(
         json!({ "sessionId": "c1", "title": "Explore", "state": "idle", "canStop": false }),
@@ -162,7 +162,7 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
                 subagent
             }
         )]),
-        "Ran a subagent"
+        "ran a subagent"
     );
     assert_eq!(
         summary(&[item(
@@ -176,23 +176,29 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
     );
     assert_eq!(
         summary(&[tool("a", "other", json!({})), tool("b", "other", json!({}))]),
-        "Used 2 tools"
+        "used 2 tools"
     );
 }
 
+// Pins: g0-session#13
 #[test]
-fn the_assembly_mcp_server_tools_read_as_words_in_the_row_and_the_summary() {
+fn an_assembly_helper_tool_keeps_its_words() {
+    for kind in [None, Some("execute"), Some("other")] {
+        assert_eq!(
+            Fold::tool_words("mcp__assembly__start_session", kind, None),
+            ("Started a helper".to_string(), None)
+        );
+    }
     assert_eq!(
-        Fold::tool_title("mcp__assembly__start_session"),
-        "Started a helper"
+        Fold::tool_words("mcp.assembly.message_status", Some("execute"), Some("s1")),
+        (
+            "Checked a helper's answer".to_string(),
+            Some("s1".to_string())
+        )
     );
     assert_eq!(
-        Fold::tool_title("mcp.assembly.message_status"),
-        "Checked a helper's answer"
-    );
-    assert_eq!(
-        Fold::tool_title("mcp__other__start_session"),
-        "mcp__other__start_session"
+        Fold::tool_words("mcp__other__start_session", None, None),
+        ("mcp__other__start_session".to_string(), None)
     );
     let calls = [
         tool(
@@ -219,6 +225,31 @@ fn the_assembly_mcp_server_tools_read_as_words_in_the_row_and_the_summary() {
     ];
     assert_eq!(
         summary(&calls),
-        "Ran a command, started a helper, checked answers 2 times, listed sessions"
+        "ran a command · started a helper · checked answers 2 times · listed sessions"
+    );
+}
+
+// Pins: g0-session#13
+#[test]
+fn a_tool_is_titled_by_its_kind() {
+    let words = |kind, summary| Fold::tool_words("Bash", kind, summary);
+    let titled = |title: &str| (title.to_string(), Some("Bash".to_string()));
+    assert_eq!(words(Some("execute"), None), titled("Ran"));
+    for kind in ["edit", "delete", "move"] {
+        assert_eq!(words(Some(kind), None), titled("Edited"), "{kind}");
+    }
+    assert_eq!(words(Some("read"), None), titled("Read"));
+    assert_eq!(words(Some("search"), None), titled("Searched"));
+    assert_eq!(words(Some("fetch"), None), titled("Fetched"));
+    for kind in [Some("think"), Some("other"), None] {
+        assert_eq!(words(kind, None), ("Bash".to_string(), None), "{kind:?}");
+    }
+    assert_eq!(
+        words(Some("execute"), Some("cargo test")),
+        ("Ran".to_string(), Some("cargo test".to_string()))
+    );
+    assert_eq!(
+        words(Some("other"), Some("x")),
+        ("Bash".to_string(), Some("x".to_string()))
     );
 }
