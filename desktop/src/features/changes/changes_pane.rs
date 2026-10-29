@@ -20,14 +20,13 @@ use crate::core::intents::open_branch_diff::OpenBranchDiff;
 use crate::core::intents::open_diff::OpenDiff;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
+use crate::core::state::preferences::Preferences;
 use crate::core::ui::center_panes::CenterPanes;
 
 /// The pane's name in the saved layout, and the one key its tab opens under.
 pub const CHANGES: &str = "Changes";
 /// The one key both reads go under.
 const KEY: &str = "git/diff";
-const LINE: Pixels = px(20.);
-const TEXT: Pixels = px(13.);
 
 /// The open Changes tab, so the open diff intent shows its file there.
 struct Open(WeakEntity<ChangesPane>);
@@ -77,6 +76,8 @@ pub struct ChangesPane {
     /// The read on its way; dropping it cancels the call.
     _read: Option<Task<()>>,
     list: UniformListScrollHandle,
+    /// Redraws in the editor's face, size and line height when Settings changes them.
+    _preferences: Option<Subscription>,
 }
 
 impl ChangesPane {
@@ -152,6 +153,8 @@ impl ChangesPane {
             shown: Shown::Reading,
             _read: None,
             list: UniformListScrollHandle::new(),
+            _preferences: Preferences::try_global(cx)
+                .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
         };
         if let Some(picked) = picked {
             pane.show(picked, cx);
@@ -229,11 +232,13 @@ impl ChangesPane {
         });
     }
 
+    /// One row, in the editor's text; the number columns grow with its size.
     fn row(row: &Row, cx: &App) -> AnyElement {
         let theme = cx.theme();
+        let (font, size, line_height) = Preferences::editor_text(cx);
         let number = |n: Option<u32>| {
             div()
-                .w(px(44.))
+                .w(px(44. * f32::from(size) / 13.))
                 .flex_none()
                 .pr_2()
                 .text_right()
@@ -243,10 +248,10 @@ impl ChangesPane {
         let line = match row {
             Row::Label(label) => {
                 return div()
-                    .h(LINE)
+                    .h(line_height)
                     .px_3()
-                    .font_family(theme.mono_font_family.clone())
-                    .text_size(TEXT)
+                    .font_family(font)
+                    .text_size(size)
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.muted_foreground)
                     .child(label.clone())
@@ -263,10 +268,10 @@ impl ChangesPane {
         // The font is set on the row, not only on the list, so measuring the widest row on its own counts the same
         // characters at the same width.
         h_flex()
-            .h(LINE)
+            .h(line_height)
             .min_w_full()
-            .font_family(theme.mono_font_family.clone())
-            .text_size(TEXT)
+            .font_family(font)
+            .text_size(size)
             .when_some(fill, |row, fill| row.bg(fill))
             .child(number(line.old))
             .child(number(line.new))
@@ -331,11 +336,8 @@ impl Panel for ChangesPane {
 impl Render for ChangesPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, danger, mono) = (
-            theme.muted_foreground,
-            theme.danger,
-            theme.mono_font_family.clone(),
-        );
+        let (muted, danger) = (theme.muted_foreground, theme.danger);
+        let (mono, size, _) = Preferences::editor_text(cx);
         let note = |text: String| div().px_3().py_2().text_sm().child(text);
         let reading = matches!(self.shown, Shown::Reading) && self.picked.is_some();
         let header = h_flex()
@@ -414,7 +416,7 @@ impl Render for ChangesPane {
                         )
                         .flex_1()
                         .font_family(mono)
-                        .text_size(TEXT),
+                        .text_size(size),
                     )
                 })
                 .children(

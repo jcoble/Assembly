@@ -257,6 +257,17 @@ impl SessionView {
         (turn_run != Some(known) && !self.stats.contains_key(known)).then(|| known.to_string())
     }
 
+    /// The plan's items, when the turn going now wrote it: an earlier turn's plan is no step of this one.
+    pub fn turn_plan(&self) -> Option<&[PlanItem]> {
+        let turn = self
+            .turn
+            .as_ref()
+            .filter(|turn| turn.state == TurnState::Started)?;
+        let (_, items) =
+            (self.plan.as_ref()).filter(|(seq, items)| *seq > turn.seq && !items.is_empty())?;
+        Some(items)
+    }
+
     /// When the run going now started, from its started turn row; `None` when no such row is loaded.
     pub fn run_started_at(&self, run_id: &str) -> Option<i64> {
         let turn = self.turn.as_ref()?;

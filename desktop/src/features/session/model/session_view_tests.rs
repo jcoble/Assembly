@@ -497,6 +497,26 @@ fn an_ask_row_opens_a_card_that_its_settled_row_updates_in_place() {
     );
 }
 
+// Pins: g0-session#12
+#[test]
+fn a_turn_without_a_plan_shows_no_step() {
+    let turn = |seq, run: &str, state: &str| row(seq, run, None, "turn", json!({ "state": state }));
+    let plan = |seq, run: &str| {
+        let items = json!({ "items": [{ "text": "Read the README", "status": "in_progress" }] });
+        row(seq, run, Some("todo"), "plan", items)
+    };
+    let mut view = live(
+        SessionView::default(),
+        &[turn(1, "r1", "started"), plan(2, "r1")],
+    );
+    assert_eq!(view.turn_plan().map(<[_]>::len), Some(1));
+    view.apply(&turn(3, "r1", "finished"));
+    view.apply(&turn(4, "r2", "started"));
+    assert!(view.turn_plan().is_none(), "r1's plan is no step of r2");
+    view.apply(&plan(5, "r2"));
+    assert_eq!(view.turn_plan().map(<[_]>::len), Some(1));
+}
+
 // Pins: g0-session#28
 #[test]
 fn the_newest_context_report_wins_live_or_paged_and_draws_no_item() {
