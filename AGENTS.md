@@ -305,6 +305,16 @@ Nothing else stands in for it, however sure you are of the code.
 - Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).
 - Real-window checks (the lag meter, memory) run on the Mac: pull the lane's branch into a Mac lane and run
   `shell/assembly.sh start --counters` there.
+Test first for any behaviour change: write the test, watch it fail, then make it pass.
+The commit-msg hook rejects a commit whose subject starts with fix unless it stages a test file (*.test.ts, *_test.dart, a tests/ folder) or a Rust #[test], or the body has a line No-test: <reason>.
+Run only what you touched: pnpm --dir tauri-svelte-preview test:<name> (or node --experimental-strip-types <file>.test.ts), cargo test --manifest-path tauri-svelte-preview/src-tauri/Cargo.toml <name>, check:svelte. Full suites belong to CI.
+Test behaviour and logic. No tests that mirror the implementation or only check that a callback is wired. No tests on component structure, layout, panels, menus, styling, colour tokens or contrast: the UI changes daily and those tests only get rewritten to match it.
+A test that needs a sleep or polling to pass is wrong; wait on the event that marks completion.
+Every change gets the four-scenario check (docs/operations/four-scenario-check.md), with no exemption for changes that look small: Claude Code and Codex, each on a local session and on Workbox Test. Several changes may share one run if it exercises each of them. Report the four-row table with evidence; a scenario you can't run is reported blocked with the exact error. Each worktree has its own test-app run: fourScenarios.ts start --worktree <path> and stop --worktree <path> use ~/assembly-proof/current-<folder name>-<path hash> so equal folder names in different locations stay separate. The hash uses the canonical worktree path. Without --worktree, commands use the current directory's Git worktree. Different worktrees may run together when more than 6 GB of RAM is available; starting the same worktree twice is refused. Stopping one worktree leaves the others running.
+The four scenarios only cover chat. A change the owner can see or use also gets a feature check: open that feature in the test app seeded with real data (long names, many projects and worktrees, large chats), use it as the task describes, screenshot it, look for anything cut off, repeated or empty, and add a "Feature check" line with the Drive link to the PR.
+That check and any UI proof use the real native app with real test data, driven the way a person uses it. On Linux the app runs under Xvfb at 1710x990, driven with assembly-native-ui (screenshots, clicks, keys); Codex may use its computer-use tool. A browser preview is not proof: it has no app data. Use a headless browser at 1710x990 only for real web pages.
+Save screenshots as ~/Workbox/screenshots/TSK-<id>-<what>-<before|after>.png and run evidence add <file> --task TSK-<id> --desc "<what it proves>"; evidence publish TSK-<id> gives the Drive links for the PR and the task. Close every browser and app you opened.
+
 
 ## Lanes
 
