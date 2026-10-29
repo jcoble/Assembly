@@ -212,7 +212,7 @@ public sealed partial class ChatSocketTests
         var untitled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
 
         Assert.Equal((parent.SessionId, true, "Look"), (titled.ParentSessionId, titled.Helper, titled.Title));
-        Assert.Equal((parent.SessionId, true, "Helper"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
+        Assert.Equal((parent.SessionId, true, "Session"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
         Assert.Equal(["agents", "helper", "agents", "helper"], _here.Asked);
     }
 }

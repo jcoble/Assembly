@@ -95,7 +95,7 @@ internal sealed class SessionsFeature : IFeature
                 throw new CallFailed($"this machine has no agent {args.Agent}");
             var session = args.ParentSessionId is { } parentId
                 ? await machine.CreateHelperAsync(new SessionInfo(parentId, args.Agent, args.RepoUrl, null, null, 0), args.Agent,
-                    args.Title ?? "Helper", call.Cancellation)
+                    args.Title ?? "Session", call.Cancellation)
                 : await machine.CreateSessionAsync(args.Agent, args.RepoUrl, call.Cancellation);
             return _ => new Created(session.SessionId);
         }, args => $"machine {args.Machine}");
