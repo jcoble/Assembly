@@ -103,6 +103,11 @@ impl Panel for SessionPane {
     fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         "Chat"
     }
+
+    /// Alone in its group it draws no kit title row: its header is its title row, with the sessions button.
+    fn title_bar(&self, _cx: &App) -> bool {
+        false
+    }
 }
 
 impl Render for SessionPane {

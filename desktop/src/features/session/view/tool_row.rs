@@ -3,6 +3,7 @@
 //! when it opens and again only when the call's state changes (an edit's diff once the edit finishes). A long diff
 //! shows its first lines until shown in full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
 
+use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -27,6 +28,8 @@ pub struct ToolRow {
     pub kept: Kept,
     /// It's in the running turn's activity card, with how long it has run: only there does a started call spin.
     pub took_ms: Option<i64>,
+    /// The user denied it: it didn't run, so it isn't drawn as failed.
+    pub denied: bool,
     pub on_action: OnAction,
 }
 
@@ -56,6 +59,40 @@ pub fn command_of(input: &str) -> Option<String> {
         .map(|parts| parts.join(" "))
 }
 
+/// A path's last two parts ("notes/plan.md"), for a tool line: the call doesn't say what folder it ran in.
+pub fn short_path(path: &str) -> String {
+    let parts: Vec<&str> = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    parts[parts.len().saturating_sub(2)..].join("/")
+}
+
+/// What a tool line shows after its title: its summary, else its path; a path as its last two parts.
+pub fn line_summary(tool: &ToolPayload) -> Option<String> {
+    match (&tool.summary, &tool.path) {
+        (Some(summary), Some(path)) if summary != path => Some(summary.clone()),
+        (_, Some(path)) => Some(short_path(path)),
+        (summary, None) => summary.clone(),
+    }
+}
+
+/// A run that failed (not one the user denied, which didn't run): its line reads "Failed to run" and it opens to its
+/// output, as the mock's red line.
+pub fn failed_run(tool: &ToolPayload, denied: bool) -> bool {
+    tool.state == ToolState::Failed && !denied && tool.kind.as_deref() == Some("execute")
+}
+
+/// A tool line's title and summary: its kind's word (`Fold::tool_words`), "Failed to run" for a failed run.
+pub fn line_words(tool: &ToolPayload, denied: bool) -> (String, Option<String>) {
+    let summary = line_summary(tool);
+    let (title, summary) = Fold::tool_words(&tool.name, tool.kind.as_deref(), summary.as_deref());
+    match failed_run(tool, denied) {
+        true => ("Failed to run".to_string(), summary),
+        false => (title, summary),
+    }
+}
+
 /// The output's last `OUTPUT_TAIL` lines.
 pub fn output_tail(output: &str) -> &str {
     let mut at = output.len();
@@ -82,6 +119,7 @@ impl ToolRow {
         let state = match self.tool.state {
             ToolState::Started if self.took_ms.is_some() => StepState::Running,
             ToolState::Started => StepState::Unfinished,
+            ToolState::Failed if self.denied => StepState::Unfinished,
             ToolState::Completed => StepState::Done,
             ToolState::Failed => StepState::Failed,
         };
@@ -99,11 +137,17 @@ impl ToolRow {
         .flatten()
         .map(IntoElement::into_any_element)
         .collect();
+        let (title, summary) = line_words(&self.tool, self.denied);
         StepRow {
             id: SharedString::from(format!("{}:line", self.key)),
             state,
-            title: Fold::tool_title(&self.tool.name).into(),
-            summary: self.tool.summary.clone().map(Into::into),
+            // The timeline's line shows what kind of call it was; the activity card keeps its done and failed marks.
+            glyph: self
+                .took_ms
+                .is_none()
+                .then(|| glyph(self.tool.kind.as_deref())),
+            title: title.into(),
+            summary: summary.map(Into::into),
             tags,
             took_ms: self.took_ms,
             chevron,
@@ -120,16 +164,24 @@ impl ToolRow {
 
     fn detail(&self, detail: &ToolDetail, cx: &App) -> Div {
         let theme = cx.theme();
+        // The mock's `.out`: a box 10 px round, a shade lighter than the panel, 12 px code at 1.5, muted.
         let block = || {
             div()
-                .p_2()
-                .rounded(theme.radius)
-                .bg(theme.muted)
+                .px_3()
+                .py(px(9.))
+                .rounded(px(10.))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.group_box.opacity(0.5))
                 .font_family(theme.mono_font_family.clone())
-                .text_xs()
+                .text_size(px(12.))
+                .line_height(relative(1.5))
+                .text_color(theme.muted_foreground)
                 .overflow_x_hidden()
         };
-        let mut column = v_flex().gap_1().pl_5();
+        let mut column = (v_flex().gap_2().ml(px(7.)).pl(px(15.)))
+            .border_l_1()
+            .border_color(theme.border);
         if let Some(command) = detail.input.as_deref().and_then(command_of) {
             column = column.child(block().child(command));
         }
@@ -177,6 +229,18 @@ impl ToolRow {
             );
         }
         column
+    }
+}
+
+/// A call's icon on its line, by its ACP kind.
+fn glyph(kind: Option<&str>) -> Glyph {
+    match kind {
+        Some("execute") => Glyph::Terminal,
+        Some("edit" | "delete" | "move") => Glyph::Pencil,
+        Some("read") => Glyph::FileText,
+        Some("search") => Glyph::Search,
+        Some("fetch") => Glyph::Globe,
+        _ => Glyph::Wrench,
     }
 }
 
