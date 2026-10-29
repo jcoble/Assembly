@@ -415,5 +415,11 @@
       "reason": ""
     }
   ],
-  "windowScreenshots": "missing"
+  "windowScreenshots": {
+    "where": "project files: notes/evidence/four-way/look/c0a1903/window/",
+    "files": [
+      "PR-113-table-before.png",
+      "PR-113-table-after.png"
+    ]
+  }
 }

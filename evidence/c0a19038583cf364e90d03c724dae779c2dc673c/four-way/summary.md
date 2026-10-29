@@ -8,4 +8,4 @@ Feature scenarios: files, preferences, rows, scm, sessions-list, session-view, s
 - codex on local: pass (session 17c9101a-6658-405d-8ff9-09fb2c512c9c, transcript /home/blackcolours/.codex/sessions/2026/10/28/rollout-2026-10-28T20-43-18-01a1851c-7a13-7903-92a9-0d666e7b8507.jsonl 157790 bytes)
 - codex on workbox-test: pass (session 2be7365f-2996-467d-ade9-b8983ee0b6be, transcript /home/blackcolours/.codex/sessions/2026/10/29/rollout-2026-10-29T00-43-31-01a1851c-ac4b-7c21-bc0f-f22ec1f67785.jsonl 72630 bytes)
 
-Window screenshots: missing
+Window screenshots: PR-113-table-before.png, PR-113-table-after.png (project files: notes/evidence/four-way/look/c0a1903/window/)
