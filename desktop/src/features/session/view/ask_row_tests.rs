@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::{asked, one_line, outcome, settled};
+use super::{asked, one_line, outcome, permission_choices, settled};
 use crate::features::session::rows::ask::AskPayload;
 
 fn ask(state: &str, answer: Option<Value>) -> AskPayload {
@@ -114,4 +114,32 @@ fn a_multi_line_title_shows_its_first_line() {
     );
     assert_eq!(one_line("ls -la\n"), "ls -la");
     assert_eq!(one_line("Write notes.txt"), "Write notes.txt");
+}
+
+// Pins: g0-session#16
+#[test]
+fn a_permission_offers_deny_then_allow() {
+    let ask: AskPayload = serde_json::from_value(json!({
+        "kind": "permission",
+        "state": "open",
+        "options": [
+            { "optionId": "yes", "name": "Yes", "kind": "allow_once" },
+            { "optionId": "always", "name": "Yes, and don't ask again", "kind": "allow_always" },
+            { "optionId": "no", "name": "No", "kind": "reject_once" },
+        ],
+    }))
+    .unwrap();
+    let words = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        (pairs.iter())
+            .map(|(id, label)| (id.to_string(), label.to_string()))
+            .collect()
+    };
+    assert_eq!(
+        permission_choices(&ask.options),
+        words(&[
+            ("no", "Deny"),
+            ("always", "Yes, and don't ask again"),
+            ("yes", "Allow")
+        ])
+    );
 }

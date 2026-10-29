@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use super::grow::chevron;
 use super::session_action::{OnAction, SessionAction};
-use crate::features::session::rows::ask::{AskInput, AskPayload, AskSchema};
+use crate::features::session::rows::ask::{AskInput, AskOption, AskPayload, AskSchema};
 
 #[derive(Clone)]
 pub struct AskRow {
@@ -81,6 +81,26 @@ pub fn settled(ask: &AskPayload) -> String {
         Some(kind) if kind.starts_with("reject") => "Denied".to_string(),
         _ => outcome(ask),
     }
+}
+
+/// A permission's buttons as the mock's card has them: (option id, label), Deny first and Allow last, the agent's
+/// other options (an always-allow) between them in their own words.
+pub fn permission_choices(options: &[AskOption]) -> Vec<(String, String)> {
+    let label = |option: &AskOption| match option.kind.as_str() {
+        "reject_once" => "Deny".to_string(),
+        "allow_once" => "Allow".to_string(),
+        _ => option.name.clone(),
+    };
+    let rank = |option: &&AskOption| match option.kind.as_str() {
+        "reject_once" => 0,
+        "allow_once" => 2,
+        _ => 1,
+    };
+    let mut options: Vec<&AskOption> = options.iter().collect();
+    options.sort_by_key(rank);
+    (options.into_iter())
+        .map(|option| (option.option_id.clone(), label(option)))
+        .collect()
 }
 
 /// A title on one line, as a tool line is (`Fold::tool_words`): a title of several lines (a heredoc command) shows its
@@ -275,16 +295,16 @@ impl AskRow {
             }
             return column;
         }
-        // A permission's options at the card's right, as the mock's Deny and Allow: allowing once solid, the rest
-        // outlined.
+        // A permission's options at the card's right, as the mock's: Deny, the agent's others, then Allow, solid.
         let Some(form) = &self.form else {
             let mut row = h_flex().gap(px(6.)).flex_wrap().justify_end();
-            for option in &self.ask.options {
-                let pick = answer(json!({ "optionId": option.option_id }));
-                let choice = button(&option.option_id, option.name.clone(), pick);
-                row = row.child(match option.kind.as_str() {
-                    "allow_once" => choice.primary().font_weight(FontWeight::SEMIBOLD),
-                    _ => choice.outline().h(px(26.)).px(px(10.)),
+            for (id, label) in permission_choices(&self.ask.options) {
+                let pick = answer(json!({ "optionId": id }));
+                let solid = label == "Allow";
+                let choice = button(&id, label, pick);
+                row = row.child(match solid {
+                    true => choice.primary().font_weight(FontWeight::SEMIBOLD),
+                    false => choice.outline().h(px(26.)).px(px(10.)),
                 });
             }
             return column.child(row);
