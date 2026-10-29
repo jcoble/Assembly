@@ -93,6 +93,45 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         await _remote.NoLiveAsync().WaitAsync(Wait);
     }
 
+    // Pins: remote#20
+    [Fact]
+    public async Task A_catch_up_reads_pages_until_one_is_empty()
+    {
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async IAsyncEnumerable<System.Text.Json.JsonElement> Subscribe(string session, long after,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.CompletedTask;
+                yield return System.Text.Json.JsonSerializer.SerializeToElement(new { t = "state", seq = after });
+            }
+            finally { ended.TrySetResult(); }
+        }
+        var rows = Enumerable.Range(1, 5).Select(seq => new StoredRow("s1", seq, "run", null,
+            "turn", System.Text.Json.JsonSerializer.SerializeToElement(new { state = "finished" }), seq,
+            PrevSeq: seq - 1)).ToArray();
+        var reads = new List<long>();
+        await using var follower = new RemoteFollower(_hub, Subscribe, (_, after, _) =>
+        {
+            reads.Add(after);
+            return Task.FromResult<IReadOnlyList<StoredRow>>(after switch
+            {
+                0 => rows[..3],
+                3 => rows[3..],
+                _ => []
+            });
+        }, _ => Task.CompletedTask, _ => Task.CompletedTask, (_, _) => { }, TextWriter.Null);
+
+        Assert.Null(_hub.OpenRun("s1"));
+        Assert.False(_hub.HasSubscribers("s1"));
+        follower.Watch("s1");
+        await ended.Task.WaitAsync(Wait);
+
+        Assert.Equal(new long[] { 1, 2, 3, 4, 5 }, _hub.RunRows("s1", "run").Select(row => row.Seq));
+        Assert.Equal(new long[] { 0, 3, 5 }, reads);
+    }
+
     // The follower runs over the shared machine socket, not a per-session /live client.
     private async Task FollowPastSettledAsync()
     {

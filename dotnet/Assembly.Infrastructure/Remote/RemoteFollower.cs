@@ -158,7 +158,7 @@ internal sealed class RemoteFollower(
                         foreach (var row in rows) await CopyAsync(row);
                         if (rows.Count == 0 && hub.LastSeq(sessionId) < target)
                             throw new IOException("remote catch-up made no progress");
-                    } while (rows.Count == RowsFeature.PageLimit || hub.LastSeq(sessionId) < target);
+                    } while (rows.Count > 0);
                     if (interrupted) continue;
                     caughtUp = true;
                     if (TakeShownRunning(sessionId) && hub.OpenRun(sessionId) is null && hub.LastTurnEnd(sessionId) > 0)
