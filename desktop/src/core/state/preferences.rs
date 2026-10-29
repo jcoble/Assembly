@@ -19,6 +19,8 @@ pub struct Preferences {
     _feed: Option<Task<()>>,
     /// The last save of each key, while it's being written. A newer one replaces it, so the newest value wins.
     saves: HashMap<&'static str, Task<()>>,
+    /// The value of each save still on its way, so an older save's echo doesn't undo it.
+    pending: HashMap<String, Value>,
     /// The values the backend has: its topic's, and each save it took. A failed save puts its key's back.
     confirmed: HashMap<String, Value>,
     /// Why the last edit wasn't saved, until the next one.
@@ -36,6 +38,7 @@ impl Preferences {
             appearance: Appearance::default(),
             _feed: None,
             saves: HashMap::new(),
+            pending: HashMap::new(),
             confirmed: HashMap::new(),
             failure: None,
         });
@@ -114,6 +117,7 @@ impl Preferences {
         );
         preferences.update(cx, |preferences, cx| {
             preferences.appearance.set(key.into(), value.clone());
+            preferences.pending.insert(key.into(), value.clone());
             preferences.failure = None;
             let save = cx.spawn(async move |this, cx| {
                 let failure = match call.await {
@@ -131,6 +135,7 @@ impl Preferences {
     }
 
     fn saved(&mut self, key: &str, value: Value, failure: Option<String>, cx: &mut Context<Self>) {
+        self.pending.remove(key);
         match failure {
             None => {
                 self.confirmed.insert(key.into(), value);
@@ -152,7 +157,9 @@ impl Preferences {
         for (key, mut item) in items {
             let value = item.get_mut("value").map(Value::take).unwrap_or_default();
             self.confirmed.insert(key.clone(), value.clone());
-            self.appearance.set(key, value);
+            if !self.pending.contains_key(&key) {
+                self.appearance.set(key, value);
+            }
         }
         cx.notify();
     }
