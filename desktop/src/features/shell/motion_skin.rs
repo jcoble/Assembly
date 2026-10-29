@@ -5,8 +5,8 @@
 //!   jump to the end. New: the old app had no dock motion.
 //! - splits and tab groups paint no fill of their own, so the sessions column shows the rail and the rest shows the
 //!   work panel that Frame draws behind them (the design system's "a ground and one panel").
-//! - the sessions column carries the utility strip at its foot, as the approved look has it
-//!   (the design system's look-final/README.md:66); there's no bottom bar.
+//! - the sessions column is a raised panel, `RAIL_GAP` in from the window's edges, with the utility strip at its foot,
+//!   as the approved look has it (the design system's look-final/README.md:66); there's no bottom bar.
 //! - the side docks' tabs are the old app's (side_tabs.rs); the chat's title and the bottom dock's tabs are the kit's.
 //!
 //! Every other piece of the skin passes through, the drag edge and its save on release included.
@@ -24,6 +24,11 @@ use gpui_kit::component::v_flex;
 use gpui_kit::*;
 
 use super::side_tabs;
+
+/// The sessions panel's distance from the window's edge and from the work panel (Frame's `PANEL_GAP`).
+const RAIL_GAP: Pixels = px(8.);
+/// The sessions panel's corners.
+const RAIL_RADIUS: Pixels = px(14.);
 
 pub struct MotionSkin {
     pub inner: Rc<DockSkin>,
@@ -71,10 +76,22 @@ impl DockAreaRenderer for MotionSkin {
         cx: &mut App,
     ) -> AnyElement {
         let content = if dock.placement() == DockPlacement::Left {
-            v_flex()
+            let theme = cx.theme();
+            div()
                 .size_full()
-                .child(div().flex_1().min_h_0().child(content))
-                .child(self.foot.clone())
+                .px(RAIL_GAP)
+                .child(
+                    v_flex()
+                        .size_full()
+                        .overflow_hidden()
+                        .rounded(RAIL_RADIUS)
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.group_box)
+                        .shadow_md()
+                        .child(div().flex_1().min_h_0().child(content))
+                        .child(self.foot.clone()),
+                )
                 .into_any_element()
         } else {
             content

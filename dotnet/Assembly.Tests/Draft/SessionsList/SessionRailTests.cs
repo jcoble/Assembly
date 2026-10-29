@@ -10,7 +10,7 @@ using static Assembly.Application.Features.Chat.Sessions.SessionsFeature;
 namespace Assembly.Tests.Draft.SessionsList;
 
 /// <summary>
-/// The rail's one SQL read (main-screen spec S1 to S3, PR 1): tab totals over every eligible parent, filters before
+/// The rail's one SQL read (main-screen spec S1 to S3, PR 1): needs total over every eligible session, filters before
 /// totals and paging, project groups in a fixed order, started sessions ordered like any other session, and the invalidations that make a
 /// window read it again.
 /// </summary>
@@ -43,11 +43,26 @@ public sealed class SessionRailTests : IDisposable
         Running(started);
         Asking(started);
         Assert.Equal([started, other, starter], Collect(next => Read(after: next, limit: 1)));
-        Assert.Equal(new RailTotals(3, 1, 1), Read().Totals);
+        Assert.Equal(new RailTotals(1), Read().Totals);
         Assert.False(Entry(Read(), starter).Running);
         Assert.False(Entry(Read(), starter).NeedsYou);
-        Assert.Equal(started, Read("running").Sessions.Single().SessionId);
-        Assert.Equal(started, Read("needs").Sessions.Single().SessionId);
+        Assert.True(Entry(Read(), started).Running);
+        Assert.True(Entry(Read(), started).NeedsYou);
+    }
+
+    // Pins: sessions-list#1, sessions-list#6
+    [Fact]
+    public void AStartedSessionSortsByItsOwnValuesNotItsStarters()
+    {
+        var other = Parent(title: "Middle");
+        var starter = Parent(title: "Zulu");
+        var started = Helper(starter);
+        var flat = new RailGroupBy(false, false);
+        Assert.Equal([started, starter, other], Sessions(Read(groupBy: flat)));
+        Assert.Equal([started, other, starter], Collect(next => Read(groupBy: flat, sort: "name", dir: "asc", after: next, limit: 1)));
+        _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, starter, "done"); return 0; });
+        Assert.Equal([started, other], Sessions(Read(statuses: ["working"])));
+        Assert.Equal("working", Entry(Read(groupBy: new(true, false)), started).Section);
     }
 
     // Pins: sessions-list#1, sessions-list#6
@@ -63,10 +78,8 @@ public sealed class SessionRailTests : IDisposable
         Rows(native, ("background", RowKind.Task, new { state = "running" }));
         Rows(starter, ("native", RowKind.Subagent, new { state = "running" }),
             (null, RowKind.Turn, new { state = "finished" }));
-        Assert.Equal(new RailTotals(1, 0, 0), Read().Totals);
-        Assert.Equal(starter, Read().Sessions.Single().SessionId);
-        Assert.Empty(Read("running").Sessions);
-        Assert.Empty(Read("needs").Sessions);
+        Assert.Equal(new RailTotals(0), Read().Totals);
+        Assert.Equal([starter], Sessions(Read()));
     }
 
     [Fact]
@@ -82,11 +95,11 @@ public sealed class SessionRailTests : IDisposable
         }
 
         var first = Read(limit: 50);
-        Assert.Equal(new RailTotals(205, 41, 30), first.Totals);
+        Assert.Equal(new RailTotals(30), first.Totals);
         Assert.Equal(50, first.Sessions.Count);
         Assert.Equal(205, Collect(next => Read(after: next, limit: 50)).Count);
-        Assert.Equal(41, Read("running", limit: 200).Sessions.Count);
-        Assert.Equal(first.Totals, Read("needs", limit: 1).Totals);
+        Assert.Equal(41, Read(limit: 250).Sessions.Count(entry => entry.Kind == "session" && entry.Running));
+        Assert.Equal(first.Totals, Read(limit: 1).Totals);
     }
 
     [Fact]
@@ -105,16 +118,16 @@ public sealed class SessionRailTests : IDisposable
         var mixed = Parent("claude");
         Running(Helper(mixed, "codex"));
 
-        Assert.Equal(new RailTotals(3, 2, 0), Read(providers: ["codex"]).Totals);
-        Assert.Equal(new RailTotals(3, 0, 1), Read(providers: ["claude"]).Totals);
-        Assert.Equal(new RailTotals(2, 0, 1), Read(locations: ["remote"]).Totals);
-        Assert.Equal(new RailTotals(4, 2, 0), Read(providers: ["claude", "codex"], locations: ["local"]).Totals);
+        Assert.Equal((3, 0), (Sessions(Read(providers: ["codex"])).Count, Read(providers: ["codex"]).Totals.Needs));
+        Assert.Equal((4, 1), (Sessions(Read(providers: ["claude"])).Count, Read(providers: ["claude"]).Totals.Needs));
+        Assert.Equal((2, 1), (Sessions(Read(locations: ["remote"])).Count, Read(locations: ["remote"]).Totals.Needs));
+        Assert.Equal(5, Sessions(Read(providers: ["claude", "codex"], locations: ["local"])).Count);
         var none = Read(providers: ["nobody"]);
-        Assert.Equal(new RailTotals(0, 0, 0), none.Totals);
+        Assert.Equal(new RailTotals(0), none.Totals);
         Assert.Empty(none.Sessions);
         Assert.Equal(["claude", "codex"], none.Agents);
-        Assert.Equal([mixed, c, a], Collect(next => Read(providers: ["claude"], after: next, limit: 2)));
-        Assert.DoesNotContain(settled, Read(limit: 200).Sessions.Select(entry => entry.SessionId));
+        Assert.Contains(settled, Sessions(Read(limit: 200)));
+        Assert.Equal(Sessions(Read(providers: ["claude"], limit: 200)), Collect(next => Read(providers: ["claude"], after: next, limit: 2)));
     }
 
     [Fact]
@@ -126,9 +139,9 @@ public sealed class SessionRailTests : IDisposable
         var other = Parent(repo: "/r/beta", title: "nothing");
         Asking(other);
 
-        Assert.Equal(new RailTotals(2, 1, 0), Read(filter: "socket").Totals);
+        Assert.Equal((2, 0), (Sessions(Read(filter: "socket")).Count, Read(filter: "socket").Totals.Needs));
         Assert.Equal([titled, named], Collect(next => Read(filter: "SOCKET", after: next, limit: 1)));
-        Assert.Equal(new RailTotals(1, 0, 1), Read(filter: "BETA").Totals);
+        Assert.Equal((1, 1), (Sessions(Read(filter: "BETA")).Count, Read(filter: "BETA").Totals.Needs));
     }
 
     [Fact]
@@ -142,9 +155,10 @@ public sealed class SessionRailTests : IDisposable
             .Concat(Enumerable.Range(0, 4).Select(i => Parent(repo: "/srv/alpha", machine: i % 2 == 0 ? "workbox-test" : null, tick: false)))
             .ToArray();
 
-        var all = Read(limit: 200).Sessions;
+        var rail = Read(limit: 200);
+        var all = rail.Sessions.Where(entry => entry.Kind == "session").ToArray();
         Assert.Equal([mine, .. tied.OrderDescending(StringComparer.Ordinal), github, zeta], all.Select(entry => entry.SessionId));
-        Assert.Equal(["alpha", "alpha", "o/alpha", "Zeta"], all.Where(entry => entry.GroupStart).Select(entry => entry.Group));
+        Assert.Equal(["alpha", "alpha", "o/alpha", "Zeta"], rail.Sessions.Where(entry => entry.Kind == "project").Select(entry => entry.Group));
         Assert.Equal(all.Select(entry => entry.SessionId), Collect(next => Read(after: next, limit: 2)));
 
         Assert.Equal("icons/asterisk.svg", Entry(Read(), mine).Icon);
@@ -156,23 +170,24 @@ public sealed class SessionRailTests : IDisposable
         // 250 parents of one project, newest first; the reader's row is the 231st, with 130 held above it.
         var parents = Enumerable.Range(0, 250).Select(_ => Parent()).Reverse().ToArray();
         var reader = parents[230];
-        var held = Read(anchor: reader, above: 130, limit: 200);
+        var held = Read(groupBy: new(false, false), anchor: reader, above: 130, limit: 200);
         Assert.Equal((100, reader), (held.Start, held.Sessions[130].SessionId));
 
         // It moves ahead of every row held before it.
         _time.Advance(TimeSpan.FromSeconds(1));
         _sessions.Touch(reader);
-        var moved = Read(anchor: reader, above: 130, limit: 200);
+        var moved = Read(groupBy: new(false, false), anchor: reader, above: 130, limit: 200);
         Assert.Equal((0, reader), (moved.Start, moved.Sessions[0].SessionId));
 
         // 60 sessions start ahead of it: it stays at the same place in what's read.
         var row = parents[200];
         for (var i = 0; i < 60; i++)
             Parent();
-        Assert.Equal(row, Read(anchor: row, above: 149, limit: 200).Sessions[149].SessionId);
+        Assert.Equal(row, Read(groupBy: new(false, false), anchor: row, above: 149, limit: 200).Sessions[149].SessionId);
 
         // A row that left the tab: the read falls back to the cursor.
-        Assert.Equal(parents[1], Read(anchor: "gone", after: Cursor(Entry(Read(limit: 200), parents[0])), limit: 1).Sessions.Single().SessionId);
+        var flat = Read(groupBy: new(false, false), limit: 200);
+        Assert.Equal(parents[1], Read(groupBy: new(false, false), anchor: "gone", after: Cursor(Entry(flat, parents[0])), limit: 1).Sessions.Single().SessionId);
     }
 
     [Theory]
@@ -192,12 +207,12 @@ public sealed class SessionRailTests : IDisposable
         Add(null, RowKind.Turn, new { state = "started" });
         Add("t1", RowKind.Task, new { state = "running" });
         Add(null, RowKind.Turn, new { state = "finished" });
-        var rail = Read("running");
-        Assert.Equal(new RailTotals(1, 1, 0), rail.Totals);
+        var rail = Read();
+        Assert.Equal(new RailTotals(0), rail.Totals);
         Assert.True(Entry(rail, session).Running);
 
         Add("t1", RowKind.Task, new { state = "completed" });
-        Assert.Equal(new RailTotals(1, 0, 0), Read("running").Totals);
+        Assert.Equal(new RailTotals(0), Read().Totals);
         Assert.False(Entry(Read(), session).Running);
     }
 
@@ -210,7 +225,7 @@ public sealed class SessionRailTests : IDisposable
         _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, done, "done"); return 0; });
 
         var rail = Read();
-        Assert.Equal(new RailTotals(2, 1, 0), rail.Totals);
+        Assert.Equal(new RailTotals(0), rail.Totals);
         Assert.False(Entry(rail, idle).Running);
         Assert.Null(Entry(rail, idle).CompletedAt);
         Assert.True(Entry(rail, done).Running);
@@ -225,10 +240,10 @@ public sealed class SessionRailTests : IDisposable
             ("q1", RowKind.Ask, new { state = "answered" }), (null, RowKind.Turn, new { state = "finished" }));
 
         var rail = Read();
-        Assert.Equal(new RailTotals(1, 0, 0), rail.Totals);
+        Assert.Equal(new RailTotals(0), rail.Totals);
         Assert.True(Entry(rail, answered).Unread);
         Assert.False(Entry(rail, answered).NeedsYou);
-        Assert.Empty(Read("needs").Sessions);
+        Assert.False(Entry(Read(), answered).NeedsYou);
     }
 
     [Theory]
@@ -254,7 +269,7 @@ public sealed class SessionRailTests : IDisposable
         Add("a", RowKind.Ask, new { state = "answered" });
 
         Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        var after = Entry(Read("needs"), session);
+        var after = Entry(Read(), session);
         Assert.Equal((session, 3L), (after.AskSession, after.AskSeq));
     }
 
@@ -270,8 +285,8 @@ public sealed class SessionRailTests : IDisposable
         _topics.Published.Clear();
         Asking(helper);
         Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        var rail = Read("needs");
-        Assert.Equal(new RailTotals(2, 0, 1), rail.Totals);
+        var rail = Read();
+        Assert.Equal(new RailTotals(1), rail.Totals);
         Assert.Equal(helper, Entry(rail, helper).AskSession);
     }
 
@@ -301,6 +316,27 @@ public sealed class SessionRailTests : IDisposable
         var entry = Entry(Read(), session);
         Assert.Equal(("lane/rail", 20L), (entry.Branch, entry.BranchAt));
     }
+
+    [Fact]
+    public void PreviewIsTheNewestAssistantText()
+    {
+        var session = Parent();
+        Assert.Null(Entry(Read(), session).Preview);
+        Rows(session, ("m1", RowKind.Message, Message(["The first answer."])));
+        Rows(session, ("m2", RowKind.Message, Message(["The newest ", "answer."], ["A second paragraph."])));
+        // A later prompt or tool isn't assistant text.
+        Rows(session, (null, RowKind.User, new { text = "A newer prompt." }), ("t1", RowKind.Tool, new { title = "Read" }));
+        Assert.Equal("The newest answer. A second paragraph.", Entry(Read(), session).Preview);
+
+        Rows(session, ("m3", RowKind.Message, Message([new string('a', 400)])));
+        Assert.Equal(new string('a', 160), Entry(Read(), session).Preview);
+    }
+
+    /// <summary>A message row's payload: one paragraph per array, each of those inline text parts.</summary>
+    private static object Message(params string[][] paragraphs) => new
+    {
+        blocks = paragraphs.Select(parts => new { kind = "paragraph", parts = parts.Select(value => new { kind = "text", value }).ToArray() }).ToArray(),
+    };
 
     private string Parent(string agent = "claude", string repo = "/home/me/assembly", string? machine = null, string? title = null, bool tick = true)
     {
@@ -336,11 +372,13 @@ public sealed class SessionRailTests : IDisposable
         return batch;
     }
 
-    private Rail Read(string tab = "all", string[]? providers = null, string[]? locations = null, string? filter = null,
+    private Rail Read(string[]? providers = null, string[]? locations = null, string[]? statuses = null,
+        RailGroupBy? groupBy = null, string sort = "recent", string dir = "desc", string[]? folded = null, string? filter = null,
         RailCursor? after = null, int limit = 50, string? anchor = null, int above = 0) =>
-        _sessions.Rail(new RailArgs(tab, providers, locations, filter, after, limit, anchor, above));
+        _sessions.Rail(new RailArgs(providers, locations, statuses, groupBy ?? new(false, true), sort, dir, folded, filter,
+            after, limit, anchor, above));
 
-    private static RailCursor Cursor(RailEntry entry) => new(entry.Group, entry.RepoUrl, entry.Ordering);
+    private static RailCursor Cursor(RailEntry entry) => new(entry.SectionIndex, "", "", entry.Header, entry.Ordering);
 
     /// <summary>Every parent, following each page's cursor from the first.</summary>
     private static List<string> Collect(Func<RailCursor?, Rail> read)
@@ -350,12 +388,15 @@ public sealed class SessionRailTests : IDisposable
         do
         {
             var page = read(next);
-            seen.AddRange(page.Sessions.Select(entry => entry.SessionId));
+            seen.AddRange(page.Sessions.Where(entry => entry.Kind == "session").Select(entry => entry.SessionId));
             next = page.Next;
         } while (next is not null);
         Assert.Equal(seen.Count, seen.Distinct().Count());
         return seen;
     }
+
+    private static List<string> Sessions(Rail rail) =>
+        [.. rail.Sessions.Where(entry => entry.Kind == "session").Select(entry => entry.SessionId)];
 
     private static RailEntry Entry(Rail rail, string session) => rail.Sessions.Single(entry => entry.SessionId == session);
 

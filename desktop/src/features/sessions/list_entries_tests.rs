@@ -4,11 +4,8 @@ use crate::features::sessions::list_entry::ListEntry;
 use crate::features::sessions::rail_page::{Rail, RailEntry, RailPage, test_entry};
 use crate::features::sessions::status::Status;
 
-fn parent(id: &str, repo: &str, group_start: bool) -> RailEntry {
-    RailEntry {
-        group_start,
-        ..test_entry(id, repo)
-    }
+fn parent(id: &str, repo: &str) -> RailEntry {
+    test_entry(id, repo)
 }
 
 fn page(sessions: Vec<RailEntry>) -> RailPage {
@@ -28,30 +25,47 @@ fn rail_with(page: RailPage) -> Rail {
     rail
 }
 
-fn heading(repo: &str) -> ListEntry {
+fn heading(repo: &str, count: usize) -> ListEntry {
     ListEntry::Project {
+        key: format!("project:::{repo}"),
+        fold_key: format!("::{repo}"),
         label: repo.into(),
         repo_url: repo.into(),
-        machine: None,
+        machines: vec![],
+        count,
+        folded: false,
     }
 }
 
 #[test]
-fn lines_keep_the_backends_order_with_a_heading_where_it_starts_a_project() {
-    // The backend's order, not the window's: "zeta" before "alpha" stays so.
+fn lines_keep_the_backends_explicit_headers_and_order() {
     let (z1, z2, a1) = (
-        parent("z1", "/zeta", true),
-        parent("z2", "/zeta", false),
-        parent("a1", "/alpha", true),
+        parent("z1", "/zeta"),
+        parent("z2", "/zeta"),
+        parent("a1", "/alpha"),
     );
-    let rail = rail_with(page(vec![z1.clone(), z2.clone(), a1.clone()]));
+    let project = |repo: &str, count| RailEntry {
+        session_id: format!("project:::{repo}"),
+        kind: "project".into(),
+        group: repo.into(),
+        count,
+        header: 1,
+        ..test_entry("unused", repo)
+    };
+    let rail = rail_with(page(vec![
+        project("/zeta", 2),
+        z1.clone(),
+        z2.clone(),
+        project("/alpha", 1),
+        a1.clone(),
+    ]));
     assert_eq!(
         list_entries(&rail),
         [
-            heading("/zeta"),
+            heading("/zeta", 2),
             ListEntry::Session(Box::new(z1)),
             ListEntry::Session(Box::new(z2)),
-            heading("/alpha"),
+            heading("/alpha", 1),
             ListEntry::Session(Box::new(a1)),
         ]
     );

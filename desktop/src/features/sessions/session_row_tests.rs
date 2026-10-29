@@ -1,4 +1,4 @@
-use super::subtitle;
+use super::{details, status_words};
 use crate::features::sessions::presence::Presence;
 use crate::features::sessions::rail_page::{RailEntry, test_entry};
 
@@ -54,16 +54,42 @@ fn a_session_on_a_machine_that_isnt_answering_keeps_its_state_and_says_offline()
     };
     assert_eq!(Presence::of(&running), Presence::Working);
     assert_eq!(
-        subtitle(&running, None, true),
-        "claude · Workbox Test · lane/rail · offline"
+        status_words(Presence::of(&running), true),
+        ["offline", "Working"]
     );
+    assert_eq!(details(&running), "Workbox Test · lane/rail");
     // A local session is on This Mac.
     let local = RailEntry {
         machine: None,
         ..running
     };
-    assert_eq!(
-        subtitle(&local, None, false),
-        "claude · This Mac · lane/rail"
-    );
+    assert_eq!(details(&local), "This Mac · lane/rail");
+}
+
+#[test]
+fn status_words_name_each_state_in_order() {
+    let words = |presence| status_words(presence, false);
+    assert_eq!(words(Presence::Working), ["Working"]);
+    assert_eq!(words(Presence::NeedsYou), ["Needs you"]);
+    assert_eq!(words(Presence::Done), ["Done"]);
+    assert_eq!(words(Presence::Failed), ["Failed"]);
+    assert_eq!(words(Presence::Unread), ["Idle"]);
+    assert_eq!(words(Presence::Idle), ["Idle"]);
+    assert_eq!(status_words(Presence::Idle, true), ["offline", "Idle"]);
+}
+
+#[test]
+fn a_finished_row_that_isnt_marked_still_names_its_state() {
+    // Its turn ended and the user hasn't marked it Done: it isn't working, waiting or failed, so it's Idle, not blank.
+    let finished = RailEntry {
+        machine: Some("workbox-test".into()),
+        ..entry()
+    };
+    assert_eq!(Presence::of(&finished), Presence::Idle);
+    assert_eq!(status_words(Presence::of(&finished), false), ["Idle"]);
+    let unread = RailEntry {
+        unread: true,
+        ..finished
+    };
+    assert_eq!(status_words(Presence::of(&unread), false), ["Idle"]);
 }
