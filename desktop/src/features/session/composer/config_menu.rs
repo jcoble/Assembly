@@ -39,14 +39,29 @@ impl RenderOnce for ConfigMenu {
             current,
             on_select,
         } = self;
-        // "Effort  Medium": the menu's name, muted, then the value chosen now, cut off with an ellipsis past 96 px.
-        let name = div().text_color(cx.theme().muted_foreground).child(label);
+        // "Effort  Medium": the menu's name, faint, then the value chosen now, cut off with an ellipsis past 96 px; the
+        // mock's `.sel3`, 30 px high with 9 px corners and 12.5 px text.
+        let theme = cx.theme();
+        let name = div()
+            .text_size(px(12.5))
+            .text_color(theme.muted_foreground.opacity(0.65))
+            .child(label);
         Button::new(SharedString::from(format!("composer:menu:{config_id}")))
             .outline()
             .small()
-            .rounded(cx.theme().radius)
+            .h(px(30.))
+            .px(px(10.))
+            .rounded(px(9.))
+            .bg(theme.accent)
             .child(name)
-            .children(shown.map(|shown| div().max_w(px(96.)).truncate().child(shown)))
+            .children(shown.map(|shown| {
+                div()
+                    .max_w(px(96.))
+                    .truncate()
+                    .text_size(px(12.5))
+                    .text_color(theme.foreground)
+                    .child(shown)
+            }))
             .dropdown_caret(true)
             .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
                 choices.iter().fold(menu, |menu, (value, name)| {

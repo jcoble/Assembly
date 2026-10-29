@@ -1,7 +1,7 @@
-//! How the composer draws, to the approved look (the mockup canvas's board 4): one box on the raised ground with the
-//! design system's radius-xl corners and no edge until the draft has focus: attached images' chips, the draft, and a
-//! footer with Attach and the agent's menus as outlined buttons on the left, then the branch the newest turn started
-//! on, the context ring, Stop while a turn runs and the round Send, which is the one solid button and is dimmed while
+//! How the composer draws, to the approved mock's `.composer`: one box on the raised ground with 16 px corners and an
+//! edge, lit while the draft has focus: attached images' chips, the draft, and a footer with the round Attach (+), the
+//! agent's menus as outlined buttons and the branch the newest turn started on as a chip on the left, then the context
+//! ring, Stop while a turn runs and the round Send, which is the one solid button and is dimmed while
 //! there's nothing to send, an image hasn't uploaded or the session's machine is offline
 //! (which a line above the box says; Stop is dimmed then too). Files dropped anywhere on the box light its edge. The "/" list floats just above the box, and why something failed sits above it.
 
@@ -21,25 +21,34 @@ use crate::features::session::composer::context_ring::ContextRing;
 use crate::features::session::composer::slash_list::SlashList;
 use crate::features::session::view::item_row::CHAT_COLUMN;
 
-/// The design system's `radius-xl`, the composer's corners.
-const BOX_RADIUS: Pixels = px(20.);
-/// Send and Stop are round, this wide.
+/// The composer's corners, the approved mock's `.composer`.
+const BOX_RADIUS: Pixels = px(16.);
+/// Attach, Send and Stop are round, and the pickers and the branch are this high (the mock's `.circ` and `.sel3`).
 const ROUND_BUTTON: Pixels = px(30.);
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.draft.read(cx).focus_handle(cx).is_focused(window);
         let theme = cx.theme();
-        let pill = theme.radius_full();
+        let (pill, attach_color) = (theme.radius_full(), theme.muted_foreground);
+        // The branch as a chip beside the pickers, as the mock's: its mark faint, its name in the foreground.
         let branch = self.branch.clone().map(|branch| {
             h_flex()
-                .gap_1()
+                .h(ROUND_BUTTON)
+                .px(px(10.))
+                .gap(px(6.))
                 .min_w_0()
-                .max_w(px(160.))
-                .font_family(theme.mono_font_family.clone())
-                .text_size(px(11.5))
-                .text_color(theme.muted_foreground)
-                .child(Icon::new(Glyph::GitBranch).size(px(12.)))
+                .max_w(px(200.))
+                .rounded(px(9.))
+                .border_1()
+                .border_color(theme.input)
+                .bg(theme.accent)
+                .text_size(px(12.5))
+                .child(
+                    Icon::new(Glyph::GitBranch)
+                        .size(px(13.))
+                        .text_color(theme.muted_foreground.opacity(0.65)),
+                )
                 .child(div().min_w_0().truncate().child(branch))
         });
         let empty = self.draft.read(cx).value().trim().is_empty() && self.attachments.is_empty();
@@ -69,25 +78,26 @@ impl Render for Composer {
             .flex_1()
             .min_w_0()
             .flex_wrap()
-            .py(px(3.))
             .gap_1p5()
             .child(
                 Button::new("composer:attach")
                     .outline()
                     .small()
-                    .icon(Glyph::Paperclip)
+                    .icon(Glyph::Plus)
                     .rounded(pill)
+                    .size(ROUND_BUTTON)
+                    .text_color(attach_color)
                     .tooltip("Attach images")
                     .on_click(
                         cx.listener(|composer, _, window, cx| composer.pick_images(window, cx)),
                     ),
             )
-            .children(menus);
+            .children(menus)
+            .children(branch);
         let right = h_flex()
             .flex_none()
             .h(ROUND_BUTTON)
             .gap_1p5()
-            .children(branch)
             .when_some(self.meter.clone(), |foot, meter| {
                 foot.child(ContextRing { meter })
             })
@@ -145,15 +155,18 @@ impl Render for Composer {
         let chips =
             (!self.attachments.is_empty()).then(|| h_flex().flex_wrap().gap_1p5().children(chips));
         let composer = cx.weak_entity();
+        // The mock's draft: 13.5 px, the kit's smallest inset so it sits near the box's edge.
         let draft = Textarea::new(&self.draft)
             .appearance(false)
+            .xsmall()
+            .text_size(px(13.5))
             .on_paste(move |item, _, cx| {
                 composer
                     .update(cx, |composer, cx| composer.pasted(item, cx))
                     .unwrap_or(false)
             });
         let root = div().relative().w_full().max_w(CHAT_COLUMN).mx_auto();
-        let root = self.slash_keys(root.px_4().pt_1().pb_3(), cx);
+        let root = self.slash_keys(root.px_4().pt_2().pb_4(), cx);
         let theme = cx.theme();
         let offline = (self.offline.as_ref()).map(|machine| {
             SharedString::from(if self.still_offline {
@@ -208,19 +221,16 @@ impl Render for Composer {
             )
         })
         .child(
+            // The mock leaves 22 px under the draft's line before the footer.
             v_flex()
-                .gap_2()
-                .pl(px(14.))
-                .pr(px(10.))
-                .py(px(10.))
+                .gap(px(20.))
+                .px(px(12.))
+                .pt(px(12.))
+                .pb(px(10.))
                 .rounded(BOX_RADIUS)
                 .bg(theme.group_box)
                 .border_1()
-                .border_color(if focused {
-                    theme.ring
-                } else {
-                    transparent_black()
-                })
+                .border_color(if focused { theme.ring } else { theme.input })
                 .drag_over::<ExternalPaths>(|style, _, _, cx| {
                     style.border_color(cx.theme().drag_border)
                 })
