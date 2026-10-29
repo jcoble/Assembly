@@ -47,7 +47,7 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
         sessions.Get(id) switch
         {
             { Machine: { Length: > 0 } machine } => throw new CallFailed($"The terminal for a session on {machine} can't be opened here yet."),
-            { } session when SessionStore.Folder(checkouts, session) is { } folder && Directory.Exists(folder) => folder,
+            { } session when SessionStore.Folder(checkouts, sessions.Top(session)) is { } folder && Directory.Exists(folder) => folder,
             null => throw new CallFailed($"Unknown terminal owner: {id}"),
             _ => null,
         };

@@ -249,6 +249,23 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task A_nested_helpers_shell_starts_in_its_top_sessions_folder()
+    {
+        using var file = new TempDatabase();
+        using var db = TestDatabase.Open(file.Path);
+        var sessions = Assembly.Application.Features.Chat.Sessions.SessionStore.Open(db, TimeProvider.System, _folder);
+        var top = sessions.Create("agent", "https://example.invalid/repo");
+        var nested = sessions.Helper(sessions.Helper(top, "agent", "Helper"), "agent", "Nested helper");
+        var topFolder = Directory.CreateDirectory(Path.Combine(_folder, top.SessionId)).FullName;
+        await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(),
+            Assembly.Infrastructure.Agents.AdapterLauncher.ExistingFolder(_folder, sessions));
+
+        await host.StartAsync(new StartArgs(null, Owner: nested.SessionId));
+
+        Assert.Equal(topFolder, Assert.Single(_pty.Started).Request.Cwd);
+    }
+
+    [Fact]
     public async Task Closing_the_host_during_start_disposes_the_late_pty()
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
