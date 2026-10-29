@@ -113,7 +113,9 @@ internal sealed class RemoteFollower(
         var caughtUp = false;
         void Unwatched(string session)
         {
-            if (session == sessionId && caughtUp && !Needed(sessionId)) done.Cancel();
+            if (session != sessionId || !caughtUp || Needed(sessionId)) return;
+            // The event can still reach this follow after it finished and disposed its source.
+            try { done.Cancel(); } catch (ObjectDisposedException) { }
         }
         hub.Unwatched += Unwatched;
         try
