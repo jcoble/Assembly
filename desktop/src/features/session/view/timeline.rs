@@ -222,6 +222,8 @@ impl Render for Timeline {
         })
         // The kit's space between rows sits outside them; the rows draw their own (RenderRow).
         .with_row_style(StyleRefinement::default().pb_0())
+        // The mock's feed starts 22 px under the header.
+        .with_list_style(StyleRefinement::default().pt(px(22.)))
         .size_full()
     }
 }

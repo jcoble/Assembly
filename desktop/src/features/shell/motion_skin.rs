@@ -9,10 +9,12 @@
 //!   (the design system's look-final/README.md:66); there's no bottom bar.
 //! - the sessions column's tabs are the old app's (side_tabs.rs); the drawer draws none, its pane buttons sitting in
 //!   the title row (drawer_buttons.rs); the chat's title and an open bottom dock's tabs are the kit's.
-//! - a closed bottom dock draws nothing along the foot; Terminal in the title row opens it.
+//! - a closed bottom dock draws nothing along the foot, and the centre reaches over the strip the kit keeps for it;
+//!   Terminal in the title row opens it.
 //!
 //! Every other piece of the skin passes through, the drag edge and its save on release included.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -33,7 +35,15 @@ pub struct MotionSkin {
     pub foot: AnyView,
     /// The area this skin draws, to tell which dock a tab group is in.
     pub area: WeakEntity<DockArea>,
+    /// The bottom dock is shut, as Frame saw it this frame: the centre then reaches over the strip the kit keeps for
+    /// it, so the chat's composer sits 16 px off the panel's foot, as the mock's.
+    pub bottom_shut: Rc<Cell<bool>>,
 }
+
+/// How far the centre reaches down over a shut bottom dock's strip so the chat's foot meets the panel's: the kit keeps
+/// 29 px for the strip (its `CLOSED_BOTTOM_STRIP`, not exported), less the 4 px the centre already overhangs the
+/// panel's edge, as measured in the running app.
+const SHUT_BOTTOM_STRIP: Pixels = px(25.);
 
 impl DockAreaRenderer for MotionSkin {
     fn frame(&self, window: &mut Window, cx: &mut App) -> Stateful<Div> {
@@ -53,7 +63,11 @@ impl DockAreaRenderer for MotionSkin {
     }
 
     fn center_frame(&self, window: &mut Window, cx: &mut App) -> Stateful<Div> {
-        self.inner.center_frame(window, cx)
+        let frame = self.inner.center_frame(window, cx);
+        match self.bottom_shut.get() {
+            true => frame.mb(-SHUT_BOTTOM_STRIP),
+            false => frame,
+        }
     }
 
     fn render_split_handle(

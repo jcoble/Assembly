@@ -88,11 +88,12 @@ impl RenderOnce for ItemRow {
             ItemKind::Message { blocks, at, .. } => v_flex()
                 .pt(px(9.))
                 .gap_1()
-                .child(MarkdownView {
+                // The mock's `.reply` colour, a shade brighter than the theme's text; on the reply only.
+                .child(div().text_color(rgb(0xe2e2e2)).child(MarkdownView {
                     id: key.clone().into(),
                     blocks,
                     session: self.session.clone(),
-                })
+                }))
                 .children(meta(at, self.copy.clone(), self.turn.clone(), true))
                 .into_any_element(),
             ItemKind::Thinking { .. } | ItemKind::Tool { .. } | ItemKind::Ask { .. } => {
