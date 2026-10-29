@@ -21,6 +21,9 @@ pub type RenderRow = Rc<dyn Fn(&Entry, bool, &mut Window, &mut App) -> AnyElemen
 /// Load the next older page when the top row on screen is this close to the first loaded entry.
 pub const LOAD_OLDER_WITHIN: usize = 10;
 
+/// The strip under the rows that the scroll-to-bottom arrow sits in: its 32 px and its space from the edge.
+const ARROW_STRIP: Pixels = px(48.);
+
 pub struct Timeline {
     scroller: Entity<MessageScrollerState>,
     /// Draws one entry: the pane's, reading its view and sending its actions.
@@ -224,6 +227,11 @@ impl Render for Timeline {
         .with_row_style(StyleRefinement::default().pb_0())
         // The mock's feed starts 22 px under the header.
         .with_list_style(StyleRefinement::default().pt(px(22.)))
+        // The scroll-to-bottom arrow is drawn over the bottom of the scroller. The rows stop above a strip tall
+        // enough to hold it, so it never covers one.
+        .with_content_style(StyleRefinement::default().flex_1().h_auto().mb(ARROW_STRIP))
+        .flex()
+        .flex_col()
         .size_full()
     }
 }
