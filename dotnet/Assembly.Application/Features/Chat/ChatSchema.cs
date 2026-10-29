@@ -159,7 +159,7 @@ internal static class Schema
               CASE WHEN header = 2 AND $dir = 'asc' THEN session_id END ASC,
               CASE WHEN header = 2 AND $dir = 'desc' THEN session_id END DESC) AS n
           FROM entries),
-        page AS (
+        candidates AS (
           SELECT {RailColumns}, ordering, n FROM ordered o
           WHERE CASE WHEN $anchor IN (SELECT session_id FROM ordered)
             THEN n >= (SELECT n FROM ordered WHERE session_id = $anchor) - $above
@@ -179,6 +179,11 @@ internal static class Schema
                   OR ($sort = 'name' AND ((
                     $dir = 'asc' AND (name, session_id) > (json_extract($after_ordering, '$[1]'), json_extract($after_ordering, '$[2]')))
                     OR ($dir = 'desc' AND (name, session_id) < (json_extract($after_ordering, '$[1]'), json_extract($after_ordering, '$[2]'))))))) END
+          ORDER BY n LIMIT $limit),
+        page AS (
+          SELECT {RailColumns}, ordering, n FROM ordered
+          WHERE n IN (SELECT n FROM candidates)
+            OR ($anchor IS NOT NULL AND NOT EXISTS (SELECT 1 FROM candidates))
           ORDER BY n LIMIT $limit),
         family AS (
           SELECT p.*,

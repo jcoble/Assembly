@@ -11,7 +11,7 @@ pub struct SessionItem {
     pub repo_url: String,
     pub title: Option<String>,
     pub machine: Option<String>,
-    /// Set on a helper session: it isn't on the sessions list.
+    /// Set on a started session (on the list) and a native subagent (not on it).
     pub parent_session_id: Option<String>,
     pub acp_session_id: Option<String>,
     pub updated_at: i64,
