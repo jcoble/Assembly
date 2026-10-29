@@ -172,8 +172,8 @@ public sealed class DesktopBackend : IAsyncDisposable
         var startup = connections.StartupSnapshot(startupName);
         var hostStop = new CancellationTokenSource();
         var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
-        var boardMirror = startup is { } connected ? new RemoteWorkflowMirror(connected.Config, boardQueries, boardTransitions,
-            connected.Unreachable) : null;
+        var boardMirror = startup is { } connected ? new RemoteWorkflowMirror(startupName!, () => connections.StartupSnapshot(startupName)?.Config,
+            boardQueries, boardTransitions, connected.Unreachable) : null;
         var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
         clock.Ticked += machinesFeature.Tick;
         var boardMachines = boardMirror is null ? null : topics.Subscribe("machines", null, _ =>
