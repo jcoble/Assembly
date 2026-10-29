@@ -77,8 +77,15 @@ impl Render for Composer {
                         cx.listener(|composer, _, window, cx| composer.pick_images(window, cx)),
                     ),
             )
-            .children(menus)
-            .child(div().flex_1())
+            // The pickers take what room is left and cut off at its edge; the ring and Send stay pinned right.
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .gap_1p5()
+                    .children(menus),
+            )
             .children(branch)
             .when_some(self.meter.clone(), |foot, meter| {
                 foot.child(ContextRing { meter })

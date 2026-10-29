@@ -206,7 +206,10 @@ impl Draw<'_> {
             }
             Block::Table { headers, rows } => {
                 let (border, radius) = (theme.border, theme.radius);
+                // The table keeps to the column: its columns share the width evenly and their text wraps.
                 let mut table = v_flex()
+                    .w_full()
+                    .overflow_hidden()
                     .border_1()
                     .border_color(border)
                     .rounded(radius)
@@ -222,11 +225,18 @@ impl Draw<'_> {
 
     fn table_row(&mut self, cells: &[Vec<Inline>], header: bool) -> Div {
         let muted = self.cx.theme().muted;
-        let mut row = h_flex().when(header, |row| {
+        let mut row = h_flex().w_full().items_start().when(header, |row| {
             row.font_weight(FontWeight::SEMIBOLD).bg(muted)
         });
         for cell in cells {
-            row = row.child(div().flex_1().px_2().py_1().child(self.text(cell)));
+            row = row.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .px_2()
+                    .py_1()
+                    .child(self.text(cell)),
+            );
         }
         row
     }
