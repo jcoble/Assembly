@@ -355,6 +355,12 @@ Save screenshots as ~/Workbox/screenshots/TSK-<id>-<what>-<before|after>.png and
 - An explicitly authorized merge uses `ALLOW_MERGE=1 gh pr merge <n> --merge`, after checks pass and the review
   bot has nothing open. Send review-bot findings back to the lane that built the PR until they are resolved.
 - End the PR body with the model and harness that did the work.
+- Every agent's GitHub tools sign in as Jesse, so what an agent writes shows as his. Start every PR body, PR comment
+  and review reply an agent writes with a line naming who wrote it, for example `Written by Claude (controller
+  session)` or `Written by Codex (board lane)`.
+- A PR body tells Jesse what changed for him, in plain words: what he will see or what now works differently, then
+  how it was checked. No plan section numbers, no task keys without their titles, no names invented while planning.
+  If he would have to ask what a phrase means, rewrite it.
 - A PR is one request. UI changes need before and after screenshots; motion needs a short video. Never commit
   screenshots.
 - Code, comments and commit messages don't name AI tools.
