@@ -10,14 +10,15 @@ use futures_channel::mpsc::unbounded;
 use gpui::TestAppContext;
 use gpui_kit::{Entity, Modifiers, VisualTestContext};
 use gpui_kit::{ListOffset, px};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::{SessionsPane, empty_line};
+use super::{SessionsPane, empty_line, provider_options, saved_filters};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::real_backend::RealBackend;
 use crate::core::socket::test_wait::until;
+use crate::core::socket::update::Update;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::Sessions;
 use crate::features::sessions::rail_page::{
@@ -339,4 +340,42 @@ fn switching_tabs_starts_at_the_top(cx: &mut TestAppContext) {
             assert_eq!(pane.lines.logical_scroll_top(), ListOffset::default())
         });
     }
+}
+
+// Pins: sessions-list#7
+#[test]
+fn set_picks_sends_one_read_with_providers_and_locations() {
+    let mut rail = Rail::default();
+    let (_, args) = rail.set_picks(vec!["claude".into()], vec!["local".into()]);
+    assert_eq!(args["providers"], json!(["claude"]));
+    assert_eq!(args["locations"], json!(["local"]));
+    assert!(rail.changed().is_none(), "the one read is out");
+}
+
+// Pins: sessions-list#7
+#[test]
+fn saved_filters_reads_the_rail_filters_preference() {
+    let saved = json!({"provider": ["claude"], "location": ["local"]});
+    let state = Update::State(vec![
+        ("theme".into(), json!({"key": "theme", "value": "dark"})),
+        (
+            "rail.filters".into(),
+            json!({"key": "rail.filters", "value": saved}),
+        ),
+    ]);
+    assert_eq!(
+        saved_filters(&state),
+        Some((vec!["claude".into()], vec!["local".into()]))
+    );
+    assert_eq!(saved_filters(&Update::State(Vec::new())), None);
+}
+
+// Pins: sessions-list#7
+#[test]
+fn a_saved_pick_not_yet_in_agents_still_shows() {
+    let options = provider_options(&["claude".into()], &["codex".into()]);
+    let shown: Vec<_> = (options.iter())
+        .map(|option| (option.value.as_str(), option.label.as_str()))
+        .collect();
+    assert_eq!(shown, [("claude", "Claude"), ("codex", "Codex")]);
 }

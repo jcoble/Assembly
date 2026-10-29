@@ -154,14 +154,9 @@ impl Rail {
         self.requery()
     }
 
-    /// Picks the provider or location, or drops it when it's picked.
-    pub fn toggle_provider(&mut self, agent: &str) -> Request {
-        toggle(&mut self.providers, agent);
-        self.requery()
-    }
-
-    pub fn toggle_location(&mut self, location: &str) -> Request {
-        toggle(&mut self.locations, location);
+    /// The providers and locations picked, in one read.
+    pub fn set_picks(&mut self, providers: Vec<String>, locations: Vec<String>) -> Request {
+        (self.providers, self.locations) = (providers, locations);
         self.requery()
     }
 
@@ -307,11 +302,4 @@ pub fn test_entry(id: &str, repo_url: &str) -> RailEntry {
         "needsYou": false, "failed": false, "unread": false, "ordering": id, "askSession": null, "askSeq": null,
         "branch": null, "branchAt": null, "icon": "icons/bot.svg" }))
     .unwrap()
-}
-
-fn toggle(values: &mut Vec<String>, value: &str) {
-    match values.iter().position(|held| held == value) {
-        Some(at) => _ = values.remove(at),
-        None => values.push(value.to_owned()),
-    }
 }
