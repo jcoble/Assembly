@@ -1,6 +1,7 @@
-//! `StepRow` is one step on a 22 px line at 13 px, muted: its sign (a spinner while it runs, then its kind's icon, or
-//! a check or a cross once done, a still dot for one left unfinished), its title and summary (in the code face), the
-//! chevron after them for a step that opens, and how long it ran at the end. A failed step reads in the danger colour.
+//! `StepRow` is one step on a 22 px line at 13 px, muted, as the approved mock's `.tl`: its sign (a spinner while it
+//! runs, then its kind's 14 px icon, faint, or a check or a cross once done, a still dot for one left unfinished), its
+//! title and summary (in the code face), the chevron after them for a step that opens, faint, and at the right its line
+//! counts and how long it ran. A failed step reads in the danger colour.
 //! The running step's title shimmers. A tool call's line is one, in the timeline and in a running turn's activity
 //! card; a workflow run's steps can be drawn with it too. Section 11's StepRow.
 
@@ -43,16 +44,15 @@ impl RenderOnce for StepRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
+        let faint = muted.opacity(0.65);
         let failed = self.state == StepState::Failed;
-        let mark = |mark: Glyph, color: Hsla| {
-            let color = if self.glyph.is_some() && !failed {
-                muted
-            } else {
-                color
-            };
-            (Icon::new(self.glyph.unwrap_or(mark)).xsmall())
+        let mark = |mark: Glyph, color: Hsla| match self.glyph {
+            Some(glyph) => (Icon::new(glyph).size(px(14.)))
+                .text_color(if failed { color } else { faint })
+                .into_any_element(),
+            None => (Icon::new(mark).xsmall())
                 .text_color(color)
-                .into_any_element()
+                .into_any_element(),
         };
         let sign = match self.state {
             StepState::Running => (Spinner::new().xsmall().color(theme.success)).into_any_element(),
@@ -83,9 +83,18 @@ impl RenderOnce for StepRow {
                     .text_size(px(12.))
                     .child(self.summary.unwrap_or_default()),
             )
-            .children(self.tags)
-            .children(self.chevron.map(chevron))
+            .children(
+                (self.chevron.map(chevron))
+                    .map(|chevron| chevron.text_color(if failed { theme.danger } else { faint })),
+            )
             .child(div().flex_1())
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .children(self.tags),
+            )
             .when_some(self.took_ms, |line, ms| {
                 line.child(div().flex_none().text_xs().child(worked_for(ms)))
             })

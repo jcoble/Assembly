@@ -153,19 +153,22 @@ impl ToolRow {
 
     fn detail(&self, detail: &ToolDetail, cx: &App) -> Div {
         let theme = cx.theme();
+        // The mock's `.out`: a box 10 px round, a shade lighter than the panel, 12 px code at 1.5, muted.
         let block = || {
             div()
                 .px_3()
-                .py_2()
-                .rounded(theme.radius)
+                .py(px(9.))
+                .rounded(px(10.))
                 .border_1()
                 .border_color(theme.border)
-                .bg(theme.group_box)
+                .bg(theme.group_box.opacity(0.5))
                 .font_family(theme.mono_font_family.clone())
-                .text_xs()
+                .text_size(px(12.))
+                .line_height(relative(1.5))
+                .text_color(theme.muted_foreground)
                 .overflow_x_hidden()
         };
-        let mut column = (v_flex().gap_2().ml(px(6.)).pl(px(16.)))
+        let mut column = (v_flex().gap_2().ml(px(7.)).pl(px(15.)))
             .border_l_1()
             .border_color(theme.border);
         if let Some(command) = detail.input.as_deref().and_then(command_of) {

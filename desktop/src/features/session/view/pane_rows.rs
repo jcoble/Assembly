@@ -130,8 +130,9 @@ impl SessionPane {
         }
     }
 
-    /// The space under a row: 8 between a turn's steps, 14 after a reply or a card, 24 after a turn's line. A row
-    /// with a meta line (a prompt, a final reply) has that line, shown on hover, as its space.
+    /// The space under a row: 5 between a turn's steps and under a shut turn's line (the mock's 27 px `.tl` pitch; a
+    /// reply adds its own 9 over it), 14 after a reply or a card, 24 after a turn's stats line. A row with a meta line
+    /// (a prompt, a final reply) has that line, shown on hover, as its space.
     pub(super) fn space_under(&self, entry: &Entry) -> Pixels {
         let item = match entry {
             Entry::Item(at) => &self.view.items[*at],
@@ -140,7 +141,7 @@ impl SessionPane {
                     .kept
                     .get(&format!("fold:{run_id}"))
                     .is_some_and(|kept| kept.open);
-                return px(if open { 8. } else { 14. });
+                return px(if open { 8. } else { 5. });
             }
             Entry::Loading => return px(8.),
             Entry::Working => return px(14.),
@@ -149,7 +150,7 @@ impl SessionPane {
             return px(0.);
         }
         px(match &item.kind {
-            ItemKind::Tool { .. } | ItemKind::Thinking { .. } | ItemKind::Other { .. } => 8.,
+            ItemKind::Tool { .. } | ItemKind::Thinking { .. } | ItemKind::Other { .. } => 5.,
             ItemKind::Stats { .. } if self.line_moved(item) => 0.,
             ItemKind::Stats { .. } => 24.,
             _ => 14.,

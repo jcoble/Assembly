@@ -82,9 +82,10 @@ impl SessionPane {
                 row.clone()
             }
             None => {
-                // Only a question opens as a card; a tool call's or thinking's body hangs from its own rule.
+                // Only a question opens as a card; a tool call's or thinking's line is a bare line, as the mock's
+                // `.tl`, and its body hangs from its own rule.
                 let ask = matches!(item.kind, ItemKind::Ask { .. });
-                let lit = move |row, grown, cx: &App| band(row, if ask { grown } else { 0. }, cx);
+                let lit = move |row, grown, cx: &App| if ask { band(row, grown, cx) } else { row };
                 let row = cx.new(|_| ExpandRow::new(open, title, body).band(lit));
                 let key = item.key.clone();
                 let heard = cx.subscribe(&row, move |pane, _, event, cx| {
