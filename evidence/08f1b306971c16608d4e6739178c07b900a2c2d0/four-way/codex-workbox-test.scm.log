@@ -1,0 +1,4 @@
+ok worktrees/list says the session's folder is on workbox-test
+ok git/status says the session's folder is on workbox-test
+ok git/diff says the session's folder is on workbox-test
+ok git/branchDiff says the session's folder is on workbox-test

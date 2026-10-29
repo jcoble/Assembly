@@ -99,6 +99,24 @@ fn an_empty_draft_sends_nothing_and_a_failed_send_puts_the_draft_back(cx: &mut T
     );
 }
 
+#[gpui::test]
+fn an_unreachable_machine_shows_a_send_error_and_keeps_the_draft(cx: &mut TestAppContext) {
+    let (composer, client, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("kept-remote-session".into()), window, cx)
+    });
+    client.queue_answer(Err(CallError::Unreachable {
+        machine: "Workbox Test".into(),
+    }));
+    type_and_send(&composer, "Reply OK.", cx);
+    assert_eq!(draft(&composer, cx), "Reply OK.");
+    assert_eq!(
+        cx.update(|_, cx| composer.read(cx).error.clone())
+            .as_deref(),
+        Some("Couldn't send: Workbox Test is offline. Check Settings > Connections.")
+    );
+}
+
 // Pins: g0-session#8, g0-session#22
 #[gpui::test]
 fn a_send_that_fails_after_switching_sessions_goes_back_to_its_own_draft(cx: &mut TestAppContext) {
@@ -255,4 +273,11 @@ fn connect_asks_the_backend_to_reach_the_offline_machine_once_at_a_time(cx: &mut
     );
     composer.update(cx, |composer, cx| composer.set_offline(None, cx));
     assert!(!cx.update(|_, cx| composer.read(cx).still_offline));
+}
+
+// Pins: g0-session#23
+#[test]
+fn the_draft_asks_for_follow_up_changes_once_there_are_messages() {
+    assert_eq!(super::placeholder(false), "Message");
+    assert_eq!(super::placeholder(true), "Ask for follow-up changes…");
 }

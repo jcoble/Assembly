@@ -243,3 +243,19 @@ fn a_read_sent_while_a_pick_is_going_doesnt_put_the_old_value_back(cx: &mut Test
     assert_eq!(client.config_calls().len(), 3, "read, pick, read");
     assert_eq!(menus(&composer, cx)[0].1, "opus");
 }
+
+// Pins: g0-session#27
+#[test]
+fn only_effort_shows_its_name_before_its_value() {
+    use crate::features::session::composer::config_menu::shows_name;
+    assert!(shows_name("effort", "Effort"));
+    assert!(shows_name("reasoning_effort", "Reasoning effort"));
+    for (id, name) in [
+        ("model", "Model"),
+        ("mode", "Mode"),
+        ("fast", "Fast mode"),
+        ("agent", "Agent"),
+    ] {
+        assert!(!shows_name(id, name), "{id}");
+    }
+}

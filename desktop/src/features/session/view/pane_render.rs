@@ -2,7 +2,9 @@
 //! header, the timeline, the plan card, the status line and the composer, top to bottom.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
+use gpui_kit::component::dock::{
+    BasePanel, Panel, PanelEvent, PanelId, panel_handle, register_panel,
+};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -12,6 +14,7 @@ use std::rc::Rc;
 use super::SessionPane;
 use crate::core::intents::open_session::OpenSession;
 use crate::core::state::selected_session::SelectedSession;
+use crate::core::ui::center_panes::CenterPanes;
 use crate::features::session::client::session_client::SessionClient;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::view::plan_card::PlanCard;
@@ -23,11 +26,25 @@ impl SessionPane {
     /// the open session intent, which selects that session.
     pub fn register(cx: &mut App) {
         register_panel(cx, "Chat", |_, window, cx| {
-            panel_handle(cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx)))
+            let pane = cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx));
+            CenterPanes::remember("Chat", PanelId::from(pane.entity_id()), cx);
+            panel_handle(pane)
         });
         cx.on_action(|intent: &OpenSession, cx| {
             let id = Some(intent.id.clone());
             SelectedSession::global(cx).update(cx, |selected, cx| selected.select(id, cx));
+            if let Some(window) = cx
+                .active_window()
+                .or_else(|| cx.windows().into_iter().next())
+            {
+                cx.defer(move |cx| {
+                    _ = window.update(cx, |_, window, cx| {
+                        CenterPanes::open("Chat", window, cx, |window, cx| {
+                            cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx))
+                        })
+                    });
+                });
+            }
         });
     }
 
@@ -85,6 +102,11 @@ impl BasePanel for SessionPane {
 impl Panel for SessionPane {
     fn title(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         "Chat"
+    }
+
+    /// Alone in its group it draws no kit title row: its header is its title row, with the sessions button.
+    fn title_bar(&self, _cx: &App) -> bool {
+        false
     }
 }
 

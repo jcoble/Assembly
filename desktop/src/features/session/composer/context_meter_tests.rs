@@ -14,7 +14,7 @@ fn nothing_reported_shows_nothing_not_zero() {
 #[test]
 fn the_popover_and_hint_read_the_rounded_shares() {
     let meter = ContextMeter::of(51_285, 1_000_000).unwrap();
-    assert_eq!(meter.detail, "51,285 of 1,000,000 (5%)");
+    assert_eq!(meter.detail, "95% context left · 51,285 of 1,000,000 (5%)");
     assert_eq!((meter.left, meter.used), (95, 5));
 }
 

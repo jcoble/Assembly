@@ -92,6 +92,148 @@ internal static class Schema
         WHERE json_extract(payload, '$.clientId') = $client ORDER BY seq DESC LIMIT 1;
         """;
 
+    /// <summary>
+    /// The rail's sessions, own state, ordering, filters, totals and page, in one SQL statement. A session's row ends with
+    /// its preview: its newest assistant message as plain text, its first 160 characters (each block's text parts run
+    /// together, blocks joined by a space).
+    /// </summary>
+    public const string Rail = $"""
+        WITH sessions AS (
+          SELECT s.session_id, s.agent, s.repo_url,
+            CASE WHEN s.repo_url LIKE 'https://github.com/%' THEN rtrim(substr(s.repo_url, 20), '/')
+                 ELSE substr(rtrim(s.repo_url, '/'), length(rtrim(rtrim(s.repo_url, '/'), replace(rtrim(s.repo_url, '/'), '/', ''))) + 1) END AS label,
+            CASE WHEN s.settled_at IS NOT NULL THEN 'settled' WHEN s.completed_at IS NOT NULL THEN 'done' ELSE 'working' END AS section,
+            CASE WHEN s.settled_at IS NOT NULL THEN 2 WHEN s.completed_at IS NOT NULL THEN 1 ELSE 0 END AS section_index,
+            s.title, s.machine, s.updated_at, s.completed_at, s.read_seq
+          FROM session_info s
+          WHERE (s.parent_session_id IS NULL OR s.helper = 1)
+            AND ($providers IS NULL OR s.agent IN (SELECT value FROM json_each($providers)))
+            AND ($locations IS NULL OR iif(s.machine IS NULL, 'local', 'remote') IN (SELECT value FROM json_each($locations)))
+            AND ($statuses IS NULL OR (CASE WHEN s.settled_at IS NOT NULL THEN 'settled' WHEN s.completed_at IS NOT NULL THEN 'done' ELSE 'working' END)
+                   IN (SELECT value FROM json_each($statuses)))
+            AND ($filter IS NULL OR instr(lower(COALESCE(s.title, '') || char(10) || s.repo_url), lower($filter)) > 0)),
+        totals AS (
+          SELECT COALESCE(SUM(EXISTS (SELECT 1 FROM rows a INDEXED BY rows_summary
+            WHERE a.session_id = p.session_id AND {SummaryKinds} AND a.kind = 'ask' AND json_extract(a.payload, '$.state') = 'open'
+              AND NOT EXISTS (SELECT 1 FROM rows b INDEXED BY rows_summary WHERE b.session_id = a.session_id AND {SummaryKinds}
+                              AND b.kind = 'ask' AND b.item_id = a.item_id AND b.seq > a.seq))), 0) AS needs
+          FROM sessions p),
+        section_headers AS (
+          SELECT 'section:' || section AS session_id, 'section' AS kind, section, '' AS agent, '' AS repo_url,
+            CASE section WHEN 'working' THEN 'Working' WHEN 'done' THEN 'Done' ELSE 'Settled' END AS group_label,
+            COUNT(*) AS count, NULL AS machines, NULL AS title, NULL AS machine, 0 AS updated_at, NULL AS completed_at,
+            0 AS read_seq, section_index, '' AS order_group, '' AS order_repo, 0 AS header, '' AS name
+          FROM sessions WHERE $status_group = 1 GROUP BY section, section_index),
+        project_headers AS (
+          SELECT 'project:' || iif($status_group = 1, section, '') || '::' || repo_url AS session_id,
+            'project' AS kind, iif($status_group = 1, section, '') AS section, '' AS agent, repo_url, label AS group_label,
+            COUNT(*) AS count, group_concat(DISTINCT coalesce(machine, 'local')) AS machines, NULL AS title, NULL AS machine,
+            0 AS updated_at, NULL AS completed_at, 0 AS read_seq,
+            iif($status_group = 1, section_index, 0) AS section_index, label AS order_group, repo_url AS order_repo, 1 AS header,
+            '' AS name
+          FROM sessions WHERE $project_group = 1
+            AND NOT ($status_group = 1 AND section IN (SELECT value FROM json_each($folded)))
+          GROUP BY iif($status_group = 1, section, ''), iif($status_group = 1, section_index, 0), repo_url, label),
+        members AS (
+          SELECT session_id, 'session' AS kind, section, agent, repo_url, label AS group_label, 0 AS count, NULL AS machines,
+            title, machine, updated_at, completed_at, read_seq,
+            iif($status_group = 1, section_index, 0) AS section_index,
+            iif($project_group = 1, label, '') AS order_group, iif($project_group = 1, repo_url, '') AS order_repo,
+            2 AS header, lower(COALESCE(NULLIF(trim(title), ''), label)) AS name
+          FROM sessions p
+          WHERE NOT ($status_group = 1 AND section IN (SELECT value FROM json_each($folded)))
+            AND NOT ($project_group = 1 AND (iif($status_group = 1, section, '') || '::' || repo_url)
+              IN (SELECT value FROM json_each($folded)))),
+        entries AS (
+          SELECT {RailColumns} FROM section_headers UNION ALL SELECT {RailColumns} FROM project_headers
+          UNION ALL SELECT {RailColumns} FROM members),
+        ordered AS (
+          SELECT *, json_array(updated_at, name, session_id) AS ordering,
+            ROW_NUMBER() OVER (ORDER BY section_index,
+              CASE WHEN header = 0 THEN 0 ELSE 1 END,
+              CASE WHEN order_repo = '' THEN 1 ELSE 0 END, lower(order_group), order_repo, header,
+              CASE WHEN header = 2 AND $sort = 'recent' AND $dir = 'asc' THEN updated_at END ASC,
+              CASE WHEN header = 2 AND $sort = 'recent' AND $dir = 'desc' THEN updated_at END DESC,
+              CASE WHEN header = 2 AND $sort = 'name' AND $dir = 'asc' THEN name END ASC,
+              CASE WHEN header = 2 AND $sort = 'name' AND $dir = 'desc' THEN name END DESC,
+              CASE WHEN header = 2 AND $dir = 'asc' THEN session_id END ASC,
+              CASE WHEN header = 2 AND $dir = 'desc' THEN session_id END DESC) AS n
+          FROM entries),
+        candidates AS (
+          SELECT {RailColumns}, ordering, n FROM ordered o
+          WHERE CASE WHEN $anchor IN (SELECT session_id FROM ordered)
+            THEN n >= (SELECT n FROM ordered WHERE session_id = $anchor) - $above
+            ELSE $after_section IS NULL
+              OR (section_index, CASE WHEN header = 0 THEN 0 ELSE 1 END,
+                  CASE WHEN order_repo = '' THEN 1 ELSE 0 END, lower(order_group), order_repo, header)
+                 > ($after_section, CASE WHEN $after_header = 0 THEN 0 ELSE 1 END,
+                    CASE WHEN $after_repo = '' THEN 1 ELSE 0 END, lower($after_group), $after_repo, $after_header)
+              OR ((section_index, CASE WHEN header = 0 THEN 0 ELSE 1 END,
+                   CASE WHEN order_repo = '' THEN 1 ELSE 0 END, lower(order_group), order_repo, header)
+                  = ($after_section, CASE WHEN $after_header = 0 THEN 0 ELSE 1 END,
+                     CASE WHEN $after_repo = '' THEN 1 ELSE 0 END, lower($after_group), $after_repo, $after_header)
+                AND header = 2 AND (
+                  ($sort = 'recent' AND ((
+                    $dir = 'asc' AND (updated_at, session_id) > (json_extract($after_ordering, '$[0]'), json_extract($after_ordering, '$[2]')))
+                    OR ($dir = 'desc' AND (updated_at, session_id) < (json_extract($after_ordering, '$[0]'), json_extract($after_ordering, '$[2]')))))
+                  OR ($sort = 'name' AND ((
+                    $dir = 'asc' AND (name, session_id) > (json_extract($after_ordering, '$[1]'), json_extract($after_ordering, '$[2]')))
+                    OR ($dir = 'desc' AND (name, session_id) < (json_extract($after_ordering, '$[1]'), json_extract($after_ordering, '$[2]'))))))) END
+          ORDER BY n LIMIT $limit),
+        page AS (
+          SELECT {RailColumns}, ordering, n FROM ordered
+          WHERE n IN (SELECT n FROM candidates)
+            OR ($anchor IS NOT NULL AND NOT EXISTS (SELECT 1 FROM candidates))
+          ORDER BY n LIMIT $limit),
+        family AS (
+          SELECT p.*,
+            (SELECT json_extract(t.payload, '$.state') FROM rows t INDEXED BY rows_summary
+             WHERE p.kind = 'session' AND t.session_id = p.session_id AND {SummaryKinds} AND t.kind = 'turn'
+             ORDER BY t.item_id DESC, t.seq DESC LIMIT 1) AS turn,
+            (SELECT MIN(a.seq) FROM rows a INDEXED BY rows_summary
+             WHERE p.kind = 'session' AND a.session_id = p.session_id AND {SummaryKinds} AND a.kind = 'ask'
+               AND json_extract(a.payload, '$.state') = 'open'
+               AND NOT EXISTS (SELECT 1 FROM rows b INDEXED BY rows_summary WHERE b.session_id = a.session_id AND {SummaryKinds}
+                               AND b.kind = 'ask' AND b.item_id = a.item_id AND b.seq > a.seq)) AS ask_seq,
+            EXISTS (SELECT 1 FROM rows w INDEXED BY rows_summary
+             WHERE p.kind = 'session' AND w.session_id = p.session_id AND {SummaryKinds} AND w.kind = 'task'
+               AND json_extract(w.payload, '$.state') IN ('running', 'requires_action')
+               AND NOT EXISTS (SELECT 1 FROM rows l INDEXED BY rows_summary WHERE l.session_id = w.session_id AND {SummaryKinds}
+                               AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy
+          FROM page p)
+        SELECT 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM totals
+        UNION ALL
+        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, NULL, NULL, agent, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        FROM (SELECT DISTINCT agent FROM session_info WHERE parent_session_id IS NULL OR helper = 1)
+        UNION ALL
+        SELECT 2, p.n, p.session_id, p.kind, p.section, p.agent, p.repo_url, p.group_label, p.count, p.machines, p.title,
+          p.machine, p.updated_at, p.completed_at, (p.turn IS 'started' OR p.busy), p.ask_seq IS NOT NULL, p.turn IS 'failed',
+          COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE p.kind = 'session' AND e.session_id = p.session_id
+                    AND {SummaryKinds} AND e.kind = 'turn' AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled')
+                    ORDER BY e.item_id DESC, e.seq DESC LIMIT 1), 0) > p.read_seq,
+          iif(p.ask_seq IS NULL, NULL, p.session_id), p.ask_seq, json_extract(b.payload, '$.branch'), b.created_at,
+          p.section_index, p.header, p.ordering,
+          (SELECT NULLIF(substr(trim(replace(group_concat(t.text, ' ' ORDER BY t.n), char(10), ' ')), 1, 160), '') FROM (
+             SELECT k.key AS n, (SELECT group_concat(v.atom, '' ORDER BY v.id) FROM json_tree(k.value) v
+                                 WHERE v.key = 'value' AND v.type = 'text') AS text
+             FROM json_each(m.payload, '$.blocks') k) t)
+        FROM family p
+        LEFT JOIN rows b ON p.kind = 'session' AND b.session_id = p.session_id AND b.seq = (
+          SELECT MAX(r.seq) FROM rows r INDEXED BY rows_item WHERE r.session_id = p.session_id AND r.item_id IS NULL AND r.kind = 'stats'
+            AND COALESCE(json_extract(r.payload, '$.branch'), '') <> '')
+        LEFT JOIN rows m ON p.kind = 'session' AND m.session_id = p.session_id AND m.seq = (
+          SELECT r.seq FROM rows r WHERE r.session_id = p.session_id AND r.kind = 'message' ORDER BY r.seq DESC LIMIT 1)
+        ORDER BY 1, 2;
+        """;
+
+    // The columns of every rail entry, headers and sessions alike.
+    private const string RailColumns = """
+        session_id, kind, section, agent, repo_url, group_label, count, machines, title, machine, updated_at, completed_at,
+        read_seq, section_index, order_group, order_repo, header, name
+        """;
+
     // The kinds a summary reads. SQLite uses a partial index only for a query that names its condition as the index
     // does, so the queries use this text as it is; INDEXED BY makes a query that drifts from it fail to prepare.
     private const string SummaryKinds = "kind IN ('turn', 'ask', 'task', 'subagent')";

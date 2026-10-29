@@ -45,7 +45,7 @@ pub const PANES: [&str; 13] = [
     TERMINAL,
 ];
 
-/// The sessions column opens so its card is 320 px wide (frame.ts SESSIONS_WIDTH).
+/// The sessions column opens so its card is 320 px wide (frame.ts SESSIONS_WIDTH); the design card width is not pinned.
 pub const SESSIONS_WIDTH: Pixels = px(326.);
 /// The drawer's card width (routes/+page.svelte drawerWidth).
 pub const DRAWER_WIDTH: Pixels = px(320.);

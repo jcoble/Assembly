@@ -7,6 +7,8 @@ pub mod fade;
 pub mod grow;
 #[cfg(test)]
 mod redraw_tests;
+pub mod text;
 pub mod theme_id;
 
 pub use apply::{THEMES_DIR, init, set};
+pub use text::apply_text;

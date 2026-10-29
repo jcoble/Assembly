@@ -1,8 +1,9 @@
 //! `Frame` owns the window's root view: the title row and the DockArea (drawn by MotionSkin over the kit's DockSkin,
-//! which is what emits a layout change when a dock edge drag ends) on the rail ground, and the one rounded work panel
-//! behind the center, the drawer and the bottom dock. The utility strip sits at the foot of the sessions column
+//! which is what emits a layout change when a dock edge drag ends) on the window's ground, and the one rounded work
+//! panel behind the center, the drawer and the bottom dock. The utility strip sits at the foot of the sessions column
 //! (MotionSkin). Replaces ShellFrame.svelte and the `next-shell` markup in routes/+page.svelte (lines 817-958).
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::component::dock::{DockArea, DockEvent, DockPlacement, DockSkin};
@@ -21,8 +22,10 @@ use crate::core::ui::center_panes::CenterPanes;
 
 /// The work panel's distance from the window's edges (the design system's `panel-gap`).
 const PANEL_GAP: Pixels = px(8.);
-/// The work panel's corners (the design system's `radius-lg`).
-const PANEL_RADIUS: Pixels = px(16.);
+/// The window's ground, darker than the work panel (the approved mock's `.win`, #0e0e0f).
+const GROUND: u32 = 0x0e0e0f;
+/// The work panel's corners (the approved mock's `.panel`).
+const PANEL_RADIUS: Pixels = px(14.);
 /// How narrow and how wide the sessions column and the drawer can be dragged (the approved look's layout). The kit
 /// has no per-dock limits, so Frame holds them.
 const LIMITS: [(DockPlacement, Pixels, Pixels); 2] = [
@@ -37,6 +40,8 @@ pub struct Frame {
     /// How many of Frame's holds to a dock's limits still have their own layout event to come. Those events don't
     /// save, so a drag still saves once, when it ends.
     held: usize,
+    /// The bottom dock is shut, for MotionSkin's centre.
+    bottom_shut: Rc<Cell<bool>>,
     /// Reads the saved layout, then applies it.
     _load: Task<()>,
     _subscriptions: Vec<Subscription>,
@@ -53,11 +58,13 @@ impl Frame {
         cx: &mut Context<Self>,
     ) -> Self {
         let utility_strip = cx.new(|_| UtilityStrip);
+        let bottom_shut = Rc::new(Cell::new(true));
         let dock = cx.new(|cx| {
             let skin = MotionSkin {
                 inner: DockSkin::new(cx),
                 foot: utility_strip.into(),
                 area: cx.weak_entity(),
+                bottom_shut: bottom_shut.clone(),
             };
             DockArea::new("assembly-shell", Some(LAYOUT_VERSION), window, cx)
                 .with_renderer(Rc::new(skin))
@@ -103,6 +110,7 @@ impl Frame {
             dock,
             layout: LayoutStore::new(write),
             held: 0,
+            bottom_shut,
             _load,
             _subscriptions: vec![docked],
         }
@@ -135,6 +143,8 @@ impl Render for Frame {
         let sessions = (!dock.is_zoomed() && dock.is_dock_open(DockPlacement::Left))
             .then(|| dock.dock_size(DockPlacement::Left))
             .flatten();
+        self.bottom_shut
+            .set(!dock.is_dock_open(DockPlacement::Bottom));
         let theme = cx.theme();
         // The panel's box: from the sessions column's edge to `PANEL_GAP` short of the window's.
         let panel = || {
@@ -148,7 +158,7 @@ impl Render for Frame {
         };
         v_flex()
             .size_full()
-            .bg(theme.sidebar)
+            .bg(rgb(GROUND))
             .child(self.top_bar.clone())
             .child(
                 div()
@@ -165,7 +175,8 @@ impl Render for Frame {
                             .child(self.dock.clone()),
                     )
                     // The ring goes over the panes, so a tab bar or a pane with its own fill doesn't hide it.
-                    .child(panel().border_1().border_color(theme.border)),
+                    // The mock's faint edge (#1d1d1f on the dark theme): the theme's border at under half strength.
+                    .child(panel().border_1().border_color(theme.border.opacity(0.45))),
             )
     }
 }

@@ -12,6 +12,12 @@ namespace Assembly.Application.Common.Acp.V1;
 /// </summary>
 public static class UpdateReader
 {
+    // Board reporting only records the caller's own task, so it never waits on a permission card. Claude asks; Codex doesn't.
+    public static PermissionOutcome? BoardPermission(RequestPermissionRequest request) =>
+        request.ToolTitle == "mcp__assembly__board_update"
+        && request.Options.FirstOrDefault(option => option.Kind == "allow_once") is { } allow
+            ? PermissionOutcome.Selected(allow.OptionId) : null;
+
     /// <summary>The event one <c>session/update</c> carries, or null for the kinds we don't show.</summary>
     public static AgentEvent? Read(SessionNotification notification, long at)
     {

@@ -9,6 +9,60 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed class RemoteTunnelTests
 {
     [Fact]
+    public async Task The_owned_ssh_forward_disables_connection_sharing()
+    {
+        // -V exits without connecting; the setup seam otherwise replaces the entire ssh command.
+        await using var tunnel = RemoteTunnel.ForSsh("-V", 12345, 9797, TextWriter.Null);
+        var args = (string[])typeof(RemoteTunnel).GetField("_args",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(tunnel)!;
+        Assert.Contains(Enumerable.Range(0, args.Length - 1), i => args[i] == "-S" && args[i + 1] == "none");
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1000)]
+    public async Task Debug_output_is_discarded_and_real_exit_errors_are_bounded(int errorLines)
+    {
+        var log = new SharedLog();
+        await using var tunnel = RemoteTunnel.Wrapped(["python3", "-c",
+            "import sys; print('debug1: Entering interactive session.',file=sys.stderr); " +
+            "[print('debug%d: channel noise %d' % (i%3+1,i),file=sys.stderr) for i in range(50000)]; " +
+            $"[print('error context ' + 'x'*100,file=sys.stderr) for _ in range({errorLines})]; " +
+            "print('connection lost: real error',file=sys.stderr); sys.exit(3)"], log);
+        await Until(() => log.ToString().Contains("tunnel: ssh exited"));
+
+        var message = log.ToString();
+        Assert.Contains("connection lost: real error", message);
+        Assert.DoesNotContain("debug", message);
+        Assert.True(message.Length < 4200, $"retained exit message has {message.Length} characters");
+    }
+
+    [Fact]
+    public async Task Occupied_forward_port_fails_setup_and_stops_the_owned_process()
+    {
+        System.Net.Sockets.TcpListener? occupied = null;
+        RemoteTunnel? owned = null;
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            {
+                var opened = await RemoteTunnel.ConnectAsync("fake", 9797, "test/env", TextWriter.Null,
+                    start: port =>
+                    {
+                        occupied = new(System.Net.IPAddress.Loopback, port);
+                        occupied.Start();
+                        return owned = RemoteTunnel.Wrapped(["python3", "-c",
+                            $"import socket; s=socket.socket(); s.bind(('127.0.0.1',{port}))"], TextWriter.Null);
+                    }, readToken: _ => Task.FromResult("token"));
+                await opened.Tunnel.DisposeAsync();
+            });
+            Assert.NotNull(owned);
+            Assert.Equal(0, owned.Pid);
+        }
+        finally { occupied?.Stop(); if (owned is not null) await owned.DisposeAsync(); }
+    }
+
+    [Fact]
     public async Task It_runs_in_its_own_process_group_and_is_stopped_by_pid()
     {
         var tunnel = new RemoteTunnel("/usr/bin/perl", ["-e", "setpgrp(0, 0); exec @ARGV or die", "/bin/sleep", "30"], TextWriter.Null);
@@ -77,6 +131,42 @@ public sealed class RemoteTunnelTests
         await Until(() => log.ToString().Contains("tunnel: ssh exited"));
 
         Assert.Contains("tunnel: ssh exited (3: own)", log.ToString());
+    }
+
+    [Fact]
+    public async Task Same_remote_ports_have_independent_endpoints_and_reach_different_hosts()
+    {
+        async Task<(RemoteTunnel Tunnel, RemoteConfig Config)> Open(string host) => await RemoteTunnel.ConnectAsync(host, 9797, "test/env", TextWriter.Null,
+            start: port => RemoteTunnel.Wrapped(["python3", "-c", "from http.server import HTTPServer,BaseHTTPRequestHandler; " +
+                "exec(\"class H(BaseHTTPRequestHandler):\\n def do_GET(self):\\n  self.send_response(200); self.end_headers(); self.wfile.write(b'" + host + "')\\n def log_message(self,*args): pass\"); " +
+                $"server=HTTPServer(('127.0.0.1',{port}),H); import sys; print('debug1: Entering interactive session.',file=sys.stderr,flush=True); server.serve_forever()"], TextWriter.Null),
+            readToken: _ => Task.FromResult("token"));
+        var first = await Open("first");
+        await using var stopFirst = first.Tunnel;
+        var second = await Open("second");
+        await using var stopSecond = second.Tunnel;
+        Assert.NotEqual(first.Config.Address, second.Config.Address);
+        using var http = new HttpClient();
+        Assert.Equal("first", await http.GetStringAsync(first.Config.Address));
+        Assert.Equal("second", await http.GetStringAsync(second.Config.Address));
+    }
+
+    [Fact]
+    public async Task Cancelled_setup_stops_its_owned_process()
+    {
+        using var stop = new CancellationTokenSource();
+        var started = new TaskCompletionSource<RemoteTunnel>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var connecting = RemoteTunnel.ConnectAsync("fake", 9797, "test/env", TextWriter.Null, stop.Token,
+            start: _ =>
+            {
+                var tunnel = RemoteTunnel.Wrapped(["/bin/sleep", "30"], TextWriter.Null);
+                started.SetResult(tunnel);
+                return tunnel;
+            }, readToken: async cancel => { await Task.Delay(Timeout.Infinite, cancel); return "token"; });
+        var owned = await started.Task;
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => connecting);
+        Assert.True(owned.Pid == 0 || kill(owned.Pid, 0) != 0);
     }
 
     // It reads /proc, which macOS doesn't have.

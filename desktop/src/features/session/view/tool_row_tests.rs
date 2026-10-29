@@ -1,4 +1,11 @@
-use super::{DIFF_SHOWN, OUTPUT_TAIL, command_of, diff_lines, output_tail};
+use serde_json::json;
+
+use super::{
+    DIFF_SHOWN, OUTPUT_TAIL, command_of, diff_lines, failed_run, line_summary, line_words,
+    output_tail, short_path,
+};
+use crate::features::session::model::fold::Fold;
+use crate::features::session::rows::tool::ToolPayload;
 
 fn numbered(count: usize) -> String {
     (1..=count).map(|n| format!("{n}\n")).collect()
@@ -48,4 +55,62 @@ fn a_codex_shell_call_shows_its_argv_as_one_command() {
         Some("ls -la".to_string())
     );
     assert_eq!(command_of(r#"{"command":["bash",1]}"#), None);
+}
+
+// Pins: g0-session#13
+#[test]
+fn a_tool_line_shows_the_last_two_parts_of_its_path() {
+    let long = "/home/me/.local/share/assembly/sessions/s-1/notes/plan.md";
+    assert_eq!(short_path(long), "notes/plan.md");
+    assert_eq!(short_path(r"C:\work\desktop\main.rs"), "desktop/main.rs");
+    assert_eq!(short_path("/a.rs"), "a.rs");
+    assert_eq!(short_path("notes/plan.md"), "notes/plan.md");
+}
+
+// Pins: g0-session#13
+#[test]
+fn an_edit_titled_by_its_kind_shows_its_file_not_the_tools_own_verb() {
+    let edit = |path: Option<&str>| {
+        let tool = json!({ "name": "Editing files", "state": "completed", "path": path, "added": 3,
+            "hasDetail": true, "kind": "edit" });
+        serde_json::from_value::<ToolPayload>(tool).unwrap()
+    };
+    let words = |tool: &ToolPayload| {
+        Fold::tool_words(
+            &tool.name,
+            tool.kind.as_deref(),
+            line_summary(tool).as_deref(),
+        )
+    };
+    assert_eq!(
+        words(&edit(Some("/home/me/scratch/src/calc.py"))),
+        ("Edited".to_string(), Some("src/calc.py".to_string()))
+    );
+    assert_eq!(words(&edit(None)), ("Edited".to_string(), None));
+}
+
+// Pins: g0-session#13
+#[test]
+fn a_failed_run_reads_failed_to_run_and_opens() {
+    let call = |kind: &str, state: &str| {
+        let tool = json!({ "name": "Bash", "state": state, "summary": "cat missing.txt", "hasDetail": true,
+            "kind": kind });
+        serde_json::from_value::<ToolPayload>(tool).unwrap()
+    };
+    let failed = call("execute", "failed");
+    assert_eq!(
+        line_words(&failed, false),
+        (
+            "Failed to run".to_string(),
+            Some("cat missing.txt".to_string())
+        )
+    );
+    assert!(failed_run(&failed, false));
+    // A denied run didn't run; a run that worked, or a failed edit, keeps its own word and stays shut.
+    assert_eq!(line_words(&failed, true).0, "Ran");
+    assert!(!failed_run(&failed, true));
+    assert_eq!(line_words(&call("execute", "completed"), false).0, "Ran");
+    assert!(!failed_run(&call("execute", "completed"), false));
+    assert_eq!(line_words(&call("edit", "failed"), false).0, "Edited");
+    assert!(!failed_run(&call("edit", "failed"), false));
 }

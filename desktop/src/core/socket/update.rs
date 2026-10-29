@@ -5,9 +5,8 @@ use serde_json::Value;
 
 #[derive(Debug)]
 pub enum Update {
-    /// The topic's items now, at subscribe and again after every reconnect. Upserted, never replacing: no topic
-    /// removes items yet.
+    /// The topic's items now, at subscribe and again after every reconnect.
     State(Vec<(String, Value)>),
-    /// One item changed (an upsert).
+    /// One item changed. A topic that removes items (`machines`) sends a null item for one removed.
     Change { key: String, item: Value },
 }

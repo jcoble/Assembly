@@ -32,7 +32,7 @@ impl RenderOnce for ActivityCard {
             .px_3()
             .py_2()
             .gap_1()
-            .rounded(theme.radius_lg)
+            .rounded(px(12.))
             .bg(theme.group_box)
             .child(h_flex().child(pill))
             .children(self.steps)
