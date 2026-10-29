@@ -452,5 +452,11 @@
       "reason": ""
     }
   ],
-  "windowScreenshots": "missing"
+  "windowScreenshots": {
+    "where": "project files: notes/evidence/four-way/settings2/fadaeb6/window/",
+    "files": [
+      "TSK-1637-claude-local-editor-diff-after-restart.png",
+      "TSK-1637-claude-remote-reply-after-recovery.png"
+    ]
+  }
 }
