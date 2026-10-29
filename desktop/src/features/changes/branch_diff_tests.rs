@@ -71,10 +71,11 @@ fn a_deleted_file_and_a_non_ascii_path_keep_their_names() {
 
 // Pins: scm#18
 #[test]
-fn a_name_git_quotes_shows_without_its_quotes_or_prefix() {
+fn a_name_git_quotes_shows_as_the_file_is_named() {
     let diff = "diff --git \"a/tab\\there.txt\" \"b/tab\\there.txt\"\n@@ -1 +1 @@\n-a\n+b\n\
-                diff --git \"a/old\\\"q.txt\" \"b/new\\\"q.txt\"\nsimilarity index 100%\n\
-                rename from \"old\\\"q.txt\"\nrename to \"new\\\"q.txt\"\n";
+                diff --git \"a/old\\\"q.txt\" \"b/the \\\"fast\\\" path\\\\x.md\"\nsimilarity index 100%\n\
+                rename from \"old\\\"q.txt\"\nrename to \"the \\\"fast\\\" path\\\\x.md\"\n\
+                diff --git \"a/caf\\303\\251.md\" \"b/caf\\303\\251.md\"\n@@ -1 +1 @@\n-a\n+b\n";
     let labels: Vec<_> = branch(diff, false)
         .rows()
         .into_iter()
@@ -83,5 +84,8 @@ fn a_name_git_quotes_shows_without_its_quotes_or_prefix() {
             Row::Line(_) => None,
         })
         .collect();
-    assert_eq!(labels, ["tab\\there.txt", "new\\\"q.txt"]);
+    assert_eq!(
+        labels,
+        ["tab\there.txt", "the \"fast\" path\\x.md", "café.md"]
+    );
 }
