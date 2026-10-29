@@ -21,6 +21,16 @@ pub struct Fold {
 }
 
 impl Fold {
+    /// Whether its final reply is there and finished: the reply then has a meta line, which carries the turn's line.
+    pub fn reply_done(&self, items: &[Item]) -> bool {
+        let Some(reply) = &self.reply else {
+            return false;
+        };
+        items.iter().any(|item| {
+            &item.key == reply && matches!(item.kind, ItemKind::Message { done: true, .. })
+        })
+    }
+
     /// Each finished run's fold, by run id. A run is finished once its stats are in and it isn't the one running.
     pub fn all(
         items: &[Item],

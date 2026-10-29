@@ -55,7 +55,7 @@ impl RenderOnce for StepRow {
                 .into_any_element()
         };
         let sign = match self.state {
-            StepState::Running => Spinner::new().xsmall().color(muted).into_any_element(),
+            StepState::Running => (Spinner::new().xsmall().color(theme.success)).into_any_element(),
             StepState::Done => mark(Glyph::CircleCheck, theme.success),
             StepState::Failed => mark(Glyph::CircleX, theme.danger),
             StepState::Unfinished => mark(Glyph::Dot, muted),

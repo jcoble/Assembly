@@ -1,5 +1,5 @@
 //! A running turn's activity card: its tool calls as steps, each with how long it ran, and the footer under them
-//! ("3 steps · 0:41"). A page carries only an item's newest row, so a step counts from when the item before it in the
+//! ("3 steps · 0:41", or "Step 3 of 5 · 0:41" when the session has a plan). A page carries only an item's newest row, so a step counts from when the item before it in the
 //! turn was last written (or the turn started) to its own newest row, or to now while it runs.
 
 use super::item::{Item, ItemKind};
@@ -38,8 +38,9 @@ pub fn steps(items: &[Item], run: &str, started_at: i64, now: i64) -> Vec<Step> 
     steps
 }
 
-/// "3 steps · 0:41", "1 step · 1:02:05", or only the time before the first step.
-pub fn footer(steps: usize, ms: i64) -> String {
+/// "3 steps · 0:41", "1 step · 1:02:05", or only the time before the first step; with a plan, its step and length
+/// ("Step 3 of 5 · 0:41") in place of the count.
+pub fn footer(steps: usize, plan: Option<(usize, usize)>, ms: i64) -> String {
     let seconds = ms.max(0) / 1000;
     let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
     let time = if hours > 0 {
@@ -47,9 +48,10 @@ pub fn footer(steps: usize, ms: i64) -> String {
     } else {
         format!("{minutes}:{seconds:02}")
     };
-    match steps {
-        0 => time,
-        1 => format!("1 step · {time}"),
-        _ => format!("{steps} steps · {time}"),
+    match (plan, steps) {
+        (Some((step, of)), _) => format!("Step {step} of {of} · {time}"),
+        (None, 0) => time,
+        (None, 1) => format!("1 step · {time}"),
+        (None, _) => format!("{steps} steps · {time}"),
     }
 }

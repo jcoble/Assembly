@@ -14,6 +14,7 @@ use crate::features::session::model::turn_line::{checkout_line, turn_line};
 use crate::features::session::view::activity_card::ActivityCard;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::{CHAT_COLUMN, ItemRow};
+use crate::features::session::view::plan_card::current_step;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
@@ -48,6 +49,9 @@ impl SessionPane {
                     .then(|| self.view.items[*at].clone())
                     .and_then(|item| self.expand_of(&item, None, cx));
                 let item = &self.view.items[*at];
+                if self.line_moved(item) {
+                    return div().into_any_element();
+                }
                 let mut shown = item.clone();
                 if let ItemKind::Message { blocks, .. } = &mut shown.kind
                     && let Some(cut) = self.shown_blocks(&item.key, blocks)
@@ -94,7 +98,10 @@ impl SessionPane {
                     return div().into_any_element();
                 };
                 let steps = activity::steps(&self.view.items, &run, since, now);
-                let footer = activity::footer(steps.len(), now - since);
+                let plan = (self.view.plan.as_ref())
+                    .filter(|(_, items)| !items.is_empty())
+                    .map(|(_, items)| (current_step(items), items.len()));
+                let footer = activity::footer(steps.len(), plan, now - since);
                 let steps = steps
                     .into_iter()
                     .filter_map(|step| {
@@ -145,7 +152,7 @@ impl SessionPane {
         }
         px(match &item.kind {
             ItemKind::Tool { .. } | ItemKind::Thinking { .. } | ItemKind::Other { .. } => 8.,
-            ItemKind::Stats { stats } if stats.status == "completed" => 0.,
+            ItemKind::Stats { .. } if self.line_moved(item) => 0.,
             ItemKind::Stats { .. } => 24.,
             _ => 14.,
         })
@@ -171,6 +178,15 @@ impl SessionPane {
             ItemKind::Message { blocks, .. } => Some(markdown_of(blocks).into()),
             _ => None,
         }
+    }
+
+    /// A completed turn's line that shows under its finished final reply instead (`turn_of`); its row draws nothing.
+    fn line_moved(&self, item: &Item) -> bool {
+        let ItemKind::Stats { stats } = &item.kind else {
+            return false;
+        };
+        let fold = self.folds.get(&stats.run_id);
+        stats.status == "completed" && fold.is_some_and(|fold| fold.reply_done(&self.view.items))
     }
 
     /// A reply's completed turn's line, for its meta line; the turn's own row then draws nothing.

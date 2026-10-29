@@ -1,6 +1,6 @@
 //! `ItemRow` draws one item of the timeline by its kind: a prompt, a reply with its meta line, thinking, a tool, an
-//! ask, a task, a subagent, a note, the line under a stopped or failed turn, an error notice, or a kind it doesn't
-//! know by name. Replaces TimelineItem.svelte and the spike's item_view.rs.
+//! ask, a task, a subagent, a note, the line under a turn, an error notice, or a kind it doesn't know by name.
+//! Replaces TimelineItem.svelte and the spike's item_view.rs.
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -129,8 +129,6 @@ impl RenderOnce for ItemRow {
                 .text_color(muted)
                 .child(text)
                 .into_any_element(),
-            // A completed turn's line shows on hover under its final reply instead; Stopped and Failed stay shown.
-            ItemKind::Stats { stats } if stats.status == "completed" => div().into_any_element(),
             ItemKind::Stats { stats } => v_flex()
                 .text_xs()
                 .text_color(muted)

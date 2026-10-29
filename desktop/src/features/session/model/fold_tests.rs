@@ -253,3 +253,20 @@ fn a_tool_is_titled_by_its_kind() {
         ("Bash".to_string(), Some("x".to_string()))
     );
 }
+
+// Pins: g0-session#10
+#[test]
+fn a_turn_with_no_finished_reply_keeps_its_own_line() {
+    let reply_done = |items: &[Item]| Fold::all(items, &stats(), None)["r1"].reply_done(items);
+    let tool_only = [tool("t", "execute", json!({}))];
+    assert!(
+        !reply_done(&tool_only),
+        "a tool-only turn has no reply to carry its line"
+    );
+    let mut unfinished = text("m");
+    if let ItemKind::Message { done, .. } = &mut unfinished.kind {
+        *done = false;
+    }
+    assert!(!reply_done(&[tool("t", "execute", json!({})), unfinished]));
+    assert!(reply_done(&[tool("t", "execute", json!({})), text("m")]));
+}
