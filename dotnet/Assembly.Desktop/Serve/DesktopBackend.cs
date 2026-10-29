@@ -149,11 +149,6 @@ public sealed class DesktopBackend : IAsyncDisposable
         var status = new MachineStatus(topics, []);
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
-        var hostStop = new CancellationTokenSource();
-        var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
-        var boardMirror = remote is null ? null : new RemoteWorkflowMirror(remote, boardQueries, boardTransitions,
-            () => status.Unreachable(remote.Name, "Board connection closed"));
-        var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
 
         Uri? address = null;
         Action dropSockets = () => { };
@@ -171,7 +166,14 @@ public sealed class DesktopBackend : IAsyncDisposable
             });
         connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
         // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
-        if (remote is not null) await connections.ReadyAsync(remote.Name);
+        var startupName = savedRemote?.Name ?? remote?.Name;
+        if (startupName is not null) await connections.ReadyAsync(startupName);
+        var startup = connections.StartupSnapshot(startupName);
+        var hostStop = new CancellationTokenSource();
+        var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
+        var boardMirror = startup is { } connected ? new RemoteWorkflowMirror(startupName!, () => connections.StartupSnapshot(startupName)?.Config,
+            boardQueries, boardTransitions, connected.Unreachable) : null;
+        var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
         clock.Ticked += machinesFeature.Tick;
         var boardMachines = boardMirror is null ? null : topics.Subscribe("machines", null, _ =>
         {

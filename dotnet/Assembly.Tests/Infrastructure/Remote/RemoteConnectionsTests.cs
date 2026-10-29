@@ -11,6 +11,33 @@ namespace Assembly.Tests.Infrastructure.Remote;
 
 public sealed class RemoteConnectionsTests
 {
+    [Fact]
+    public async Task The_startup_snapshot_names_the_connected_machine()
+    {
+        using var file = new TempDatabase();
+        var topics = new Topics();
+        using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
+        using var hub = new LiveHub(RowStore.Open(db));
+        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
+        var machines = new MachineSet(new FakeMachine(null, sessions));
+        var status = new MachineStatus(topics, []);
+        var store = new MachineStore(db);
+        await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
+        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+            feature, open: (_, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>(
+                (new("ssh-host", new Uri("http://127.0.0.1:1"), "token"), null)));
+        Assert.Null(connections.StartupSnapshot("saved-box"));
+        connections.Start(new("saved-box", "ssh-host"));
+        await connections.ReadyAsync("saved-box");
+        var snapshot = connections.StartupSnapshot("saved-box")!.Value;
+        Assert.Equal("saved-box", snapshot.Config.Name);
+        Assert.Equal(new Uri("http://127.0.0.1:1"), snapshot.Config.Address);
+        Assert.Equal("token", snapshot.Config.Token);
+        Assert.Same(machines.Named("saved-box"), snapshot.Machine);
+        snapshot.Unreachable();
+        Assert.Equal("Board connection closed", status.Items.Single(item => item.Name == "saved-box").Reason);
+    }
+
     [Theory]
     [InlineData("pr109 no such host", "couldn't reach pr109 no such host over ssh (ssh exit 255)")]
     // -V exits successfully without connecting or producing a token.
