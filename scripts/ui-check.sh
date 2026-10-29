@@ -46,6 +46,8 @@ case "${1:-}" in
     [ -x "$home/backend/Assembly.Desktop" ]
     mkdir -p "$home/runtime" "$home/cache" "$home/data" "$home/mac"
     chmod 700 "$home/runtime"
+    # The backend home needs the providers; the adapters install once into this lane's DATA.
+    dotnet/scripts/agents-file.sh "$DATA/adapters" "$home/mac/agents.json"
     # All mutable paths, including the backend token, stay inside this lane's DATA.
     cat > "$home/backend/lane.json" <<JSON
 {"port":$DESKTOP_PORT,"home":"$home/mac","tokenFile":"$home/token.env","remotePort":$BOX_PORT,"remoteTokenFile":"$BOX_TOKEN_FILE"}
