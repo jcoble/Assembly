@@ -1,0 +1,496 @@
+{
+  "commit": "8d752f21cbfb66d19bcf63350cf9694945e77451",
+  "lane": "settings",
+  "localMachine": "agent-workbox",
+  "startedAt": "2026-10-29T18:32:39Z",
+  "finishedAt": "2026-10-29T18:33:37Z",
+  "builtFrom": {
+    "local": "8d752f21cbfb66d19bcf63350cf9694945e77451",
+    "workboxTest": "8d752f21cbfb66d19bcf63350cf9694945e77451"
+  },
+  "features": [
+    "files",
+    "preferences",
+    "rows",
+    "scm",
+    "sessions-list",
+    "session-view",
+    "socket",
+    "terminal"
+  ],
+  "partial": false,
+  "pass": true,
+  "cases": [
+    {
+      "agent": "claude",
+      "machine": "local",
+      "sessionId": "616a87fe-0b1e-4726-91fb-e1c7ebb5bcff",
+      "runId": "ccd6adf1-c520-47b7-899b-bcdf7f0da541",
+      "startedAt": "2026-10-29T18:32:41Z",
+      "finishedAt": "2026-10-29T18:32:54Z",
+      "state": "finished",
+      "reply": "agent-workbox\nfour-way-ok",
+      "acpSessionId": "e722b6d1-41b7-495b-ac7b-1c4d427a21a8",
+      "transcript": {
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-settings-mac-sessions-616a87fe-0b1e-4726-91fb-e1c7ebb5bcff/e722b6d1-41b7-495b-ac7b-1c4d427a21a8.jsonl",
+        "bytes": 366315
+      },
+      "rows": "claude-local.rows.json",
+      "features": [
+        {
+          "name": "files",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the top folder is listed (2 entries)",
+            "ok search finds README by name, ignoring case",
+            "ok README reads with its size and revision (6 bytes)",
+            "ok a path outside the folder is refused"
+          ]
+        },
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (it had committed)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 12 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (13)",
+            "ok the socket from 6 starts at 7 with prevSeq 6"
+          ]
+        },
+        {
+          "name": "scm",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok worktrees/list answers the main checkout first",
+            "ok git/status answers the branch and changed files",
+            "ok git/diff answers a file's staged and working tree diffs",
+            "ok git/branchDiff answers the branch against its base, or says there is none"
+          ]
+        },
+        {
+          "name": "sessions-list",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a new session is in Working",
+            "ok the rail lists the session under its provider and location",
+            "ok Mark done stamps completedAt",
+            "ok sessionRail names the session when it moves",
+            "ok Settle stamps settledAt and keeps the done time",
+            "ok a settled session pages with Settled, not with the open ones",
+            "ok a settled session stays in the rail under Settled",
+            "ok Back to working clears both stamps",
+            "ok back in Working, it is in the rail again",
+            "ok Connect has no remote to reach here",
+            "ok while its own session's turn runs, Running lists and counts it",
+            "ok once that turn has ended, Running no longer lists it"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 7 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the Context tab lists the 0 files the session's tool calls changed",
+            "ok the Context tab lists no attachments, on this machine",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from agent-workbox",
+            "ok an unknown call answers not_found"
+          ]
+        },
+        {
+          "name": "terminal",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok terminal starts on the local owning backend",
+            "ok live output and replay contain the same bytes",
+            "ok input reaches the program, resize reaches the PTY, and exit follows output",
+            "ok close removes the terminal and its replay",
+            "ok unknown and remote owners are refused with and without a folder, leaving no terminal"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "claude",
+      "machine": "workbox-test",
+      "sessionId": "62c3e864-6a59-4add-bd55-0a2b65ee8996",
+      "runId": "11ae6125-d526-4c71-a99d-4799620da659",
+      "startedAt": "2026-10-29T18:32:54Z",
+      "finishedAt": "2026-10-29T18:33:06Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "82723587-d574-4cdd-8e91-38326fe97132",
+      "transcript": {
+        "path": "/home/blackcolours/.claude/projects/-home-blackcolours-assembly-dotnet-settings-serve-sessions-62c3e864-6a59-4add-bd55-0a2b65ee8996/82723587-d574-4cdd-8e91-38326fe97132.jsonl",
+        "bytes": 213798
+      },
+      "rows": "claude-workbox-test.rows.json",
+      "features": [
+        {
+          "name": "files",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a remote session's files say they can't be shown yet"
+          ]
+        },
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (it had committed)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 11 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (12)",
+            "ok the socket from 5 starts at 6 with prevSeq 5"
+          ]
+        },
+        {
+          "name": "scm",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok worktrees/list says the session's folder is on workbox-test",
+            "ok git/status says the session's folder is on workbox-test",
+            "ok git/diff says the session's folder is on workbox-test",
+            "ok git/branchDiff says the session's folder is on workbox-test"
+          ]
+        },
+        {
+          "name": "sessions-list",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a new session is in Working",
+            "ok the rail lists the session under its provider and location",
+            "ok Mark done stamps completedAt",
+            "ok sessionRail names the session when it moves",
+            "ok Settle stamps settledAt and keeps the done time",
+            "ok a settled session pages with Settled, not with the open ones",
+            "ok a settled session stays in the rail under Settled",
+            "ok Back to working clears both stamps",
+            "ok back in Working, it is in the rail again",
+            "ok Connect reaches the remote",
+            "ok while its own session's turn runs, Running lists and counts it",
+            "ok once that turn has ended, Running no longer lists it"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 7 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the Context tab lists the 0 files the session's tool calls changed",
+            "ok the Context tab lists no attachments, on workbox-test",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from workbox-test",
+            "ok an unknown call answers not_found"
+          ]
+        },
+        {
+          "name": "terminal",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok terminal starts on the workbox-test owning backend",
+            "ok live output and replay contain the same bytes",
+            "ok input reaches the program, resize reaches the PTY, and exit follows output",
+            "ok close removes the terminal and its replay",
+            "ok unknown and remote owners are refused with and without a folder, leaving no terminal"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "local",
+      "sessionId": "2922ef2d-e127-40ea-97ee-e839296ae66a",
+      "runId": "ebf982c1-df68-4b93-b715-6b58d2ebd0f3",
+      "startedAt": "2026-10-29T18:33:06Z",
+      "finishedAt": "2026-10-29T18:33:21Z",
+      "state": "finished",
+      "reply": "agent-workbox\nfour-way-ok",
+      "acpSessionId": "01a188ef-ed39-7f51-ba34-410a43f47355",
+      "transcript": {
+        "path": "/home/blackcolours/.codex/sessions/2026/10/29/rollout-2026-10-29T14-33-08-01a188ef-ed39-7f51-ba34-410a43f47355.jsonl",
+        "bytes": 158002
+      },
+      "rows": "codex-local.rows.json",
+      "features": [
+        {
+          "name": "files",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the top folder is listed (2 entries)",
+            "ok search finds README by name, ignoring case",
+            "ok README reads with its size and revision (6 bytes)",
+            "ok a path outside the folder is refused"
+          ]
+        },
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (cancelled)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 12 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (14)",
+            "ok the socket from 6 starts at 7 with prevSeq 6"
+          ]
+        },
+        {
+          "name": "scm",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok worktrees/list answers the main checkout first",
+            "ok git/status answers the branch and changed files",
+            "ok git/diff answers a file's staged and working tree diffs",
+            "ok git/branchDiff answers the branch against its base, or says there is none"
+          ]
+        },
+        {
+          "name": "sessions-list",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a new session is in Working",
+            "ok the rail lists the session under its provider and location",
+            "ok Mark done stamps completedAt",
+            "ok sessionRail names the session when it moves",
+            "ok Settle stamps settledAt and keeps the done time",
+            "ok a settled session pages with Settled, not with the open ones",
+            "ok a settled session stays in the rail under Settled",
+            "ok Back to working clears both stamps",
+            "ok back in Working, it is in the rail again",
+            "ok Connect has no remote to reach here",
+            "ok while its own session's turn runs, Running lists and counts it",
+            "ok once that turn has ended, Running no longer lists it"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 8 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the Context tab lists the 0 files the session's tool calls changed",
+            "ok the Context tab lists no attachments, on this machine",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from agent-workbox",
+            "ok an unknown call answers not_found"
+          ]
+        },
+        {
+          "name": "terminal",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok terminal starts on the local owning backend",
+            "ok live output and replay contain the same bytes",
+            "ok input reaches the program, resize reaches the PTY, and exit follows output",
+            "ok close removes the terminal and its replay",
+            "ok unknown and remote owners are refused with and without a folder, leaving no terminal"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    },
+    {
+      "agent": "codex",
+      "machine": "workbox-test",
+      "sessionId": "450b6b36-8521-470e-aace-303eac4b2a0d",
+      "runId": "5ced798a-2314-4978-993f-e9185dd47d4e",
+      "startedAt": "2026-10-29T18:33:21Z",
+      "finishedAt": "2026-10-29T18:33:37Z",
+      "state": "finished",
+      "reply": "workbox-test\nfour-way-ok",
+      "acpSessionId": "01a188f0-2713-7112-87be-cee478fb1770",
+      "transcript": {
+        "path": "/home/blackcolours/.codex/sessions/2026/10/29/rollout-2026-10-29T18-33-22-01a188f0-2713-7112-87be-cee478fb1770.jsonl",
+        "bytes": 70332
+      },
+      "rows": "codex-workbox-test.rows.json",
+      "features": [
+        {
+          "name": "files",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a remote session's files say they can't be shown yet"
+          ]
+        },
+        {
+          "name": "preferences",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a save is answered",
+            "ok a save reaches another socket's subscription",
+            "ok a later subscription gets the saved value",
+            "ok a cancelled save is all or nothing (it had committed)"
+          ]
+        },
+        {
+          "name": "rows",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the socket from 0 sent 15 rows",
+            "ok every row's prevSeq is the row before it, and seqs only rise (1 skip past deleted deltas)",
+            "ok the socket reaches the newest row (16)",
+            "ok the socket from 7 starts at 8 with prevSeq 7"
+          ]
+        },
+        {
+          "name": "scm",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok worktrees/list says the session's folder is on workbox-test",
+            "ok git/status says the session's folder is on workbox-test",
+            "ok git/diff says the session's folder is on workbox-test",
+            "ok git/branchDiff says the session's folder is on workbox-test"
+          ]
+        },
+        {
+          "name": "sessions-list",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok a new session is in Working",
+            "ok the rail lists the session under its provider and location",
+            "ok Mark done stamps completedAt",
+            "ok sessionRail names the session when it moves",
+            "ok Settle stamps settledAt and keeps the done time",
+            "ok a settled session pages with Settled, not with the open ones",
+            "ok a settled session stays in the rail under Settled",
+            "ok Back to working clears both stamps",
+            "ok back in Working, it is in the rail again",
+            "ok Connect reaches the remote",
+            "ok while its own session's turn runs, Running lists and counts it",
+            "ok once that turn has ended, Running no longer lists it"
+          ]
+        },
+        {
+          "name": "session-view",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok the header's keyed topic sends the session, with no parent session",
+            "ok a working session carries its run (the column draws its dot)",
+            "ok the run goes from the session when the turn ends (the dot goes)",
+            "ok the first rows page has 9 rows, hasBefore and no active run",
+            "ok an opened tool call reads its detail",
+            "ok the Context tab lists the 0 files the session's tool calls changed",
+            "ok the Context tab lists no attachments, on workbox-test",
+            "ok the sessions column lists the session"
+          ]
+        },
+        {
+          "name": "socket",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok hello is answered with welcome from workbox-test",
+            "ok an unknown call answers not_found"
+          ]
+        },
+        {
+          "name": "terminal",
+          "pass": true,
+          "exitCode": 0,
+          "steps": [
+            "ok terminal starts on the workbox-test owning backend",
+            "ok live output and replay contain the same bytes",
+            "ok input reaches the program, resize reaches the PTY, and exit follows output",
+            "ok close removes the terminal and its replay",
+            "ok unknown and remote owners are refused with and without a folder, leaving no terminal"
+          ]
+        }
+      ],
+      "pass": true,
+      "reason": ""
+    }
+  ],
+  "windowScreenshots": "missing"
+}

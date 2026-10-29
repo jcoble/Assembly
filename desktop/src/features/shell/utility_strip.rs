@@ -1,13 +1,15 @@
 //! `UtilityStrip` owns the bar at the foot of the sessions column, under a divider: Settings, then Resources and
 //! Usage as pills, each opening the kit's popover anchored to it and opening upward, which the kit keeps on screen.
-//! Their bodies wait for what doesn't exist yet (a settings view, and the resources and usage quota feeds); nothing
-//! here polls. Replaces UtilityStrip.svelte, utilityStrip.ts and the usage and resource popovers in ShellOverlays.svelte.
+//! Settings opens the Settings page through the `OpenSettings` intent; the other two bodies wait for the resources and
+//! usage quota feeds; nothing here polls. Replaces UtilityStrip.svelte, utilityStrip.ts and the usage and resource popovers in ShellOverlays.svelte.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
+
+use crate::core::intents::open_settings::OpenSettings;
 
 pub struct UtilityStrip;
 
@@ -19,7 +21,8 @@ impl Render for UtilityStrip {
             .ghost()
             .compact()
             .icon(IconName::Settings)
-            .tooltip("Settings");
+            .tooltip("Settings")
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx));
         h_flex()
             .h(px(38.))
             .flex_none()
@@ -28,7 +31,11 @@ impl Render for UtilityStrip {
             .border_t_1()
             .border_color(theme.table_row_border)
             .text_color(theme.muted_foreground)
-            .child(figure("settings", settings, "Settings come later."))
+            .child(
+                div()
+                    .debug_selector(|| "settings-button".into())
+                    .child(settings),
+            )
             .child(figure(
                 "resources",
                 Button::new("Resources")
