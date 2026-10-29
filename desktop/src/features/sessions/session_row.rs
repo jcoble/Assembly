@@ -1,7 +1,7 @@
 //! `SessionRow` is one session in the rail, an inbox row of three lines: its title (in the accent with a spinner while
 //! it runs, else after its provider's mark) with how long it has run or its age; its state in colour ("offline" first
 //! while its machine isn't answering), then its machine and recorded branch; and its newest assistant text, at most
-//! two lines. A session another one started sits one level in, on a tree line under its starter. A click opens the
+//! two lines. A session another one started is a row like any other, at the same left edge. A click opens the
 //! session; the right-click menu moves it between Working and Done or settles it (`sessions/mark`).
 
 use std::rc::Rc;
@@ -187,20 +187,6 @@ impl RenderOnce for SessionRow {
                 .line_clamp(2)
                 .child(preview)
         });
-        let started = entry.depth == 1;
-        // A started session's tree line: down from the row above, then right towards its mark.
-        let branch = started.then(|| {
-            div()
-                .absolute()
-                .left(px(22.))
-                .top(px(-1.))
-                .h(px(20.))
-                .w(px(8.))
-                .border_l_1()
-                .border_b_1()
-                .rounded_bl(px(6.))
-                .border_color(theme.border)
-        });
         let opened = id.clone();
         let selector = format!("session-{id}");
         let status = Status::of(entry.completed_at);
@@ -211,7 +197,7 @@ impl RenderOnce for SessionRow {
             .w_full()
             .pt(px(9.))
             .pb(px(10.))
-            .pl(if started { px(34.) } else { px(16.) })
+            .pl(px(16.))
             .pr(px(14.))
             .border_t_1()
             .border_color(theme.table_row_border)
@@ -229,7 +215,6 @@ impl RenderOnce for SessionRow {
             })
             .when(!selected, |row| row.hover(|row| row.bg(hover)))
             .on_click(move |_, window, cx| on_open(opened.clone(), window, cx))
-            .children(branch)
             .child(first)
             .child(second)
             .children(preview)
