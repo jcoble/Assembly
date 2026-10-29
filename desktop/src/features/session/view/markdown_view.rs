@@ -205,14 +205,29 @@ impl Draw<'_> {
                 list.into_any_element()
             }
             Block::Table { headers, rows } => {
+                // One grid for the whole table, so every row shares the same columns and long cells wrap.
                 let (border, radius) = (theme.border, theme.radius);
-                let mut table = v_flex()
+                let columns = rows
+                    .iter()
+                    .map(Vec::len)
+                    .chain([headers.len()])
+                    .max()
+                    .unwrap_or(0);
+                let mut table = div()
+                    .grid()
+                    .grid_cols(columns as u16)
                     .border_1()
                     .border_color(border)
-                    .rounded(radius)
-                    .child(self.table_row(headers, true));
-                for cells in rows {
-                    table = table.child(self.table_row(cells, false));
+                    .rounded(radius);
+                let lines = (!headers.is_empty())
+                    .then_some((headers, true))
+                    .into_iter()
+                    .chain(rows.iter().map(|row| (row, false)));
+                for (cells, header) in lines {
+                    for at in 0..columns {
+                        let cell = cells.get(at).map(Vec::as_slice).unwrap_or_default();
+                        table = table.child(self.table_cell(cell, header));
+                    }
                 }
                 table.into_any_element()
             }
@@ -220,15 +235,17 @@ impl Draw<'_> {
         }
     }
 
-    fn table_row(&mut self, cells: &[Vec<Inline>], header: bool) -> Div {
+    /// A short row's missing cells come in empty, so the cells after them stay in their columns.
+    fn table_cell(&mut self, cell: &[Inline], header: bool) -> Div {
         let muted = self.cx.theme().muted;
-        let mut row = h_flex().when(header, |row| {
-            row.font_weight(FontWeight::SEMIBOLD).bg(muted)
-        });
-        for cell in cells {
-            row = row.child(div().flex_1().px_2().py_1().child(self.text(cell)));
-        }
-        row
+        div()
+            .min_w_0()
+            .px_2()
+            .py_1()
+            .when(header, |cell| {
+                cell.font_weight(FontWeight::SEMIBOLD).bg(muted)
+            })
+            .child(self.text(cell))
     }
 
     /// One paragraph's text with its marks; its links open their URL or file when clicked.
