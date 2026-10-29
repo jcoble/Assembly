@@ -266,7 +266,7 @@ public sealed class SessionStore
 
     /// <summary>
     /// The rail's read (see <see cref="SessionsFeature.RailArgs"/>), in one statement: the totals, the providers, the
-    /// parent page and the expanded parent's helper page, each a part of <see cref="Chat.Schema.Rail"/>'s rows.
+    /// session page, each a part of <see cref="Chat.Schema.Rail"/>'s rows.
     /// </summary>
     internal SessionsFeature.Rail Rail(SessionsFeature.RailArgs args, CancellationToken cancel = default)
     {
@@ -275,21 +275,16 @@ public sealed class SessionStore
         var parts = _db.Query(Chat.Schema.Rail, row => (Part: row.Long(0), N: (int)row.Long(1), Row: ReadRail(row)), cancel,
             new SqlArg("$tab", args.Tab), new SqlArg("$providers", Json(args.Providers)), new SqlArg("$locations", Json(args.Locations)),
             new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()), new SqlArg("$limit", args.Limit),
-            new SqlArg("$group", args.After?.Group), new SqlArg("$repo", args.After?.RepoUrl), new SqlArg("$updated", args.After?.UpdatedAt),
-            new SqlArg("$id", args.After?.SessionId), new SqlArg("$expanded", args.Expanded),
-            new SqlArg("$helperUpdated", args.HelpersAfter?.UpdatedAt), new SqlArg("$helperId", args.HelpersAfter?.SessionId),
-            new SqlArg("$helperLimit", args.HelperLimit), new SqlArg("$anchor", args.Anchor), new SqlArg("$above", args.Above),
-            new SqlArg("$helperAnchor", args.HelperAnchor), new SqlArg("$helperAbove", args.HelperAbove));
+            new SqlArg("$group", args.After?.Group), new SqlArg("$repo", args.After?.RepoUrl), new SqlArg("$ordering", args.After?.Ordering),
+            new SqlArg("$anchor", args.Anchor), new SqlArg("$above", args.Above));
         // The rows before each page, from its first row's place in the whole tab or child list.
         int Start(long part) => parts.FirstOrDefault(row => row.Part == part) is { Row: not null } first ? first.N - 1 : 0;
         var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
-        var helpers = parts.Where(part => part.Part == 3).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
         return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
-            sessions, sessions.Count == args.Limit ? new(sessions[^1].Group, sessions[^1].RepoUrl, sessions[^1].UpdatedAt, sessions[^1].SessionId) : null,
-            helpers, helpers.Count == args.HelperLimit ? new(helpers[^1].UpdatedAt, helpers[^1].SessionId) : null, Start(2), Start(3));
+            sessions, sessions.Count == args.Limit ? new(sessions[^1].Group, sessions[^1].RepoUrl, sessions[^1].Ordering) : null, Start(2));
     }
 
-    // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a parent (2) or helper (3).
+    // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a session (2).
     private static object ReadRail(IRow row)
     {
         string? Text(int column) => row.IsNull(column) ? null : row.Text(column);
@@ -300,7 +295,7 @@ public sealed class SessionStore
             1 => row.Text(3),
             _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Long(6) == 1, Text(7), Text(8),
                 row.Long(9), Long(10), row.Long(11) == 1, row.Long(12) == 1, row.Long(13) == 1, row.Long(14) == 1, (int)row.Long(15),
-                Text(16), Long(17), Text(18), Long(19), ProviderGlyph.Of(row.Text(3))),
+                Text(16), Long(17), Text(18), Long(19), ProviderGlyph.Of(row.Text(3)), row.Text(20)),
         };
     }
 

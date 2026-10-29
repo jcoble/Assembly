@@ -1,4 +1,4 @@
-//! `Presence` is what a rail row says its session is doing, from the backend's read (a parent's counts its helpers):
+//! `Presence` is what a rail row says its session is doing, from the backend's read:
 //! it needs you (an open question or permission), it's working, its last turn failed, the user marked it done, a
 //! turn ended that you haven't seen, or nothing. The first that holds wins, in that order. A machine that isn't
 //! answering doesn't change it: the row keeps the last state it knew and says it's offline beside it.

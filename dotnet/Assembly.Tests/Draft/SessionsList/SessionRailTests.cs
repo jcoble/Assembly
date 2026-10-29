@@ -11,7 +11,7 @@ namespace Assembly.Tests.Draft.SessionsList;
 
 /// <summary>
 /// The rail's one SQL read (main-screen spec S1 to S3, PR 1): tab totals over every eligible parent, filters before
-/// totals and paging, project groups in a fixed order, helpers under their parent, and the invalidations that make a
+/// totals and paging, project groups in a fixed order, started sessions after their starter, and the invalidations that make a
 /// window read it again.
 /// </summary>
 public sealed class SessionRailTests : IDisposable
@@ -31,6 +31,45 @@ public sealed class SessionRailTests : IDisposable
         _hub = new LiveHub(rows, topics: _topics);
     }
 
+    // Pins: sessions-list#1, sessions-list#6
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StartedSessionsFollowTheirStarterAndKeepTheirOwnState(bool remote)
+    {
+        var starter = Parent(machine: remote ? "workbox-test" : null);
+        var other = Parent();
+        var started = Helper(starter);
+        Running(started);
+        Asking(started);
+        Assert.Equal([other, starter, started], Collect(next => Read(after: next, limit: 1)));
+        Assert.Equal(new RailTotals(3, 1, 1), Read().Totals);
+        Assert.False(Entry(Read(), starter).Running);
+        Assert.False(Entry(Read(), starter).NeedsYou);
+        Assert.Equal(1, Entry(Read(), started).Depth);
+        Assert.Equal(started, Read("running").Sessions.Single().SessionId);
+        Assert.Equal(started, Read("needs").Sessions.Single().SessionId);
+    }
+
+    // Pins: sessions-list#1, sessions-list#6
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NativeSubagentsNeverEnterTheRailOrKeepTheirParentRunning(bool remote)
+    {
+        var starter = Parent(machine: remote ? "workbox-test" : null);
+        var native = _sessions.Child(_sessions.Get(starter)!, "native", "Native subagent").SessionId;
+        Running(native);
+        Asking(native);
+        Rows(native, ("background", RowKind.Task, new { state = "running" }));
+        Rows(starter, ("native", RowKind.Subagent, new { state = "running" }),
+            (null, RowKind.Turn, new { state = "finished" }));
+        Assert.Equal(new RailTotals(1, 0, 0), Read().Totals);
+        Assert.Equal(starter, Read().Sessions.Single().SessionId);
+        Assert.Empty(Read("running").Sessions);
+        Assert.Empty(Read("needs").Sessions);
+    }
+
     [Fact]
     public void CountsIncludeUnloadedParentsOnce()
     {
@@ -42,19 +81,13 @@ public sealed class SessionRailTests : IDisposable
             if (i % 7 == 0)
                 Asking(parents[i]);
         }
-        // Parent 1 is idle, but its helpers work and ask: it counts once in each tab. Parent 0 already runs.
-        Running(Helper(parents[1]));
-        Running(Helper(parents[1]));
-        Asking(Helper(parents[1]));
-        Running(Helper(parents[0]));
 
         var first = Read(limit: 50);
-        Assert.Equal(new RailTotals(205, 42, 31), first.Totals);
+        Assert.Equal(new RailTotals(205, 41, 30), first.Totals);
         Assert.Equal(50, first.Sessions.Count);
         Assert.Equal(205, Collect(next => Read(after: next, limit: 50)).Count);
-        Assert.Equal(42, Read("running", limit: 200).Sessions.Count);
+        Assert.Equal(41, Read("running", limit: 200).Sessions.Count);
         Assert.Equal(first.Totals, Read("needs", limit: 1).Totals);
-        Assert.Equal(3, Entry(Read("needs", limit: 200), parents[1]).Helpers);
     }
 
     [Fact]
@@ -69,14 +102,14 @@ public sealed class SessionRailTests : IDisposable
         var settled = Parent("claude");
         Running(settled);
         _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, settled, "settled"); return 0; });
-        // A claude parent whose codex helper runs: the parent's provider picks it, the helper's work counts for it.
+        // A started session counts under its own provider.
         var mixed = Parent("claude");
         Running(Helper(mixed, "codex"));
 
-        Assert.Equal(new RailTotals(2, 1, 0), Read(providers: ["codex"]).Totals);
-        Assert.Equal(new RailTotals(3, 1, 1), Read(providers: ["claude"]).Totals);
+        Assert.Equal(new RailTotals(3, 2, 0), Read(providers: ["codex"]).Totals);
+        Assert.Equal(new RailTotals(3, 0, 1), Read(providers: ["claude"]).Totals);
         Assert.Equal(new RailTotals(2, 0, 1), Read(locations: ["remote"]).Totals);
-        Assert.Equal(new RailTotals(3, 2, 0), Read(providers: ["claude", "codex"], locations: ["local"]).Totals);
+        Assert.Equal(new RailTotals(4, 2, 0), Read(providers: ["claude", "codex"], locations: ["local"]).Totals);
         var none = Read(providers: ["nobody"]);
         Assert.Equal(new RailTotals(0, 0, 0), none.Totals);
         Assert.Empty(none.Sessions);
@@ -115,23 +148,7 @@ public sealed class SessionRailTests : IDisposable
         Assert.Equal(["alpha", "alpha", "o/alpha", "Zeta"], all.Where(entry => entry.GroupStart).Select(entry => entry.Group));
         Assert.Equal(all.Select(entry => entry.SessionId), Collect(next => Read(after: next, limit: 2)));
 
-        // A parent's helpers page on their own cursor, and asking for them changes nothing else.
-        var helpers = Enumerable.Range(0, 5).Select(_ => Helper(zeta)).ToArray();
-        var seen = new List<string>();
-        RailChildCursor? childAfter = null;
-        do
-        {
-            var page = Read(limit: 2, expanded: zeta, helpersAfter: childAfter);
-            Assert.True(page.Helpers.Count <= 2);
-            Assert.Equal(Read(limit: 2).Totals, page.Totals);
-            Assert.Equal(Read(limit: 2).Sessions, page.Sessions);
-            seen.AddRange(page.Helpers.Select(entry => entry.SessionId));
-            childAfter = page.HelpersNext;
-        } while (childAfter is not null);
-        Assert.Equal(Enumerable.Reverse(helpers), seen);
-        var both = Read(limit: 1, expanded: zeta, helperLimit: 3);
-        Assert.Equal((1, 3), (both.Sessions.Count, both.Helpers.Count));
-        Assert.Equal("icons/asterisk.svg", Entry(both, mine).Icon);
+        Assert.Equal("icons/asterisk.svg", Entry(Read(), mine).Icon);
     }
 
     [Fact]
@@ -159,24 +176,12 @@ public sealed class SessionRailTests : IDisposable
         Assert.Equal(parents[1], Read(anchor: "gone", after: Cursor(Entry(Read(limit: 200), parents[0])), limit: 1).Sessions.Single().SessionId);
     }
 
-    [Fact]
-    public void HelpersPastTheTwoHundredthKeepTheReadersHelper()
-    {
-        var parent = Parent();
-        var helpers = Enumerable.Range(0, 250).Select(_ => Helper(parent)).Reverse().ToArray();
-        var read = Read(expanded: parent, helperAnchor: helpers[230], helperAbove: 150, helperLimit: 200);
-        Assert.Equal((80, helpers[230]), (read.HelperStart, read.Helpers[150].SessionId));
-        Assert.Equal(170, read.Helpers.Count);
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void BackgroundWorkRunsAfterItsTurnEnds(bool remote)
     {
         var session = Parent(machine: remote ? "workbox-test" : null);
-        var parent = Parent();
-        var helper = Helper(parent);
         var seq = 0L;
         void Add(string? item, string kind, object payload)
         {
@@ -188,18 +193,13 @@ public sealed class SessionRailTests : IDisposable
         Add(null, RowKind.Turn, new { state = "started" });
         Add("t1", RowKind.Task, new { state = "running" });
         Add(null, RowKind.Turn, new { state = "finished" });
-        Rows(helper, (null, RowKind.Turn, new { state = "started" }), ("s1", RowKind.Subagent, new { state = "running" }),
-            (null, RowKind.Turn, new { state = "finished" }));
-
-        var rail = Read("running", expanded: parent);
-        Assert.Equal(new RailTotals(2, 2, 0), rail.Totals);
+        var rail = Read("running");
+        Assert.Equal(new RailTotals(1, 1, 0), rail.Totals);
         Assert.True(Entry(rail, session).Running);
-        Assert.True(rail.Helpers.Single().Running);
 
         Add("t1", RowKind.Task, new { state = "completed" });
-        Rows(helper, ("s1", RowKind.Subagent, new { state = "completed" }));
-        Assert.Equal(new RailTotals(2, 0, 0), Read("running").Totals);
-        Assert.False(Read(expanded: parent).Helpers.Single().Running);
+        Assert.Equal(new RailTotals(1, 0, 0), Read("running").Totals);
+        Assert.False(Entry(Read(), session).Running);
     }
 
     [Fact]
@@ -272,8 +272,8 @@ public sealed class SessionRailTests : IDisposable
         Asking(helper);
         Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
         var rail = Read("needs");
-        Assert.Equal(new RailTotals(1, 0, 1), rail.Totals);
-        Assert.Equal(helper, Entry(rail, parent).AskSession);
+        Assert.Equal(new RailTotals(2, 0, 1), rail.Totals);
+        Assert.Equal(helper, Entry(rail, helper).AskSession);
     }
 
     [Theory]
@@ -338,12 +338,10 @@ public sealed class SessionRailTests : IDisposable
     }
 
     private Rail Read(string tab = "all", string[]? providers = null, string[]? locations = null, string? filter = null,
-        RailCursor? after = null, int limit = 50, string? expanded = null, RailChildCursor? helpersAfter = null, int? helperLimit = null,
-        string? anchor = null, int above = 0, string? helperAnchor = null, int helperAbove = 0) =>
-        _sessions.Rail(new RailArgs(tab, providers, locations, filter, after, limit, expanded, helpersAfter, helperLimit ?? limit,
-            anchor, above, helperAnchor, helperAbove));
+        RailCursor? after = null, int limit = 50, string? anchor = null, int above = 0) =>
+        _sessions.Rail(new RailArgs(tab, providers, locations, filter, after, limit, anchor, above));
 
-    private static RailCursor Cursor(RailEntry entry) => new(entry.Group, entry.RepoUrl, entry.UpdatedAt, entry.SessionId);
+    private static RailCursor Cursor(RailEntry entry) => new(entry.Group, entry.RepoUrl, entry.Ordering);
 
     /// <summary>Every parent, following each page's cursor from the first.</summary>
     private static List<string> Collect(Func<RailCursor?, Rail> read)

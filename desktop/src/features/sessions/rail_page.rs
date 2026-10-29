@@ -1,8 +1,8 @@
 //! `RailPage` is one `sessions/rail` answer (dotnet/.../Sessions/SessionsFeature.cs, `Rail`): each tab's total, the
-//! providers to filter by, a page of parents in the backend's order and the expanded parent's helpers. `Rail` is the
+//! providers to filter by and a page of sessions in the backend's order. `Rail` is the
 //! sessions column's read: the tab and filters it asks for, what it holds, and its one read at a time. A change while
 //! a read is out reads again once it answers; a new tab or filter reads at once, and the older read's answer is
-//! dropped. It holds a window of the tab's parents, and of the expanded parent's helpers, at most `KEEP` of each once
+//! dropped. It holds a window of the tab's sessions, at most `KEEP` once
 //! the reader has gone past them. A read again names the row in view and how many held rows sit above it, so the
 //! backend's page keeps it wherever it moved; scrolling past `KEEP` lets the first rows go, and going back reads them
 //! again. The window never counts, sorts or groups: it draws what the backend sent.
@@ -61,20 +61,10 @@ pub struct RailTotals {
 pub struct RailCursor {
     group: String,
     repo_url: String,
-    updated_at: i64,
-    session_id: String,
+    ordering: String,
 }
 
-/// Where the expanded parent's next helper page starts (`SessionsFeature.RailChildCursor`).
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RailChildCursor {
-    updated_at: i64,
-    session_id: String,
-}
-
-/// One parent or helper (`SessionsFeature.RailEntry`). A parent's `running` and `needs_you` hold for its helpers'
-/// work and asks too; `group_start` marks its project's first parent in the tab.
+/// One session's own state and SQL order; started sessions have depth 1.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RailEntry {
@@ -91,7 +81,8 @@ pub struct RailEntry {
     pub needs_you: bool,
     pub failed: bool,
     pub unread: bool,
-    pub helpers: usize,
+    pub depth: usize,
+    pub ordering: String,
     pub ask_session: Option<String>,
     pub ask_seq: Option<i64>,
     /// The newest branch a turn's stats recorded: what it was then, not the checkout now.
@@ -108,25 +99,17 @@ pub struct RailPage {
     pub agents: Vec<String>,
     pub sessions: Vec<RailEntry>,
     pub next: Option<RailCursor>,
-    pub helpers: Vec<RailEntry>,
-    pub helpers_next: Option<RailChildCursor>,
-    /// How many of the tab's parents, and of the expanded parent's helpers, come before the page.
+    /// How many sessions come before this page.
     #[serde(default)]
     pub start: usize,
-    #[serde(default)]
-    pub helper_start: usize,
 }
 
-/// Which read is out: what's held again (a change, a new tab, filter or expanded parent), the next parent page, the
-/// page before what's held, or the expanded parent's next or earlier helper page (with the held parents again, as the
-/// backend reads both at once).
+/// A refresh, the next page, or the page before the held rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Read {
     Top,
     More,
     Earlier,
-    Helpers,
-    EarlierHelpers,
 }
 
 /// A read to send: its number, which its answer is matched by, and the call's args.
@@ -139,18 +122,13 @@ pub struct Rail {
     /// `local` and `remote`.
     pub locations: Vec<String>,
     pub filter: String,
-    /// The one parent whose helpers show under it.
-    pub expanded: Option<String>,
     pub totals: RailTotals,
     pub agents: Vec<String>,
     pub sessions: Vec<RailEntry>,
-    pub helpers: Vec<RailEntry>,
     next: Option<RailCursor>,
-    helpers_next: Option<RailChildCursor>,
-    /// How many of the tab's parents, and of the expanded parent's helpers, come before the held ones.
+    /// How many sessions precede the held rows.
     pub ahead: usize,
-    pub helpers_ahead: usize,
-    /// The parent or helper at the top of the view, which a read again keeps.
+    /// The session at the top of the view, which a read again keeps.
     view: Option<String>,
     /// Why the last read failed, until one answers.
     pub error: Option<String>,
@@ -163,8 +141,7 @@ pub struct Rail {
 }
 
 impl Rail {
-    /// A change came: read from the top now, or once the read that's out answers. Every change counts, a helper's
-    /// too: which tab its parent is in is the backend's to say.
+    /// A change came: read now, or once the read that's out answers.
     pub fn changed(&mut self) -> Option<Request> {
         if self.reading.is_some() {
             self.again = true;
@@ -198,15 +175,6 @@ impl Rail {
         Some(self.requery())
     }
 
-    /// Shows a parent's helpers under it, or hides them; one parent's at a time.
-    pub fn toggle_expanded(&mut self, session_id: &str) -> Request {
-        self.expanded =
-            (self.expanded.as_deref() != Some(session_id)).then(|| session_id.to_owned());
-        self.helpers.clear();
-        (self.helpers_next, self.helpers_ahead) = (None, 0);
-        self.start(Read::Top)
-    }
-
     /// The next parent page, when there is one and nothing's out.
     pub fn more(&mut self) -> Option<Request> {
         (self.reading.is_none() && self.next.is_some()).then(|| self.start(Read::More))
@@ -217,22 +185,9 @@ impl Rail {
         (self.reading.is_none() && self.ahead > 0).then(|| self.start(Read::Earlier))
     }
 
-    /// The expanded parent's helpers before the held ones.
-    pub fn earlier_helpers(&mut self) -> Option<Request> {
-        (self.reading.is_none() && self.helpers_ahead > 0).then(|| self.start(Read::EarlierHelpers))
-    }
-
-    /// The parent or helper at the top of the view.
+    /// The session at the top of the view.
     pub fn look_at(&mut self, session_id: Option<String>) {
         self.view = session_id;
-    }
-
-    pub fn has_more_helpers(&self) -> bool {
-        self.helpers_next.is_some()
-    }
-
-    pub fn more_helpers(&mut self) -> Option<Request> {
-        (self.reading.is_none() && self.has_more_helpers()).then(|| self.start(Read::Helpers))
     }
 
     /// Takes read `id`'s answer, and gives the read to send next: from the top again if a change came meanwhile. An
@@ -269,29 +224,13 @@ impl Rail {
             self.sessions.truncate(KEEP);
             self.next = Some(cursor(&self.sessions[KEEP - 1]));
         }
-        self.helpers_next = page.helpers_next;
-        if read == Read::Helpers {
-            self.helpers.extend(page.helpers);
-            self.helpers_ahead += trim(&mut self.helpers);
-            return;
-        }
-        (self.helpers, self.helpers_ahead) = (page.helpers, page.helper_start);
-        if read == Read::EarlierHelpers && self.helpers.len() > KEEP {
-            self.helpers.truncate(KEEP);
-            let last = &self.helpers[KEEP - 1];
-            self.helpers_next = Some(RailChildCursor {
-                updated_at: last.updated_at,
-                session_id: last.session_id.clone(),
-            });
-        }
     }
 
     /// A new tab or filter: what's held was for the old one.
     fn requery(&mut self) -> Request {
         self.sessions.clear();
-        self.helpers.clear();
-        (self.next, self.helpers_next, self.view) = (None, None, None);
-        (self.ahead, self.helpers_ahead) = (0, 0);
+        (self.next, self.view) = (None, None);
+        self.ahead = 0;
         self.start(Read::Top)
     }
 
@@ -303,29 +242,14 @@ impl Rail {
     }
 
     fn args(&self, read: Read) -> Value {
-        let (more, helpers) = (read == Read::More, read == Read::Helpers);
-        // A helper in view keeps its parent too.
-        let in_helpers =
-            (self.helpers.iter()).any(|entry| Some(&entry.session_id) == self.view.as_ref());
-        let parent_view = if in_helpers {
-            self.expanded.as_ref()
-        } else {
-            self.view.as_ref()
-        };
+        let more = read == Read::More;
         let parent = keep(
             &self.sessions,
-            parent_view,
+            self.view.as_ref(),
             self.ahead,
             read == Read::Earlier,
         );
-        let helper = keep(
-            &self.helpers,
-            self.view.as_ref(),
-            self.helpers_ahead,
-            read == Read::EarlierHelpers,
-        );
         let (anchor, above) = parent.filter(|_| !more).unzip();
-        let (helper_anchor, helper_above) = helper.filter(|_| !helpers).unzip();
         json!({
             "tab": self.tab.wire(),
             "providers": self.providers,
@@ -336,11 +260,7 @@ impl Rail {
             "limit": if more { PAGE } else { (self.sessions.len() + PAGE).min(MOST) },
             "anchor": anchor.map(|entry| &entry.session_id),
             "above": above.unwrap_or(0),
-            "expanded": if more { None } else { self.expanded.as_ref() },
-            "helpersAfter": if helpers { self.helpers_next.as_ref() } else { None },
-            "helperLimit": if helpers { PAGE } else { (self.helpers.len() + PAGE).min(MOST) },
-            "helperAnchor": helper_anchor.map(|entry| &entry.session_id),
-            "helperAbove": helper_above.unwrap_or(0),
+
         })
     }
 }
@@ -376,8 +296,7 @@ fn cursor(entry: &RailEntry) -> RailCursor {
     RailCursor {
         group: entry.group.clone(),
         repo_url: entry.repo_url.clone(),
-        updated_at: entry.updated_at,
-        session_id: entry.session_id.clone(),
+        ordering: entry.ordering.clone(),
     }
 }
 
@@ -386,7 +305,7 @@ fn cursor(entry: &RailEntry) -> RailCursor {
 pub fn test_entry(id: &str, repo_url: &str) -> RailEntry {
     serde_json::from_value(json!({ "sessionId": id, "agent": "claude", "repoUrl": repo_url, "group": repo_url,
         "groupStart": false, "title": null, "machine": null, "updatedAt": 1, "completedAt": null, "running": false,
-        "needsYou": false, "failed": false, "unread": false, "helpers": 0, "askSession": null, "askSeq": null,
+        "needsYou": false, "failed": false, "unread": false, "depth": 0, "ordering": id, "askSession": null, "askSeq": null,
         "branch": null, "branchAt": null, "icon": "icons/bot.svg" }))
     .unwrap()
 }

@@ -177,6 +177,12 @@ impl SessionsPane {
         cx.notify();
     }
 
+    pub(super) fn set_tab(&mut self, tab: Tab) -> Request {
+        self.lines.scroll_to(ListOffset::default());
+        self.from_start = true;
+        self.rail.set_tab(tab)
+    }
+
     /// Takes a read's answer, and sends the read it asks for next. The selection is left alone: a session that left
     /// the tab stays open.
     pub(super) fn answer(&mut self, id: u64, outcome: Outcome<RailPage>, cx: &mut Context<Self>) {
@@ -185,7 +191,7 @@ impl SessionsPane {
         cx.notify();
     }
 
-    /// Opens a row's session, a helper's own too, and clears the filter, as picking a result did in the old rail.
+    /// Opens a row's session, and clears the filter, as picking a result did in the old rail.
     pub(super) fn open(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
         SelectedSession::global(cx)
             .update(cx, |selected, cx| selected.select(Some(session_id), cx));
@@ -329,7 +335,7 @@ impl Render for SessionsPane {
             .selected_index(selected.unwrap_or_default())
             .children(Tab::ALL.map(|tab| TabItem::new().label(tab.label(&self.rail.totals))))
             .on_click(cx.listener(|pane, at: &usize, _, cx| {
-                let read = pane.rail.set_tab(Tab::ALL[*at]);
+                let read = pane.set_tab(Tab::ALL[*at]);
                 pane.send(Some(read), cx);
             }));
         self.follow_entries(window, cx);

@@ -1,5 +1,4 @@
-//! `ListEntry` is one line of the sessions column, in the backend's order: a project's heading, a parent session, one
-//! of the expanded parent's helpers, or the line that loads more of them.
+//! A project's heading or a session, in the backend's order.
 
 use super::rail_page::RailEntry;
 
@@ -12,11 +11,7 @@ pub enum ListEntry {
         repo_url: String,
         machine: Option<String>,
     },
-    Session(RailEntry),
-    Helper(RailEntry),
-    /// The expanded parent (by id) has more helpers than are loaded, after or before the held ones.
-    MoreHelpers(String),
-    EarlierHelpers(String),
+    Session(Box<RailEntry>),
 }
 
 impl ListEntry {
@@ -24,8 +19,7 @@ impl ListEntry {
     pub fn key(&self) -> &str {
         match self {
             ListEntry::Project { repo_url, .. } => repo_url,
-            ListEntry::Session(entry) | ListEntry::Helper(entry) => &entry.session_id,
-            ListEntry::MoreHelpers(parent) | ListEntry::EarlierHelpers(parent) => parent,
+            ListEntry::Session(entry) => &entry.session_id,
         }
     }
 }

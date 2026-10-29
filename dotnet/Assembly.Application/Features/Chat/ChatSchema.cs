@@ -92,29 +92,15 @@ internal static class Schema
         WHERE json_extract(payload, '$.clientId') = $client ORDER BY seq DESC LIMIT 1;
         """;
 
-    /// <summary>
-    /// The rail's read (<see cref="Sessions.SessionStore.Rail"/>). <c>parents</c> are the open top-level sessions the
-    /// filters pick, with each one's project label ("owner/repo" for a GitHub URL, else the folder's last name).
-    /// <c>family</c> is each of them and its children, with each one's newest turn state and first open ask, both read
-    /// through rows_summary. <c>tops</c> folds a family into its parent: it runs or needs you if any of them does.
-    /// <c>listed</c> is the tab's parents, <c>page</c> its page after the cursor, A to Z by label then repo, newest
-    /// first; <c>helpers</c> is the expanded parent's page of children. Every row has the same columns: part (0
-    /// totals, 1 a provider, 2 a parent, 3 a helper), its order, session, agent, repo, label, group start, title,
-    /// machine, updated, completed, running, needs you, failed, unread, helpers, ask session, ask seq, branch and when
-    /// it was recorded. The totals row puts All in the helpers column and the other two in theirs.
-    /// </summary>
+    /// <summary>The rail's sessions, own state, ordering, filters, totals and page, in one SQL statement.</summary>
     public const string Rail = $"""
-        WITH parents AS (
-          SELECT session_id, agent, repo_url, title, machine, updated_at, completed_at, read_seq,
-            CASE WHEN repo_url LIKE 'https://github.com/%' THEN rtrim(substr(repo_url, 20), '/')
-                 ELSE substr(rtrim(repo_url, '/'), length(rtrim(rtrim(repo_url, '/'), replace(rtrim(repo_url, '/'), '/', ''))) + 1) END AS label
-          FROM session_info
-          WHERE parent_session_id IS NULL AND settled_at IS NULL
-            AND ($providers IS NULL OR agent IN (SELECT value FROM json_each($providers)))
-            AND ($locations IS NULL OR iif(machine IS NULL, 'local', 'remote') IN (SELECT value FROM json_each($locations)))
-            AND ($filter IS NULL OR instr(lower(COALESCE(title, '') || char(10) || repo_url), lower($filter)) > 0)),
-        family AS (
-          SELECT COALESCE(s.parent_session_id, s.session_id) AS top, s.session_id, s.agent, s.repo_url, s.title, s.machine, s.updated_at, s.completed_at,
+        WITH sessions AS (
+          SELECT s.*,
+            CASE WHEN s.repo_url LIKE 'https://github.com/%' THEN rtrim(substr(s.repo_url, 20), '/')
+                 ELSE substr(rtrim(s.repo_url, '/'), length(rtrim(rtrim(s.repo_url, '/'), replace(rtrim(s.repo_url, '/'), '/', ''))) + 1) END AS label,
+            (s.parent_session_id IS NOT NULL) AS depth,
+            printf('%020d:%s:', COALESCE(p.updated_at, s.updated_at), COALESCE(p.session_id, s.session_id))
+              || CASE WHEN s.parent_session_id IS NULL THEN '~' ELSE printf('%020d:%s', s.updated_at, s.session_id) END AS ordering,
             (SELECT json_extract(t.payload, '$.state') FROM rows t INDEXED BY rows_summary
              WHERE t.session_id = s.session_id AND {SummaryKinds} AND t.kind = 'turn' ORDER BY t.item_id DESC, t.seq DESC LIMIT 1) AS turn,
             (SELECT MIN(a.seq) FROM rows a INDEXED BY rows_summary
@@ -122,58 +108,42 @@ internal static class Schema
                AND NOT EXISTS (SELECT 1 FROM rows b INDEXED BY rows_summary WHERE b.session_id = a.session_id AND {SummaryKinds}
                                AND b.kind = 'ask' AND b.item_id = a.item_id AND b.seq > a.seq)) AS ask_seq,
             EXISTS (SELECT 1 FROM rows w INDEXED BY rows_summary
-             WHERE w.session_id = s.session_id AND {SummaryKinds} AND w.kind IN ('task', 'subagent')
+             WHERE w.session_id = s.session_id AND {SummaryKinds} AND w.kind = 'task'
                AND json_extract(w.payload, '$.state') IN ('running', 'requires_action')
                AND NOT EXISTS (SELECT 1 FROM rows l INDEXED BY rows_summary WHERE l.session_id = w.session_id AND {SummaryKinds}
                                AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy
-          FROM session_info s WHERE COALESCE(s.parent_session_id, s.session_id) IN (SELECT session_id FROM parents)),
-        tops AS (
-          SELECT top, MAX(turn IS 'started' OR busy) AS running, MAX(ask_seq IS NOT NULL) AS needs,
-            MAX(session_id = top AND turn IS 'failed') AS failed, COUNT(*) - 1 AS helpers
-          FROM family GROUP BY top),
-        asks AS (
-          SELECT top, session_id, ask_seq, ROW_NUMBER() OVER (PARTITION BY top ORDER BY session_id <> top, ask_seq, session_id) AS n
-          FROM family WHERE ask_seq IS NOT NULL),
+          FROM session_info s LEFT JOIN session_info p ON p.session_id = s.parent_session_id
+          WHERE (s.parent_session_id IS NULL OR s.helper = 1) AND s.settled_at IS NULL
+            AND ($providers IS NULL OR s.agent IN (SELECT value FROM json_each($providers)))
+            AND ($locations IS NULL OR iif(s.machine IS NULL, 'local', 'remote') IN (SELECT value FROM json_each($locations)))
+            AND ($filter IS NULL OR instr(lower(COALESCE(s.title, '') || char(10) || s.repo_url), lower($filter)) > 0)),
+        states AS (SELECT *, turn IS 'started' OR busy AS running, ask_seq IS NOT NULL AS needs, turn IS 'failed' AS failed FROM sessions),
         listed AS (
-          SELECT p.*, t.running, t.needs, t.failed, t.helpers,
-            ROW_NUMBER() OVER (PARTITION BY p.repo_url ORDER BY p.updated_at DESC, p.session_id DESC) = 1 AS group_start
-          FROM parents p JOIN tops t ON t.top = p.session_id
-          WHERE $tab = 'all' OR ($tab = 'running' AND t.running) OR ($tab = 'needs' AND t.needs)),
-        ranked AS (SELECT *, ROW_NUMBER() OVER (ORDER BY lower(label), repo_url, updated_at DESC, session_id DESC) AS n FROM listed),
+          SELECT *, ROW_NUMBER() OVER (PARTITION BY repo_url ORDER BY ordering DESC) = 1 AS group_start
+          FROM states WHERE $tab = 'all' OR ($tab = 'running' AND running) OR ($tab = 'needs' AND needs)),
+        ranked AS (SELECT *, ROW_NUMBER() OVER (ORDER BY lower(label), repo_url, ordering DESC) AS n FROM listed),
         page AS (
           SELECT n, session_id, agent, repo_url, label, group_start, title, machine, updated_at, completed_at, read_seq,
-            running, needs, failed, helpers FROM ranked
+            running, needs, failed, depth, ask_seq, ordering FROM ranked
           WHERE CASE WHEN $anchor IN (SELECT session_id FROM ranked) THEN n >= (SELECT n FROM ranked WHERE session_id = $anchor) - $above
             ELSE $group IS NULL OR (lower(label), repo_url) > (lower($group), $repo)
-              OR ((lower(label), repo_url) = (lower($group), $repo) AND (updated_at, session_id) < ($updated, $id)) END
-          ORDER BY n LIMIT $limit),
-        kids AS (
-          SELECT *, ROW_NUMBER() OVER (ORDER BY updated_at DESC, session_id DESC) AS n FROM family WHERE top = $expanded AND session_id <> top),
-        helpers AS (
-          SELECT n, session_id, agent, repo_url, title, machine, updated_at, completed_at, turn, busy, ask_seq FROM kids
-          WHERE CASE WHEN $helperAnchor IN (SELECT session_id FROM kids) THEN n >= (SELECT n FROM kids WHERE session_id = $helperAnchor) - $helperAbove
-            ELSE $helperUpdated IS NULL OR (updated_at, session_id) < ($helperUpdated, $helperId) END
-          ORDER BY n LIMIT $helperLimit)
+              OR ((lower(label), repo_url) = (lower($group), $repo) AND ordering < $ordering) END
+          ORDER BY n LIMIT $limit)
         SELECT 0, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, COALESCE(SUM(running), 0), COALESCE(SUM(needs), 0), 0, 0, COUNT(*),
-          NULL, NULL, NULL, NULL FROM tops
+          NULL, NULL, NULL, NULL, NULL FROM states
         UNION ALL
-        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, agent, NULL, NULL, 0, NULL, NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL
-        FROM (SELECT DISTINCT agent FROM session_info WHERE parent_session_id IS NULL AND settled_at IS NULL)
+        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, agent, NULL, NULL, 0, NULL, NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL
+        FROM (SELECT DISTINCT agent FROM session_info WHERE (parent_session_id IS NULL OR helper = 1) AND settled_at IS NULL)
         UNION ALL
         SELECT 2, p.n, p.session_id, p.agent, p.repo_url, p.label, p.group_start, p.title, p.machine, p.updated_at, p.completed_at,
           p.running, p.needs, p.failed,
           COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE e.session_id = p.session_id AND {SummaryKinds} AND e.kind = 'turn'
                       AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled') ORDER BY e.item_id DESC, e.seq DESC LIMIT 1), 0) > p.read_seq,
-          p.helpers, a.session_id, a.ask_seq, json_extract(b.payload, '$.branch'), b.created_at
+          p.depth, iif(p.ask_seq IS NULL, NULL, p.session_id), p.ask_seq, json_extract(b.payload, '$.branch'), b.created_at, p.ordering
         FROM page p
-        LEFT JOIN asks a ON a.top = p.session_id AND a.n = 1
         LEFT JOIN rows b ON b.session_id = p.session_id AND b.seq = (
           SELECT MAX(r.seq) FROM rows r INDEXED BY rows_item WHERE r.session_id = p.session_id AND r.item_id IS NULL AND r.kind = 'stats'
             AND COALESCE(json_extract(r.payload, '$.branch'), '') <> '')
-        UNION ALL
-        SELECT 3, h.n, h.session_id, h.agent, h.repo_url, '', 0, h.title, h.machine, h.updated_at, h.completed_at, h.turn IS 'started' OR h.busy,
-          h.ask_seq IS NOT NULL, h.turn IS 'failed', 0, 0, iif(h.ask_seq IS NULL, NULL, h.session_id), h.ask_seq, NULL, NULL
-        FROM helpers h
         ORDER BY 1, 2;
         """;
 

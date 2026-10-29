@@ -57,7 +57,7 @@ internal sealed class SessionsFeature : IFeature
         {
             if (args.Tab is not ("all" or "running" or "needs"))
                 throw new CallFailed("expected all, running or needs");
-            var bounded = args with { Limit = Math.Clamp(args.Limit, 1, ListLimit), HelperLimit = Math.Clamp(args.HelperLimit, 1, ListLimit) };
+            var bounded = args with { Limit = Math.Clamp(args.Limit, 1, ListLimit) };
             return Task.FromResult(_store.Rail(bounded, call.Cancellation));
         });
         // Only the database: no order key, as nothing outside it can hang.
@@ -118,39 +118,21 @@ internal sealed class SessionsFeature : IFeature
 
     internal sealed record MarkArgs([property: JsonRequired] string Session, [property: JsonRequired] string State);
 
-    /// <summary>
-    /// A rail read: the tab (<c>all</c>, <c>running</c> or <c>needs</c>), the filters (empty means all; values are OR
-    /// within one, AND across them), the parent page after <c>After</c>, and with <c>Expanded</c> that parent's helpers
-    /// after <c>HelpersAfter</c>, each page up to its own limit. A read again names the row the reader is on
-    /// (<c>Anchor</c>, <c>HelperAnchor</c>) and how many held rows sit above it; its page starts that many rows before
-    /// the row's place now, wherever it moved, and falls back to the cursor once the row left. <c>Locations</c> holds <c>local</c> and <c>remote</c>; <c>Filter</c> matches a title
-    /// or project.
-    /// </summary>
+    /// <summary>A tab and filters, with a cursor or the row to keep in view and how many rows sit above it.</summary>
     internal sealed record RailArgs(string Tab = "all", IReadOnlyList<string>? Providers = null, IReadOnlyList<string>? Locations = null,
-        string? Filter = null, RailCursor? After = null, int Limit = 50, string? Expanded = null, RailChildCursor? HelpersAfter = null,
-        int HelperLimit = 50, string? Anchor = null, int Above = 0, string? HelperAnchor = null, int HelperAbove = 0);
+        string? Filter = null, RailCursor? After = null, int Limit = 50, string? Anchor = null, int Above = 0);
 
-    /// <summary>Where the next parent page starts: the last row's project label, repo, time and id.</summary>
-    internal sealed record RailCursor(string Group, string RepoUrl, long UpdatedAt, string SessionId);
+    /// <summary>The last row's project and SQL ordering key, including its starter's position.</summary>
+    internal sealed record RailCursor(string Group, string RepoUrl, string Ordering);
 
-    /// <summary>Where the expanded parent's next helper page starts.</summary>
-    internal sealed record RailChildCursor(long UpdatedAt, string SessionId);
-
-    /// <summary>Each tab's parents, counted once over every eligible parent, loaded or not.</summary>
     internal sealed record RailTotals(int All, int Running, int NeedsYou);
 
-    /// <summary>
-    /// One parent or helper as the rail draws it. <c>GroupStart</c> marks the first of its project in the tab's order.
-    /// <c>Running</c> and <c>NeedsYou</c> count its helpers' work and asks; <c>AskSession</c> and <c>AskSeq</c> are
-    /// the open ask it shows first. <c>Branch</c> is the newest branch a turn's stats recorded, at <c>BranchAt</c>.
-    /// </summary>
+    /// <summary>One session's own state. Started sessions have depth 1 and follow their starter.</summary>
     internal sealed record RailEntry(string SessionId, string Agent, string RepoUrl, string Group, bool GroupStart, string? Title,
-        string? Machine, long UpdatedAt, long? CompletedAt, bool Running, bool NeedsYou, bool Failed, bool Unread, int Helpers,
-        string? AskSession, long? AskSeq, string? Branch, long? BranchAt, string Icon);
+        string? Machine, long UpdatedAt, long? CompletedAt, bool Running, bool NeedsYou, bool Failed, bool Unread, int Depth,
+        string? AskSession, long? AskSeq, string? Branch, long? BranchAt, string Icon, string Ordering);
 
-    /// <summary>The rail's read: totals, the providers to filter by, a parent page and the expanded parent's helper page.</summary>
-    internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next,
-        IReadOnlyList<RailEntry> Helpers, RailChildCursor? HelpersNext, int Start = 0, int HelperStart = 0);
+    internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next, int Start = 0);
 
     /// <summary>A committed change to a session, parent or helper, on the <c>sessionRail</c> topic: read the rail again.</summary>
     internal sealed record RailChange(string SessionId);

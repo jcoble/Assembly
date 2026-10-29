@@ -1,5 +1,3 @@
-use serde_json::json;
-
 use super::{changed_lines, list_entries, project_label, same_line};
 use crate::core::socket::outcome::Outcome;
 use crate::features::sessions::list_entry::ListEntry;
@@ -13,27 +11,19 @@ fn parent(id: &str, repo: &str, group_start: bool) -> RailEntry {
     }
 }
 
-fn page(sessions: Vec<RailEntry>, helpers: Vec<RailEntry>, more_helpers: bool) -> RailPage {
+fn page(sessions: Vec<RailEntry>) -> RailPage {
     RailPage {
         totals: Default::default(),
         agents: vec![],
         sessions,
         next: None,
-        helpers,
-        helpers_next: more_helpers
-            .then(|| serde_json::from_value(json!({ "updatedAt": 1, "sessionId": "h2" })).unwrap()),
         start: 0,
-        helper_start: 0,
     }
 }
 
-/// A rail holding `page`, as the backend answered it.
-fn rail_with(page: RailPage, expanded: Option<&str>) -> Rail {
+fn rail_with(page: RailPage) -> Rail {
     let mut rail = Rail::default();
-    let (id, _) = match expanded {
-        Some(parent) => rail.toggle_expanded(parent),
-        None => rail.changed().unwrap(),
-    };
+    let (id, _) = rail.changed().unwrap();
     assert_eq!(rail.finish(id, Outcome::Ok(page)), None);
     rail
 }
@@ -54,46 +44,17 @@ fn lines_keep_the_backends_order_with_a_heading_where_it_starts_a_project() {
         parent("z2", "/zeta", false),
         parent("a1", "/alpha", true),
     );
-    let rail = rail_with(
-        page(vec![z1.clone(), z2.clone(), a1.clone()], vec![], false),
-        None,
-    );
+    let rail = rail_with(page(vec![z1.clone(), z2.clone(), a1.clone()]));
     assert_eq!(
         list_entries(&rail),
         [
             heading("/zeta"),
-            ListEntry::Session(z1),
-            ListEntry::Session(z2),
+            ListEntry::Session(Box::new(z1)),
+            ListEntry::Session(Box::new(z2)),
             heading("/alpha"),
-            ListEntry::Session(a1),
+            ListEntry::Session(Box::new(a1)),
         ]
     );
-}
-
-#[test]
-fn the_expanded_parents_helpers_sit_under_it_with_a_line_for_more() {
-    let (p, q) = (parent("p", "/r", true), parent("q", "/r", false));
-    let helper = test_entry("h1", "/r");
-    let rail = rail_with(
-        page(vec![p.clone(), q.clone()], vec![helper.clone()], true),
-        Some("p"),
-    );
-    assert_eq!(
-        list_entries(&rail),
-        [
-            heading("/r"),
-            ListEntry::Session(p.clone()),
-            ListEntry::Helper(helper.clone()),
-            ListEntry::MoreHelpers("p".into()),
-            ListEntry::Session(q.clone()),
-        ]
-    );
-    // The last helper page leaves no line to load more.
-    let rail = rail_with(
-        page(vec![p.clone(), q.clone()], vec![helper.clone()], false),
-        Some("p"),
-    );
-    assert_eq!(list_entries(&rail)[3], ListEntry::Session(q));
 }
 
 #[test]
@@ -116,7 +77,7 @@ fn the_row_menu_moves_a_session_to_the_other_two_groups() {
 }
 
 fn line(id: &str) -> ListEntry {
-    ListEntry::Session(test_entry(id, "/r"))
+    ListEntry::Session(Box::new(test_entry(id, "/r")))
 }
 
 #[test]
@@ -161,10 +122,10 @@ fn the_line_at_the_top_is_found_again_when_lines_change_around_it() {
 fn a_row_whose_state_changed_is_still_the_line_at_the_top() {
     // "b" started running: its line changed, but it's the same session, so the reader stays on it.
     let old = [line("a"), line("b"), line("c")];
-    let running = ListEntry::Session(RailEntry {
+    let running = ListEntry::Session(Box::new(RailEntry {
         running: true,
         ..test_entry("b", "/r")
-    });
+    }));
     let new = [line("a2"), line("a"), running, line("c")];
     let (changed, _) = changed_lines(&old, &new);
     assert_eq!(same_line(&old, &new, &changed, 1), Some(2));

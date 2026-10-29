@@ -1,5 +1,5 @@
 //! `list_entries` lays the rail's answer out as the column draws it, in the backend's order: a project's heading where
-//! the backend marked a project's first parent, each parent, and under the expanded one its helpers. Nothing here
+//! the backend marked a project's first session, followed by its sessions. Nothing here
 //! groups, sorts or counts: the backend's one read (`sessions/rail`) did.
 
 use std::ops::Range;
@@ -17,16 +17,7 @@ pub fn list_entries(rail: &Rail) -> Vec<ListEntry> {
                 machine: entry.machine.clone(),
             });
         }
-        entries.push(ListEntry::Session(entry.clone()));
-        if rail.expanded.as_deref() == Some(entry.session_id.as_str()) {
-            if rail.helpers_ahead > 0 {
-                entries.push(ListEntry::EarlierHelpers(entry.session_id.clone()));
-            }
-            entries.extend(rail.helpers.iter().cloned().map(ListEntry::Helper));
-            if rail.has_more_helpers() {
-                entries.push(ListEntry::MoreHelpers(entry.session_id.clone()));
-            }
-        }
+        entries.push(ListEntry::Session(Box::new(entry.clone())));
     }
     entries
 }
@@ -47,7 +38,7 @@ pub fn changed_lines(old: &[ListEntry], new: &[ListEntry]) -> (Range<usize>, usi
 
 /// Where line `at` of `old` is in `new`, when it lies in the `changed` lines or new lines go in just before it (a
 /// splice would lose it, or leave an unscrolled list above it) and is still there, by its key: a row whose state
-/// changed is still the line it was. The kind counts too: a parent and its helper lines share its id.
+/// changed is still the line it was. The kind distinguishes a heading from a session.
 pub fn same_line(
     old: &[ListEntry],
     new: &[ListEntry],

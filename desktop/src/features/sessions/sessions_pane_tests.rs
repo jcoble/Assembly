@@ -24,16 +24,13 @@ use crate::features::sessions::rail_page::{
     Rail, RailEntry, RailPage, RailTotals, Tab, test_entry,
 };
 
-fn page(sessions: Vec<RailEntry>, helpers: Vec<RailEntry>) -> RailPage {
+fn page(sessions: Vec<RailEntry>) -> RailPage {
     RailPage {
         totals: RailTotals::default(),
         agents: vec!["claude".into()],
         sessions,
         next: None,
-        helpers,
-        helpers_next: None,
         start: 0,
-        helper_start: 0,
     }
 }
 
@@ -52,16 +49,13 @@ fn late_tab_answer_is_ignored() {
     assert_eq!(args["tab"], "running");
     // All's answer comes after Running was asked for: it's dropped, and asks for nothing.
     assert!(
-        rail.finish(all, Outcome::Ok(page(vec![test_entry("a", "/r")], vec![])))
+        rail.finish(all, Outcome::Ok(page(vec![test_entry("a", "/r")])))
             .is_none()
     );
     assert!(ids(&rail).is_empty());
     assert!(
-        rail.finish(
-            running,
-            Outcome::Ok(page(vec![test_entry("b", "/r")], vec![]))
-        )
-        .is_none()
+        rail.finish(running, Outcome::Ok(page(vec![test_entry("b", "/r")])))
+            .is_none()
     );
     assert_eq!(ids(&rail), ["b"]);
 }
@@ -72,49 +66,18 @@ fn change_during_read_refreshes_again() {
     let (first, _) = rail.changed().unwrap();
     assert!(rail.changed().is_none(), "one read at a time");
     let (again, args) = rail
-        .finish(
-            first,
-            Outcome::Ok(page(vec![test_entry("a", "/r")], vec![])),
-        )
+        .finish(first, Outcome::Ok(page(vec![test_entry("a", "/r")])))
         .expect("the change that came meanwhile reads again");
     assert_eq!(
         (args["tab"].as_str(), args["after"].is_null()),
         (Some("all"), true)
     );
-    assert!(
-        rail.finish(again, Outcome::Ok(page(vec![], vec![])))
-            .is_none()
-    );
+    assert!(rail.finish(again, Outcome::Ok(page(vec![]))).is_none());
     assert!(ids(&rail).is_empty());
     // A failure says so, and the next change still reads.
     let (failed, _) = rail.changed().unwrap();
     rail.finish(failed, Outcome::Aborted);
     assert!(rail.changed().is_some());
-}
-
-#[test]
-fn helper_only_change_invalidates_parent_tab() {
-    // Needs you holds nothing; a helper's ask opens. The change names the helper, not its parent, and the window
-    // doesn't decide: it reads the tab again, and the backend lists the parent.
-    let mut rail = Rail::default();
-    let (id, _) = rail.set_tab(Tab::NeedsYou);
-    rail.finish(id, Outcome::Ok(page(vec![], vec![])));
-    let (id, args) = rail.changed().expect("a helper's change reads the tab");
-    assert_eq!(args["tab"], "needs");
-    let parent = RailEntry {
-        needs_you: true,
-        helpers: 1,
-        ..test_entry("p", "/r")
-    };
-    let mut answer = page(vec![parent], vec![]);
-    answer.totals = RailTotals {
-        all: 1,
-        running: 0,
-        needs_you: 1,
-    };
-    rail.finish(id, Outcome::Ok(answer));
-    assert_eq!(ids(&rail), ["p"]);
-    assert_eq!(Tab::NeedsYou.label(&rail.totals), "Needs you 1");
 }
 
 fn parents(from: usize, to: usize) -> Vec<RailEntry> {
@@ -127,7 +90,7 @@ fn parents(from: usize, to: usize) -> Vec<RailEntry> {
 fn window(from: usize) -> RailPage {
     RailPage {
         start: from,
-        ..page(parents(from, 150), vec![])
+        ..page(parents(from, 150))
     }
 }
 
@@ -206,17 +169,9 @@ fn selected(cx: &mut VisualTestContext) -> Option<String> {
 }
 
 /// The pane takes `answer` as its read's.
-fn answer(
-    pane: &Entity<SessionsPane>,
-    expand: Option<&str>,
-    answer: RailPage,
-    cx: &mut VisualTestContext,
-) {
+fn answer(pane: &Entity<SessionsPane>, answer: RailPage, cx: &mut VisualTestContext) {
     pane.update(cx, |pane, cx| {
-        let (id, _) = match expand {
-            Some(parent) => pane.rail.toggle_expanded(parent),
-            None => pane.rail.changed().unwrap(),
-        };
+        let (id, _) = pane.rail.changed().unwrap();
         pane.answer(id, Outcome::Ok(answer), cx);
     });
     draw(cx);
@@ -227,39 +182,21 @@ fn filtered_out_selection_stays_open(cx: &mut TestAppContext) {
     let (pane, cx) = open(cx);
     answer(
         &pane,
-        None,
-        page(vec![test_entry("a", "/r"), test_entry("b", "/r")], vec![]),
+        page(vec![test_entry("a", "/r"), test_entry("b", "/r")]),
         cx,
     );
     click("session-a", cx);
     assert_eq!(selected(cx).as_deref(), Some("a"));
     // Running no longer lists it: the session stays open.
-    answer(&pane, None, page(vec![test_entry("b", "/r")], vec![]), cx);
+    answer(&pane, page(vec![test_entry("b", "/r")]), cx);
     assert!(cx.debug_bounds("session-a").is_none());
     assert_eq!(selected(cx).as_deref(), Some("a"));
 }
 
 #[gpui::test]
-fn helper_opens_its_own_session(cx: &mut TestAppContext) {
-    let (pane, cx) = open(cx);
-    let parent = RailEntry {
-        helpers: 1,
-        ..test_entry("p", "/r")
-    };
-    answer(
-        &pane,
-        Some("p"),
-        page(vec![parent], vec![test_entry("h1", "/r")]),
-        cx,
-    );
-    click("session-h1", cx);
-    assert_eq!(selected(cx).as_deref(), Some("h1"));
-}
-
-#[gpui::test]
 fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
     let (pane, cx) = open(cx);
-    answer(&pane, None, page(vec![test_entry("a", "/r")], vec![]), cx);
+    answer(&pane, page(vec![test_entry("a", "/r")]), cx);
     let typed = |pane: &Entity<SessionsPane>, cx: &mut VisualTestContext| {
         pane.update_in(cx, |pane, window, cx| {
             pane.filter
@@ -281,7 +218,7 @@ fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
     cleared(&pane, cx);
     // Picking a session.
     typed(&pane, cx);
-    answer(&pane, None, page(vec![test_entry("a", "/r")], vec![]), cx);
+    answer(&pane, page(vec![test_entry("a", "/r")]), cx);
     click("session-a", cx);
     assert_eq!(selected(cx).as_deref(), Some("a"));
     cleared(&pane, cx);
@@ -337,7 +274,7 @@ async fn a_column_opened_before_the_backend_was_ready_follows_it(cx: &mut TestAp
 #[gpui::test]
 fn earlier_rows_keep_the_line_at_a_windows_start(cx: &mut TestAppContext) {
     let (pane, cx) = open(cx);
-    answer(&pane, None, window(100), cx);
+    answer(&pane, window(100), cx);
     let top =
         |cx: &mut VisualTestContext| pane.read_with(cx, |pane, _| pane.lines.logical_scroll_top());
     let earlier = |page: RailPage, cx: &mut VisualTestContext| {
@@ -374,37 +311,32 @@ fn earlier_rows_keep_the_line_at_a_windows_start(cx: &mut TestAppContext) {
     );
 }
 
+// Pins: sessions-list#9
 #[gpui::test]
-fn the_earlier_helpers_line_at_the_top_stays_there_when_its_parent_changes(
-    cx: &mut TestAppContext,
-) {
+fn switching_tabs_starts_at_the_top(cx: &mut TestAppContext) {
     let (pane, cx) = open(cx);
-    // The parent and its newest helper change at once, so the lines between them are replaced too.
-    let held = |running: bool| {
-        let mut helpers = parents(0, 60);
-        helpers[59].running = running;
-        RailPage {
-            helper_start: 50,
-            ..page(
-                vec![RailEntry {
-                    running,
-                    ..test_entry("p", "/r")
-                }],
-                helpers,
-            )
-        }
-    };
-    answer(&pane, Some("p"), held(false), cx);
-    // The lines are the parent, Show earlier helpers, then the helpers; the reader is partly into the second.
-    let top = ListOffset {
-        item_ix: 1,
-        offset_in_item: px(4.),
-    };
-    let at =
-        |cx: &mut VisualTestContext| pane.read_with(cx, |pane, _| pane.lines.logical_scroll_top());
-    pane.update(cx, |pane, _| pane.lines.scroll_to(top));
+    answer(&pane, page(parents(0, 29)), cx);
+    pane.update(cx, |pane, _| {
+        pane.lines.scroll_to(ListOffset {
+            item_ix: 20,
+            offset_in_item: px(3.),
+        })
+    });
     draw(cx);
-    assert_eq!(at(cx), top);
-    answer(&pane, None, held(true), cx);
-    assert_eq!(at(cx), top);
+    for tab in [Tab::Running, Tab::All] {
+        let (id, _) = pane.update(cx, |pane, _| pane.set_tab(tab));
+        draw(cx);
+        pane.update(cx, |pane, cx| {
+            let sessions = if tab == Tab::All {
+                parents(0, 29)
+            } else {
+                vec![]
+            };
+            pane.answer(id, Outcome::Ok(page(sessions)), cx);
+        });
+        draw(cx);
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.lines.logical_scroll_top(), ListOffset::default())
+        });
+    }
 }

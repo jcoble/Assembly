@@ -1,11 +1,9 @@
 //! The sessions pane's list: its lines follow the rail's answer (only the lines that changed are re-measured, so the
-//! list keeps its place), each line draws as a project's header, a parent's row, a helper's row or the line that
-//! loads more helpers, and the next parent page loads while the list's end is in view (the page before the held ones
+//! list keeps its place), each line draws as a project's header or a session row. The next page loads near the end (the page before the held ones
 //! while their start is).
 
 use std::rc::Rc;
 
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
 use super::list_entries::{changed_lines, list_entries, same_line};
@@ -36,6 +34,8 @@ impl SessionsPane {
             self.lines.splice(old, count);
             if let Some(item_ix) = kept {
                 self.lines.scroll_to(ListOffset { item_ix, ..top });
+            } else if self.from_start && top == ListOffset::default() {
+                self.lines.scroll_to(ListOffset::default());
             }
             self.entries = Rc::new(entries);
             self.from_start = self.rail.ahead == 0;
@@ -50,9 +50,7 @@ impl SessionsPane {
         let view = self.entries[top.min(self.entries.len())..]
             .iter()
             .find_map(|line| match line {
-                ListEntry::Session(entry) | ListEntry::Helper(entry) => {
-                    Some(entry.session_id.clone())
-                }
+                ListEntry::Session(entry) => Some(entry.session_id.clone()),
                 _ => None,
             });
         self.rail.look_at(view);
@@ -75,7 +73,7 @@ impl SessionsPane {
         cx: &mut Context<Self>,
     ) -> impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static {
         let entries = self.entries.clone();
-        let (expanded, now) = (self.rail.expanded.clone(), self.now);
+        let now = self.now;
         let pane = cx.entity().downgrade();
         let on_mark: OnMark = {
             let pane = pane.clone();
@@ -91,16 +89,6 @@ impl SessionsPane {
                     .ok();
             })
         };
-        let on_toggle: OnSession = {
-            let pane = pane.clone();
-            Rc::new(move |session_id, _, cx| {
-                pane.update(cx, |pane, cx| {
-                    let read = pane.rail.toggle_expanded(&session_id);
-                    pane.send(Some(read), cx);
-                })
-                .ok();
-            })
-        };
         move |at, _, cx| {
             let Some(entry) = entries.get(at).cloned() else {
                 return Empty.into_any_element();
@@ -109,10 +97,8 @@ impl SessionsPane {
                 selected: SelectedSession::global(cx).read(cx).session_id()
                     == Some(&entry.session_id),
                 offline: Machines::offline(entry.machine.as_deref(), cx),
-                expanded: expanded.as_deref() == Some(entry.session_id.as_str()),
                 now,
                 on_open: on_open.clone(),
-                on_toggle: on_toggle.clone(),
                 on_mark: on_mark.clone(),
             };
             match entry {
@@ -130,44 +116,9 @@ impl SessionsPane {
                 }
                 ListEntry::Session(entry) => {
                     let context = row(&entry, cx);
-                    SessionRow::new(entry, false, context).into_any_element()
+                    SessionRow::new(*entry, context).into_any_element()
                 }
-                ListEntry::Helper(entry) => {
-                    let context = row(&entry, cx);
-                    SessionRow::new(entry, true, context).into_any_element()
-                }
-                ListEntry::MoreHelpers(parent) => helpers_line(&pane, false, &parent, cx),
-                ListEntry::EarlierHelpers(parent) => helpers_line(&pane, true, &parent, cx),
             }
         }
     }
-}
-
-/// The line under the held helpers that loads more of them, or above them that loads the earlier ones.
-fn helpers_line(
-    pane: &WeakEntity<SessionsPane>,
-    earlier: bool,
-    parent: &str,
-    cx: &App,
-) -> AnyElement {
-    let (pane, which) = (pane.clone(), if earlier { "earlier" } else { "more" });
-    div()
-        .id(SharedString::from(format!("{which}-helpers:{parent}")))
-        .pl(px(52.))
-        .py_1()
-        .text_xs()
-        .text_color(cx.theme().muted_foreground)
-        .cursor_pointer()
-        .child(format!("Show {which} helpers"))
-        .on_click(move |_, _, cx| {
-            pane.update(cx, |pane, cx| {
-                let read = match earlier {
-                    true => pane.rail.earlier_helpers(),
-                    false => pane.rail.more_helpers(),
-                };
-                pane.send(read, cx);
-            })
-            .ok();
-        })
-        .into_any_element()
 }
