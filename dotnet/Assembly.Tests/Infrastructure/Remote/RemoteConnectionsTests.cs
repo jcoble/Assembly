@@ -11,6 +11,17 @@ namespace Assembly.Tests.Infrastructure.Remote;
 
 public sealed class RemoteConnectionsTests
 {
+    [Theory]
+    [InlineData("pr109 no such host", "couldn't reach pr109 no such host over ssh (ssh exit 255)")]
+    // -V exits successfully without connecting or producing a token.
+    [InlineData("-V", "-V has no token in ~/test/env (ssh exit 0)")]
+    public async Task Token_read_distinguishes_ssh_failure_from_a_missing_token(string host, string expected)
+    {
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            RemoteTunnel.ReadTokenAsync(host, "test/env", CancellationToken.None));
+        Assert.Equal(expected, error.Message);
+    }
+
     // Pins: sessions-list#12
     [Fact]
     public async Task ConnectOnAConnectedMachineRetriesItsTunnelNow()
