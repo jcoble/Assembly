@@ -65,12 +65,13 @@ pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &A
     (grown, moving)
 }
 
-/// An open row's card edge, coming in as it grows: `row` keeps its place, the card reaching past it on both sides.
+/// An open row's card edge, coming in as it grows: shut, `row` keeps its place; open, the card is the column's width
+/// and its content sits 8 px in.
 pub fn band(row: Div, grown: f32, cx: &App) -> Div {
     let theme = cx.theme();
     row.px_2()
         .py_1()
-        .mx(px(-8.))
+        .mx(px(-8.) * (1. - grown))
         .rounded(theme.radius_lg)
         .border_1()
         .border_color(theme.border.opacity(grown))
