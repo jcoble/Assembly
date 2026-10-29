@@ -13,7 +13,7 @@ use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::turn_line::checkout_line;
 use crate::features::session::view::activity_card::ActivityCard;
 use crate::features::session::view::ask_row::AskForm;
-use crate::features::session::view::item_row::ItemRow;
+use crate::features::session::view::item_row::{CHAT_COLUMN, ItemRow};
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
@@ -69,6 +69,8 @@ impl SessionPane {
             Entry::FoldHeading { run_id, .. } => match self.folds.get(run_id) {
                 Some(fold) => div()
                     .w_full()
+                    .max_w(CHAT_COLUMN)
+                    .mx_auto()
                     .px_4()
                     .py_1()
                     .child(TurnFoldRow {
@@ -101,7 +103,9 @@ impl SessionPane {
                         tool.then(|| self.expand_of(&item, Some(step.took_ms), cx))?
                     })
                     .collect();
-                ActivityCard { steps, footer }.into_any_element()
+                (div().w_full().max_w(CHAT_COLUMN).mx_auto())
+                    .child(ActivityCard { steps, footer })
+                    .into_any_element()
             }
         }
     }
@@ -149,6 +153,8 @@ impl SessionPane {
 fn line(text: impl Into<SharedString>, color: Hsla) -> AnyElement {
     div()
         .w_full()
+        .max_w(CHAT_COLUMN)
+        .mx_auto()
         .px_4()
         .py_1()
         .text_xs()

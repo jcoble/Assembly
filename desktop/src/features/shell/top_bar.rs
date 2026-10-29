@@ -1,6 +1,6 @@
 //! `TopBar` owns the title row above the panes, on the rail: the round Home button, which keeps the open sessions column's width so the
-//! dividers line up, also while the column's edge is dragged. The dock's own tab bars are the tabs, and the kit draws
-//! the sessions, drawer and bottom dock toggles in them. Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
+//! dividers line up, also while the column's edge is dragged, and at the right the drawer's pane buttons and Terminal
+//! (drawer_buttons.rs). Replaces TopTabRow.svelte's chrome, HomeButton.svelte and the
 //! `window-chrome` markup in routes/+page.svelte.
 
 use gpui_kit::assets::IconName;
@@ -9,6 +9,8 @@ use gpui_kit::component::dock::{DockArea, DockPlacement};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::*;
+
+use super::drawer_buttons::DrawerButtons;
 
 /// The row's height, the old app's `--center-head-row-height` (lib/shell/styles/nextTokens.css:287).
 const HEIGHT: Pixels = px(42.);
@@ -42,19 +44,27 @@ impl Render for TopBar {
         } else {
             px(0.)
         };
-        h_flex().h(HEIGHT).flex_none().child(
-            h_flex()
-                .w(sessions.max(MIN_HOME_WIDTH))
-                .h_full()
-                .pl(px(80.))
-                .child(
-                    Button::new("home")
-                        .primary()
-                        .icon(IconName::House)
-                        .rounded(cx.theme().radius_full())
-                        .with_size(HOME_SIZE)
-                        .tooltip("Home"),
-                ),
-        )
+        h_flex()
+            .h(HEIGHT)
+            .flex_none()
+            .pr(px(12.))
+            .child(
+                h_flex()
+                    .w(sessions.max(MIN_HOME_WIDTH))
+                    .h_full()
+                    .pl(px(80.))
+                    .child(
+                        Button::new("home")
+                            .primary()
+                            .icon(IconName::House)
+                            .rounded(cx.theme().radius_full())
+                            .with_size(HOME_SIZE)
+                            .tooltip("Home"),
+                    ),
+            )
+            .child(div().flex_1())
+            .child(DrawerButtons {
+                dock: self.dock.clone(),
+            })
     }
 }

@@ -1,5 +1,5 @@
-//! `TurnFoldRow` is a finished turn's heading: "Worked for 42s · Edited 2 files, ran 3 commands", opening and closing
-//! the work it folds, with its chevron. Replaces chat/TurnFold.svelte.
+//! `TurnFoldRow` is a finished turn's heading: "Worked for 42s · ran 3 commands · edited 2 files", muted, with the
+//! chevron after it, opening and closing the work it folds. Replaces chat/TurnFold.svelte.
 
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
@@ -20,7 +20,7 @@ pub struct TurnFoldRow {
     pub on_action: OnAction,
 }
 
-/// "Worked for 42s · Edited 2 files", or either half alone.
+/// "Worked for 42s · edited 2 files", or either half alone; the summary leading starts with a capital.
 pub fn heading(fold: &Fold) -> String {
     let worked = fold
         .duration_ms
@@ -28,7 +28,14 @@ pub fn heading(fold: &Fold) -> String {
     let summary = Some(fold.summary.clone()).filter(|summary| !summary.is_empty());
     match (worked, summary) {
         (Some(worked), Some(summary)) => format!("{worked} · {summary}"),
-        (Some(text), None) | (None, Some(text)) => text,
+        (Some(text), None) => text,
+        (None, Some(summary)) => {
+            let mut chars = summary.chars();
+            (chars.next().into_iter())
+                .flat_map(char::to_uppercase)
+                .chain(chars)
+                .collect()
+        }
         (None, None) => "Worked".to_string(),
     }
 }
@@ -48,7 +55,11 @@ impl RenderOnce for TurnFoldRow {
                 let run_id = run_id.clone();
                 on_action(SessionAction::ToggleFold { run_id }, window, cx)
             })
-            .child(chevron)
             .child(heading(&self.fold))
+            .child(chevron)
     }
 }
+
+#[cfg(test)]
+#[path = "turn_fold_row_tests.rs"]
+mod tests;

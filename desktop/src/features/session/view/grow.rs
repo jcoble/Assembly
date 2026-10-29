@@ -65,15 +65,15 @@ pub fn turn(open: bool, toggled_at: Option<Instant>, window: &mut Window, cx: &A
     (grown, moving)
 }
 
-/// An open row's lighter band (the design system's `raised`), coming in as it grows: `row` keeps its place, the band
-/// reaching past it on both sides.
+/// An open row's card edge, coming in as it grows: `row` keeps its place, the card reaching past it on both sides.
 pub fn band(row: Div, grown: f32, cx: &App) -> Div {
     let theme = cx.theme();
     row.px_2()
         .py_1()
         .mx(px(-8.))
         .rounded(theme.radius_lg)
-        .when(grown > 0., |row| row.bg(theme.group_box.opacity(grown)))
+        .border_1()
+        .border_color(theme.border.opacity(grown))
 }
 
 /// `body` growing in place: while it moves, cut to `grown` of the height it was last measured at (0 before the first

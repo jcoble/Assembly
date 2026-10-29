@@ -15,7 +15,7 @@ pub struct Fold {
     pub work: HashSet<String>,
     /// The final reply's key: its copy button and time go under it.
     pub reply: Option<String>,
-    /// "Edited 2 files, ran 3 commands".
+    /// "ran 3 commands · edited 2 files", lower case: the heading capitalises it when it leads.
     pub summary: String,
     pub duration_ms: Option<i64>,
 }
@@ -118,9 +118,9 @@ impl Fold {
         }
         let [started, sent, checked, listed] = helpers;
         let parts: Vec<String> = [
+            counted(commands, "ran a command", "ran {} commands"),
             counted(edits, "edited a file", "edited {} files"),
             counted(reads, "read a file", "read {} files"),
-            counted(commands, "ran a command", "ran {} commands"),
             counted(searches, "searched once", "searched {} times"),
             counted(fetches, "fetched a page", "fetched {} pages"),
             counted(others, "used a tool", "used {} tools"),
@@ -141,18 +141,30 @@ impl Fold {
         if parts.is_empty() {
             return if thinking > 0 { "Thought" } else { "Worked" }.to_string();
         }
-        let line = parts.join(", ");
-        let mut chars = line.chars();
-        chars
-            .next()
-            .map(|first| first.to_uppercase().chain(chars).collect())
-            .unwrap_or_default()
+        parts.join(" · ")
     }
 
-    /// A tool row's title: an Assembly helper tool's in words (`mcp__assembly__start_session` is "Started a
-    /// helper"), any other's name.
-    pub fn tool_title(name: &str) -> String {
-        helper_of(name).map_or_else(|| name.to_string(), |helper| HELPERS[helper].1.to_string())
+    /// A tool row's title and summary: an Assembly helper tool's in words (`mcp__assembly__start_session` is
+    /// "Started a helper"), any other by its kind ("Ran", "Edited"…) with its name as the summary when it has none,
+    /// and a kind without a word keeps the name as its title.
+    pub fn tool_words(
+        name: &str,
+        kind: Option<&str>,
+        summary: Option<&str>,
+    ) -> (String, Option<String>) {
+        let summary = summary.filter(|summary| !summary.is_empty());
+        if let Some(helper) = helper_of(name) {
+            return (HELPERS[helper].1.to_string(), summary.map(str::to_string));
+        }
+        let word = match kind {
+            Some("execute") => "Ran",
+            Some("edit" | "delete" | "move") => "Edited",
+            Some("read") => "Read",
+            Some("search") => "Searched",
+            Some("fetch") => "Fetched",
+            _ => return (name.to_string(), summary.map(str::to_string)),
+        };
+        (word.to_string(), Some(summary.unwrap_or(name).to_string()))
     }
 }
 

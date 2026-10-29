@@ -5,10 +5,7 @@ use gpui_kit::component::dock::DockPlacement;
 use gpui_kit::{Modifiers, MouseButton, VisualTestContext, point, px};
 use serde_json::json;
 
-use super::default_layout::{
-    AGENTS, CHAT, CONTEXT, FILES, HISTORY, PROBLEMS, RUN, SEARCH, SESSIONS, SOURCE_CONTROL, TASKS,
-    TERMINAL, WORKTREES,
-};
+use super::default_layout::{CHAT, FILES, PROBLEMS, SEARCH, SESSIONS, TERMINAL};
 use super::frame_tests::{dump, open};
 
 fn tab(name: &str, cx: &mut VisualTestContext) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
@@ -24,35 +21,6 @@ fn the_sessions_column_has_the_old_text_chips(cx: &mut TestAppContext) {
     for name in [SESSIONS, FILES, SEARCH] {
         let chip = tab(name, cx).unwrap_or_else(|| panic!("{name} has a chip"));
         assert_eq!(chip.size.height, px(30.), "{name}'s chip is 30 px high");
-    }
-}
-
-// Pins: g0-shape#12
-#[gpui::test]
-fn the_drawer_has_the_old_icon_pills(cx: &mut TestAppContext) {
-    let (frame, _, cx) = open(None, cx);
-    cx.update(|window, cx| {
-        frame.read(cx).dock().clone().update(cx, |dock, cx| {
-            dock.toggle_dock(DockPlacement::Right, window, cx);
-        })
-    });
-    cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    for name in [
-        SOURCE_CONTROL,
-        AGENTS,
-        TASKS,
-        WORKTREES,
-        RUN,
-        CONTEXT,
-        HISTORY,
-    ] {
-        let pill = tab(name, cx).unwrap_or_else(|| panic!("{name} has a pill"));
-        assert_eq!(
-            (pill.size.width, pill.size.height),
-            (px(28.), px(24.)),
-            "{name}'s pill"
-        );
     }
 }
 

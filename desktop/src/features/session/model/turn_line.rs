@@ -2,6 +2,8 @@
 //! "Failed") and the checkout line above a prompt when the run started on another branch or commit. Ported from
 //! session/turns.ts.
 
+use std::collections::HashMap;
+
 use chrono::{Local, TimeZone};
 
 use crate::features::session::rows::turn_stats::TurnStats;
@@ -52,6 +54,18 @@ pub fn checkout_line(stats: Option<&TurnStats>) -> Option<String> {
         "Checkout changed · {from} → {}",
         checkout(stats.branch.as_deref(), head)
     ))
+}
+
+/// The branch the newest turn with one started on, for the composer; an empty branch or a detached "HEAD" isn't one.
+pub fn latest_branch(stats: &HashMap<String, TurnStats>) -> Option<String> {
+    (stats.values())
+        .filter(|turn| {
+            turn.branch
+                .as_deref()
+                .is_some_and(|b| !b.is_empty() && b != "HEAD")
+        })
+        .max_by_key(|turn| turn.started_at)
+        .and_then(|turn| turn.branch.clone())
 }
 
 /// A prompt's or reply's time: "Thursday 12:02 PM" within the last 7 days, "Oct 17, 12:02 PM" before that.

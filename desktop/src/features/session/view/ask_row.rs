@@ -213,7 +213,7 @@ impl AskRow {
             let action = Rc::new(action);
             Button::new(SharedString::from(format!("ask:{ask_id}:{id}")))
                 .compact()
-                .rounded(theme.radius_full())
+                .rounded(theme.radius)
                 .label(label)
                 .on_click(move |_, window, cx| on_action(action.as_ref().clone(), window, cx))
         };
