@@ -12,7 +12,7 @@ use gpui_kit::{Entity, Modifiers, VisualTestContext};
 use gpui_kit::{ListOffset, px};
 use serde_json::{Value, json};
 
-use super::{SessionsPane, empty_line, provider_options, saved_filters};
+use super::{SessionsPane, empty_line, needs_words, provider_options, saved_filters};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
@@ -472,9 +472,42 @@ fn folding_settled_sends_one_read() {
         ])),
     );
     rail.look_at(Some("settled-row".into()));
-    let (_, args) = rail.toggle_fold("settled".into());
+    let (_, args) = rail.toggle_fold("settled".into(), "section:settled".into());
     assert_eq!(args["folded"], json!(["settled"]));
-    assert_eq!(args["anchor"], "settled-row");
-    assert!(!args["after"].is_null());
     assert!(rail.changed().is_none(), "the one read is out");
+}
+
+// Pins: sessions-list#9
+#[test]
+fn folding_a_group_keeps_its_header_in_the_page() {
+    let mut rail = Rail::default();
+    let (first, _) = rail.changed().unwrap();
+    let header = RailEntry {
+        kind: "project".into(),
+        header: 1,
+        ..test_entry("project:::/r", "/r")
+    };
+    rail.finish(
+        first,
+        Outcome::Ok(page(vec![
+            test_entry("above", "/q"),
+            header,
+            test_entry("member", "/r"),
+        ])),
+    );
+    // The header is at the top, so the row in view is its first member, which folding removes.
+    rail.look_at(Some("member".into()));
+    let (_, args) = rail.toggle_fold("::/r".into(), "project:::/r".into());
+    assert_eq!(
+        (&args["anchor"], &args["above"]),
+        (&json!("project:::/r"), &json!(1))
+    );
+}
+
+// Pins: sessions-list#10
+#[test]
+fn the_needs_total_reads_as_words_above_zero() {
+    assert_eq!(needs_words(0), None);
+    assert_eq!(needs_words(1).as_deref(), Some("1 needs you"));
+    assert_eq!(needs_words(3).as_deref(), Some("3 need you"));
 }

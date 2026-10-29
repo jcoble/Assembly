@@ -161,7 +161,7 @@ internal static class Schema
           FROM entries),
         page AS (
           SELECT {RailColumns}, ordering, n FROM ordered o
-          WHERE CASE WHEN $anchor IN (SELECT session_id FROM ordered WHERE kind = 'session')
+          WHERE CASE WHEN $anchor IN (SELECT session_id FROM ordered)
             THEN n >= (SELECT n FROM ordered WHERE session_id = $anchor) - $above
             ELSE $after_section IS NULL
               OR (section_index, CASE WHEN header = 0 THEN 0 ELSE 1 END,

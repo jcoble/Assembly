@@ -104,16 +104,16 @@ impl SessionsPane {
             };
             match entry {
                 ListEntry::Section {
+                    key: header,
                     fold_key,
                     label,
                     count,
                     folded,
-                    ..
                 } => {
                     let (pane, key) = (pane.clone(), fold_key.clone());
                     SectionHeader::new(fold_key, label, count, folded, move |_, _, cx| {
                         pane.update(cx, |pane, cx| {
-                            let read = pane.rail.toggle_fold(key.clone());
+                            let read = pane.rail.toggle_fold(key.clone(), header.clone());
                             pane.send(Some(read), cx);
                         })
                         .ok();
@@ -121,13 +121,13 @@ impl SessionsPane {
                     .into_any_element()
                 }
                 ListEntry::Project {
+                    key: header,
                     fold_key,
                     label,
                     repo_url,
                     machines,
                     count,
                     folded,
-                    ..
                 } => {
                     let machine = machines
                         .first()
@@ -143,7 +143,7 @@ impl SessionsPane {
                         move |_, _, cx| {
                             toggle_pane
                                 .update(cx, |pane, cx| {
-                                    let read = pane.rail.toggle_fold(key.clone());
+                                    let read = pane.rail.toggle_fold(key.clone(), header.clone());
                                     pane.send(Some(read), cx);
                                 })
                                 .ok();

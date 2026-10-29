@@ -111,6 +111,17 @@ public sealed class SessionRailGroupTests : IDisposable
         Assert.Equal(all, paged);
         Assert.Equal(paged.Length, paged.Distinct().Count());
     }
+    // Pins: sessions-list#9
+    [Fact]
+    public void FoldingFromItsHeaderReturnsTheHeaderFirst()
+    {
+        Parent(repo: "/work/alpha");
+        Parent(repo: "/work/zeta");
+        var rail = Read(folded: ["::/work/zeta"], anchor: "project:::/work/zeta");
+        var header = rail.Sessions[0];
+        Assert.Equal(("project", "/work/zeta", 1), (header.Kind, header.RepoUrl, header.Count));
+        Assert.Single(rail.Sessions);
+    }
     private string Parent(string agent = "claude", string repo = "/work/assembly", string? machine = null,
         string? title = null, bool tick = true)
     {
@@ -126,9 +137,10 @@ public sealed class SessionRailGroupTests : IDisposable
     private void Mark(string session, string state) =>
         _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, session, state); return 0; });
     private Rail Read(string[]? providers = null, string[]? statuses = null, RailGroupBy? groupBy = null,
-        string sort = "recent", string dir = "desc", string[]? folded = null, RailCursor? after = null, int limit = 50) =>
+        string sort = "recent", string dir = "desc", string[]? folded = null, RailCursor? after = null, int limit = 50,
+        string? anchor = null) =>
         _sessions.Rail(new RailArgs(Providers: providers, Statuses: statuses, GroupBy: groupBy ?? new(false, true),
-            Sort: sort, Dir: dir, Folded: folded, After: after, Limit: limit));
+            Sort: sort, Dir: dir, Folded: folded, After: after, Limit: limit, Anchor: anchor));
     private static List<string> Sessions(Rail rail) =>
         [.. rail.Sessions.Where(entry => entry.Kind == "session").Select(entry => entry.SessionId)];
     private static string[] Collect(Func<RailCursor?, Rail> read)

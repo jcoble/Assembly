@@ -457,6 +457,7 @@ impl Panel for SessionsPane {
 impl Render for SessionsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
+        let warning = cx.theme().warning;
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let creating = self.creating.is_some();
         let pane = cx.entity().downgrade();
@@ -484,7 +485,21 @@ impl Render for SessionsPane {
             .track_focus(&self.focus)
             .size_full()
             .child(self.search(on_view, new_session, cx))
-            .child(self.pills.clone())
+            .child(
+                h_flex()
+                    .child(div().flex_1().min_w_0().child(self.pills.clone()))
+                    .children(needs_words(self.rail.totals.needs).map(|words| {
+                        h_flex()
+                            .flex_none()
+                            .gap(px(5.))
+                            .pr(px(14.))
+                            .pb(px(10.))
+                            .text_size(px(12.))
+                            .text_color(warning)
+                            .child(div().size(px(6.)).rounded_full().bg(warning))
+                            .child(words)
+                    })),
+            )
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),
@@ -521,6 +536,15 @@ impl Render for SessionsPane {
                         ),
                 )
             })
+    }
+}
+
+/// The rail's filtered "need you" total in words, or nothing at zero.
+fn needs_words(needs: usize) -> Option<String> {
+    match needs {
+        0 => None,
+        1 => Some("1 needs you".into()),
+        n => Some(format!("{n} need you")),
     }
 }
 

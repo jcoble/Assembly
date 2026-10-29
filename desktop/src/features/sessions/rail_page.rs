@@ -161,12 +161,14 @@ impl Rail {
         self.requery()
     }
 
-    pub fn toggle_fold(&mut self, key: String) -> Request {
+    /// Folds or unfolds group `key`, reading around its `header`, which stays in the page where it was.
+    pub fn toggle_fold(&mut self, key: String, header: String) -> Request {
         if let Some(at) = self.folded.iter().position(|folded| folded == &key) {
             self.folded.remove(at);
         } else {
             self.folded.push(key);
         }
+        self.view = Some(header);
         self.start(Read::Top)
     }
 
