@@ -114,7 +114,8 @@ impl FilterPills {
     }
 }
 
-/// A 26 px round pill: the theme's light primary when picked, its secondary fill with muted text otherwise.
+/// A 26 px round pill: the theme's light primary at medium weight when picked, its secondary fill with muted text
+/// otherwise.
 fn pill(id: impl Into<ElementId>, picked: bool, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let (fill, hover, text) = match picked {
@@ -134,6 +135,7 @@ fn pill(id: impl Into<ElementId>, picked: bool, cx: &App) -> Stateful<Div> {
         .text_size(px(12.))
         .bg(fill)
         .text_color(text)
+        .when(picked, |pill| pill.font_weight(FontWeight::MEDIUM))
         .cursor_pointer()
         .hover(move |pill| pill.bg(hover))
 }
@@ -146,7 +148,7 @@ impl Render for FilterPills {
             .track_focus(&self.focus)
             .flex_wrap()
             .gap(px(6.))
-            .px(px(14.))
+            .px(px(12.))
             .pb(px(10.))
             .on_key_down(cx.listener(|pills, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && pills.state.open.is_some() {

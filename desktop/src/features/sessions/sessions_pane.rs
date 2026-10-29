@@ -470,7 +470,7 @@ impl Panel for SessionsPane {
 impl Render for SessionsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let warning = cx.theme().warning;
+        let (warning, border) = (cx.theme().warning, cx.theme().border.opacity(0.6));
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let creating = self.creating.is_some();
         let pane = cx.entity().downgrade();
@@ -496,20 +496,34 @@ impl Render for SessionsPane {
             .track_focus(&self.focus)
             .size_full()
             .child(self.search(on_view, new_session, cx))
-            .child(self.pills.clone())
-            // Its own line under the pills, so it never covers one.
-            .children(needs_words(self.rail.totals.needs).map(|words| {
-                h_flex()
-                    .justify_end()
-                    .gap(px(5.))
-                    .mt(px(-4.))
-                    .pr(px(14.))
-                    .pb(px(8.))
-                    .text_size(px(12.))
-                    .text_color(warning)
-                    .child(div().size(px(6.)).rounded_full().bg(warning))
-                    .child(words)
-            }))
+            // The pills, then a rule across the card, as the mock's `.pills` has.
+            .child(
+                v_flex()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(self.pills.clone())
+                    // Its own line under the pills, so it never covers one: the rows' amber question chip.
+                    .children(needs_words(self.rail.totals.needs).map(|words| {
+                        h_flex()
+                            .justify_end()
+                            .mt(px(-2.))
+                            .pr(px(12.))
+                            .pb(px(8.))
+                            .child(
+                                h_flex()
+                                    .h(px(18.))
+                                    .px(px(7.))
+                                    .gap(px(4.))
+                                    .rounded_full()
+                                    .bg(warning.opacity(0.12))
+                                    .text_size(px(10.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(warning)
+                                    .child(div().size(px(6.)).rounded_full().bg(warning))
+                                    .child(words),
+                            )
+                    })),
+            )
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),
