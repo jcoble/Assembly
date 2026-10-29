@@ -64,7 +64,7 @@ pub struct RailCursor {
     ordering: String,
 }
 
-/// One session's own state and SQL order; started sessions have depth 1.
+/// One session's own state and SQL order.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RailEntry {
@@ -81,7 +81,6 @@ pub struct RailEntry {
     pub needs_you: bool,
     pub failed: bool,
     pub unread: bool,
-    pub depth: usize,
     pub ordering: String,
     pub ask_session: Option<String>,
     pub ask_seq: Option<i64>,
@@ -305,7 +304,7 @@ fn cursor(entry: &RailEntry) -> RailCursor {
 pub fn test_entry(id: &str, repo_url: &str) -> RailEntry {
     serde_json::from_value(json!({ "sessionId": id, "agent": "claude", "repoUrl": repo_url, "group": repo_url,
         "groupStart": false, "title": null, "machine": null, "updatedAt": 1, "completedAt": null, "running": false,
-        "needsYou": false, "failed": false, "unread": false, "depth": 0, "ordering": id, "askSession": null, "askSeq": null,
+        "needsYou": false, "failed": false, "unread": false, "ordering": id, "askSession": null, "askSeq": null,
         "branch": null, "branchAt": null, "icon": "icons/bot.svg" }))
     .unwrap()
 }

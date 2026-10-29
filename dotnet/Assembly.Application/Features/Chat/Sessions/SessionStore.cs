@@ -294,8 +294,8 @@ public sealed class SessionStore
             0 => new SessionsFeature.RailTotals((int)row.Long(15), (int)row.Long(11), (int)row.Long(12)),
             1 => row.Text(3),
             _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Long(6) == 1, Text(7), Text(8),
-                row.Long(9), Long(10), row.Long(11) == 1, row.Long(12) == 1, row.Long(13) == 1, row.Long(14) == 1, (int)row.Long(15),
-                Text(16), Long(17), Text(18), Long(19), ProviderGlyph.Of(row.Text(3)), row.Text(20)),
+                row.Long(9), Long(10), row.Long(11) == 1, row.Long(12) == 1, row.Long(13) == 1, row.Long(14) == 1,
+                Text(15), Long(16), Text(17), Long(18), ProviderGlyph.Of(row.Text(3)), row.Text(19)),
         };
     }
 
@@ -463,7 +463,7 @@ public sealed class SessionStore
             // The list holds top-level sessions only; a subagent's is opened from its parent.
             scope.Publish(SessionsFeature.Topic, sessionId, Item(session), SessionsJson.Default.SessionItem,
                 keyedOnly: session.ParentSessionId is not null);
-            // The rail draws helpers under their parent, so it hears every session's change.
+            // The rail hears every session's change.
             scope.Publish(SessionsFeature.RailTopic, sessionId, new SessionsFeature.RailChange(sessionId), SessionsJson.Default.RailChange);
         }
     }

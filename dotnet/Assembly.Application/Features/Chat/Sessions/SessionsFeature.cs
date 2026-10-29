@@ -122,14 +122,14 @@ internal sealed class SessionsFeature : IFeature
     internal sealed record RailArgs(string Tab = "all", IReadOnlyList<string>? Providers = null, IReadOnlyList<string>? Locations = null,
         string? Filter = null, RailCursor? After = null, int Limit = 50, string? Anchor = null, int Above = 0);
 
-    /// <summary>The last row's project and SQL ordering key, including its starter's position.</summary>
+    /// <summary>The last row's project and SQL ordering key.</summary>
     internal sealed record RailCursor(string Group, string RepoUrl, string Ordering);
 
     internal sealed record RailTotals(int All, int Running, int NeedsYou);
 
-    /// <summary>One session's own state. Started sessions have depth 1 and follow their starter.</summary>
+    /// <summary>One session's own state and SQL order.</summary>
     internal sealed record RailEntry(string SessionId, string Agent, string RepoUrl, string Group, bool GroupStart, string? Title,
-        string? Machine, long UpdatedAt, long? CompletedAt, bool Running, bool NeedsYou, bool Failed, bool Unread, int Depth,
+        string? Machine, long UpdatedAt, long? CompletedAt, bool Running, bool NeedsYou, bool Failed, bool Unread,
         string? AskSession, long? AskSeq, string? Branch, long? BranchAt, string Icon, string Ordering);
 
     internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next, int Start = 0);

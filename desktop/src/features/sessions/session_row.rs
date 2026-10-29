@@ -1,4 +1,4 @@
-//! One ordinary session row, showing its own state and metadata. Started sessions sit one level in.
+//! One ordinary session row, showing its own state and metadata.
 
 use std::rc::Rc;
 
@@ -138,11 +138,7 @@ impl RenderOnce for SessionRow {
             .gap_2()
             .py_1()
             .pr_2()
-            .pl(if self.entry.depth == 1 {
-                px(32.)
-            } else {
-                px(6.)
-            })
+            .pl(px(6.))
             .rounded(theme.radius_lg)
             .cursor_pointer()
             .when(selected, |row| row.bg(theme.secondary))

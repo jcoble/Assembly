@@ -98,9 +98,7 @@ internal static class Schema
           SELECT s.*,
             CASE WHEN s.repo_url LIKE 'https://github.com/%' THEN rtrim(substr(s.repo_url, 20), '/')
                  ELSE substr(rtrim(s.repo_url, '/'), length(rtrim(rtrim(s.repo_url, '/'), replace(rtrim(s.repo_url, '/'), '/', ''))) + 1) END AS label,
-            (s.parent_session_id IS NOT NULL) AS depth,
-            printf('%020d:%s:', COALESCE(p.updated_at, s.updated_at), COALESCE(p.session_id, s.session_id))
-              || CASE WHEN s.parent_session_id IS NULL THEN '~' ELSE printf('%020d:%s', s.updated_at, s.session_id) END AS ordering,
+            printf('%020d:%s', s.updated_at, s.session_id) AS ordering,
             (SELECT json_extract(t.payload, '$.state') FROM rows t INDEXED BY rows_summary
              WHERE t.session_id = s.session_id AND {SummaryKinds} AND t.kind = 'turn' ORDER BY t.item_id DESC, t.seq DESC LIMIT 1) AS turn,
             (SELECT MIN(a.seq) FROM rows a INDEXED BY rows_summary
@@ -112,7 +110,7 @@ internal static class Schema
                AND json_extract(w.payload, '$.state') IN ('running', 'requires_action')
                AND NOT EXISTS (SELECT 1 FROM rows l INDEXED BY rows_summary WHERE l.session_id = w.session_id AND {SummaryKinds}
                                AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy
-          FROM session_info s LEFT JOIN session_info p ON p.session_id = s.parent_session_id
+          FROM session_info s
           WHERE (s.parent_session_id IS NULL OR s.helper = 1) AND s.settled_at IS NULL
             AND ($providers IS NULL OR s.agent IN (SELECT value FROM json_each($providers)))
             AND ($locations IS NULL OR iif(s.machine IS NULL, 'local', 'remote') IN (SELECT value FROM json_each($locations)))
@@ -124,22 +122,22 @@ internal static class Schema
         ranked AS (SELECT *, ROW_NUMBER() OVER (ORDER BY lower(label), repo_url, ordering DESC) AS n FROM listed),
         page AS (
           SELECT n, session_id, agent, repo_url, label, group_start, title, machine, updated_at, completed_at, read_seq,
-            running, needs, failed, depth, ask_seq, ordering FROM ranked
+            running, needs, failed, ask_seq, ordering FROM ranked
           WHERE CASE WHEN $anchor IN (SELECT session_id FROM ranked) THEN n >= (SELECT n FROM ranked WHERE session_id = $anchor) - $above
             ELSE $group IS NULL OR (lower(label), repo_url) > (lower($group), $repo)
               OR ((lower(label), repo_url) = (lower($group), $repo) AND ordering < $ordering) END
           ORDER BY n LIMIT $limit)
         SELECT 0, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, COALESCE(SUM(running), 0), COALESCE(SUM(needs), 0), 0, 0, COUNT(*),
-          NULL, NULL, NULL, NULL, NULL FROM states
+          NULL, NULL, NULL, NULL FROM states
         UNION ALL
-        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, agent, NULL, NULL, 0, NULL, NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL
+        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, agent, NULL, NULL, 0, NULL, NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL
         FROM (SELECT DISTINCT agent FROM session_info WHERE (parent_session_id IS NULL OR helper = 1) AND settled_at IS NULL)
         UNION ALL
         SELECT 2, p.n, p.session_id, p.agent, p.repo_url, p.label, p.group_start, p.title, p.machine, p.updated_at, p.completed_at,
           p.running, p.needs, p.failed,
           COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE e.session_id = p.session_id AND {SummaryKinds} AND e.kind = 'turn'
                       AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled') ORDER BY e.item_id DESC, e.seq DESC LIMIT 1), 0) > p.read_seq,
-          p.depth, iif(p.ask_seq IS NULL, NULL, p.session_id), p.ask_seq, json_extract(b.payload, '$.branch'), b.created_at, p.ordering
+          iif(p.ask_seq IS NULL, NULL, p.session_id), p.ask_seq, json_extract(b.payload, '$.branch'), b.created_at, p.ordering
         FROM page p
         LEFT JOIN rows b ON b.session_id = p.session_id AND b.seq = (
           SELECT MAX(r.seq) FROM rows r INDEXED BY rows_item WHERE r.session_id = p.session_id AND r.item_id IS NULL AND r.kind = 'stats'

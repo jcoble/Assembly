@@ -11,7 +11,7 @@ namespace Assembly.Tests.Draft.SessionsList;
 
 /// <summary>
 /// The rail's one SQL read (main-screen spec S1 to S3, PR 1): tab totals over every eligible parent, filters before
-/// totals and paging, project groups in a fixed order, started sessions after their starter, and the invalidations that make a
+/// totals and paging, project groups in a fixed order, started sessions ordered like any other session, and the invalidations that make a
 /// window read it again.
 /// </summary>
 public sealed class SessionRailTests : IDisposable
@@ -35,18 +35,17 @@ public sealed class SessionRailTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void StartedSessionsFollowTheirStarterAndKeepTheirOwnState(bool remote)
+    public void StartedSessionsAreOwnRowsOrderedCountedAndKeepTheirOwnState(bool remote)
     {
         var starter = Parent(machine: remote ? "workbox-test" : null);
         var other = Parent();
         var started = Helper(starter);
         Running(started);
         Asking(started);
-        Assert.Equal([other, starter, started], Collect(next => Read(after: next, limit: 1)));
+        Assert.Equal([started, other, starter], Collect(next => Read(after: next, limit: 1)));
         Assert.Equal(new RailTotals(3, 1, 1), Read().Totals);
         Assert.False(Entry(Read(), starter).Running);
         Assert.False(Entry(Read(), starter).NeedsYou);
-        Assert.Equal(1, Entry(Read(), started).Depth);
         Assert.Equal(started, Read("running").Sessions.Single().SessionId);
         Assert.Equal(started, Read("needs").Sessions.Single().SessionId);
     }
