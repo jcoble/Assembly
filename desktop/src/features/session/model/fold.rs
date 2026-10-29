@@ -155,9 +155,9 @@ impl Fold {
     }
 
     /// A tool row's title and summary: an Assembly helper tool's in words (`mcp__assembly__start_session` is
-    /// "Started a helper"), any other by its kind ("Ran", "Edited"…) with its name as the summary when it has none,
-    /// and a kind without a word keeps the name as its title. A line is one line: a summary of several lines shows its
-    /// first, ending in "…".
+    /// "Started a helper"), any other by its kind ("Ran", "Edited"…), and a kind without a word keeps the name as its
+    /// title. A kind's word never has the name after it: an agent's name for a call ("Editing files") repeats it. A
+    /// line is one line: a summary of several lines shows its first, ending in "…".
     pub fn tool_words(
         name: &str,
         kind: Option<&str>,
@@ -181,10 +181,7 @@ impl Fold {
             Some("fetch") => "Fetched",
             _ => return (name.to_string(), summary),
         };
-        (
-            word.to_string(),
-            Some(summary.unwrap_or_else(|| name.to_string())),
-        )
+        (word.to_string(), summary)
     }
 }
 

@@ -233,7 +233,7 @@ fn an_assembly_helper_tool_keeps_its_words() {
 #[test]
 fn a_tool_is_titled_by_its_kind() {
     let words = |kind, summary| Fold::tool_words("Bash", kind, summary);
-    let titled = |title: &str| (title.to_string(), Some("Bash".to_string()));
+    let titled = |title: &str| (title.to_string(), None);
     assert_eq!(words(Some("execute"), None), titled("Ran"));
     for kind in ["edit", "delete", "move"] {
         assert_eq!(words(Some(kind), None), titled("Edited"), "{kind}");

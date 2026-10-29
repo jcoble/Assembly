@@ -66,6 +66,15 @@ pub fn short_path(path: &str) -> String {
     parts[parts.len().saturating_sub(2)..].join("/")
 }
 
+/// What a tool line shows after its title: its summary, else its path; a path as its last two parts.
+pub fn line_summary(tool: &ToolPayload) -> Option<String> {
+    match (&tool.summary, &tool.path) {
+        (Some(summary), Some(path)) if summary != path => Some(summary.clone()),
+        (_, Some(path)) => Some(short_path(path)),
+        (summary, None) => summary.clone(),
+    }
+}
+
 /// The output's last `OUTPUT_TAIL` lines.
 pub fn output_tail(output: &str) -> &str {
     let mut at = output.len();
@@ -109,11 +118,7 @@ impl ToolRow {
         .flatten()
         .map(IntoElement::into_any_element)
         .collect();
-        // A summary that is the call's path shows it short.
-        let summary = match (&self.tool.summary, &self.tool.path) {
-            (Some(summary), Some(path)) if summary == path => Some(short_path(path)),
-            (summary, _) => summary.clone(),
-        };
+        let summary = line_summary(&self.tool);
         let (title, summary) = Fold::tool_words(
             &self.tool.name,
             self.tool.kind.as_deref(),
