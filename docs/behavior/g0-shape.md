@@ -10,6 +10,7 @@ g0-host's; what each pane shows belongs to the lane that owns that pane.
 g0-shape#1 The window opens in the old app's layout. The left column is one tabbed column, Sessions, Files and Search,
 and Chat is in the center (Jesse 2026-10-27, look item 20). The drawer is on the right with Source control, Agents,
 Tasks, Worktrees, Run, Context and History, and it's closed at launch. The bottom dock holds Problems and Terminal, and it's closed too.
+A closed bottom dock draws nothing along the foot; the Terminal button in the title row opens and closes it.
 g0-shape#2 Any pane can be dragged anywhere, and any divider can be resized.
 g0-shape#3 The layout is kept across relaunches, including the sessions column's width and whether it's folded
 (491a4447, 5bfc3360). A layout saved by an older build, or one that can't be read, opens the default layout instead.
@@ -18,7 +19,7 @@ g0-shape#4 Launching the app doesn't save the layout. Changes made together save
 behind older ones (378bc67d).
 g0-shape#5 Opening the drawer pushes the panes over instead of covering them. Closing it gives the center its width
 back (289c449b).
-g0-shape#6 The round Home button, with the old app's house icon, sits above the sessions column and keeps its width,
+g0-shape#6 The Home button, with the old app's house icon, sits above the sessions column and keeps its width,
 so the dividers line up with the top row. It follows the column while the column's edge is dragged (f4898b79,
 668f7350).
 g0-shape#7 The drawer's tabs, Sessions, Chat and Problems have no close button (951f2b43).
@@ -34,11 +35,14 @@ this one row (Jesse 2026-10-27, "many list items from diff places get the same b
 click and each frame's height, can open or shut it itself, and can draw the band and the body from its own state.
 g0-shape#11 The sessions column can be dragged from 220 to 560 px wide and the drawer from 240 to 640 px (the approved
 look); a dragged edge stops at the limit, and the drag still saves once, when it ends.
-g0-shape#12 The side docks' tabs are the old app's (Jesse 2026-10-27, "make these more like the ones in the old app,
-same with left side"). The drawer's are one rounded strip of icon pills, the old app's icons, the shown one lit and the
-name on hover. The sessions column's are the old top tab row's text chips. A click shows that pane, a side tab still
-drags its pane anywhere (g0-shape#2), and a row too narrow for its tabs scrolls. Chat and the bottom dock keep the
-kit's tabs.
+g0-shape#12 The drawer's tabs sit in the title row, at its right: one 26 px icon button per drawer pane, the old app's
+icons, the shown one lit while the drawer is open and the name on hover. A button opens the shut drawer on its pane,
+shows its pane in the open drawer, or closes the drawer when its pane is the one shown. They have no drag handle, so a
+drawer pane no longer drags from its tab. The sessions column's tabs are the old top tab row's text chips (Jesse
+2026-10-27, "make these more like the ones in the old app, same with left side"): a click shows that pane, a chip still
+drags its pane anywhere (g0-shape#2), and a row too narrow for its tabs scrolls. Chat alone in the center draws no tab
+row: its 48 px title row reads "project › Session title", with a button before it that shows and hides the sessions
+column, there even with no session open. Chat beside other center panes, and an open bottom dock, keep the kit's tabs.
 g0-shape#13 The drawer's Context tab lists the files the selected session's tool calls edited, deleted or moved, newest
 first, each once with its file name, its folder and its lines added and removed (`rows/files`, parity map 11c). A
 failed call touched nothing; a call that changed several files lists each with its own lines. The tab reads the list when it's shown and when another session is picked while it's

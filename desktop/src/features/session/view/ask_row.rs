@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use super::grow::chevron;
 use super::session_action::{OnAction, SessionAction};
-use crate::features::session::rows::ask::{AskInput, AskPayload, AskSchema};
+use crate::features::session::rows::ask::{AskInput, AskOption, AskPayload, AskSchema};
 
 #[derive(Clone)]
 pub struct AskRow {
@@ -66,6 +66,49 @@ pub fn outcome(ask: &AskPayload) -> String {
         "Answered".to_string()
     } else {
         picked.join("; ")
+    }
+}
+
+/// A settled card's word: "Allowed" or "Denied" for a permission answered with one of its options, else `outcome`.
+pub fn settled(ask: &AskPayload) -> String {
+    let picked = ask
+        .answer
+        .as_ref()
+        .and_then(|answer| answer["optionId"].as_str());
+    let option = picked.and_then(|id| ask.options.iter().find(|it| it.option_id == id));
+    match option.map(|it| it.kind.as_str()) {
+        Some(kind) if kind.starts_with("allow") => "Allowed".to_string(),
+        Some(kind) if kind.starts_with("reject") => "Denied".to_string(),
+        _ => outcome(ask),
+    }
+}
+
+/// A permission's buttons as the mock's card has them: (option id, label), Deny first and Allow last, the agent's
+/// other options (an always-allow) between them in their own words.
+pub fn permission_choices(options: &[AskOption]) -> Vec<(String, String)> {
+    let label = |option: &AskOption| match option.kind.as_str() {
+        "reject_once" => "Deny".to_string(),
+        "allow_once" => "Allow".to_string(),
+        _ => option.name.clone(),
+    };
+    let rank = |option: &&AskOption| match option.kind.as_str() {
+        "reject_once" => 0,
+        "allow_once" => 2,
+        _ => 1,
+    };
+    let mut options: Vec<&AskOption> = options.iter().collect();
+    options.sort_by_key(rank);
+    (options.into_iter())
+        .map(|option| (option.option_id.clone(), label(option)))
+        .collect()
+}
+
+/// A title on one line, as a tool line is (`Fold::tool_words`): a title of several lines (a heredoc command) shows its
+/// first, ending in "…".
+pub fn one_line(text: &str) -> String {
+    match text.trim_end().split_once('\n') {
+        Some((first, _)) => format!("{}…", first.trim_end()),
+        None => text.trim_end().to_string(),
     }
 }
 
@@ -155,8 +198,8 @@ impl AskForm {
 }
 
 impl AskRow {
-    /// The 28 px line: a chevron turned `grown` of the way, a mark, the title, and "Needs you" while open; settled,
-    /// what it was answered with and the title.
+    /// Open, the 28 px line: a chevron turned `grown` of the way, a mark, the title, and "Needs you". Settled, a muted
+    /// tool line: a check (a cross if denied or cancelled), what it was answered with, the title, then the chevron.
     pub fn head(&self, grown: f32, cx: &App) -> Div {
         let theme = cx.theme();
         let open = self.ask.state == "open";
@@ -165,43 +208,52 @@ impl AskRow {
         } else {
             "Question"
         };
-        let title = self.ask.title.clone().unwrap_or_else(|| kind.to_string());
-        let (mark, color) = match (open, self.ask.state.as_str()) {
-            (true, _) if self.ask.kind == "permission" => {
-                (Glyph::ShieldQuestionMark, theme.warning)
-            }
-            (true, _) => (Glyph::CircleQuestionMark, theme.warning),
-            (false, "cancelled") => (Glyph::CircleX, theme.muted_foreground),
-            (false, _) => (Glyph::CircleCheck, theme.success),
+        let title = one_line(self.ask.title.as_deref().unwrap_or(kind));
+        if !open {
+            let word = settled(&self.ask);
+            let crossed = self.ask.state == "cancelled" || word == "Denied";
+            let mark = if crossed {
+                Glyph::CircleX
+            } else {
+                Glyph::CircleCheck
+            };
+            return h_flex()
+                .h(px(22.))
+                .gap_2()
+                .text_size(px(13.))
+                .text_color(theme.muted_foreground)
+                .child(Icon::new(mark).xsmall())
+                .child(div().flex_none().max_w(px(240.)).truncate().child(word))
+                .child(div().min_w_0().truncate().child(title))
+                .child(chevron(grown));
+        }
+        // The mock's `.confirm` title: a 15 px warning mark, the title at medium weight; "Needs you" and the chevron
+        // that shuts it at the right.
+        let mark = if self.ask.kind == "permission" {
+            Glyph::TriangleAlert
+        } else {
+            Glyph::CircleQuestionMark
         };
-        let line = h_flex()
+        h_flex()
             .h(px(28.))
             .gap_2()
-            .text_sm()
-            .child(chevron(grown))
-            .child(Icon::new(mark).xsmall().text_color(color));
-        if open {
-            return line
-                .child(div().flex_1().min_w_0().truncate().child(title))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child("Needs you"),
-                );
-        }
-        line.child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(outcome(&self.ask))
-                .child(
-                    div()
-                        .text_color(theme.muted_foreground)
-                        .child(format!(" · {title}")),
-                ),
-        )
+            .text_size(px(13.))
+            .child(Icon::new(mark).size(px(15.)).text_color(theme.warning))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("Needs you"),
+            )
+            .child(chevron(grown).text_color(theme.muted_foreground))
     }
 
     /// The message and what answers it, under the title; a settled one's message and fields, with nothing to answer.
@@ -213,7 +265,9 @@ impl AskRow {
             let action = Rc::new(action);
             Button::new(SharedString::from(format!("ask:{ask_id}:{id}")))
                 .compact()
-                .rounded(theme.radius_full())
+                .h(px(28.))
+                .px(px(12.))
+                .rounded(px(8.))
                 .label(label)
                 .on_click(move |_, window, cx| on_action(action.as_ref().clone(), window, cx))
         };
@@ -221,18 +275,14 @@ impl AskRow {
             ask_id: ask_id.clone(),
             answer,
         };
+        // The mock's `.confirm` body: the reason muted at 12.5 px under the title, in line with it.
         let mut column = v_flex()
             .gap_2()
-            .pl(px(24.))
-            .pr_2()
-            .pb_2()
-            .text_sm()
+            .pl(px(23.))
+            .pb_1()
+            .text_size(px(12.5))
             .when_some(self.ask.message.clone(), |column, message| {
-                column.child(
-                    div()
-                        .text_color(theme.foreground.opacity(0.9))
-                        .child(message),
-                )
+                column.child(div().text_color(theme.muted_foreground).child(message))
             });
         // Settled, it shows what it asked (each field and its choices) with nothing to answer.
         if self.ask.state != "open" {
@@ -245,14 +295,16 @@ impl AskRow {
             }
             return column;
         }
+        // A permission's options at the card's right, as the mock's: Deny, the agent's others, then Allow, solid.
         let Some(form) = &self.form else {
-            let mut row = h_flex().gap_2().flex_wrap();
-            for option in &self.ask.options {
-                let pick = answer(json!({ "optionId": option.option_id }));
-                let choice = button(&option.option_id, option.name.clone(), pick);
-                row = row.child(match option.kind.as_str() {
-                    "allow_once" => choice.primary(),
-                    _ => choice.secondary(),
+            let mut row = h_flex().gap(px(6.)).flex_wrap().justify_end();
+            for (id, label) in permission_choices(&self.ask.options) {
+                let pick = answer(json!({ "optionId": id }));
+                let solid = label == "Allow";
+                let choice = button(&id, label, pick);
+                row = row.child(match solid {
+                    true => choice.primary().font_weight(FontWeight::SEMIBOLD),
+                    false => choice.outline().h(px(26.)).px(px(10.)),
                 });
             }
             return column.child(row);

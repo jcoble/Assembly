@@ -1,7 +1,9 @@
-//! `StepRow` is one step on a 28 px line: its sign (a spinner while it runs, a check or a cross once done, a still dot
-//! for one left unfinished), its title and summary, and how long it ran. The running step's title shimmers. A tool
-//! call's line is one, in the timeline and in a running turn's activity card; a workflow run's steps can be drawn with
-//! it too. Section 11's StepRow.
+//! `StepRow` is one step on a 22 px line at 13 px, muted, as the approved mock's `.tl`: its sign (a spinner while it
+//! runs, then its kind's 14 px icon, faint, or a check or a cross once done, a still dot for one left unfinished), its
+//! title and summary (in the code face), the chevron after them for a step that opens, faint, and at the right its line
+//! counts and how long it ran. A failed step reads in the danger colour.
+//! The running step's title shimmers. A tool call's line is one, in the timeline and in a running turn's activity
+//! card; a workflow run's steps can be drawn with it too. Section 11's StepRow.
 
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::shimmer::ShimmerText;
@@ -26,6 +28,8 @@ pub enum StepState {
 pub struct StepRow {
     pub id: SharedString,
     pub state: StepState,
+    /// Shown in place of the done, failed or unfinished mark.
+    pub glyph: Option<Glyph>,
     pub title: SharedString,
     pub summary: Option<SharedString>,
     /// After the summary: a tool call's line counts.
@@ -40,20 +44,21 @@ impl RenderOnce for StepRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let muted = theme.muted_foreground;
+        let faint = muted.opacity(0.65);
+        let failed = self.state == StepState::Failed;
+        let mark = |mark: Glyph, color: Hsla| match self.glyph {
+            Some(glyph) => (Icon::new(glyph).size(px(14.)))
+                .text_color(if failed { color } else { faint })
+                .into_any_element(),
+            None => (Icon::new(mark).xsmall())
+                .text_color(color)
+                .into_any_element(),
+        };
         let sign = match self.state {
-            StepState::Running => Spinner::new().xsmall().color(muted).into_any_element(),
-            StepState::Done => Icon::new(Glyph::CircleCheck)
-                .xsmall()
-                .text_color(theme.success)
-                .into_any_element(),
-            StepState::Failed => Icon::new(Glyph::CircleX)
-                .xsmall()
-                .text_color(theme.danger)
-                .into_any_element(),
-            StepState::Unfinished => Icon::new(Glyph::Dot)
-                .xsmall()
-                .text_color(muted)
-                .into_any_element(),
+            StepState::Running => (Spinner::new().xsmall().color(theme.success)).into_any_element(),
+            StepState::Done => mark(Glyph::CircleCheck, theme.success),
+            StepState::Failed => mark(Glyph::CircleX, theme.danger),
+            StepState::Unfinished => mark(Glyph::Dot, muted),
         };
         let title = if self.state == StepState::Running {
             ShimmerText::new(self.title)
@@ -64,27 +69,32 @@ impl RenderOnce for StepRow {
         };
         h_flex()
             .id(self.id)
-            .h(px(28.))
+            .h(px(22.))
             .gap_2()
-            .text_sm()
-            .text_color(muted)
-            .children(self.chevron.map(chevron))
+            .text_size(px(13.))
+            .text_color(if failed { theme.danger } else { muted })
             .child(sign)
+            .child(div().flex_none().child(title))
             .child(
                 div()
-                    .flex_none()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(theme.foreground)
-                    .child(title),
-            )
-            .child(
-                div()
-                    .flex_1()
                     .min_w_0()
                     .truncate()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_size(px(12.))
                     .child(self.summary.unwrap_or_default()),
             )
-            .children(self.tags)
+            .children(
+                (self.chevron.map(chevron))
+                    .map(|chevron| chevron.text_color(if failed { theme.danger } else { faint })),
+            )
+            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap_2()
+                    .text_size(px(12.))
+                    .children(self.tags),
+            )
             .when_some(self.took_ms, |line, ms| {
                 line.child(div().flex_none().text_xs().child(worked_for(ms)))
             })

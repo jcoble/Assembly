@@ -1,13 +1,16 @@
 use serde_json::{Value, json};
 
-use super::{asked, outcome};
+use super::{asked, one_line, outcome, permission_choices, settled};
 use crate::features::session::rows::ask::AskPayload;
 
 fn ask(state: &str, answer: Option<Value>) -> AskPayload {
     serde_json::from_value(json!({
         "kind": "permission",
         "state": state,
-        "options": [{ "optionId": "allow", "name": "Allow once", "kind": "allow_once" }],
+        "options": [
+            { "optionId": "allow", "name": "Allow once", "kind": "allow_once" },
+            { "optionId": "deny", "name": "No", "kind": "reject_once" },
+        ],
         "answer": answer,
     }))
     .unwrap()
@@ -86,5 +89,57 @@ fn a_settled_question_still_says_what_it_asked() {
     assert!(
         asked(&ask("answered", None)).is_empty(),
         "a permission has no fields"
+    );
+}
+
+// Pins: g0-session#16
+#[test]
+fn an_answered_permission_reads_allowed_or_denied() {
+    let allowed = ask("answered", Some(json!({ "optionId": "allow" })));
+    assert_eq!(settled(&allowed), "Allowed");
+    let denied = ask("answered", Some(json!({ "optionId": "deny" })));
+    assert_eq!(settled(&denied), "Denied");
+    assert_eq!(settled(&ask("cancelled", None)), "Cancelled");
+    let skipped = ask("answered", Some(json!({ "action": "decline" })));
+    assert_eq!(settled(&skipped), "Skipped");
+}
+
+// An approval for a multi-line command (a heredoc) is one line, as a tool line is: its first line, ending in "…".
+// Pins: g0-session#16
+#[test]
+fn a_multi_line_title_shows_its_first_line() {
+    assert_eq!(
+        one_line("cat > here.txt <<EOF\nalpha\nbeta\nEOF"),
+        "cat > here.txt <<EOF…"
+    );
+    assert_eq!(one_line("ls -la\n"), "ls -la");
+    assert_eq!(one_line("Write notes.txt"), "Write notes.txt");
+}
+
+// Pins: g0-session#16
+#[test]
+fn a_permission_offers_deny_then_allow() {
+    let ask: AskPayload = serde_json::from_value(json!({
+        "kind": "permission",
+        "state": "open",
+        "options": [
+            { "optionId": "yes", "name": "Yes", "kind": "allow_once" },
+            { "optionId": "always", "name": "Yes, and don't ask again", "kind": "allow_always" },
+            { "optionId": "no", "name": "No", "kind": "reject_once" },
+        ],
+    }))
+    .unwrap();
+    let words = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        (pairs.iter())
+            .map(|(id, label)| (id.to_string(), label.to_string()))
+            .collect()
+    };
+    assert_eq!(
+        permission_choices(&ask.options),
+        words(&[
+            ("no", "Deny"),
+            ("always", "Yes, and don't ask again"),
+            ("yes", "Allow")
+        ])
     );
 }

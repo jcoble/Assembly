@@ -1,0 +1,6 @@
+ok a new session is in Working
+ok Mark done stamps completedAt
+ok Settle stamps settledAt and keeps the done time
+ok a settled session pages with Settled, not with the open ones
+ok Back to working clears both stamps
+ok Connect reaches the remote
