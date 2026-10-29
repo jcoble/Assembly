@@ -109,8 +109,11 @@ public sealed class RemoteWorkflowMirror(RemoteConfig remote, WorkflowQueries qu
                     json.GetProperty("item").Deserialize(WorkflowJson.Default.BoardChange);
                     wake();
                 }
-                else if (json.TryGetProperty("id", out var id) && _calls.TryRemove(id.GetInt64(), out var pending))
+                // Calls count from 1 and the subscription is 0. A reply with no pending call answers one that gave up
+                // (a cancelled call gets a "cancelled" error after it left), so nothing waits for it.
+                else if (json.TryGetProperty("id", out var id) && id.GetInt64() != 0)
                 {
+                    if (!_calls.TryRemove(id.GetInt64(), out var pending)) continue;
                     if (type == "result") pending.TrySetResult(json.GetProperty("result").Clone());
                     else if (json.GetProperty("code").GetString() == "failed")
                         pending.TrySetException(new CallFailed(json.GetProperty("message").GetString()!));

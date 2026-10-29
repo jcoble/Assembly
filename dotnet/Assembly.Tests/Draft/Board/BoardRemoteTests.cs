@@ -138,6 +138,33 @@ public sealed class BoardRemoteTests
     }
 
     [Fact]
+    public async Task CancelledSourceCallKeepsTheBoardConnection()
+    {
+        await using var source = new BoardSocketTests.Host();
+        await source.StartAsync();
+        var creator = source.Sessions.Create("codex", "project");
+        // A running turn holds the answer on the source until the caller cancels it.
+        source.Registry.For(creator.SessionId).Send("held");
+        source.Tools.Update(creator.SessionId, source.F.Report(question: source.F.Ask()));
+        var recorded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sub = source.F.Topics.Subscribe("board", null, _ => { }, (_, _) => recorded.TrySetResult());
+        using var desktop = new BoardQueryTests.Fixture();
+        var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var mirror = new RemoteWorkflowMirror(new("Workbox Test", source.Address, "board-test"),
+            desktop.Queries, desktop.Transitions, () => lost.TrySetResult());
+        var args = source.F.Answer() with { MachineId = "Workbox Test" };
+        using var cancel = new CancellationTokenSource();
+        var waiting = mirror.AnswerAsync(args, cancel.Token);
+        await recorded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await cancel.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        // The same answer again queues behind the cancelled one on the source, so its reply follows the cancel's reply.
+        Assert.Equal(args.AnswerKey, (await mirror.AnswerAsync(args, CancellationToken.None)).AnswerKey);
+        Assert.False(lost.Task.IsCompleted);
+        source.F.Topics.Unsubscribe(sub);
+    }
+
+    [Fact]
     public void RestartOfflineRetainsCardsAndRoutesToSource()
     {
         using var source = new BoardQueryTests.Fixture();
