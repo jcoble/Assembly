@@ -33,7 +33,8 @@ gpui_kit::assets::icon_assets!(
         Wrench,
         Circle,
         CircleDot,
-        Lightbulb
+        Lightbulb,
+        Terminal
     ]
 );
 

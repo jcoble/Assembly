@@ -77,6 +77,22 @@ pub fn line_summary(tool: &ToolPayload) -> Option<String> {
     }
 }
 
+/// A run that failed (not one the user denied, which didn't run): its line reads "Failed to run" and it opens to its
+/// output, as the mock's red line.
+pub fn failed_run(tool: &ToolPayload, denied: bool) -> bool {
+    tool.state == ToolState::Failed && !denied && tool.kind.as_deref() == Some("execute")
+}
+
+/// A tool line's title and summary: its kind's word (`Fold::tool_words`), "Failed to run" for a failed run.
+pub fn line_words(tool: &ToolPayload, denied: bool) -> (String, Option<String>) {
+    let summary = line_summary(tool);
+    let (title, summary) = Fold::tool_words(&tool.name, tool.kind.as_deref(), summary.as_deref());
+    match failed_run(tool, denied) {
+        true => ("Failed to run".to_string(), summary),
+        false => (title, summary),
+    }
+}
+
 /// The output's last `OUTPUT_TAIL` lines.
 pub fn output_tail(output: &str) -> &str {
     let mut at = output.len();
@@ -121,12 +137,7 @@ impl ToolRow {
         .flatten()
         .map(IntoElement::into_any_element)
         .collect();
-        let summary = line_summary(&self.tool);
-        let (title, summary) = Fold::tool_words(
-            &self.tool.name,
-            self.tool.kind.as_deref(),
-            summary.as_deref(),
-        );
+        let (title, summary) = line_words(&self.tool, self.denied);
         StepRow {
             id: SharedString::from(format!("{}:line", self.key)),
             state,
@@ -224,7 +235,7 @@ impl ToolRow {
 /// A call's icon on its line, by its ACP kind.
 fn glyph(kind: Option<&str>) -> Glyph {
     match kind {
-        Some("execute") => Glyph::SquareTerminal,
+        Some("execute") => Glyph::Terminal,
         Some("edit" | "delete" | "move") => Glyph::Pencil,
         Some("read") => Glyph::FileText,
         Some("search") => Glyph::Search,

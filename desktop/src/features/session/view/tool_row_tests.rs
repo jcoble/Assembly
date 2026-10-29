@@ -1,7 +1,8 @@
 use serde_json::json;
 
 use super::{
-    DIFF_SHOWN, OUTPUT_TAIL, command_of, diff_lines, line_summary, output_tail, short_path,
+    DIFF_SHOWN, OUTPUT_TAIL, command_of, diff_lines, failed_run, line_summary, line_words,
+    output_tail, short_path,
 };
 use crate::features::session::model::fold::Fold;
 use crate::features::session::rows::tool::ToolPayload;
@@ -86,4 +87,30 @@ fn an_edit_titled_by_its_kind_shows_its_file_not_the_tools_own_verb() {
         ("Edited".to_string(), Some("src/calc.py".to_string()))
     );
     assert_eq!(words(&edit(None)), ("Edited".to_string(), None));
+}
+
+// Pins: g0-session#13
+#[test]
+fn a_failed_run_reads_failed_to_run_and_opens() {
+    let call = |kind: &str, state: &str| {
+        let tool = json!({ "name": "Bash", "state": state, "summary": "cat missing.txt", "hasDetail": true,
+            "kind": kind });
+        serde_json::from_value::<ToolPayload>(tool).unwrap()
+    };
+    let failed = call("execute", "failed");
+    assert_eq!(
+        line_words(&failed, false),
+        (
+            "Failed to run".to_string(),
+            Some("cat missing.txt".to_string())
+        )
+    );
+    assert!(failed_run(&failed, false));
+    // A denied run didn't run; a run that worked, or a failed edit, keeps its own word and stays shut.
+    assert_eq!(line_words(&failed, true).0, "Ran");
+    assert!(!failed_run(&failed, true));
+    assert_eq!(line_words(&call("execute", "completed"), false).0, "Ran");
+    assert!(!failed_run(&call("execute", "completed"), false));
+    assert_eq!(line_words(&call("edit", "failed"), false).0, "Edited");
+    assert!(!failed_run(&call("edit", "failed"), false));
 }

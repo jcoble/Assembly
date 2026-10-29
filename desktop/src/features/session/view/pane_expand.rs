@@ -2,7 +2,7 @@
 //! item key, kept by the pane so a row scrolled away and back is as it was left. Each draw hands it its title and body
 //! as they are now, so a late detail or more thinking grows it on the same curve. A click opens or shuts it, and the
 //! pane keeps `Kept::open` in step, reading an opened tool call's detail; on each frame its height changes the
-//! timeline measures its row again, so the rows below slide with it.
+//! timeline measures its row again, so the rows below slide with it. A failed run opens to its output by itself.
 
 use gpui_kit::*;
 
@@ -14,7 +14,7 @@ use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::view::ask_row::AskRow;
 use crate::features::session::view::grow::band;
 use crate::features::session::view::item_row::{thinking_body, thinking_title};
-use crate::features::session::view::tool_row::ToolRow;
+use crate::features::session::view::tool_row::{ToolRow, failed_run};
 
 type Title = Box<dyn Fn(f32, &mut Window, &mut App) -> AnyElement>;
 type Body = Box<dyn Fn(&mut Window, &mut App) -> AnyElement>;
@@ -29,6 +29,7 @@ impl SessionPane {
         took_ms: Option<i64>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        let mut fails = false;
         let (open, title, body): (bool, Title, Body) = match &item.kind {
             ItemKind::Tool { item_id, tool } => {
                 let row = ToolRow {
@@ -39,6 +40,7 @@ impl SessionPane {
                     denied: denied(&self.view.items).contains(item_id.as_str()),
                     on_action: self.on_action.clone(),
                 };
+                fails = took_ms.is_none() && failed_run(tool, row.denied);
                 if !tool.has_detail {
                     return Some(row.line(None, cx).into_any_element());
                 }
@@ -95,6 +97,15 @@ impl SessionPane {
                 row
             }
         };
+        // A failed run opens to its output the first time the timeline draws it failed, as the mock's; shut by hand, it
+        // stays shut.
+        if fails && !self.kept.contains_key(&item.key) {
+            self.kept.entry(item.key.clone()).or_default().open = true;
+            row.update(cx, |row, cx| row.set_open(true, false, cx));
+            if let Some(at) = self.view.items.iter().position(|it| it.key == item.key) {
+                self.read_detail_if_stale(at, cx);
+            }
+        }
         // A question answered since it was last drawn open shrinks shut, whether the answer came live or on a page
         // loaded after a reconnect; one opened again by hand after that stays open.
         if let ItemKind::Ask { ask, .. } = &item.kind {
