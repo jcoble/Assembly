@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Acp.V1;
 using Assembly.Application.Common.Database;
 
 using Assembly.Application.Features.Chat.Rows;
@@ -254,13 +255,58 @@ public sealed class SessionStore
         var sessions = _db.Query(
             $"""
             SELECT {Columns} FROM session_info
-            WHERE (updated_at < $before OR (updated_at = $before AND session_id < $id)) AND parent_session_id IS NULL
+            WHERE (updated_at < $before OR (updated_at = $before AND session_id < $id)) AND (parent_session_id IS NULL OR helper = 1)
               AND ($settled IS NULL OR (settled_at IS NOT NULL) = $settled)
             ORDER BY updated_at DESC, session_id DESC LIMIT $limit;
             """,
             ReadSession, cancel, Args([("$before", before ?? long.MaxValue), ("$id", beforeId ?? ""), ("$limit", limit),
                 ("$settled", settled is { } wanted ? (wanted ? 1 : 0) : null)]));
         return sessions.Count == limit ? new SessionPage(sessions, sessions[^1].UpdatedAt, sessions[^1].SessionId) : new SessionPage(sessions, null, null);
+    }
+
+    /// <summary>
+    /// The rail's read (see <see cref="SessionsFeature.RailArgs"/>), in one statement: the totals, the providers, the
+    /// session page, each a part of <see cref="Chat.Schema.Rail"/>'s rows.
+    /// </summary>
+    internal SessionsFeature.Rail Rail(SessionsFeature.RailArgs args, CancellationToken cancel = default)
+    {
+        string? Json(IReadOnlyList<string>? values) =>
+            values is { Count: > 0 } ? JsonSerializer.Serialize(values, SessionsJson.Default.IReadOnlyListString) : null;
+        var groupBy = args.GroupBy ?? new SessionsFeature.RailGroupBy(false, true);
+        var parts = _db.Query(Chat.Schema.Rail, row => (Part: row.Long(0), N: (int)row.Long(1), Row: ReadRail(row)), cancel,
+            new SqlArg("$providers", Json(args.Providers)), new SqlArg("$locations", Json(args.Locations)),
+            new SqlArg("$statuses", Json(args.Statuses)), new SqlArg("$status_group", groupBy.Status ? 1 : 0),
+            new SqlArg("$project_group", groupBy.Project ? 1 : 0), new SqlArg("$sort", args.Sort), new SqlArg("$dir", args.Dir),
+            new SqlArg("$folded", Json(args.Folded)), new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()),
+            new SqlArg("$limit", args.Limit), new SqlArg("$after_section", args.After?.Section),
+            new SqlArg("$after_group", args.After?.Group), new SqlArg("$after_repo", args.After?.RepoUrl),
+            new SqlArg("$after_header", args.After?.Header), new SqlArg("$after_ordering", args.After?.Ordering),
+            new SqlArg("$anchor", args.Anchor), new SqlArg("$above", args.Above));
+        // The entries before each page, from its first row's place in the whole list.
+        int Start(long part) => parts.FirstOrDefault(row => row.Part == part) is { Row: not null } first ? first.N - 1 : 0;
+        var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
+        SessionsFeature.RailCursor Cursor(SessionsFeature.RailEntry entry) => new(
+            groupBy.Status ? entry.SectionIndex : 0, groupBy.Project ? entry.Group : "", groupBy.Project ? entry.RepoUrl : "",
+            entry.Header, entry.Ordering);
+        return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
+            sessions, sessions.Count == args.Limit ? Cursor(sessions[^1]) : null, Start(2));
+    }
+
+    // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a session (2).
+    private static object ReadRail(IRow row)
+    {
+        string? Text(int column) => row.IsNull(column) ? null : row.Text(column);
+        long? Long(int column) => row.IsNull(column) ? null : row.Long(column);
+        return row.Long(0) switch
+        {
+            0 => new SessionsFeature.RailTotals((int)row.Long(8)),
+            1 => row.Text(5),
+            _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Text(6), row.Text(7),
+                (int)row.Long(8), Text(9)?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [], Text(10), Text(11), row.Long(12),
+                Long(13), row.Long(14) == 1, row.Long(15) == 1, row.Long(16) == 1, row.Long(17) == 1,
+                Text(18), Long(19), Text(20), Long(21), ProviderGlyph.Of(row.Text(5)), (int)row.Long(22), (int)row.Long(23),
+                row.Text(24), Text(25)),
+        };
     }
 
     /// <summary>
@@ -423,9 +469,13 @@ public sealed class SessionStore
     private void Publish(IWriteScope scope, string sessionId)
     {
         if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", sessionId)) is { } session)
-            // The list holds top-level sessions only; a subagent's is opened from its parent.
+        {
+            // Started sessions belong in the list; a native subagent's is opened from its parent.
             scope.Publish(SessionsFeature.Topic, sessionId, Item(session), SessionsJson.Default.SessionItem,
-                keyedOnly: session.ParentSessionId is not null);
+                keyedOnly: session.ParentSessionId is not null && !session.Helper);
+            // The rail hears every session's change.
+            scope.Publish(SessionsFeature.RailTopic, sessionId, new SessionsFeature.RailChange(sessionId), SessionsJson.Default.RailChange);
+        }
     }
 
     private List<SessionInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>

@@ -1,0 +1,127 @@
+[
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 1,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793176030964,
+    "firstSeq": 1
+  },
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 2,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793176030964,
+    "firstSeq": 2
+  },
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 5,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": "rs_0543dc39ce7cd43f016ae1b1e295448192a3ed5bed985257fa:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Planning minimal hostname execution**",
+      "done": true
+    },
+    "createdAt": 1793176035427,
+    "firstSeq": 3
+  },
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 7,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": "exec-1b5ea4a4-9d0a-4276-be25-6d85037f78b6",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793176035428,
+    "firstSeq": 6
+  },
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 10,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": "context:e2f7e14c-f710-497b-971e-6d046b13b949",
+    "kind": "context",
+    "payload": {
+      "used": 30669,
+      "size": 237500
+    },
+    "createdAt": 1793176036303,
+    "firstSeq": 8
+  },
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 11,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": "msg_0543dc39ce7cd43f016ae1b1e4575481928f40e14bad4341b3",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "Jesses-MacBook-Air.local\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793176036315,
+    "firstSeq": 11
+  },
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 12,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+      "status": "completed",
+      "startedAt": 1793176030964,
+      "durationMs": 5351,
+      "firstTokenMs": 5299,
+      "model": "5.6 Luna",
+      "inputTokens": 30817,
+      "outputTokens": 125,
+      "cacheHitPct": 49.6,
+      "toolCalls": 1,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793176036315,
+    "firstSeq": 12
+  },
+  {
+    "sessionId": "01a2c78e-12b4-4c7a-8b92-8bf5fd6dd1dd",
+    "seq": 13,
+    "runId": "e2f7e14c-f710-497b-971e-6d046b13b949",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793176036315,
+    "firstSeq": 13
+  }
+]

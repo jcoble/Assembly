@@ -36,8 +36,8 @@ internal sealed class SendFeature : IFeature
         calls.Write(Feature, "send", SessionsJson.Default.SendArgs, SessionsJson.Default.Sent, async (args, call) =>
         {
             var session = Session(args.Session);
-            // A helper whose parent is on the machine that reaches this one takes its prompts from there.
-            if (session.ParentSessionId is { } parent && _store.Get(parent) is not null)
+            // Native subagents take prompts only from their parent; started sessions also accept the person's prompts.
+            if (!session.Helper && session.ParentSessionId is { } parent && _store.Get(parent) is not null)
                 throw new CallFailed("a subagent's session takes prompts from its parent only");
             if (args.ClientId is not null && ClientIdError(args.ClientId) is { } bad)
                 throw new CallFailed(bad);
