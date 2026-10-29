@@ -69,6 +69,20 @@ pub fn outcome(ask: &AskPayload) -> String {
     }
 }
 
+/// A settled card's word: "Allowed" or "Denied" for a permission answered with one of its options, else `outcome`.
+pub fn settled(ask: &AskPayload) -> String {
+    let picked = ask
+        .answer
+        .as_ref()
+        .and_then(|answer| answer["optionId"].as_str());
+    let option = picked.and_then(|id| ask.options.iter().find(|it| it.option_id == id));
+    match option.map(|it| it.kind.as_str()) {
+        Some(kind) if kind.starts_with("allow") => "Allowed".to_string(),
+        Some(kind) if kind.starts_with("reject") => "Denied".to_string(),
+        _ => outcome(ask),
+    }
+}
+
 /// What a question asked, for its settled card: each field's label, its hint, and its choices joined ("" for text).
 pub fn asked(ask: &AskPayload) -> Vec<(String, Option<String>, String)> {
     let fields = ask.schema.as_ref().and_then(AskSchema::of);
@@ -155,8 +169,8 @@ impl AskForm {
 }
 
 impl AskRow {
-    /// The 28 px line: a chevron turned `grown` of the way, a mark, the title, and "Needs you" while open; settled,
-    /// what it was answered with and the title.
+    /// Open, the 28 px line: a chevron turned `grown` of the way, a mark, the title, and "Needs you". Settled, a muted
+    /// tool line: a check (a cross if denied or cancelled), what it was answered with, the title, then the chevron.
     pub fn head(&self, grown: f32, cx: &App) -> Div {
         let theme = cx.theme();
         let open = self.ask.state == "open";
@@ -166,42 +180,42 @@ impl AskRow {
             "Question"
         };
         let title = self.ask.title.clone().unwrap_or_else(|| kind.to_string());
-        let (mark, color) = match (open, self.ask.state.as_str()) {
-            (true, _) if self.ask.kind == "permission" => {
-                (Glyph::ShieldQuestionMark, theme.warning)
-            }
-            (true, _) => (Glyph::CircleQuestionMark, theme.warning),
-            (false, "cancelled") => (Glyph::CircleX, theme.muted_foreground),
-            (false, _) => (Glyph::CircleCheck, theme.success),
+        if !open {
+            let word = settled(&self.ask);
+            let crossed = self.ask.state == "cancelled" || word == "Denied";
+            let mark = if crossed {
+                Glyph::CircleX
+            } else {
+                Glyph::CircleCheck
+            };
+            return h_flex()
+                .h(px(22.))
+                .gap_2()
+                .text_size(px(13.))
+                .text_color(theme.muted_foreground)
+                .child(Icon::new(mark).xsmall())
+                .child(div().flex_none().max_w(px(240.)).truncate().child(word))
+                .child(div().min_w_0().truncate().child(title))
+                .child(chevron(grown));
+        }
+        let mark = if self.ask.kind == "permission" {
+            Glyph::ShieldQuestionMark
+        } else {
+            Glyph::CircleQuestionMark
         };
-        let line = h_flex()
+        h_flex()
             .h(px(28.))
             .gap_2()
             .text_sm()
             .child(chevron(grown))
-            .child(Icon::new(mark).xsmall().text_color(color));
-        if open {
-            return line
-                .child(div().flex_1().min_w_0().truncate().child(title))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child("Needs you"),
-                );
-        }
-        line.child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child(outcome(&self.ask))
-                .child(
-                    div()
-                        .text_color(theme.muted_foreground)
-                        .child(format!(" · {title}")),
-                ),
-        )
+            .child(Icon::new(mark).xsmall().text_color(theme.warning))
+            .child(div().flex_1().min_w_0().truncate().child(title))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child("Needs you"),
+            )
     }
 
     /// The message and what answers it, under the title; a settled one's message and fields, with nothing to answer.

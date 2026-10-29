@@ -1,8 +1,13 @@
-//! `Header` is the line above the timeline: the session's title, its agent and machine, and, for a session another
-//! session started, a link to the session that started it (the open session intent, lane g0-host). It follows the
-//! `sessions` topic keyed on the open session. Replaces SessionHeader.svelte.
+//! `Header` is the 48 px line above the timeline, as the approved look's title row: a button that shows and hides the
+//! sessions column, a rule, then "project › Session title", and at the right the agent and machine and, for a session
+//! another session started, a link to the session that started it (the open session intent, lane g0-host). The center
+//! draws no tab row over a lone pane, so this button stands in for the one that row had. It follows the `sessions`
+//! topic keyed on the open session. Replaces SessionHeader.svelte.
 
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::dock::DockPlacement;
+use gpui_kit::component::tooltip::Tooltip;
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -10,6 +15,14 @@ use crate::core::intents::open_session::OpenSession;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
 use crate::core::state::session_item::SessionItem;
+use crate::core::ui::center_panes::CenterPanes;
+
+/// The project a session is in: its folder's or repo's last name ("Assembly" for `https://github.com/me/Assembly`).
+pub fn project(repo_url: &str) -> &str {
+    let url = repo_url.trim_end_matches(['/', '\\']);
+    let url = url.strip_suffix(".git").unwrap_or(url);
+    url.rsplit(['/', '\\']).next().unwrap_or(url)
+}
 
 #[derive(Default)]
 pub struct Header {
@@ -66,25 +79,61 @@ impl Render for Header {
             return div();
         };
         let theme = cx.theme();
+        let (muted, border) = (theme.muted_foreground, theme.border);
         let parent = item.parent_session_id.clone();
+        let sessions = div()
+            .id("toggle-sessions")
+            .size(px(28.))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .rounded(theme.radius)
+            .text_color(theme.foreground.opacity(0.85))
+            .cursor_pointer()
+            .hover(|button| button.bg(theme.secondary_hover))
+            .tooltip(|window, cx| Tooltip::new("Sessions").build(window, cx))
+            .on_click(|_, window, cx| {
+                if let Some(dock) = CenterPanes::dock(cx) {
+                    dock.update(cx, |dock, cx| {
+                        dock.toggle_dock(DockPlacement::Left, window, cx)
+                    });
+                }
+            })
+            .child(Icon::new(IconName::PanelLeft).size(px(14.)));
         div().child(
-            v_flex()
-                .px_4()
-                .py_2()
+            h_flex()
+                .h(px(48.))
+                .gap(px(10.))
+                .px(px(14.))
                 .border_b_1()
-                .border_color(theme.border)
+                .border_color(border)
+                .text_size(px(13.5))
+                .child(sessions)
+                .child(div().flex_none().w_px().h(px(16.)).bg(border))
                 .child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .truncate()
-                        .child(item.title()),
+                    h_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap_1()
+                        .text_color(muted)
+                        .child(div().flex_none().child(project(&item.repo_url).to_string()))
+                        .child(Icon::new(IconName::ChevronRight).size(px(14.)))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_color(theme.foreground)
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(item.title()),
+                        ),
                 )
                 .child(
                     h_flex()
+                        .flex_none()
                         .gap_1()
                         .text_xs()
-                        .text_color(theme.muted_foreground)
+                        .text_color(muted)
                         .child(item.place())
                         .when_some(parent, |line, parent| {
                             line.child("·").child(

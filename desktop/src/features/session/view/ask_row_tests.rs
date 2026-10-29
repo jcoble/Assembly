@@ -1,13 +1,16 @@
 use serde_json::{Value, json};
 
-use super::{asked, outcome};
+use super::{asked, outcome, settled};
 use crate::features::session::rows::ask::AskPayload;
 
 fn ask(state: &str, answer: Option<Value>) -> AskPayload {
     serde_json::from_value(json!({
         "kind": "permission",
         "state": state,
-        "options": [{ "optionId": "allow", "name": "Allow once", "kind": "allow_once" }],
+        "options": [
+            { "optionId": "allow", "name": "Allow once", "kind": "allow_once" },
+            { "optionId": "deny", "name": "No", "kind": "reject_once" },
+        ],
         "answer": answer,
     }))
     .unwrap()
@@ -87,4 +90,16 @@ fn a_settled_question_still_says_what_it_asked() {
         asked(&ask("answered", None)).is_empty(),
         "a permission has no fields"
     );
+}
+
+// Pins: g0-session#16
+#[test]
+fn an_answered_permission_reads_allowed_or_denied() {
+    let allowed = ask("answered", Some(json!({ "optionId": "allow" })));
+    assert_eq!(settled(&allowed), "Allowed");
+    let denied = ask("answered", Some(json!({ "optionId": "deny" })));
+    assert_eq!(settled(&denied), "Denied");
+    assert_eq!(settled(&ask("cancelled", None)), "Cancelled");
+    let skipped = ask("answered", Some(json!({ "action": "decline" })));
+    assert_eq!(settled(&skipped), "Skipped");
 }

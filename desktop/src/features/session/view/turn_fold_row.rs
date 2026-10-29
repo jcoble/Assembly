@@ -47,8 +47,9 @@ impl RenderOnce for TurnFoldRow {
         let on_action = self.on_action.clone();
         h_flex()
             .id(SharedString::from(format!("fold:{run_id}")))
+            .h(px(22.))
             .gap_2()
-            .text_sm()
+            .text_size(px(13.))
             .text_color(cx.theme().muted_foreground)
             .cursor_pointer()
             .on_click(move |_, window, cx| {

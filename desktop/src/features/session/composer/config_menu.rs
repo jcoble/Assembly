@@ -1,8 +1,8 @@
 //! `ConfigMenu` is one of the agent's own menus (model, effort, mode…) from `config/get`, set through `config/set`:
-//! an outlined button in the composer's footer showing the value chosen now, opening upward with a check on that
-//! value. The kit's menu doesn't flip, so it opens upward even in a window too short for it; the composer sits at the
-//! bottom, so there's room above in any usable window. They're read again when a turn ends, since the agent can change
-//! a value itself. Replaces the config selects in Composer.svelte.
+//! an outlined button in the composer's footer showing the menu's name, muted, then the value chosen now, opening
+//! upward with a check on that value. The kit's menu doesn't flip, so it opens upward even in a window too short for
+//! it; the composer sits at the bottom, so there's room above in any usable window. They're read again when a turn
+//! ends, since the agent can change a value itself. Replaces the config selects in Composer.svelte.
 
 use std::rc::Rc;
 
@@ -31,7 +31,7 @@ impl RenderOnce for ConfigMenu {
             .choices
             .iter()
             .find(|(value, _)| *value == self.current)
-            .map_or(self.label.clone(), |(_, name)| name.clone());
+            .map(|(_, name)| name.clone());
         let ConfigMenu {
             config_id,
             label,
@@ -39,13 +39,15 @@ impl RenderOnce for ConfigMenu {
             current,
             on_select,
         } = self;
+        // "Effort  Medium": the menu's name, muted, then the value chosen now.
+        let name = div().text_color(cx.theme().muted_foreground).child(label);
         Button::new(SharedString::from(format!("composer:menu:{config_id}")))
             .outline()
             .small()
             .rounded(cx.theme().radius)
-            .label(shown)
+            .child(name)
+            .children(shown)
             .dropdown_caret(true)
-            .tooltip(label)
             .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
                 choices.iter().fold(menu, |menu, (value, name)| {
                     let (id, value, on_select) =

@@ -1,6 +1,6 @@
 //! `ItemRow` draws one item of the timeline by its kind: a prompt, a reply with its meta line, thinking, a tool, an
-//! ask, a task, a subagent, a note, the line under a turn, an error notice, or a kind it doesn't know by name.
-//! Replaces TimelineItem.svelte and the spike's item_view.rs.
+//! ask, a task, a subagent, a note, the line under a stopped or failed turn, an error notice, or a kind it doesn't
+//! know by name. Replaces TimelineItem.svelte and the spike's item_view.rs.
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -30,6 +30,8 @@ pub struct ItemRow {
     pub session: SharedString,
     /// What the copy button under a prompt or a final reply copies; `None` draws no meta line.
     pub copy: Option<SharedString>,
+    /// A final reply's turn line ("Worked for 42s · Thu 12:02 PM · model · …"), shown in its meta line.
+    pub turn: Option<String>,
     /// "Checkout changed · main@1a2b3c4 → feat@5d6e7f8" above a prompt whose run started elsewhere.
     pub checkout: Option<String>,
     /// What the pane drew for a tool call, thinking or a question: the `ExpandRow` it keeps for it (pane_expand.rs).
@@ -45,12 +47,13 @@ impl RenderOnce for ItemRow {
         let key = self.item.key.clone();
         // Each row its own hover group, so its copy button and time show only under the pointer.
         let group = SharedString::from(format!("{key}:meta"));
-        let meta = |at: i64, copy: Option<SharedString>| {
+        let meta = |at: i64, copy: Option<SharedString>, turn: Option<String>| {
             copy.map(|copy| MessageMeta {
                 key: key.clone(),
                 group: group.clone(),
                 copy,
                 at,
+                turn,
                 now: self.now,
             })
         };
@@ -75,7 +78,7 @@ impl RenderOnce for ItemRow {
                         open: self.kept.open,
                         on_action: self.on_action.clone(),
                     })
-                    .children(meta(at, self.copy.clone()))
+                    .children(meta(at, self.copy.clone(), None))
                     .into_any_element()
             }
             ItemKind::Message { blocks, at, .. } => v_flex()
@@ -85,7 +88,7 @@ impl RenderOnce for ItemRow {
                     blocks,
                     session: self.session.clone(),
                 })
-                .children(meta(at, self.copy.clone()))
+                .children(meta(at, self.copy.clone(), self.turn.clone()))
                 .into_any_element(),
             ItemKind::Thinking { .. } | ItemKind::Tool { .. } | ItemKind::Ask { .. } => {
                 self.expand.unwrap_or_else(|| div().into_any_element())
@@ -126,6 +129,8 @@ impl RenderOnce for ItemRow {
                 .text_color(muted)
                 .child(text)
                 .into_any_element(),
+            // A completed turn's line shows on hover under its final reply instead; Stopped and Failed stay shown.
+            ItemKind::Stats { stats } if stats.status == "completed" => div().into_any_element(),
             ItemKind::Stats { stats } => v_flex()
                 .text_xs()
                 .text_color(muted)
@@ -143,7 +148,6 @@ impl RenderOnce for ItemRow {
             .max_w(CHAT_COLUMN)
             .mx_auto()
             .px_4()
-            .py_1()
             // The reading style, 14 on 22; a line that sets its own size keeps the same proportion.
             .text_size(px(14.))
             .line_height(relative(22. / 14.))
@@ -154,8 +158,9 @@ impl RenderOnce for ItemRow {
 /// Thinking's line: "Thinking" until it's done, then "Thought", and a chevron after it turned `grown` of the way.
 pub fn thinking_title(done: bool, grown: f32, cx: &App) -> AnyElement {
     h_flex()
+        .h(px(22.))
         .gap_2()
-        .text_sm()
+        .text_size(px(13.))
         .text_color(cx.theme().muted_foreground)
         .child(if done { "Thought" } else { "Thinking" })
         .child(chevron(grown))

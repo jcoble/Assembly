@@ -10,7 +10,7 @@ use crate::features::session::model::activity;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::markdown_text::markdown_of;
-use crate::features::session::model::turn_line::checkout_line;
+use crate::features::session::model::turn_line::{checkout_line, turn_line};
 use crate::features::session::view::activity_card::ActivityCard;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::{CHAT_COLUMN, ItemRow};
@@ -59,6 +59,7 @@ impl SessionPane {
                     kept: self.kept.get(&item.key).cloned().unwrap_or_default(),
                     session: self.session.clone().unwrap_or_default().into(),
                     copy: self.copy_text(item),
+                    turn: self.turn_of(item, now),
                     checkout: self.checkout(item),
                     expand,
                     now,
@@ -72,7 +73,6 @@ impl SessionPane {
                     .max_w(CHAT_COLUMN)
                     .mx_auto()
                     .px_4()
-                    .py_1()
                     .child(TurnFoldRow {
                         fold: fold.clone(),
                         // Where it's going: a fold shutting is still on the list until it's done.
@@ -125,17 +125,61 @@ impl SessionPane {
         }
     }
 
-    /// A prompt copies its text; a finished turn's final reply copies its markdown. Others have no meta line.
+    /// The space under a row: 8 between a turn's steps, 14 after a reply or a card, 24 after a turn's line. A row
+    /// with a meta line (a prompt, a final reply) has that line, shown on hover, as its space.
+    pub(super) fn space_under(&self, entry: &Entry) -> Pixels {
+        let item = match entry {
+            Entry::Item(at) => &self.view.items[*at],
+            Entry::FoldHeading { run_id, .. } => {
+                let open = self
+                    .kept
+                    .get(&format!("fold:{run_id}"))
+                    .is_some_and(|kept| kept.open);
+                return px(if open { 8. } else { 14. });
+            }
+            Entry::Loading => return px(8.),
+            Entry::Working => return px(14.),
+        };
+        if self.has_meta(item) {
+            return px(0.);
+        }
+        px(match &item.kind {
+            ItemKind::Tool { .. } | ItemKind::Thinking { .. } | ItemKind::Other { .. } => 8.,
+            ItemKind::Stats { stats } if stats.status == "completed" => 0.,
+            ItemKind::Stats { .. } => 24.,
+            _ => 14.,
+        })
+    }
+
+    /// A prompt and a finished turn's final reply have a meta line; other rows don't.
+    fn has_meta(&self, item: &Item) -> bool {
+        match &item.kind {
+            ItemKind::User { .. } => true,
+            ItemKind::Message { done, .. } => {
+                let fold = item.run_id.as_ref().and_then(|run| self.folds.get(run));
+                *done && fold.is_some_and(|fold| fold.reply.as_ref() == Some(&item.key))
+            }
+            _ => false,
+        }
+    }
+
+    /// A prompt copies its text; a finished turn's final reply copies its markdown.
     fn copy_text(&self, item: &Item) -> Option<SharedString> {
         match &item.kind {
+            _ if !self.has_meta(item) => None,
             ItemKind::User { text, .. } => Some(text.clone().into()),
-            ItemKind::Message { blocks, done, .. } => {
-                let fold = item.run_id.as_ref().and_then(|run| self.folds.get(run));
-                let last = fold.is_some_and(|fold| fold.reply.as_ref() == Some(&item.key));
-                (*done && last).then(|| markdown_of(blocks).into())
-            }
+            ItemKind::Message { blocks, .. } => Some(markdown_of(blocks).into()),
             _ => None,
         }
+    }
+
+    /// A reply's completed turn's line, for its meta line; the turn's own row then draws nothing.
+    fn turn_of(&self, item: &Item, now: i64) -> Option<String> {
+        if !matches!(item.kind, ItemKind::Message { .. }) {
+            return None;
+        }
+        let stats = self.view.stats.get(item.run_id.as_ref()?)?;
+        (stats.status == "completed").then(|| turn_line(Some(stats), None, now))
     }
 
     fn checkout(&self, item: &Item) -> Option<String> {
@@ -156,7 +200,6 @@ fn line(text: impl Into<SharedString>, color: Hsla) -> AnyElement {
         .max_w(CHAT_COLUMN)
         .mx_auto()
         .px_4()
-        .py_1()
         .text_xs()
         .text_color(color)
         .child(text.into())

@@ -1,8 +1,8 @@
-//! `StepRow` is one step on a 28 px line, muted: its sign (a spinner while it runs, then its kind's icon, or a check or
-//! a cross once done, a still dot for one left unfinished), its title and summary, the chevron after them for a step
-//! that opens, and how long it ran at the end. A failed step reads in the danger colour. The running step's title
-//! shimmers. A tool call's line is one, in the timeline and in a running turn's activity card; a workflow run's steps
-//! can be drawn with it too. Section 11's StepRow.
+//! `StepRow` is one step on a 22 px line at 13 px, muted: its sign (a spinner while it runs, then its kind's icon, or
+//! a check or a cross once done, a still dot for one left unfinished), its title and summary (in the code face), the
+//! chevron after them for a step that opens, and how long it ran at the end. A failed step reads in the danger colour.
+//! The running step's title shimmers. A tool call's line is one, in the timeline and in a running turn's activity
+//! card; a workflow run's steps can be drawn with it too. Section 11's StepRow.
 
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::shimmer::ShimmerText;
@@ -69,9 +69,9 @@ impl RenderOnce for StepRow {
         };
         h_flex()
             .id(self.id)
-            .h(px(28.))
+            .h(px(22.))
             .gap_2()
-            .text_sm()
+            .text_size(px(13.))
             .text_color(if failed { theme.danger } else { muted })
             .child(sign)
             .child(div().flex_none().child(title))
@@ -79,6 +79,8 @@ impl RenderOnce for StepRow {
                 div()
                     .min_w_0()
                     .truncate()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_size(px(12.))
                     .child(self.summary.unwrap_or_default()),
             )
             .children(self.tags)
