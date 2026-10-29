@@ -380,6 +380,9 @@ Save screenshots as ~/Workbox/screenshots/TSK-<id>-<what>-<before|after>.png and
 
 ## Plans and docs
 
+- Read the Notion page "Assembly plan and decisions"
+  (https://app.notion.com/p/408394b0689d81b599fbe74c704a5986) before starting work: the order of work, Jesse's
+  decisions in his own words, and the open questions. Never remove or reword his decisions there.
 - Tasks live in Notion. For Notion-tracked work, follow `.claude/skills/work-tasks/SKILL.md` (also
   `.codex/skills/work-tasks`): the plan, dated updates, proof and review go on the task page; the PR links the task
   and its proof.
