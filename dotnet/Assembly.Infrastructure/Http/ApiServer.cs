@@ -44,7 +44,7 @@ public static class ApiServer
         new AttachmentRoutes(services.SessionStore, services.Machines, services.Attachments).Map(app);
         new ConfigRoutes(services.SessionStore, services.Machines).Map(app);
         if (services.Helpers is not null)
-            new McpRoutes(services.Helpers).Map(app);
+            new McpRoutes(services.Helpers, services.Board).Map(app);
         app.Map("/live", context =>
         {
             if (services.SessionStore.Get(context.Request.Query["session"].ToString()) is { } session)

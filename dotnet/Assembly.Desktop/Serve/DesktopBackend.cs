@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Assembly.Application.Features.Workflows;
+using Assembly.Infrastructure.Workflows;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -39,6 +42,11 @@ namespace Assembly.Desktop.Serve;
 public sealed class DesktopBackend : IAsyncDisposable
 {
     private readonly AppDatabase _db;
+    private readonly BoardTools _board;
+    private readonly CancellationTokenSource _hostStop;
+    private readonly RemoteWorkflowMirror? _boardMirror;
+    private readonly Topics _topics;
+    private readonly Topics.Subscription? _boardMachines;
     private readonly LiveHub _hub;
     private readonly SessionRegistry _sessions;
     private readonly BackgroundWork _work;
@@ -51,10 +59,15 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly TerminalHost _terminals;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteMachine? remote,
-        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals)
+        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop)
     {
         _homeLock = homeLock;
         _terminals = terminals;
+        _board = board;
+        _hostStop = hostStop;
+        _boardMirror = boardMirror;
+        _topics = topics;
+        _boardMachines = boardMachines;
         _machinesFeature = machinesFeature;
         _remote = remote;
         _outbox = outbox;
@@ -105,6 +118,10 @@ public sealed class DesktopBackend : IAsyncDisposable
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
+        WorkflowSchema.Open(db);
+        var boardQueries = new WorkflowQueries(db, remote?.Name);
+        var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
+        boardTransitions.Recover();
         // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
         // before the API starts, so no session makes a checkout in sessions/ first.
         var checkouts = Path.Combine(home, "sessions");
@@ -138,6 +155,11 @@ public sealed class DesktopBackend : IAsyncDisposable
             ? new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments))
             : new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments), remoteMachine);
         sessions.Helpers.Delivery.Machines = machines;
+        var hostStop = new CancellationTokenSource();
+        var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
+        var boardMirror = remote is null ? null : new RemoteWorkflowMirror(remote, boardQueries, boardTransitions,
+            () => status.Unreachable(remote.Name, "Board connection closed"));
+        var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
         if (tunnel is not null && remote is not null)
             tunnel.Exited += () => status.Unreachable(remote.Name, "ssh tunnel exited");
         var outbox = remoteMachine is null ? null : new RemoteOutbox(remoteMachine, sessionStore, hub, machines.Named(null)!, log);
@@ -154,9 +176,20 @@ public sealed class DesktopBackend : IAsyncDisposable
         var clock = new BackendClock(topics, TimeProvider.System, work);
         var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, () => tunnel?.TryNow());
         clock.Ticked += machinesFeature.Tick;
+        var boardMachines = boardMirror is null ? null : topics.Subscribe("machines", null, _ =>
+        {
+            foreach (var item in status.Items)
+                if (item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
+            clock.Start();
+        }, (_, json) =>
+        {
+            var item = JsonSerializer.Deserialize(json, SessionsJson.Default.MachineItem)!;
+            if (item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
+        });
+        boardMirror?.Reconnect();
         var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [new TerminalFeature(terminals), new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+            [new TerminalFeature(terminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new FilesFeature(sessionStore),
@@ -166,15 +199,16 @@ public sealed class DesktopBackend : IAsyncDisposable
                 {
                     hub.CloseSubscriptions();
                     dropSockets();
-                })]), port, out dropSockets, routes =>
+                })], board), port, out dropSockets, routes =>
         {
             MachineFeatureList.Add(routes, new FeatureContext(db));
             DesktopFeatureList.Add(routes, new FeatureContext(db));
             new DebugRoutes(hub).Map(routes);
             page.Map(routes);
         });
+        app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
         await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature, terminals);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -199,8 +233,13 @@ public sealed class DesktopBackend : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await _hostStop.CancelAsync();
         await _app.StopAsync();
         await _app.DisposeAsync();
+        if (_boardMachines is not null) _topics.Unsubscribe(_boardMachines);
+        if (_boardMirror is not null) await _boardMirror.DisposeAsync();
+        await _board.DisposeAsync();
+        _hostStop.Dispose();
         // Before the remote, so no probe is still out on it.
         await _machinesFeature.DisposeAsync();
         if (_outbox is not null)

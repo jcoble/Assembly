@@ -6,6 +6,30 @@ namespace Assembly.Application.Features.Chat.Sessions;
 // SessionHost, continued: the session's config choices.
 public sealed partial class SessionHost
 {
+    /// <summary>Starts its own turn once the running turn ends, without steering it.</summary>
+    public async Task<string?> SendAfterTurnAsync(string text, string? clientId, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RunningTurn? turn;
+            lock (_gate)
+            {
+                if (clientId is not null && _hub.UserRowOfClient(_sessionId, clientId) is { } row)
+                {
+                    SameText(clientId, row.Text, text);
+                    return row.RunId;
+                }
+                turn = _turn;
+                // Send records the client id under this lock before any other waiter can send it.
+                if (turn is null && Send(text, clientId) is { } runId)
+                    return runId;
+            }
+            if (turn is not null)
+                await turn.Done.WaitAsync(cancellationToken);
+        }
+    }
+
     /// <summary>
     /// Chooses <paramref name="value"/> for <paramref name="configId"/> in every ACP session the session opens from now on.
     /// An open session gets it first, and it's stored only once that agent takes it: a cancel stores nothing, a refusal fails.
