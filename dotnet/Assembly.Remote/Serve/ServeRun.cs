@@ -15,6 +15,8 @@ using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
+using Assembly.Application.Features.Terminal;
+using Assembly.Infrastructure.Terminal;
 
 namespace Assembly.Remote.Serve;
 
@@ -56,7 +58,9 @@ public static class ServeRun
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics), options.Port, out _,
+        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
+            AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new TerminalFeature(terminals)]), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

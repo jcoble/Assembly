@@ -6,7 +6,7 @@ using Assembly.Infrastructure.Git;
 
 namespace Assembly.Infrastructure.Chat.SourceControl;
 
-/// <summary>Reads a session's git status and file diffs over the socket from its local folder.</summary>
+/// <summary>Reads a session's git status, file diffs and branch diff over the socket from its local folder.</summary>
 internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
 {
     public void Register(ICallRegistry calls)
@@ -22,16 +22,19 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
             var originalPath = args.OriginalPath is null ? null : Path.GetRelativePath(root, SessionPaths.Resolve(root, args.OriginalPath));
             return await new GitDiffReader(new GitCli()).ReadAsync(root, path, originalPath, call.Cancellation);
         });
+        calls.Read("git", "branchDiff", SourceControlJson.Default.Args, SourceControlJson.Default.GitBranchDiff, async (args, call) =>
+            await new GitBranchDiffReader(new GitCli()).ReadAsync(SessionPaths.RootOf(sessions, args.Session), call.Cancellation));
     }
 
     internal sealed record DiffArgs([property: JsonRequired] string Session, [property: JsonRequired] string Path, string? OriginalPath);
     internal sealed record Args([property: JsonRequired] string Session);
 }
 
-/// <summary>The arguments and answers for the session's git status and diff reads.</summary>
+/// <summary>The arguments and answers for the session's git status, file diff and branch diff reads.</summary>
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(SourceControlFeature.Args))]
 [JsonSerializable(typeof(GitStatus))]
 [JsonSerializable(typeof(SourceControlFeature.DiffArgs))]
 [JsonSerializable(typeof(GitFileDiff))]
+[JsonSerializable(typeof(GitBranchDiff))]
 internal sealed partial class SourceControlJson : JsonSerializerContext;

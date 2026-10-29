@@ -1,6 +1,6 @@
 //! `lines_of` turns a `git diff` text into the Changes tab's lines: each with its old and new line numbers and whether
 //! it was added, removed or kept (scm#15). Git's header lines before the first run are left out, except the ones that
-//! say what happened to the file (a rename, a new or deleted file). A conflict's combined diff (`@@@`) has no numbers
+//! say what happened to the file (a rename, a new or deleted file, a binary change). A conflict's combined diff (`@@@`) has no numbers
 //! and is shown as git prints it (scm#16). Replaces the old app's parseUnifiedDiff.ts.
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,7 +24,8 @@ pub struct DiffLine {
 }
 
 /// The header lines worth keeping: what happened to the file.
-const NOTES: [&str; 8] = [
+const NOTES: [&str; 9] = [
+    "Binary files",
     "old mode",
     "new mode",
     "rename from",

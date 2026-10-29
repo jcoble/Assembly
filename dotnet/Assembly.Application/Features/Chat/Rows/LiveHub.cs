@@ -1,7 +1,9 @@
+using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Domain.Rows;
 using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat;
+using Assembly.Application.Features.Chat.Sessions;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -192,6 +194,11 @@ public sealed class LiveHub : IDisposable
                 if (!rows.All(subscriber.Queue.Writer.TryWrite))
                     Close(subscriber, new LiveFellBehind());
             }
+        // Every committed row that can move a session between the rail's tabs, change which ask it shows or its
+        // branch tells the rail, whether or not the summary changed: the open ask it shows can change while one stays open.
+        if (_topics is not null && rows.Any(row => row.Kind is RowKind.Turn or RowKind.Ask or RowKind.Task or RowKind.Subagent or RowKind.Stats))
+            _topics.Publish(SessionsFeature.RailTopic, sessionId,
+                JsonSerializer.Serialize(new SessionsFeature.RailChange(sessionId), SessionsJson.Default.RailChange));
         // Last, so the rows have gone out whatever the item's write does. Only a row that changes the session's
         // summary sends its list item again, never one per row.
         if (_summaries?.Apply(sessionId, rows) == true)

@@ -1,10 +1,14 @@
 // The sessions list's groups (docs/behavior/sessions-list.md) over the socket, as the window's row menu uses them:
 // sessions/mark moves the case's session to Done, Settled and back to Working, and each move reaches the keyed
-// sessions topic with its stamps. It ends with the session back in Working, where it started. On the remote, Connect
+// sessions topic with its stamps. It ends with the session back in Working, where it started. The rail
+// (sessions/rail) lists it under its provider, location and lifecycle, including while it is Settled,
+// and the sessionRail topic names it when it moves. A session of the scenario's own, started while it watches the
+// rail, has its Running flag while its one turn runs and not once it has ended. On the remote, Connect
 // (machines/connect) reaches it and answers it reachable; on this machine, there's nothing to connect to. node
-// scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN and CHECK4_SESSION set (scripts/features/README.md).
+// scripts/features/sessions-list.ts, with CHECK4_API, CHECK4_TOKEN, CHECK4_SESSION and CHECK4_REPO set (scripts/features/README.md).
 // The token goes in the hello frame, never in argv or output.
-const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine } = process.env;
+const { CHECK4_API: api, CHECK4_TOKEN: token, CHECK4_SESSION: session, CHECK4_MACHINE: machine, CHECK4_AGENT: agent } =
+  process.env;
 
 type Item = { sessionId: string; completedAt: number | null; settledAt: number | null };
 type Frame = { t: string; id?: number; sub?: number; message?: string; items?: { key: string; item: Item }[]; item?: Item; result?: unknown };
@@ -17,9 +21,18 @@ function fail(step: string, why: string): never {
 
 const socket = new WebSocket(`${api!.replace(/^http/, 'ws')}/socket`);
 const frames: Frame[] = [];
+/** Whether the sessionRail topic (sub 2) has named `watched` since the last `railChange`, and who waits for it. */
+let watched = session;
+let railNamed = false;
+let railHeard: (() => void) | undefined;
 let next: (() => void) | undefined;
 socket.onmessage = (event) => {
-  frames.push(JSON.parse(String(event.data)));
+  const got = JSON.parse(String(event.data)) as Frame & { key?: string };
+  if (got.sub === 2 && got.t === 'change' && got.key === watched) {
+    railNamed = true;
+    railHeard?.();
+  }
+  frames.push(got);
   next?.();
 };
 /** The next frame `wanted` takes, within `ms`; frames it doesn't take are dropped. */
@@ -72,6 +85,50 @@ async function page(group: string, step: string): Promise<string[]> {
   return result.sessions.map((item) => item.sessionId);
 }
 
+type RailEntry = { sessionId: string; kind: string; section: string; running: boolean; needsYou: boolean };
+type Rail = { totals: { needs: number }; sessions: RailEntry[] };
+/** The case's provider and location in the flat rail. */
+async function rail(step: string): Promise<Rail> {
+  const id = ++ids;
+  const locations = [machine === 'local' ? 'local' : 'remote'];
+  const args = {
+    providers: [agent], locations, statuses: [], groupBy: { status: false, project: false },
+    sort: 'recent', dir: 'desc', folded: [], limit: 200,
+  };
+  socket.send(JSON.stringify({ t: 'call', id, feature: 'sessions', method: 'rail', args }));
+  const answer = await frame((got) => got.id === id && (got.t === 'result' || got.t === 'error'), 10_000, step);
+  if (answer.t !== 'result') fail(step, `it failed: ${answer.message ?? JSON.stringify(answer)}`);
+  return answer.result as Rail;
+}
+const entry = (page: Rail, id = session) => page.sessions.find((item) => item.kind === 'session' && item.sessionId === id);
+const listed = (page: Rail, id = session) => !!entry(page, id);
+
+/** Waits for sessionRail to name `watched`, at once if it has since the last wait, within `ms`. */
+function railChange(step: string, ms: number) {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      console.log(`fail ${step}: sessionRail didn't name the session within ${Math.round(ms / 1000)} s`);
+      process.exit(1);
+    }, Math.max(ms, 0));
+    railHeard = () => {
+      if (!railNamed) return;
+      railNamed = false;
+      railHeard = undefined;
+      clearTimeout(timer);
+      resolve();
+    };
+    railHeard();
+  });
+}
+/** Reads again at each sessionRail change naming the session until `holds` takes the page, within `ms`. */
+async function untilRail(step: string, ms: number, holds: (page: Rail) => boolean) {
+  const end = Date.now() + ms;
+  while (!holds(await rail(step))) {
+    if (Date.now() >= end) fail(step, `the rail didn't show it within ${Math.round(ms / 1000)} s`);
+    await railChange(step, end - Date.now());
+  }
+}
+
 async function main() {
   await new Promise((resolve, reject) => {
     socket.onopen = resolve;
@@ -88,21 +145,38 @@ async function main() {
     fail('a new session is in Working', `it has ${JSON.stringify([first.completedAt, first.settledAt])}`);
   console.log('ok a new session is in Working');
 
+  socket.send(JSON.stringify({ t: 'sub', id: 2, topic: 'sessionRail' }));
+  await frame((got) => got.sub === 2 && got.t === 'state', 10_000, 'sessionRail sends its state');
+  let step = 'the rail lists the session under its provider and location';
+  const all = await rail(step);
+  if (!listed(all)) fail(step, "the rail doesn't have it");
+  console.log(`ok ${step}`);
+  railNamed = false;
+
   const done = await mark('done', (item) => item.completedAt !== null, 'Mark done stamps completedAt');
   if (done.settledAt !== null) fail('Mark done leaves it unsettled', `settledAt is ${done.settledAt}`);
   console.log('ok Mark done stamps completedAt');
+  await railChange('sessionRail names the session when it moves', 5_000);
+  console.log('ok sessionRail names the session when it moves');
 
   const settled = await mark('settled', (item) => item.settledAt !== null, 'Settle stamps settledAt');
   if (settled.completedAt !== done.completedAt) fail('Settle keeps the done time', `it moved to ${settled.completedAt}`);
   console.log('ok Settle stamps settledAt and keeps the done time');
 
-  const step = 'a settled session pages with Settled, not with the open ones';
+  step = 'a settled session pages with Settled, not with the open ones';
   if (!(await page('settled', step)).includes(session)) fail(step, "Settled's page doesn't have it");
   if ((await page('open', step)).includes(session)) fail(step, 'the open page still has it');
+  console.log(`ok ${step}`);
+  step = 'a settled session stays in the rail under Settled';
+  const settledRail = await rail(step);
+  if (entry(settledRail)?.section !== 'settled') fail(step, "the rail doesn't list it as Settled");
   console.log(`ok ${step}`);
 
   await mark('working', (item) => item.completedAt === null && item.settledAt === null, 'Back to working clears both stamps');
   console.log('ok Back to working clears both stamps');
+  step = 'back in Working, it is in the rail again';
+  if (!listed(await rail(step))) fail(step, "the rail doesn't have it");
+  console.log(`ok ${step}`);
 
   const connect = machine === 'local' ? 'Connect has no remote to reach here' : 'Connect reaches the remote';
   const id = ++ids;
@@ -114,6 +188,26 @@ async function main() {
     fail(connect, JSON.stringify(answer));
   }
   console.log(`ok ${connect}`);
+
+  // The case's turn started before this scenario could watch the rail, so a session of its own takes one turn.
+  step = "while its own session's turn runs, Running lists and counts it";
+  const created = ++ids;
+  const where = machine === 'local' ? null : machine;
+  const args = { agent, repoUrl: process.env.CHECK4_REPO, machine: where, parentSessionId: null, title: null };
+  socket.send(JSON.stringify({ t: 'call', id: created, feature: 'sessions', method: 'create', args }));
+  const made = await frame((got) => got.id === created && (got.t === 'result' || got.t === 'error'), 30_000, step);
+  if (made.t !== 'result') fail(step, `it wasn't created: ${made.message ?? JSON.stringify(made)}`);
+  const own = (made.result as { sessionId: string }).sessionId;
+  [watched, railNamed] = [own, false];
+  const sent = ++ids;
+  socket.send(JSON.stringify({ t: 'call', id: sent, feature: 'send', method: 'send', args: { session: own, text: 'Reply with only the word ok.' } }));
+  const started = await frame((got) => got.id === sent && (got.t === 'result' || got.t === 'error'), 30_000, step);
+  if (started.t !== 'result') fail(step, `the turn didn't start: ${started.message ?? JSON.stringify(started)}`);
+  await untilRail(step, 60_000, (page) => entry(page, own)?.running === true);
+  console.log(`ok ${step}`);
+  step = 'once that turn has ended, Running no longer lists it';
+  await untilRail(step, 180_000, (page) => entry(page, own)?.running === false);
+  console.log(`ok ${step}`);
 }
 
 main()

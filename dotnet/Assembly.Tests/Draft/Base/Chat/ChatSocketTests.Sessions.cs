@@ -129,9 +129,9 @@ public sealed partial class ChatSocketTests
         Assert.Contains("\"title\":\"Café's\"", await ReadAsync(socket));
     }
 
-    // The list's state has no helpers, so its changes don't either; a helper's own sub still gets them.
+    // Pins: sessions-list#6. Started sessions publish to the list and still reach their own subscription.
     [Fact]
-    public async Task A_helpers_changes_go_only_to_its_own_sub()
+    public async Task A_started_sessions_changes_go_to_the_list_and_its_own_sub()
     {
         var parent = _sessions.Create("claude", "repo");
         using var list = await OpenAsync();
@@ -139,6 +139,8 @@ public sealed partial class ChatSocketTests
         await ReadAsync(list);
 
         var helper = _sessions.Helper(parent, "claude", "Helper");
+        using var created = JsonDocument.Parse(await ReadAsync(list));
+        Assert.Equal(helper.SessionId, created.RootElement.GetProperty("key").GetString());
         using var own = await OpenAsync();
         await SendAsync(own, $$"""{"t":"sub","id":1,"topic":"sessions","key":"{{helper.SessionId}}"}""");
         await ReadAsync(own);
@@ -147,7 +149,10 @@ public sealed partial class ChatSocketTests
 
         Assert.Contains("\"title\":\"Renamed\"", await ReadAsync(own));
         using var change = JsonDocument.Parse(await ReadAsync(list));
-        Assert.Equal(parent.SessionId, change.RootElement.GetProperty("key").GetString());
+        Assert.Equal(helper.SessionId, change.RootElement.GetProperty("key").GetString());
+        Assert.Contains("\"title\":\"Renamed\"", change.RootElement.GetRawText());
+        using var parentChange = JsonDocument.Parse(await ReadAsync(list));
+        Assert.Equal(parent.SessionId, parentChange.RootElement.GetProperty("key").GetString());
     }
 
     // Copied databases give sessions the same time; a page break between them loses neither.
@@ -212,7 +217,7 @@ public sealed partial class ChatSocketTests
         var untitled = _sessions.Get(Result(await ReadAsync(socket)).GetProperty("sessionId").GetString()!)!;
 
         Assert.Equal((parent.SessionId, true, "Look"), (titled.ParentSessionId, titled.Helper, titled.Title));
-        Assert.Equal((parent.SessionId, true, "Helper"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
+        Assert.Equal((parent.SessionId, true, "Session"), (untitled.ParentSessionId, untitled.Helper, untitled.Title));
         Assert.Equal(["agents", "helper", "agents", "helper"], _here.Asked);
     }
 }
