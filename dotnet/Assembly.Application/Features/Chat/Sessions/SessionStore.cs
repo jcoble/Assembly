@@ -255,7 +255,7 @@ public sealed class SessionStore
         var sessions = _db.Query(
             $"""
             SELECT {Columns} FROM session_info
-            WHERE (updated_at < $before OR (updated_at = $before AND session_id < $id)) AND parent_session_id IS NULL
+            WHERE (updated_at < $before OR (updated_at = $before AND session_id < $id)) AND (parent_session_id IS NULL OR helper = 1)
               AND ($settled IS NULL OR (settled_at IS NOT NULL) = $settled)
             ORDER BY updated_at DESC, session_id DESC LIMIT $limit;
             """,
@@ -470,9 +470,9 @@ public sealed class SessionStore
     {
         if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", sessionId)) is { } session)
         {
-            // The list holds top-level sessions only; a subagent's is opened from its parent.
+            // Started sessions belong in the list; a native subagent's is opened from its parent.
             scope.Publish(SessionsFeature.Topic, sessionId, Item(session), SessionsJson.Default.SessionItem,
-                keyedOnly: session.ParentSessionId is not null);
+                keyedOnly: session.ParentSessionId is not null && !session.Helper);
             // The rail hears every session's change.
             scope.Publish(SessionsFeature.RailTopic, sessionId, new SessionsFeature.RailChange(sessionId), SessionsJson.Default.RailChange);
         }

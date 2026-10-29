@@ -69,6 +69,29 @@ public sealed class SessionRailTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void SettledStartedSessionsEnterHistoryButNativeSubagentsStayOut(bool remote)
+    {
+        var parent = Parent(machine: remote ? "workbox-test" : null);
+        var started = Helper(parent);
+        var native = _sessions.Child(_sessions.Get(parent)!, "native", "Native subagent").SessionId;
+        _topics.Published.Clear();
+        _database.Writer.Write("test.mark", scope =>
+        {
+            _sessions.Mark(scope, started, "settled");
+            _sessions.Mark(scope, native, "settled");
+            return 0;
+        });
+        Assert.Equal([started], _sessions.List(null, 1, settled: true).Sessions.Select(s => s.SessionId));
+        var first = _sessions.List(null, 1);
+        Assert.Equal(started, first.Sessions.Single().SessionId);
+        Assert.Equal([parent], _sessions.List(first.NextBefore, 10, beforeId: first.NextBeforeId).Sessions.Select(s => s.SessionId));
+        Assert.Contains((Topic, (string?)started, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
+        Assert.Contains((Topic, (string?)native, true), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void NativeSubagentsNeverEnterTheRailOrKeepTheirParentRunning(bool remote)
     {
         var starter = Parent(machine: remote ? "workbox-test" : null);
@@ -279,7 +302,7 @@ public sealed class SessionRailTests : IDisposable
         var parent = Parent();
         _topics.Published.Clear();
         var helper = Helper(parent);
-        Assert.Contains((Topic, (string?)helper, true), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
+        Assert.Contains((Topic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
         Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
 
         _topics.Published.Clear();
@@ -288,6 +311,24 @@ public sealed class SessionRailTests : IDisposable
         var rail = Read();
         Assert.Equal(new RailTotals(1), rail.Totals);
         Assert.Equal(helper, Entry(rail, helper).AskSession);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RemovingTheFinalAnchorRecoversEarlierSessions(bool grouped)
+    {
+        var last = Parent(repo: "/work/zeta");
+        var earlier = Parent(repo: "/work/alpha");
+        var groupBy = new RailGroupBy(false, grouped);
+        var entry = Entry(Read(groupBy: groupBy), last);
+        var cursor = new RailCursor(0, grouped ? entry.Group : "", grouped ? entry.RepoUrl : "", entry.Header, entry.Ordering);
+        _database.Writer.Write("test.mark", scope => { _sessions.Mark(scope, last, "settled"); return 0; });
+
+        var recovered = Read(statuses: ["working"], groupBy: groupBy, anchor: last, after: cursor, limit: 2);
+        Assert.Equal([earlier], Sessions(recovered));
+        Assert.Equal(0, recovered.Start);
+        Assert.Empty(Read(statuses: ["working"], groupBy: groupBy, after: cursor).Sessions);
     }
 
     [Theory]
