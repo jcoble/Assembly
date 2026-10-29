@@ -86,3 +86,62 @@ fn with_no_socket_an_edit_isnt_made_and_says_why(cx: &mut TestAppContext) {
     assert_eq!(font_size(cx), EDITOR_FONT_SIZE.default);
     assert!(cx.update(|cx| Preferences::failure(cx)).is_some());
 }
+
+#[gpui::test]
+async fn an_older_saves_echo_doesnt_undo_a_newer_edit(cx: &mut TestAppContext) {
+    // The backend takes 17 at once and echoes it, and holds 18: the echo of 17 arrives while 18 is on its way.
+    let sub = Arc::new(Mutex::new(json!(null)));
+    let heard = sub.clone();
+    let backend = FakeBackend::start(move |frame| {
+        if let Some(replies) = hello(frame) {
+            return replies;
+        }
+        let id = frame["id"].clone();
+        match (frame["t"].as_str(), frame["method"].as_str()) {
+            (Some("sub"), _) => {
+                *heard.lock().unwrap() = id.clone();
+                vec![Reply::Frame(json!({"t": "state", "sub": id, "items": [
+                    {"key": "editor.fontSize", "item": {"key": "editor.fontSize", "value": 16}}]}))]
+            }
+            (Some("call"), Some("set")) if frame["args"]["value"] == json!(17) => vec![
+                Reply::Frame(json!({"t": "result", "id": id, "result": {}})),
+                Reply::Frame(
+                    json!({"t": "change", "sub": heard.lock().unwrap().clone(), "key": "editor.fontSize",
+                    "item": {"key": "editor.fontSize", "value": 17}}),
+                ),
+            ],
+            _ => Vec::new(),
+        }
+    });
+    cx.executor().allow_parking();
+    let preferences = cx.update(|cx| {
+        gpui_kit::init(cx);
+        let endpoint = Endpoint {
+            port: backend.port,
+            token: "secret".into(),
+        };
+        SocketClient::start(endpoint, cx);
+        Preferences::init(cx);
+        Preferences::start(cx);
+        Preferences::try_global(cx).expect("the preferences")
+    });
+    let (changed, mut changes) = unbounded();
+    let tell = changed.clone();
+    let _heard = cx.update(|cx| cx.observe(&preferences, move |_, _| _ = tell.unbounded_send(())));
+    until("the saved state", &mut changes, &changed, || {
+        font_size(cx) == 16.
+    })
+    .await;
+
+    cx.update(|cx| {
+        Preferences::save(EDITOR_FONT_SIZE.key, json!(17), cx);
+        Preferences::save(EDITOR_FONT_SIZE.key, json!(18), cx);
+    });
+    until("the echo of 17", &mut changes, &changed, || {
+        preferences.read_with(cx, |preferences, _| {
+            preferences.confirmed.get(EDITOR_FONT_SIZE.key) == Some(&json!(17))
+        })
+    })
+    .await;
+    assert_eq!(font_size(cx), 18., "the newer edit stays");
+}
