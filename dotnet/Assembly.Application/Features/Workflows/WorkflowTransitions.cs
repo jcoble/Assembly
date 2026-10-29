@@ -49,16 +49,20 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
                     EndedAt = Terminal(args.State) ? task.EndedAt ?? now : null
                 };
             BoardQuestion? question = null;
+            BoardAnswerResult? previous = null;
             var kind = "task_reported";
             if (args.AnswerReceived is { } received)
             {
                 if (task is null) throw new CallFailed("not_found");
                 var a = new BoardAnswerArgs("local", args.TaskKey, received.QuestionKey, received.Generation, received.AnswerKey, received.Answer);
                 ValidateAnswer(a);
-                if (Previous(scope, a) is { } previous)
-                    return new BoardUpdateResult("local", args.TaskKey, previous.AcceptedRevision, previous.QuestionKey, previous.Generation, previous);
-                question = Accept(scope, task, a, true, now);
-                kind = "answer_recorded";
+                // An answer already recorded stays as it is, but progress reported with its receipt still lands.
+                previous = Previous(scope, a);
+                if (previous is null)
+                {
+                    question = Accept(scope, task, a, true, now);
+                    kind = "answer_recorded";
+                }
             }
             else if (args.Question is { } requested)
             {
@@ -84,10 +88,14 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
                     "SELECT json_extract(payload_json,'$.changedPaths') FROM board_events WHERE machine_id='local' AND task_key=$task ORDER BY seq DESC LIMIT 1;",
                     r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$task", args.TaskKey)) ==
                     JsonSerializer.Serialize(args.ChangedPaths, WorkflowSchema.Default.StringArray)))
-                return new("local", args.TaskKey, task.Revision, args.Question?.QuestionKey,
-                    args.Question is null ? null : args.Question.ExpectedGeneration + 1, null);
+                return previous is not null
+                    ? new("local", args.TaskKey, previous.AcceptedRevision, previous.QuestionKey, previous.Generation, previous)
+                    : new("local", args.TaskKey, task.Revision, args.Question?.QuestionKey,
+                        args.Question is null ? null : args.Question.ExpectedGeneration + 1, null);
             next = next with { UpdatedAt = now, Revision = next.Revision + 1 };
             Commit(scope, next, question, kind, args.ChangedPaths, now);
+            if (previous is not null)
+                return new("local", next.TaskKey, next.Revision, previous.QuestionKey, previous.Generation, previous);
             var accepted = question?.AnswerKey is null ? null : Acceptance(question);
             return new("local", next.TaskKey, next.Revision, question?.QuestionKey ?? args.Question?.QuestionKey, question?.Generation ?? (args.Question is null ? null : args.Question.ExpectedGeneration + 1), accepted);
         });

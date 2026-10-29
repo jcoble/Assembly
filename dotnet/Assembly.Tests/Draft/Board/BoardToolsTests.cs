@@ -183,6 +183,19 @@ public sealed class BoardToolsTests
     }
 
     [Fact]
+    public void AnswerReceiptKeepsTheProgressReportedWithIt()
+    {
+        using var f = new BoardQueryTests.Fixture();
+        f.Update(question: f.Ask());
+        var a = f.Answer();
+        f.Transitions.Answer(a);
+        var received = new BoardAnswerReceived(a.QuestionKey, a.Generation, a.AnswerKey, a.Answer);
+        f.Update(state: "completed", received: received);
+        Assert.Equal("completed", f.Detail().Task.State);
+        Assert.Equal("pending", Assert.Single(f.Detail().Questions).DeliveryState);
+    }
+
+    [Fact]
     public void RestartBetweenIntentAndSendIsUnknown() => RestartUnknown();
 
     [Fact]
