@@ -180,6 +180,37 @@ fn the_summary_counts_work_by_kind_distinct_files_and_failures() {
     );
 }
 
+// Pins: g0-session#9
+#[test]
+fn a_denied_command_is_not_counted_as_run_or_failed() {
+    let answered = |option: &str| {
+        let ask = json!({ "kind": "permission", "state": "answered", "toolCallId": "b",
+            "options": [{ "optionId": "yes", "name": "Yes", "kind": "allow_once" },
+                        { "optionId": "no", "name": "No", "kind": "reject_once" }],
+            "answer": { "optionId": option } });
+        item(
+            "ask",
+            ItemKind::Ask {
+                ask_id: "1".into(),
+                ask: serde_json::from_value(ask).unwrap(),
+            },
+        )
+    };
+    let calls = |option| {
+        [
+            tool("a", "execute", json!({})),
+            tool("b", "execute", json!({ "state": "failed" })),
+            answered(option),
+        ]
+    };
+    assert_eq!(summary(&calls("no")), "ran a command");
+    assert_eq!(
+        summary(&calls("yes")),
+        "ran 2 commands · 1 call failed",
+        "an allowed call that failed still counts"
+    );
+}
+
 // Pins: g0-session#13
 #[test]
 fn an_assembly_helper_tool_keeps_its_words() {

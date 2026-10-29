@@ -28,6 +28,8 @@ pub struct ToolRow {
     pub kept: Kept,
     /// It's in the running turn's activity card, with how long it has run: only there does a started call spin.
     pub took_ms: Option<i64>,
+    /// The user denied it: it didn't run, so it isn't drawn as failed.
+    pub denied: bool,
     pub on_action: OnAction,
 }
 
@@ -101,6 +103,7 @@ impl ToolRow {
         let state = match self.tool.state {
             ToolState::Started if self.took_ms.is_some() => StepState::Running,
             ToolState::Started => StepState::Unfinished,
+            ToolState::Failed if self.denied => StepState::Unfinished,
             ToolState::Completed => StepState::Done,
             ToolState::Failed => StepState::Failed,
         };

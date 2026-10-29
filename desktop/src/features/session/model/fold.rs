@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::item::{Item, ItemKind};
+use crate::features::session::rows::ask::AskPayload;
 use crate::features::session::rows::tool::ToolState;
 use crate::features::session::rows::turn_stats::TurnStats;
 
@@ -87,6 +88,7 @@ impl Fold {
             (0, 0, 0, 0, 0, 0);
         let (mut failed, mut thinking, mut subagents) = (0, 0, 0);
         let mut helpers = [0; HELPERS.len()];
+        let denied = denied(work.iter().copied());
         for item in work {
             let tool = match &item.kind {
                 ItemKind::Thinking { .. } => {
@@ -97,7 +99,8 @@ impl Fold {
                     subagents += 1;
                     continue;
                 }
-                ItemKind::Tool { tool, .. } => tool,
+                // A call the user denied didn't run, and didn't fail.
+                ItemKind::Tool { item_id, tool } if !denied.contains(item_id.as_str()) => tool,
                 _ => continue,
             };
             // A failed call still counts as what it was (a stopped command is still a command run).
@@ -199,6 +202,24 @@ fn helper_of(name: &str) -> Option<usize> {
         .iter()
         .find_map(|prefix| name.strip_prefix(prefix))?;
     HELPERS.iter().position(|(helper, _)| *helper == tool)
+}
+
+/// The tool calls the user denied: each permission answered with a reject option names its call.
+pub fn denied<'a>(items: impl IntoIterator<Item = &'a Item>) -> HashSet<&'a str> {
+    let denies = |ask: &'a AskPayload| {
+        let picked = ask.answer.as_ref()?["optionId"].as_str()?;
+        let option = ask.options.iter().find(|it| it.option_id == picked)?;
+        option
+            .kind
+            .starts_with("reject")
+            .then_some(ask.tool_call_id.as_deref()?)
+    };
+    (items.into_iter())
+        .filter_map(|item| match &item.kind {
+            ItemKind::Ask { ask, .. } => denies(ask),
+            _ => None,
+        })
+        .collect()
 }
 
 fn is_work(item: &Item) -> bool {

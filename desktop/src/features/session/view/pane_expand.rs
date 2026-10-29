@@ -9,6 +9,7 @@ use gpui_kit::*;
 use super::SessionPane;
 use crate::core::ui::expand_row::{ExpandRow, ExpandRowEvent};
 use crate::features::session::model::entries::entry_key;
+use crate::features::session::model::fold::denied;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::view::ask_row::AskRow;
 use crate::features::session::view::grow::band;
@@ -29,12 +30,13 @@ impl SessionPane {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let (open, title, body): (bool, Title, Body) = match &item.kind {
-            ItemKind::Tool { tool, .. } => {
+            ItemKind::Tool { item_id, tool } => {
                 let row = ToolRow {
                     key: item.key.clone(),
                     tool: tool.clone(),
                     kept: self.kept.get(&item.key).cloned().unwrap_or_default(),
                     took_ms,
+                    denied: denied(&self.view.items).contains(item_id.as_str()),
                     on_action: self.on_action.clone(),
                 };
                 if !tool.has_detail {
