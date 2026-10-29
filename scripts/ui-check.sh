@@ -39,6 +39,7 @@ stop() {
 }
 case "${1:-}" in
   start)
+    trap 'echo "ui-check: start failed at: $BASH_COMMAND (logs: $home/xvfb.log, $home/app.log)" >&2' ERR
     [ ! -f "$state" ] || { echo 'stop this lane first' >&2; exit 1; }
     [ "$(free -g | awk '/^Mem:/ {print $7}')" -gt 6 ] || { echo '6 GB or less available; not starting' >&2; exit 1; }
     [ -x "$DATA/target/debug/assembly-desktop" ]
