@@ -89,3 +89,15 @@ fn the_title_row_names_the_project_by_its_last_part() {
     assert_eq!(project("/home/me/dev/work/Assembly/"), "Assembly");
     assert_eq!(project(r"C:\dev\Assembly"), "Assembly");
 }
+
+// Pins: g0-shape#12
+#[gpui::test]
+fn with_no_session_open_the_title_row_keeps_the_sessions_button(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (_, cx) = cx.add_window_view(|_, _| Header::default());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("toggle-sessions").is_some(),
+        "a sessions column left closed can be opened again"
+    );
+}

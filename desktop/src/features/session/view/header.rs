@@ -74,15 +74,13 @@ fn read(item: serde_json::Value) -> Option<SessionItem> {
 }
 
 impl Render for Header {
+    /// With no session open it still draws, holding only the sessions button, so a column left closed can reopen.
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(item) = &self.item else {
-            return div();
-        };
         let theme = cx.theme();
         let (muted, border) = (theme.muted_foreground, theme.border);
-        let parent = item.parent_session_id.clone();
         let sessions = div()
             .id("toggle-sessions")
+            .debug_selector(|| "toggle-sessions".into())
             .size(px(28.))
             .flex()
             .flex_none()
@@ -101,16 +99,20 @@ impl Render for Header {
                 }
             })
             .child(Icon::new(IconName::PanelLeft).size(px(14.)));
+        let row = h_flex()
+            .h(px(48.))
+            .gap(px(10.))
+            .px(px(14.))
+            .border_b_1()
+            .border_color(border)
+            .text_size(px(13.5))
+            .child(sessions);
+        let Some(item) = &self.item else {
+            return div().child(row);
+        };
+        let parent = item.parent_session_id.clone();
         div().child(
-            h_flex()
-                .h(px(48.))
-                .gap(px(10.))
-                .px(px(14.))
-                .border_b_1()
-                .border_color(border)
-                .text_size(px(13.5))
-                .child(sessions)
-                .child(div().flex_none().w_px().h(px(16.)).bg(border))
+            row.child(div().flex_none().w_px().h(px(16.)).bg(border))
                 .child(
                     h_flex()
                         .flex_1()

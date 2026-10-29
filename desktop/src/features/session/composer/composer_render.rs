@@ -64,7 +64,12 @@ impl Render for Composer {
                 current: current.to_string(),
                 on_select: on_select.clone(),
             });
-        let foot = h_flex()
+        // Attach and the pickers wrap onto more lines when they don't fit; the ring and Send stay on the first, right.
+        let left = h_flex()
+            .flex_1()
+            .min_w_0()
+            .flex_wrap()
+            .py(px(3.))
             .gap_1p5()
             .child(
                 Button::new("composer:attach")
@@ -77,15 +82,11 @@ impl Render for Composer {
                         cx.listener(|composer, _, window, cx| composer.pick_images(window, cx)),
                     ),
             )
-            // The pickers take what room is left and cut off at its edge; the ring and Send stay pinned right.
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .gap_1p5()
-                    .children(menus),
-            )
+            .children(menus);
+        let right = h_flex()
+            .flex_none()
+            .h(ROUND_BUTTON)
+            .gap_1p5()
             .children(branch)
             .when_some(self.meter.clone(), |foot, meter| {
                 foot.child(ContextRing { meter })
@@ -111,6 +112,7 @@ impl Render for Composer {
                     .tooltip(if running { "Steer" } else { "Send" })
                     .on_click(cx.listener(|composer, _, window, cx| composer.send(window, cx))),
             );
+        let foot = h_flex().items_start().gap_1p5().child(left).child(right);
         let commands: Vec<_> = (self.slash_list(cx).into_iter())
             .map(|command| {
                 let slash = if command.name.starts_with('$') {
