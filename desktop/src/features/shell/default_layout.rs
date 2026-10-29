@@ -45,8 +45,8 @@ pub const PANES: [&str; 13] = [
     TERMINAL,
 ];
 
-/// The sessions column opens so its card is 320 px wide (frame.ts SESSIONS_WIDTH).
-pub const SESSIONS_WIDTH: Pixels = px(326.);
+/// The sessions column opens so its card is 340 px wide, the approved mock's `.rail` (8 px of ground each side).
+pub const SESSIONS_WIDTH: Pixels = px(356.);
 /// The drawer's card width (routes/+page.svelte drawerWidth).
 pub const DRAWER_WIDTH: Pixels = px(320.);
 /// What the bottom dock opens at (frame.ts DOCK_HEIGHT).

@@ -362,18 +362,21 @@ impl SessionsPane {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
+        // The mock's search: sunk below the card, on the ground's colour with a faint edge, a 13 px faint glass.
         let field = h_flex()
             .flex_1()
             .min_w_0()
             .h(px(30.))
             .pl(px(10.))
-            .gap(px(2.))
-            .rounded(px(8.))
-            .bg(theme.secondary)
+            .gap(px(5.))
+            .rounded(px(9.))
+            .bg(theme.background)
+            .border_1()
+            .border_color(theme.border.opacity(0.6))
             .child(
                 Icon::new(IconName::Search)
-                    .xsmall()
-                    .text_color(theme.muted_foreground),
+                    .size(px(13.))
+                    .text_color(theme.muted_foreground.opacity(0.65)),
             )
             .child(Input::new(&self.filter).small().appearance(false));
         h_flex()
@@ -386,9 +389,19 @@ impl SessionsPane {
                 cx.listener(|pane, _: &Escape, window, cx| pane.clear_filter(window, cx)),
             )
             .child(field)
-            .child(view_options(self.rail.view_options, on_view))
+            .child(view_options(self.rail.view_options, on_view, cx))
             .child(new_session)
     }
+}
+
+/// The column's header buttons, the mock's `.ib`: 26 px, 8 px corners, a 15 px muted icon.
+pub fn header_button(button: Button, cx: &App) -> Button {
+    button
+        .ghost()
+        .with_size(px(20.))
+        .size(px(26.))
+        .rounded(px(8.))
+        .text_color(cx.theme().muted_foreground)
 }
 
 /// What an empty column says, from the connection's state (`None` before the backend's first ready line).
@@ -464,9 +477,7 @@ impl Render for SessionsPane {
         let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
             pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
         });
-        let new_session = Button::new("new-session")
-            .ghost()
-            .compact()
+        let new_session = header_button(Button::new("new-session"), cx)
             .icon(if creating {
                 IconName::X
             } else {

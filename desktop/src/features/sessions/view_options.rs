@@ -8,6 +8,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
+
+use super::sessions_pane::header_button;
+
 pub const VIEW_KEY: &str = "rail.view";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -90,13 +93,11 @@ pub fn saved_view(update: &Update) -> View {
 
 pub type OnView = Rc<dyn Fn(View, &mut Window, &mut App)>;
 
-pub fn view_options(view: View, on_view: OnView) -> impl IntoElement {
+pub fn view_options(view: View, on_view: OnView, cx: &App) -> impl IntoElement {
     Popover::new("rail-view")
         .anchor(Anchor::TopRight)
         .trigger(
-            Button::new("rail-view-button")
-                .ghost()
-                .compact()
+            header_button(Button::new("rail-view-button"), cx)
                 .icon(gpui_kit::assets::IconName::ListFilter)
                 .tooltip("View options"),
         )

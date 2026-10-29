@@ -86,7 +86,8 @@ impl DockAreaRenderer for MotionSkin {
                         .overflow_hidden()
                         .rounded(RAIL_RADIUS)
                         .border_1()
-                        .border_color(theme.border)
+                        // The mock's `.rail` edge (#262628): the theme's border at 60 %.
+                        .border_color(theme.border.opacity(0.6))
                         .bg(theme.group_box)
                         .shadow_md()
                         .child(div().flex_1().min_h_0().child(content))
