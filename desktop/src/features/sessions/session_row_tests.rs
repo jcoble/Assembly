@@ -73,7 +73,23 @@ fn status_words_name_each_state_in_order() {
     assert_eq!(words(Presence::NeedsYou), ["Needs you"]);
     assert_eq!(words(Presence::Done), ["Done"]);
     assert_eq!(words(Presence::Failed), ["Failed"]);
-    assert!(words(Presence::Unread).is_empty());
-    assert!(words(Presence::Idle).is_empty());
-    assert_eq!(status_words(Presence::Idle, true), ["offline"]);
+    assert_eq!(words(Presence::Unread), ["Idle"]);
+    assert_eq!(words(Presence::Idle), ["Idle"]);
+    assert_eq!(status_words(Presence::Idle, true), ["offline", "Idle"]);
+}
+
+#[test]
+fn a_finished_row_that_isnt_marked_still_names_its_state() {
+    // Its turn ended and the user hasn't marked it Done: it isn't working, waiting or failed, so it's Idle, not blank.
+    let finished = RailEntry {
+        machine: Some("workbox-test".into()),
+        ..entry()
+    };
+    assert_eq!(Presence::of(&finished), Presence::Idle);
+    assert_eq!(status_words(Presence::of(&finished), false), ["Idle"]);
+    let unread = RailEntry {
+        unread: true,
+        ..finished
+    };
+    assert_eq!(status_words(Presence::of(&unread), false), ["Idle"]);
 }

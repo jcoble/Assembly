@@ -1,5 +1,5 @@
-//! `SessionsPane` is the sessions column: its header (view options and New session), a search field (title or
-//! project), the provider and location pills (saved as the `rail.filters` preference and restored at start), the
+//! `SessionsPane` is the sessions column: a search field (title or project) with view options and New session beside
+//! it, the provider and location pills (saved as the `rail.filters` preference and restored at start), the
 //! All / Running / Needs you tabs with the backend's totals, and the tab's sessions by project as a virtual list, loading
 //! the next page as the reader nears its end. Every list and total comes from `sessions/rail`, read again whenever
 //! the `sessionRail` topic says a session changed (and at subscribe and each reconnect). A row's menu moves its
@@ -304,18 +304,36 @@ impl SessionsPane {
         self.send(read, cx);
     }
 
-    /// The search field: the title or project text, which Escape clears.
-    fn search(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let icon = Icon::new(IconName::Search)
-            .xsmall()
-            .text_color(cx.theme().muted_foreground);
-        div()
-            .px(px(12.))
+    /// The top line: the search field (the title or project text, which Escape clears), then view options and New
+    /// session. The dock's own tab already names the column.
+    fn search(&self, new_session: Button, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let field = h_flex()
+            .flex_1()
+            .min_w_0()
+            .h(px(30.))
+            .pl(px(10.))
+            .gap(px(2.))
+            .rounded(px(8.))
+            .bg(theme.secondary)
+            .child(
+                Icon::new(IconName::Search)
+                    .xsmall()
+                    .text_color(theme.muted_foreground),
+            )
+            .child(Input::new(&self.filter).small().appearance(false));
+        h_flex()
+            .pl(px(12.))
+            .pr(px(8.))
+            .pt(px(10.))
             .pb(px(10.))
+            .gap(px(2.))
             .capture_action(
                 cx.listener(|pane, _: &Escape, window, cx| pane.clear_filter(window, cx)),
             )
-            .child(Input::new(&self.filter).small().prefix(icon))
+            .child(field)
+            .child(view_options())
+            .child(new_session)
     }
 }
 
@@ -400,32 +418,16 @@ impl Render for SessionsPane {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let creating = self.creating.is_some();
-        let header = h_flex()
-            .pl(px(16.))
-            .pr(px(10.))
-            .pt(px(12.))
-            .pb(px(8.))
-            .gap(px(2.))
-            .child(
-                div()
-                    .flex_1()
-                    .text_base()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Sessions"),
-            )
-            .child(view_options())
-            .child(
-                Button::new("new-session")
-                    .ghost()
-                    .compact()
-                    .icon(if creating {
-                        IconName::X
-                    } else {
-                        IconName::Plus
-                    })
-                    .tooltip(if creating { "Cancel" } else { "New session" })
-                    .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx))),
-            );
+        let new_session = Button::new("new-session")
+            .ghost()
+            .compact()
+            .icon(if creating {
+                IconName::X
+            } else {
+                IconName::Plus
+            })
+            .tooltip(if creating { "Cancel" } else { "New session" })
+            .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx)));
         let selected = Tab::ALL.iter().position(|tab| *tab == self.rail.tab);
         let tabs = TabBar::new("rail-tabs")
             .segmented()
@@ -445,8 +447,7 @@ impl Render for SessionsPane {
         v_flex()
             .track_focus(&self.focus)
             .size_full()
-            .child(header)
-            .child(self.search(cx))
+            .child(self.search(new_session, cx))
             .child(self.pills.clone())
             .child(div().px(px(12.)).pb(px(8.)).child(tabs))
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
