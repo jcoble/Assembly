@@ -1,3 +1,5 @@
+using Assembly.Application.Features.Workflows;
+using Assembly.Infrastructure.Workflows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
@@ -15,6 +17,8 @@ using Assembly.Application.Features.Chat;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
+using Assembly.Application.Features.Terminal;
+using Assembly.Infrastructure.Terminal;
 
 namespace Assembly.Remote.Serve;
 
@@ -38,6 +42,10 @@ public static class ServeRun
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var topics = new Topics();
         using var db = AppDatabase.Open(options.Database, TimeProvider.System, topics);
+        WorkflowSchema.Open(db);
+        var boardQueries = new WorkflowQueries(db);
+        var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
+        boardTransitions.Recover();
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts);
         using var hub = new LiveHub(store);
@@ -53,17 +61,30 @@ public static class ServeRun
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
+        using var hostStop = new CancellationTokenSource();
+        await using var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
+        var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync);
 
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics), options.Port, out _,
+        await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
+            AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new TerminalFeature(terminals), workflowCalls], board), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");
         if (closed > 0)
             Console.WriteLine($"closed {closed} turn(s) the last run left unfinished");
-        await app.RunAsync();
+        using var stopping = app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
+        try
+        {
+            await app.RunAsync();
+        }
+        finally
+        {
+            await hostStop.CancelAsync();
+        }
         return 0;
     }
 }

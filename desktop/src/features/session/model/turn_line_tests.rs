@@ -3,7 +3,9 @@
 use chrono::{Local, TimeZone};
 use serde_json::{Value, json};
 
-use super::turn_line::{checkout_line, message_time, turn_line, worked_for};
+use std::collections::HashMap;
+
+use super::turn_line::{checkout_line, latest_branch, message_time, turn_line, worked_for};
 use crate::features::session::rows::turn_stats::TurnStats;
 
 fn stats(over: Value) -> TurnStats {
@@ -123,4 +125,28 @@ fn a_time_within_the_week_says_its_weekday_an_older_one_its_date() {
         message_time(local(5, 9, 30), local(5, 10, 0)),
         "Monday 9:30 AM"
     );
+}
+
+fn turns(branches: &[(&str, i64, Value)]) -> HashMap<String, TurnStats> {
+    (branches.iter())
+        .map(|(run, at, branch)| {
+            let turn = stats(json!({ "runId": run, "startedAt": at, "branch": branch }));
+            (run.to_string(), turn)
+        })
+        .collect()
+}
+
+#[test]
+fn the_branch_is_the_newest_turns_that_has_one() {
+    let newer_on_feat = turns(&[("r1", 1_000, json!("main")), ("r2", 2_000, json!("feat"))]);
+    assert_eq!(latest_branch(&newer_on_feat).as_deref(), Some("feat"));
+    let newer_without = turns(&[("r1", 1_000, json!("main")), ("r2", 2_000, Value::Null)]);
+    assert_eq!(latest_branch(&newer_without).as_deref(), Some("main"));
+}
+
+#[test]
+fn an_empty_or_head_branch_is_not_shown() {
+    let detached = turns(&[("r1", 1_000, json!("")), ("r2", 2_000, json!("HEAD"))]);
+    assert_eq!(latest_branch(&detached), None);
+    assert_eq!(latest_branch(&HashMap::new()), None);
 }

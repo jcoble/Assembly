@@ -54,6 +54,11 @@ impl CenterPanes {
         Some(id)
     }
 
+    /// The window's dock, once Frame has set it up: the session header's sessions button toggles its left side.
+    pub fn dock(cx: &App) -> Option<Entity<DockArea>> {
+        cx.try_global::<CenterPanes>()?.dock.upgrade()
+    }
+
     /// Records a pane under its key when it was built some other way, as a pane restored from the saved layout is, so
     /// opening that key finds it.
     pub fn remember(key: impl Into<String>, id: PanelId, cx: &mut App) {

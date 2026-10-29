@@ -5,6 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::item::{Item, ItemKind};
+use crate::features::session::rows::ask::AskPayload;
 use crate::features::session::rows::tool::ToolState;
 use crate::features::session::rows::turn_stats::TurnStats;
 
@@ -15,12 +16,22 @@ pub struct Fold {
     pub work: HashSet<String>,
     /// The final reply's key: its copy button and time go under it.
     pub reply: Option<String>,
-    /// "Edited 2 files, ran 3 commands".
+    /// "ran 3 commands · edited 2 files", lower case: the heading capitalises it when it leads.
     pub summary: String,
     pub duration_ms: Option<i64>,
 }
 
 impl Fold {
+    /// Whether its final reply is there and finished: the reply then has a meta line, which carries the turn's line.
+    pub fn reply_done(&self, items: &[Item]) -> bool {
+        let Some(reply) = &self.reply else {
+            return false;
+        };
+        items.iter().any(|item| {
+            &item.key == reply && matches!(item.kind, ItemKind::Message { done: true, .. })
+        })
+    }
+
     /// Each finished run's fold, by run id. A run is finished once its stats are in and it isn't the one running.
     pub fn all(
         items: &[Item],
@@ -77,17 +88,21 @@ impl Fold {
             (0, 0, 0, 0, 0, 0);
         let (mut failed, mut thinking, mut subagents) = (0, 0, 0);
         let mut helpers = [0; HELPERS.len()];
+        let denied = denied(work.iter().copied());
         for item in work {
             let tool = match &item.kind {
                 ItemKind::Thinking { .. } => {
                     thinking += 1;
                     continue;
                 }
-                ItemKind::Subagent { .. } => {
-                    subagents += 1;
+                ItemKind::Subagent { subagent, .. } => {
+                    if !subagent.helper {
+                        subagents += 1;
+                    }
                     continue;
                 }
-                ItemKind::Tool { tool, .. } => tool,
+                // A call the user denied didn't run, and didn't fail.
+                ItemKind::Tool { item_id, tool } if !denied.contains(item_id.as_str()) => tool,
                 _ => continue,
             };
             // A failed call still counts as what it was (a stopped command is still a command run).
@@ -118,18 +133,18 @@ impl Fold {
         }
         let [started, sent, checked, listed] = helpers;
         let parts: Vec<String> = [
+            counted(commands, "ran a command", "ran {} commands"),
             counted(edits, "edited a file", "edited {} files"),
             counted(reads, "read a file", "read {} files"),
-            counted(commands, "ran a command", "ran {} commands"),
             counted(searches, "searched once", "searched {} times"),
             counted(fetches, "fetched a page", "fetched {} pages"),
             counted(others, "used a tool", "used {} tools"),
             counted(subagents, "ran a subagent", "ran {} subagents"),
-            counted(started, "started a helper", "started {} helpers"),
+            counted(started, "started a session", "started {} sessions"),
             counted(sent, "sent a message", "sent {} messages"),
             counted(
                 checked,
-                "checked a helper's answer",
+                "checked a session's answer",
                 "checked answers {} times",
             ),
             counted(listed, "listed sessions", "listed sessions {} times"),
@@ -141,27 +156,46 @@ impl Fold {
         if parts.is_empty() {
             return if thinking > 0 { "Thought" } else { "Worked" }.to_string();
         }
-        let line = parts.join(", ");
-        let mut chars = line.chars();
-        chars
-            .next()
-            .map(|first| first.to_uppercase().chain(chars).collect())
-            .unwrap_or_default()
+        parts.join(" · ")
     }
 
-    /// A tool row's title: an Assembly helper tool's in words (`mcp__assembly__start_session` is "Started a
-    /// helper"), any other's name.
-    pub fn tool_title(name: &str) -> String {
-        helper_of(name).map_or_else(|| name.to_string(), |helper| HELPERS[helper].1.to_string())
+    /// A tool row's title and summary: an Assembly helper tool's in words (`mcp__assembly__start_session` is
+    /// "Started a helper"), any other by its kind ("Ran", "Edited"…), and a kind without a word keeps the name as its
+    /// title. A kind's word never has the name after it: an agent's name for a call ("Editing files") repeats it. A
+    /// line is one line: a summary of several lines shows its first, ending in "…".
+    pub fn tool_words(
+        name: &str,
+        kind: Option<&str>,
+        summary: Option<&str>,
+    ) -> (String, Option<String>) {
+        let summary = summary
+            .map(str::trim_end)
+            .filter(|summary| !summary.is_empty())
+            .map(|summary| match summary.split_once('\n') {
+                Some((first, _)) => format!("{}…", first.trim_end()),
+                None => summary.to_string(),
+            });
+        if let Some(helper) = helper_of(name) {
+            return (HELPERS[helper].1.to_string(), summary);
+        }
+        let word = match kind {
+            Some("execute") => "Ran",
+            Some("edit" | "delete" | "move") => "Edited",
+            Some("read") => "Read",
+            Some("search") => "Searched",
+            Some("fetch") => "Fetched",
+            _ => return (name.to_string(), summary),
+        };
+        (word.to_string(), summary)
     }
 }
 
 /// The Assembly MCP server's tools, with their row titles: Claude Code calls them `mcp__assembly__<tool>`, Codex
 /// `mcp.assembly.<tool>`. The summary counts them in this order.
 const HELPERS: [(&str, &str); 4] = [
-    ("start_session", "Started a helper"),
+    ("start_session", "Started a session"),
     ("send_message", "Sent a message"),
-    ("message_status", "Checked a helper's answer"),
+    ("message_status", "Checked a session's answer"),
     ("list_sessions", "Listed sessions"),
 ];
 
@@ -170,6 +204,24 @@ fn helper_of(name: &str) -> Option<usize> {
         .iter()
         .find_map(|prefix| name.strip_prefix(prefix))?;
     HELPERS.iter().position(|(helper, _)| *helper == tool)
+}
+
+/// The tool calls the user denied: each permission answered with a reject option names its call.
+pub fn denied<'a>(items: impl IntoIterator<Item = &'a Item>) -> HashSet<&'a str> {
+    let denies = |ask: &'a AskPayload| {
+        let picked = ask.answer.as_ref()?["optionId"].as_str()?;
+        let option = ask.options.iter().find(|it| it.option_id == picked)?;
+        option
+            .kind
+            .starts_with("reject")
+            .then_some(ask.tool_call_id.as_deref()?)
+    };
+    (items.into_iter())
+        .filter_map(|item| match &item.kind {
+            ItemKind::Ask { ask, .. } => denies(ask),
+            _ => None,
+        })
+        .collect()
 }
 
 fn is_work(item: &Item) -> bool {

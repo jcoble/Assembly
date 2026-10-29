@@ -5,12 +5,16 @@
 //!   jump to the end. New: the old app had no dock motion.
 //! - splits and tab groups paint no fill of their own, so the sessions column shows the rail and the rest shows the
 //!   work panel that Frame draws behind them (the design system's "a ground and one panel").
-//! - the sessions column carries the utility strip at its foot, as the approved look has it
-//!   (the design system's look-final/README.md:66); there's no bottom bar.
-//! - the side docks' tabs are the old app's (side_tabs.rs); the chat's title and the bottom dock's tabs are the kit's.
+//! - the sessions column is a raised panel, `RAIL_GAP` in from the window's edges, with the utility strip at its foot,
+//!   as the approved look has it (the design system's look-final/README.md:66); there's no bottom bar.
+//! - the sessions column's tabs are the old app's (side_tabs.rs); the drawer draws none, its pane buttons sitting in
+//!   the title row (drawer_buttons.rs); the chat's title and an open bottom dock's tabs are the kit's.
+//! - a closed bottom dock draws nothing along the foot, and the centre reaches over the strip the kit keeps for it;
+//!   Terminal in the title row opens it.
 //!
 //! Every other piece of the skin passes through, the drag edge and its save on release included.
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -25,13 +29,26 @@ use gpui_kit::*;
 
 use super::side_tabs;
 
+/// The sessions panel's distance from the window's edge and from the work panel (Frame's `PANEL_GAP`).
+const RAIL_GAP: Pixels = px(8.);
+/// The sessions panel's corners.
+const RAIL_RADIUS: Pixels = px(14.);
+
 pub struct MotionSkin {
     pub inner: Rc<DockSkin>,
     /// Drawn at the foot of the sessions column.
     pub foot: AnyView,
     /// The area this skin draws, to tell which dock a tab group is in.
     pub area: WeakEntity<DockArea>,
+    /// The bottom dock is shut, as Frame saw it this frame: the centre then reaches over the strip the kit keeps for
+    /// it, so the chat's composer sits 16 px off the panel's foot, as the mock's.
+    pub bottom_shut: Rc<Cell<bool>>,
 }
+
+/// How far the centre reaches down over a shut bottom dock's strip so the chat's foot meets the panel's: the kit keeps
+/// 29 px for the strip (its `CLOSED_BOTTOM_STRIP`, not exported), less the 4 px the centre already overhangs the
+/// panel's edge, as measured in the running app.
+const SHUT_BOTTOM_STRIP: Pixels = px(25.);
 
 impl DockAreaRenderer for MotionSkin {
     fn frame(&self, window: &mut Window, cx: &mut App) -> Stateful<Div> {
@@ -51,7 +68,11 @@ impl DockAreaRenderer for MotionSkin {
     }
 
     fn center_frame(&self, window: &mut Window, cx: &mut App) -> Stateful<Div> {
-        self.inner.center_frame(window, cx)
+        let frame = self.inner.center_frame(window, cx);
+        match self.bottom_shut.get() {
+            true => frame.mb(-SHUT_BOTTOM_STRIP),
+            false => frame,
+        }
     }
 
     fn render_split_handle(
@@ -71,15 +92,32 @@ impl DockAreaRenderer for MotionSkin {
         cx: &mut App,
     ) -> AnyElement {
         let content = if dock.placement() == DockPlacement::Left {
-            v_flex()
+            let theme = cx.theme();
+            div()
                 .size_full()
-                .child(div().flex_1().min_h_0().child(content))
-                .child(self.foot.clone())
+                .px(RAIL_GAP)
+                .child(
+                    v_flex()
+                        .size_full()
+                        .overflow_hidden()
+                        .rounded(RAIL_RADIUS)
+                        .border_1()
+                        // The mock's `.rail` edge (#262628): the theme's border at 60 %.
+                        .border_color(theme.border.opacity(0.6))
+                        .bg(theme.group_box)
+                        .shadow_md()
+                        .child(div().flex_1().min_h_0().child(content))
+                        .child(self.foot.clone()),
+                )
                 .into_any_element()
         } else {
             content
         };
-        // A closed bottom dock still shows its tab bar, so only the side docks slide in: a closed side dock draws nothing.
+        // A closed bottom dock draws nothing in the strip the kit keeps for it; Terminal in the title row opens it.
+        if dock.placement() == DockPlacement::Bottom && !dock.is_open() {
+            return Empty.into_any_element();
+        }
+        // Only the side docks slide in: a closed side dock draws nothing.
         let content = match dock.placement() {
             DockPlacement::Left | DockPlacement::Right if dock.is_open() => {
                 entering(dock.placement(), content, window, cx)
@@ -129,7 +167,7 @@ impl TabGroupRenderer for Unfilled {
     ) -> AnyElement {
         match side(&self.1, group.node(), cx) {
             Some(DockPlacement::Left) => side_tabs::chips(group, window, cx),
-            Some(DockPlacement::Right) => side_tabs::pills(group, window, cx),
+            Some(DockPlacement::Right) => Empty.into_any_element(),
             _ => self.0.render_tab_bar(group, window, cx),
         }
     }

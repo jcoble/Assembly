@@ -1,18 +1,14 @@
-//! The side docks' tabs, drawn as the old app drew them (Jesse 2026-10-27: "make these more like the ones in the old
-//! app, same with left side"). The drawer's are RightPanelTabs.svelte's: one rounded strip of icon pills, the shown one
-//! lit, the name on hover. The sessions column had no tabs in the old app, so its are the old top tab row's text chips
-//! (TopTabRow.svelte). Both are 30 px high, as the kit's tab bar and the chat's title are, so the column tops line up.
+//! The sessions column's tabs, drawn as the old app drew them (Jesse 2026-10-27: "make these more like the ones in the
+//! old app, same with left side"). The sessions column had no tabs in the old app, so its are the old top tab row's text
+//! chips (TopTabRow.svelte), 30 px high, as the kit's tab bar and the chat's title are, so the column tops line up. The
+//! drawer draws no tabs: its pane buttons sit in the title row (drawer_buttons.rs).
 //! A click shows that tab's pane. A tab drags its pane elsewhere and takes one dropped on it, as the kit's do, and a
 //! row too narrow for its tabs scrolls, as the old top tab row did.
 
-use gpui_kit::assets::IconName;
 use gpui_kit::component::dock::{DragPanel, TabGroupContext};
-use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-
-use super::default_layout::{AGENTS, CONTEXT, HISTORY, RUN, SOURCE_CONTROL, TASKS, WORKTREES};
 
 const BAR_HEIGHT: Pixels = px(30.);
 
@@ -133,60 +129,4 @@ pub(super) fn chips(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> An
         }))
         .child(end(group, cx))
         .into_any_element()
-}
-
-/// The drawer's icon pills, in one rounded `muted` strip: 28 by 24, the shown one lit at 16% `foreground`.
-pub(super) fn pills(group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
-    let tabs = tabs(group, cx);
-    if tabs.is_empty() {
-        return Empty.into_any_element();
-    }
-    let theme = cx.theme();
-    let (foreground, muted, muted_foreground) =
-        (theme.foreground, theme.muted, theme.muted_foreground);
-    h_flex()
-        .id("side-tabs")
-        .h(BAR_HEIGHT)
-        .min_w_0()
-        .overflow_x_scroll()
-        .px_2()
-        .child(
-            h_flex()
-                .flex_none()
-                .rounded_full()
-                .bg(muted)
-                .p(px(3.))
-                .gap(px(2.))
-                .children(tabs.into_iter().map(|(ix, name, shown)| {
-                    tab(group, ix, name, cx)
-                        .w(px(28.))
-                        .h(px(24.))
-                        .justify_center()
-                        .rounded_full()
-                        .text_color(muted_foreground)
-                        .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
-                        .child(Icon::new(icon(name)).size(px(14.)))
-                        .map(|pill| match shown {
-                            true => pill.bg(foreground.opacity(0.16)).text_color(foreground),
-                            false => pill.hover(|pill| pill.bg(foreground.opacity(0.06))),
-                        })
-                })),
-        )
-        .child(end(group, cx))
-        .into_any_element()
-}
-
-/// The old app's icon for each drawer pane; a pane it didn't have gets a dot.
-fn icon(name: &str) -> IconName {
-    match name {
-        SOURCE_CONTROL => IconName::GitBranch,
-        AGENTS => IconName::Bot,
-        TASKS => IconName::ListChecks,
-        WORKTREES => IconName::GitFork,
-        RUN => IconName::CirclePlay,
-        CONTEXT => IconName::Gauge,
-        // Lucide's history icon, under the kit's name for it.
-        HISTORY => IconName::RotateCcwClock,
-        _ => IconName::Dot,
-    }
 }

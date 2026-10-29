@@ -1,6 +1,6 @@
 //! `AppAssets` owns the window's icons: the kit's default set, which its own components draw, and the few the window
 //! draws that the kit doesn't embed by default, from the kit's Lucide catalog. Lucide is the old app's icon set
-//! (@lucide/svelte), so the icons are the same: the round Home button's house is HomeButton.svelte's.
+//! (@lucide/svelte), so the icons are the same: the Home button's house is HomeButton.svelte's.
 
 use std::borrow::Cow;
 
@@ -34,7 +34,15 @@ gpui_kit::assets::icon_assets!(
         Server,
         Download,
         Sparkles,
-        Puzzle
+        Puzzle,
+        Pencil,
+        Wrench,
+        Circle,
+        CircleDot,
+        Lightbulb,
+        Terminal,
+        Rocket,
+        ListFilter
     ]
 );
 

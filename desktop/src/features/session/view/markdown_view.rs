@@ -189,8 +189,10 @@ impl Draw<'_> {
                         (false, _, true) => format!("{}.", at + 1),
                         (false, _, false) => "•".to_string(),
                     };
+                    // It shrinks to the row, so a long item wraps instead of running past the column.
                     let body = v_flex()
                         .flex_1()
+                        .min_w_0()
                         .gap_1()
                         .child(self.text(&item.parts))
                         .child(self.blocks(&item.blocks));
@@ -205,14 +207,36 @@ impl Draw<'_> {
                 list.into_any_element()
             }
             Block::Table { headers, rows } => {
-                let (border, radius) = (theme.border, theme.radius);
-                let mut table = v_flex()
+                // One grid for the whole table, so every row shares the same columns and long cells wrap. The mock's
+                // `.mtable`: 10 px corners and 12.5 px text.
+                let (border, radius) = (theme.border, px(10.));
+                let columns = rows
+                    .iter()
+                    .map(Vec::len)
+                    .chain([headers.len()])
+                    .max()
+                    .unwrap_or(0);
+                let mut table = div()
+                    .grid()
+                    .grid_cols(columns as u16)
                     .border_1()
                     .border_color(border)
                     .rounded(radius)
-                    .child(self.table_row(headers, true));
-                for cells in rows {
-                    table = table.child(self.table_row(cells, false));
+                    .overflow_hidden()
+                    .text_size(px(12.5));
+                // A header row of blank cells is no header, so it draws no header band.
+                let has_header = headers
+                    .iter()
+                    .any(|cell| !Runs::of(cell).text.trim().is_empty());
+                let lines = has_header
+                    .then_some((headers, true))
+                    .into_iter()
+                    .chain(rows.iter().map(|row| (row, false)));
+                for (line, (cells, header)) in lines.enumerate() {
+                    for at in 0..columns {
+                        let cell = cells.get(at).map(Vec::as_slice).unwrap_or_default();
+                        table = table.child(self.table_cell(cell, header, line > 0));
+                    }
                 }
                 table.into_any_element()
             }
@@ -220,15 +244,20 @@ impl Draw<'_> {
         }
     }
 
-    fn table_row(&mut self, cells: &[Vec<Inline>], header: bool) -> Div {
-        let muted = self.cx.theme().muted;
-        let mut row = h_flex().when(header, |row| {
-            row.font_weight(FontWeight::SEMIBOLD).bg(muted)
-        });
-        for cell in cells {
-            row = row.child(div().flex_1().px_2().py_1().child(self.text(cell)));
-        }
-        row
+    /// A short row's missing cells come in empty, so the cells after them stay in their columns. A row under another
+    /// has a rule over it, and the header row a band a shade lighter than the panel (the mock's `#19191b`).
+    fn table_cell(&mut self, cell: &[Inline], header: bool, ruled: bool) -> Div {
+        let theme = self.cx.theme();
+        let (band, rule) = (theme.muted.opacity(0.35), theme.table_row_border);
+        div()
+            .min_w_0()
+            .px(px(10.))
+            .py(px(6.))
+            .when(ruled, |cell| cell.border_t_1().border_color(rule))
+            .when(header, |cell| {
+                cell.font_weight(FontWeight::SEMIBOLD).bg(band)
+            })
+            .child(self.text(cell))
     }
 
     /// One paragraph's text with its marks; its links open their URL or file when clicked.
@@ -249,7 +278,8 @@ impl Draw<'_> {
                         thickness: px(1.),
                         color: None,
                     }),
-                    background_color: marks.code.then_some(theme.muted),
+                    // The mock's inline code chip (#1a1a1c); a highlight can't change the face or draw an edge.
+                    background_color: marks.code.then_some(theme.muted.opacity(0.7)),
                     color: marks.link.then_some(theme.link),
                     ..HighlightStyle::default()
                 };

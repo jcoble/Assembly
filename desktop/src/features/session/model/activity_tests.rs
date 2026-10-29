@@ -70,10 +70,17 @@ fn each_step_runs_from_the_item_before_it_and_the_running_one_to_now() {
 // Pins: g0-session#12
 #[test]
 fn the_footer_counts_the_steps_and_the_turns_time() {
-    assert_eq!(footer(0, 3_400), "0:03");
-    assert_eq!(footer(1, 41_000), "1 step · 0:41");
-    assert_eq!(footer(3, 125_000), "3 steps · 2:05");
-    assert_eq!(footer(2, 3_725_000), "2 steps · 1:02:05");
+    assert_eq!(footer(0, None, 3_400), "0:03");
+    assert_eq!(footer(1, None, 41_000), "1 step · 0:41");
+    assert_eq!(footer(3, None, 125_000), "3 steps · 2:05");
+    assert_eq!(footer(2, None, 3_725_000), "2 steps · 1:02:05");
+}
+
+// Pins: g0-session#12
+#[test]
+fn with_a_plan_the_footer_says_which_step_of_it_the_turn_is_on() {
+    assert_eq!(footer(3, Some((3, 5)), 161_000), "Step 3 of 5 · 2:41");
+    assert_eq!(footer(0, Some((1, 4)), 3_400), "Step 1 of 4 · 0:03");
 }
 
 // Pins: g0-session#12

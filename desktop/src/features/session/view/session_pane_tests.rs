@@ -466,7 +466,7 @@ fn the_composers_ring_shows_the_newest_context_report(cx: &mut TestAppContext) {
     live(&client, context(4, 950_000), cx);
     let shown = meter(&pane, cx).expect("the live report");
     assert!(shown.hot);
-    assert_eq!(shown.detail, "950,000 of 1,000,000 (95%)");
+    assert_eq!(shown.detail, "5% context left · 950,000 of 1,000,000 (95%)");
     show(&pane, "s2", cx);
     assert_eq!(
         meter(&pane, cx),

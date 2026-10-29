@@ -1,5 +1,6 @@
 //! One folder per feature, `features/<feature>/`, which never uses another feature's folder.
 
+pub mod board;
 pub mod changes;
 pub mod files;
 pub mod meter;

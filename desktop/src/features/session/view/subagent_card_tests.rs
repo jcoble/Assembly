@@ -11,6 +11,7 @@ fn subagent(state: &str, stop_reason: Option<&str>, error: Option<&str>) -> Suba
         error: error.map(String::from),
         can_stop: true,
         tool_call_id: None,
+        helper: false,
     }
 }
 

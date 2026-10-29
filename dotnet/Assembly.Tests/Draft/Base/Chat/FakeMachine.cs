@@ -22,6 +22,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     /// <summary>Turns down a send, stop or answer, as a machine does when the turn or ask can't take it.</summary>
     public bool Refuses { get; set; }
     public List<string> Asked { get; } = [];
+    public string? SentClientId { get; private set; }
     public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Set when a held call reaches the machine.</summary>
@@ -66,8 +67,11 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Remote("helper", () => store.Helper(parent, agent, title), cancellationToken);
 
-    public Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken) =>
-        Remote<string?>($"send {session.SessionId} {text}", () => Refuses ? null : "run-1", cancellationToken);
+    public Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken)
+    {
+        SentClientId = clientId;
+        return Remote<string?>($"send {session.SessionId} {text}", () => Refuses ? null : "run-1", cancellationToken);
+    }
 
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Remote($"stop {runId}", () => !Refuses, cancellationToken);

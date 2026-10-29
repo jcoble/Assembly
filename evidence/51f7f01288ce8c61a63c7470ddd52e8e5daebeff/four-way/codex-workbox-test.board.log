@@ -1,0 +1,3 @@
+ok real provider reported two independent questions through MCP
+ok real provider received answer; reask rejected stale answer; chat answer recorded without echo
+ok desktop SQL mirror, source detail and actual recovery chat agree

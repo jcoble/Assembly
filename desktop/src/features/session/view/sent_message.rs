@@ -8,6 +8,10 @@ use gpui_kit::*;
 
 use super::session_action::{OnAction, SessionAction};
 
+/// The bubble's corners: the design system's radius-xl.
+const BUBBLE_RADIUS: Pixels = px(20.);
+/// The bubble's widest, the approved mock's `.bubble`.
+const BUBBLE_WIDTH: Pixels = px(470.);
 /// A prompt folds past this many lines.
 pub const FOLD_LINES: usize = 10;
 
@@ -86,14 +90,16 @@ impl RenderOnce for SentMessage {
         });
         v_flex()
             .ml_auto()
-            .max_w(relative(0.8))
+            .max_w(BUBBLE_WIDTH)
             .gap_1()
             .children(sender)
             .child(
                 v_flex()
-                    .px_3()
-                    .py_2()
-                    .rounded(theme.radius)
+                    .px(px(16.))
+                    .py(px(10.))
+                    .text_size(px(13.5))
+                    .line_height(relative(1.5))
+                    .rounded(BUBBLE_RADIUS)
                     .bg(theme.secondary)
                     .gap_1()
                     .when(!text.is_empty(), |bubble| bubble.child(text.to_string()))

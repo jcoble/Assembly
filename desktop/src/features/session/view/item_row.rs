@@ -2,7 +2,8 @@
 //! ask, a task, a subagent, a note, the line under a turn, an error notice, or a kind it doesn't know by name.
 //! Replaces TimelineItem.svelte and the spike's item_view.rs.
 
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::assets::IconName as Glyph;
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -19,6 +20,10 @@ use crate::features::session::model::kept::Kept;
 use crate::features::session::model::notices::Notice;
 use crate::features::session::model::turn_line::turn_line;
 
+/// The chat column's widest, centred in the pane (the reading measure); the composer keeps to it too. With its 16 px
+/// sides its content is the approved mock's 660 px `.col`.
+pub const CHAT_COLUMN: Pixels = px(692.);
+
 #[derive(IntoElement)]
 pub struct ItemRow {
     pub item: Item,
@@ -27,6 +32,8 @@ pub struct ItemRow {
     pub session: SharedString,
     /// What the copy button under a prompt or a final reply copies; `None` draws no meta line.
     pub copy: Option<SharedString>,
+    /// A final reply's turn line ("Worked for 42s · Thu 12:02 PM · model · …"), shown in its meta line.
+    pub turn: Option<String>,
     /// "Checkout changed · main@1a2b3c4 → feat@5d6e7f8" above a prompt whose run started elsewhere.
     pub checkout: Option<String>,
     /// What the pane drew for a tool call, thinking or a question: the `ExpandRow` it keeps for it (pane_expand.rs).
@@ -40,12 +47,17 @@ impl RenderOnce for ItemRow {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let key = self.item.key.clone();
-        let meta = |at: i64, copy: Option<SharedString>| {
+        // Each row its own hover group, so its copy button and time show only under the pointer.
+        let group = SharedString::from(format!("{key}:meta"));
+        let meta = |at: i64, copy: Option<SharedString>, turn: Option<String>, reply: bool| {
             copy.map(|copy| MessageMeta {
                 key: key.clone(),
+                group: group.clone(),
                 copy,
                 at,
+                turn,
                 now: self.now,
+                reply,
             })
         };
         let body = match self.item.kind {
@@ -69,17 +81,20 @@ impl RenderOnce for ItemRow {
                         open: self.kept.open,
                         on_action: self.on_action.clone(),
                     })
-                    .children(meta(at, self.copy.clone()))
+                    .children(meta(at, self.copy.clone(), None, false))
                     .into_any_element()
             }
+            // The mock's `.reply` sits 14 px under the line above it: 9 more than a step's 5.
             ItemKind::Message { blocks, at, .. } => v_flex()
+                .pt(px(9.))
                 .gap_1()
-                .child(MarkdownView {
+                // The mock's `.reply` colour, a shade brighter than the theme's text; on the reply only.
+                .child(div().text_color(rgb(0xe2e2e2)).child(MarkdownView {
                     id: key.clone().into(),
                     blocks,
                     session: self.session.clone(),
-                })
-                .children(meta(at, self.copy.clone()))
+                }))
+                .children(meta(at, self.copy.clone(), self.turn.clone(), true))
                 .into_any_element(),
             ItemKind::Thinking { .. } | ItemKind::Tool { .. } | ItemKind::Ask { .. } => {
                 self.expand.unwrap_or_else(|| div().into_any_element())
@@ -131,27 +146,45 @@ impl RenderOnce for ItemRow {
                 .child(format!("[{kind}]"))
                 .into_any_element(),
         };
-        div().w_full().px_4().py_1().child(body)
+        div()
+            .group(group.clone())
+            .w_full()
+            .max_w(CHAT_COLUMN)
+            .mx_auto()
+            .px_4()
+            // The reading style, the mock's `.reply`: 13.5 px at 1.6; a line that sets its own size keeps the proportion.
+            .text_size(px(13.5))
+            .line_height(relative(1.6))
+            .child(body)
     }
 }
 
-/// Thinking's line: a chevron turned `grown` of the way, and "Thinking" until it's done, then "Thought".
+/// Thinking's line, as a tool line: a bulb, "Thinking" until it's done, then "Thought", and a chevron after it turned
+/// `grown` of the way; the bulb and chevron faint, as the mock's `.tl`.
 pub fn thinking_title(done: bool, grown: f32, cx: &App) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    let faint = muted.opacity(0.65);
     h_flex()
+        .h(px(22.))
         .gap_2()
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-        .child(chevron(grown))
+        .text_size(px(13.))
+        .text_color(muted)
+        .child(Icon::new(Glyph::Lightbulb).size(px(14.)).text_color(faint))
         .child(if done { "Thought" } else { "Thinking" })
+        .child(chevron(grown).text_color(faint))
         .into_any_element()
 }
 
-/// What thinking shows open: its text.
+/// What thinking shows open: its text, hanging from a rule under the title.
 pub fn thinking_body(text: SharedString, cx: &App) -> AnyElement {
+    let theme = cx.theme();
     div()
+        .ml(px(7.))
+        .pl(px(15.))
+        .border_l_1()
+        .border_color(theme.border)
         .text_sm()
-        .italic()
-        .text_color(cx.theme().muted_foreground)
+        .text_color(theme.muted_foreground)
         .child(text)
         .into_any_element()
 }

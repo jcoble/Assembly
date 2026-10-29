@@ -19,7 +19,7 @@ public sealed class HelperRow(SessionStore sessionStore, SessionRegistry session
         // there, and this machine copies it.
         if (helper.ParentSessionId is not { } parent || sessionStore.Get(parent) is not { Machine: null })
             return;
-        var payload = new SubagentPayload(helper.SessionId, helper.Title ?? "Helper", $"Helper session ({helper.Agent})", state, stopReason, error,
+        var payload = new SubagentPayload(helper.SessionId, helper.Title ?? "Session", $"Session ({helper.Agent})", state, stopReason, error,
             CanStop: state != "idle", ToolCallId: null, Agent: helper.Agent, Helper: true);
         // The ACP-id slot carries Assembly's session id here, not an ACP id.
         sessions.For(parent).Show(new SubagentShown(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), helper.SessionId, payload));
