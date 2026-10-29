@@ -220,10 +220,6 @@ small things.
 
 ## Reviews for every implementation step
 
-Jesse (2026-10-26): "When they get to implementing, I'd like to have a sub-agent look over what they are about to do,
-look at what's been done, the plan, everything and see if they see any spots in the plan, missing, needs changed,
-etc. Then have a code and spec review done, one Claude and one Sol 6.1."
-
 - Before writing anything, a Claude Code subagent reads the step, what's on main, the plan and this file, and reports
   gaps or anything that needs changing.
 - After the step, two code and spec reviews of its diff: one by a Claude Code subagent, and one by Sol 6.1
@@ -233,25 +229,16 @@ etc. Then have a code and spec review done, one Claude and one Sol 6.1."
 
 ## Checking a feature
 
-- Check every feature with both Claude Code and Codex, on the desktop and on Workbox Test: `scripts/check4.sh`, with this
-  commit's backend running locally and its host deployed (`dotnet/scripts/workbox.sh serve`). It writes
-  `evidence/<commit>/four-way/`; commit that folder with the feature.
-- The plain check proves turns run, not that the feature works. A feature's lane writes its scenario,
-  `scripts/features/<feature>.sh` (see the README there), from the corrected spec. `scripts/check4.sh` runs every
-  scenario in every case, so a change that breaks a feature already landed fails its check. Keep a scenario short
-  (seconds, not minutes) so a full run stays cheap. `--feature <name>` runs one scenario for quick runs while
-  working; that run isn't evidence.
-- A lane may not call a feature checked without a passing summary for its commit. CI fails a push to main whose
-  code commits have none (`scripts/check-evidence.sh`). Never write or edit evidence by hand.
-- A change the owner can see or use also gets a feature check: open that feature in the app with real-looking data
-  (long names, many projects, large chats), use it as the task describes, and look for anything cut off, repeated or
-  empty.
-- Window screenshots before and after go to Google Drive with the `evidence` tool, never into this repo, and the PR
-  and its task link to them (docs/evidence.md). `scripts/check4.sh window <commit> <file>...` records their names in
-  the summary.
-- Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).
-- Real-window checks (the lag meter, memory) run on the Mac: pull the lane's branch into a Mac lane and run
-  `shell/assembly.sh start --counters` there.
+Test first for any behaviour change: write the test, watch it fail, then make it pass.
+The commit-msg hook rejects a commit whose subject starts with fix unless it stages a test file (*.test.ts, *_test.dart, a tests/ folder) or a Rust #[test], or the body has a line No-test: <reason>.
+Run only what you touched: pnpm --dir tauri-svelte-preview test:<name> (or node --experimental-strip-types <file>.test.ts), cargo test --manifest-path tauri-svelte-preview/src-tauri/Cargo.toml <name>, check:svelte. Full suites belong to CI.
+Test behaviour and logic. No tests that mirror the implementation or only check that a callback is wired. No tests on component structure, layout, panels, menus, styling, colour tokens or contrast: the UI changes daily and those tests only get rewritten to match it.
+A test that needs a sleep or polling to pass is wrong; wait on the event that marks completion.
+Every change gets the four-scenario check (docs/operations/four-scenario-check.md), with no exemption for changes that look small: Claude Code and Codex, each on a local session and on Workbox Test. Several changes may share one run if it exercises each of them. Report the four-row table with evidence; a scenario you can't run is reported blocked with the exact error. Each worktree has its own test-app run: fourScenarios.ts start --worktree <path> and stop --worktree <path> use ~/assembly-proof/current-<folder name>-<path hash> so equal folder names in different locations stay separate. The hash uses the canonical worktree path. Without --worktree, commands use the current directory's Git worktree. Different worktrees may run together when more than 6 GB of RAM is available; starting the same worktree twice is refused. Stopping one worktree leaves the others running.
+The four scenarios only cover chat. A change the owner can see or use also gets a feature check: open that feature in the test app seeded with real data (long names, many projects and worktrees, large chats), use it as the task describes, screenshot it, look for anything cut off, repeated or empty, and add a "Feature check" line with the Drive link to the PR.
+That check and any UI proof use the real native app with real test data, driven the way a person uses it. On Linux the app runs under Xvfb at 1710x990, driven with assembly-native-ui (screenshots, clicks, keys); Codex may use its computer-use tool. A browser preview is not proof: it has no app data. Use a headless browser at 1710x990 only for real web pages.
+Save screenshots as ~/Workbox/screenshots/TSK-<id>-<what>-<before|after>.png and run evidence add <file> --task TSK-<id> --desc "<what it proves>"; evidence publish TSK-<id> gives the Drive links for the PR and the task. Close every browser and app you opened.
+
 
 ## Lanes
 
