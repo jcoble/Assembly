@@ -48,6 +48,7 @@ internal sealed partial class RemoteMachine
             && _sessionStore.Get(item.SessionId) is { Machine: var machine } && machine == _name)
         {
             _sessionStore.ApplyRemote(item);
+            if (item.ActiveRunId is { } runId) _follower.Watch(item.SessionId, runId);
         }
     }
 

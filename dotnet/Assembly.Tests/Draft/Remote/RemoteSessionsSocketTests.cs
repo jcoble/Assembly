@@ -60,6 +60,42 @@ public sealed partial class RemoteRowsSocketTests
         finally { _localTopics.Unsubscribe(subscription); }
     }
 
+    // Pins: remote#16, remote#21. The native rail reads copied rows, with no chat viewer.
+    [Fact]
+    public async Task A_remote_turn_without_an_open_chat_updates_the_session_rail()
+    {
+        var working = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        SessionsFeature.RailEntry Entry() => _localSessions.Rail(new SessionsFeature.RailArgs(GroupBy: new(false, false)))
+            .Sessions.Single(entry => entry.SessionId == "s");
+        var subscription = _localTopics.Subscribe(SessionsFeature.RailTopic, "s", _ => { }, (_, _) =>
+        {
+            var entry = Entry();
+            if (entry.Running && entry.NeedsYou) working.TrySetResult();
+            if (!entry.Running && !entry.NeedsYou && entry.Failed && entry.Unread) ended.TrySetResult();
+        });
+        try
+        {
+            Assert.False(_localHub.HasSubscribers("s"));
+            Assert.False(Entry().Running);
+            await _machine.ProbeAsync(CancellationToken.None);
+            var batch = new RowBatch();
+            batch.Rows.Add(new NewRow("direct-run", null, "turn", JsonSerializer.SerializeToElement(new { state = "started" }), 1));
+            batch.Rows.Add(new NewRow("direct-run", "ask-1", "ask", JsonSerializer.SerializeToElement(new { state = "open" }), 2));
+            _remoteHub.Publish("s", batch);
+            await working.Task.WaitAsync(Wait);
+            var finish = new RowBatch();
+            finish.Rows.Add(new NewRow("direct-run", "ask-1", "ask", JsonSerializer.SerializeToElement(new { state = "answered" }), 3));
+            finish.Rows.Add(new NewRow("direct-run", null, "turn", JsonSerializer.SerializeToElement(new { state = "failed" }), 4));
+            _remoteHub.Publish("s", finish);
+            await ended.Task.WaitAsync(Wait);
+            Assert.Equal(4, RowStore.Open(_localDb).LastSeq("s"));
+            Assert.False(_localHub.HasSubscribers("s"));
+            Assert.Equal(0, _sessionHttpHits);
+        }
+        finally { _localTopics.Unsubscribe(subscription); }
+    }
+
     // Pins: remote#11
     [Fact]
     public async Task A_remote_with_another_row_format_is_refused_at_welcome()
