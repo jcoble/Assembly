@@ -35,6 +35,7 @@ use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::kept::Kept;
 use crate::features::session::model::reveal::Reveal;
 use crate::features::session::model::session_view::{SessionView, key_of};
+use crate::features::session::model::turn_line::latest_branch;
 use crate::features::session::rows::row::Row;
 use crate::features::session::rows::row_page::RowPage;
 use crate::features::session::rows::tool::ToolState;
@@ -130,21 +131,22 @@ impl SessionPane {
             let Some(pane) = pane.upgrade() else {
                 return div().into_any_element();
             };
-            let (row, fresh, fold) = pane.update(cx, |pane, cx| {
+            let (row, fresh, fold, space) = pane.update(cx, |pane, cx| {
                 pane.make_form(entry, window, cx);
                 (
                     pane.row(entry, cx),
                     pane.fresh_key(entry),
                     pane.open_fold_of(entry),
+                    pane.space_under(entry),
                 )
             });
             let row = match fresh {
                 Some(key) => fade_in(key, row, window, cx),
                 None => row,
             };
-            // The kit's space between rows (pb_8), inside the row so it grows with it.
+            // The space under a row by what it is (pane_rows.rs), inside the row so it grows with it.
             let row = div()
-                .when(!last, |row| row.pb_8())
+                .when(!last, |row| row.pb(space))
                 .child(row)
                 .into_any_element();
             // A fold's work grows in place as the fold opens and shuts.
@@ -506,9 +508,13 @@ impl SessionPane {
         }
         let context = self.view.context.map(|(_, used, size)| (used, size));
         let running = active.is_some();
+        let branch = latest_branch(&self.view.stats);
+        let messages = !self.view.items.is_empty();
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
+            composer.set_branch(branch, cx);
+            composer.set_messages(messages, cx);
         });
         self.tell_read(running, cx);
         cx.notify();
