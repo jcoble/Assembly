@@ -20,6 +20,7 @@ internal sealed class RemoteFollower(
     private readonly HashSet<string> _gaveUp = [];
     // Remote helpers a restart found shown running here, until their follower first catches up. Under the same lock.
     private readonly HashSet<string> _shownRunning = [];
+    private readonly Dictionary<string, string> _expectedRuns = [];
     private readonly CancellationTokenSource _stopping = new();
     internal string[] FollowedSessions
     {
@@ -30,12 +31,13 @@ internal sealed class RemoteFollower(
     /// Catches the session up, and follows it for as long as it's needed. A session already followed gets one more
     /// pass once its follower would stop, so a watch that lands as it stops isn't lost.
     /// </summary>
-    public void Watch(string sessionId)
+    public void Watch(string sessionId, string? expectedRun = null)
     {
         lock (_following)
         {
             if (_stopping.IsCancellationRequested)
                 return;
+            if (expectedRun is not null) _expectedRuns[sessionId] = expectedRun;
             if (_following.ContainsKey(sessionId))
                 _again.Add(sessionId);
             else
@@ -75,7 +77,20 @@ internal sealed class RemoteFollower(
             return _again.Remove(sessionId);
     }
 
-    private bool Needed(string sessionId) => hub.OpenRun(sessionId) is not null || hub.HasSubscribers(sessionId);
+    private bool Needed(string sessionId)
+    {
+        string? expected;
+        lock (_following) expected = _expectedRuns.GetValueOrDefault(sessionId);
+        // A user row precedes started. Keep following until the run's turn row is copied,
+        // including when another follow copied it before the send response arrived.
+        if (expected is not null && hub.RunRows(sessionId, expected).Any(row => row.Kind == RowKind.Turn))
+        {
+            lock (_following)
+                if (_expectedRuns.GetValueOrDefault(sessionId) == expected) _expectedRuns.Remove(sessionId);
+            expected = null;
+        }
+        return expected is not null || hub.OpenRun(sessionId) is not null || hub.HasSubscribers(sessionId);
+    }
 
     private async Task FollowAsync(string sessionId)
     {
@@ -100,6 +115,7 @@ internal sealed class RemoteFollower(
             lock (_following)
             {
                 _following.Remove(sessionId);
+                if (gaveUp) _expectedRuns.Remove(sessionId);
                 again = _again.Remove(sessionId);
                 if (gaveUp && !again) _gaveUp.Add(sessionId);
             }

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Socket;
@@ -33,6 +34,8 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
     private WebApplication _app = null!;
     private Uri _address = null!;
     private int _liveHits;
+    private readonly TopicSet _localTopics = new();
+    private Func<WebSocket, Task>? _bulkRead;
 
     public async Task InitializeAsync()
     {
@@ -41,7 +44,7 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         _localDb = TestDatabase.Open(_localFile.Path);
         _remoteStore = RowStore.Open(_remoteDb);
         _remoteHub = new LiveHub(_remoteStore, topics: topics);
-        _localHub = new LiveHub(RowStore.Open(_localDb));
+        _localHub = new LiveHub(RowStore.Open(_localDb), topics: _localTopics);
         var sessions = SessionStore.Open(_remoteDb, TimeProvider.System, "checkouts");
         sessions.Add("s", "claude", "https://github.com/o/r", "box");
         _localSessions = SessionStore.Open(_localDb, TimeProvider.System, "checkouts");
@@ -55,7 +58,16 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         _app = builder.Build();
         _app.UseWebSockets();
         _app.Map("/socket", _socket.HandleAsync);
-        _app.Map("/socket/bulk", _bulk.HandleAsync);
+        _app.Map("/socket/bulk", async context =>
+        {
+            if (_bulkRead is null) await _bulk.HandleAsync(context);
+            else
+            {
+                using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                await _bulkRead(socket);
+            }
+        });
+        _app.MapPost("/sessions/s/send", () => new { runId = "run" });
         _app.MapGet("/version", () => new { formatVersion = RowStore.FormatVersion });
         _app.Map("/live", context =>
         {
@@ -79,6 +91,39 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         Publish(1, 5);
         Assert.Equal(Enumerable.Range(1, 5).Select(n => (long)n), await ReadSeqsAsync(viewer, 5));
         Assert.Equal(0, _liveHits);
+    }
+
+    // Pins: remote#18
+    [Fact]
+    public async Task Remote_rows_keep_following_a_turn_the_desktop_started_until_its_rows_arrive()
+    {
+        var copied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rail = _localTopics.Subscribe(SessionsFeature.RailTopic, "s", _ => { }, (_, _) => copied.TrySetResult());
+        _bulkRead = async socket =>
+        {
+            await ReadAsync(socket);
+            await SendAsync(socket, """{"t":"welcome","protocol":1}""");
+            await ReadAsync(socket);
+            // The catch-up has read no rows. The send's user and started rows arrive afterwards,
+            // through the live subscription, even if its empty read response is still in flight.
+            var batch = new RowBatch();
+            batch.Rows.Add(new NewRow("run", null, RowKind.User,
+                JsonDocument.Parse("""{"text":"answer"}""").RootElement.Clone(), 1));
+            batch.Rows.Add(new NewRow("run", null, RowKind.Turn,
+                JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
+            _remoteHub.Publish("s", batch);
+            await SendAsync(socket, """{"t":"result","id":1,"result":{"rows":[]}}""");
+        };
+        try
+        {
+            Assert.False(_localHub.HasSubscribers("s"));
+            Assert.Equal("run", await _machine.SendAsync(_localSessions.Get("s")!, "answer", null, CancellationToken.None));
+            await copied.Task.WaitAsync(Wait);
+            Assert.False(_localHub.HasSubscribers("s"));
+            Assert.Equal(new long[] { 1, 2 }, _localHub.RunRows("s", "run").Select(row => row.Seq));
+            Assert.Equal("run", _localHub.OpenRun("s"));
+        }
+        finally { _localTopics.Unsubscribe(rail); }
     }
 
     // Pins: remote#20
@@ -173,10 +218,10 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         return socket;
     }
 
-    private static Task SendAsync(ClientWebSocket socket, string frame) =>
+    private static Task SendAsync(WebSocket socket, string frame) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, true, CancellationToken.None);
 
-    private static async Task<string> ReadAsync(ClientWebSocket socket)
+    private static async Task<string> ReadAsync(WebSocket socket)
     {
         using var deadline = new CancellationTokenSource(Wait);
         using var frame = new MemoryStream();
