@@ -133,6 +133,35 @@ fn a_subscription_gets_its_state_then_each_change_until_unsub() {
     assert!(block_on(missing.recv()).is_err());
 }
 
+// A keyed topic whose items are rows (the terminal's output, TerminalFeature.cs) gets each row as a change of its
+// key, and the socket stays open.
+#[test]
+fn a_keyed_topic_of_rows_gets_each_row_as_a_change() {
+    let backend = FakeBackend::start(|frame| {
+        hello(frame).unwrap_or_else(|| match frame["t"].as_str() {
+            Some("sub") => {
+                let sub = frame["id"].clone();
+                vec![
+                    Reply::Frame(json!({"t": "state", "sub": sub, "seq": 0, "items": []})),
+                    Reply::Frame(
+                        json!({"t": "rows", "sub": sub, "row": {"seq": 2, "prevSeq": 0, "data": "aGk="}}),
+                    ),
+                ]
+            }
+            _ => vec![],
+        })
+    });
+    let client = Client::start(backend.port);
+    let (_, mut updates) = client.subscribe_key("terminal", Some("term-1"));
+    assert!(
+        matches!(block_on(updates.recv()).ok(), Some(Update::State(items)) if items.is_empty())
+    );
+    assert!(matches!(
+        block_on(updates.recv()).ok(),
+        Some(Update::Change { key, item }) if key == "term-1" && item["data"] == "aGk="
+    ));
+}
+
 // Pins: g0-socket#7
 #[test]
 fn a_drop_aborts_waiting_calls_reopens_once_and_subscribes_again() {

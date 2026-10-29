@@ -1,5 +1,7 @@
 //! `InFrame` is a frame the backend sends (dotnet/Assembly.Infrastructure/Socket/SocketDispatcher.cs). `t` names it.
-//! `state` on the `rows` topic has `seq` and no items; the `rows` frames after it continue from that seq.
+//! `state` on the `rows` topic has `seq` and no items; the `rows` frames after it continue from that seq. A `rows`
+//! frame's row stays JSON here: the chat's `rows` topic reads it as a `Row`, and another topic of rows (`terminal`)
+//! passes it on as a change.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -33,7 +35,7 @@ pub(super) enum InFrame {
     },
     Rows {
         sub: u64,
-        row: super::row::Row,
+        row: Value,
     },
 }
 

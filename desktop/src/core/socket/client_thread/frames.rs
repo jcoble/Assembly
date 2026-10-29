@@ -1,6 +1,6 @@
 //! How the client thread applies each frame the backend sends: answers settle their calls, a subscription's error
 //! drops it, `state` and `change` go to their topic, and rows pass through their feed's seq check, a gap
-//! re-subscribing from the last seq.
+//! re-subscribing from the last seq. A row on a keyed topic (`terminal`) goes to it as a change of its key.
 
 use std::sync::atomic::Ordering;
 
@@ -10,6 +10,7 @@ use crate::core::socket::error_code::ErrorCode;
 use crate::core::socket::in_frame::InFrame;
 use crate::core::socket::out_frame::OutFrame;
 use crate::core::socket::outcome::Outcome;
+use crate::core::socket::row::Row;
 use crate::core::socket::row_update::RowUpdate;
 use crate::core::socket::rows_feed::RowStep;
 use crate::core::socket::update::Update;
@@ -55,8 +56,25 @@ impl ClientThread {
                 }
             }
             InFrame::Rows { sub, row } => {
+                if let Some(topic) = self.topics.get(&sub) {
+                    let key = topic.key.clone().unwrap_or_default();
+                    let _ = topic
+                        .updates
+                        .unbounded_send(Update::Change { key, item: row });
+                    return;
+                }
                 let Some(rows) = self.rows.get_mut(&sub) else {
                     return;
+                };
+                let row: Row = match serde_json::from_value(row) {
+                    Ok(row) => row,
+                    // As a frame that doesn't read: reopening at once would get the same row again.
+                    Err(error) => {
+                        eprintln!("socket: a row this client doesn't read ({error})");
+                        self.close();
+                        self.disconnected();
+                        return;
+                    }
                 };
                 match rows.feed.step(row.seq, row.prev_seq) {
                     RowStep::Pass => {
