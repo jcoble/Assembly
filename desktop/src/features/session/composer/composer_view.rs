@@ -16,7 +16,7 @@ use serde_json::json;
 use super::agent_config::AgentConfig;
 use super::attachment::{Attachment, AttachmentState};
 use super::context_meter::ContextMeter;
-use crate::features::session::client::session_client::SessionClient;
+use crate::features::session::client::session_client::{CallError, SessionClient};
 
 pub struct Composer {
     client: Rc<dyn SessionClient>,
@@ -267,7 +267,22 @@ impl Composer {
                         // so nothing else takes its place): it comes back to its session's draft with its images,
                         // unless something new was typed there, and a resend keeps its clientId in case the first
                         // did land. Images don't follow a draft to another session.
-                        Err(_) => {
+                        Err(error) => {
+                            if composer.session.as_ref() == Some(&session) {
+                                let hint = if matches!(error, CallError::Unreachable { .. }) {
+                                    " Check Settings > Connections."
+                                } else {
+                                    ""
+                                };
+                                composer.error = Some(
+                                    format!(
+                                        "Couldn't send: {}.{hint}",
+                                        error.reason().trim_end_matches('.')
+                                    )
+                                    .into(),
+                                );
+                                cx.notify();
+                            }
                             composer
                                 .retry_ids
                                 .insert(session.clone(), (text, client_id));

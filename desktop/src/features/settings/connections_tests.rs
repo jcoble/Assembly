@@ -184,6 +184,38 @@ impl Page<'_> {
     }
 }
 
+#[gpui::test]
+async fn adding_an_existing_name_is_refused_and_keeps_the_form(cx: &mut TestAppContext) {
+    let backend = backend();
+    let page = editing_box(cx, &backend).await;
+    page.cx.update(|window, cx| {
+        page.page.update(cx, |page, cx| {
+            page.machine_edits.editing = None;
+            for (field, value) in
+                page.machine_fields
+                    .iter()
+                    .zip([" box ", "other-host", "1", "other/env"])
+            {
+                field.update(cx, |field, cx| field.set_value(value, window, cx));
+            }
+            page.save_machine(window, cx);
+            assert_eq!(
+                page.machine_edits.failure,
+                Some((
+                    None,
+                    "A machine named \"box\" already exists. Edit it instead.".into()
+                ))
+            );
+            assert!(page.machine_call.is_none(), "no upsert is sent");
+            let typed = page
+                .machine_fields
+                .each_ref()
+                .map(|field| field.read(cx).value().to_string());
+            assert_eq!(typed, [" box ", "other-host", "1", "other/env"]);
+        });
+    });
+}
+
 // What was typed while a save is on its way would be wiped when the save comes back, never sent: the fields take
 // nothing until it does. A save the backend refuses leaves them as they were, to fix and try again.
 #[gpui::test]

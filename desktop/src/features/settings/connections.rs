@@ -75,6 +75,7 @@ impl SettingsPage {
         };
         let label = v_flex()
             .gap_0p5()
+            .flex_1()
             .min_w_0()
             .child(
                 div()
@@ -86,12 +87,22 @@ impl SettingsPage {
             .child(
                 h_flex()
                     .gap_1p5()
+                    .items_start()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(div().size(px(6.)).rounded_full().bg(dot))
-                    .child(format!("{reached} · {status}")),
+                    .child(div().flex_none().size(px(6.)).rounded_full().bg(dot))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .child(format!("{reached} · {status}")),
+                    ),
             );
-        let failure = self.failure_about(machine.name.as_ref(), cx);
+        let failure = machine
+            .name
+            .as_ref()
+            .and_then(|name| self.failure_about(Some(name), cx));
         let actions = machine
             .name
             .is_some()
@@ -277,6 +288,24 @@ impl SettingsPage {
             .each_ref()
             .map(|field| field.read(cx).value());
         let edited = (self.machine_edits.editing.as_ref()).and_then(|edited| edited.name.clone());
+        if edited.is_none()
+            && Machines::try_global(cx).is_some_and(|machines| {
+                machines
+                    .read(cx)
+                    .machines()
+                    .any(|machine| machine.name.as_deref() == Some(name.trim()))
+            })
+        {
+            self.machine_edits.failure = Some((
+                None,
+                format!(
+                    "A machine named \"{}\" already exists. Edit it instead.",
+                    name.trim()
+                ),
+            ));
+            cx.notify();
+            return;
+        }
         let name = edited.unwrap_or(name.to_string());
         match set_args(&name, &ssh, &port, &token_file) {
             Ok(args) => self.machine_call(None, "set", args, "Not saved", window, cx),
