@@ -185,8 +185,7 @@ doesn't. Before calling work done, name which of these you covered:
   on component structure, layout, panels, menus, styling, colour tokens or contrast: the UI changes daily and those
   tests only get rewritten to match it.
 - A test that needs a sleep or polling to pass is wrong; wait on the event that marks completion.
-- Every change gets the four-scenario check (see "Checking a feature"), with no exemption for changes that look
-  small: Claude Code and Codex, each on a local session and on Workbox Test.
+- Every change gets the check its level calls for (see "Checking a feature": none, one tester, or the four-way).
   `docs/operations/four-scenario-check.md` explains setup, the four-row report and blocked results. Several changes
   may share a run only if it exercises each change and meets the commit-evidence rule below.
 
@@ -200,7 +199,7 @@ small things.
 
 Every reviewer, the review bot included, is also the final gate on the four-way check ("Checking a feature"). Read
 every run's report and open its evidence. Block the PR when the runs don't cover what the PR changes end to end, skip
-the off-happy-path cases that matter for this change, are missing any of the four runs or ran on a commit older than
+the off-happy-path cases that matter for this change, are missing a run the change's level calls for or ran on a commit older than
 the head, when the screenshots don't show what the report claims, or when the look and theme don't match the rest of
 the app. Thin testing is a blocking finding, like a bug.
 
@@ -255,6 +254,19 @@ things still go wrong in ways nobody expected. The only way to find them is to r
 the way a person would, thoroughly, every time. So the four-way UI check below is the proof a feature works.
 Nothing else stands in for it, however sure you are of the code.
 
+- **Which check.** The controller picks the level in each lane's spec, by what the change touches, and says why. A
+  test alone never proves behavior: every level except the first runs the real app.
+
+  | Change touches | Check | Proof |
+  |---|---|---|
+  | Scripts, build or CI config, docs, tests only | None: run the changed thing once | Its output in the PR |
+  | Backend behavior: delivery, send rules, data, remote | One tester drives the app to where the result shows; local and Workbox Test only if it touches remote | 2 to 4 screenshots of where it lands: the message in the chat, its log line, its audit entry, the row's state |
+  | Anything visible, or the chat or session flow | The four-way check below | The report table and screenshots |
+
+  Backend behavior almost always shows somewhere in the app. If it shows nowhere, the tester says so: the change
+  likely needs a log line or audit entry anyway. A fix after a failed check is rechecked by one tester on just what
+  failed. One run may cover several PRs of a feature when it exercises each of them.
+
 - **The four-way check.** Claude Code and Codex each test the feature in the real native app on the workbox: once
   with the app's own backend there (local), and once on sessions on Workbox Test, connected from Settings >
   Connections (remote). Four runs: Claude Code local, Claude Code remote, Codex local, Codex remote.
@@ -281,8 +293,8 @@ Nothing else stands in for it, however sure you are of the code.
   `scripts/check4.sh window <commit> <file>...` records their names in the summary.
 - **The PR table.** The PR body has one table with a row per run: tester, local or remote, commit, pass, FAIL or
   blocked, and links to its screenshots and video. Each run's report goes under the table, so the reviewer reads it in
-  the PR. A blocked row shows the exact error. Fixes go back to the lane, and all four runs happen again on the fixed
-  commit. A lane may not call a feature done without all four passing on its final commit.
+  the PR. A blocked row shows the exact error. Fixes go back to the lane, and the fixed commit is rechecked by one tester on what failed. A lane may not call a feature done
+  without its level's check passing on its final commit.
 - **The regression check is not the four-way check.** `scripts/check4.sh` sends one turn per provider and machine and
   runs every landed feature's short socket scenario (`scripts/features/<feature>.sh`, see the README there), so a
   change that breaks something already landed is caught cheaply. Keep scenarios short (seconds). It writes
