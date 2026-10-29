@@ -183,8 +183,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             clock.Start();
         }, (_, json) =>
         {
-            var item = JsonSerializer.Deserialize(json, SessionsJson.Default.MachineItem)!;
-            if (item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
+            // A removed machine is published as null; the mirror only follows its own machine's reachability.
+            var item = JsonSerializer.Deserialize(json, SessionsJson.Default.MachineItem);
+            if (item is not null && item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
         });
         boardMirror?.Reconnect();
         var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
