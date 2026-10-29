@@ -19,7 +19,7 @@ g0-shape#4 Launching the app doesn't save the layout. Changes made together save
 behind older ones (378bc67d).
 g0-shape#5 Opening the drawer pushes the panes over instead of covering them. Closing it gives the center its width
 back (289c449b).
-g0-shape#6 The round Home button, with the old app's house icon, sits above the sessions column and keeps its width,
+g0-shape#6 The Home button, with the old app's house icon, sits above the sessions column and keeps its width,
 so the dividers line up with the top row. It follows the column while the column's edge is dragged (f4898b79,
 668f7350).
 g0-shape#7 The drawer's tabs, Sessions, Chat and Problems have no close button (951f2b43).
@@ -35,7 +35,7 @@ this one row (Jesse 2026-10-27, "many list items from diff places get the same b
 click and each frame's height, can open or shut it itself, and can draw the band and the body from its own state.
 g0-shape#11 The sessions column can be dragged from 220 to 560 px wide and the drawer from 240 to 640 px (the approved
 look); a dragged edge stops at the limit, and the drag still saves once, when it ends.
-g0-shape#12 The drawer's tabs sit in the title row, at its right: one 28 px icon button per drawer pane, the old app's
+g0-shape#12 The drawer's tabs sit in the title row, at its right: one 26 px icon button per drawer pane, the old app's
 icons, the shown one lit while the drawer is open and the name on hover. A button opens the shut drawer on its pane,
 shows its pane in the open drawer, or closes the drawer when its pane is the one shown. They have no drag handle, so a
 drawer pane no longer drags from its tab. The sessions column's tabs are the old top tab row's text chips (Jesse

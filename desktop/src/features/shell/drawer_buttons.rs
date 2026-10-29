@@ -1,4 +1,4 @@
-//! `DrawerButtons` are the drawer's pane buttons at the right of the title row: one 28 px icon button per drawer pane,
+//! `DrawerButtons` are the drawer's pane buttons at the right of the title row: one 26 px icon button per drawer pane,
 //! the shown one lit while the drawer is open, then Terminal, which opens and closes the bottom dock. A pane's button
 //! opens the drawer on it, shows it, or closes the drawer when it's the one shown (`press`). The drawer draws no tabs of
 //! its own any more, so its panes no longer drag from a tab (accepted for the approved look).
@@ -14,7 +14,8 @@ use super::default_layout::{
     AGENTS, CONTEXT, HISTORY, RUN, SOURCE_CONTROL, TASKS, TERMINAL, WORKTREES,
 };
 
-const SIZE: Pixels = px(28.);
+/// The approved mock's icon button (`.ib`): 26 px, 8 px corners, a 15 px icon in the muted colour.
+const SIZE: Pixels = px(26.);
 
 /// What pressing a drawer pane's button does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,11 +63,7 @@ impl RenderOnce for DrawerButtons {
             });
         }
         let theme = cx.theme();
-        let (lit, color, radius) = (
-            theme.secondary_hover,
-            theme.foreground.opacity(0.85),
-            theme.radius,
-        );
+        let (lit, color, radius) = (theme.secondary_hover, theme.muted_foreground, px(8.));
         let button = |name: &'static str, glyph: IconName, on: bool| {
             div()
                 .id(name)
@@ -81,7 +78,7 @@ impl RenderOnce for DrawerButtons {
                 .when(on, |button| button.bg(lit))
                 .hover(|button| button.bg(lit))
                 .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
-                .child(Icon::new(glyph).size(px(14.)))
+                .child(Icon::new(glyph).size(px(15.)))
         };
         let panes = panes.into_iter().map(|(id, name, shown)| {
             let dock = self.dock.clone();

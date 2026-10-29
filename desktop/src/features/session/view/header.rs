@@ -77,17 +77,20 @@ impl Render for Header {
     /// With no session open it still draws, holding only the sessions button, so a column left closed can reopen.
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (muted, border) = (theme.muted_foreground, theme.border);
+        // The approved mock's `.ptop`: a faint rule under it (#1d1d1f), "project" faint (#6e6e72), the title in the
+        // foreground, and the sessions button a 26 px icon button.
+        let (muted, border) = (theme.muted_foreground, theme.border.opacity(0.45));
+        let faint = muted.opacity(0.65);
         let sessions = div()
             .id("toggle-sessions")
             .debug_selector(|| "toggle-sessions".into())
-            .size(px(28.))
+            .size(px(26.))
             .flex()
             .flex_none()
             .items_center()
             .justify_center()
-            .rounded(theme.radius)
-            .text_color(theme.foreground.opacity(0.85))
+            .rounded(px(8.))
+            .text_color(muted)
             .cursor_pointer()
             .hover(|button| button.bg(theme.secondary_hover))
             .tooltip(|window, cx| Tooltip::new("Sessions").build(window, cx))
@@ -98,7 +101,7 @@ impl Render for Header {
                     });
                 }
             })
-            .child(Icon::new(IconName::PanelLeft).size(px(14.)));
+            .child(Icon::new(IconName::PanelLeft).size(px(15.)));
         let row = h_flex()
             .h(px(48.))
             .gap(px(10.))
@@ -112,13 +115,13 @@ impl Render for Header {
         };
         let parent = item.parent_session_id.clone();
         div().child(
-            row.child(div().flex_none().w_px().h(px(16.)).bg(border))
+            row.child(div().flex_none().w_px().h(px(16.)).bg(theme.border))
                 .child(
                     h_flex()
                         .flex_1()
                         .min_w_0()
-                        .gap_1()
-                        .text_color(muted)
+                        .gap_2()
+                        .text_color(faint)
                         .child(div().flex_none().child(project(&item.repo_url).to_string()))
                         .child(Icon::new(IconName::ChevronRight).size(px(14.)))
                         .child(

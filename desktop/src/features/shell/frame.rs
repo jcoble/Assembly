@@ -21,8 +21,8 @@ use crate::core::ui::center_panes::CenterPanes;
 
 /// The work panel's distance from the window's edges (the design system's `panel-gap`).
 const PANEL_GAP: Pixels = px(8.);
-/// The work panel's corners (the design system's `radius-lg`).
-const PANEL_RADIUS: Pixels = px(16.);
+/// The work panel's corners (the approved mock's `.panel`).
+const PANEL_RADIUS: Pixels = px(14.);
 /// How narrow and how wide the sessions column and the drawer can be dragged (the approved look's layout). The kit
 /// has no per-dock limits, so Frame holds them.
 const LIMITS: [(DockPlacement, Pixels, Pixels); 2] = [
@@ -165,7 +165,8 @@ impl Render for Frame {
                             .child(self.dock.clone()),
                     )
                     // The ring goes over the panes, so a tab bar or a pane with its own fill doesn't hide it.
-                    .child(panel().border_1().border_color(theme.border)),
+                    // The mock's faint edge (#1d1d1f on the dark theme): the theme's border at under half strength.
+                    .child(panel().border_1().border_color(theme.border.opacity(0.45))),
             )
     }
 }
