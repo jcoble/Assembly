@@ -3,7 +3,7 @@
 //! apart from the list: it starts at the oldest of the topic's first state and moves only with each page's
 //! `nextBefore`, so an item that changes without moving (a rename) can't skip the sessions past it. A reconnect's
 //! state that doesn't reach the newest held session (more than 200 changed meanwhile) replaces the list and starts
-//! the cursor again from its oldest. The backend keeps helper sessions off the topic and the pages. Each item that arrives or
+//! the cursor again from its oldest. The backend keeps native subagents off the topic and the pages; started sessions are on them. Each item that arrives or
 //! changes is emitted as a `SessionChange`, so the list can animate it. Settled, the archive, has pages of its own
 //! (`sessions_settled.rs`), loaded only once it's opened; every change, settled or not, still comes on the topic.
 

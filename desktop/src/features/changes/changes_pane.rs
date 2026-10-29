@@ -1,7 +1,8 @@
-//! `ChangesPane` is the Changes tab beside Chat: one changed file's diff from `git/diff` (scm#13 to scm#17). There's one
-//! tab for every file, as in the old app: the open diff intent brings it forward and shows the picked file. The read is
-//! keyed, so picking another file stops the one on its way, and it's a task the pane holds, so closing the tab cancels
-//! it. The tab is saved with the layout under the "Changes" pane's name, and comes back with its file read afresh.
+//! `ChangesPane` is the Changes tab beside Chat: one changed file's diff from `git/diff` (scm#13 to scm#17), or the
+//! branch's diff against its base from `git/branchDiff` (scm#18 to scm#20). There's one tab for both, as in the old
+//! app: the open diff intents bring it forward and show what was picked. The reads share one key, so picking something
+//! else stops the read on its way, and each is a task the pane holds, so closing the tab cancels it. The tab is saved
+//! with the layout under the "Changes" pane's name, and comes back with what it showed read afresh.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
@@ -12,8 +13,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+use super::branch_diff::BranchDiff;
 use super::diff_lines::Kind;
 use super::file_diff::{FileDiff, Row, widest};
+use crate::core::intents::open_branch_diff::OpenBranchDiff;
 use crate::core::intents::open_diff::OpenDiff;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
@@ -21,6 +24,8 @@ use crate::core::ui::center_panes::CenterPanes;
 
 /// The pane's name in the saved layout, and the one key its tab opens under.
 pub const CHANGES: &str = "Changes";
+/// The one key both reads go under.
+const KEY: &str = "git/diff";
 const LINE: Pixels = px(20.);
 const TEXT: Pixels = px(13.);
 
@@ -29,22 +34,40 @@ struct Open(WeakEntity<ChangesPane>);
 
 impl Global for Open {}
 
-/// The file the tab shows.
-#[derive(Clone)]
-struct Picked {
-    session: String,
-    path: String,
-    original_path: Option<String>,
+/// What the tab shows: one file, or the session's whole branch against its base.
+#[derive(Clone, Debug, PartialEq)]
+enum Picked {
+    File {
+        session: String,
+        path: String,
+        original_path: Option<String>,
+    },
+    Branch {
+        session: String,
+    },
 }
 
 enum Shown {
     Reading,
     Read {
-        diff: FileDiff,
         rows: Vec<Row>,
         widest: usize,
+        notes: Vec<&'static str>,
+        /// The branch compared with, for a branch diff.
+        base: Option<String>,
     },
     Failed(String),
+}
+
+impl Shown {
+    fn read(notes: Vec<&'static str>, rows: Vec<Row>, base: Option<String>) -> Self {
+        Shown::Read {
+            widest: widest(&rows),
+            rows,
+            notes,
+            base,
+        }
+    }
 }
 
 pub struct ChangesPane {
@@ -65,35 +88,46 @@ impl ChangesPane {
                 _ => Value::Null,
             };
             let text = |key: &str| saved[key].as_str().map(String::from);
-            let picked = text("session")
-                .zip(text("path"))
-                .map(|(session, path)| Picked {
+            let picked = text("session").map(|session| match text("path") {
+                Some(path) => Picked::File {
                     session,
                     path,
                     original_path: text("originalPath"),
-                });
+                },
+                None => Picked::Branch { session },
+            });
             let pane = cx.new(|cx| ChangesPane::new(picked, cx));
             CenterPanes::remember(CHANGES, PanelId::from(pane.entity_id()), cx);
             cx.set_global(Open(pane.downgrade()));
             panel_handle(pane)
         });
         cx.on_action(|intent: &OpenDiff, cx| {
-            let picked = Picked {
+            let picked = Picked::File {
                 session: intent.session_id.clone(),
                 path: intent.path.clone(),
                 original_path: intent.original_path.clone(),
             };
-            // A click runs this while its window is being updated, so the window is updated once that's done. A display
-            // with no window manager has no active window, so the app's one window stands in.
-            if let Some(window) = cx
-                .active_window()
-                .or_else(|| cx.windows().into_iter().next())
-            {
-                cx.defer(move |cx| {
-                    _ = window.update(cx, |_, window, cx| Self::open(picked, window, cx))
-                });
-            }
+            Self::open_later(picked, cx);
         });
+        cx.on_action(|intent: &OpenBranchDiff, cx| {
+            let picked = Picked::Branch {
+                session: intent.session_id.clone(),
+            };
+            Self::open_later(picked, cx);
+        });
+    }
+
+    /// A click runs an intent while its window is being updated, so the window is updated once that's done. A display
+    /// with no window manager has no active window, so the app's one window stands in.
+    fn open_later(picked: Picked, cx: &mut App) {
+        if let Some(window) = cx
+            .active_window()
+            .or_else(|| cx.windows().into_iter().next())
+        {
+            cx.defer(move |cx| {
+                _ = window.update(cx, |_, window, cx| Self::open(picked, window, cx))
+            });
+        }
     }
 
     /// Brings the Changes tab forward, making it the first time, and shows `picked` in it.
@@ -143,32 +177,56 @@ impl ChangesPane {
             cx.notify();
             return;
         };
-        let args = json!({ "session": picked.session, "path": picked.path, "originalPath": picked.original_path });
-        // Keyed, so a newer read answers this one Aborted and cancels it on the backend.
-        let call = socket
-            .read(cx)
-            .call::<FileDiff>("git", "diff", args, Some("git/diff"));
-        self._read = Some(cx.spawn(async move |pane, cx| {
-            let outcome = call.await;
-            _ = pane.update(cx, |pane, cx| {
-                pane.shown = match outcome {
-                    Outcome::Ok(diff) => {
+        // Both reads share one key, so a newer read answers the older one Aborted and cancels it on the backend.
+        let socket = socket.read(cx);
+        self._read = Some(match picked {
+            Picked::File {
+                session,
+                path,
+                original_path,
+            } => {
+                let args =
+                    json!({ "session": session, "path": path, "originalPath": original_path });
+                let call = socket.call::<FileDiff>("git", "diff", args, Some(KEY));
+                cx.spawn(async move |pane, cx| {
+                    let shown = |diff: FileDiff| {
                         let rows = diff.rows();
-                        Shown::Read {
-                            widest: widest(&rows),
-                            rows,
-                            diff,
-                        }
-                    }
-                    Outcome::Failed(failure) => Shown::Failed(failure.message),
-                    // A newer read drops this task before its answer comes, so an abort here is the socket closing.
-                    Outcome::Aborted => Shown::Failed("The connection dropped.".into()),
-                };
-                pane._read = None;
-                cx.notify();
-            });
-        }));
+                        Shown::read(diff.notes(&rows), rows, None)
+                    };
+                    Self::answered(pane, call.await, shown, cx);
+                })
+            }
+            Picked::Branch { session } => {
+                let args = json!({ "session": session });
+                let call = socket.call::<BranchDiff>("git", "branchDiff", args, Some(KEY));
+                cx.spawn(async move |pane, cx| {
+                    let shown = |branch: BranchDiff| {
+                        let rows = branch.rows();
+                        Shown::read(branch.notes(&rows), rows, Some(branch.base))
+                    };
+                    Self::answered(pane, call.await, shown, cx);
+                })
+            }
+        });
         cx.notify();
+    }
+
+    fn answered<T>(
+        pane: WeakEntity<Self>,
+        outcome: Outcome<T>,
+        shown: impl FnOnce(T) -> Shown,
+        cx: &mut AsyncApp,
+    ) {
+        _ = pane.update(cx, |pane, cx| {
+            pane.shown = match outcome {
+                Outcome::Ok(answer) => shown(answer),
+                Outcome::Failed(failure) => Shown::Failed(failure.message),
+                // A newer read drops this task before its answer comes, so an abort here is the socket closing.
+                Outcome::Aborted => Shown::Failed("The connection dropped.".into()),
+            };
+            pane._read = None;
+            cx.notify();
+        });
     }
 
     fn row(row: &Row, cx: &App) -> AnyElement {
@@ -187,9 +245,11 @@ impl ChangesPane {
                 return div()
                     .h(LINE)
                     .px_3()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_size(TEXT)
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(theme.muted_foreground)
-                    .child(*label)
+                    .child(label.clone())
                     .into_any_element();
             }
             Row::Line(line) => line,
@@ -246,8 +306,12 @@ impl BasePanel for ChangesPane {
 
     fn dump(&self, _: &App) -> PanelState {
         let info = match &self.picked {
-            Some(picked) => json!({ "session": picked.session, "path": picked.path,
-                "originalPath": picked.original_path }),
+            Some(Picked::File {
+                session,
+                path,
+                original_path,
+            }) => json!({ "session": session, "path": path, "originalPath": original_path }),
+            Some(Picked::Branch { session }) => json!({ "session": session }),
             None => Value::Null,
         };
         PanelState {
@@ -285,12 +349,28 @@ impl Render for ChangesPane {
                     .truncate()
                     .text_sm()
                     .text_color(muted)
-                    .child(match &self.picked {
-                        Some(picked) => match &picked.original_path {
-                            Some(from) => format!("{from} → {}", picked.path),
-                            None => picked.path.clone(),
-                        },
-                        None => "Pick a changed file in the Source control tab.".into(),
+                    .child(match (&self.picked, &self.shown) {
+                        (
+                            Some(Picked::File {
+                                path,
+                                original_path: Some(from),
+                                ..
+                            }),
+                            _,
+                        ) => {
+                            format!("{from} → {path}")
+                        }
+                        (Some(Picked::File { path, .. }), _) => path.clone(),
+                        (
+                            Some(Picked::Branch { .. }),
+                            Shown::Read {
+                                base: Some(base), ..
+                            },
+                        ) => {
+                            format!("Branch vs {base}")
+                        }
+                        (Some(Picked::Branch { .. }), _) => "Branch".into(),
+                        (None, _) => "Pick a changed file in the Source control tab.".into(),
                     }),
             )
             .child(
@@ -309,7 +389,12 @@ impl Render for ChangesPane {
             _ if self.picked.is_none() => pane,
             Shown::Reading => pane.child(note("Reading the diff…".into()).text_color(muted)),
             Shown::Failed(message) => pane.child(note(message.clone()).text_color(danger)),
-            Shown::Read { diff, rows, widest } => pane
+            Shown::Read {
+                rows,
+                widest,
+                notes,
+                ..
+            } => pane
                 .when(!rows.is_empty(), |pane| {
                     pane.child(
                         uniform_list(
@@ -333,9 +418,9 @@ impl Render for ChangesPane {
                     )
                 })
                 .children(
-                    diff.notes(rows)
-                        .into_iter()
-                        .map(|text| note(text.into()).text_color(muted)),
+                    notes
+                        .iter()
+                        .map(|text| note((*text).into()).text_color(muted)),
                 ),
         }
     }

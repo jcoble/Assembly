@@ -122,8 +122,8 @@ internal sealed class RunRoutes(LiveHub hub, SessionStore sessionStore, MachineS
             return;
         }
 
-        // A helper whose parent is on the machine that reaches this one takes its prompts from there.
-        if (session.ParentSessionId is { } parent && sessionStore.Get(parent) is not null)
+        // Native subagents take prompts only from their parent; started sessions also accept the person's prompts.
+        if (!session.Helper && session.ParentSessionId is { } parent && sessionStore.Get(parent) is not null)
         {
             await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "a subagent's session takes prompts from its parent only");
             return;

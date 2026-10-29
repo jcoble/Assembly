@@ -23,16 +23,46 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task Send_fails_when_the_turn_cant_take_it_and_for_a_subagents_session()
+    public async Task PersonCanSendToAStartedSession()
+    {
+        var parent = _sessions.Create("claude", "repo");
+        var session = _sessions.Helper(parent, "claude", "Started session");
+        using var socket = await OpenRealAsync();
+
+        await CallAsync(socket, 1, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
+        var answer = await ReadAsync(socket);
+        Assert.StartsWith("""{"t":"result","id":1,""", answer);
+        var runId = RunOf(answer);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+
+        Assert.False(string.IsNullOrEmpty(runId));
+        Assert.Single(_rows.RowsAfter(session.SessionId, 0), row => row.Kind == RowKind.Turn && row.Payload.GetProperty("state").GetString() == "started");
+        await EndTurnAsync(agent, prompt);
+    }
+
+    [Fact]
+    public async Task PersonCannotSendToANativeSubagent()
+    {
+        var parent = _sessions.Create("claude", "repo");
+        var session = _sessions.Child(parent, "native-child", "Native subagent");
+        using var socket = await OpenAsync();
+
+        await CallAsync(socket, 1, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
+
+        Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"a subagent's session takes prompts from its parent only"}""", await ReadAsync(socket));
+        Assert.Empty(_here.Asked);
+    }
+
+    [Fact]
+    public async Task Send_fails_when_the_turn_cant_take_it_or_the_session_is_unknown()
     {
         var session = _sessions.Create("claude", "repo");
-        var helper = _sessions.Helper(session, "claude", "Helper");
         _here.Refuses = true;
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "send", "send", $$"""{"session":"{{session.SessionId}}","text":"hi"}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
-        await CallAsync(socket, 2, "send", "send", $$"""{"session":"{{helper.SessionId}}","text":"hi"}""");
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
         await CallAsync(socket, 3, "send", "send", """{"session":"nope","text":"hi"}""");
         Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));

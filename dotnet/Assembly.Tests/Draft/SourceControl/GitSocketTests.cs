@@ -138,6 +138,26 @@ public sealed class GitSocketTests : IAsyncLifetime
         await AssertErrorAsync(socket, "expected a file in the session's folder");
     }
 
+    // Pins: scm#18
+    [Fact]
+    public async Task Branch_diff_answers_its_base_and_changes_for_the_session_clone()
+    {
+        var session = _sessions.Create("claude", "https://github.com/o/r");
+        var root = _sessions.Item(session).Root!;
+        var origin = Path.Combine(_checkouts.FullName, "origin");
+        await MakeRepoAsync(origin);
+        await GitAsync(_checkouts.FullName, "clone", origin, root);
+        await GitAsync(root, "checkout", "-b", "feature");
+        await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "branch edit\n");
+        using var socket = await OpenAsync();
+        await CallAsync(socket, 1, "git", "branchDiff", session.SessionId);
+        using var answer = JsonDocument.Parse(await ReadAsync(socket));
+        var diff = answer.RootElement.GetProperty("result");
+        Assert.Equal("origin/main", diff.GetProperty("base").GetString());
+        Assert.Contains("+branch edit\n", diff.GetProperty("diff").GetString());
+        Assert.False(diff.GetProperty("truncated").GetBoolean());
+    }
+
     // Pins: scm#6
     [Theory]
     [InlineData("worktrees", "list")]

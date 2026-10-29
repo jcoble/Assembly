@@ -1,7 +1,6 @@
-//! `Status` is which of the user's three groups a session is in: Working, Done or Settled. It's read from the
-//! session's `completedAt` and `settledAt` stamps, which only the user's own mark (`sessions/mark`) sets.
-
-use crate::core::state::session_item::SessionItem;
+//! `Status` is the user's own mark on a session: Working, Done or Settled, from its `completedAt` and `settledAt`
+//! stamps, which only `sessions/mark` sets. The rail holds no settled session (History does), so a row is Done once
+//! it has a completion stamp. A row's menu moves it from there.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -11,22 +10,11 @@ pub enum Status {
 }
 
 impl Status {
-    /// The groups in the order the list draws them.
-    pub const ALL: [Status; 3] = [Status::Working, Status::Done, Status::Settled];
-
-    pub fn of(item: &SessionItem) -> Status {
-        match (item.completed_at, item.settled_at) {
-            (_, Some(_)) => Status::Settled,
-            (Some(_), None) => Status::Done,
-            (None, None) => Status::Working,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Status::Working => "Working",
-            Status::Done => "Done",
-            Status::Settled => "Settled",
+    /// A rail row's mark, from its completion stamp.
+    pub fn of(completed_at: Option<i64>) -> Status {
+        match completed_at {
+            Some(_) => Status::Done,
+            None => Status::Working,
         }
     }
 

@@ -30,6 +30,8 @@ using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
 using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Clock;
+using Assembly.Application.Features.Terminal;
+using Assembly.Infrastructure.Terminal;
 
 namespace Assembly.Desktop.Serve;
 
@@ -54,11 +56,13 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly FileStream _homeLock;
     private readonly DiagnosticsHost _diagnostics;
     private readonly MachinesFeature _machinesFeature;
+    private readonly TerminalHost _terminals;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteMachine? remote,
-        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop)
+        RemoteOutbox? outbox, WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop)
     {
         _homeLock = homeLock;
+        _terminals = terminals;
         _board = board;
         _hostStop = hostStop;
         _boardMirror = boardMirror;
@@ -183,8 +187,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
         });
         boardMirror?.Reconnect();
+        var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
         var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+            [new TerminalFeature(terminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                 new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new FilesFeature(sessionStore),
@@ -203,7 +208,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         });
         app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
         await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature, board, boardMirror, topics, boardMachines, hostStop);
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, remoteMachine, outbox, app, diagnostics, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop);
         address = backend.Address;
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -239,6 +244,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _machinesFeature.DisposeAsync();
         if (_outbox is not null)
             await _outbox.DisposeAsync();
+        await _terminals.DisposeAsync();
         await _sessions.DisposeAsync();
         // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
         await _work.DisposeAsync();
