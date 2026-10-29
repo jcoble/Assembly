@@ -74,6 +74,7 @@ impl SessionsPane {
     ) -> impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static {
         let entries = self.entries.clone();
         let now = self.now;
+        let running_drawn = self.running_drawn.clone();
         let pane = cx.entity().downgrade();
         let on_mark: OnMark = {
             let pane = pane.clone();
@@ -115,6 +116,9 @@ impl SessionsPane {
                     .into_any_element()
                 }
                 ListEntry::Session(entry) => {
+                    if entry.running {
+                        running_drawn.set(true);
+                    }
                     let context = row(&entry, cx);
                     SessionRow::new(*entry, context).into_any_element()
                 }

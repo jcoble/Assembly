@@ -92,7 +92,11 @@ internal static class Schema
         WHERE json_extract(payload, '$.clientId') = $client ORDER BY seq DESC LIMIT 1;
         """;
 
-    /// <summary>The rail's sessions, own state, ordering, filters, totals and page, in one SQL statement.</summary>
+    /// <summary>
+    /// The rail's sessions, own state, ordering, filters, totals and page, in one SQL statement. A session's row ends with
+    /// its preview: its newest assistant message as plain text, its first 160 characters (each block's text parts run
+    /// together, blocks joined by a space).
+    /// </summary>
     public const string Rail = $"""
         WITH sessions AS (
           SELECT s.*,
@@ -128,20 +132,26 @@ internal static class Schema
               OR ((lower(label), repo_url) = (lower($group), $repo) AND ordering < $ordering) END
           ORDER BY n LIMIT $limit)
         SELECT 0, 0, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, COALESCE(SUM(running), 0), COALESCE(SUM(needs), 0), 0, 0, COUNT(*),
-          NULL, NULL, NULL, NULL FROM states
+          NULL, NULL, NULL, NULL, NULL FROM states
         UNION ALL
-        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, agent, NULL, NULL, 0, NULL, NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL
+        SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, agent, NULL, NULL, 0, NULL, NULL, 0, NULL, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL
         FROM (SELECT DISTINCT agent FROM session_info WHERE (parent_session_id IS NULL OR helper = 1) AND settled_at IS NULL)
         UNION ALL
         SELECT 2, p.n, p.session_id, p.agent, p.repo_url, p.label, p.group_start, p.title, p.machine, p.updated_at, p.completed_at,
           p.running, p.needs, p.failed,
           COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE e.session_id = p.session_id AND {SummaryKinds} AND e.kind = 'turn'
                       AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled') ORDER BY e.item_id DESC, e.seq DESC LIMIT 1), 0) > p.read_seq,
-          iif(p.ask_seq IS NULL, NULL, p.session_id), p.ask_seq, json_extract(b.payload, '$.branch'), b.created_at, p.ordering
+          iif(p.ask_seq IS NULL, NULL, p.session_id), p.ask_seq, json_extract(b.payload, '$.branch'), b.created_at, p.ordering,
+          (SELECT NULLIF(substr(trim(replace(group_concat(t.text, ' ' ORDER BY t.n), char(10), ' ')), 1, 160), '') FROM (
+             SELECT k.key AS n, (SELECT group_concat(v.atom, '' ORDER BY v.id) FROM json_tree(k.value) v
+                                 WHERE v.key = 'value' AND v.type = 'text') AS text
+             FROM json_each(m.payload, '$.blocks') k) t)
         FROM page p
         LEFT JOIN rows b ON b.session_id = p.session_id AND b.seq = (
           SELECT MAX(r.seq) FROM rows r INDEXED BY rows_item WHERE r.session_id = p.session_id AND r.item_id IS NULL AND r.kind = 'stats'
             AND COALESCE(json_extract(r.payload, '$.branch'), '') <> '')
+        LEFT JOIN rows m ON m.session_id = p.session_id AND m.seq = (
+          SELECT r.seq FROM rows r WHERE r.session_id = p.session_id AND r.kind = 'message' ORDER BY r.seq DESC LIMIT 1)
         ORDER BY 1, 2;
         """;
 

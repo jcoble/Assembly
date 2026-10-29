@@ -89,6 +89,8 @@ pub struct RailEntry {
     pub branch_at: Option<i64>,
     /// The provider's glyph: a bundled icon's path, picked by the backend.
     pub icon: String,
+    /// A parent's newest assistant text, cut to 160 characters by the backend.
+    pub preview: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

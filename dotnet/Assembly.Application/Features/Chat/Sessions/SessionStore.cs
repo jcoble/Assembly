@@ -295,7 +295,7 @@ public sealed class SessionStore
             1 => row.Text(3),
             _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Long(6) == 1, Text(7), Text(8),
                 row.Long(9), Long(10), row.Long(11) == 1, row.Long(12) == 1, row.Long(13) == 1, row.Long(14) == 1,
-                Text(15), Long(16), Text(17), Long(18), ProviderGlyph.Of(row.Text(3)), row.Text(19)),
+                Text(15), Long(16), Text(17), Long(18), ProviderGlyph.Of(row.Text(3)), row.Text(19), Text(20)),
         };
     }
 

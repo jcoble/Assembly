@@ -1,6 +1,6 @@
-//! `SessionsPane` is the sessions column: New session, the All / Running / Needs you tabs with the backend's totals,
-//! a filter menu (title or project), the provider and location pills (saved as the `rail.filters` preference and
-//! restored at start), and the tab's sessions by project as a virtual list, loading
+//! `SessionsPane` is the sessions column: its header (view options and New session), a search field (title or
+//! project), the provider and location pills (saved as the `rail.filters` preference and restored at start), the
+//! All / Running / Needs you tabs with the backend's totals, and the tab's sessions by project as a virtual list, loading
 //! the next page as the reader nears its end. Every list and total comes from `sessions/rail`, read again whenever
 //! the `sessionRail` topic says a session changed (and at subscribe and each reconnect). A row's menu moves its
 //! session between Working and Done or settles it (`sessions/mark`). It registers under the sessions pane's name,
@@ -12,10 +12,11 @@ use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, regi
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
-use gpui_kit::component::{ActiveTheme as _, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -53,7 +54,7 @@ pub struct SessionsPane {
     pub(super) rail: Rail,
     /// The read that's out; replacing it drops the older one.
     reading: Option<Task<()>>,
-    /// The filter menu's title or project text.
+    /// The search field's title or project text.
     pub(super) filter: Entity<InputState>,
     /// The provider and location pills; their picks feed the rail's read.
     pills: Entity<FilterPills>,
@@ -66,8 +67,10 @@ pub struct SessionsPane {
     pub(super) lines: ListState,
     /// The drawn lines start at the tab's real start, not a window's further down.
     pub(super) from_start: bool,
-    /// The backend clock's last tick, kept once a minute, for the rows' ages.
+    /// The backend clock's last tick, for the rows' ages and running times.
     pub(super) now: Option<i64>,
+    /// The last frame drew a running row, so the next tick redraws its running time.
+    pub(super) running_drawn: Rc<Cell<bool>>,
     _heard: Vec<Subscription>,
     /// The `sessionRail` feed and the backend clock, once the backend's first ready line started the socket.
     feed: Option<(Task<()>, Entity<BackendClock>, Subscription)>,
@@ -85,7 +88,7 @@ impl SessionsPane {
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Title or project"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Search sessions…"));
         let locations =
             [("local", "Local"), ("remote", "Remote")].map(|(value, label)| FilterOption {
                 value: value.into(),
@@ -136,6 +139,7 @@ impl SessionsPane {
             lines: ListState::new(0, ListAlignment::Top, px(200.)),
             from_start: true,
             now: None,
+            running_drawn: Rc::default(),
             _heard: heard,
             feed: None,
             _backend: Vec::new(),
@@ -194,10 +198,12 @@ impl SessionsPane {
         self.feed.is_some()
     }
 
-    /// Ages are minutes at the finest, so a tick redraws only when the minute turns.
+    /// Ages are minutes at the finest, so a tick redraws when the minute turns, and each second only while a running
+    /// row's time is in view.
     fn tick(&mut self, now: i64, cx: &mut Context<Self>) {
-        if self.now.map(|held| held / 60_000) != Some(now / 60_000) {
-            self.now = Some(now);
+        let turned = self.now.map(|held| held / 60_000) != Some(now / 60_000);
+        self.now = Some(now);
+        if turned || self.running_drawn.get() {
             cx.notify();
         }
     }
@@ -298,33 +304,33 @@ impl SessionsPane {
         self.send(read, cx);
     }
 
-    /// The filter menu: the title or project text.
-    fn filter_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let pane = cx.entity().downgrade();
-        let input = self.filter.clone();
-        Popover::new("rail-filter")
-            .anchor(Anchor::TopRight)
-            .trigger(
-                Button::new("rail-filter-button")
-                    .ghost()
-                    .compact()
-                    .icon(IconName::Search)
-                    .selected(!self.rail.filter.is_empty())
-                    .tooltip("Filter sessions"),
+    /// The search field: the title or project text, which Escape clears.
+    fn search(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let icon = Icon::new(IconName::Search)
+            .xsmall()
+            .text_color(cx.theme().muted_foreground);
+        div()
+            .px(px(12.))
+            .pb(px(10.))
+            .capture_action(
+                cx.listener(|pane, _: &Escape, window, cx| pane.clear_filter(window, cx)),
             )
-            .content(move |_, _, _| {
-                let clear = pane.clone();
-                v_flex().w(px(240.)).child(
-                    div()
-                        .capture_action(move |_: &Escape, window, cx| {
-                            clear
-                                .update(cx, |pane, cx| pane.clear_filter(window, cx))
-                                .ok();
-                        })
-                        .child(Input::new(&input).small()),
-                )
-            })
+            .child(Input::new(&self.filter).small().prefix(icon))
     }
+}
+
+/// The header's view options. Grouping and sorting aren't built yet, so it says so.
+fn view_options() -> impl IntoElement {
+    Popover::new("rail-view")
+        .anchor(Anchor::TopRight)
+        .trigger(
+            Button::new("rail-view-button")
+                .ghost()
+                .compact()
+                .icon(IconName::ListFilter)
+                .tooltip("View options"),
+        )
+        .content(|_, _, _| div().p_2().child("Grouping and sorting come later."))
 }
 
 /// What an empty column says, from the connection's state (`None` before the backend's first ready line).
@@ -393,23 +399,33 @@ impl Render for SessionsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
+        let creating = self.creating.is_some();
         let header = h_flex()
-            .px_2()
-            .pt_2()
-            .justify_between()
+            .pl(px(16.))
+            .pr(px(10.))
+            .pt(px(12.))
+            .pb(px(8.))
+            .gap(px(2.))
+            .child(
+                div()
+                    .flex_1()
+                    .text_base()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Sessions"),
+            )
+            .child(view_options())
             .child(
                 Button::new("new-session")
                     .ghost()
                     .compact()
-                    .icon(IconName::Plus)
-                    .label(if self.creating.is_some() {
-                        "Cancel"
+                    .icon(if creating {
+                        IconName::X
                     } else {
-                        "New session"
+                        IconName::Plus
                     })
+                    .tooltip(if creating { "Cancel" } else { "New session" })
                     .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx))),
-            )
-            .child(self.filter_menu(cx));
+            );
         let selected = Tab::ALL.iter().position(|tab| *tab == self.rail.tab);
         let tabs = TabBar::new("rail-tabs")
             .segmented()
@@ -420,9 +436,8 @@ impl Render for SessionsPane {
                 pane.send(Some(read), cx);
             }));
         self.follow_entries(window, cx);
-        let list = list(self.lines.clone(), self.line_renderer(cx))
-            .flex_1()
-            .px_1();
+        self.running_drawn.set(false);
+        let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
         let empty = match self.rail.loaded {
             true => "No sessions here.",
             false => empty_line(state.as_ref()),
@@ -431,8 +446,9 @@ impl Render for SessionsPane {
             .track_focus(&self.focus)
             .size_full()
             .child(header)
+            .child(self.search(cx))
             .child(self.pills.clone())
-            .child(div().px_2().py_1().child(tabs))
+            .child(div().px(px(12.)).pb(px(8.)).child(tabs))
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),

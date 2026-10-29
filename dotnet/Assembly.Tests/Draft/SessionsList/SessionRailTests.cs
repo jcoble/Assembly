@@ -302,6 +302,27 @@ public sealed class SessionRailTests : IDisposable
         Assert.Equal(("lane/rail", 20L), (entry.Branch, entry.BranchAt));
     }
 
+    [Fact]
+    public void PreviewIsTheNewestAssistantText()
+    {
+        var session = Parent();
+        Assert.Null(Entry(Read(), session).Preview);
+        Rows(session, ("m1", RowKind.Message, Message(["The first answer."])));
+        Rows(session, ("m2", RowKind.Message, Message(["The newest ", "answer."], ["A second paragraph."])));
+        // A later prompt or tool isn't assistant text.
+        Rows(session, (null, RowKind.User, new { text = "A newer prompt." }), ("t1", RowKind.Tool, new { title = "Read" }));
+        Assert.Equal("The newest answer. A second paragraph.", Entry(Read(), session).Preview);
+
+        Rows(session, ("m3", RowKind.Message, Message([new string('a', 400)])));
+        Assert.Equal(new string('a', 160), Entry(Read(), session).Preview);
+    }
+
+    /// <summary>A message row's payload: one paragraph per array, each of those inline text parts.</summary>
+    private static object Message(params string[][] paragraphs) => new
+    {
+        blocks = paragraphs.Select(parts => new { kind = "paragraph", parts = parts.Select(value => new { kind = "text", value }).ToArray() }).ToArray(),
+    };
+
     private string Parent(string agent = "claude", string repo = "/home/me/assembly", string? machine = null, string? title = null, bool tick = true)
     {
         if (tick)
