@@ -122,6 +122,8 @@ public sealed class RemoteTunnel : IAsyncDisposable
             await ssh.WaitForExitAsync(CancellationToken.None);
             await errors;
         }
+        if (ssh.ExitCode == 255)
+            throw new InvalidOperationException($"couldn't reach {host} over ssh (ssh exit 255)");
         const string prefix = "ASSEMBLY_TOKEN=";
         return output.Split('\n').Select(line => line.Trim()).FirstOrDefault(line => line.StartsWith(prefix, StringComparison.Ordinal))?[prefix.Length..]
             ?? throw new InvalidOperationException($"{host} has no token in ~/{tokenFile} (ssh exit {ssh.ExitCode})");
