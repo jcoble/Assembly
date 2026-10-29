@@ -3,7 +3,7 @@ using Assembly.Infrastructure.Agents;
 using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Infrastructure.Remote;
+using Assembly.Application.Common.Machines;
 
 namespace Assembly.Desktop.Serve;
 
@@ -26,13 +26,11 @@ public static class DesktopServe
         var token = TokenFile.ReadOrCreate(options.TokenFile);
         var agents = AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile));
         var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions());
-        var (tunnel, remote) = options.Remote is { } host ? await RemoteTunnel.ConnectAsync(host, options.RemotePort, options.RemoteTokenFile, Console.Out) : (null, null);
-        await using var stopTunnel = tunnel;
-        await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out, remote, tunnel,
-            utilityClis: (AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex")));
+        var profile = options.Remote is { } host ? new SavedMachine(host, host, options.RemotePort, options.RemoteTokenFile) : null;
+        await using var backend = await DesktopBackend.StartAsync(options.Home, token, options.Port, launcher, Console.Out,
+            utilityClis: (AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex")), savedRemote: profile);
         // The window's launcher waits for this line's "listening on " prefix: it comes once /socket takes a hello and
-        // the MCP url is set. A failed or hung tunnel, or a port in use, never prints it, so the launcher also watches
-        // the exit and limits its wait.
+        // the MCP url is set. Remote connection attempts run independently of local startup.
         Console.WriteLine($"listening on {backend.Address}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");

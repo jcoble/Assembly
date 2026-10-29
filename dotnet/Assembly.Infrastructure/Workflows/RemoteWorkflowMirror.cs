@@ -12,8 +12,12 @@ using Assembly.Infrastructure.Remote;
 namespace Assembly.Infrastructure.Workflows;
 
 /// <summary>One Board socket, one receive loop, and complete committed event replay. No pane owns this connection.</summary>
-public sealed class RemoteWorkflowMirror(RemoteConfig remote, WorkflowQueries queries, WorkflowTransitions transitions, Action unreachable) : IAsyncDisposable
+public sealed class RemoteWorkflowMirror(string name, Func<RemoteConfig?> current, WorkflowQueries queries, WorkflowTransitions transitions, Action unreachable) : IAsyncDisposable
 {
+    /// <summary>A mirror of one fixed address, for callers that hold the configuration themselves.</summary>
+    public RemoteWorkflowMirror(RemoteConfig remote, WorkflowQueries queries, WorkflowTransitions transitions, Action unreachable)
+        : this(remote.Name, () => remote, queries, transitions, unreachable) { }
+
     private readonly Lock _gate = new();
     private readonly SemaphoreSlim _send = new(1);
     private readonly CancellationTokenSource _stop = new();
@@ -22,7 +26,7 @@ public sealed class RemoteWorkflowMirror(RemoteConfig remote, WorkflowQueries qu
     private TaskCompletionSource<ClientWebSocket>? _ready;
     private long _id;
     private bool _disposed;
-    public string Name => remote.Name;
+    public string Name => name;
 
     // Called under Topics' lock: queue only; the worker does the connection and all writes.
     public void Reconnect()
@@ -47,6 +51,8 @@ public sealed class RemoteWorkflowMirror(RemoteConfig remote, WorkflowQueries qu
         void Wake() { if (wake.CurrentCount == 0) { try { wake.Release(); } catch (SemaphoreFullException) { } } }
         try
         {
+            // Read at each connection, so the mirror follows the machine's current tunnel after a reconnect.
+            var remote = current() ?? throw new MachineUnreachable(Name, "Board source is not connected");
             var address = new UriBuilder(new Uri(remote.Address, "/socket")) { Scheme = remote.Address.Scheme == "https" ? "wss" : "ws" };
             await socket.ConnectAsync(address.Uri, connection.Token);
             receiver = ReceiveAsync(socket, welcome, subscribed, Wake, connection.Token);
