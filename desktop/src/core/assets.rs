@@ -29,7 +29,8 @@ gpui_kit::assets::icon_assets!(
         FolderOpen,
         File,
         ChevronDown,
-        Rocket
+        Rocket,
+        ListFilter
     ]
 );
 

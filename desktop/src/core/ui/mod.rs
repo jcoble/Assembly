@@ -8,3 +8,4 @@ pub mod filter_pills;
 #[cfg(test)]
 mod filter_pills_tests;
 pub mod pane_names;
+pub mod spinner;

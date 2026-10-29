@@ -127,10 +127,13 @@ internal sealed class SessionsFeature : IFeature
 
     internal sealed record RailTotals(int All, int Running, int NeedsYou);
 
-    /// <summary>One session's own state. Started sessions have depth 1 and follow their starter.</summary>
+    /// <summary>
+    /// One session's own state. Started sessions have depth 1 and follow their starter. <c>Preview</c> is its newest
+    /// assistant text, cut to 160 characters.
+    /// </summary>
     internal sealed record RailEntry(string SessionId, string Agent, string RepoUrl, string Group, bool GroupStart, string? Title,
         string? Machine, long UpdatedAt, long? CompletedAt, bool Running, bool NeedsYou, bool Failed, bool Unread, int Depth,
-        string? AskSession, long? AskSeq, string? Branch, long? BranchAt, string Icon, string Ordering);
+        string? AskSession, long? AskSeq, string? Branch, long? BranchAt, string Icon, string Ordering, string? Preview);
 
     internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next, int Start = 0);
 
