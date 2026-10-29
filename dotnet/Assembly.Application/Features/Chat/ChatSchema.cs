@@ -104,7 +104,7 @@ internal static class Schema
                  ELSE substr(rtrim(s.repo_url, '/'), length(rtrim(rtrim(s.repo_url, '/'), replace(rtrim(s.repo_url, '/'), '/', ''))) + 1) END AS label,
             CASE WHEN s.settled_at IS NOT NULL THEN 'settled' WHEN s.completed_at IS NOT NULL THEN 'done' ELSE 'working' END AS section,
             CASE WHEN s.settled_at IS NOT NULL THEN 2 WHEN s.completed_at IS NOT NULL THEN 1 ELSE 0 END AS section_index,
-            s.title, s.machine, s.updated_at, s.completed_at, s.read_seq, lower(COALESCE(s.title, '')) AS name
+            s.title, s.machine, s.updated_at, s.completed_at, s.read_seq
           FROM session_info s
           WHERE (s.parent_session_id IS NULL OR s.helper = 1)
             AND ($providers IS NULL OR s.agent IN (SELECT value FROM json_each($providers)))
@@ -139,7 +139,7 @@ internal static class Schema
             title, machine, updated_at, completed_at, read_seq,
             iif($status_group = 1, section_index, 0) AS section_index,
             iif($project_group = 1, label, '') AS order_group, iif($project_group = 1, repo_url, '') AS order_repo,
-            2 AS header, name
+            2 AS header, lower(COALESCE(NULLIF(trim(title), ''), label)) AS name
           FROM sessions p
           WHERE NOT ($status_group = 1 AND section IN (SELECT value FROM json_each($folded)))
             AND NOT ($project_group = 1 AND (iif($status_group = 1, section, '') || '::' || repo_url)

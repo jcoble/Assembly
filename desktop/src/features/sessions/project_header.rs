@@ -91,27 +91,20 @@ impl RenderOnce for ProjectHeader {
         ];
         let sum = self.label.bytes().map(usize::from).sum::<usize>();
         let colour = colours[sum % colours.len()];
+        let (muted, faint) = (theme.muted_foreground, theme.muted_foreground.opacity(0.65));
         h_flex()
             .w_full()
             .h(PROJECT_HEIGHT)
             .mt_1()
             .gap(px(6.))
-            .pl_1()
+            .pl(px(7.))
             .pr_1()
-            .child(
-                Button::new(SharedString::from(format!(
-                    "fold:project:{}",
-                    self.repo_url
-                )))
-                .ghost()
-                .xsmall()
-                .icon(if self.folded {
-                    IconName::ChevronRight
-                } else {
-                    IconName::ChevronDown
-                })
-                .on_click(self.on_toggle),
-            )
+            .child(chevron(
+                format!("fold:project:{}", self.repo_url),
+                self.folded,
+                faint,
+                self.on_toggle,
+            ))
             .child(
                 div()
                     .flex_none()
@@ -131,30 +124,30 @@ impl RenderOnce for ProjectHeader {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_xs()
+                    .text_size(px(11.5))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.muted_foreground)
+                    .text_color(muted)
                     .truncate()
                     .child(self.label.to_uppercase()),
             )
+            // The mock's machine chips: 18 px round, on the pill fill.
             .children(self.machines.into_iter().map(|machine| {
-                div()
-                    .px_1()
-                    .rounded_sm()
-                    .bg(theme.muted)
-                    .text_size(px(9.))
+                h_flex()
+                    .flex_none()
+                    .h(px(18.))
+                    .px(px(7.))
+                    .rounded_full()
+                    .bg(theme.secondary)
+                    .text_size(px(10.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(muted)
                     .child(if machine == "local" {
                         "This Mac".to_owned()
                     } else {
                         machine
                     })
             }))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(self.count.to_string()),
-            )
+            .child(count(self.count, faint))
             .child(
                 Button::new(SharedString::from(format!("project:{}", self.repo_url)))
                     .ghost()
@@ -196,37 +189,54 @@ impl SectionHeader {
 impl RenderOnce for SectionHeader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
+        let (muted, faint) = (theme.muted_foreground, theme.muted_foreground.opacity(0.65));
         h_flex()
             .w_full()
             .h(PROJECT_HEIGHT)
-            .px_1()
-            .gap_1()
-            .child(
-                Button::new(SharedString::from(format!("fold:section:{}", self.key)))
-                    .ghost()
-                    .xsmall()
-                    .icon(if self.folded {
-                        IconName::ChevronRight
-                    } else {
-                        IconName::ChevronDown
-                    })
-                    .on_click(self.on_toggle),
-            )
+            .pl(px(7.))
+            .pr(px(14.))
+            .gap(px(6.))
+            .child(chevron(
+                format!("fold:section:{}", self.key),
+                self.folded,
+                faint,
+                self.on_toggle,
+            ))
             .child(
                 div()
                     .flex_1()
-                    .text_xs()
+                    .text_size(px(11.5))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.muted_foreground)
+                    .text_color(muted)
                     .child(self.label),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(self.count.to_string()),
-            )
+            .child(count(self.count, faint))
     }
+}
+
+/// A header's fold chevron, the mock's 14 px faint one.
+fn chevron(id: String, folded: bool, faint: Hsla, on_toggle: OnToggle) -> Button {
+    Button::new(SharedString::from(id))
+        .ghost()
+        .with_size(px(18.))
+        .size(px(20.))
+        .text_color(faint)
+        .icon(if folded {
+            IconName::ChevronRight
+        } else {
+            IconName::ChevronDown
+        })
+        .on_click(on_toggle)
+}
+
+/// A header's count, at its right end.
+fn count(count: usize, faint: Hsla) -> Div {
+    div()
+        .flex_none()
+        .text_size(px(11.5))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(faint)
+        .child(count.to_string())
 }
 
 #[cfg(test)]

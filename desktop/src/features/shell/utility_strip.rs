@@ -6,7 +6,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::*;
 
 pub struct UtilityStrip;
@@ -15,16 +15,19 @@ impl Render for UtilityStrip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let pill = theme.radius_full();
+        // The mock's foot: a 22 px settings button with 6 px corners, then its figures.
         let settings = Button::new("Settings")
             .ghost()
-            .compact()
+            .with_size(px(17.))
+            .size(px(22.))
+            .rounded(px(6.))
             .icon(IconName::Settings)
             .tooltip("Settings");
         h_flex()
-            .h(px(38.))
+            .h(px(40.))
             .flex_none()
-            .px_2()
-            .gap_1()
+            .px(px(12.))
+            .gap(px(10.))
             .border_t_1()
             .border_color(theme.table_row_border)
             .text_color(theme.muted_foreground)

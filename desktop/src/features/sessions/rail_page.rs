@@ -276,7 +276,8 @@ impl Rail {
 }
 
 /// The held row a read keeps and how many held rows to keep above it: the one in view, else the first; for the rows
-/// before the held ones, the first with a page above it. None reads from the start, for a window there already.
+/// before the held ones, the first with a page above it. None reads from the start, for a window there already with
+/// no session above the one in view (only its headings), so new rows and their headings come in at the top.
 fn keep<'a>(
     held: &'a [RailEntry],
     view: Option<&String>,
@@ -288,7 +289,9 @@ fn keep<'a>(
         .filter(|_| !earlier);
     match at {
         _ if earlier => held.first().map(|entry| (entry, PAGE)),
-        Some(at) if at > 0 || ahead > 0 => Some((&held[at], at)),
+        Some(at) if ahead > 0 || held[..at].iter().any(|entry| entry.kind == "session") => {
+            Some((&held[at], at))
+        }
         None if ahead > 0 => held.first().map(|entry| (entry, 0)),
         _ => None,
     }

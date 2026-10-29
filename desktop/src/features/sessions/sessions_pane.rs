@@ -362,18 +362,21 @@ impl SessionsPane {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
+        // The mock's search: sunk below the card, on the ground's colour with a faint edge, a 13 px faint glass.
         let field = h_flex()
             .flex_1()
             .min_w_0()
             .h(px(30.))
             .pl(px(10.))
-            .gap(px(2.))
-            .rounded(px(8.))
-            .bg(theme.secondary)
+            .gap(px(5.))
+            .rounded(px(9.))
+            .bg(theme.background)
+            .border_1()
+            .border_color(theme.border.opacity(0.6))
             .child(
                 Icon::new(IconName::Search)
-                    .xsmall()
-                    .text_color(theme.muted_foreground),
+                    .size(px(13.))
+                    .text_color(theme.muted_foreground.opacity(0.65)),
             )
             .child(Input::new(&self.filter).small().appearance(false));
         h_flex()
@@ -386,9 +389,19 @@ impl SessionsPane {
                 cx.listener(|pane, _: &Escape, window, cx| pane.clear_filter(window, cx)),
             )
             .child(field)
-            .child(view_options(self.rail.view_options, on_view))
+            .child(view_options(self.rail.view_options, on_view, cx))
             .child(new_session)
     }
+}
+
+/// The column's header buttons, the mock's `.ib`: 26 px, 8 px corners, a 15 px muted icon.
+pub fn header_button(button: Button, cx: &App) -> Button {
+    button
+        .ghost()
+        .with_size(px(20.))
+        .size(px(26.))
+        .rounded(px(8.))
+        .text_color(cx.theme().muted_foreground)
 }
 
 /// What an empty column says, from the connection's state (`None` before the backend's first ready line).
@@ -457,16 +470,14 @@ impl Panel for SessionsPane {
 impl Render for SessionsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
-        let warning = cx.theme().warning;
+        let (warning, border) = (cx.theme().warning, cx.theme().border.opacity(0.6));
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let creating = self.creating.is_some();
         let pane = cx.entity().downgrade();
         let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
             pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
         });
-        let new_session = Button::new("new-session")
-            .ghost()
-            .compact()
+        let new_session = header_button(Button::new("new-session"), cx)
             .icon(if creating {
                 IconName::X
             } else {
@@ -485,19 +496,32 @@ impl Render for SessionsPane {
             .track_focus(&self.focus)
             .size_full()
             .child(self.search(on_view, new_session, cx))
+            // The pills, then a rule across the card, as the mock's `.pills` has.
             .child(
-                h_flex()
-                    .child(div().flex_1().min_w_0().child(self.pills.clone()))
+                v_flex()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(self.pills.clone())
+                    // Its own line under the pills, so it never covers one: the rows' amber question chip.
                     .children(needs_words(self.rail.totals.needs).map(|words| {
                         h_flex()
-                            .flex_none()
-                            .gap(px(5.))
-                            .pr(px(14.))
-                            .pb(px(10.))
-                            .text_size(px(12.))
-                            .text_color(warning)
-                            .child(div().size(px(6.)).rounded_full().bg(warning))
-                            .child(words)
+                            .justify_end()
+                            .mt(px(-2.))
+                            .pr(px(12.))
+                            .pb(px(8.))
+                            .child(
+                                h_flex()
+                                    .h(px(18.))
+                                    .px(px(7.))
+                                    .gap(px(4.))
+                                    .rounded_full()
+                                    .bg(warning.opacity(0.12))
+                                    .text_size(px(10.5))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(warning)
+                                    .child(div().size(px(6.)).rounded_full().bg(warning))
+                                    .child(words),
+                            )
                     })),
             )
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))

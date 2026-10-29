@@ -127,6 +127,29 @@ fn a_read_again_names_the_row_in_view() {
     assert_eq!(anchor(&rail.changed().unwrap().1), (None, Some(0)));
 }
 
+/// At the rail's real start, the first session sits under its headings: a read again still starts at the top, so a
+/// new or moved row above it comes in with its heading.
+#[test]
+fn a_refresh_at_the_top_shows_new_rows_and_their_headings() {
+    let header = |id: &str, kind: &str| RailEntry {
+        kind: kind.into(),
+        ..test_entry(id, "/r")
+    };
+    let mut rail = Rail::default();
+    let (id, _) = rail.changed().unwrap();
+    let held = vec![
+        header("section:working", "section"),
+        header("project:working::/r", "project"),
+    ];
+    rail.finish(id, Outcome::Ok(page([held, parents(0, 3)].concat())));
+    rail.look_at(Some("p000".into()));
+    let args = rail.changed().unwrap().1;
+    assert_eq!(
+        (&args["anchor"], &args["after"]),
+        (&Value::Null, &Value::Null)
+    );
+}
+
 // Pins: g0-session#30
 #[test]
 fn an_empty_column_says_what_the_connection_is_doing() {
