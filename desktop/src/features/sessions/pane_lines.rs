@@ -58,13 +58,15 @@ impl SessionsPane {
             return;
         }
         let near = self.entries.len().saturating_sub(LOAD_OLDER_WITHIN);
+        let mut read = None;
         if self.lines.item_is_below_viewport(near) == Some(false) {
-            let read = self.rail.more();
-            self.send(read, cx);
-        } else if top < LOAD_OLDER_WITHIN {
-            let read = self.rail.earlier();
-            self.send(read, cx);
+            read = self.rail.more();
         }
+        // A short list shows its end and its start at once: with no next page, the rows (and headings) above load.
+        if read.is_none() && top < LOAD_OLDER_WITHIN {
+            read = self.rail.earlier();
+        }
+        self.send(read, cx);
     }
 
     /// Draws line `at` of the list.

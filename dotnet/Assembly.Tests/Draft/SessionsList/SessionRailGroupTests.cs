@@ -84,6 +84,19 @@ public sealed class SessionRailGroupTests : IDisposable
             dir == "asc" ? ["Alpha", "Zulu"] : ["Zulu", "Alpha"],
             rows.Where(entry => entry.Kind == "session" && entry.RepoUrl == "/work/alpha").Select(entry => entry.Title));
     }
+    // Pins: sessions-list#6
+    [Theory]
+    [InlineData("asc")]
+    [InlineData("desc")]
+    public void SortByNameUsesTheShownName(string dir)
+    {
+        var alpha = Parent(repo: "/work/x", title: "Alpha");
+        var untitled = Parent(repo: "/work/middle");
+        var zulu = Parent(repo: "/work/y", title: "Zulu");
+        string[] ascending = [alpha, untitled, zulu];
+        Assert.Equal(dir == "asc" ? ascending : [.. ascending.Reverse()],
+            Sessions(Read(groupBy: new(false, false), sort: "name", dir: dir)));
+    }
     // Pins: sessions-list#6, sessions-list#9
     [Fact]
     public void AFoldedSectionReturnsItsHeaderAndCountButNoRows()
