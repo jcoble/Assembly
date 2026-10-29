@@ -187,6 +187,9 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public void Watch(SessionInfo session) => _follower.Watch(session.SessionId);
 
+    /// <summary>A turn delivered through the Board socket still needs its rows copied here.</summary>
+    internal void WatchRun(string sessionId, string runId) => _follower.Watch(sessionId, runId);
+
     /// <summary>Follows the remote sessions whose copied rows show a turn still running, as after a desktop restart mid-turn.</summary>
     public void WatchRunning(IEnumerable<string> sessionIds, IEnumerable<string> helpersShownRunning)
     {

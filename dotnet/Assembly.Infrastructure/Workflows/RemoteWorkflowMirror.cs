@@ -28,6 +28,9 @@ public sealed class RemoteWorkflowMirror(string name, Func<RemoteConfig?> curren
     private bool _disposed;
     public string Name => name;
 
+    /// <summary>A committed remote Board delivery names the session and run whose rows the desktop needs.</summary>
+    public event Action<string, string>? AnswerDelivered;
+
     // Called under Topics' lock: queue only; the worker does the connection and all writes.
     public void Reconnect()
     {
@@ -145,7 +148,14 @@ public sealed class RemoteWorkflowMirror(string name, Func<RemoteConfig?> curren
                 var after = queries.Applied(Name, cancel);
                 var result = await CallAsync(socket, "changes", new BoardChangesArgs(after), WorkflowJson.Default.BoardChangesArgs,
                     WorkflowJson.Default.BoardChangesResult, cancel);
-                foreach (var item in result.Events) transitions.Apply(item, Name);
+                foreach (var item in result.Events)
+                {
+                    transitions.Apply(item, Name);
+                    if (item.Kind == "answer_delivered")
+                        foreach (var question in item.Questions)
+                            if (question is { DeliveryState: "delivered", DeliveryTurnId: { } runId })
+                                AnswerDelivered?.Invoke(item.Task.CreatorSessionId, runId);
+                }
                 if (result.NextSeq == result.LatestSeq) break;
                 if (result.NextSeq <= after) throw new IOException("Board replay did not advance");
             }
