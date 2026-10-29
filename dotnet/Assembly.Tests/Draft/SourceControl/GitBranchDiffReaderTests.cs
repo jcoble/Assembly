@@ -96,6 +96,21 @@ public sealed class GitBranchDiffReaderTests : IDisposable
         Assert.Contains("Binary files a/binary and b/binary differ", (await Read()).Diff);
     }
 
+    // Pins: scm#18
+    [Fact]
+    public async Task A_renamed_and_a_deleted_file_keep_their_names_with_spaces_and_accents_unquoted()
+    {
+        await Init();
+        Directory.CreateDirectory(Path.Combine(Root, "docs"));
+        await Git(Root, "mv", "tracked", "docs/naïve name.txt");
+        await Git(Root, "rm", "-q", "binary");
+        await Commit(Root);
+        var diff = (await Read()).Diff;
+        Assert.Contains("diff --git a/tracked b/docs/naïve name.txt\n", diff);
+        Assert.Contains("rename to docs/naïve name.txt\n", diff);
+        Assert.Contains("diff --git a/binary b/binary\ndeleted file mode", diff);
+    }
+
     // Pins: scm#20
     [Fact]
     public async Task A_long_diff_is_cut_at_the_cap()

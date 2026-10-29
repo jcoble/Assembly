@@ -38,22 +38,33 @@ impl BranchDiff {
 }
 
 /// The file's name now: a rename's or copy's "to" line, or else X in "diff --git a/X b/X", which is the same name
-/// twice, so a folder named "a b" can't split it in the wrong place. A name git quotes is shown as git wrote it.
+/// twice, so a folder named "a b" can't split it in the wrong place. A name git quotes (it holds a tab, a quote or a
+/// backslash) shows with git's escapes but without the quotes.
 fn name_of(file: &str) -> &str {
     let to = file.lines().find_map(|line| {
         line.strip_prefix("rename to ")
             .or(line.strip_prefix("copy to "))
     });
     if let Some(to) = to {
-        return to;
+        return unquoted(to);
     }
     let header = file.lines().next().unwrap_or_default();
-    let names = header.strip_prefix("diff --git a/").unwrap_or(header);
-    let half = names.len().saturating_sub(3) / 2;
-    match (names.get(..half), names.get(half..)) {
-        (Some(name), Some(rest)) if rest.strip_prefix(" b/") == Some(name) => name,
-        _ => header,
-    }
+    let names = header.strip_prefix("diff --git ").unwrap_or(header);
+    let half = names.len().saturating_sub(1) / 2;
+    let name = names
+        .get(..half)
+        .zip(names.get(half..).and_then(|rest| rest.strip_prefix(' ')))
+        .and_then(|(a, b)| {
+            let name = unquoted(a).strip_prefix("a/")?;
+            (unquoted(b).strip_prefix("b/")? == name).then_some(name)
+        });
+    name.unwrap_or(header)
+}
+
+fn unquoted(name: &str) -> &str {
+    name.strip_prefix('"')
+        .and_then(|name| name.strip_suffix('"'))
+        .unwrap_or(name)
 }
 
 /// Each file's part of the text, from its `diff --git` line to the next one.

@@ -51,3 +51,37 @@ fn a_folder_with_b_slash_in_its_name_keeps_the_whole_path() {
         Row::Label("docs/a b/x.md".into())
     );
 }
+
+// Pins: scm#18
+#[test]
+fn a_deleted_file_and_a_non_ascii_path_keep_their_names() {
+    let diff = "diff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\n--- a/gone.txt\n+++ /dev/null\n\
+                @@ -1 +0,0 @@\n-a\n\
+                diff --git a/café/naïve file.md b/café/naïve file.md\n@@ -1 +1 @@\n-a\n+b\n";
+    let labels: Vec<_> = branch(diff, false)
+        .rows()
+        .into_iter()
+        .filter_map(|row| match row {
+            Row::Label(label) => Some(label),
+            Row::Line(_) => None,
+        })
+        .collect();
+    assert_eq!(labels, ["gone.txt", "café/naïve file.md"]);
+}
+
+// Pins: scm#18
+#[test]
+fn a_name_git_quotes_shows_without_its_quotes_or_prefix() {
+    let diff = "diff --git \"a/tab\\there.txt\" \"b/tab\\there.txt\"\n@@ -1 +1 @@\n-a\n+b\n\
+                diff --git \"a/old\\\"q.txt\" \"b/new\\\"q.txt\"\nsimilarity index 100%\n\
+                rename from \"old\\\"q.txt\"\nrename to \"new\\\"q.txt\"\n";
+    let labels: Vec<_> = branch(diff, false)
+        .rows()
+        .into_iter()
+        .filter_map(|row| match row {
+            Row::Label(label) => Some(label),
+            Row::Line(_) => None,
+        })
+        .collect();
+    assert_eq!(labels, ["tab\\there.txt", "new\\\"q.txt"]);
+}
