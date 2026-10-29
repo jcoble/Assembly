@@ -24,7 +24,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
     private readonly Dictionary<string, Task> _pending = [];
     // Includes running work and every waiter, independently of the queue tail.
     private readonly Dictionary<string, HashSet<CancellationTokenSource>> _operations = [];
-    private readonly ConcurrentDictionary<string, (RemoteMachine Machine, RemoteOutbox Outbox, IAsyncDisposable? Tunnel, MachineStatus Status)> _active = new();
+    private readonly ConcurrentDictionary<string, (RemoteMachine Machine, RemoteOutbox Outbox, IAsyncDisposable? Tunnel, MachineStatus Status, RemoteConfig Config)> _active = new();
     private bool _disposed;
 
     public RemoteConnections(MachineStore store, MachineSet machines, MachineStatus status, LiveHub hub, SessionStore sessions,
@@ -68,6 +68,13 @@ internal sealed class RemoteConnections : IAsyncDisposable
 
     internal Task ReadyAsync(string name) { lock (_gate) return _pending[name]; }
 
+    /// <summary>The connection already open at startup; subsequent connection changes remain owned here.</summary>
+    internal (RemoteMachine Machine, RemoteConfig Config, Action Unreachable)? StartupSnapshot(string? name)
+    {
+        if (name is null || !_active.TryGetValue(name, out var active)) return null;
+        return (active.Machine, active.Config, () => active.Status.Unreachable(name, "Board connection closed"));
+    }
+
     private Task Queue(string name, bool connect, bool probe = false, CancellationToken cancel = default)
     {
         lock (_gate)
@@ -110,7 +117,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
                         if (tunnel is RemoteTunnel ssh) ssh.Exited += () => scoped.Unreachable(name, "ssh tunnel exited");
                         var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded);
                         var outbox = new RemoteOutbox(remote, _sessions, _hub, _machines.Named(null)!, _log);
-                        _active[name] = (remote, outbox, tunnel, scoped);
+                        _active[name] = (remote, outbox, tunnel, scoped, opened.Config with { Name = name });
                         tunnel = null;
                         _machines.Set(remote);
                         remote.WatchRunning(_store.RunningTurns(name), _store.RunningHelpers(name));

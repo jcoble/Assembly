@@ -186,7 +186,8 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
                 var request = parameters.Deserialize(AcpJsonContext.Default.RequestPermissionRequest)
                     ?? throw new JsonRpcException(JsonRpcException.InvalidParams, "Missing permission request.");
                 var outcome = await AskAsync(request.SessionId, PermissionOutcome.Cancelled,
-                    (policy, token) => policy.DecideAsync(request, token), cancellationToken);
+                    (policy, token) => V1.UpdateReader.BoardPermission(request) is { } allowed
+                        ? Task.FromResult(allowed) : policy.DecideAsync(request, token), cancellationToken);
                 return JsonSerializer.SerializeToElement(new RequestPermissionResponse(outcome), AcpJsonContext.Default.RequestPermissionResponse);
             case AcpMethods.ElicitationCreate:
                 var question = parameters.Deserialize(AcpJsonContext.Default.ElicitationRequest)
