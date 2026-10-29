@@ -90,6 +90,7 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         _machine.Watch(_localSessions.Get("s")!);
         await ReadSeqsAsync(viewer, 5);
         _socket.DropAll();
+        _bulk.DropAll();
         Publish(6, 9);
         Assert.Equal(new long[] { 6, 7, 8, 9 }, await ReadSeqsAsync(viewer, 4));
         Assert.False(viewer.Rows.TryRead(out _));
@@ -101,34 +102,51 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
     public async Task Remote_follower_has_no_timer_of_its_own()
     {
         using var viewer = _localHub.Subscribe("s", 0);
-        await using var follower = new RemoteFollower(_address, "token", _localHub, _ => Task.CompletedTask,
-            () => { }, _ => Task.CompletedTask, (_, _) => { }, TextWriter.Null, _time);
+        var frames = System.Threading.Channels.Channel.CreateUnbounded<JsonElement>();
+        var subscribed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var read = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async IAsyncEnumerable<JsonElement> Subscribe(string session, long after,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            subscribed.TrySetResult();
+            await foreach (var frame in frames.Reader.ReadAllAsync(cancellationToken)) yield return frame;
+        }
+        await using var follower = new RemoteFollower(_localHub, Subscribe, (_, _, _) =>
+        {
+            read.TrySetResult();
+            return Task.FromResult<IReadOnlyList<StoredRow>>([]);
+        }, _ => Task.CompletedTask, _ => Task.CompletedTask, (_, _) => { }, TextWriter.Null);
         follower.Watch("s");
-        await _time.Created.Task.WaitAsync(Wait);
+        await subscribed.Task.WaitAsync(Wait);
         _time.Advance(TimeSpan.FromHours(1));
         Assert.Equal(0, _time.Made);
+        Assert.False(read.Task.IsCompleted);
+        frames.Writer.TryWrite(JsonDocument.Parse("""{"t":"state","seq":0}""").RootElement.Clone());
+        await read.Task.WaitAsync(Wait);
     }
 
     // Pins: remote#20. Intermediate updates to one item must survive a large catch-up.
-    [Fact]
-    public async Task Remote_rows_read_a_gap_too_big_to_push()
+    [Theory]
+    [InlineData(502, 0)]
+    [InlineData(4, 3 * 1024 * 1024)]
+    public async Task Remote_rows_read_a_gap_too_big_to_push(int count, int payloadSize)
     {
-        Publish(1, 502, sameItem: true);
+        Publish(1, count, sameItem: true, payloadSize);
         using var viewer = _localHub.Subscribe("s", 0);
         _machine.Watch(_localSessions.Get("s")!);
-        Assert.Equal(Enumerable.Range(1, 502).Select(n => (long)n), await ReadSeqsAsync(viewer, 502));
-        Publish(503, 503, sameItem: true);
-        Assert.Equal(new long[] { 503 }, await ReadSeqsAsync(viewer, 1));
+        Assert.Equal(Enumerable.Range(1, count).Select(n => (long)n), await ReadSeqsAsync(viewer, count));
+        Publish(count + 1, count + 1, sameItem: true);
+        Assert.Equal(new long[] { count + 1 }, await ReadSeqsAsync(viewer, 1));
         Assert.False(viewer.Rows.TryRead(out _));
         Assert.Equal(0, _liveHits);
     }
 
-    private void Publish(int from, int to, bool sameItem = false)
+    private void Publish(int from, int to, bool sameItem = false, int payloadSize = 0)
     {
         var batch = new RowBatch();
         for (var n = from; n <= to; n++)
             batch.Rows.Add(new NewRow("run", sameItem ? "tool" : $"tool-{n}", "tool",
-                JsonDocument.Parse($$"""{"state":"running","summary":"update {{n}}"}""").RootElement.Clone(), n));
+                JsonDocument.Parse($$"""{"state":"running","summary":"update {{n}}{{new string('x', payloadSize)}}"}""").RootElement.Clone(), n));
         _remoteHub.Publish("s", batch);
     }
 

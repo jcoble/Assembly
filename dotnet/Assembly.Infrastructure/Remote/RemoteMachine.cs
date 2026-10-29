@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.WebSockets;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -34,8 +35,12 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
     public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
-        Action<string>? turnEnded = null)
+        Action<string>? turnEnded = null, TimeProvider? time = null)
     {
+        _address = address;
+        _token = token;
+        _time = time ?? TimeProvider.System;
+        _log = log;
         _turnEnded = turnEnded ?? (_ => { });
         _name = name;
         _hub = hub;
@@ -43,10 +48,12 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status = status;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _follower = new RemoteFollower(address, token, hub, CheckFormatAsync, () => _status.Reachable(_name), RefreshAsync, AddSubagentSession, log, TimeProvider.System);
+        _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, CheckFormatAsync, RefreshAsync, AddSubagentSession, log);
     }
 
     public string? Name => _name;
+
+    internal string[] FollowedSessions => _follower.FollowedSessions;
 
     // A subagent's session, made on the remote by its parent's session, is known here from its parent's row.
     private void AddSubagentSession(string parentSessionId, StoredRow row)
@@ -194,7 +201,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     /// </summary>
     public async Task ProbeAsync(CancellationToken cancellationToken)
     {
-        if (_follower.Linked)
+        if (_socket is { State: WebSocketState.Open })
         {
             _status.Reachable(_name);
             _follower.Resume();
@@ -301,9 +308,179 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     private static string? Text(JsonElement json, string name) =>
         json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
+    // All followed sessions share this receive loop. A backend restart can leave SSH up, so this machine owns retry.
+    private readonly CancellationTokenSource _socketStop = new();
+    private readonly SemaphoreSlim _socketSend = new(1), _bulkCall = new(1);
+    private readonly Dictionary<long, (string Session, System.Threading.Channels.Channel<JsonElement> Frames)> _subscriptions = [];
+    private ClientWebSocket? _socket, _bulkSocket;
+    private Task? _socketRun;
+    private long _nextSub;
+    private readonly Uri _address = null!;
+    private readonly string _token = null!;
+    private readonly TimeProvider _time = null!;
+    private readonly TextWriter _log = null!;
+
+    private async IAsyncEnumerable<JsonElement> RowsAsync(string session, long after,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var frames = System.Threading.Channels.Channel.CreateBounded<JsonElement>(512);
+        var id = Interlocked.Increment(ref _nextSub);
+        await _socketSend.WaitAsync(cancellationToken);
+        try
+        {
+            _subscriptions.Add(id, (session, frames));
+            _socketRun ??= Task.Run(SocketLoopAsync, CancellationToken.None);
+            if (_socket is { State: WebSocketState.Open } socket)
+                await SendFrameAsync(socket, SubFrame(id, session, after), cancellationToken);
+        }
+        catch
+        {
+            _subscriptions.Remove(id);
+            _socket?.Abort();
+            throw;
+        }
+        finally { _socketSend.Release(); }
+        try
+        {
+            await foreach (var frame in frames.Reader.ReadAllAsync(cancellationToken))
+                yield return frame;
+        }
+        finally
+        {
+            await _socketSend.WaitAsync(CancellationToken.None);
+            try
+            {
+                _subscriptions.Remove(id);
+                if (_socket is { State: WebSocketState.Open } socket)
+                    try { await SendFrameAsync(socket, $"{{\"t\":\"unsub\",\"id\":{id}}}", _socketStop.Token); }
+                    catch (Exception error) when (error is WebSocketException or OperationCanceledException) { socket.Abort(); }
+            }
+            finally { _socketSend.Release(); }
+        }
+    }
+
+    private static string SubFrame(long id, string session, long after) =>
+        $"{{\"t\":\"sub\",\"id\":{id},\"topic\":\"rows\",\"key\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after}}}";
+
+    private async Task SocketLoopAsync()
+    {
+        var backoff = TimeSpan.FromSeconds(1);
+        while (!_socketStop.IsCancellationRequested)
+        {
+            using var socket = new ClientWebSocket();
+            var copied = false;
+            try
+            {
+                await OpenSocketAsync(socket, "/socket", _socketStop.Token);
+                await _socketSend.WaitAsync(_socketStop.Token);
+                try
+                {
+                    _socket = socket;
+                    foreach (var (id, sub) in _subscriptions)
+                        await SendFrameAsync(socket, SubFrame(id, sub.Session, _hub.LastSeq(sub.Session)), _socketStop.Token);
+                }
+                finally { _socketSend.Release(); }
+                _status.Reachable(_name);
+                _follower.Resume();
+                while (true)
+                {
+                    var frame = await ReadFrameAsync(socket, _socketStop.Token);
+                    await _socketSend.WaitAsync(_socketStop.Token);
+                    try
+                    {
+                        if (frame.TryGetProperty("sub", out var sub) && _subscriptions.TryGetValue(sub.GetInt64(), out var target)
+                            && !target.Frames.Writer.TryWrite(frame))
+                            throw new IOException("remote rows queue is full");
+                    }
+                    finally { _socketSend.Release(); }
+                    copied |= frame.GetProperty("t").GetString() == "rows";
+                }
+            }
+            catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException)
+            {
+                if (_socketStop.IsCancellationRequested) break;
+                _status.Unreachable(_name, "machine socket closed");
+                _log.WriteLine($"remote {_name}: socket lost ({error.GetType().Name})");
+            }
+            finally
+            {
+                await _socketSend.WaitAsync(CancellationToken.None);
+                try { _socket = null; }
+                finally { _socketSend.Release(); }
+            }
+            if (copied) backoff = TimeSpan.FromSeconds(1);
+            try { await Task.Delay(backoff, _time, _socketStop.Token); }
+            catch (OperationCanceledException) when (_socketStop.IsCancellationRequested) { break; }
+            backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, 30));
+        }
+    }
+
+    private async Task<IReadOnlyList<StoredRow>> ReadRowsAsync(string session, long after, CancellationToken cancellationToken)
+    {
+        await _bulkCall.WaitAsync(cancellationToken);
+        try
+        {
+            if (_bulkSocket is not { State: WebSocketState.Open })
+            {
+                _bulkSocket?.Dispose();
+                _bulkSocket = new ClientWebSocket();
+                await OpenSocketAsync(_bulkSocket, "/socket/bulk", cancellationToken);
+            }
+            await SendFrameAsync(_bulkSocket,
+                $"{{\"t\":\"call\",\"id\":1,\"feature\":\"rows\",\"method\":\"after\",\"args\":{{\"session\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after},\"limit\":{RowsFeature.PageLimit}}}}}", cancellationToken);
+            var frame = await ReadFrameAsync(_bulkSocket, cancellationToken);
+            if (frame.GetProperty("t").GetString() != "result") throw new IOException("remote rows read failed");
+            return frame.GetProperty("result").GetProperty("rows").EnumerateArray().Select(RowWire.Read).ToArray();
+        }
+        catch
+        {
+            if (!cancellationToken.IsCancellationRequested) _socket?.Abort();
+            _bulkSocket?.Dispose();
+            _bulkSocket = null;
+            throw;
+        }
+        finally { _bulkCall.Release(); }
+    }
+
+    private async Task OpenSocketAsync(ClientWebSocket socket, string path, CancellationToken cancellationToken)
+    {
+        socket.Options.SetRequestHeader("Authorization", $"Bearer {_token}");
+        var uri = new UriBuilder(_address) { Scheme = _address.Scheme == "https" ? "wss" : "ws", Path = path };
+        await socket.ConnectAsync(uri.Uri, cancellationToken);
+        await SendFrameAsync(socket, $"{{\"t\":\"hello\",\"protocol\":1,\"token\":{JsonSerializer.Serialize(_token, RowJsonContext.Rows.String)}}}", cancellationToken);
+        var welcome = await ReadFrameAsync(socket, cancellationToken);
+        if (welcome.GetProperty("t").GetString() != "welcome" || welcome.GetProperty("protocol").GetInt32() != 1)
+            throw new IOException("remote socket handshake failed");
+    }
+
+    private static Task SendFrameAsync(ClientWebSocket socket, string frame, CancellationToken cancellationToken) =>
+        socket.SendAsync(Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, true, cancellationToken);
+
+    private static async Task<JsonElement> ReadFrameAsync(ClientWebSocket socket, CancellationToken cancellationToken)
+    {
+        using var bytes = new MemoryStream();
+        var chunk = new byte[16384];
+        WebSocketReceiveResult received;
+        do
+        {
+            received = await socket.ReceiveAsync(chunk, cancellationToken);
+            if (received.MessageType == WebSocketMessageType.Close) throw new IOException("remote socket closed");
+            bytes.Write(chunk, 0, received.Count);
+            if (bytes.Length > 4 * 1024 * 1024) throw new IOException("remote frame too large");
+        } while (!received.EndOfMessage);
+        using var json = JsonDocument.Parse(bytes.ToArray());
+        return json.RootElement.Clone();
+    }
+
     public async ValueTask DisposeAsync()
     {
+        await _socketStop.CancelAsync();
         await _follower.DisposeAsync();
+        if (_socketRun is not null) await _socketRun;
+        _bulkSocket?.Dispose();
+        _socketStop.Dispose();
+        _socketSend.Dispose();
+        _bulkCall.Dispose();
         _http.Dispose();
     }
 }

@@ -7,6 +7,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Time.Testing;
+using Assembly.Application.Common.Machines;
+using Assembly.Application.Features.Chat.Sessions;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -25,10 +27,8 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
     private readonly TopicSet _topics = new();
     private readonly LiveHub _hub;
     private readonly CountingTime _time = new(DateTimeOffset.UtcNow);
-    private readonly TaskCompletionSource _connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource _closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private WebApplication? _remote;
-    private RemoteFollower? _follower;
+    private readonly Assembly.Tests.Draft.Base.MachinesSocketTests.StubRemote _remote = new();
+    private RemoteMachine? _machine;
 
     public RemoteFollowerTests()
     {
@@ -46,11 +46,10 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         for (var second = 0; second < 60; second++)
         {
             _time.Advance(TimeSpan.FromSeconds(1));
-            await Task.Delay(5);
         }
 
         Assert.Equal(made, _time.Made);
-        Assert.False(_closed.Task.IsCompleted);
+        Assert.True(_remote.LiveOpen > 0);
     }
 
     [Fact]
@@ -61,7 +60,7 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
 
         viewer.Dispose();
 
-        await _closed.Task.WaitAsync(Wait);
+        await _remote.NoLiveAsync().WaitAsync(Wait);
     }
 
     // The window views sessions through the rows topic, not /live: the same, for a rows-topic viewer.
@@ -75,11 +74,10 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
         for (var second = 0; second < 60; second++)
         {
             _time.Advance(TimeSpan.FromSeconds(1));
-            await Task.Delay(5);
         }
 
         Assert.Equal(made, _time.Made);
-        Assert.False(_closed.Task.IsCompleted);
+        Assert.True(_remote.LiveOpen > 0);
         _topics.Unsubscribe(viewer);
     }
 
@@ -88,52 +86,30 @@ public sealed class RemoteFollowerTests : IAsyncDisposable
     {
         var viewer = _topics.Subscribe(RowsFeature.Topic, "s1", _ => { }, (_, _) => { });
         await FollowPastSettledAsync();
-        Assert.False(_closed.Task.IsCompleted);
+        Assert.True(_remote.LiveOpen > 0);
 
         _topics.Unsubscribe(viewer);
 
-        await _closed.Task.WaitAsync(Wait);
+        await _remote.NoLiveAsync().WaitAsync(Wait);
     }
 
-    // Follows s1 on a remote whose link stays open and quiet, until the link has been quiet past Settled.
+    // The follower runs over the shared machine socket, not a per-session /live client.
     private async Task FollowPastSettledAsync()
     {
-        var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
-        _remote = builder.Build();
-        _remote.UseWebSockets();
-        _remote.Map("/live", async context =>
-        {
-            using var socket = await context.WebSockets.AcceptWebSocketAsync();
-            _connected.TrySetResult();
-            try
-            {
-                while ((await socket.ReceiveAsync(new byte[1024], context.RequestAborted)).MessageType != WebSocketMessageType.Close)
-                {
-                }
-            }
-            catch (Exception error) when (error is WebSocketException or OperationCanceledException)
-            {
-            }
-            _closed.TrySetResult();
-        });
         await _remote.StartAsync();
-
-        _follower = new RemoteFollower(new Uri(_remote.Urls.Single()), "box-token", _hub, _ => Task.CompletedTask, () => { },
-            _ => Task.CompletedTask, (_, _) => { }, new SharedLog(), _time);
-        _follower.Watch("s1");
-        await _connected.Task.WaitAsync(Wait);
-        // The settle's timer is made after the link's last-frame time is read, so advancing past it now settles.
-        await _time.SettleTimerMade.Task.WaitAsync(Wait);
+        _machine = new RemoteMachine("box", _remote.Address, "box-token", _hub,
+            SessionStore.Open(_database, TimeProvider.System, "checkouts"), new SharedLog(),
+            new MachineStatus(_topics, ["box"]), time: _time);
+        _machine.WatchRunning(["s1"], []);
+        await _remote.LiveSeenAsync("s1").WaitAsync(Wait);
         _time.Advance(PastSettled);
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_follower is not null)
-            await _follower.DisposeAsync();
-        if (_remote is not null)
-            await _remote.DisposeAsync();
+        if (_machine is not null)
+            await _machine.DisposeAsync();
+        await _remote.DisposeAsync();
         _hub.Dispose();
         _database.Dispose();
         _db.Dispose();
