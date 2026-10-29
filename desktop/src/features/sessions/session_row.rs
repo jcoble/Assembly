@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -101,16 +101,16 @@ impl RenderOnce for SessionRow {
         let (running, accent, faint) = (
             entry.running,
             theme.caret,
-            theme.muted_foreground.opacity(0.7),
+            theme.muted_foreground.opacity(0.65),
         );
         let id = entry.session_id.clone();
-        // Hover is quieter than the selected row's fill.
-        let hover = theme.secondary.opacity(0.6);
+        // The mock's steps above the card: hover a little, the selected row a little more.
+        let (hover, picked) = (theme.secondary.opacity(0.4), theme.secondary.opacity(0.7));
         let mark = match running {
             true => RingSpinner::new(theme.info).into_any_element(),
             false => Icon::empty()
                 .path(entry.icon.clone())
-                .xsmall()
+                .size(px(13.))
                 .text_color(theme.muted_foreground)
                 .into_any_element(),
         };
@@ -139,6 +139,10 @@ impl RenderOnce for SessionRow {
                     .line_height(px(18.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(running, |text| text.text_color(accent))
+                    // An offline row's title steps back, as the mock's offline row.
+                    .when(offline && !running, |text| {
+                        text.text_color(theme.muted_foreground)
+                    })
                     .child(title),
             )
             .children(time.map(|time| {
@@ -162,17 +166,20 @@ impl RenderOnce for SessionRow {
                         .gap_1()
                         .rounded_full()
                         .bg(theme.warning.opacity(0.12))
+                        .text_size(px(10.5))
                         .text_color(theme.warning)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(dot(theme.warning))
                         .child(word),
-                    "offline" => h_flex().flex_none().child(word),
+                    "offline" => h_flex()
+                        .flex_none()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(word),
+                    // The state in its colour, without a dot, as the mock's second line.
                     _ => h_flex()
                         .flex_none()
-                        .gap(px(5.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(tint(presence, cx))
-                        .child(dot(tint(presence, cx)))
                         .child(word),
                 }
             }))
@@ -208,7 +215,7 @@ impl RenderOnce for SessionRow {
             .border_color(theme.table_row_border)
             .cursor_pointer()
             .when(selected, |row| {
-                row.bg(theme.secondary).child(
+                row.bg(picked).child(
                     div()
                         .absolute()
                         .left_0()
