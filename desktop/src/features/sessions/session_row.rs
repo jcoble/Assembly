@@ -120,11 +120,15 @@ impl RenderOnce for SessionRow {
                 .child(elapsed_text(now, entry.updated_at)),
             false => div().text_color(faint).child(age(now, entry.updated_at)),
         });
-        let unread = (presence == Presence::Unread)
-            .then(|| div().flex_none().size(px(6.)).rounded_full().bg(accent));
+        // In the left gutter, level with the title, so it doesn't move the title.
+        let unread = (presence == Presence::Unread).then(|| {
+            (div().absolute().left(px(5.)).top(px(15.)))
+                .size(px(6.))
+                .rounded_full()
+                .bg(accent)
+        });
         let first = h_flex()
             .gap(px(7.))
-            .children(unread)
             .child(mark)
             .child(
                 div()
@@ -185,6 +189,7 @@ impl RenderOnce for SessionRow {
                 .line_height(px(17.))
                 .text_color(theme.muted_foreground)
                 .line_clamp(2)
+                .text_ellipsis()
                 .child(preview)
         });
         let opened = id.clone();
@@ -215,6 +220,7 @@ impl RenderOnce for SessionRow {
             })
             .when(!selected, |row| row.hover(|row| row.bg(hover)))
             .on_click(move |_, window, cx| on_open(opened.clone(), window, cx))
+            .children(unread)
             .child(first)
             .child(second)
             .children(preview)

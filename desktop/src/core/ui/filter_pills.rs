@@ -144,6 +144,7 @@ impl Render for FilterPills {
             .id("filter-pills")
             .key_context("FilterPills")
             .track_focus(&self.focus)
+            .flex_wrap()
             .gap(px(6.))
             .px(px(14.))
             .pb(px(10.))

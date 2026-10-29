@@ -485,21 +485,20 @@ impl Render for SessionsPane {
             .track_focus(&self.focus)
             .size_full()
             .child(self.search(on_view, new_session, cx))
-            .child(
+            .child(self.pills.clone())
+            // Its own line under the pills, so it never covers one.
+            .children(needs_words(self.rail.totals.needs).map(|words| {
                 h_flex()
-                    .child(div().flex_1().min_w_0().child(self.pills.clone()))
-                    .children(needs_words(self.rail.totals.needs).map(|words| {
-                        h_flex()
-                            .flex_none()
-                            .gap(px(5.))
-                            .pr(px(14.))
-                            .pb(px(10.))
-                            .text_size(px(12.))
-                            .text_color(warning)
-                            .child(div().size(px(6.)).rounded_full().bg(warning))
-                            .child(words)
-                    })),
-            )
+                    .justify_end()
+                    .gap(px(5.))
+                    .mt(px(-4.))
+                    .pr(px(14.))
+                    .pb(px(8.))
+                    .text_size(px(12.))
+                    .text_color(warning)
+                    .child(div().size(px(6.)).rounded_full().bg(warning))
+                    .child(words)
+            }))
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),

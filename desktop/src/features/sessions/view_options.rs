@@ -1,5 +1,6 @@
 use crate::core::socket::update::Update;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
@@ -101,12 +102,18 @@ pub fn view_options(view: View, on_view: OnView) -> impl IntoElement {
         )
         .content(move |_, _, cx| {
             let theme = cx.theme();
+            // A chosen option is checked, in the accent.
+            let chosen = ButtonCustomVariant::new(cx)
+                .color(theme.caret.opacity(0.9))
+                .foreground(theme.caret)
+                .hover(theme.caret.opacity(0.2))
+                .active(theme.caret.opacity(0.3));
             let toggle = |id: &'static str, label: &'static str, picked: bool, next: View| {
                 let on_view = on_view.clone();
                 Button::new(id)
                     .small()
                     .label(label)
-                    .when(picked, |button| button.secondary())
+                    .when(picked, |button| button.custom(chosen).icon(IconName::Check))
                     .when(!picked, |button| button.ghost())
                     .on_click(move |_, window, cx| on_view(next, window, cx))
             };
