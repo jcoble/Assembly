@@ -42,7 +42,7 @@ drawer pane no longer drags from its tab. The sessions column's tabs are the old
 2026-10-27, "make these more like the ones in the old app, same with left side"): a click shows that pane, a chip still
 drags its pane anywhere (g0-shape#2), and a row too narrow for its tabs scrolls. Chat alone in the center draws no tab
 row: its 48 px title row reads "project › Session title", with a button before it that shows and hides the sessions
-column. Chat beside other center panes, and an open bottom dock, keep the kit's tabs.
+column, there even with no session open. Chat beside other center panes, and an open bottom dock, keep the kit's tabs.
 g0-shape#13 The drawer's Context tab lists the files the selected session's tool calls edited, deleted or moved, newest
 first, each once with its file name, its folder and its lines added and removed (`rows/files`, parity map 11c). A
 failed call touched nothing; a call that changed several files lists each with its own lines. The tab reads the list when it's shown and when another session is picked while it's
