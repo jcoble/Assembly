@@ -303,8 +303,7 @@ Nothing else stands in for it, however sure you are of the code.
   passing summary only says the pieces still connect; it says nothing about whether the feature works for a person.
 - Close every browser and app you opened, and verify their processes exited. Stop only your own recorded PIDs.
 - Remote tests of the app run only on Workbox Test (SSH alias `workbox-test`).
-- Real-window checks (the lag meter, memory) run on the Mac: pull the lane's branch into a Mac lane and run
-  `shell/assembly.sh start --counters` there.
+- Real-window checks run in the native app on agent-workbox with `scripts/ui-check.sh` (see "Checking a feature").
 Test first for any behaviour change: write the test, watch it fail, then make it pass.
 The commit-msg hook rejects a commit whose subject starts with fix unless it stages a test file (*.test.ts, *_test.dart, a tests/ folder) or a Rust #[test], or the body has a line No-test: <reason>.
 Run only what you touched: pnpm --dir tauri-svelte-preview test:<name> (or node --experimental-strip-types <file>.test.ts), cargo test --manifest-path tauri-svelte-preview/src-tauri/Cargo.toml <name>, check:svelte. Full suites belong to CI.

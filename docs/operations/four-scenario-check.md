@@ -53,14 +53,11 @@ output, send a second prompt, quit, reopen and check order and duplicates. For r
 without a previously cached session, viewing it offline, then reconnecting and sending another message.
 Record each exercised action and its result; an unrun action stays blocked, with its exact error.
 
-Assembly's existing rule places real-window checks on the Mac, in an adopted lane. The documented command,
-`shell/assembly.sh start --counters`, launches the old Tauri shell, not the GPUI window in `desktop/`.
-There is no equivalent GPUI build/start/stop wrapper in this checkout. `desktop/README.md` documents the crate;
-use proof of the window being changed and report missing setup instead of substituting the old shell.
-
-The source runs Linux native proof under Xvfb at 1710x990 with `assembly-native-ui`. Assembly has no corresponding
-runner or documented GPUI driver procedure, and its Mac-only window rule remains in force. Do not claim Linux
-native proof from that source command. A headless browser at 1710x990 is for real web pages only.
+Run it in the native GPUI app on agent-workbox, from the lane's worktree: `scripts/ui-check.sh start` builds and
+starts the app and its backend on a private Xvfb display at 1710x990, `scripts/ui-check.sh shot <file>` saves a
+screenshot, and `scripts/ui-check.sh stop` stops only what `start` started. Drive it as AGENTS.md "Checking a
+feature" says (`assembly-native-ui` and `xdotool`, or Codex's computer use). If `start` fails it prints the failing
+step; report that as blocked. Never substitute the old Tauri shell (`shell/assembly.sh`) or a browser for the window.
 
 ## Screenshots, publishing and cleanup
 
