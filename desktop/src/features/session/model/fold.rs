@@ -156,15 +156,22 @@ impl Fold {
 
     /// A tool row's title and summary: an Assembly helper tool's in words (`mcp__assembly__start_session` is
     /// "Started a helper"), any other by its kind ("Ran", "Edited"…) with its name as the summary when it has none,
-    /// and a kind without a word keeps the name as its title.
+    /// and a kind without a word keeps the name as its title. A line is one line: a summary of several lines shows its
+    /// first, ending in "…".
     pub fn tool_words(
         name: &str,
         kind: Option<&str>,
         summary: Option<&str>,
     ) -> (String, Option<String>) {
-        let summary = summary.filter(|summary| !summary.is_empty());
+        let summary = summary
+            .map(str::trim_end)
+            .filter(|summary| !summary.is_empty())
+            .map(|summary| match summary.split_once('\n') {
+                Some((first, _)) => format!("{}…", first.trim_end()),
+                None => summary.to_string(),
+            });
         if let Some(helper) = helper_of(name) {
-            return (HELPERS[helper].1.to_string(), summary.map(str::to_string));
+            return (HELPERS[helper].1.to_string(), summary);
         }
         let word = match kind {
             Some("execute") => "Ran",
@@ -172,9 +179,12 @@ impl Fold {
             Some("read") => "Read",
             Some("search") => "Searched",
             Some("fetch") => "Fetched",
-            _ => return (name.to_string(), summary.map(str::to_string)),
+            _ => return (name.to_string(), summary),
         };
-        (word.to_string(), Some(summary.unwrap_or(name).to_string()))
+        (
+            word.to_string(),
+            Some(summary.unwrap_or_else(|| name.to_string())),
+        )
     }
 }
 

@@ -254,6 +254,24 @@ fn a_tool_is_titled_by_its_kind() {
     );
 }
 
+// Pins: g0-session#13
+#[test]
+fn a_multi_line_command_shows_its_first_line() {
+    let heredoc = "cat >> src/calc.py <<'EOF'\ndef div(a, b):\n    return a / b\nEOF\n";
+    assert_eq!(
+        Fold::tool_words("Bash", Some("execute"), Some(heredoc)),
+        (
+            "Ran".to_string(),
+            Some("cat >> src/calc.py <<'EOF'…".to_string())
+        )
+    );
+    assert_eq!(
+        Fold::tool_words("Bash", Some("execute"), Some("ls -la\n")),
+        ("Ran".to_string(), Some("ls -la".to_string())),
+        "a line ending is not more to show"
+    );
+}
+
 // Pins: g0-session#10
 #[test]
 fn a_turn_with_no_finished_reply_keeps_its_own_line() {
