@@ -48,9 +48,9 @@ case "${1:-}" in
     chmod 700 "$home/runtime"
     # The backend home needs the providers; the adapters install once into this lane's DATA.
     dotnet/scripts/agents-file.sh "$DATA/adapters" "$home/mac/agents.json"
-    # All mutable paths, including the backend token, stay inside this lane's DATA.
+    # The backend token goes in TOKEN_FILE, where scripts/check4.sh and the other scripts read it.
     cat > "$home/backend/lane.json" <<JSON
-{"port":$DESKTOP_PORT,"home":"$home/mac","tokenFile":"$home/token.env","remotePort":$BOX_PORT,"remoteTokenFile":"$BOX_TOKEN_FILE"}
+{"port":$DESKTOP_PORT,"home":"$home/mac","tokenFile":"$TOKEN_FILE","remotePort":$BOX_PORT,"remoteTokenFile":"$BOX_TOKEN_FILE"}
 JSON
     export XDG_RUNTIME_DIR=$home/runtime XDG_CACHE_HOME=$home/cache XDG_DATA_HOME=$home/data
     export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
