@@ -46,13 +46,15 @@ impl SessionRow {
     }
 }
 
-/// A row's coloured words on its second line: "offline" while its machine isn't answering, ahead of its state's.
+/// The words that start a row's second line: "offline" while its machine isn't answering, ahead of its state. Every
+/// row names its state; one that isn't working, waiting, failed or marked Done is "Idle", an unread answer included
+/// (the dot before its title says that).
 pub fn status_words(presence: Presence, offline: bool) -> Vec<&'static str> {
     let mut words = Vec::new();
     if offline {
         words.push("offline");
     }
-    words.extend(presence.word());
+    words.push(presence.word().unwrap_or("Idle"));
     words
 }
 
@@ -102,6 +104,8 @@ impl RenderOnce for SessionRow {
             theme.muted_foreground.opacity(0.7),
         );
         let id = entry.session_id.clone();
+        // Hover is quieter than the selected row's fill.
+        let hover = theme.secondary.opacity(0.6);
         let mark = match running {
             true => RingSpinner::new(theme.info).into_any_element(),
             false => Icon::empty()
@@ -127,20 +131,25 @@ impl RenderOnce for SessionRow {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_sm()
+                    .text_size(px(13.))
+                    .line_height(px(18.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .when(running, |text| text.text_color(accent))
                     .child(title),
             )
-            .children(time.map(|time| time.flex_none().text_xs().font_features(tabular())));
-        let words = status_words(presence, offline);
-        let worded = !words.is_empty();
+            .children(time.map(|time| {
+                time.flex_none()
+                    .text_size(px(11.5))
+                    .font_features(tabular())
+            }));
+        let dot = |color: Hsla| div().flex_none().size(px(6.)).rounded_full().bg(color);
         let second = h_flex()
             .mt(px(3.))
             .gap(px(6.))
-            .text_xs()
+            .text_size(px(11.5))
+            .line_height(px(16.))
             .text_color(faint)
-            .children(words.into_iter().map(|word| {
+            .children(status_words(presence, offline).into_iter().map(|word| {
                 match word {
                     "Needs you" => h_flex()
                         .flex_none()
@@ -151,24 +160,29 @@ impl RenderOnce for SessionRow {
                         .bg(theme.warning.opacity(0.12))
                         .text_color(theme.warning)
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(div().size(px(6.)).rounded_full().bg(theme.warning))
+                        .child(dot(theme.warning))
                         .child(word),
                     "offline" => h_flex().flex_none().child(word),
                     _ => h_flex()
                         .flex_none()
+                        .gap(px(5.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(tint(presence, cx))
+                        .child(dot(tint(presence, cx)))
                         .child(word),
                 }
             }))
-            .child(div().min_w_0().truncate().child(match worded {
-                true => format!("· {}", details(&entry)),
-                false => details(&entry),
-            }));
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(format!("· {}", details(&entry))),
+            );
         let preview = entry.preview.clone().map(|preview| {
             div()
                 .mt_1()
-                .text_xs()
+                .text_size(px(12.))
+                .line_height(px(17.))
                 .text_color(theme.muted_foreground)
                 .line_clamp(2)
                 .child(preview)
@@ -199,7 +213,7 @@ impl RenderOnce for SessionRow {
                         .bg(accent),
                 )
             })
-            .when(!selected, |row| row.hover(|row| row.bg(theme.list_hover)))
+            .when(!selected, |row| row.hover(|row| row.bg(hover)))
             .on_click(move |_, window, cx| on_open(opened.clone(), window, cx))
             .child(first)
             .child(second)
