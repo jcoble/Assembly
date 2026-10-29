@@ -1,0 +1,8 @@
+{
+  "name": "assembly",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "app:dev": "node scripts/app-dev.ts"
+  }
+}
