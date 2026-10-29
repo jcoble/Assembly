@@ -14,7 +14,7 @@ use gpui_kit::*;
 
 use std::rc::Rc;
 
-use super::Composer;
+use super::{Composer, placeholder};
 use crate::features::session::composer::attachment_chip::AttachmentChip;
 use crate::features::session::composer::config_menu::{ConfigMenu, OnSelect};
 use crate::features::session::composer::context_ring::ContextRing;
@@ -29,6 +29,12 @@ const ROUND_BUTTON: Pixels = px(30.);
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.draft.read(cx).focus_handle(cx).is_focused(window);
+        let hint = placeholder(self.messages);
+        if self.hint != hint {
+            self.hint = hint;
+            self.draft
+                .update(cx, |draft, cx| draft.set_placeholder(hint, window, cx));
+        }
         let theme = cx.theme();
         let (pill, attach_color) = (theme.radius_full(), theme.muted_foreground);
         // The branch as a chip beside the pickers, as the mock's: its mark faint, its name in the foreground.

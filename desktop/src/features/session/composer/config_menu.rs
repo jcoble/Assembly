@@ -1,5 +1,5 @@
 //! `ConfigMenu` is one of the agent's own menus (model, effort, mode…) from `config/get`, set through `config/set`:
-//! an outlined button in the composer's footer showing the menu's name, muted, then the value chosen now, opening
+//! an outlined button in the composer's footer showing the value chosen now (Effort's name before it), opening
 //! upward with a check on that value. The kit's menu doesn't flip, so it opens upward even in a window too short for
 //! it; the composer sits at the bottom, so there's room above in any usable window. They're read again when a turn
 //! ends, since the agent can change a value itself. Replaces the config selects in Composer.svelte.
@@ -9,10 +9,17 @@ use std::rc::Rc;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 /// Takes (config id, value).
 pub type OnSelect = Rc<dyn Fn(&str, &str, &mut Window, &mut App)>;
+
+/// Whether a picker shows its name before its value: only Effort does ("Effort High"), as the mock's; the others
+/// ("Opus 5.5", "Manual") show their value alone.
+pub fn shows_name(id: &str, name: &str) -> bool {
+    id.contains("effort") || name.to_lowercase().contains("effort")
+}
 
 #[derive(IntoElement)]
 pub struct ConfigMenu {
@@ -32,6 +39,7 @@ impl RenderOnce for ConfigMenu {
             .iter()
             .find(|(value, _)| *value == self.current)
             .map(|(_, name)| name.clone());
+        let named = shows_name(&self.config_id, &self.label);
         let ConfigMenu {
             config_id,
             label,
@@ -39,8 +47,8 @@ impl RenderOnce for ConfigMenu {
             current,
             on_select,
         } = self;
-        // "Effort  Medium": the menu's name, faint, then the value chosen now, cut off with an ellipsis past 96 px; the
-        // mock's `.sel3`, 30 px high with 9 px corners and 12.5 px text.
+        // "Effort  High": Effort's name, faint, then the value chosen now, cut off with an ellipsis past 96 px; the
+        // others their value alone ("Opus 5.5"). The mock's `.sel3`, 30 px high with 9 px corners and 12.5 px text.
         let theme = cx.theme();
         let name = div()
             .text_size(px(12.5))
@@ -53,7 +61,7 @@ impl RenderOnce for ConfigMenu {
             .px(px(10.))
             .rounded(px(9.))
             .bg(theme.accent)
-            .child(name)
+            .when(named, |button| button.child(name))
             .children(shown.map(|shown| {
                 div()
                     .max_w(px(96.))

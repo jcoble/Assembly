@@ -509,10 +509,12 @@ impl SessionPane {
         let context = self.view.context.map(|(_, used, size)| (used, size));
         let running = active.is_some();
         let branch = latest_branch(&self.view.stats);
+        let messages = !self.view.items.is_empty();
         self.composer.update(cx, |composer, cx| {
             composer.set_running(active, cx);
             composer.set_context(context, cx);
             composer.set_branch(branch, cx);
+            composer.set_messages(messages, cx);
         });
         self.tell_read(running, cx);
         cx.notify();

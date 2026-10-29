@@ -1,5 +1,6 @@
-//! `ContextRing` is the composer's gauge of the agent's context window: a 14 px ring of what's left with "62% left"
-//! beside it, faint, the ring in the accent until a quarter is left, warm then and hot at a tenth, with "51,285 of 1,000,000 (5%)" on hover.
+//! `ContextRing` is the composer's gauge of the agent's context window: a 14 px ring of what's left with "62%" beside
+//! it, faint, the ring in the accent until a quarter is left, warm then and hot at a tenth, with
+//! "62% context left · 380,000 of 1,000,000 (38%)" on hover.
 //! It reads as a gauge, never a spinner (the old app's TSK-1367): the kit's `ProgressCircle` holding still at its
 //! value. Replaces the meter in Composer.svelte.
 
@@ -38,6 +39,6 @@ impl RenderOnce for ContextRing {
                     .value(f32::from(self.meter.arc))
                     .color(color),
             )
-            .child(format!("{}% left", self.meter.left))
+            .child(format!("{}%", self.meter.left))
     }
 }

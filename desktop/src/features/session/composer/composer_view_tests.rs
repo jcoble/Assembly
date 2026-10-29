@@ -256,3 +256,10 @@ fn connect_asks_the_backend_to_reach_the_offline_machine_once_at_a_time(cx: &mut
     composer.update(cx, |composer, cx| composer.set_offline(None, cx));
     assert!(!cx.update(|_, cx| composer.read(cx).still_offline));
 }
+
+// Pins: g0-session#23
+#[test]
+fn the_draft_asks_for_follow_up_changes_once_there_are_messages() {
+    assert_eq!(super::placeholder(false), "Message");
+    assert_eq!(super::placeholder(true), "Ask for follow-up changes…");
+}

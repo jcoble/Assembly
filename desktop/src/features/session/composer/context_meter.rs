@@ -33,7 +33,7 @@ impl ContextMeter {
             warm: left <= 25,
             hot: left <= 10,
             detail: format!(
-                "{} of {} ({}%)",
+                "{left}% context left · {} of {} ({}%)",
                 thousands(used),
                 thousands(size),
                 100 - left

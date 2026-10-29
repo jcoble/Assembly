@@ -49,6 +49,10 @@ pub struct Composer {
     meter: Option<ContextMeter>,
     /// The branch the session's newest turn started on, shown in the footer; `None` before its first turn.
     branch: Option<String>,
+    /// The open session has messages: the draft's hint asks for follow-up changes.
+    messages: bool,
+    /// The draft's hint as last set (`placeholder`).
+    hint: &'static str,
     /// A failed send's text and clientId, by session: sending that text again reuses the id, so if the first did reach
     /// the agent the backend answers its run instead of starting another.
     retry_ids: HashMap<String, (String, String)>,
@@ -71,13 +75,22 @@ pub enum ComposerEvent {
     Sent { session: String, run_id: String },
 }
 
+/// The draft's hint: "Message" for a new session's first message, the mock's words once it has messages.
+pub fn placeholder(messages: bool) -> &'static str {
+    if messages {
+        "Ask for follow-up changes…"
+    } else {
+        "Message"
+    }
+}
+
 impl Composer {
     pub fn new(client: Rc<dyn SessionClient>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let draft = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(1, DRAFT_ROWS)
                 .submit_on_enter(true)
-                .placeholder("Message")
+                .placeholder(placeholder(false))
         });
         let enter = cx.subscribe_in(
             &draft,
@@ -108,6 +121,8 @@ impl Composer {
             still_offline: false,
             meter: None,
             branch: None,
+            messages: false,
+            hint: placeholder(false),
             retry_ids: HashMap::new(),
             named: 0,
             picks: 0,
@@ -173,6 +188,14 @@ impl Composer {
     pub fn set_branch(&mut self, branch: Option<String>, cx: &mut Context<Self>) {
         if self.branch != branch {
             self.branch = branch;
+            cx.notify();
+        }
+    }
+
+    /// Whether the open session has messages, for the draft's hint (`placeholder`).
+    pub fn set_messages(&mut self, messages: bool, cx: &mut Context<Self>) {
+        if self.messages != messages {
+            self.messages = messages;
             cx.notify();
         }
     }
