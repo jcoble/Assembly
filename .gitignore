@@ -9,3 +9,7 @@ obj/
 .vscode/
 .idea/
 .lane
+# Proof files from scripts/check4.sh stay out of git; only the summaries are committed (CI reads summary.json).
+evidence/*/four-way/*
+!evidence/*/four-way/summary.json
+!evidence/*/four-way/summary.md
