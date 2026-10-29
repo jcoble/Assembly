@@ -189,8 +189,10 @@ impl Draw<'_> {
                         (false, _, true) => format!("{}.", at + 1),
                         (false, _, false) => "•".to_string(),
                     };
+                    // It shrinks to the row, so a long item wraps instead of running past the column.
                     let body = v_flex()
                         .flex_1()
+                        .min_w_0()
                         .gap_1()
                         .child(self.text(&item.parts))
                         .child(self.blocks(&item.blocks));
