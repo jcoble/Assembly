@@ -75,3 +75,7 @@ About 200 to 300 changed lines across the three source files and the tests. Need
 named above, means stop and send the controller a one-paragraph proposal. KISS and YAGNI as in AGENTS.md "Scope".
 No AGENTS.md or CLAUDE.md edits. Commit messages end with `Architecture: unchanged` (or update
 `docs/architecture.md` if the machine link's description there changes) and `Committed-by: Codex`.
+
+## Amendment (2026-10-29)
+
+The controller permits `RemoteConnections.cs` to signal a newly reachable machine after `_machines.Set(remote)`, or `RemoteTunnel.cs` to expose `Ready` only if that is simpler, and permits migrating or deleting the old `/live` fixtures in `Infrastructure/Remote/RemoteFollowerTests.cs` and `Draft/Base/MachinesSocketTests.Stub.cs` and `MachinesSocketTests.cs`. Because a backend restart can leave the SSH tunnel connected, `RemoteMachine` owns one cancellable reconnect wait using its supplied `TimeProvider`, with the existing backoff; followers have no retry timer. The final amendment replaces repeated catch-up subscriptions: an empty catch-up with a newer seq triggers backward `rows/page` reads from `last + 1` to the last copied seq, then copies in seq order and continues the live subscription; add `Remote_rows_page_a_gap_too_big_to_push` (remote#20), leave `RowsFeature.cs` and `RowsSocketTests.cs` unchanged, and keep the total change around 400 to 500 lines in the named files.
