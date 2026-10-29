@@ -26,6 +26,7 @@ impl RenderOnce for ContextRing {
         let detail = SharedString::from(self.meter.detail);
         h_flex()
             .id("composer:context")
+            .flex_none()
             .h(px(22.))
             .gap_1p5()
             .text_size(px(12.))
