@@ -150,7 +150,6 @@ public sealed class DesktopBackend : IAsyncDisposable
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
 
-
         Uri? address = null;
         Action dropSockets = () => { };
         var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);

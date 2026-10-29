@@ -4,6 +4,7 @@
 
 mod connections;
 mod fonts;
+mod machine_edits;
 mod page_content;
 mod row;
 mod search;
