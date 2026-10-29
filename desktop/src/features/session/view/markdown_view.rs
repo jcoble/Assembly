@@ -219,7 +219,11 @@ impl Draw<'_> {
                     .border_1()
                     .border_color(border)
                     .rounded(radius);
-                let lines = (!headers.is_empty())
+                // A header row of blank cells is no header, so it draws no header band.
+                let has_header = headers
+                    .iter()
+                    .any(|cell| !Runs::of(cell).text.trim().is_empty());
+                let lines = has_header
                     .then_some((headers, true))
                     .into_iter()
                     .chain(rows.iter().map(|row| (row, false)));
