@@ -98,9 +98,7 @@ impl SessionPane {
                     return div().into_any_element();
                 };
                 let steps = activity::steps(&self.view.items, &run, since, now);
-                let plan = (self.view.plan.as_ref())
-                    .filter(|(_, items)| !items.is_empty())
-                    .map(|(_, items)| (current_step(items), items.len()));
+                let plan = (self.view.turn_plan()).map(|items| (current_step(items), items.len()));
                 let footer = activity::footer(steps.len(), plan, now - since);
                 let steps = steps
                     .into_iter()
