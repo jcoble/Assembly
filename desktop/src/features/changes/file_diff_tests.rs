@@ -23,8 +23,8 @@ fn one_part_has_no_label_and_two_parts_are_each_under_theirs() {
     assert_eq!(one.len(), 3);
 
     let both = diff(EDIT, EDIT, false, false).rows();
-    assert_eq!(both[0], Row::Label("Staged"));
-    assert_eq!(both[4], Row::Label("Working tree"));
+    assert_eq!(both[0], Row::Label("Staged".into()));
+    assert_eq!(both[4], Row::Label("Working tree".into()));
     assert_eq!(both.len(), 8);
 }
 

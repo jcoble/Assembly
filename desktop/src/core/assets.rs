@@ -34,7 +34,9 @@ gpui_kit::assets::icon_assets!(
         Circle,
         CircleDot,
         Lightbulb,
-        Terminal
+        Terminal,
+        Rocket,
+        ListFilter
     ]
 );
 

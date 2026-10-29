@@ -211,19 +211,41 @@ fn a_denied_command_is_not_counted_as_run_or_failed() {
     );
 }
 
+#[test]
+fn a_started_session_is_not_counted_as_a_provider_subagent() {
+    let mut payload = json!({ "sessionId": "c1", "title": "Review", "state": "idle", "canStop": false, "helper": true });
+    let started = item(
+        "s",
+        ItemKind::Subagent {
+            acp_session_id: "s1".into(),
+            subagent: serde_json::from_value(payload.clone()).unwrap(),
+        },
+    );
+    assert_eq!(summary(std::slice::from_ref(&started)), "Worked");
+    payload.as_object_mut().unwrap().remove("helper");
+    let provider = item(
+        "p",
+        ItemKind::Subagent {
+            acp_session_id: "p1".into(),
+            subagent: serde_json::from_value(payload).unwrap(),
+        },
+    );
+    assert_eq!(summary(&[started, provider]), "ran a subagent");
+}
+
 // Pins: g0-session#13
 #[test]
 fn an_assembly_helper_tool_keeps_its_words() {
     for kind in [None, Some("execute"), Some("other")] {
         assert_eq!(
             Fold::tool_words("mcp__assembly__start_session", kind, None),
-            ("Started a helper".to_string(), None)
+            ("Started a session".to_string(), None)
         );
     }
     assert_eq!(
         Fold::tool_words("mcp.assembly.message_status", Some("execute"), Some("s1")),
         (
-            "Checked a helper's answer".to_string(),
+            "Checked a session's answer".to_string(),
             Some("s1".to_string())
         )
     );
@@ -256,7 +278,7 @@ fn an_assembly_helper_tool_keeps_its_words() {
     ];
     assert_eq!(
         summary(&calls),
-        "ran a command · started a helper · checked answers 2 times · listed sessions"
+        "ran a command · started a session · checked answers 2 times · listed sessions"
     );
 }
 

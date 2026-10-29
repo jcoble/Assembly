@@ -1,0 +1,157 @@
+[
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 1,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": null,
+    "kind": "user",
+    "payload": {
+      "text": "Run the shell command hostname, then reply with only its output and, on the next line, the word four-way-ok."
+    },
+    "createdAt": 1793252389585,
+    "firstSeq": 1
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 2,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "started"
+    },
+    "createdAt": 1793252389585,
+    "firstSeq": 2
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 4,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": "rs_0a996b3763e8f59b016ae2dc29003081918bed24bc1e8283f9:thinking",
+    "kind": "thinking",
+    "payload": {
+      "text": "\n\n**Planning tool call with commentary**",
+      "done": true
+    },
+    "createdAt": 1793252394740,
+    "firstSeq": 3
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 7,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": "msg_0a996b3763e8f59b016ae2dc2ab7948191932722964129814c",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "Running "
+            },
+            {
+              "kind": "code",
+              "value": "hostname"
+            },
+            {
+              "kind": "text",
+              "value": " now."
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793252395047,
+    "firstSeq": 7
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 9,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": "exec-b5422817-b615-4ca7-ac39-892d8dc2dde2",
+    "kind": "tool",
+    "payload": {
+      "name": "exec_command",
+      "state": "completed",
+      "summary": "hostname",
+      "hasDetail": true,
+      "kind": "execute"
+    },
+    "createdAt": 1793252395051,
+    "firstSeq": 8
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 12,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": "context:54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "kind": "context",
+    "payload": {
+      "used": 26268,
+      "size": 258400
+    },
+    "createdAt": 1793252396638,
+    "firstSeq": 10
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 13,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": "msg_0a996b3763e8f59b016ae2dc2c75388191b941111a8d45f1fc",
+    "kind": "message",
+    "payload": {
+      "blocks": [
+        {
+          "kind": "paragraph",
+          "parts": [
+            {
+              "kind": "text",
+              "value": "agent-workbox\nfour-way-ok"
+            }
+          ]
+        }
+      ]
+    },
+    "createdAt": 1793252396644,
+    "firstSeq": 13
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 14,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": null,
+    "kind": "stats",
+    "payload": {
+      "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+      "status": "completed",
+      "startedAt": 1793252389585,
+      "durationMs": 7059,
+      "firstTokenMs": 5155,
+      "model": "5.6 Luna",
+      "inputTokens": 26481,
+      "outputTokens": 277,
+      "cacheHitPct": 49.3,
+      "toolCalls": 1,
+      "branch": null,
+      "head": null,
+      "prevBranch": null,
+      "prevHead": null
+    },
+    "createdAt": 1793252396644,
+    "firstSeq": 14
+  },
+  {
+    "sessionId": "504b276d-5049-4034-95ca-95e188d9ebf0",
+    "seq": 15,
+    "runId": "54be4ee8-7263-4572-b2b5-2cf3c3dc43d5",
+    "itemId": null,
+    "kind": "turn",
+    "payload": {
+      "state": "finished"
+    },
+    "createdAt": 1793252396644,
+    "firstSeq": 15
+  }
+]

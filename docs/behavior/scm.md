@@ -50,3 +50,16 @@ changes says so. A diff too long to send whole is cut and says it was cut. A con
 as it prints it.
 scm#17 The diff is read when the file is picked and from the tab's Refresh button. Picking another file stops a read
 still on its way. Reading changes nothing on disk, and a path outside the session's folder is refused.
+
+## The branch's diff against its base
+
+The old app's Changes tab Branch scope (`GitDiffView.svelte`, `read_git_branch_diff`): everything the checked-out
+branch changed since it left the default branch, committed or not, as one diff.
+
+scm#18 The Source control tab's Branch diff button opens the Changes tab on everything the session's checked-out
+branch changed since it left the default branch (`origin/HEAD`), committed and uncommitted, file under file, each
+under its own path. The tab's header names the base, such as "Branch vs origin/main".
+scm#19 Files git doesn't track yet aren't in the branch diff; the Source control list still has them. A folder whose
+repository has no `origin/HEAD` says there's no default branch to compare with.
+scm#20 A binary file in the branch diff says so under its path. A branch diff too long to send whole is cut and says
+it was cut. It's read when opened and from Refresh, and reading it changes nothing on disk.
