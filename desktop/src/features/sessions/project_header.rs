@@ -1,6 +1,4 @@
-//! `ProjectHeader` heads one project in the rail: a small coloured badge with two letters of its name, the label the
-//! backend gave it in small capitals, and a New session button that opens the new-session form with the project's
-//! folder and its first session's machine filled in.
+//! The rail's section and project headers: fold chevron, backend count, project machines and New session.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -11,11 +9,16 @@ use gpui_kit::*;
 pub const PROJECT_HEIGHT: Pixels = px(30.);
 
 type OnNew = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+type OnToggle = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct ProjectHeader {
     label: String,
     repo_url: String,
+    machines: Vec<String>,
+    count: usize,
+    folded: bool,
+    on_toggle: OnToggle,
     on_new: OnNew,
 }
 
@@ -23,11 +26,19 @@ impl ProjectHeader {
     pub fn new(
         label: String,
         repo_url: String,
+        machines: Vec<String>,
+        count: usize,
+        folded: bool,
+        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         on_new: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         ProjectHeader {
             label,
             repo_url,
+            machines,
+            count,
+            folded,
+            on_toggle: Box::new(on_toggle),
             on_new: Box::new(on_new),
         }
     }
@@ -85,8 +96,22 @@ impl RenderOnce for ProjectHeader {
             .h(PROJECT_HEIGHT)
             .mt_1()
             .gap(px(6.))
-            .pl(px(14.))
+            .pl_1()
             .pr_1()
+            .child(
+                Button::new(SharedString::from(format!(
+                    "fold:project:{}",
+                    self.repo_url
+                )))
+                .ghost()
+                .xsmall()
+                .icon(if self.folded {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                })
+                .on_click(self.on_toggle),
+            )
             .child(
                 div()
                     .flex_none()
@@ -112,6 +137,24 @@ impl RenderOnce for ProjectHeader {
                     .truncate()
                     .child(self.label.to_uppercase()),
             )
+            .children(self.machines.into_iter().map(|machine| {
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .bg(theme.muted)
+                    .text_size(px(9.))
+                    .child(if machine == "local" {
+                        "This Mac".to_owned()
+                    } else {
+                        machine
+                    })
+            }))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(self.count.to_string()),
+            )
             .child(
                 Button::new(SharedString::from(format!("project:{}", self.repo_url)))
                     .ghost()
@@ -119,6 +162,69 @@ impl RenderOnce for ProjectHeader {
                     .icon(IconName::Plus)
                     .tooltip("New session in this project")
                     .on_click(self.on_new),
+            )
+    }
+}
+
+#[derive(IntoElement)]
+pub struct SectionHeader {
+    key: String,
+    label: String,
+    count: usize,
+    folded: bool,
+    on_toggle: OnToggle,
+}
+
+impl SectionHeader {
+    pub fn new(
+        key: String,
+        label: String,
+        count: usize,
+        folded: bool,
+        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            key,
+            label,
+            count,
+            folded,
+            on_toggle: Box::new(on_toggle),
+        }
+    }
+}
+
+impl RenderOnce for SectionHeader {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        h_flex()
+            .w_full()
+            .h(PROJECT_HEIGHT)
+            .px_1()
+            .gap_1()
+            .child(
+                Button::new(SharedString::from(format!("fold:section:{}", self.key)))
+                    .ghost()
+                    .xsmall()
+                    .icon(if self.folded {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    })
+                    .on_click(self.on_toggle),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child(self.label),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(self.count.to_string()),
             )
     }
 }

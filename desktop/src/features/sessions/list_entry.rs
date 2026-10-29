@@ -4,12 +4,21 @@ use super::rail_page::RailEntry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ListEntry {
-    /// The heading before a project's first parent in the tab: its label, its repo, and that parent's machine, which
-    /// the heading's New session fills in.
+    Section {
+        key: String,
+        fold_key: String,
+        label: String,
+        count: usize,
+        folded: bool,
+    },
     Project {
+        key: String,
+        fold_key: String,
         label: String,
         repo_url: String,
-        machine: Option<String>,
+        machines: Vec<String>,
+        count: usize,
+        folded: bool,
     },
     Session(Box<RailEntry>),
 }
@@ -18,7 +27,7 @@ impl ListEntry {
     /// What the line is, whatever it shows now: the list finds the line at its top again by it.
     pub fn key(&self) -> &str {
         match self {
-            ListEntry::Project { repo_url, .. } => repo_url,
+            ListEntry::Section { key, .. } | ListEntry::Project { key, .. } => key,
             ListEntry::Session(entry) => &entry.session_id,
         }
     }

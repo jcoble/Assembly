@@ -1,5 +1,4 @@
-//! `list_entries` lays the rail's answer out as the column draws it, in the backend's order: a project's heading where
-//! the backend marked a project's first session, followed by its sessions. Nothing here
+//! `list_entries` lays the rail's explicit section, project and session entries out in the backend's order. Nothing here
 //! groups, sorts or counts: the backend's one read (`sessions/rail`) did.
 
 use std::ops::Range;
@@ -8,18 +7,35 @@ use super::list_entry::ListEntry;
 use super::rail_page::Rail;
 
 pub fn list_entries(rail: &Rail) -> Vec<ListEntry> {
-    let mut entries = Vec::new();
-    for entry in &rail.sessions {
-        if entry.group_start {
-            entries.push(ListEntry::Project {
+    rail.sessions
+        .iter()
+        .map(|entry| match entry.kind.as_str() {
+            "section" => ListEntry::Section {
+                key: entry.session_id.clone(),
+                fold_key: entry.section.clone(),
                 label: entry.group.clone(),
-                repo_url: entry.repo_url.clone(),
-                machine: entry.machine.clone(),
-            });
-        }
-        entries.push(ListEntry::Session(Box::new(entry.clone())));
-    }
-    entries
+                count: entry.count,
+                folded: rail.folded.contains(&entry.section),
+            },
+            "project" => {
+                let fold_key = entry
+                    .session_id
+                    .strip_prefix("project:")
+                    .unwrap_or(&entry.session_id)
+                    .to_owned();
+                ListEntry::Project {
+                    key: entry.session_id.clone(),
+                    folded: rail.folded.contains(&fold_key),
+                    fold_key,
+                    label: entry.group.clone(),
+                    count: entry.count,
+                    machines: entry.machines.clone(),
+                    repo_url: entry.repo_url.clone(),
+                }
+            }
+            _ => ListEntry::Session(Box::new(entry.clone())),
+        })
+        .collect()
 }
 
 /// Which lines changed from `old` to `new`: the old range to replace and how many new lines go in its place. Only

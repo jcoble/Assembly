@@ -8,7 +8,7 @@ use gpui_kit::*;
 
 use super::list_entries::{changed_lines, list_entries, same_line};
 use super::list_entry::ListEntry;
-use super::project_header::ProjectHeader;
+use super::project_header::{ProjectHeader, SectionHeader};
 use super::session_row::{OnMark, OnSession, RowContext, SessionRow};
 use super::sessions_pane::SessionsPane;
 use crate::core::state::machines::Machines;
@@ -25,7 +25,7 @@ impl SessionsPane {
         if entries != *self.entries {
             let (old, count) = changed_lines(&self.entries, &entries);
             // A splice moves a place inside the changed lines to their start, so the line at the top stays in view
-            // by its identity instead. Unscrolled at the tab's real start, the list stays there and shows what came
+            // by its identity instead. Unscrolled at the rail's real start, the list stays there and shows what came
             // in; at the start of a window further down, it keeps its line.
             let top = self.lines.logical_scroll_top();
             let kept = (top != ListOffset::default() || !self.from_start)
@@ -103,16 +103,59 @@ impl SessionsPane {
                 on_mark: on_mark.clone(),
             };
             match entry {
+                ListEntry::Section {
+                    fold_key,
+                    label,
+                    count,
+                    folded,
+                    ..
+                } => {
+                    let (pane, key) = (pane.clone(), fold_key.clone());
+                    SectionHeader::new(fold_key, label, count, folded, move |_, _, cx| {
+                        pane.update(cx, |pane, cx| {
+                            let read = pane.rail.toggle_fold(key.clone());
+                            pane.send(Some(read), cx);
+                        })
+                        .ok();
+                    })
+                    .into_any_element()
+                }
                 ListEntry::Project {
+                    fold_key,
                     label,
                     repo_url,
-                    machine,
+                    machines,
+                    count,
+                    folded,
+                    ..
                 } => {
-                    let (pane, at) = (pane.clone(), repo_url.clone());
-                    ProjectHeader::new(label, repo_url, move |_, window, cx| {
-                        pane.update(cx, |pane, cx| pane.new_in(&at, machine.clone(), window, cx))
-                            .ok();
-                    })
+                    let machine = machines
+                        .first()
+                        .and_then(|machine| (machine != "local").then(|| machine.clone()));
+                    let (toggle_pane, key) = (pane.clone(), fold_key.clone());
+                    let (new_pane, at) = (pane.clone(), repo_url.clone());
+                    ProjectHeader::new(
+                        label,
+                        repo_url,
+                        machines,
+                        count,
+                        folded,
+                        move |_, _, cx| {
+                            toggle_pane
+                                .update(cx, |pane, cx| {
+                                    let read = pane.rail.toggle_fold(key.clone());
+                                    pane.send(Some(read), cx);
+                                })
+                                .ok();
+                        },
+                        move |_, window, cx| {
+                            new_pane
+                                .update(cx, |pane, cx| {
+                                    pane.new_in(&at, machine.clone(), window, cx)
+                                })
+                                .ok();
+                        },
+                    )
                     .into_any_element()
                 }
                 ListEntry::Session(entry) => {

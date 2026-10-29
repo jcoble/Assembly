@@ -1,4 +1,4 @@
-//! The sessions column: the open sessions by tab and project, as the backend's `sessions/rail` read lists them.
+//! The sessions column: filtered history with optional status and project groups, as `sessions/rail` lists it.
 //! Picking one sets the selected session; the session view follows it. Replaces the session list in routes/+page.svelte
 //! and the spike's sessions/panel.rs.
 
@@ -14,3 +14,4 @@ pub mod rail_page;
 pub mod session_row;
 pub mod sessions_pane;
 pub mod status;
+pub mod view_options;

@@ -55,8 +55,12 @@ internal sealed class SessionsFeature : IFeature
         calls.Topic(RailTopic, SessionsJson.Default.RailChange, change => change.SessionId, (_, _) => []);
         calls.Read(Topic, "rail", SessionsJson.Default.RailArgs, SessionsJson.Default.Rail, (args, call) =>
         {
-            if (args.Tab is not ("all" or "running" or "needs"))
-                throw new CallFailed("expected all, running or needs");
+            if ((args.Statuses ?? []).Any(status => status is not ("working" or "done" or "settled")))
+                throw new CallFailed("expected working, done or settled");
+            if (args.Sort is not ("recent" or "name"))
+                throw new CallFailed("expected recent or name");
+            if (args.Dir is not ("desc" or "asc"))
+                throw new CallFailed("expected desc or asc");
             var bounded = args with { Limit = Math.Clamp(args.Limit, 1, ListLimit) };
             return Task.FromResult(_store.Rail(bounded, call.Cancellation));
         });
@@ -118,21 +122,26 @@ internal sealed class SessionsFeature : IFeature
 
     internal sealed record MarkArgs([property: JsonRequired] string Session, [property: JsonRequired] string State);
 
-    /// <summary>A tab and filters, with a cursor or the row to keep in view and how many rows sit above it.</summary>
-    internal sealed record RailArgs(string Tab = "all", IReadOnlyList<string>? Providers = null, IReadOnlyList<string>? Locations = null,
-        string? Filter = null, RailCursor? After = null, int Limit = 50, string? Anchor = null, int Above = 0);
+    /// <summary>Filters and view options, with a cursor or the row to keep in view and how many rows sit above it.</summary>
+    internal sealed record RailArgs(IReadOnlyList<string>? Providers = null, IReadOnlyList<string>? Locations = null,
+        IReadOnlyList<string>? Statuses = null, RailGroupBy? GroupBy = null, string Sort = "recent", string Dir = "desc",
+        IReadOnlyList<string>? Folded = null, string? Filter = null, RailCursor? After = null, int Limit = 50,
+        string? Anchor = null, int Above = 0);
 
-    /// <summary>The last row's project and SQL ordering key.</summary>
-    internal sealed record RailCursor(string Group, string RepoUrl, string Ordering);
+    internal sealed record RailGroupBy(bool Status, bool Project);
 
-    internal sealed record RailTotals(int All, int Running, int NeedsYou);
+    /// <summary>The last row's fixed section/group/header position and SQL ordering key.</summary>
+    internal sealed record RailCursor(int Section, string Group, string RepoUrl, int Header, string Ordering);
+
+    internal sealed record RailTotals(int Needs);
 
     /// <summary>
     /// One session's own state and SQL order. <c>Preview</c> is its newest assistant text, cut to 160 characters.
     /// </summary>
-    internal sealed record RailEntry(string SessionId, string Agent, string RepoUrl, string Group, bool GroupStart, string? Title,
-        string? Machine, long UpdatedAt, long? CompletedAt, bool Running, bool NeedsYou, bool Failed, bool Unread,
-        string? AskSession, long? AskSeq, string? Branch, long? BranchAt, string Icon, string Ordering, string? Preview);
+    internal sealed record RailEntry(string SessionId, string Kind, string Section, string Agent, string RepoUrl, string Group,
+        int Count, IReadOnlyList<string> Machines, string? Title, string? Machine, long UpdatedAt, long? CompletedAt,
+        bool Running, bool NeedsYou, bool Failed, bool Unread, string? AskSession, long? AskSeq, string? Branch,
+        long? BranchAt, string Icon, int SectionIndex, int Header, string Ordering, string? Preview);
 
     internal sealed record Rail(RailTotals Totals, IReadOnlyList<string> Agents, IReadOnlyList<RailEntry> Sessions, RailCursor? Next, int Start = 0);
 

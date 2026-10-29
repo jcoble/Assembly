@@ -272,16 +272,24 @@ public sealed class SessionStore
     {
         string? Json(IReadOnlyList<string>? values) =>
             values is { Count: > 0 } ? JsonSerializer.Serialize(values, SessionsJson.Default.IReadOnlyListString) : null;
+        var groupBy = args.GroupBy ?? new SessionsFeature.RailGroupBy(false, true);
         var parts = _db.Query(Chat.Schema.Rail, row => (Part: row.Long(0), N: (int)row.Long(1), Row: ReadRail(row)), cancel,
-            new SqlArg("$tab", args.Tab), new SqlArg("$providers", Json(args.Providers)), new SqlArg("$locations", Json(args.Locations)),
-            new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()), new SqlArg("$limit", args.Limit),
-            new SqlArg("$group", args.After?.Group), new SqlArg("$repo", args.After?.RepoUrl), new SqlArg("$ordering", args.After?.Ordering),
+            new SqlArg("$providers", Json(args.Providers)), new SqlArg("$locations", Json(args.Locations)),
+            new SqlArg("$statuses", Json(args.Statuses)), new SqlArg("$status_group", groupBy.Status ? 1 : 0),
+            new SqlArg("$project_group", groupBy.Project ? 1 : 0), new SqlArg("$sort", args.Sort), new SqlArg("$dir", args.Dir),
+            new SqlArg("$folded", Json(args.Folded)), new SqlArg("$filter", string.IsNullOrWhiteSpace(args.Filter) ? null : args.Filter.Trim()),
+            new SqlArg("$limit", args.Limit), new SqlArg("$after_section", args.After?.Section),
+            new SqlArg("$after_group", args.After?.Group), new SqlArg("$after_repo", args.After?.RepoUrl),
+            new SqlArg("$after_header", args.After?.Header), new SqlArg("$after_ordering", args.After?.Ordering),
             new SqlArg("$anchor", args.Anchor), new SqlArg("$above", args.Above));
-        // The rows before each page, from its first row's place in the whole tab or child list.
+        // The entries before each page, from its first row's place in the whole list.
         int Start(long part) => parts.FirstOrDefault(row => row.Part == part) is { Row: not null } first ? first.N - 1 : 0;
         var sessions = parts.Where(part => part.Part == 2).Select(part => (SessionsFeature.RailEntry)part.Row).ToList();
+        SessionsFeature.RailCursor Cursor(SessionsFeature.RailEntry entry) => new(
+            groupBy.Status ? entry.SectionIndex : 0, groupBy.Project ? entry.Group : "", groupBy.Project ? entry.RepoUrl : "",
+            entry.Header, entry.Ordering);
         return new SessionsFeature.Rail((SessionsFeature.RailTotals)parts[0].Row, [.. parts.Where(part => part.Part == 1).Select(part => (string)part.Row)],
-            sessions, sessions.Count == args.Limit ? new(sessions[^1].Group, sessions[^1].RepoUrl, sessions[^1].Ordering) : null, Start(2));
+            sessions, sessions.Count == args.Limit ? Cursor(sessions[^1]) : null, Start(2));
     }
 
     // One of Schema.Rail's rows: the totals (part 0), a provider (1), or a session (2).
@@ -291,11 +299,13 @@ public sealed class SessionStore
         long? Long(int column) => row.IsNull(column) ? null : row.Long(column);
         return row.Long(0) switch
         {
-            0 => new SessionsFeature.RailTotals((int)row.Long(15), (int)row.Long(11), (int)row.Long(12)),
-            1 => row.Text(3),
-            _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Long(6) == 1, Text(7), Text(8),
-                row.Long(9), Long(10), row.Long(11) == 1, row.Long(12) == 1, row.Long(13) == 1, row.Long(14) == 1,
-                Text(15), Long(16), Text(17), Long(18), ProviderGlyph.Of(row.Text(3)), row.Text(19), Text(20)),
+            0 => new SessionsFeature.RailTotals((int)row.Long(8)),
+            1 => row.Text(5),
+            _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Text(6), row.Text(7),
+                (int)row.Long(8), Text(9)?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [], Text(10), Text(11), row.Long(12),
+                Long(13), row.Long(14) == 1, row.Long(15) == 1, row.Long(16) == 1, row.Long(17) == 1,
+                Text(18), Long(19), Text(20), Long(21), ProviderGlyph.Of(row.Text(5)), (int)row.Long(22), (int)row.Long(23),
+                row.Text(24), Text(25)),
         };
     }
 

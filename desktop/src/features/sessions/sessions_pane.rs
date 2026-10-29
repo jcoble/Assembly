@@ -1,6 +1,6 @@
 //! `SessionsPane` is the sessions column: its header (view options and New session), a search field (title or
-//! project), the provider and location pills (saved as the `rail.filters` preference and restored at start), the
-//! All / Running / Needs you tabs with the backend's totals, and the tab's sessions by project as a virtual list, loading
+//! project), provider, location and status pills, the saved grouping and sort popover, and the backend's explicit
+//! section, project and session entries as a virtual list, loading
 //! the next page as the reader nears its end. Every list and total comes from `sessions/rail`, read again whenever
 //! the `sessionRail` topic says a session changed (and at subscribe and each reconnect). A row's menu moves its
 //! session between Working and Done or settles it (`sessions/mark`). It registers under the sessions pane's name,
@@ -10,8 +10,6 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
-use gpui_kit::component::popover::Popover;
-use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -22,7 +20,8 @@ use std::rc::Rc;
 
 use super::list_entry::ListEntry;
 use super::new_session_form::NewSessionForm;
-use super::rail_page::{Rail, RailPage, Request, Tab};
+use super::rail_page::{Rail, RailPage, Request};
+use super::view_options::{VIEW_KEY, View, saved_view, view_options};
 use crate::core::clock::backend_clock::BackendClock;
 use crate::core::clock::tick::Tick;
 use crate::core::socket::client::SocketClient;
@@ -35,11 +34,12 @@ use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
 const RAIL_TOPIC: &str = "sessionRail";
-/// The pills' picks among the backend's preferences: `{"provider": [...], "location": [...]}`.
+/// The pills' picks among the backend's preferences.
 const FILTERS_KEY: &str = "rail.filters";
 /// The pills' groups, in order.
 const PROVIDER: usize = 0;
 const LOCATION: usize = 1;
+const STATUS: usize = 2;
 
 pub struct SessionsPane {
     focus: FocusHandle,
@@ -65,7 +65,7 @@ pub struct SessionsPane {
     /// The list's lines as last drawn, and the list's own state (heights measured, where it's scrolled).
     pub(super) entries: Rc<Vec<ListEntry>>,
     pub(super) lines: ListState,
-    /// The drawn lines start at the tab's real start, not a window's further down.
+    /// The drawn lines start at the rail's real start, not a window further down.
     pub(super) from_start: bool,
     /// The backend clock's last tick, for the rows' ages and running times.
     pub(super) now: Option<i64>,
@@ -94,10 +94,23 @@ impl SessionsPane {
                 value: value.into(),
                 label: label.into(),
             });
+        let statuses = [
+            ("working", "Working"),
+            ("done", "Done"),
+            ("settled", "Settled"),
+        ]
+        .map(|(value, label)| FilterOption {
+            value: value.into(),
+            label: label.into(),
+        });
         let pills = cx.new(|cx| {
             let provider = FilterGroup::new("Provider", Vec::new());
             FilterPills::new(
-                vec![provider, FilterGroup::new("Location", locations.into())],
+                vec![
+                    provider,
+                    FilterGroup::new("Location", locations.into()),
+                    FilterGroup::new("Status", statuses.into()),
+                ],
                 cx,
             )
         });
@@ -117,9 +130,10 @@ impl SessionsPane {
                 let picks = (
                     groups[PROVIDER].picked.clone(),
                     groups[LOCATION].picked.clone(),
+                    groups[STATUS].picked.clone(),
                 );
                 pane.save_filters(&picks, cx);
-                let read = pane.rail.set_picks(picks.0, picks.1);
+                let read = pane.rail.set_picks(picks.0, picks.1, picks.2);
                 pane.send(Some(read), cx);
             }),
         ];
@@ -178,9 +192,13 @@ impl SessionsPane {
             let mut preferences = socket.read(cx).subscribe("preferences", None);
             self.restoring = Some(cx.spawn(async move |pane, cx| {
                 let first = preferences.updates.recv().await.ok();
-                if let Some((providers, locations)) = first.as_ref().and_then(saved_filters) {
-                    pane.update(cx, |pane, cx| pane.restore(providers, locations, cx))
-                        .ok();
+                if let Some(first) = first.as_ref() {
+                    let (providers, locations, statuses) = saved_filters(first).unwrap_or_default();
+                    let view = saved_view(first);
+                    pane.update(cx, |pane, cx| {
+                        pane.restore(providers, locations, statuses, view, cx)
+                    })
+                    .ok();
                 }
             }));
         }
@@ -230,14 +248,16 @@ impl SessionsPane {
         cx.notify();
     }
 
-    pub(super) fn set_tab(&mut self, tab: Tab) -> Request {
+    pub(super) fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
         self.lines.scroll_to(ListOffset::default());
         self.from_start = true;
-        self.rail.set_tab(tab)
+        self.save_view(view, cx);
+        let read = self.rail.set_view(view);
+        self.send(Some(read), cx);
     }
 
     /// Takes a read's answer, and sends the read it asks for next. The selection is left alone: a session that left
-    /// the tab stays open.
+    /// the current view stays open.
     pub(super) fn answer(&mut self, id: u64, outcome: Outcome<RailPage>, cx: &mut Context<Self>) {
         let next = self.rail.finish(id, outcome);
         self.show_providers(cx);
@@ -246,14 +266,25 @@ impl SessionsPane {
     }
 
     /// The saved picks, into the pills and the rail, in one read.
-    fn restore(&mut self, providers: Vec<String>, locations: Vec<String>, cx: &mut Context<Self>) {
-        let picks = (providers.clone(), locations.clone());
+    fn restore(
+        &mut self,
+        providers: Vec<String>,
+        locations: Vec<String>,
+        statuses: Vec<String>,
+        view: View,
+        cx: &mut Context<Self>,
+    ) {
+        let picks = (providers.clone(), locations.clone(), statuses.clone());
         self.pills.update(cx, |pills, cx| {
             let groups = &mut pills.state.groups;
-            (groups[PROVIDER].picked, groups[LOCATION].picked) = picks;
+            (
+                groups[PROVIDER].picked,
+                groups[LOCATION].picked,
+                groups[STATUS].picked,
+            ) = picks;
             cx.notify();
         });
-        let read = self.rail.set_picks(providers, locations);
+        let read = self.rail.restore(providers, locations, statuses, view);
         self.show_providers(cx);
         self.send(Some(read), cx);
     }
@@ -269,13 +300,13 @@ impl SessionsPane {
     /// Saves the picks as the `rail.filters` preference; a newer save replaces this one.
     fn save_filters(
         &mut self,
-        (providers, locations): &(Vec<String>, Vec<String>),
+        (providers, locations, statuses): &(Vec<String>, Vec<String>, Vec<String>),
         cx: &mut Context<Self>,
     ) {
         let Some(socket) = SocketClient::try_global(cx) else {
             return;
         };
-        let value = json!({"provider": providers, "location": locations});
+        let value = json!({"provider": providers, "location": locations, "status": statuses});
         let save = (socket.read(cx)).call::<Value>(
             "preferences",
             "set",
@@ -285,6 +316,24 @@ impl SessionsPane {
         self.saving = Some(cx.spawn(async move |_, _| {
             if let Outcome::Failed(failure) = save.await {
                 eprintln!("sessions: the filters weren't saved: {}", failure.message);
+            }
+        }));
+    }
+
+    /// Saves grouping and row order; folds stay only in this pane.
+    fn save_view(&mut self, view: View, cx: &mut Context<Self>) {
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return;
+        };
+        let save = (socket.read(cx)).call::<Value>(
+            "preferences",
+            "set",
+            json!({"key": VIEW_KEY, "value": view}),
+            None,
+        );
+        self.saving = Some(cx.spawn(async move |_, _| {
+            if let Outcome::Failed(failure) = save.await {
+                eprintln!("sessions: the view wasn't saved: {}", failure.message);
             }
         }));
     }
@@ -319,20 +368,6 @@ impl SessionsPane {
     }
 }
 
-/// The header's view options. Grouping and sorting aren't built yet, so it says so.
-fn view_options() -> impl IntoElement {
-    Popover::new("rail-view")
-        .anchor(Anchor::TopRight)
-        .trigger(
-            Button::new("rail-view-button")
-                .ghost()
-                .compact()
-                .icon(IconName::ListFilter)
-                .tooltip("View options"),
-        )
-        .content(|_, _, _| div().p_2().child("Grouping and sorting come later."))
-}
-
 /// What an empty column says, from the connection's state (`None` before the backend's first ready line).
 pub fn empty_line(state: Option<&ConnectionState>) -> &'static str {
     match state {
@@ -345,13 +380,14 @@ pub fn empty_line(state: Option<&ConnectionState>) -> &'static str {
 }
 
 /// The saved provider and location picks in the `preferences` topic's first update, its state.
-pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>)> {
+pub fn saved_filters(update: &Update) -> Option<(Vec<String>, Vec<String>, Vec<String>)> {
     let Update::State(items) = update else {
         return None;
     };
     let (_, item) = items.iter().find(|(key, _)| key == FILTERS_KEY)?;
-    let picks = |group: &str| serde_json::from_value(item["value"][group].clone()).ok();
-    Some((picks("provider")?, picks("location")?))
+    let picks =
+        |group: &str| serde_json::from_value(item["value"][group].clone()).unwrap_or_default();
+    Some((picks("provider"), picks("location"), picks("status")))
 }
 
 /// One pill per provider the backend listed, then any picked one it hasn't listed yet; "claude" reads "Claude".
@@ -400,6 +436,11 @@ impl Render for SessionsPane {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
         let creating = self.creating.is_some();
+        let pane = cx.entity().downgrade();
+        let on_view: super::view_options::OnView =
+            Rc::new(move |view, _: &mut Window, cx: &mut App| {
+                pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
+            });
         let header = h_flex()
             .pl(px(16.))
             .pr(px(10.))
@@ -411,9 +452,9 @@ impl Render for SessionsPane {
                     .flex_1()
                     .text_base()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("Sessions"),
+                    .child(format!("Sessions · {} need you", self.rail.totals.needs)),
             )
-            .child(view_options())
+            .child(view_options(self.rail.view_options, on_view))
             .child(
                 Button::new("new-session")
                     .ghost()
@@ -426,15 +467,6 @@ impl Render for SessionsPane {
                     .tooltip(if creating { "Cancel" } else { "New session" })
                     .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx))),
             );
-        let selected = Tab::ALL.iter().position(|tab| *tab == self.rail.tab);
-        let tabs = TabBar::new("rail-tabs")
-            .segmented()
-            .selected_index(selected.unwrap_or_default())
-            .children(Tab::ALL.map(|tab| TabItem::new().label(tab.label(&self.rail.totals))))
-            .on_click(cx.listener(|pane, at: &usize, _, cx| {
-                let read = pane.set_tab(Tab::ALL[*at]);
-                pane.send(Some(read), cx);
-            }));
         self.follow_entries(window, cx);
         self.running_drawn.set(false);
         let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
@@ -448,7 +480,6 @@ impl Render for SessionsPane {
             .child(header)
             .child(self.search(cx))
             .child(self.pills.clone())
-            .child(div().px(px(12.)).pb(px(8.)).child(tabs))
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),
