@@ -15,7 +15,8 @@ here updates this file in the same commit. Every other commit says `Architecture
   small `src/core/` (with the one socket client in `core/socket/`, the one owner of
   native views in `core/native_views/`, the backend launcher in `core/backend/`, the palette's command list in
   `core/commands/`) and one folder per
-  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that.
+  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that. The Terminal tab, `features/terminal/`,
+  keeps an `alacritty_terminal` grid fed by the backend's `terminal` topic and draws it with GPUI text.
 - `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
 
 ## The backend: a core in layers, the rest by feature

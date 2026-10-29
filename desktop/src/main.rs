@@ -50,6 +50,7 @@ fn main() {
             features::worktrees::worktrees_pane::WorktreesPane::register(cx);
             features::changes::changes_pane::ChangesPane::register(cx);
             features::board::board_pane::BoardPane::register(cx);
+            features::terminal::terminal_pane::TerminalPane::register(cx);
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::settings::init(cx);
