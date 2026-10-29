@@ -109,20 +109,18 @@ public sealed class RemoteRowsSocketTests : IAsyncLifetime
         Assert.Equal(0, _time.Made);
     }
 
-    // Pins: remote#20. Use the real page handler: a permissive stub would hide lost intermediate rows.
+    // Pins: remote#20. Intermediate updates to one item must survive a large catch-up.
     [Fact]
-    public async Task Remote_rows_page_a_gap_too_big_to_push()
+    public async Task Remote_rows_read_a_gap_too_big_to_push()
     {
-        // A tool remains running while its state changes. These rows remain stored and a small catch-up sends all.
         Publish(1, 502, sameItem: true);
-        var expected = _remoteStore.RowsAfter("s", 1).Select(row => row.Seq).ToArray();
-        using var socket = await OpenAsync(bulk: true);
-        await SendAsync(socket, """{"t":"call","id":1,"feature":"rows","method":"page","args":{"session":"s","before":503,"limit":500}}""");
-        using var response = JsonDocument.Parse(await ReadAsync(socket));
-        Assert.Equal("result", response.RootElement.GetProperty("t").GetString());
-        var gap = response.RootElement.GetProperty("result").GetProperty("rows").EnumerateArray()
-            .Select(RowWire.Read).Where(row => row.Seq > 1).OrderBy(row => row.Seq).ToArray();
-        Assert.Equal(expected, gap.Select(row => row.Seq));
+        using var viewer = _localHub.Subscribe("s", 0);
+        _machine.Watch(_localSessions.Get("s")!);
+        Assert.Equal(Enumerable.Range(1, 502).Select(n => (long)n), await ReadSeqsAsync(viewer, 502));
+        Publish(503, 503, sameItem: true);
+        Assert.Equal(new long[] { 503 }, await ReadSeqsAsync(viewer, 1));
+        Assert.False(viewer.Rows.TryRead(out _));
+        Assert.Equal(0, _liveHits);
     }
 
     private void Publish(int from, int to, bool sameItem = false)
