@@ -331,25 +331,26 @@ async fn switching_sessions_keeps_the_shell_and_replays_on_return(cx: &mut TestA
         following(pane) && pane.grid.text() == "hello"
     })
     .await;
-    let terminals = open.terminals.lock().unwrap();
-    assert!(terminals.of("close").is_empty());
-    let back: Vec<_> = terminals.seen[before..]
-        .iter()
-        .map(|(method, _)| method.as_str())
-        .collect();
-    assert!(
-        !back.contains(&"start"),
-        "a's return started a shell: {back:?}"
-    );
-    assert_eq!(back.first(), Some(&"list"));
-    let subs = terminals.of("sub");
-    assert_eq!(subs.last().unwrap()["key"], "term-1");
-    assert_eq!(
-        terminals.of("read").last().unwrap(),
-        &json!({"terminal": "term-1", "offset": 0})
-    );
-    let reads = terminals.of("read").len();
-    drop(terminals);
+    let reads = {
+        let terminals = open.terminals.lock().unwrap();
+        assert!(terminals.of("close").is_empty());
+        let back: Vec<_> = terminals.seen[before..]
+            .iter()
+            .map(|(method, _)| method.as_str())
+            .collect();
+        assert!(
+            !back.contains(&"start"),
+            "a's return started a shell: {back:?}"
+        );
+        assert_eq!(back.first(), Some(&"list"));
+        let subs = terminals.of("sub");
+        assert_eq!(subs.last().unwrap()["key"], "term-1");
+        assert_eq!(
+            terminals.of("read").last().unwrap(),
+            &json!({"terminal": "term-1", "offset": 0})
+        );
+        terminals.of("read").len()
+    };
     // A row past the last offset (7) reads once more from there.
     open.terminals.lock().unwrap().kept = b"hello\r\nmore\r\n".to_vec();
     let row = json!({"seq": 13, "prevSeq": 10, "data": STANDARD.encode(b"e\r\n")});
