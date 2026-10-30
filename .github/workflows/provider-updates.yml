@@ -31,7 +31,7 @@ jobs:
           node-version: 24
       - run: node --test scripts/package-adapters.test.ts
       - id: versions
-        run: echo "versions=$(node scripts/package-adapters.ts resolve)" >> "$GITHUB_OUTPUT"
+        run: node scripts/package-adapters.ts resolve
   package:
     needs: resolve
     strategy:
@@ -72,6 +72,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: adapters-*
@@ -84,9 +90,4 @@ jobs:
           TAG: assembly-providers-${{ github.run_id }}-${{ github.run_attempt }}
           COMMIT: ${{ github.sha }}
           VERSIONS: ${{ needs.resolve.outputs.versions }}
-        run: |
-          test "$(find adapters -name '*.tar.gz' | wc -l | tr -d ' ')" = 3
-          test "$(find adapters -name '*.json' | wc -l | tr -d ' ')" = 3
-          gh release create "$TAG" --target "$COMMIT" --draft --title "Provider adapters $TAG" --notes "Exact upstream versions: $VERSIONS. Each archive includes a production lockfile; manifests contain SHA-256 and ACP initialization responses." --latest=false
-          gh release upload "$TAG" adapters/*
-          gh release edit "$TAG" --draft=false --latest=false
+        run: node scripts/package-adapters.ts publish adapters "$VERSIONS" "$TAG" "$COMMIT"

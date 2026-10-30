@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
@@ -89,16 +89,49 @@ export function archiveBundle(bundle: string, output: string, target: string, ve
   return manifest;
 }
 
+
+function publishBundles(assetPath: string, versions: Versions, tag: string, commit: string) {
+  if (!tag || !commit) throw new Error("Publish requires a tag and commit");
+  const directory = resolve(assetPath);
+  const expected = targets.flatMap(target => [".tar.gz", ".json"].map(extension => "assembly-adapters-" + target + extension)).sort();
+  if (JSON.stringify(readdirSync(directory).sort()) !== JSON.stringify(expected)) throw new Error("Incomplete or unexpected release assets");
+  for (const target of targets) {
+    const file = "assembly-adapters-" + target + ".tar.gz";
+    const manifest = JSON.parse(readFileSync(join(directory, "assembly-adapters-" + target + ".json"), "utf8"));
+    if (manifest.schemaVersion !== 1 || manifest.target !== target || manifest.archive?.file !== file) throw new Error("Mismatched target manifest: " + target);
+    const recorded = validateVersions(manifest.versions);
+    if (names.some(name => recorded[name] !== versions[name])) throw new Error("Mismatched release versions: " + target);
+    const hash = createHash("sha256").update(readFileSync(join(directory, file))).digest("hex");
+    if (manifest.archive.sha256 !== hash) throw new Error("Corrupted release archive: " + target);
+    if (names.some(name => manifest.smoke?.[name]?.protocolVersion !== 1 || manifest.smoke?.[name]?.agentInfo?.version !== versions[name])) {
+      throw new Error("Mismatched initialization proof: " + target);
+    }
+  }
+  const gh = (args: string[]) => execFileSync("gh", ["release", ...args], { stdio: "inherit" });
+  gh(["create", tag, "--target", commit, "--draft", "--title", "Provider adapters " + tag,
+    "--notes", "Exact upstream versions: " + JSON.stringify(versions) + ". Archives contain production lockfiles; manifests contain SHA-256 and ACP initialization responses.", "--latest=false"]);
+  gh(["upload", tag, ...expected.map(file => join(directory, file))]);
+  gh(["edit", tag, "--draft=false", "--latest=false"]);
+}
+
 async function main() {
-  const [command, target, versionsJson, outputPath] = process.argv.slice(2);
+  const [command, ...args] = process.argv.slice(2);
   if (command === "resolve") {
     const versions = Object.fromEntries(names.map(name => [name, JSON.parse(execFileSync(
       "npm", ["view", "@agentclientprotocol/" + name + "@latest", "version", "--json", "--registry=https://registry.npmjs.org"],
       { encoding: "utf8" },
     ))]));
-    console.log(JSON.stringify(validateVersions(versions)));
+    const result = JSON.stringify(validateVersions(versions));
+    if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, "versions=" + result + "\n");
+    console.log(result);
     return;
   }
+  if (command === "publish") {
+    const [assetPath, versionsJson, tag, commit] = args;
+    publishBundles(assetPath, validateVersions(JSON.parse(versionsJson)), tag, commit);
+    return;
+  }
+  const [target, versionsJson, outputPath] = args;
   if (command !== "build" || !outputPath) throw new Error("Usage: package-adapters.ts resolve | build <target> <versions-json> <output>");
   if (!targets.includes(target) || target !== process.platform + "-" + process.arch) throw new Error("Build requires a native runner for " + target);
   const versions = validateVersions(JSON.parse(versionsJson));

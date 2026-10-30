@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { validateVersions, smokeAdapter, archiveBundle } from "./package-adapters.ts";
 
 const versions = { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" };
@@ -77,3 +78,141 @@ test("missing launch entry fails before an archive can be published", () => fixt
   mkdirSync(join(root, "bundle")); mkdirSync(join(root, "out"));
   assert.throws(() => archiveBundle(join(root, "bundle"), join(root, "out"), "linux-x64", versions), /ENOENT/);
 }));
+
+function releaseFixture(root: string) {
+  const assets = join(root, "assets"); mkdirSync(assets);
+  for (const target of ["darwin-arm64", "darwin-x64", "linux-x64"]) {
+    const file = "assembly-adapters-" + target + ".tar.gz";
+    const bytes = Buffer.from("fixture production archive " + target);
+    writeFileSync(join(assets, file), bytes);
+    writeFileSync(join(assets, "assembly-adapters-" + target + ".json"), JSON.stringify({
+      schemaVersion: 1, target, versions,
+      archive: { file, sha256: createHash("sha256").update(bytes).digest("hex") },
+      smoke: Object.fromEntries(Object.entries(versions).map(([name, version]) => [name, {
+        protocolVersion: 1, agentInfo: { version },
+      }])),
+    }));
+  }
+  const statePath = join(root, "release-state.json");
+  writeFileSync(statePath, JSON.stringify({ calls: [], releases: {} }));
+  // No network: the actual publisher CLI resolves gh to this owned executable.
+  writeFileSync(join(root, "gh"), "#!" + process.execPath + "\n" + String.raw`
+const fs = require("node:fs");
+const state = JSON.parse(fs.readFileSync(process.env.RELEASE_STATE, "utf8"));
+const [kind, stage, tag, ...args] = process.argv.slice(2);
+if (kind !== "release") throw new Error("Unexpected gh operation");
+state.calls.push({ stage, tag });
+const save = () => fs.writeFileSync(process.env.RELEASE_STATE, JSON.stringify(state));
+if (stage === "create") {
+  if (!args.includes("--draft") || state.releases[tag]) throw new Error("Must create a fresh draft");
+  if (process.env.FAIL_STAGE !== stage) state.releases[tag] = { draft: true, assets: [] };
+} else if (stage === "upload") {
+  state.releases[tag].assets = process.env.FAIL_STAGE === stage ? args.slice(0, 1) : args;
+} else if (stage === "edit") {
+  if (state.releases[tag].assets.length !== 6) throw new Error("Cannot publish incomplete assets");
+  if (!args.includes("--draft=false")) throw new Error("Expected publish");
+  if (process.env.FAIL_STAGE !== stage) state.releases[tag].draft = false;
+} else throw new Error("Unexpected release stage");
+save();
+if (process.env.FAIL_STAGE === stage) process.exit(17);
+`, { mode: 0o755 });
+  return {
+    assets,
+    state: () => JSON.parse(readFileSync(statePath, "utf8")),
+    run: (fail = "", tag = "assembly-providers-fixture-1") => spawnSync(process.execPath, [
+      fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "publish",
+      assets, JSON.stringify(versions), tag, "a".repeat(40),
+    ], {
+      encoding: "utf8",
+      env: { PATH: root + ":" + process.env.PATH, HOME: root, GH_REPO: "fixture/no-network", RELEASE_STATE: statePath, FAIL_STAGE: fail },
+    }),
+  };
+}
+test("publisher refuses incomplete artifacts before writing a release", () => fixture(root => {
+  const f = releaseFixture(root);
+  rmSync(join(f.assets, "assembly-adapters-linux-x64.tar.gz"));
+  const run = f.run();
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Incomplete or unexpected release assets/);
+  assert.deepEqual(f.state().calls, []);
+}));
+test("publisher refuses corrupted archives before writing a release", () => fixture(root => {
+  const f = releaseFixture(root);
+  writeFileSync(join(f.assets, "assembly-adapters-linux-x64.tar.gz"), "corrupt");
+  const run = f.run();
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Corrupted release archive/);
+  assert.deepEqual(f.state().calls, []);
+}));
+test("publisher refuses mismatched adapter proof before writing a release", () => fixture(root => {
+  const f = releaseFixture(root), file = join(f.assets, "assembly-adapters-linux-x64.json");
+  const manifest = JSON.parse(readFileSync(file, "utf8"));
+  manifest.smoke["codex-acp"].agentInfo.version = "0.0.0";
+  writeFileSync(file, JSON.stringify(manifest));
+  const run = f.run();
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /Mismatched initialization proof/);
+  assert.deepEqual(f.state().calls, []);
+}));
+for (const stage of ["create", "upload", "edit"]) {
+  test("failed release " + stage + " never publishes incomplete assets", () => fixture(root => {
+    const f = releaseFixture(root);
+    assert.notEqual(f.run(stage).status, 0);
+    assert.ok(f.state().calls.some(call => call.stage === stage), "must exercise the actual publisher stage");
+    assert.ok(Object.values(f.state().releases).every((release: any) => release.draft));
+    if (stage !== "edit") assert.ok(!f.state().calls.some(call => call.stage === "edit"));
+  }));
+}
+test("a complete release publishes all six assets", () => fixture(root => {
+  const f = releaseFixture(root), run = f.run();
+  assert.equal(run.status, 0, run.stderr);
+  const release = f.state().releases["assembly-providers-fixture-1"];
+  assert.equal(release.draft, false);
+  assert.equal(release.assets.length, 6);
+}));
+test("a retry publishes a fresh release and preserves the failed draft", () => fixture(root => {
+  const f = releaseFixture(root);
+  assert.notEqual(f.run("upload").status, 0);
+  const retry = f.run("", "assembly-providers-fixture-2");
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(f.state().releases["assembly-providers-fixture-1"].draft, true);
+  assert.equal(f.state().releases["assembly-providers-fixture-2"].draft, false);
+}));
+
+for (const field of ["target", "archive.file", "versions"]) {
+  test("publisher rejects cross-wired manifest " + field, () => fixture(root => {
+    const f = releaseFixture(root), path = join(f.assets, "assembly-adapters-linux-x64.json");
+    const manifest = JSON.parse(readFileSync(path, "utf8"));
+    if (field === "target") manifest.target = "darwin-x64";
+    else if (field === "archive.file") manifest.archive.file = "assembly-adapters-darwin-x64.tar.gz";
+    else manifest.versions["codex-acp"] = "1.0.0";
+    writeFileSync(path, JSON.stringify(manifest));
+    const run = f.run();
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /Mismatched/);
+    assert.deepEqual(f.state().calls, []);
+  }));
+}
+for (const fail of [false, true]) {
+  test(fail ? "registry failure stops resolution and writes no workflow output" : "successful resolution writes both exact versions to the workflow output", () => fixture(root => {
+    const output = join(root, "github-output");
+    writeFileSync(join(root, "npm"), "#!" + process.execPath + "\n" + String.raw`
+if (process.env.FAIL_REGISTRY) { console.error("fixture registry unavailable"); process.exit(17); }
+console.log(JSON.stringify(process.argv.some(arg => arg.includes("claude-agent-acp")) ? "0.99.1" : "2.5.0"));
+`, { mode: 0o755 });
+    const run = spawnSync(process.execPath, [
+      fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "resolve",
+    ], {
+      encoding: "utf8",
+      env: { PATH: root + ":" + process.env.PATH, HOME: root, GITHUB_OUTPUT: output, FAIL_REGISTRY: fail ? "1" : "" },
+    });
+    if (fail) {
+      assert.notEqual(run.status, 0);
+      assert.match(run.stderr, /fixture registry unavailable/);
+      assert.equal(existsSync(output), false);
+    } else {
+      assert.equal(run.status, 0, run.stderr);
+      assert.deepEqual(JSON.parse(readFileSync(output, "utf8").trim().slice("versions=".length)), versions);
+    }
+  }));
+}
