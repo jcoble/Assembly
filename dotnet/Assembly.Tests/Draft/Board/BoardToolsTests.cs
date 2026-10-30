@@ -47,7 +47,7 @@ public sealed class BoardToolsTests
         host.Tools.Update(session.SessionId, host.F.Report() with { Summary = "Still working" });
         Assert.All(host.F.Queries.Changes(new(0), CancellationToken.None).Events, e => Assert.Equal(steps, e.Steps));
         foreach (var invalid in new[] { steps[1] with { State = "bogus" }, steps[1] with { Badge = "bogus" },
-                     steps[1] with { Progress = -1 }, steps[1] with { Progress = 101 } })
+                     steps[1] with { Progress = -1 }, steps[1] with { Progress = 101 }, steps[1] with { Text = null! } })
         {
             var bad = JsonSerializer.SerializeToElement(report with { Steps = [invalid] }, WorkflowJson.Default.BoardUpdateArgs);
             Assert.Equal(("invalid_argument", true), host.Tools.Call(session.SessionId, bad));

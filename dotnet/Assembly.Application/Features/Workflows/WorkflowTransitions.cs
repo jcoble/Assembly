@@ -28,9 +28,12 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
         if (args.ChangedPaths is { } paths) foreach (var path in paths) Text(path, 240, true);
         if (args.Steps is { } steps)
             foreach (var step in steps)
+            {
+                Text(step?.Text, 240, true);
                 if (step is null || step.State is not ("future" or "running" or "done" or "failed" or "retried" or "waiting" or "skipped" or "closed") ||
                     step.Badge is not (null or "needs-you" or "high-impact" or "changed" or "answered" or "approved") ||
                     step.Progress is < 0 or > 100) throw new CallFailed("invalid_argument");
+            }
         if (args.Question is { } ask)
         {
             Text(ask.QuestionKey, 80, true); Text(ask.Prompt, 1200, true); Text(ask.Recommendation, 300);
