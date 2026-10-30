@@ -348,6 +348,29 @@ async fn switching_sessions_keeps_the_shell_and_replays_on_return(cx: &mut TestA
         terminals.of("read").last().unwrap(),
         &json!({"terminal": "term-1", "offset": 0})
     );
+    let reads = terminals.of("read").len();
+    drop(terminals);
+    // A row past the last offset (7) reads once more from there.
+    open.terminals.lock().unwrap().kept = b"hello\r\nmore\r\n".to_vec();
+    let row = json!({"seq": 13, "prevSeq": 10, "data": STANDARD.encode(b"e\r\n")});
+    open.pane.update(open.cx, |pane, cx| {
+        pane.output(
+            Update::Change {
+                key: "term-1".into(),
+                item: row,
+            },
+            cx,
+        )
+    });
+    open.until("the gap read", |_, pane| {
+        following(pane) && pane.grid.text() == "hello\nmore"
+    })
+    .await;
+    let terminals = open.terminals.lock().unwrap();
+    assert_eq!(
+        terminals.of("read")[reads..],
+        [json!({"terminal": "term-1", "offset": 7})]
+    );
 }
 
 // Pins: terminal#7

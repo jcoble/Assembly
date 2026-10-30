@@ -13,8 +13,9 @@ use super::event::Event;
 use super::fake_backend::{FakeBackend, Reply, hello};
 use super::outcome::Outcome;
 use super::pending_call::PendingCall;
+use super::row_update::RowUpdate;
 use super::test_client::{
-    DEADLINE, TestClient as Client, backend, connected, endpoint, error, outcome,
+    DEADLINE, TestClient as Client, backend, connected, endpoint, error, outcome, row,
 };
 use super::update::Update;
 
@@ -134,18 +135,21 @@ fn a_subscription_gets_its_state_then_each_change_until_unsub() {
 }
 
 // A keyed topic whose items are rows (the terminal's output, TerminalFeature.cs) gets each row as a change of its
-// key, and the socket stays open.
+// key, the connection stays open, and a chat row on the same socket still reads as a `Row`.
 #[test]
-fn a_keyed_topic_of_rows_gets_each_row_as_a_change() {
+fn a_terminal_row_reaches_its_topic_and_a_chat_row_still_reads() {
     let backend = FakeBackend::start(|frame| {
         hello(frame).unwrap_or_else(|| match frame["t"].as_str() {
             Some("sub") => {
                 let sub = frame["id"].clone();
+                let row = match frame["topic"].as_str() {
+                    Some("terminal") => json!({"seq": 2, "prevSeq": 0, "data": "aGk="}),
+                    _ => row(4, 3),
+                };
+                let seq = if frame["topic"] == "terminal" { 0 } else { 3 };
                 vec![
-                    Reply::Frame(json!({"t": "state", "sub": sub, "seq": 0, "items": []})),
-                    Reply::Frame(
-                        json!({"t": "rows", "sub": sub, "row": {"seq": 2, "prevSeq": 0, "data": "aGk="}}),
-                    ),
+                    Reply::Frame(json!({"t": "state", "sub": sub, "seq": seq, "items": []})),
+                    Reply::Frame(json!({"t": "rows", "sub": sub, "row": row})),
                 ]
             }
             _ => vec![],
@@ -160,6 +164,10 @@ fn a_keyed_topic_of_rows_gets_each_row_as_a_change() {
         block_on(updates.recv()).ok(),
         Some(Update::Change { key, item }) if key == "term-1" && item["data"] == "aGk="
     ));
+    let mut rows = client.rows(Some(3));
+    assert!(matches!(block_on(rows.recv()).ok(), Some(RowUpdate::Row(row)) if row.seq == 4));
+    // One connection carried both: the terminal row didn't break it.
+    assert!(backend.closed.try_recv().is_err());
 }
 
 // Pins: g0-socket#7
