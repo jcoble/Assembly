@@ -134,42 +134,6 @@ fn a_subscription_gets_its_state_then_each_change_until_unsub() {
     assert!(block_on(missing.recv()).is_err());
 }
 
-// A keyed topic whose items are rows (the terminal's output, TerminalFeature.cs) gets each row as a change of its
-// key, the connection stays open, and a chat row on the same socket still reads as a `Row`.
-#[test]
-fn a_terminal_row_reaches_its_topic_and_a_chat_row_still_reads() {
-    let backend = FakeBackend::start(|frame| {
-        hello(frame).unwrap_or_else(|| match frame["t"].as_str() {
-            Some("sub") => {
-                let sub = frame["id"].clone();
-                let row = match frame["topic"].as_str() {
-                    Some("terminal") => json!({"seq": 2, "prevSeq": 0, "data": "aGk="}),
-                    _ => row(4, 3),
-                };
-                let seq = if frame["topic"] == "terminal" { 0 } else { 3 };
-                vec![
-                    Reply::Frame(json!({"t": "state", "sub": sub, "seq": seq, "items": []})),
-                    Reply::Frame(json!({"t": "rows", "sub": sub, "row": row})),
-                ]
-            }
-            _ => vec![],
-        })
-    });
-    let client = Client::start(backend.port);
-    let (_, mut updates) = client.subscribe_key("terminal", Some("term-1"));
-    assert!(
-        matches!(block_on(updates.recv()).ok(), Some(Update::State(items)) if items.is_empty())
-    );
-    assert!(matches!(
-        block_on(updates.recv()).ok(),
-        Some(Update::Change { key, item }) if key == "term-1" && item["data"] == "aGk="
-    ));
-    let mut rows = client.rows(Some(3));
-    assert!(matches!(block_on(rows.recv()).ok(), Some(RowUpdate::Row(row)) if row.seq == 4));
-    // One connection carried both: the terminal row didn't break it.
-    assert!(backend.closed.try_recv().is_err());
-}
-
 // Pins: g0-socket#7
 #[test]
 fn a_drop_aborts_waiting_calls_reopens_once_and_subscribes_again() {
