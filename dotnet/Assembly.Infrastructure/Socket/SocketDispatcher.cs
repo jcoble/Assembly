@@ -97,9 +97,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     }
 
     public void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key,
-        Func<string?, CallContext, IReadOnlyList<TItem>> state) =>
+        Func<string?, CallContext, IReadOnlyList<TItem>> state, bool terminal = false) =>
         _topics.Add(topic, new TopicFrames(NeedsKey: false, (sub, frame, context) =>
-            ([StateFrame(sub, state(frame.Key, context), item, key)], (changed, json) => ChangeFrame(sub, changed, json))));
+            ([StateFrame(sub, state(frame.Key, context), item, key)], (changed, json) => ChangeFrame(sub, changed, json)), Terminal: terminal));
 
     public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
         Action<string, CallContext>? opened = null) =>
@@ -127,6 +127,11 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         if (!_topics.TryGetValue(frame.Topic!, out var topic))
         {
             connection.Send(Error(id, "not_found", $"there's no topic {frame.Topic}"));
+            return null;
+        }
+        if (topic.Terminal != connection.Terminal)
+        {
+            connection.Send(Error(id, "not_found", topic.Terminal ? $"{frame.Topic} is on /socket/terminal" : $"{frame.Topic} is on /socket"));
             return null;
         }
         if (topic.NeedsKey && frame.Key is null)
@@ -206,6 +211,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     internal async Task<ReadOnlyMemory<byte>> AnswerAsync(InFrame frame, long id, SocketConnection connection, CancellationToken cancelled)
     {
         var name = $"{frame.Feature}/{frame.Method}";
+        if (connection.Terminal)
+            return Error(id, "not_found", $"{name} is on /socket");
         if (!_calls.TryGetValue(name, out var call))
             return Error(id, "not_found", $"there's no call {name}");
         if (call.Bulk != connection.Bulk)
@@ -388,7 +395,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     // published becomes, (key, JSON) to a frame, or null for none.
     private sealed record TopicFrames(bool NeedsKey,
         Func<long, InFrame, CallContext, (IReadOnlyList<ReadOnlyMemory<byte>> State, Func<string?, string, ReadOnlyMemory<byte>?> Change)> Open,
-        Action<string, CallContext>? Opened = null);
+        Action<string, CallContext>? Opened = null, bool Terminal = false);
 
     private sealed record Call(bool Writes, Func<JsonElement, object?> ReadArgs, Func<object, CallContext, Task<JsonElement>> RunAsync,
         Func<object, string?>? Order = null, bool Bulk = false);

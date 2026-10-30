@@ -4,7 +4,7 @@ namespace Assembly.Application.Features.Terminal;
 
 /// <summary>
 /// The terminal calls (<c>terminal/start</c>, <c>list</c>, <c>write</c>, <c>resize</c>, <c>read</c>, <c>close</c>) and
-/// the <c>terminal</c> rows topic: one terminal's output, keyed by its id, with byte offsets as seqs and its exit as
+/// the <c>terminal</c> change topic on the terminal socket: one terminal's output, keyed by its id, with byte offsets as seqs and its exit as
 /// the last row. Every machine serves it. Reads run side by side, so the window keeps one <c>write</c> in flight per
 /// terminal and sends what's typed meanwhile in the next.
 /// </summary>
@@ -37,6 +37,7 @@ internal sealed class TerminalFeature : IFeature
             await _host.CloseAsync(args.Terminal);
             return new Empty();
         });
-        calls.Rows(OutputTopic, (terminal, after, _) => _host.State(terminal, after));
+        // State is always empty: catch-up is terminal/read. Each change carries its published key, the terminal id.
+        calls.Topic(OutputTopic, json.OutputRow, key: _ => "", state: (_, _) => [], terminal: true);
     }
 }

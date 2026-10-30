@@ -4,7 +4,7 @@ Draft for Jesse to correct.
 - terminal#2: Typed and pasted bytes reach the program in order. Cancelling a write stops that writer before another write starts.
 - terminal#3: Output keeps its original bytes, including text split across reads.
 - terminal#4: Resizing changes the program's terminal size.
-- terminal#5: Leaving the view keeps the shell running. Returning can replay the last 4 MB of output and continue with live output.
+- terminal#5: Leaving the view keeps the shell running. Returning catches up with terminal/read, replaying the last 4 MB of output, and continues with live output on the terminal topic on the terminal socket.
 - terminal#6: Each session has its own shell and output.
 - terminal#7: The program's exit status follows its final output. Output remains available until the terminal is closed.
 - terminal#8: Closing the terminal or stopping its backend ends its programs and cancels pending input and output work.

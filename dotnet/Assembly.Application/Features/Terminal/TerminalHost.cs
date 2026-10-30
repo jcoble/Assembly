@@ -102,13 +102,6 @@ internal sealed class TerminalHost : IAsyncDisposable
 
     public OutputPiece Read(string terminal, long offset) => Get(terminal).Read(offset);
 
-    /// <summary>Runs under the Topics lock: it takes the host's lock, then the terminal's, and never publishes.</summary>
-    public (long Seq, IReadOnlyList<string> Rows) State(string terminal, long? after)
-    {
-        lock (_lock)
-            return _terminals.TryGetValue(terminal, out var running) ? running.State(after) : (after ?? 0, []);
-    }
-
     /// <summary>Ends the terminal and lets go of its output; ok for one already closed.</summary>
     public async ValueTask CloseAsync(string terminal)
     {

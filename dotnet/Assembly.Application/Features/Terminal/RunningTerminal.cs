@@ -79,29 +79,6 @@ internal sealed class RunningTerminal : IAsyncDisposable
             return _ring.Read(offset);
     }
 
-    /// <summary>
-    /// The <c>terminal</c> topic's state for a sub resuming after <paramref name="after"/>: what came since, in one row,
-    /// when it's kept and at most a read's worth; otherwise the end, and the window reads the replay with
-    /// <c>terminal/read</c> (terminal#5). Then the exit, once there is one.
-    /// </summary>
-    public (long Seq, IReadOnlyList<string> Rows) State(long? after)
-    {
-        lock (_lock)
-        {
-            var end = _ring.End;
-            // A window that already has the exit gets nothing again.
-            if (_info.ExitCode is not null && after == end + 1)
-                return (end + 1, []);
-            var from = after is { } offset && offset >= _ring.Start && offset <= end && end - offset <= OutputRing.ReadLimit ? offset : end;
-            List<string> rows = [];
-            if (from < end)
-                rows.Add(Row(new OutputRow(end, from, _ring.Read(from).Data)));
-            if (_info.ExitCode is { } code)
-                rows.Add(Row(new OutputRow(end + 1, end, Exit: code)));
-            return (from, rows);
-        }
-    }
-
     /// <summary>Ends the process group, stops the reader and lets go of the output.</summary>
     public async ValueTask DisposeAsync()
     {
