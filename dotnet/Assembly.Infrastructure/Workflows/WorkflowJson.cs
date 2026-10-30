@@ -6,6 +6,7 @@ namespace Assembly.Infrastructure.Workflows;
 [JsonSerializable(typeof(BoardTask))]
 [JsonSerializable(typeof(BoardQuestion))]
 [JsonSerializable(typeof(BoardEvent))]
+[JsonSerializable(typeof(BoardStep))]
 [JsonSerializable(typeof(BoardMetrics))]
 [JsonSerializable(typeof(BoardSummary))]
 [JsonSerializable(typeof(BoardCursor))]

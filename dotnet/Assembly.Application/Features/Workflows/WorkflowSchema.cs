@@ -16,6 +16,7 @@ namespace Assembly.Application.Features.Workflows;
 [JsonSerializable(typeof(BoardCounts))]
 [JsonSerializable(typeof(BoardCursor))]
 [JsonSerializable(typeof(BoardEvent))]
+[JsonSerializable(typeof(BoardStep))]
 [JsonSerializable(typeof(BoardMetrics))]
 [JsonSerializable(typeof(BoardPageArgs))]
 [JsonSerializable(typeof(BoardPageResult))]

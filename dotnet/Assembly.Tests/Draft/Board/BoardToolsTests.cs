@@ -23,6 +23,41 @@ namespace Assembly.Tests.Draft.Board;
 
 public sealed class BoardToolsTests
 {
+    // Pins: board#2
+    [Fact]
+    public async Task ReportStoresOrderedStepsAndAttempts()
+    {
+        await using var host = new BoardSocketTests.Host();
+        var session = host.Sessions.Create("codex", "project");
+        var steps = BoardQueryTests.Fixture.Steps();
+        var report = host.F.Report() with { Steps = steps };
+        var input = JsonSerializer.SerializeToElement(report, WorkflowJson.Default.BoardUpdateArgs);
+        Assert.False(host.Tools.Call(session.SessionId, input).IsError);
+        var missingSteps = System.Text.Json.Nodes.JsonNode.Parse(input.GetRawText())!;
+        missingSteps.AsObject().Remove("steps");
+        Assert.Equal(("bad_args", true), host.Tools.Call(session.SessionId, JsonSerializer.SerializeToElement(missingSteps)));
+        Assert.Equal(JsonValueKind.Null, JsonSerializer.SerializeToElement(host.F.Report(), WorkflowJson.Default.BoardUpdateArgs).GetProperty("steps").ValueKind);
+        var item = Assert.Single(host.F.Queries.Changes(new(0), CancellationToken.None).Events);
+        Assert.Equal(steps, item.Steps);
+        Assert.Equal(2, item.Steps![1].Attempt);
+        Assert.Equal(3, item.Steps[1].MaxAttempts);
+        Assert.Equal(40, item.Steps[1].Progress);
+        var repeated = host.Tools.Update(session.SessionId, report);
+        Assert.Equal(repeated, host.Tools.Update(session.SessionId, report));
+        host.Tools.Update(session.SessionId, host.F.Report() with { Summary = "Still working" });
+        Assert.All(host.F.Queries.Changes(new(0), CancellationToken.None).Events, e => Assert.Equal(steps, e.Steps));
+        foreach (var invalid in new[] { steps[1] with { State = "bogus" }, steps[1] with { Badge = "bogus" },
+                     steps[1] with { Progress = -1 }, steps[1] with { Progress = 101 } })
+        {
+            var bad = JsonSerializer.SerializeToElement(report with { Steps = [invalid] }, WorkflowJson.Default.BoardUpdateArgs);
+            Assert.Equal(("invalid_argument", true), host.Tools.Call(session.SessionId, bad));
+        }
+        host.Tools.Update(session.SessionId, report with { Question = host.F.Ask() });
+        host.Tools.Update(session.SessionId, report with { Question = host.F.Ask(), Steps = [steps[0]] });
+        host.F.Transitions.Answer(host.F.Answer(), true);
+        Assert.Equal(new[] { steps[0] }, host.F.Queries.Changes(new(0), CancellationToken.None).Events[^1].Steps);
+    }
+
     [Fact]
     public async Task RapidAnswersEachStartTheirOwnTurn()
     {

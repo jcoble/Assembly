@@ -37,7 +37,42 @@ public sealed class BoardQueryTests(Xunit.Abstractions.ITestOutputHelper output)
             new("local", "task", question, generation, key ?? Guid.NewGuid().ToString(), value ?? new("text", "Use the simple option"));
         public BoardQuestionAsk Ask(string key = "q1", int generation = 0, string kind = "text") =>
             new(key, generation, kind, "Which option?", "Use the simple option");
+        public static BoardStep[] Steps() => [
+            new(0, "Read the failing case", "read", "case.cs", "done", "changed", null, null,
+                DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch.AddSeconds(2), null, null, null, null, null),
+            new(1, "Retry the case", "test", "dotnet test", "running", null, "Second attempt", 40,
+                DateTimeOffset.UnixEpoch.AddSeconds(2), null, 2, 3, null, null, null),
+            new(2, "Choose a scope", null, null, "waiting", "needs-you", "Which branch?", null,
+                null, null, null, null, "scope", "issues:create", false),
+            new(3, "File the result", null, null, "future", null, null, null,
+                null, null, null, null, null, null, null)
+        ];
         public void Dispose() { Db.Dispose(); _file.Dispose(); }
+    }
+
+    // Pins: board#5
+    [Fact]
+    public void TaskReturnsCurrentStepsAndMetrics()
+    {
+        using var f = new Fixture();
+        var first = Fixture.Steps();
+        f.Transitions.Update("session", "project", f.Report() with { Steps = first });
+        var second = new[] { first[0], first[1] with { State = "failed" }, first[2] with { State = "skipped" } };
+        f.Transitions.Update("session", "project", f.Report() with { Steps = second });
+        var detail = f.Detail();
+        Assert.Equal(second, detail.Steps);
+        Assert.Equal(2, detail.Feed.Length);
+        Assert.All(detail.Feed, e => Assert.Null(e.Steps));
+        var json = System.Text.Json.JsonSerializer.Serialize(detail,
+            global::Assembly.Infrastructure.Workflows.WorkflowJson.Default.BoardTaskResult);
+        using var parsed = System.Text.Json.JsonDocument.Parse(json);
+        Assert.All(parsed.RootElement.GetProperty("feed").EnumerateArray(), e => Assert.False(e.TryGetProperty("steps", out _)));
+        Assert.Equal(new BoardMetrics(1, 1, 1, null, null), detail.Metrics);
+        Assert.Equal(detail.Metrics, Assert.Single(f.Page().Items).Metrics);
+        Assert.Equal(second, f.Detail(before: detail.Feed[^1].Seq).Steps);
+        f.Transitions.Update("session", "project", f.Report() with { Steps = [] });
+        Assert.Empty(f.Detail().Steps);
+        Assert.Equal(0, f.Detail().Metrics.StepsDone);
     }
 
     // Pins: board#5
