@@ -144,14 +144,20 @@ impl TerminalPane {
             let opened = TerminalLink::open(&session, size, cx).await;
             let subscription = pane.update(cx, |pane, cx| match opened {
                 Ok((link, started)) => {
-                    let subscription = link.follow(cx);
+                    let subscription = match link.follow(cx) {
+                        Ok(subscription) => subscription,
+                        Err(why) => {
+                            pane.shown = Shown::Said(why);
+                            cx.notify();
+                            return None;
+                        }
+                    };
                     // A reused shell may have another size, and the pane may have measured itself meanwhile.
                     if started != pane.size {
                         link.resize(pane.size, cx);
                     }
                     pane.link = Some(link);
-                    pane.shown = Shown::Open;
-                    pane.catch_up(cx);
+                    // The subscription state starts catch-up, so its arrival cannot cause a second initial read.
                     Some(subscription)
                 }
                 Err(why) => {
@@ -211,6 +217,9 @@ impl TerminalPane {
             return;
         };
         if matches!(update, Update::State(_)) {
+            if self.shown == Shown::Opening {
+                self.shown = Shown::Open;
+            }
             self.catch_up(cx);
             return;
         }

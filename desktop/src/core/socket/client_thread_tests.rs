@@ -13,9 +13,8 @@ use super::event::Event;
 use super::fake_backend::{FakeBackend, Reply, hello};
 use super::outcome::Outcome;
 use super::pending_call::PendingCall;
-use super::row_update::RowUpdate;
 use super::test_client::{
-    DEADLINE, TestClient as Client, backend, connected, endpoint, error, outcome, row,
+    DEADLINE, TestClient as Client, backend, connected, endpoint, error, outcome,
 };
 use super::update::Update;
 

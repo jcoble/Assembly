@@ -113,10 +113,10 @@ impl TerminalLink {
     }
 
     /// The terminal's live rows.
-    pub fn follow(&self, cx: &App) -> TopicSubscription<Update> {
-        SocketClient::global(cx)
-            .read(cx)
-            .subscribe("terminal", Some(&self.id))
+    pub fn follow(&self, cx: &App) -> Result<TopicSubscription<Update>, String> {
+        let client = SocketClient::try_terminal(cx)
+            .ok_or_else(|| "the backend didn't answer".to_string())?;
+        Ok(client.read(cx).subscribe("terminal", Some(&self.id)))
     }
 
     /// A row from the subscription, as what to hand on: nothing for one already handed on, and `Err(())` for one

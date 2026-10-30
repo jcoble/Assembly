@@ -115,11 +115,15 @@ fn start_backend(cx: &mut App) -> (Task<Option<Value>>, WriteLayout) {
                             if let Some(bulk) = SocketClient::try_bulk(cx) {
                                 bulk.read(cx).reconnect(endpoint.clone());
                             }
+                            if let Some(terminal) = SocketClient::try_terminal(cx) {
+                                terminal.read(cx).reconnect(endpoint.clone());
+                            }
                             client.read(cx).reconnect(endpoint)
                         }
                         None => {
                             let client = SocketClient::start(endpoint.clone(), cx);
-                            SocketClient::start_bulk(endpoint, cx);
+                            SocketClient::start_bulk(endpoint.clone(), cx);
+                            SocketClient::start_terminal(endpoint, cx);
                             _ = socket.set(client.clone());
                             Sessions::start(cx);
                             Machines::start(cx);

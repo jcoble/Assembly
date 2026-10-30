@@ -59,12 +59,9 @@ fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<()>) -> Fake
         let replies = match (frame["t"].as_str(), frame["method"].as_str()) {
             (Some("sub"), _) => {
                 terminals.seen.push(("sub".into(), frame.clone()));
-                let seq = terminals.kept.len();
-                let mut replies = vec![Reply::Frame(
-                    json!({"t": "state", "sub": id, "seq": seq, "items": []}),
-                )];
+                let mut replies = vec![Reply::Frame(json!({"t": "state", "sub": id, "items": []}))];
                 for row in &terminals.rows {
-                    replies.push(Reply::Frame(json!({"t": "rows", "sub": id, "row": row})));
+                    replies.push(Reply::Frame(json!({"t": "change", "sub": id, "op": "upsert", "key": frame["key"], "item": row})));
                 }
                 replies
             }
@@ -138,6 +135,13 @@ async fn open(cx: &mut TestAppContext, terminals: Terminals, remote: bool) -> Op
         let b = session("b", remote.then_some("Workbox Test"));
         Sessions::start_holding(vec![session("a", None), b], false, false, cx);
         SocketClient::start(
+            Endpoint {
+                port: backend.port,
+                token: "secret".into(),
+            },
+            cx,
+        );
+        SocketClient::start_terminal(
             Endpoint {
                 port: backend.port,
                 token: "secret".into(),
@@ -468,4 +472,33 @@ async fn the_size_stays_within_what_the_backend_allows(cx: &mut TestAppContext) 
         .await;
     let first = open.terminals.lock().unwrap().of("resize")[0].clone();
     assert_eq!(first, json!({"terminal": "term-1", "cols": 300, "rows": 4}));
+}
+
+#[gpui::test]
+async fn output_arrives_on_the_terminal_socket_not_the_main_one(cx: &mut TestAppContext) {
+    let mut open = open(
+        cx,
+        Terminals {
+            rows: vec![json!({"seq": 5, "prevSeq": 0, "data": STANDARD.encode(b"hello")})],
+            ..Default::default()
+        },
+        false,
+    )
+    .await;
+    open.until("the terminal output arrived", |_, pane| {
+        following(pane) && pane.grid.text().contains("hello")
+    })
+    .await;
+    let subscriptions: Vec<_> = open
+        ._backend
+        .on
+        .try_iter()
+        .filter(|(_, frame)| frame["t"] == "sub" && frame["topic"] == "terminal")
+        .collect();
+    assert!(!subscriptions.is_empty());
+    assert!(
+        subscriptions
+            .iter()
+            .all(|(path, _)| path == "/socket/terminal")
+    );
 }

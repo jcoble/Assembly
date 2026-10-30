@@ -2,6 +2,7 @@
 //! subscribes through it; nothing else opens a socket. It emits each `ConnectionState` change. A second one, the
 //! bulk client (`start_bulk`, its own global), is the same client on `/socket/bulk`, which alone carries the large
 //! calls (attachments/*, rows/page and rows/tool), so they never hold up the main socket's calls and topics.
+//! A third client on /socket/terminal carries only terminal output.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -43,6 +44,10 @@ struct GlobalBulk(Entity<SocketClient>);
 
 impl Global for GlobalBulk {}
 
+struct GlobalTerminal(Entity<SocketClient>);
+
+impl Global for GlobalTerminal {}
+
 impl Drop for SocketClient {
     /// Ends the client thread, which closes the socket and ends its reader, and waits for it.
     fn drop(&mut self) {
@@ -70,6 +75,16 @@ impl SocketClient {
             .map_or_else(Default::default, |main| main.read(cx).next_id.clone());
         let client = Self::spawn(endpoint, "/socket/bulk", ids, cx);
         cx.set_global(GlobalBulk(client.clone()));
+        client
+    }
+
+    /// Starts the terminal client, on `/socket/terminal`, as the app's other global. It takes the main client's ids, so an id
+    /// names one call across all sockets.
+    pub fn start_terminal(endpoint: Endpoint, cx: &mut App) -> Entity<Self> {
+        let ids = Self::try_global(cx)
+            .map_or_else(Default::default, |main| main.read(cx).next_id.clone());
+        let client = Self::spawn(endpoint, "/socket/terminal", ids, cx);
+        cx.set_global(GlobalTerminal(client.clone()));
         client
     }
 
@@ -125,6 +140,12 @@ impl SocketClient {
     /// The bulk client, once the backend's first ready line started it.
     pub fn try_bulk(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalBulk>().map(|bulk| bulk.0.clone())
+    }
+
+    /// The terminal client, once the backend's first ready line started it.
+    pub fn try_terminal(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalTerminal>()
+            .map(|terminal| terminal.0.clone())
     }
 
     pub fn state(&self) -> &ConnectionState {
