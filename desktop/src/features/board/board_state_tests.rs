@@ -333,6 +333,7 @@ fn payload_decodes_empty_and_populated_results() {
         questions: vec![],
     };
     let full = BoardTaskResult {
+        steps: vec![],
         questions: vec![open, answered],
         feed: vec![event],
         next_before_seq: Some(6),
