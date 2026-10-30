@@ -22,6 +22,8 @@ pub struct GridCell {
     pub fg: Color,
     pub bg: Color,
     pub bold: bool,
+    /// A double-width character, which covers this column and the next.
+    pub wide: bool,
 }
 
 /// A size in cells, which is how `Term` is told one.
@@ -89,6 +91,7 @@ impl TerminalGrid {
                     fg,
                     bg,
                     bold: cell.flags.contains(Flags::BOLD),
+                    wide: cell.flags.contains(Flags::WIDE_CHAR),
                 }
             })
             .collect()

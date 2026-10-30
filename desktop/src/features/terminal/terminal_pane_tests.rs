@@ -16,6 +16,7 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
 use crate::core::socket::test_wait::until;
+use crate::core::socket::update::Update;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::session_item::SessionItem;
 use crate::core::state::sessions::Sessions;
@@ -393,4 +394,54 @@ async fn a_remote_session_shows_the_limitation(cx: &mut TestAppContext) {
             .iter()
             .all(|args| args["owner"] == "a")
     );
+}
+
+// Pins: terminal#5, terminal#7
+#[gpui::test]
+async fn a_reconnect_reads_what_was_missed_and_keeps_the_exit(cx: &mut TestAppContext) {
+    let kept = b"abc".to_vec();
+    let mut open = open(
+        cx,
+        Terminals {
+            kept,
+            ..Default::default()
+        },
+        false,
+    )
+    .await;
+    open.until("following", |_, pane| {
+        following(pane) && pane.grid.text() == "abc"
+    })
+    .await;
+    // While the socket was down the shell wrote more and ended; the new subscription's state comes first.
+    open.terminals.lock().unwrap().kept = b"abcdef".to_vec();
+    open.pane.update(open.cx, |pane, cx| {
+        pane.output(Update::State(Vec::new()), cx);
+        let exit = json!({"seq": 7, "prevSeq": 6, "exit": 0});
+        pane.output(
+            Update::Change {
+                key: "term-1".into(),
+                item: exit,
+            },
+            cx,
+        );
+    });
+    open.until("caught up", |_, pane| pane.shown == Shown::Exited(0))
+        .await;
+    open.pane
+        .read_with(open.cx, |pane, _| assert_eq!(pane.grid.text(), "abcdef"));
+}
+
+// Pins: terminal#4
+#[gpui::test]
+async fn the_size_stays_within_what_the_backend_allows(cx: &mut TestAppContext) {
+    let mut open = open(cx, Terminals::default(), false).await;
+    open.until("the shell started", |_, pane| following(pane))
+        .await;
+    open.pane
+        .update(open.cx, |pane, cx| pane.resized((400, 2), cx));
+    open.until("resized", |terminals, _| !terminals.of("resize").is_empty())
+        .await;
+    let first = open.terminals.lock().unwrap().of("resize")[0].clone();
+    assert_eq!(first, json!({"terminal": "term-1", "cols": 300, "rows": 4}));
 }

@@ -27,6 +27,10 @@ use crate::core::state::sessions::Sessions;
 /// The layout's name for the tab (default_layout.rs).
 const TERMINAL: &str = "Terminal";
 
+/// The sizes the backend allows (TerminalHost.cs); the grid keeps to them too, so the two never differ.
+const COLS: (usize, usize) = (20, 300);
+const ROWS: (usize, usize) = (4, 100);
+
 /// The grid's size before the pane has measured itself: the backend's own default (TerminalHost.cs).
 const FIRST_SIZE: (usize, usize) = (96, 28);
 
@@ -192,16 +196,25 @@ impl TerminalPane {
         }));
     }
 
-    /// One update from the shell's rows: its bytes to the grid, or its exit.
+    /// One update from the shell's rows: its bytes to the grid, or its exit. A state is a new subscription after a
+    /// reconnect, so output may have come meanwhile: the kept output is read again. A row past a gap waits for that
+    /// read and is handed on after it.
     fn output(&mut self, update: Update, cx: &mut Context<Self>) {
         if let Some(held) = &mut self.held {
-            held.push(update);
+            // The read on its way covers what a state stands for.
+            if !matches!(update, Update::State(_)) {
+                held.push(update);
+            }
             return;
         }
         let Some(link) = &mut self.link else {
             return;
         };
-        match link.step(update) {
+        if matches!(update, Update::State(_)) {
+            self.catch_up(cx);
+            return;
+        }
+        match link.step(&update) {
             Ok(output) => {
                 match output {
                     Some(Output::Bytes(bytes)) => self.grid.feed(&bytes),
@@ -210,12 +223,16 @@ impl TerminalPane {
                 }
                 cx.notify();
             }
-            Err(()) => self.catch_up(cx),
+            Err(()) => {
+                self.catch_up(cx);
+                self.held.get_or_insert_default().push(update);
+            }
         }
     }
 
     /// The room the pane has changed: the grid and the program take the new size (terminal#4).
-    pub fn resized(&mut self, size: (usize, usize), cx: &mut Context<Self>) {
+    pub fn resized(&mut self, (cols, rows): (usize, usize), cx: &mut Context<Self>) {
+        let size = (cols.clamp(COLS.0, COLS.1), rows.clamp(ROWS.0, ROWS.1));
         if !self.measured {
             self.measured = true;
             self.size = size;

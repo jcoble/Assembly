@@ -83,7 +83,7 @@ pub fn draw(
                     }
                     div()
                         .flex_none()
-                        .w(cell.width * run.text.chars().count() as f32)
+                        .w(cell.width * run.columns as f32)
                         .text_color(fg)
                         .bg(bg)
                         .when(run.bold, |run| run.font_weight(FontWeight::BOLD))
@@ -95,6 +95,8 @@ pub fn draw(
 /// Cells next to each other with the same look, as one piece of text.
 struct Run {
     text: String,
+    /// The terminal columns it covers.
+    columns: usize,
     fg: Color,
     bg: Color,
     bold: bool,
@@ -102,7 +104,7 @@ struct Run {
 }
 
 /// A line's cells as runs, with a blank for each column before a cell that isn't there and the cursor's cell on its
-/// own.
+/// own. A wide character covers two columns.
 fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
     let mut runs: Vec<Run> = Vec::new();
     let blank = |column| GridCell {
@@ -112,29 +114,32 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
         fg: Color::Named(NamedColor::Foreground),
         bg: Color::Named(NamedColor::Background),
         bold: false,
+        wide: false,
     };
     let last = line.last().map_or(0, |cell| cell.column + 1);
+    let end = last.max(cursor.map_or(0, |column| column + 1));
     let mut cells = line.into_iter().peekable();
-    for column in 0..last.max(cursor.map_or(0, |column| column + 1)) {
-        let cell = match cells.peek() {
-            Some(cell) if cell.column == column => cells.next().unwrap_or_else(|| blank(column)),
-            Some(cell) if cell.column < column => {
-                cells.next();
-                continue;
-            }
-            _ => blank(column),
+    let mut column = 0;
+    while column < end {
+        let cell = match cells.next_if(|cell| cell.column == column) {
+            Some(cell) => cell,
+            None => blank(column),
         };
+        let columns = if cell.wide { 2 } else { 1 };
         let at_cursor = cursor == Some(column);
+        column += columns;
         match runs.last_mut() {
             Some(run)
                 if !at_cursor
                     && !run.cursor
                     && (run.fg, run.bg, run.bold) == (cell.fg, cell.bg, cell.bold) =>
             {
-                run.text.push(cell.text)
+                run.text.push(cell.text);
+                run.columns += columns;
             }
             _ => runs.push(Run {
                 text: cell.text.to_string(),
+                columns,
                 fg: cell.fg,
                 bg: cell.bg,
                 bold: cell.bold,
@@ -207,3 +212,7 @@ fn xterm(index: u8) -> Rgb {
 fn hsla_of(Rgb { r, g, b }: Rgb) -> Hsla {
     gpui_kit::rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)).into()
 }
+
+#[cfg(test)]
+#[path = "terminal_draw_tests.rs"]
+mod tests;

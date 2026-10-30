@@ -121,11 +121,11 @@ impl TerminalLink {
 
     /// A row from the subscription, as what to hand on: nothing for one already handed on, and `Err(())` for one
     /// past a gap (output between the replay and the subscription, or during a reconnect), which `replay` fills.
-    pub fn step(&mut self, update: Update) -> Result<Option<Output>, ()> {
+    pub fn step(&mut self, update: &Update) -> Result<Option<Output>, ()> {
         let Update::Change { item, .. } = update else {
             return Ok(None);
         };
-        let Ok(row) = serde_json::from_value::<OutputRow>(item) else {
+        let Ok(row) = OutputRow::deserialize(item) else {
             return Ok(None);
         };
         if row.prev_seq > self.end {
