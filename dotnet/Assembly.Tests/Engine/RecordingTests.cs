@@ -86,6 +86,37 @@ public sealed class RecordingTests
         Assert.Equal(1, f.Count("engine_event"));
     }
 
+    [Fact]
+    public void Run_under_another_session_is_refused()
+    {
+        using var f = new EngineFixture();
+        f.SeedSession("a"); f.SeedSession("b"); f.SeedRun(ownerSessionId: "a");
+        var attribution = new Attribution("b", "r", null, null, 0);
+        var start = new ToolStarted(attribution, "provider", "call", "read", Json(0), 1);
+        var usage = new TurnUsage(attribution, "turn", 10, 4, 3, 25, 100);
+        var eventsBefore = f.Count("engine_event");
+
+        var refusedStart = f.Apply(start, "tool", actor: Reporter);
+        Assert.False(refusedStart.Applied);
+        Assert.Equal("attribution_mismatch", refusedStart.Error);
+        Assert.Equal(0, f.Count("engine_tool_call"));
+        Assert.Equal(eventsBefore, f.Count("engine_event"));
+
+        var refusedUsage = f.Apply(usage, "usage", actor: Reporter);
+        Assert.False(refusedUsage.Applied);
+        Assert.Equal("attribution_mismatch", refusedUsage.Error);
+        Assert.Equal(0, f.Count("engine_usage"));
+        Assert.Equal(eventsBefore, f.Count("engine_event"));
+
+        var owner = attribution with { SessionId = "a" };
+        Assert.True(f.Apply(start with { Attribution = owner }, "tool", actor: Reporter).Applied);
+        Assert.True(f.Apply(usage with { Attribution = owner }, "usage", actor: Reporter).Applied);
+        Assert.Equal(1, f.Count("engine_tool_call"));
+        Assert.Equal(1, f.Count("engine_usage"));
+        Assert.Equal(eventsBefore + 2, f.Count("engine_event"));
+        Assert.All(f.Events(), e => Assert.Equal("a", e.Data.SessionId));
+    }
+
     [Theory]
     [InlineData("ended", "running", "running")]
     [InlineData("idle", "succeeded", "running")]

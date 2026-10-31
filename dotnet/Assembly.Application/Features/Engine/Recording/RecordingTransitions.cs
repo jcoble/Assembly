@@ -65,7 +65,7 @@ public static class RecordingTransitions
         var preview = Preview.Create(cmd.Input);
         if (FindTool(s, "id=$id", new SqlArg("$id", c.EntityId)) is not null) return Refused(c, "bad_args");
         var status = AttributionStatus(s, cmd.Attribution);
-        if (!status.Valid) return Refused(c, "bad_args");
+        if (status.Error is not null) return Refused(c, status.Error);
         var a = cmd.Attribution;
         s.Execute("""
             INSERT INTO engine_tool_call(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,attempt,epoch,
@@ -104,7 +104,7 @@ public static class RecordingTransitions
         if (s.QueryFirst("SELECT COUNT(*) FROM engine_usage WHERE id=$id", r => r.Long(0), new SqlArg("$id", c.EntityId)) != 0)
             return Refused(c, "bad_args");
         var status = AttributionStatus(s, cmd.Attribution);
-        if (!status.Valid) return Refused(c, "bad_args");
+        if (status.Error is not null) return Refused(c, status.Error);
         s.Execute("""
             INSERT INTO engine_usage(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,attempt,epoch,
                 provider_turn_id,input_tokens,output_tokens,cached_tokens,cost_nanodollars,duration_ms,late)
@@ -115,28 +115,30 @@ public static class RecordingTransitions
         return Recorded(s, c, cmd.Attribution, "usage", "usage.recorded", 1, status.Late);
     }
 
-    private static (bool Valid, bool Late) AttributionStatus(IWriteScope s, Attribution a)
+    private static (string? Error, bool Late) AttributionStatus(IWriteScope s, Attribution a)
     {
         if (string.IsNullOrWhiteSpace(a.SessionId) || a.Epoch < 0 || a.Attempt < 0 ||
             a.StepId is not null && (a.RunId is null || a.Attempt is null) || a.StepId is null && a.Attempt is not null)
-            return (false, false);
+            return ("bad_args", false);
         var session = s.QueryFirst("SELECT state FROM engine_session WHERE id=$id", r => r.Text(0), new SqlArg("$id", a.SessionId));
-        if (session is null) return (false, false);
+        if (session is null) return ("bad_args", false);
         var late = session == "ended";
         if (a.RunId is not null)
         {
-            var run = s.QueryFirst("SELECT state FROM engine_run WHERE id=$id", r => r.Text(0), new SqlArg("$id", a.RunId));
-            if (run is null) return (false, false);
-            late |= RunTransitions.IsTerminal(run);
+            var run = s.QueryFirst("SELECT state,owner_session_id FROM engine_run WHERE id=$id",
+                r => new { State = r.Text(0), OwnerSessionId = r.Text(1) }, new SqlArg("$id", a.RunId));
+            if (run is null) return ("bad_args", false);
+            if (run.OwnerSessionId != a.SessionId) return ("attribution_mismatch", false);
+            late |= RunTransitions.IsTerminal(run.State);
         }
         if (a.StepId is not null)
         {
             var step = s.QueryFirst("SELECT run_id,state FROM engine_step WHERE id=$id",
                 r => new { Run = r.Text(0), State = r.Text(1) }, new SqlArg("$id", a.StepId));
-            if (step is null || step.Run != a.RunId) return (false, false);
+            if (step is null || step.Run != a.RunId) return ("bad_args", false);
             late |= step.State is "succeeded" or "failed" or "skipped" or "cancelled";
         }
-        return (true, late);
+        return (null, late);
     }
 
     private static ToolRow? FindTool(IWriteScope s, string predicate, params SqlArg[] args) => s.QueryFirst($"""
