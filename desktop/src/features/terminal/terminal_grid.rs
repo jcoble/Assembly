@@ -165,6 +165,11 @@ impl TerminalGrid {
             .then(|| (grid.cursor.point.column.0, line.max(0) as usize))
     }
 
+    /// Mouse tracking and encoding modes owned by alacritty's parser.
+    pub fn mouse_mode(&self) -> TermMode {
+        *self.term.mode()
+    }
+
     /// The program asked for application cursor keys, so arrows send `ESC O` rather than `ESC [`.
     pub fn app_cursor(&self) -> bool {
         self.term.mode().contains(TermMode::APP_CURSOR)
