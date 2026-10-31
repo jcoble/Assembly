@@ -10,6 +10,7 @@
 //! terminals aren't here yet (terminal#12).
 
 use std::mem;
+use std::time::Duration;
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
@@ -35,6 +36,9 @@ const ROWS: (usize, usize) = (4, 100);
 
 /// The grid's size before the pane has measured itself: the backend's own default (TerminalHost.cs).
 const FIRST_SIZE: (usize, usize) = (96, 28);
+
+/// How long the cursor shows, then hides, while it blinks (ghostty-web's interval, as the old app had).
+const BLINK: Duration = Duration::from_millis(600);
 
 #[derive(Debug, PartialEq)]
 pub enum Shown {
@@ -74,6 +78,8 @@ pub struct TerminalPane {
     writing: bool,
     /// The shell just opened: the pane takes the focus on its next draw.
     focus_wanted: bool,
+    /// The blinking cursor's half of the blink; it stays shown while the pane hasn't the focus.
+    cursor_on: bool,
     _selected: Subscription,
     /// Draws again when the terminal's font or the theme changes.
     _preferences: Option<Subscription>,
@@ -83,6 +89,8 @@ pub struct TerminalPane {
     _follow: Option<Task<()>>,
     _replay: Option<Task<()>>,
     _write: Option<Task<()>>,
+    /// Blinks the cursor while the pane has the focus; dropping it stops the timer.
+    _blink: Option<Task<()>>,
 }
 
 impl TerminalPane {
@@ -116,6 +124,7 @@ impl TerminalPane {
             typed: Vec::new(),
             writing: false,
             focus_wanted: false,
+            cursor_on: true,
             _focused: focused,
             _preferences: Preferences::try_global(cx)
                 .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
@@ -123,6 +132,7 @@ impl TerminalPane {
             _follow: None,
             _replay: None,
             _write: None,
+            _blink: None,
         }
     }
 
@@ -317,18 +327,43 @@ impl TerminalPane {
         };
         cx.stop_propagation();
         self.grid.scroll_to_bottom();
+        self.cursor_on = true;
         self.typed.extend(bytes);
         self.write(cx);
     }
 
     /// The pane took or lost the focus, which a program that asked for focus reports hears as `ESC [I` or `ESC [O`.
     fn focused(&mut self, focused: bool, cx: &mut Context<Self>) {
+        self.blink(focused, cx);
         if self.shown != Shown::Open || !self.grid.focus_reporting() {
             return;
         }
         self.typed
             .extend_from_slice(if focused { b"\x1b[I" } else { b"\x1b[O" });
         self.write(cx);
+    }
+
+    /// Blinks the cursor while the pane has the focus, and shows it steady otherwise. It draws again only while the
+    /// shell is open, where the cursor shows.
+    fn blink(&mut self, focused: bool, cx: &mut Context<Self>) {
+        self.cursor_on = true;
+        self._blink = focused.then(|| {
+            cx.spawn(async move |pane, cx| {
+                loop {
+                    cx.background_executor().timer(BLINK).await;
+                    let blinked = pane.update(cx, |pane, cx| {
+                        pane.cursor_on = !pane.cursor_on;
+                        if pane.shown == Shown::Open {
+                            cx.notify();
+                        }
+                    });
+                    if blinked.is_err() {
+                        return;
+                    }
+                }
+            })
+        });
+        cx.notify();
     }
 
     /// Sends what's been typed, unless a write is on its way: then it goes when that one's answered.
@@ -463,7 +498,7 @@ impl Render for TerminalPane {
                     })
                     .ok();
                 };
-                let cursor = (self.shown == Shown::Open)
+                let cursor = (self.shown == Shown::Open && self.cursor_on)
                     .then(|| self.grid.cursor())
                     .flatten();
                 let grid = draw(

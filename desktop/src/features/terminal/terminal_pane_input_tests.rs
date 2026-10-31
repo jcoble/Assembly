@@ -120,3 +120,27 @@ async fn reopening_a_program_that_asks_for_focus_reports_tells_it(cx: &mut TestA
         b"\x1b[I".to_vec()
     );
 }
+
+#[gpui::test]
+async fn the_cursor_blinks_only_while_the_pane_has_the_focus(cx: &mut TestAppContext) {
+    let mut open = open(cx, Terminals::default(), false).await;
+    open.cx.update(|window, _| window.activate_window());
+    open.until("the shell started", |_, pane| following(pane))
+        .await;
+    open.cx.run_until_parked();
+    let cursor =
+        |open: &mut super::Open<'_>| open.pane.read_with(open.cx, |pane, _| pane.cursor_on);
+    assert!(cursor(&mut open));
+    open.cx.executor().advance_clock(super::super::BLINK);
+    open.cx.run_until_parked();
+    assert!(!cursor(&mut open));
+    open.cx.executor().advance_clock(super::super::BLINK);
+    open.cx.run_until_parked();
+    assert!(cursor(&mut open));
+    let elsewhere = open.cx.update(|_, cx| cx.focus_handle());
+    open.cx.update(|window, cx| window.focus(&elsewhere, cx));
+    open.cx.run_until_parked();
+    open.cx.executor().advance_clock(super::super::BLINK * 3);
+    open.cx.run_until_parked();
+    assert!(cursor(&mut open));
+}
