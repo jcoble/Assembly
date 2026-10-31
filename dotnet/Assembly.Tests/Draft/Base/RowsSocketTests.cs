@@ -257,6 +257,24 @@ public sealed class RowsSocketTests : IAsyncLifetime
         Assert.Equal(RowsFeature.PageLimit, answer.RootElement.GetProperty("result").GetProperty("rows").GetArrayLength());
     }
 
+    // Pins: g0-session#2: stored session history is readable in bounded pages.
+    [Fact]
+    public async Task Rows_after_reads_raw_updates_in_seq_order_and_at_most_a_page()
+    {
+        var session = _sessions.Create("claude", "repo").SessionId;
+        var batch = new RowBatch();
+        for (var i = 0; i < RowsFeature.PageLimit + 2; i++)
+            batch.Rows.Add(new NewRow("run", "tool", RowKind.Tool,
+                JsonSerializer.SerializeToElement(new { state = "running", summary = $"update {i}" }), i));
+        _hub.Publish(session, batch);
+        using var socket = await OpenBulkAsync();
+        await SendAsync(socket, $$$"""{"t":"call","id":1,"feature":"rows","method":"after","args":{"session":"{{{session}}}","after":1,"limit":100000}}""");
+        using var answer = JsonDocument.Parse(await ReadAsync(socket));
+        var rows = answer.RootElement.GetProperty("result").GetProperty("rows").EnumerateArray().Select(RowWire.Read).ToArray();
+        Assert.Equal(Enumerable.Range(2, RowsFeature.PageLimit).Select(n => (long)n), rows.Select(row => row.Seq));
+        Assert.Equal(Enumerable.Range(1, RowsFeature.PageLimit).Select(n => (long)n), rows.Select(row => row.PrevSeq!.Value));
+    }
+
     // The window's socket dropping ends its rows sub like an unsub, and the session's last watcher going is told.
     [Fact]
     public async Task A_dropped_socket_s_rows_sub_leaves_its_session_unwatched()
