@@ -48,6 +48,8 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 
 ## One socket
 
+The authenticated `/socket` also carries the engine's six filtered topics through `stream:"engine"`, with snapshot/catch-up pages and reader acknowledgements; omitting `stream` preserves the existing topics.
+
 The page talks to the backend over one WebSocket, `/socket`, through one file, `app/src/lib/socket.ts`. The backend's
 side is `Assembly.Infrastructure/Socket/`: a feature registers its calls, saves and topics on `ICallRegistry`
 (`Assembly.Application/Common/Calls/`), and `SocketDispatcher` runs every call the same way (plan 5.2). A write's

@@ -5,6 +5,7 @@ using Assembly.Application.Features.Engine.Effects;
 using Assembly.Application.Features.Engine.Persistence;
 using Assembly.Application.Features.Engine.Reading;
 using Assembly.Application.Features.Engine.Retention;
+using Assembly.Application.Features.Engine.Recording;
 using EngineTopics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Engine;
@@ -24,6 +25,7 @@ public sealed class EngineRuntime : IAsyncDisposable
     public string Machine { get; }
     public EngineCommands Commands { get; }
     public EngineReader Reader { get; }
+    public UsageQueries Usage { get; }
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, Func<int> childLimit,
@@ -32,6 +34,7 @@ public sealed class EngineRuntime : IAsyncDisposable
         _topics = topics;
         Machine = EngineSchema.Open(db, time.GetUtcNow().ToUnixTimeMilliseconds());
         Reader = new(db, Machine);
+        Usage = new(db);
         Commands = new(Machine, childLimit);
         Publisher = new(db);
         _worker = new(db, Commands, Machine, time, effects, retention ?? new EngineRetention(

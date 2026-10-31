@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 
 using Assembly.Infrastructure.Mcp;
 using Assembly.Infrastructure.Socket;
+using Assembly.Infrastructure.Engine;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
@@ -53,7 +54,8 @@ public static class ApiServer
         });
         if (services is { Writer: { } writer, Topics: { } topics })
         {
-            var calls = new SocketDispatcher(writer, topics, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"));
+            var calls = new SocketDispatcher(writer, topics, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"),
+                services.Engine is { } engine ? new EngineSocketStream(engine) : null);
             foreach (var feature in services.Features ?? [])
                 feature.Register(calls);
             var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);

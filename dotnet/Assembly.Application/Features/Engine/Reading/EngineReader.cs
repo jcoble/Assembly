@@ -6,29 +6,36 @@ namespace Assembly.Application.Features.Engine.Reading;
 
 public sealed class EngineReader(IAppDatabase db, string machine)
 {
-    public StreamPage Since(string topic, string? key, long after, CancellationToken cancellationToken)
+    public long HighWatermark(CancellationToken cancellationToken)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        return ReadMeta(read, machine).High;
+    }
+
+    public StreamPage Since(string topic, string? key, long after, CancellationToken cancellationToken, long? through = null)
     {
         var kinds = DisplayQueries.Kinds(topic);
         using var read = db.OpenSnapshot(cancellationToken);
         var meta = ReadMeta(read, machine);
         if (after > meta.High) throw new ArgumentException("cursor_ahead");
+        if (through is { } cut) meta.High = Math.Min(meta.High, cut);
         if (after < meta.Floor) return new(after, after, [], false, true);
 
         // Bound the global scan before filtering: unrelated topics are not gaps.
         var scanned = read.Query("""
             SELECT machine,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json
-            FROM engine_event WHERE seq>$after ORDER BY seq LIMIT 200
+            FROM engine_event WHERE seq>$after AND seq<=$high ORDER BY seq LIMIT 200
             """, r => new EngineEvent(r.Text(0), r.Long(1), r.Text(2), r.Text(3), r.Text(4),
                 r.Long(5), r.Long(6), r.Long(7) != 0,
                 JsonSerializer.Deserialize(r.Text(8), EngineJson.Default.EngineEventData)!),
-            new SqlArg("$after", after));
-        var through = after;
+            new SqlArg("$after", after), new SqlArg("$high", meta.High));
+        var scannedThrough = after;
         List<EngineEvent> events = [];
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new StreamPage(after, meta.High, [], false, false),
             EngineJson.Default.StreamPage).Length;
         foreach (var item in scanned)
         {
-            if (item.Seq != through + 1) return new(after, through, events, false, true);
+            if (item.Seq != scannedThrough + 1) return new(after, scannedThrough, events, false, true);
             if (Matches(item, topic, key, kinds))
             {
                 var size = JsonSerializer.SerializeToUtf8Bytes(item, EngineJson.Default.EngineEvent).Length;
@@ -37,11 +44,11 @@ public sealed class EngineReader(IAppDatabase db, string machine)
                 bytes += size + 1;
                 events.Add(item);
             }
-            through = item.Seq;
+            scannedThrough = item.Seq;
         }
-        if (scanned.Count < 200 && (scanned.Count == 0 || through == scanned[^1].Seq) && through < meta.High)
-            return new(after, through, events, false, true);
-        return new(after, through, events, through < meta.High, false);
+        if (scanned.Count < 200 && (scanned.Count == 0 || scannedThrough == scanned[^1].Seq) && scannedThrough < meta.High)
+            return new(after, scannedThrough, events, false, true);
+        return new(after, scannedThrough, events, scannedThrough < meta.High, false);
     }
 
     private static bool Matches(EngineEvent item, string topic, string? key, string[] kinds)
@@ -55,6 +62,9 @@ public sealed class EngineReader(IAppDatabase db, string machine)
             _ => item.EntityId == key
         };
     }
+
+    public static bool Matches(EngineEvent item, string topic, string? key) =>
+        Matches(item, topic, key, DisplayQueries.Kinds(topic));
 
     public JsonElement? Entity(string entityKind, string entityId, CancellationToken cancellationToken)
     {
