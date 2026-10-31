@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Persistence;
+using Assembly.Application.Features.Engine.Runs;
 
 namespace Assembly.Application.Features.Engine.Sessions;
 
@@ -124,10 +125,17 @@ public static class SessionTransitions
     }
 
     private static CommandResult Commit(IWriteScope scope, CommandContext context, Session session,
-        string kind, IReadOnlyList<EffectDraft> effects) =>
-        EngineJournal.Commit(scope, context, session.Version, session.Epoch,
-            [new(kind, "session", context.EntityId, session.Version, false,
-                new(context.EntityId, session.RunId, null, session.ParentId, session.State, session.Epoch))], effects);
+        string kind, IReadOnlyList<EffectDraft> effects)
+    {
+        List<EventDraft> events = [new(kind, "session", context.EntityId, session.Version, false,
+            new(context.EntityId, session.RunId, null, session.ParentId, session.State, session.Epoch))];
+        var runs = scope.Query("""
+            SELECT id FROM engine_run WHERE owner_session_id=$session
+            UNION SELECT run_id FROM engine_step WHERE session_id=$session
+            """, r => r.Text(0), new SqlArg("$session", context.EntityId));
+        foreach (var run in runs) events.AddRange(RunTransitions.Recompute(scope, context, run));
+        return EngineJournal.Commit(scope, context, session.Version, session.Epoch, events, effects);
+    }
 
     private static Session? Find(IWriteScope scope, string id) => scope.QueryFirst("""
         SELECT version,epoch,state,activity_state,parent_id,run_id FROM engine_session WHERE id=$id

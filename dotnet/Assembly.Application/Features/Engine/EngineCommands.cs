@@ -3,6 +3,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Persistence;
 using Assembly.Application.Features.Engine.Sessions;
+using Assembly.Application.Features.Engine.Runs;
 
 namespace Assembly.Application.Features.Engine;
 
@@ -27,6 +28,8 @@ public sealed class EngineCommands
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
+                RunCommand run => RunTransitions.Apply(scope, context, run),
+                StepCommand step => StepTransitions.Apply(scope, context, step),
                 SessionCommand session => SessionTransitions.Apply(scope, context, session, _childLimit()),
                 _ => new(false, false, "unsupported_command", context.ExpectedVersion, 0, context.Epoch)
             };
