@@ -16,7 +16,9 @@ internal sealed class UnixPtyStarter : IPtyStarter
     private const string Child =
         "use POSIX (); my ($tty, $ctty) = splice @ARGV, 0, 2; POSIX::setsid() or die \"setsid: $!\\n\";"
         + " open(my $t, '+<', $tty) or die \"open $tty: $!\\n\"; defined ioctl($t, $ctty, 0) or die \"TIOCSCTTY: $!\\n\";"
-        + " POSIX::dup2(fileno $t, $_) for 0 .. 2; close $t if fileno($t) > 2; exec { $ARGV[0] } @ARGV or die \"exec $ARGV[0]: $!\\n\"";
+        + " POSIX::dup2(fileno $t, $_) for 0 .. 2; close $t if fileno($t) > 2;"
+        // Launchers may ignore these signals; exec preserves SIG_IGN unless the child resets it first.
+        + " $SIG{INT} = $SIG{QUIT} = 'DEFAULT'; exec { $ARGV[0] } @ARGV or die \"exec $ARGV[0]: $!\\n\"";
 
     public IPty Start(PtyRequest request)
     {

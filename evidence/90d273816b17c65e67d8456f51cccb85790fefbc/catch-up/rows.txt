@@ -1,0 +1,28 @@
+Commit: 90d273816b17c65e67d8456f51cccb85790fefbc
+Owned SSH tunnel PID: 392599
+Remote session: a810c3e0-385a-4ff6-8d37-d315cd7c9b1c
+Remote run: 9b15fa09-f369-474f-8ed7-9f1dfef89fef
+Before stop: remote 30 rows, last seq 30; desktop streamed 30, last seq 30; turn running
+assembly-dotnet-rows stopped
+lane rows: box port 9847, unit assembly-dotnet-rows, box data ~/assembly-dotnet-rows
+Restarting only assembly-dotnet-rows
+total        used        free      shared  buff/cache   available
+Mem:              31           6           7           0          18          25
+Swap:              7           3           4
+assembly-dotnet-rows runs 90d273816b17c65e67d8456f51cccb85790fefbc on Workbox Test at 127.0.0.1:9847; its token is in ~/.config/assembly-dotnet-rows/env there
+lane rows: box port 9847, unit assembly-dotnet-rows, box data ~/assembly-dotnet-rows
+active
+assembly-dotnet-rows.service: Consumed 7.689s CPU time.
+Started assembly-dotnet-rows.service - .NET remote host for Assembly (dotnet/Assembly.Remote).
+listening on 127.0.0.1:9847
+home:  /home/blackcolours/assembly-dotnet-rows/serve
+token: in /home/blackcolours/.config/assembly-dotnet-rows/env
+Remote final row: {"sessionId":"a810c3e0-385a-4ff6-8d37-d315cd7c9b1c","seq":37,"runId":"9b15fa09-f369-474f-8ed7-9f1dfef89fef","itemId":null,"kind":"turn","payload":{"state":"failed"},"createdAt":1793311238647,"prevSeq":36}
+PASS: desktop stored and streamed every remote seq exactly once in order; 37 stored rows match remote through last seq 37
+Remote sequences: 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37
+Streamed sequences: 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37
+Stored history may omit compacted message deltas by RowStore design; equality compares all retained raw rows.
+Remote SHA256: 194957a6ca90fde75967fa6de6b2f372c145dd563b7652eba10531a286ff942d
+Desktop SHA256: 194957a6ca90fde75967fa6de6b2f372c145dd563b7652eba10531a286ff942d
+Copied sequences: 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37
+Owned SSH tunnel stopped PID: 392599

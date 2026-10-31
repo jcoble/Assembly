@@ -83,10 +83,32 @@ pub struct BoardPageResult {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct BoardTaskResult {
+    #[serde(default)]
+    pub steps: Vec<BoardStep>,
     pub questions: Vec<BoardQuestion>,
     pub feed: Vec<BoardEvent>,
     pub next_before_seq: Option<i64>,
     pub next_question_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct BoardStep {
+    pub index: i32,
+    pub text: String,
+    pub tool: Option<String>,
+    pub detail: Option<String>,
+    pub state: String,
+    pub badge: Option<String>,
+    pub explanation: Option<String>,
+    pub progress: Option<i32>,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub attempt: Option<i32>,
+    pub max_attempts: Option<i32>,
+    pub question_key: Option<String>,
+    pub required_scope: Option<String>,
+    pub scope_granted: Option<bool>,
 }
 
 /// The `board` topic's item: which card changed. It carries no page; the window reads one.
@@ -129,3 +151,7 @@ pub struct BoardAnswerArgs {
 /// The answer's acceptance. The window reads none of its fields; decoding it checks the call answered with one.
 #[derive(Debug, Deserialize)]
 pub struct BoardAnswerResult {}
+
+#[cfg(test)]
+#[path = "board_payload_tests.rs"]
+mod tests;

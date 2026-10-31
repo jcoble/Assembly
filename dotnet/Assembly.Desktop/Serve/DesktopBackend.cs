@@ -194,6 +194,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
             boardMirror = startup is { } connected ? new RemoteWorkflowMirror(startupName!, () => connections.StartupSnapshot(startupName)?.Config,
                 boardQueries, boardTransitions, connected.Unreachable) : null;
+            if (boardMirror is not null)
+                boardMirror.AnswerDelivered += (sessionId, runId) =>
+                    connections.StartupSnapshot(boardMirror.Name)?.Machine.WatchRun(sessionId, runId);
             var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
             clock.Ticked += machinesFeature.Tick;
             boardMachines = boardMirror is null ? null : topics.Subscribe("machines", null, _ =>
@@ -212,7 +215,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, () => limits.UnfinishedHelpers, engineEffects);
             engineStarted?.Invoke(engine);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(terminals), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore),

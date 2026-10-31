@@ -101,6 +101,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
                         catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
                         return;
                     }
+                    var followed = _active.TryGetValue(name, out var prior) ? prior.Machine.FollowedSessions : [];
                     await CleanupAsync(name);
                     var profile = _store.Get(name, CancellationToken.None);
                     if (profile is null) { _status.Remove(name); return; }
@@ -115,12 +116,12 @@ internal sealed class RemoteConnections : IAsyncDisposable
                         tunnel = opened.Tunnel;
                         stop.Token.ThrowIfCancellationRequested();
                         if (tunnel is RemoteTunnel ssh) ssh.Exited += () => scoped.Unreachable(name, "ssh tunnel exited");
-                        var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded);
+                        var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded, _topics);
                         var outbox = new RemoteOutbox(remote, _sessions, _hub, _machines.Named(null)!, _log);
                         _active[name] = (remote, outbox, tunnel, scoped, opened.Config with { Name = name });
                         tunnel = null;
                         _machines.Set(remote);
-                        remote.WatchRunning(_store.RunningTurns(name), _store.RunningHelpers(name));
+                        remote.WatchRunning(followed.Concat(_store.RunningTurns(name)), _store.RunningHelpers(name));
                         if (probe) await _feature.ConnectAsync(remote, stop.Token);
                     }
                     catch (OperationCanceledException) when (stop.IsCancellationRequested) { }

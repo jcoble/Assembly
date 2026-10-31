@@ -61,7 +61,7 @@ public static class ServeRun
         boardTransitions.Recover();
         var store = RowStore.Open(db);
         var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts);
-        using var hub = new LiveHub(store);
+        using var hub = new LiveHub(store, topics: topics);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var agents = launcher is null ? AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)) : null;
@@ -84,7 +84,7 @@ public static class ServeRun
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
         await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, () => limits.UnfinishedHelpers, engineEffects);
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(terminals), workflowCalls], board, Engine: engine), options.Port, out _,
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines)], board, Engine: engine), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

@@ -96,6 +96,11 @@ impl Preferences {
         })
     }
 
+    /// The terminal's face, text size and line height.
+    pub fn terminal_text(cx: &App) -> (SharedString, Pixels, Pixels) {
+        Self::read(cx, Appearance::terminal_text)
+    }
+
     /// Sets `key` to `value` here at once and saves it. With no socket the edit isn't made; a save the backend
     /// doesn't take puts back the value it has. Either way the page says why.
     pub fn save(key: &'static str, value: Value, cx: &mut App) {

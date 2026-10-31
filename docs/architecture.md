@@ -15,7 +15,8 @@ here updates this file in the same commit. Every other commit says `Architecture
   small `src/core/` (with the one socket client in `core/socket/`, the one owner of
   native views in `core/native_views/`, the backend launcher in `core/backend/`, the palette's command list in
   `core/commands/`) and one folder per
-  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that.
+  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that. The Terminal tab, `features/terminal/`,
+  keeps an `alacritty_terminal` grid fed by the backend's `terminal` topic and draws it with GPUI text.
 - `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine; both hosts start the engine runtime.
 
 ## The backend: a core in layers, the rest by feature
@@ -50,6 +51,11 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 
 The authenticated `/socket` also carries the engine's six filtered topics through `stream:"engine"`, with snapshot/catch-up pages and reader acknowledgements; omitting `stream` preserves the existing topics.
 
+`/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
+For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;
+output is relayed onto the local terminal topic. The [TSK-1639 task](https://app.notion.com/p/408394b0689d8122911ae831ac180542)
+holds the terminal routing decisions and verification.
+
 The page talks to the backend over one WebSocket, `/socket`, through one file, `app/src/lib/socket.ts`. The backend's
 side is `Assembly.Infrastructure/Socket/`: a feature registers its calls, saves and topics on `ICallRegistry`
 (`Assembly.Application/Common/Calls/`), and `SocketDispatcher` runs every call the same way (plan 5.2). A write's
@@ -59,8 +65,9 @@ after its feature, by key, which is how `socket.ts` holds a key while the window
 (plan 5.9). A host hands its features to `ApiServer` in `ApiServices.Features`, which registers them on the socket;
 the desktop's first is preferences (B7). The socket exists from plan step B4, and features move onto it from B7; the
 page still uses `app/src/lib/call.ts` and `Assembly.Infrastructure/Http/`, their HTTP path, until its own switch, and
-the `/live` socket carries the rows. The only other HTTP is
-`/mcp`, which the agents use.
+the `/live` socket carries the page's rows. A remote session's rows reach the desktop over the machine socket instead
+(the `rows` topic and the bounded `rows/after` read on the remote's `/socket`), reopened on the backend clock when it
+drops. The only other HTTP is `/mcp`, which the agents use.
 
 ## Where a new feature goes
 

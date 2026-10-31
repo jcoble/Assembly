@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use gpui_kit::SharedString;
+use gpui_kit::{Pixels, SharedString, px};
 use serde_json::Value;
 
 pub use super::number_setting::NumberSetting;
@@ -110,6 +110,13 @@ impl Appearance {
 
     pub fn terminal_font(&self) -> SharedString {
         self.font(TERMINAL_FONT).unwrap_or_else(|| self.code_font())
+    }
+
+    /// The terminal's face, text size and line height.
+    pub fn terminal_text(&self) -> (SharedString, Pixels, Pixels) {
+        let size = self.number(&TERMINAL_FONT_SIZE);
+        let line_height = size * self.number(&TERMINAL_LINE_HEIGHT);
+        (self.terminal_font(), px(size), px(line_height))
     }
 }
 

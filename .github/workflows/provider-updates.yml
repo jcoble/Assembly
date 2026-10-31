@@ -1,0 +1,93 @@
+name: provider adapters
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/provider-updates.yml'
+      - 'scripts/package-adapters*'
+  pull_request:
+    paths:
+      - '.github/workflows/provider-updates.yml'
+      - 'scripts/package-adapters*'
+permissions:
+  contents: read
+concurrency:
+  group: provider-adapters-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      versions: ${{ steps.versions.outputs.versions }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - run: node --test scripts/package-adapters.test.ts
+      - id: versions
+        run: node scripts/package-adapters.ts resolve
+  package:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: darwin-arm64
+          - runner: macos-15-intel
+            target: darwin-x64
+          - runner: ubuntu-24.04
+            target: linux-x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Package and initialize both adapters from the extracted archive
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSIONS: ${{ needs.resolve.outputs.versions }}
+        run: node scripts/package-adapters.ts build "$TARGET" "$VERSIONS" "$RUNNER_TEMP/adapters"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: adapters-${{ matrix.target }}
+          path: ${{ runner.temp }}/adapters/assembly-adapters-*
+          if-no-files-found: error
+          retention-days: 3
+  publish:
+    needs: [resolve, package]
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: adapters-*
+          merge-multiple: true
+          path: adapters
+      - name: Publish one complete immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: assembly-providers-${{ github.run_id }}-${{ github.run_attempt }}
+          COMMIT: ${{ github.sha }}
+          VERSIONS: ${{ needs.resolve.outputs.versions }}
+        run: node scripts/package-adapters.ts publish adapters "$VERSIONS" "$TAG" "$COMMIT"

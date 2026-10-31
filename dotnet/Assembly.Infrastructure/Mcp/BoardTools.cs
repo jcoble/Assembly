@@ -82,7 +82,7 @@ public sealed class BoardTools(SessionStore sessions, SessionRegistry registry, 
     {
         try
         {
-            if (args.ValueKind == JsonValueKind.Undefined) return ("bad_args", true);
+            if (args.ValueKind != JsonValueKind.Object || !args.TryGetProperty("steps", out _)) return ("bad_args", true);
             var input = args.Deserialize(WorkflowJson.Default.BoardUpdateArgs) ?? throw new CallFailed("invalid_argument");
             return (JsonSerializer.Serialize(Update(caller, input), WorkflowJson.Default.BoardUpdateResult), false);
         }
@@ -101,13 +101,23 @@ public sealed class BoardTools(SessionStore sessions, SessionRegistry registry, 
 
     private const string Schema = """
         {"type":"object","additionalProperties":false,
-         "required":["taskKey","title","state","summary","taskUrl","prUrl","changedPaths","question","answerReceived"],
+         "required":["taskKey","title","state","summary","taskUrl","prUrl","changedPaths","question","answerReceived","steps"],
          "properties":{
           "taskKey":{"type":"string","maxLength":80},"title":{"type":"string","maxLength":120},
           "state":{"type":"string","enum":["queued","running","paused","waiting","completed","failed","cancelled"]},
           "summary":{"type":"string","maxLength":600},"taskUrl":{"type":["string","null"],"maxLength":2048},
           "prUrl":{"type":["string","null"],"maxLength":2048},
           "changedPaths":{"type":["array","null"],"maxItems":32,"items":{"type":"string","maxLength":240}},
+          "steps":{"type":["array","null"],"items":{"type":"object","additionalProperties":false,
+            "required":["index","text","tool","detail","state","badge","explanation","progress","startedAt","endedAt","attempt","maxAttempts","questionKey","requiredScope","scopeGranted"],
+            "properties":{"index":{"type":"integer"},"text":{"type":"string"},
+             "tool":{"type":["string","null"]},"detail":{"type":["string","null"]},
+             "state":{"type":"string","enum":["future","running","done","failed","retried","waiting","skipped","closed"]},
+             "badge":{"type":["string","null"],"enum":[null,"needs-you","high-impact","changed","answered","approved"]},
+             "explanation":{"type":["string","null"]},"progress":{"type":["integer","null"],"minimum":0,"maximum":100},
+             "startedAt":{"type":["string","null"],"format":"date-time"},"endedAt":{"type":["string","null"],"format":"date-time"},
+             "attempt":{"type":["integer","null"]},"maxAttempts":{"type":["integer","null"]},
+             "questionKey":{"type":["string","null"]},"requiredScope":{"type":["string","null"]},"scopeGranted":{"type":["boolean","null"]}}}},
           "question":{"type":["object","null"],"additionalProperties":false,
             "required":["questionKey","expectedGeneration","kind","prompt","recommendation"],
             "properties":{"questionKey":{"type":"string","maxLength":80},"expectedGeneration":{"type":"integer","minimum":0},

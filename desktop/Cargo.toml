@@ -11,6 +11,7 @@ gpui-fps = "=0.8.1"
 libc = "=0.2.191"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }
+alacritty_terminal = "=0.26.0"
 base64 = "=0.22.1"
 chrono = { version = "=0.4.45", default-features = false, features = ["clock"] }
 tungstenite = "=0.27.0"

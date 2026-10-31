@@ -15,7 +15,7 @@ namespace Assembly.Infrastructure.Socket;
 /// runs its writes one at a time in arrival order. A frame over 4 MB, or more than 16 MB waiting to be sent, closes
 /// it. Closing cancels its reads; writes already queued still commit.
 /// </summary>
-internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls, TimeProvider time, bool bulk = false)
+internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls, TimeProvider time, bool bulk = false, bool terminal = false)
 {
     internal const int Protocol = 1;
     internal const int MaxFrame = 4 * 1024 * 1024;
@@ -43,6 +43,9 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
 
     /// <summary>True on <c>/socket/bulk</c>, which serves only the bulk calls.</summary>
     public bool Bulk => bulk;
+
+    /// <summary>True on <c>/socket/terminal</c>, which serves only terminal output.</summary>
+    public bool Terminal => terminal;
 
     /// <summary>Fires as the socket closes; a read's token is linked to it, a write's isn't.</summary>
     public CancellationToken Closed => _closed.Token;

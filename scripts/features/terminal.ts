@@ -1,12 +1,12 @@
-// Terminal lifecycle on the case's host; ownership refusals on the desktop. Tokens stay in hello/headers.
+// Terminal lifecycle on the case's host; remote routing through the desktop. Tokens stay in hello/headers.
 import assert from 'node:assert/strict';
 
 const env = process.env;
 type Frame = { t: string; id?: number; sub?: number; result?: any; code?: string; message?: string;
-  row?: { seq: number; prevSeq: number; data?: string; exit?: number } };
+  item?: { seq: number; prevSeq: number; data?: string; exit?: number } };
 
 async function connect(api: string, token: string) {
-  const socket = new WebSocket(`${api.replace(/^http/, 'ws')}/socket`);
+  const socket = new WebSocket(`${api.replace(/^http/, 'ws')}/socket/terminal`);
   const frames: Frame[] = [];
   let changed: (() => void) | undefined;
   let failure: Error | undefined;
@@ -50,7 +50,7 @@ async function connect(api: string, token: string) {
       socket.send(JSON.stringify({ t: 'sub', id: sub, topic: 'terminal', key: terminal, after: 0 }));
       const state = await wait(frame => frame.sub === sub || frame.id === sub);
       assert.equal(state.t, 'state');
-      return async () => (await wait(frame => frame.t === 'rows' && frame.sub === sub)).row!;
+      return async () => (await wait(frame => frame.t === 'change' && frame.sub === sub)).item!;
     },
     close() { socket.onclose = null; socket.close(); }
   };
@@ -80,6 +80,7 @@ try {
   let exit: number | undefined;
   const read = async () => {
     const row = await next();
+    if (row.seq <= offset) return;
     assert.equal(row.prevSeq, offset, 'output has no gaps or repeated bytes');
     if (row.data != null) {
       const chunk = Buffer.from(row.data, 'base64');
@@ -91,6 +92,9 @@ try {
       exit = row.exit;
     }
   };
+  const kept = await host.call('read', { terminal, offset: 0 });
+  bytes = Buffer.from(kept.data, 'base64');
+  offset = kept.offset + bytes.length;
   while (!bytes.toString().includes('terminal-ready')) await read();
   const replay = await host.call('read', { terminal, offset: 0 });
   assert.equal(replay.offset, 0);
@@ -122,16 +126,20 @@ try {
   assert(response.ok, `create remote owner: HTTP ${response.status}`);
   const remote = await response.json() as { sessionId: string };
   const before = (await desktop.call('list')).map((item: any) => item.id).sort();
-  for (const owner of [`terminal-unknown-${crypto.randomUUID()}`, remote.sessionId]) {
-    for (const cwd of [undefined, env.CHECK4_REPO]) {
-      const answer = await desktop.request('start', { owner, cwd });
-      assert.equal(answer.t, 'error');
-      assert.equal(answer.code, 'failed');
-      assert.match(answer.message!, owner === remote.sessionId ? /terminal.*workbox-test/i : /unknown.*owner/i);
-      assert.deepEqual((await desktop.call('list')).map((item: any) => item.id).sort(), before);
-    }
+  for (const cwd of [undefined, env.CHECK4_REPO]) {
+    const answer = await desktop.request('start', { owner: `terminal-unknown-${crypto.randomUUID()}`, cwd });
+    assert.equal(answer.t, 'error');
+    assert.equal(answer.code, 'failed');
+    assert.match(answer.message!, /unknown.*owner/i);
+    assert.deepEqual((await desktop.call('list')).map((item: any) => item.id).sort(), before);
   }
-  console.log('ok unknown and remote owners are refused with and without a folder, leaving no terminal');
+  console.log('ok unknown owners are refused with and without a folder');
+  const routed = await desktop.call('start', { owner: remote.sessionId, shell: '/bin/sh' });
+  assert.match(routed.id, /^assembly-remote-terminal:\/\/workbox-test\//);
+  assert.equal((await desktop.call('start', { owner: remote.sessionId })).id, routed.id);
+  assert((await desktop.call('list', { owner: remote.sessionId })).some((item: any) => item.id === routed.id));
+  await desktop.call('close', { terminal: routed.id });
+  console.log('ok remote shell routes through the desktop and list/start reuse it');
 } catch (error) {
   console.log(`fail terminal lifecycle: ${(error as Error).message}`);
   process.exitCode = 1;

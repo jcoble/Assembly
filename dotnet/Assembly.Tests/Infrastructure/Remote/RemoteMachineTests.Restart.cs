@@ -99,90 +99,41 @@ public sealed partial class RemoteMachineTests
 
         await _desktop!.DisposeAsync();
         ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
-        // The first /live fails as a dropped link would; the next one opens and has nothing newer.
+        // The first machine socket drops. Its next subscription catches up on the same helper.
         var links = 0;
         await using var flaky = await StubAsync(app =>
         {
             app.UseWebSockets();
-            app.Map("/live", async (HttpContext context) =>
+            app.Map("/socket/{**path}", async (HttpContext context) =>
             {
-                if (Interlocked.Increment(ref links) == 1)
-                {
-                    context.Response.StatusCode = 500;
-                    return;
-                }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
+                if (!context.Request.Path.Value!.EndsWith("bulk", StringComparison.Ordinal) && Interlocked.Increment(ref links) == 1) return;
                 try
                 {
-                    await Task.Delay(Timeout.Infinite, context.RequestAborted);
+                    var buffer = new byte[4096];
+                    while (true)
+                    {
+                        var received = await socket.ReceiveAsync(buffer, context.RequestAborted);
+                        if (received.MessageType == WebSocketMessageType.Close) break;
+                        using var doc = JsonDocument.Parse(buffer.AsMemory(0, received.Count));
+                        var frame = doc.RootElement;
+                        var reply = frame.GetProperty("t").GetString() switch
+                        {
+                            "hello" => "{\"t\":\"welcome\",\"protocol\":1,\"machine\":\"box\"}",
+                            "sub" => "{\"t\":\"state\",\"sub\":" + frame.GetProperty("id") + ",\"seq\":" + frame.GetProperty("after") + ",\"items\":[]}",
+                            "call" => "{\"t\":\"result\",\"id\":1,\"result\":{\"rows\":[]}}",
+                            _ => null,
+                        };
+                        if (reply is not null) await socket.SendAsync(Encoding.UTF8.GetBytes(reply), WebSocketMessageType.Text, true, context.RequestAborted);
+                    }
                 }
-                catch (OperationCanceledException)
-                {
-                }
+                catch (Exception error) when (error is WebSocketException or OperationCanceledException) { }
             });
         });
         _desktop = await DesktopOnAsync(flaky, _desktopHome);
 
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
         Assert.True(links >= 2);
-    }
-
-    [Fact]
-    public async Task A_follower_whose_link_closes_at_once_reconnects_with_backoff()
-    {
-        var (parent, helperId, _) = await RemoteHelperIdleAsync();
-
-        await _desktop!.DisposeAsync();
-        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
-        // Every /live opens and closes at once, so the follower never settles.
-        var links = 0;
-        await using var closing = await StubAsync(app =>
-        {
-            app.UseWebSockets();
-            app.Map("/live", async (HttpContext context) =>
-            {
-                Interlocked.Increment(ref links);
-                using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted);
-            });
-        });
-        _desktop = await DesktopOnAsync(closing, _desktopHome);
-
-        // Backoff of 1 s, then 2 s: connects at about 0, 1 and 3 s.
-        await Until(() => Volatile.Read(ref links) >= 1);
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
-        Assert.InRange(Volatile.Read(ref links), 1, 3);
-        Assert.Equal("running", await HelperStateAsync(parent, helperId));
-    }
-
-    [Fact]
-    public async Task A_follower_whose_link_copies_a_row_and_then_closes_reconnects_after_a_second_each_time()
-    {
-        var (parent, helperId, _) = await RemoteHelperIdleAsync();
-
-        await _desktop!.DisposeAsync();
-        ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
-        // Every /live sends the next row and then closes: a healthy link, so the backoff stays at 1 s.
-        var links = 0;
-        await using var progressing = await StubAsync(app =>
-        {
-            app.UseWebSockets();
-            app.Map("/live", async (HttpContext context) =>
-            {
-                Interlocked.Increment(ref links);
-                var after = long.Parse(context.Request.Query["after"]!, CultureInfo.InvariantCulture);
-                using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                var row = $$$"""{"type":"row","row":{"sessionId":"{{{helperId}}}","seq":{{{after + 1}}},"runId":null,"itemId":null,"kind":"text","payload":{"text":"x"},"createdAt":1,"prevSeq":{{{after}}}}}""";
-                await socket.SendAsync(Encoding.UTF8.GetBytes(row), WebSocketMessageType.Text, endOfMessage: true, context.RequestAborted);
-                await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, context.RequestAborted);
-            });
-        });
-        _desktop = await DesktopOnAsync(progressing, _desktopHome);
-
-        // Connects at about 0, 1, 2 ... 6 s; doubling would give 0, 1 and 3.
-        await Until(() => Volatile.Read(ref links) >= 1);
-        await Task.Delay(TimeSpan.FromSeconds(6.5));
-        Assert.True(Volatile.Read(ref links) >= 5, $"{links} connects");
     }
 
     [Fact]
