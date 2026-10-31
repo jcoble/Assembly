@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -105,40 +106,53 @@ public sealed partial class MachinesSocketTests
                 Interlocked.Increment(ref TitleHits);
                 return Results.Text("boom", statusCode: 500);
             });
-            _app.Map("/live", async (HttpContext context) =>
+            _app.Map("/socket/{**path}", async (HttpContext context) =>
             {
-                Interlocked.Increment(ref LiveHits);
-                var session = context.Request.Query["session"].ToString();
-                lock (_liveOpen)
-                {
-                    if (_liveOpen.Values.Sum() == 0) _noLive = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                    MostLiveAtOnce = Math.Max(MostLiveAtOnce, _liveOpen[session] = _liveOpen.GetValueOrDefault(session) + 1);
-                    Seen(session).TrySetResult();
-                }
                 using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                var aborted = context.RequestAborted;
+                var subscriptions = new List<string>();
+                async Task Send(string json) => await socket.SendAsync(Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, context.RequestAborted);
                 try
                 {
-                    foreach (var row in LiveRows)
-                        await socket.SendAsync(Encoding.UTF8.GetBytes(row), WebSocketMessageType.Text, endOfMessage: true, aborted);
-                    while (Pings)
+                    var buffer = new byte[16384];
+                    while (true)
                     {
-                        await socket.SendAsync("""{"type":"ping"}"""u8.ToArray(), WebSocketMessageType.Text, endOfMessage: true, aborted);
-                        await Task.Delay(300, aborted);
+                        var received = await socket.ReceiveAsync(buffer, context.RequestAborted);
+                        if (received.MessageType == WebSocketMessageType.Close) break;
+                        using var frame = JsonDocument.Parse(buffer.AsMemory(0, received.Count));
+                        var json = frame.RootElement;
+                        switch (json.GetProperty("t").GetString())
+                        {
+                            case "hello":
+                                await Send("""{"t":"welcome","protocol":1,"machine":"box"}""");
+                                break;
+                            case "sub":
+                                var session = json.GetProperty("key").GetString()!;
+                                subscriptions.Add(session);
+                                Interlocked.Increment(ref LiveHits);
+                                lock (_liveOpen)
+                                {
+                                    if (_liveOpen.Values.Sum() == 0) _noLive = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                                    MostLiveAtOnce = Math.Max(MostLiveAtOnce, _liveOpen[session] = _liveOpen.GetValueOrDefault(session) + 1);
+                                    Seen(session).TrySetResult();
+                                }
+                                await Send($$"""{"t":"state","sub":{{json.GetProperty("id")}},"seq":{{json.GetProperty("after")}},"items":[]}""");
+                                break;
+                            case "unsub":
+                                // This fixture's follower tests only unsubscribe the oldest active session.
+                                Close(subscriptions[0]);
+                                subscriptions.RemoveAt(0);
+                                break;
+                            case "call":
+                                var after = json.GetProperty("args").GetProperty("after").GetInt64();
+                                var rows = LiveRows.Select(row => JsonDocument.Parse(row).RootElement.GetProperty("row").Clone())
+                                    .Where(row => row.GetProperty("seq").GetInt64() > after).Select(row => row.GetRawText());
+                                await Send("{\"t\":\"result\",\"id\":1,\"result\":{\"rows\":[" + string.Join(',', rows) + "]}}");
+                                break;
+                        }
                     }
-                    await Task.Delay(Timeout.Infinite, aborted);
                 }
-                catch (Exception error) when (error is OperationCanceledException or WebSocketException)
-                {
-                }
-                finally
-                {
-                    lock (_liveOpen)
-                    {
-                        _liveOpen[session]--;
-                        if (_liveOpen.Values.Sum() == 0) _noLive.TrySetResult();
-                    }
-                }
+                catch (Exception error) when (error is OperationCanceledException or WebSocketException) { }
+                finally { foreach (var session in subscriptions) Close(session); }
             });
             _app.MapGet("/agents", (HttpContext context) =>
             {
@@ -170,6 +184,15 @@ public sealed partial class MachinesSocketTests
             _app.MapPost("/runs/{id}/stop", () => Results.Text(StopStatus == 500 ? "boom" : "", statusCode: StopStatus));
             await _app.StartAsync();
             Address = new Uri(_app.Urls.Single());
+        }
+
+        private void Close(string session)
+        {
+            lock (_liveOpen)
+            {
+                _liveOpen[session]--;
+                if (_liveOpen.Values.Sum() == 0) _noLive.TrySetResult();
+            }
         }
 
         public async ValueTask DisposeAsync()

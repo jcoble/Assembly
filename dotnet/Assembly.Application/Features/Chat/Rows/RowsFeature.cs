@@ -75,6 +75,27 @@ internal sealed class RowsFeature : IFeature
             machine?.Watch(session);
             return Task.FromResult(PageJson(page, machine?.ActiveRun(session)));
         }, bulk: true);
+        calls.Read(Topic, "after", RowJsonContext.Rows.JsonElement, RowJsonContext.Rows.JsonElement, (args, call) =>
+        {
+            call.Cancellation.ThrowIfCancellationRequested();
+            var session = args.GetProperty("session").GetString() ?? throw new CallFailed("session is required");
+            var after = args.GetProperty("after").GetInt64();
+            var limit = args.TryGetProperty("limit", out var requested) ? requested.GetInt32() : PageLimit;
+            var rows = _store.RowsAfter(session, after, Math.Clamp(limit, 1, PageLimit));
+            // A read is one frame, capped at 4 MB even on bulk. Leave space for its result envelope.
+            var json = new List<string>();
+            var bytes = 0;
+            foreach (var row in rows)
+            {
+                var wire = RowWire.ToJson(row);
+                var size = Encoding.UTF8.GetByteCount(wire) + 1;
+                if (bytes + size > 4 * 1024 * 1024 - 1024) break;
+                json.Add(wire);
+                bytes += size;
+            }
+            using var result = JsonDocument.Parse("{\"rows\":[" + string.Join(',', json) + "]}");
+            return Task.FromResult(result.RootElement.Clone());
+        }, bulk: true);
         calls.Read(Topic, "tool", RowJsonContext.Rows.ToolArgs, RowJsonContext.Rows.ToolDetail, async (args, call) =>
         {
             var tool = _sessions.Get(args.Session) is { } session

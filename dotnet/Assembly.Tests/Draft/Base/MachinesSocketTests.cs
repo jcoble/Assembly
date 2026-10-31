@@ -283,13 +283,13 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         _stub.DropVersion = false;
         _box.WatchRunning(["s2"], []);
         Assert.Equal(Change(1, Box(true, null)), await ReadAsync(socket));
-        await Until(() => _stub.LiveHits == 1);
+        await _stub.LiveSeenAsync("s2").WaitAsync(Wait);
         // The link counts once the follower's connect returns, just after the stub sees it.
         await Task.Delay(200);
         await SubAsync(socket, 2, "clock", "second");
         await TickAsync(socket);
 
-        await Until(() => _stub.LiveHits == 2);
+        await _stub.LiveSeenAsync("s1").WaitAsync(Wait);
     }
 
     [Fact]
