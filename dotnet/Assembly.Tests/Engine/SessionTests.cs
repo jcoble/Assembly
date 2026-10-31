@@ -1,6 +1,7 @@
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Sessions;
+using Assembly.Application.Features.Engine.Messages;
 
 namespace Assembly.Tests.Engine;
 
@@ -30,6 +31,31 @@ public sealed class SessionTests
         Assert.True(f.Apply(new SetSessionState("ended", null, null), "s", version: 1,
             actor: new(ActorKind.System, "adapter")).Applied);
         Assert.Equal("ended", f.State("engine_session", "s"));
+    }
+
+    [Theory]
+    [InlineData("idle", "idle")]
+    [InlineData("running", "idle")]
+    [InlineData("running", "ended")]
+    public void Stop_ack_clears_cancel_and_releases_held_messages(string initial, string acknowledgement)
+    {
+        using var f = new EngineFixture(); f.SeedSession("s", initial);
+        Assert.True(f.Apply(new StopSession(), "s").Applied);
+        Assert.True(f.Apply(new SendMessage(null, "s", "hello", "interrupt"), "m").Applied);
+        Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='stop'"));
+        Assert.True(f.Apply(new SetSessionState(acknowledgement, null, null), "s", version: 1,
+            actor: new(ActorKind.System, "adapter")).Applied);
+        Assert.Equal(0, f.Number("SELECT cancel_requested FROM engine_session WHERE id='s'"));
+        Assert.Equal(acknowledgement == "idle" ? "queued" : "failed", f.State("engine_message", "m"));
+        Assert.Equal(acknowledgement == "idle" ? null : "recipient_ended", f.Text("SELECT reason FROM engine_message"));
+        Assert.Equal(acknowledgement == "idle" ? 1 : 0, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
+        if (acknowledgement == "idle")
+        {
+            Assert.Equal("invalid_transition", f.Apply(new SetSessionState("idle", null, null), "s", version: 2,
+                actor: new(ActorKind.System, "adapter")).Error);
+            Assert.True(f.Apply(new MessageOutcome("delivered_to_turn", "turn-1", null), "m", version: 2,
+                actor: new(ActorKind.System, "adapter")).Applied);
+        }
     }
 
     public static IEnumerable<object[]> Edges()

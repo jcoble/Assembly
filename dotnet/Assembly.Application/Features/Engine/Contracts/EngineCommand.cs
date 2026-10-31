@@ -2,10 +2,13 @@ using System.Text.Json.Serialization;
 using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
 using Assembly.Application.Features.Engine.NeedsMe;
+using Assembly.Application.Features.Engine.Messages;
 
 namespace Assembly.Application.Features.Engine.Contracts;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(SendMessage), "send_message")]
+[JsonDerivedType(typeof(MessageOutcome), "message_outcome")]
 [JsonDerivedType(typeof(StartSession), "start_session")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]
 [JsonDerivedType(typeof(StopSession), "stop_session")]

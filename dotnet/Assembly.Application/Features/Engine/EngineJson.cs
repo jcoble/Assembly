@@ -3,6 +3,7 @@ using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
 using Assembly.Application.Features.Engine.NeedsMe;
+using Assembly.Application.Features.Engine.Messages;
 
 namespace Assembly.Application.Features.Engine;
 
@@ -10,6 +11,8 @@ namespace Assembly.Application.Features.Engine;
 [JsonSerializable(typeof(CommandContext))]
 [JsonSerializable(typeof(CommandResult))]
 [JsonSerializable(typeof(EngineCommand))]
+[JsonSerializable(typeof(SendMessage))]
+[JsonSerializable(typeof(MessageOutcome))]
 [JsonSerializable(typeof(StartSession))]
 [JsonSerializable(typeof(SetSessionState))]
 [JsonSerializable(typeof(StopSession))]

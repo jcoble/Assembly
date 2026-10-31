@@ -67,7 +67,8 @@ public static class EngineJournal
             scope.Execute("""
                 INSERT INTO engine_outbox(id,version,machine,created_ms,updated_ms,event_seq,session_id,run_id,kind,payload_json,state,attempt)
                 VALUES($id,0,$machine,$now,$now,$seq,$session,$run,$kind,$payload,'pending',0)
-                """, new("$id", effect.Kind == "answer" ? effect.Id : $"{context.CommandId:N}-{index}"), new("$machine", context.Machine), new("$now", context.NowMs),
+                """, new("$id", (effect.Kind is "answer" or "send" || effect.Kind == "stop" && effect.Id.StartsWith("message-stop/", StringComparison.Ordinal))
+                    ? effect.Id : $"{context.CommandId:N}-{index}"), new("$machine", context.Machine), new("$now", context.NowMs),
                 new("$seq", last), new("$session", effect.SessionId), new("$run", effect.RunId),
                 new("$kind", effect.Kind), new("$payload", effect.Payload.GetRawText()));
         }

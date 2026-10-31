@@ -3,13 +3,14 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Persistence;
 using Assembly.Application.Features.Engine.Runs;
+using Assembly.Application.Features.Engine.Messages;
 
 namespace Assembly.Application.Features.Engine.Sessions;
 
 public static class SessionTransitions
 {
     private sealed record Session(long Version, long Epoch, string State, string Activity,
-        string? ParentId, string? RunId);
+        string? ParentId, string? RunId, bool CancelRequested = false);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
         SessionCommand command, int childLimit)
@@ -90,8 +91,10 @@ public static class SessionTransitions
         if (string.IsNullOrWhiteSpace(command.State))
             return Refused(context, "bad_args", current);
         var from = current.State == "needs_me" ? current.Activity : current.State;
+        var stopAcknowledged = current.CancelRequested && command.State is "idle" or "ended";
         var allowed = (from, command.State) is ("starting", "idle") or ("idle", "running") or ("running", "idle")
-            or ("starting" or "idle" or "running", "lost" or "ended") or ("lost", "idle");
+            or ("starting" or "idle" or "running", "lost" or "ended") or ("lost", "idle")
+            || from == "idle" && command.State == "idle" && stopAcknowledged;
         if (!allowed)
             return Refused(context, "invalid_transition", current);
         var activity = command.State is "idle" or "running" ? command.State : current.Activity;
@@ -103,11 +106,22 @@ public static class SessionTransitions
         var updated = current with { Version = current.Version + 1, State = state, Activity = activity };
         scope.Execute("""
             UPDATE engine_session SET version=$version,updated_ms=$now,state=$state,activity_state=$activity,
-                provider_session_id=COALESCE($provider,provider_session_id),lost_ms=$lost WHERE id=$id
+                provider_session_id=COALESCE($provider,provider_session_id),lost_ms=$lost,
+                cancel_requested=CASE WHEN $ack=1 THEN 0 ELSE cancel_requested END WHERE id=$id
             """, new("$version", updated.Version), new("$now", context.NowMs), new("$state", state),
             new("$activity", activity), new("$provider", command.ProviderSessionId),
-            new("$lost", command.State == "lost" ? context.NowMs : null), new("$id", context.EntityId));
-        return Commit(scope, context, updated, "session.changed", []);
+            new("$lost", command.State == "lost" ? context.NowMs : null), new("$id", context.EntityId),
+            new("$ack", stopAcknowledged ? 1 : 0));
+        List<EffectDraft> effects = [];
+        List<EventDraft> events = [];
+        if (stopAcknowledged)
+            events.AddRange(MessageTransitions.ReleaseHeld(scope, context, context.EntityId, command.State == "ended", effects));
+        if (command.State == "ended")
+        {
+            var notification = MessageTransitions.ChildEnded(scope, context, context.EntityId, effects);
+            if (notification is not null) events.Add(notification);
+        }
+        return Commit(scope, context, updated, "session.changed", effects, events);
     }
 
     private static CommandResult Stop(IWriteScope scope, CommandContext context, Session current)
@@ -125,10 +139,11 @@ public static class SessionTransitions
     }
 
     private static CommandResult Commit(IWriteScope scope, CommandContext context, Session session,
-        string kind, IReadOnlyList<EffectDraft> effects)
+        string kind, IReadOnlyList<EffectDraft> effects, IReadOnlyList<EventDraft>? additionalEvents = null)
     {
         List<EventDraft> events = [new(kind, "session", context.EntityId, session.Version, false,
             new(context.EntityId, session.RunId, null, session.ParentId, session.State, session.Epoch))];
+        if (additionalEvents is not null) events.AddRange(additionalEvents);
         var runs = scope.Query("""
             SELECT id FROM engine_run WHERE owner_session_id=$session
             UNION SELECT run_id FROM engine_step WHERE session_id=$session
@@ -153,9 +168,9 @@ public static class SessionTransitions
     }
 
     private static Session? Find(IWriteScope scope, string id) => scope.QueryFirst("""
-        SELECT version,epoch,state,activity_state,parent_id,run_id FROM engine_session WHERE id=$id
+        SELECT version,epoch,state,activity_state,parent_id,run_id,cancel_requested FROM engine_session WHERE id=$id
         """, r => new Session(r.Long(0), r.Long(1), r.Text(2), r.Text(3),
-            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5)), new SqlArg("$id", id));
+            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5), r.Long(6) != 0), new SqlArg("$id", id));
 
     private static CommandResult Refused(CommandContext context, string error, Session? current = null) =>
         new(false, false, error, current?.Version ?? 0, 0, current?.Epoch ?? context.Epoch);
