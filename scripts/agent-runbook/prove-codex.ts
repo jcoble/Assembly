@@ -37,7 +37,7 @@ try {
     const id = started.thread.id;
     const turn = (text: string) => request('turn/start', { threadId: id, input: [{ type: 'text', text, text_elements: [] }] });
     await complete(() => turn('Reply READY only. Do not use tools.'));
-    const sentinel = 'resume-' + randomUUID();
+    const sentinel = 'resume-' + randomUUID().slice(0, 8);
     const saved = spawnSync(launcher, ['update', 'codex', id], { env, input: 'Task: isolated provider proof.\nNext: ' + sentinel, encoding: 'utf8' });
     assert.equal(saved.status, 0, saved.stderr);
     await complete(() => request('thread/compact/start', { threadId: id }));
@@ -49,7 +49,7 @@ try {
     assert.ok(contextEvents[1].run.entries.some((x: any) => x.kind === 'context' && x.text.includes(sentinel) && x.text.includes('# Recovery rules')));
     const read = spawnSync(launcher, ['read', 'codex', id], { env, encoding: 'utf8' });
     assert.match(read.stdout, /Checkpoint:/);
-    console.log(JSON.stringify({ provider, host: process.platform, thread: id, result: 'PASS', checkpointSaved: true, postCompactModelReadSavedState: true, hooks: events.filter(x => x.method === 'hook/completed').map(x => ({ event: x.run.eventName, status: x.run.status, durationMs: x.run.durationMs, contextCharacters: x.run.entries.filter((e: any) => e.kind === 'context').reduce((n: number,e: any) => n + e.text.length,0) })) }, null, 2));
+    console.log(JSON.stringify({ provider, host: process.platform, thread: id, result: 'PASS', savedNext: sentinel, modelReply: text.trim(), recoveryRulesPresent: true, checkpointSaved: true, postCompactModelReadSavedState: true, hooks: events.filter(x => x.method === 'hook/completed').map(x => ({ event: x.run.eventName, status: x.run.status, durationMs: x.run.durationMs, contextCharacters: x.run.entries.filter((e: any) => e.kind === 'context').reduce((n: number,e: any) => n + e.text.length,0) })) }, null, 2));
   }, env, message => {
     if ((message.method || '').startsWith('hook/')) events.push({ method: message.method, run: message.params?.run });
     if (message.method === 'turn/completed') onComplete(message);

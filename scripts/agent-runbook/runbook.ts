@@ -131,7 +131,11 @@ export function checkpoint(provider: string, id: string, event: any) {
 }
 export function recover(provider: string, id: string, binding: Binding, eventName = 'SessionStart') {
   let text: string;
-  try { text = readRunbook(binding); }
+  try {
+    text = readRunbook(binding);
+    const header = rules(binding.project);
+    if (!text.startsWith(header)) text = header + '\n' + text;
+  }
   catch (error) { text = rules(binding.project) + '\nRECOVERY BLOCKED: ' + (error as Error).message + '\nAsk the spawning parent / runbook owner for current state before affected work.'; }
   const guidance = binding.readOnly
     ? 'Check with your spawning parent (' + (binding.parent || binding.owner) + ') before resuming affected work. This binding is read-only; report updates to the parent.'

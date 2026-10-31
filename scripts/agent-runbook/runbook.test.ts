@@ -37,6 +37,7 @@ test('both providers reload short rules and real state, not full instruction fil
     assert.match(context, /Automatic checkpoint/);
     assert.doesNotMatch(context, /FULL_INSTRUCTION_SENTINEL/);
     assert.ok(context.indexOf('Recovery rules') < context.indexOf('Next:'));
+    assert.equal(context.match(/^# Recovery rules$/gm)?.length, 1, 'Managed recovery must not duplicate rules.');
     assert.ok(context.length <= 13000);
   }
 });
@@ -135,16 +136,39 @@ test('remote bindings use bounded read-only SSH and expose loss of access', t =>
   const f = fixture(t);
   const bin = join(f.home, 'bin'); mkdirSync(bin);
   const output = join(f.home, 'remote-output');
-  writeFileSync(output, '# Recovery rules\nRemote parent state');
+  writeFileSync(output, 'Task: remote parent\nNext: remote parent state');
   writeFileSync(join(bin, 'ssh'), '#!/bin/sh\ncat "$REMOTE_OUTPUT"\n', { mode: 0o755 });
   function run(args: string[], input = '') {
     return spawnSync(process.execPath, [cli.pathname, ...args], { cwd: f.cwd, input, encoding: 'utf8', env: { ...process.env, HOME: f.home, PATH: bin + ':' + process.env.PATH, REMOTE_OUTPUT: output } });
   }
   const bind = run(['bind', 'codex', 'remote-child', '--path', "/home/owner/it's a runbook.md", '--ssh', 'workbox', '--parent', 'claude:parent']);
   assert.equal(bind.status, 0, bind.stderr);
+  const success = run(['hook', 'codex'], JSON.stringify({ cwd: f.cwd, session_id: 'remote-child', hook_event_name: 'SessionStart', source: 'compact' }));
+  const context = JSON.parse(success.stdout).hookSpecificOutput.additionalContext;
+  assert.ok(context.startsWith('# Recovery rules\n'));
+  assert.match(context, /Next: remote parent state/);
+  assert.equal(readFileSync(output, 'utf8'), 'Task: remote parent\nNext: remote parent state');
   assert.notEqual(run(['update', 'codex', 'remote-child'], 'overwrite').status, 0);
   writeFileSync(join(bin, 'ssh'), '#!/bin/sh\nexit 255\n', { mode: 0o755 });
   const recovered = run(['hook', 'codex'], JSON.stringify({ cwd: f.cwd, session_id: 'remote-child', hook_event_name: 'SessionStart', source: 'compact' }));
   assert.equal(recovered.status, 0);
   assert.match(JSON.parse(recovered.stdout).hookSpecificOutput.additionalContext, /RECOVERY BLOCKED/);
+});
+
+
+test('plain bound runbooks always recover critical rules without changing the parent file', t => {
+  const f = fixture(t);
+  const path = join(f.home, 'plain-runbook.md');
+  const state = 'Task: bound parent proof\nNext: keep the approved step';
+  writeFileSync(path, state);
+  for (const provider of ['codex', 'claude']) {
+    const bound = f.run(['bind', provider, 'external-child', '--path', path, '--parent', provider + ':parent']);
+    assert.equal(bound.status, 0, bound.stderr);
+    const context = f.hook(provider, { hook_event_name: 'SessionStart', source: 'compact', session_id: 'external-child' }).hookSpecificOutput.additionalContext;
+    assert.ok(context.startsWith('# Recovery rules\n'), 'Bound recovery must start with the condensed critical rules.');
+    assert.match(context, /Never edit AGENTS/);
+    assert.match(context, /Next: keep the approved step/);
+    assert.match(context, /read-only/);
+    assert.equal(readFileSync(path, 'utf8'), state, 'Recovery must not modify the parent file.');
+  }
 });

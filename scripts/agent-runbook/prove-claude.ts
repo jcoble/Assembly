@@ -41,7 +41,7 @@ function run(args: string[]) {
 }
 try {
   run(['--session-id', id, 'Reply READY only.']);
-  const sentinel = 'resume-' + randomUUID();
+  const sentinel = 'resume-' + randomUUID().slice(0, 8);
   const saved = spawnSync(launcher, ['update', 'claude', id], { env: runbookEnv, input: 'Task: isolated provider proof.\nNext: ' + sentinel, encoding: 'utf8' });
   assert.equal(saved.status, 0, saved.stderr);
   const compact = run(['--resume', id, '/compact']);
@@ -52,5 +52,5 @@ try {
   const events = readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.ok(events.some(e => e.event === 'PreCompact' && e.status === 0));
   assert.ok(events.some(e => e.event === 'SessionStart' && e.source === 'compact' && e.hasRules && e.context.includes(sentinel)), 'Real compact recovery did not inject rules and saved state.');
-  console.log(JSON.stringify({ hooks: events.map(({context, ...event}) => event), provider: 'claude', host: process.platform, session: id, result: 'PASS', model: Object.keys(resumed.modelUsage || {}), checkpointSaved: true, postCompactModelReadSavedState: true, compactResult: String(compact.result).slice(0,200), runbookCharacters: read.stdout.length }, null, 2));
+  console.log(JSON.stringify({ hooks: events.map(({context, ...event}) => event), provider: 'claude', host: process.platform, session: id, result: 'PASS', savedNext: sentinel, modelReply: resumed.result.trim(), recoveryRulesPresent: true, model: Object.keys(resumed.modelUsage || {}), checkpointSaved: true, postCompactModelReadSavedState: true, compactResult: String(compact.result).slice(0,200), runbookCharacters: read.stdout.length }, null, 2));
 } finally { rmSync(home, { recursive: true, force: true }); }
