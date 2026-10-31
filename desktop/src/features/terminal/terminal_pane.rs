@@ -20,7 +20,9 @@ use super::terminal_draw::draw;
 use super::terminal_grid::TerminalGrid;
 use super::terminal_keys::{key_bytes, pasted};
 use super::terminal_link::{Output, TerminalLink};
+use super::terminal_palette::palette;
 use crate::core::socket::update::Update;
+use crate::core::state::appearance::Appearance;
 use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::Sessions;
@@ -74,6 +76,8 @@ pub struct TerminalPane {
     /// The shell just opened: the pane takes the focus on its next draw.
     focus_wanted: bool,
     _selected: Subscription,
+    /// Draws again when the terminal's font or the theme changes.
+    _preferences: Option<Subscription>,
     /// Tell a program that asks when the pane takes and loses the focus.
     _focused: [Subscription; 2],
     /// Opens the shell, then follows its rows; dropping it unsubscribes.
@@ -114,6 +118,8 @@ impl TerminalPane {
             writing: false,
             focus_wanted: false,
             _focused: focused,
+            _preferences: Preferences::try_global(cx)
+                .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.refresh(cx)),
             _follow: None,
             _replay: None,
@@ -457,7 +463,8 @@ impl Render for TerminalPane {
                 let grid = draw(
                     self.grid.cells(),
                     (self.size.1, cursor),
-                    Preferences::editor_text(cx),
+                    Preferences::terminal_text(cx),
+                    palette(Preferences::read(cx, Appearance::theme)),
                     fitted,
                     window,
                     cx,

@@ -53,7 +53,6 @@ impl SettingsPage {
             );
         };
         let cards = search::cards(query, section.id);
-        let id = section.id;
         let mut column = column.child(
             h_flex()
                 .h(px(32.))
@@ -70,12 +69,6 @@ impl SettingsPage {
                     .text_color(theme.danger)
                     .child(failure),
             );
-        }
-        if id == "terminal" {
-            column = column.child(note(
-                "The terminal isn't in this window yet. These are saved now and apply once it is.",
-                cx,
-            ));
         }
         if cards.is_empty() {
             return column.child(note(

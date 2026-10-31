@@ -62,14 +62,14 @@ async fn dragging_selects_and_copy_puts_it_on_the_clipboard(cx: &mut TestAppCont
 
 #[gpui::test]
 async fn the_wheel_scrolls_back_and_typing_returns_to_the_bottom(cx: &mut TestAppContext) {
-    let kept: String = (1..=60).map(|line| format!("{line}\r\n")).collect();
+    let kept: String = (1..=200).map(|line| format!("{line}\r\n")).collect();
     let terminals = Terminals {
         kept: kept.into_bytes(),
         ..Default::default()
     };
     let mut open = open(cx, terminals, false).await;
     open.until("the output", |_, pane| {
-        following(pane) && pane.grid.text().ends_with("60")
+        following(pane) && pane.grid.text().ends_with("200")
     })
     .await;
     let bottom: usize = top_line(&mut open).parse().unwrap();

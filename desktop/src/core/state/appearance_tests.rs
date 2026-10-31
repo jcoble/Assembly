@@ -1,3 +1,4 @@
+use gpui_kit::px;
 use serde_json::{Value, json};
 
 use super::*;
@@ -99,4 +100,18 @@ fn a_number_stays_in_its_range_and_on_a_step() {
 fn a_number_shows_with_its_unit() {
     assert_eq!(EDITOR_FONT_SIZE.label(13.), "13px");
     assert_eq!(TERMINAL_LINE_HEIGHT.label(1.2), "1.2×");
+}
+
+#[test]
+fn the_terminal_draws_in_its_own_font_size_and_line_spacing() {
+    let appearance = saved(&[
+        (TERMINAL_FONT, json!("Fira Code")),
+        (TERMINAL_FONT_SIZE.key, json!(14)),
+        (TERMINAL_LINE_HEIGHT.key, json!(1.5)),
+    ]);
+    let (font, size, line_height) = appearance.terminal_text();
+    assert_eq!(
+        (font.as_ref(), size, line_height),
+        ("Fira Code", px(14.), px(21.))
+    );
 }

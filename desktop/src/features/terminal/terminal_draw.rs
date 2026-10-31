@@ -1,8 +1,8 @@
-//! The terminal's drawing: each screen line of `TerminalGrid::cells()` as runs of GPUI text in the editor's monospace
-//! font, in the theme's colours, with the cursor's cell drawn inverted. The kit theme has no terminal palette yet
-//! (implementation-plan.md, the themes' terminal palettes come with W4's later part), so the ANSI colours come from
-//! its base colours, and the 256-colour table from the usual xterm cube. It also measures the space it has and says
-//! how many columns and rows fit.
+//! The terminal's drawing: each screen line of `TerminalGrid::cells()` as runs of GPUI text in the terminal's
+//! monospace font, in the theme's terminal colours (terminal_palette.rs) over its background, with the cursor's cell
+//! as a block in the cursor colour. A theme with no terminal colours (the new light ones) takes its ANSI colours from
+//! its base colours. The 256-colour table is the usual xterm cube. It also measures the space it has and says how many
+//! columns and rows fit.
 
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use gpui_kit::component::{ActiveTheme as _, Theme, v_flex};
@@ -10,6 +10,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::terminal_grid::GridCell;
+use super::terminal_palette::Palette;
 
 /// The space for each cell: the font's advance and its line height.
 pub fn cell_size(
@@ -32,11 +33,12 @@ pub fn draw(
     cells: Vec<GridCell>,
     (rows, cursor): (usize, Option<(usize, usize)>),
     text: (SharedString, Pixels, Pixels),
+    palette: Option<&Palette>,
     fitted: impl Fn(((usize, usize), Point<Pixels>, Size<Pixels>), &mut App) + 'static,
     window: &Window,
     cx: &App,
 ) -> impl IntoElement {
-    let theme = cx.theme();
+    let colors = Colors::new(cx.theme(), palette);
     let cell = cell_size(&text, window);
     let (font, font_size, line_height) = text;
     let mut lines: Vec<Vec<GridCell>> = vec![Vec::new(); rows];
@@ -63,7 +65,7 @@ pub fn draw(
         .relative()
         .size_full()
         .overflow_hidden()
-        .bg(theme.background)
+        .bg(colors.background)
         .font_family(font)
         .text_size(font_size)
         .line_height(line_height)
@@ -78,12 +80,13 @@ pub fn draw(
                 .h(line_height)
                 .whitespace_nowrap()
                 .children(runs(line, cursor).into_iter().map(|run| {
-                    let (mut fg, mut bg) = (color(run.fg, theme), color(run.bg, theme));
+                    let (mut fg, mut bg) = (colors.of(run.fg), colors.of(run.bg));
                     if run.cursor {
-                        (fg, bg) = (bg, fg);
+                        (fg, bg) = (colors.background, colors.cursor);
                     }
                     if run.selected {
-                        bg = theme.selection;
+                        bg = colors.selection;
+                        fg = colors.selection_text.unwrap_or(fg);
                     }
                     div()
                         .flex_none()
@@ -158,43 +161,75 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
     runs
 }
 
-/// A cell's colour in the theme.
-fn color(color: Color, theme: &Theme) -> Hsla {
-    match color {
-        Color::Spec(rgb) => hsla_of(rgb),
-        Color::Indexed(index) if index < 16 => ansi(index, theme),
-        Color::Indexed(index) => hsla_of(xterm(index)),
-        Color::Named(named) => match named {
-            NamedColor::Foreground | NamedColor::BrightForeground | NamedColor::Cursor => {
-                theme.foreground
-            }
-            NamedColor::Background => theme.background,
-            NamedColor::DimForeground => theme.muted_foreground,
-            named if (named as usize) < 16 => ansi(named as u8, theme),
-            _ => theme.foreground,
-        },
-    }
+/// The colours the terminal draws in.
+struct Colors {
+    background: Hsla,
+    foreground: Hsla,
+    dim: Hsla,
+    cursor: Hsla,
+    selection: Hsla,
+    /// The selected text's colour; it keeps its own when there's none.
+    selection_text: Option<Hsla>,
+    ansi: [Hsla; 16],
 }
 
-/// The 16 ANSI colours from the theme's base colours.
-fn ansi(index: u8, theme: &Theme) -> Hsla {
-    match index {
-        0 => theme.muted,
-        1 => theme.red,
-        2 => theme.green,
-        3 => theme.yellow,
-        4 => theme.blue,
-        5 => theme.magenta,
-        6 => theme.cyan,
-        7 => theme.foreground,
-        8 => theme.muted_foreground,
-        9 => theme.red_light,
-        10 => theme.green_light,
-        11 => theme.yellow_light,
-        12 => theme.blue_light,
-        13 => theme.magenta_light,
-        14 => theme.cyan_light,
-        _ => theme.foreground,
+impl Colors {
+    /// The palette's colours over the theme's background, or the theme's own colours with no palette.
+    fn new(theme: &Theme, palette: Option<&Palette>) -> Self {
+        let hex = |value: u32| -> Hsla { gpui_kit::rgb(value).into() };
+        let Some(palette) = palette else {
+            return Self {
+                background: theme.background,
+                foreground: theme.foreground,
+                dim: theme.muted_foreground,
+                cursor: theme.foreground,
+                selection: theme.selection,
+                selection_text: None,
+                ansi: [
+                    theme.muted,
+                    theme.red,
+                    theme.green,
+                    theme.yellow,
+                    theme.blue,
+                    theme.magenta,
+                    theme.cyan,
+                    theme.foreground,
+                    theme.muted_foreground,
+                    theme.red_light,
+                    theme.green_light,
+                    theme.yellow_light,
+                    theme.blue_light,
+                    theme.magenta_light,
+                    theme.cyan_light,
+                    theme.foreground,
+                ],
+            };
+        };
+        let (selection, opacity) = palette.selection;
+        Self {
+            background: theme.background,
+            foreground: hex(palette.foreground),
+            dim: theme.muted_foreground,
+            cursor: hex(palette.cursor),
+            selection: hex(selection).opacity(opacity),
+            selection_text: Some(hex(palette.selection_text)),
+            ansi: palette.ansi.map(hex),
+        }
+    }
+
+    /// A cell's colour.
+    fn of(&self, color: Color) -> Hsla {
+        match color {
+            Color::Spec(rgb) => hsla_of(rgb),
+            Color::Indexed(index) if index < 16 => self.ansi[index as usize],
+            Color::Indexed(index) => hsla_of(xterm(index)),
+            Color::Named(named) => match named {
+                NamedColor::Background => self.background,
+                NamedColor::DimForeground => self.dim,
+                named if (named as usize) < 16 => self.ansi[named as usize],
+                _ => self.foreground,
+            },
+        }
     }
 }
 
