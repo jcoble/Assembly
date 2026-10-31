@@ -1,4 +1,5 @@
 using System.Net;
+using Assembly.Tests.Draft.Base;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
@@ -132,12 +133,9 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     [Fact]
     public async Task A_remote_that_writes_another_row_format_is_refused()
     {
-        var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
-        await using var other = builder.Build();
-        other.MapGet("/version", () => Results.Text("""{"formatVersion":99}""", "application/json"));
+        await using var other = new MachinesSocketTests.StubRemote { Format = 99 };
         await other.StartAsync();
-        var address = new Uri(other.Urls.Single());
+        var address = other.Address;
         await using var desktop = await DesktopBackend.StartAsync(Directory.CreateTempSubdirectory("assembly-desktop-").FullName, DesktopToken, 0, _desktopLauncher, _log,
             new RemoteConfig(Box, address, BoxToken));
 
@@ -369,8 +367,6 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
         await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"machines"}""");
-        Assert.Contains("not checked yet", await ReadTextAsync(socket));
-        // The first tick after the subscribe probes it.
         Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
 
         File.WriteAllText(exit, "");
@@ -391,22 +387,8 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         return Encoding.UTF8.GetString(buffer, 0, received.Count);
     }
 
-    // A stand-in for the remote: /version answers this computer's format, or the status given, beside the routes the test maps.
-    private static async Task<WebApplication> StubAsync(Action<WebApplication> map, Func<int>? versionStatus = null)
-    {
-        var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
-        var app = builder.Build();
-        app.MapGet("/version", () => (versionStatus?.Invoke() ?? 200) is var status && status != 200
-            ? Results.Text("version down", statusCode: status)
-            : Results.Text($$"""{"formatVersion":{{RowStore.FormatVersion}}}""", "application/json"));
-        map(app);
-        await app.StartAsync();
-        return app;
-    }
-
-    private Task<DesktopBackend> DesktopOnAsync(WebApplication remote, string home) =>
-        DesktopBackend.StartAsync(home, DesktopToken, 0, _desktopLauncher, _log, new RemoteConfig(Box, new Uri(remote.Urls.Single()), BoxToken));
+    private Task<DesktopBackend> DesktopOnAsync(MachinesSocketTests.StubRemote remote, string home) =>
+        DesktopBackend.StartAsync(home, DesktopToken, 0, _desktopLauncher, _log, new RemoteConfig(Box, remote.Address, BoxToken));
 
     private static async Task<string> ToolErrorAsync(DesktopBackend backend, string sessionToken, string tool, object arguments)
     {

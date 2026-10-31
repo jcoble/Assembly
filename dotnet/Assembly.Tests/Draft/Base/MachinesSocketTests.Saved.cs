@@ -38,6 +38,8 @@ public sealed partial class MachinesSocketTests
         Assert.Contains("\"port\":9837", change);
         Assert.Contains("\"tokenFile\":\"test/env\"", change);
         Assert.Contains("\"result\":", await ReadAsync(socket));
+        await _connections.ReadyAsync("saved").WaitAsync(Wait);
+        Assert.Contains("\"reachable\":true", await ReadAsync(socket));
         await CallAsync(socket, 3, "machines", "remove", """{"name":"saved"}""");
         Assert.Contains("\"key\":\"saved\",\"item\":null", await ReadAsync(socket));
         Assert.Contains("\"result\":", await ReadAsync(socket));

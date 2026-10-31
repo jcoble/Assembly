@@ -27,7 +27,7 @@ public sealed class SessionSummaries
 {
     // Each session's rows as far as they decide its summary. Only the start and the hub's lock touch them.
     private readonly Dictionary<string, Tracker> _trackers = [];
-    private volatile ImmutableDictionary<string, SessionSummary> _current = ImmutableDictionary<string, SessionSummary>.Empty;
+    private ImmutableDictionary<string, SessionSummary> _current = ImmutableDictionary<string, SessionSummary>.Empty;
 
     private SessionSummaries()
     {
@@ -46,10 +46,10 @@ public sealed class SessionSummaries
         return summaries;
     }
 
-    public SessionSummary Get(string sessionId) => _current.GetValueOrDefault(sessionId) ?? SessionSummary.None;
+    public SessionSummary Get(string sessionId) => Volatile.Read(ref _current).GetValueOrDefault(sessionId) ?? SessionSummary.None;
 
     /// <summary>Whether any session has a run open: what holds App Nap.</summary>
-    public bool AnyRunOpen => _current.Values.Any(summary => summary.RunId is not null);
+    public bool AnyRunOpen => Volatile.Read(ref _current).Values.Any(summary => summary.RunId is not null);
 
     /// <summary>Takes in the session's newly saved rows. True if its summary changed. Only under the hub's lock.</summary>
     internal bool Apply(string sessionId, IReadOnlyList<StoredRow> rows)
@@ -65,9 +65,16 @@ public sealed class SessionSummaries
         var summary = _trackers[sessionId].Summary();
         if (summary == Get(sessionId))
             return false;
-        _current = _current.SetItem(sessionId, summary);
+        ImmutableInterlocked.AddOrUpdate(ref _current, sessionId, summary, (_, _) => summary);
         return true;
     }
+
+    /// <summary>Uses the remote machine's current state even when its rows aren't being followed here.</summary>
+    public void ApplyRemote(Sessions.SessionItem item) =>
+        ImmutableInterlocked.AddOrUpdate(ref _current, item.SessionId,
+            new SessionSummary(item.ActiveRunId, item.State == "failed" ? "failed" : null,
+                Get(item.SessionId).EndSeq, item.PendingAsk, item.Background), (_, old) =>
+                new(item.ActiveRunId, item.State == "failed" ? "failed" : null, old.EndSeq, item.PendingAsk, item.Background));
 
     // Deltas, messages, tools and the rest never change a summary.
     private static bool Counts(StoredRow row) => row.Kind is RowKind.Turn or RowKind.Ask or RowKind.Task or RowKind.Subagent;
