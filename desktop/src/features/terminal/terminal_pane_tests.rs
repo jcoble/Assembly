@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{ClipboardItem, Entity, Subscription, VisualTestContext, px};
+use gpui_kit::{Entity, Subscription, VisualTestContext, px};
 use serde_json::{Value, json};
 
 use super::{Shown, TerminalPane};
@@ -536,29 +536,5 @@ async fn an_ended_shell_keeps_its_output_above_the_new_one(cx: &mut TestAppConte
     );
 }
 
-#[gpui::test]
-async fn a_paste_is_bracketed_when_the_program_asks(cx: &mut TestAppContext) {
-    let on = STANDARD.encode(b"\x1b[?2004h");
-    let terminals = Terminals {
-        rows: vec![json!({"seq": 8, "prevSeq": 0, "data": on})],
-        ..Default::default()
-    };
-    let mut open = open(cx, terminals, false).await;
-    open.until("bracketed paste on", |_, pane| {
-        following(pane) && pane.grid.bracketed_paste()
-    })
-    .await;
-    let focus = open.pane.read_with(open.cx, |pane, _| pane.focus.clone());
-    open.cx.update(|window, cx| {
-        window.focus(&focus, cx);
-        cx.write_to_clipboard(ClipboardItem::new_string("one\ntwo".into()));
-    });
-    open.cx.simulate_keystrokes("ctrl-shift-v");
-    open.until("pasted", |terminals, pane| {
-        terminals.of("write").len() == 1 && !pane.writing()
-    })
-    .await;
-    let written = open.terminals.lock().unwrap().of("write")[0]["data"].clone();
-    let written = STANDARD.decode(written.as_str().unwrap()).unwrap();
-    assert_eq!(written, b"\x1b[200~one\rtwo\x1b[201~".to_vec());
-}
+#[path = "terminal_pane_input_tests.rs"]
+mod input;

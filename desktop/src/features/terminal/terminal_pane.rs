@@ -18,6 +18,7 @@ use gpui_kit::*;
 
 use super::terminal_draw::draw;
 use super::terminal_grid::TerminalGrid;
+use super::terminal_keys::{key_bytes, pasted};
 use super::terminal_link::{Output, TerminalLink};
 use crate::core::socket::update::Update;
 use crate::core::state::preferences::Preferences;
@@ -63,7 +64,11 @@ pub struct TerminalPane {
     /// Typed while a write was on its way.
     typed: Vec<u8>,
     writing: bool,
+    /// The shell just opened: the pane takes the focus on its next draw.
+    focus_wanted: bool,
     _selected: Subscription,
+    /// Tell a program that asks when the pane takes and loses the focus.
+    _focused: [Subscription; 2],
     /// Opens the shell, then follows its rows; dropping it unsubscribes.
     _follow: Option<Task<()>>,
     _replay: Option<Task<()>>,
@@ -78,9 +83,14 @@ impl TerminalPane {
         });
     }
 
-    pub fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus = cx.focus_handle();
+        let focused = [
+            cx.on_focus(&focus, window, |pane, _, cx| pane.focused(true, cx)),
+            cx.on_blur(&focus, window, |pane, _, cx| pane.focused(false, cx)),
+        ];
         Self {
-            focus: cx.focus_handle(),
+            focus,
             active: false,
             session: None,
             grid: TerminalGrid::new(FIRST_SIZE.0, FIRST_SIZE.1),
@@ -91,6 +101,8 @@ impl TerminalPane {
             held: None,
             typed: Vec::new(),
             writing: false,
+            focus_wanted: false,
+            _focused: focused,
             _selected: cx.observe(&SelectedSession::global(cx), |pane, _, cx| pane.refresh(cx)),
             _follow: None,
             _replay: None,
@@ -220,6 +232,7 @@ impl TerminalPane {
         if matches!(update, Update::State(_)) {
             if self.shown == Shown::Opening {
                 self.shown = Shown::Open;
+                self.focus_wanted = true;
             }
             self.catch_up(cx);
             return;
@@ -282,6 +295,16 @@ impl TerminalPane {
         self.write(cx);
     }
 
+    /// The pane took or lost the focus, which a program that asked for focus reports hears as `ESC [I` or `ESC [O`.
+    fn focused(&mut self, focused: bool, cx: &mut Context<Self>) {
+        if self.shown != Shown::Open || !self.grid.focus_reporting() {
+            return;
+        }
+        self.typed
+            .extend_from_slice(if focused { b"\x1b[I" } else { b"\x1b[O" });
+        self.write(cx);
+    }
+
     /// Sends what's been typed, unless a write is on its way: then it goes when that one's answered.
     fn write(&mut self, cx: &mut Context<Self>) {
         let Some(link) = &self.link else {
@@ -338,60 +361,6 @@ fn remote(session: &str, cx: &App) -> bool {
     })
 }
 
-/// A paste as xterm sends it: line breaks as Return, and between the bracketed-paste marks when the program asked for
-/// them, so a shell or an agent takes several lines as one paste rather than running each.
-fn pasted(text: &str, bracketed: bool) -> Vec<u8> {
-    let text = text.replace("\r\n", "\r").replace('\n', "\r");
-    match bracketed {
-        true => format!("\x1b[200~{text}\x1b[201~").into_bytes(),
-        false => text.into_bytes(),
-    }
-}
-
-/// The bytes a key sends to the program, as xterm sends them; none for a key the window keeps (a Cmd shortcut).
-fn key_bytes(keystroke: &Keystroke, app_cursor: bool) -> Option<Vec<u8>> {
-    let modifiers = keystroke.modifiers;
-    if modifiers.platform {
-        return None;
-    }
-    let arrow = |letter: &str| match app_cursor {
-        true => format!("\x1bO{letter}"),
-        false => format!("\x1b[{letter}"),
-    };
-    let named = match keystroke.key.as_str() {
-        "enter" => Some("\r".to_string()),
-        "backspace" => Some("\x7f".into()),
-        "tab" if modifiers.shift => Some("\x1b[Z".into()),
-        "tab" => Some("\t".into()),
-        "escape" => Some("\x1b".into()),
-        "up" => Some(arrow("A")),
-        "down" => Some(arrow("B")),
-        "right" => Some(arrow("C")),
-        "left" => Some(arrow("D")),
-        "home" => Some("\x1b[H".into()),
-        "end" => Some("\x1b[F".into()),
-        "delete" => Some("\x1b[3~".into()),
-        "pageup" => Some("\x1b[5~".into()),
-        "pagedown" => Some("\x1b[6~".into()),
-        "space" => Some(" ".into()),
-        _ => None,
-    };
-    if let Some(named) = named {
-        return Some(named.into_bytes());
-    }
-    let key = keystroke.key.as_bytes();
-    if modifiers.control && key.len() == 1 && key[0].is_ascii_lowercase() {
-        return Some(vec![key[0] - b'a' + 1]);
-    }
-    let text = keystroke.key_char.as_deref()?;
-    let mut bytes = Vec::new();
-    if modifiers.alt {
-        bytes.push(0x1b);
-    }
-    bytes.extend(text.as_bytes());
-    Some(bytes)
-}
-
 impl EventEmitter<PanelEvent> for TerminalPane {}
 
 impl Focusable for TerminalPane {
@@ -433,6 +402,10 @@ impl Panel for TerminalPane {
 
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if mem::take(&mut self.focus_wanted) {
+            let focus = self.focus.clone();
+            window.defer(cx, move |window, cx| window.focus(&focus, cx));
+        }
         let muted = cx.theme().muted_foreground;
         let pane = v_flex()
             .id("terminal-pane")

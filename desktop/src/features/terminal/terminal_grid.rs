@@ -113,6 +113,11 @@ impl TerminalGrid {
         self.term.mode().contains(TermMode::BRACKETED_PASTE)
     }
 
+    /// The program asked to hear `ESC [I` when the terminal takes the focus and `ESC [O` when it loses it.
+    pub fn focus_reporting(&self) -> bool {
+        self.term.mode().contains(TermMode::FOCUS_IN_OUT)
+    }
+
     /// The screen as text, each line's trailing blanks dropped and the blank lines at the end too.
     #[cfg(test)]
     pub fn text(&self) -> String {
