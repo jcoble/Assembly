@@ -58,16 +58,20 @@ public static class ApiServer
                 feature.Register(calls);
             var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
             var bulk = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, bulk: true);
+            var terminal = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, terminal: true);
+            app.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);
             app.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
             dropSockets = () =>
             {
                 socket.DropAll();
                 bulk.DropAll();
+                terminal.DropAll();
             };
             // Each is an exact route: /socket/other reaches neither.
             app.Map("/socket", socket.HandleAsync);
             app.Map("/socket/bulk", bulk.HandleAsync);
+            app.Map("/socket/terminal", terminal.HandleAsync);
         }
         more?.Invoke(app);
         return app;

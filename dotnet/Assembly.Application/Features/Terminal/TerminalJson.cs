@@ -14,4 +14,5 @@ namespace Assembly.Application.Features.Terminal;
 [JsonSerializable(typeof(OutputPiece))]
 [JsonSerializable(typeof(OutputRow))]
 [JsonSerializable(typeof(Empty))]
+[JsonSerializable(typeof(ListArgs))]
 internal sealed partial class TerminalJson : JsonSerializerContext;

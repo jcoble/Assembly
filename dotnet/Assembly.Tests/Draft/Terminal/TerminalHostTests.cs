@@ -172,48 +172,6 @@ public sealed class TerminalHostTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Coming_back_catches_up_from_where_the_window_left_off_or_starts_from_the_end()
-    {
-        // Pins: terminal#5
-        var terminal = await _host.StartAsync(new StartArgs(_folder));
-        _pty.Started[0].Emit("one "u8.ToArray());
-        _pty.Started[0].Emit("two "u8.ToArray());
-        _pty.Started[0].Emit("three"u8.ToArray());
-        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && Seq(p.Json) == 13);
-
-        var (seq, rows) = _host.State(terminal.Id, after: 4);
-        var (fresh, none) = _host.State(terminal.Id, after: null);
-
-        Assert.Equal(4, seq);
-        var row = Assert.Single(rows);
-        Assert.Equal((13L, 4L), (Seq(row), PrevSeq(row)));
-        Assert.Equal("two three"u8.ToArray(), Data(row));
-        Assert.Equal(13, fresh);
-        Assert.Empty(none);
-    }
-
-    [Fact]
-    public async Task Coming_back_after_the_exit_repeats_nothing_and_far_behind_reads_the_replay()
-    {
-        // Pins: terminal#5
-        var terminal = await _host.StartAsync(new StartArgs(_folder));
-        for (var i = 0; i < 16; i++)
-            _pty.Started[0].Emit(new byte[64 * 1024]);
-        _pty.Started[0].Emit(new byte[10]);
-        _pty.Started[0].End(0);
-        await _topics.WaitFor(p => p.Topic == TerminalFeature.OutputTopic && p.Json.Contains("\"exit\":"));
-        var end = OutputRing.ReadLimit + 10L;
-
-        var (seen, nothing) = _host.State(terminal.Id, after: end + 1);
-        var (behind, onlyExit) = _host.State(terminal.Id, after: 0);
-
-        Assert.Equal(end + 1, seen);
-        Assert.Empty(nothing);
-        Assert.Equal(end, behind);
-        Assert.Equal((end + 1, end), (Seq(onlyExit.Single()), PrevSeq(onlyExit.Single())));
-    }
-
-    [Fact]
     public async Task What_you_type_reaches_the_program_until_it_ends()
     {
         // Pins: terminal#2

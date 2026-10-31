@@ -34,7 +34,8 @@ public interface ICallRegistry
     // and stays small: a write inside it would take the locks in the writer's opposite order and deadlock under load,
     // and a big state stalls every write while it runs. key gives each item's key, which its state frame carries, so
     // the page can hold a key with a save in flight.
-    void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key, Func<string?, CallContext, IReadOnlyList<TItem>> state);
+    // A terminal topic is served only on /socket/terminal, every other topic only on /socket.
+    void Topic<TItem>(string topic, JsonTypeInfo<TItem> item, Func<TItem, string> key, Func<string?, CallContext, IReadOnlyList<TItem>> state, bool terminal = false);
 
     // A topic of rows in seq order (5.1, 5.7), keyed by session, which a sub must name. Its state gets the key and the
     // sub's `after` and gives the seq the rows after it continue from, then those rows as JSON; the state frame carries

@@ -35,8 +35,9 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
     public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
-        Action<string>? turnEnded = null, TimeProvider? time = null)
+        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null)
     {
+        Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics());
         _address = address;
         _token = token;
         _time = time ?? TimeProvider.System;
@@ -52,6 +53,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     }
 
     public string? Name => _name;
+    internal RemoteTerminalSocket Terminals { get; }
 
     internal string[] FollowedSessions => _follower.FollowedSessions;
 
@@ -477,6 +479,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await Terminals.DisposeAsync();
         await _socketStop.CancelAsync();
         await _follower.DisposeAsync();
         if (_socketRun is not null) await _socketRun;

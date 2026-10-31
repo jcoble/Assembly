@@ -116,7 +116,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
                         tunnel = opened.Tunnel;
                         stop.Token.ThrowIfCancellationRequested();
                         if (tunnel is RemoteTunnel ssh) ssh.Exited += () => scoped.Unreachable(name, "ssh tunnel exited");
-                        var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded);
+                        var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded, _topics);
                         var outbox = new RemoteOutbox(remote, _sessions, _hub, _machines.Named(null)!, _log);
                         _active[name] = (remote, outbox, tunnel, scoped, opened.Config with { Name = name });
                         tunnel = null;

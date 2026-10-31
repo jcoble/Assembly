@@ -15,7 +15,8 @@ here updates this file in the same commit. Every other commit says `Architecture
   small `src/core/` (with the one socket client in `core/socket/`, the one owner of
   native views in `core/native_views/`, the backend launcher in `core/backend/`, the palette's command list in
   `core/commands/`) and one folder per
-  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that.
+  feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that. The Terminal tab, `features/terminal/`,
+  keeps an `alacritty_terminal` grid fed by the backend's `terminal` topic and draws it with GPUI text.
 - `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
 
 ## The backend: a core in layers, the rest by feature
@@ -45,6 +46,11 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
 A host's `Program.cs` only reads its arguments, registers the layers and maps its endpoints.
 
 ## One socket
+
+`/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
+For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;
+output is relayed onto the local terminal topic. The [TSK-1639 task](https://app.notion.com/p/408394b0689d8122911ae831ac180542)
+holds the terminal routing decisions and verification.
 
 The page talks to the backend over one WebSocket, `/socket`, through one file, `app/src/lib/socket.ts`. The backend's
 side is `Assembly.Infrastructure/Socket/`: a feature registers its calls, saves and topics on `ICallRegistry`

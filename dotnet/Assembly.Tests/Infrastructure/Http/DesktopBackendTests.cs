@@ -168,6 +168,12 @@ public sealed class DesktopBackendTests : IAsyncLifetime
             other.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket/other"), CancellationToken.None));
     }
 
+    [Fact]
+    public async Task The_terminal_socket_opens_and_takes_the_hello()
+    {
+        using var terminal = await OpenSocketAsync("/socket/terminal");
+    }
+
     private async Task<ClientWebSocket> OpenSocketAsync(string path = "/socket")
     {
         var socket = new ClientWebSocket();

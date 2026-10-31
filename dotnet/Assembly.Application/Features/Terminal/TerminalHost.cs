@@ -7,7 +7,7 @@ namespace Assembly.Application.Features.Terminal;
 /// This machine's terminals, by id. Terminals outlive the sockets that use them (terminal#5); disposing the host, when
 /// the backend stops, closes every one (terminal#8).
 /// </summary>
-internal sealed class TerminalHost : IAsyncDisposable
+internal sealed class TerminalHost : ITerminals, IAsyncDisposable
 {
     public const int DefaultCols = 96;
     public const int DefaultRows = 28;
@@ -34,7 +34,7 @@ internal sealed class TerminalHost : IAsyncDisposable
     /// (terminal#9), closing its shell that has ended. Fails with the folder's path when it doesn't exist (terminal#1). With no folder it starts in the
     /// owner's session folder, or the home folder while that session has none yet (its first turn checks it out).
     /// </summary>
-    public async Task<TerminalInfo> StartAsync(StartArgs args)
+    public async Task<TerminalInfo> StartAsync(StartArgs args, CancellationToken cancellation = default)
     {
         var owner = Blank(args.Owner);
         var command = Blank(args.Command);
@@ -88,6 +88,17 @@ internal sealed class TerminalHost : IAsyncDisposable
         return stopped ? throw new CallFailed("the backend is stopping") : raced!;
     }
 
+    public Task<IReadOnlyList<TerminalInfo>> ListAsync(string? owner, CancellationToken cancellation) =>
+        Task.FromResult<IReadOnlyList<TerminalInfo>>(List().Where(info => owner is null || info.Owner == owner).ToArray());
+
+    public Task ResizeAsync(string terminal, int cols, int rows, CancellationToken cancellation)
+    {
+        Resize(terminal, cols, rows);
+        return Task.CompletedTask;
+    }
+
+    public Task<OutputPiece> ReadAsync(string terminal, long offset, CancellationToken cancellation) => Task.FromResult(Read(terminal, offset));
+
     public IReadOnlyList<TerminalInfo> List()
     {
         lock (_lock)
@@ -102,15 +113,8 @@ internal sealed class TerminalHost : IAsyncDisposable
 
     public OutputPiece Read(string terminal, long offset) => Get(terminal).Read(offset);
 
-    /// <summary>Runs under the Topics lock: it takes the host's lock, then the terminal's, and never publishes.</summary>
-    public (long Seq, IReadOnlyList<string> Rows) State(string terminal, long? after)
-    {
-        lock (_lock)
-            return _terminals.TryGetValue(terminal, out var running) ? running.State(after) : (after ?? 0, []);
-    }
-
     /// <summary>Ends the terminal and lets go of its output; ok for one already closed.</summary>
-    public async ValueTask CloseAsync(string terminal)
+    public async ValueTask CloseAsync(string terminal, CancellationToken cancellation = default)
     {
         RunningTerminal? running;
         lock (_lock)
