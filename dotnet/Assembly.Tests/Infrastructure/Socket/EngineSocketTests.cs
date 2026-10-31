@@ -144,10 +144,11 @@ public sealed class EngineSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Window_has_six_commands_without_system_privileges()
+    public async Task Window_has_seven_commands_without_system_privileges()
     {
         _f.SeedSession("owner");
         _f.SeedSession("target");
+        _f.SeedSession("handoff-session");
         Assert.True(_f.Apply(new OpenNeed("target", null, null, "question", "Question", [], null, null, null),
             "need", actor: new(ActorKind.System, "host")).Applied);
         using var socket = await Open();
@@ -159,7 +160,8 @@ public sealed class EngineSocketTests : IAsyncLifetime
                 [new("step", "Step", true, 1, false, [])]), "run"),
             await Command(socket, new CancelRun(), "run", 1),
             await Command(socket, new ResolveNeed("dismissed", null), "need", 1),
-            await Command(socket, new SendMessage(null, "target", "Hello", "prompt"), "message")
+            await Command(socket, new SendMessage(null, "target", "Hello", "prompt"), "message"),
+            await Command(socket, new RequestHandoff("handoff-session", "target"), "handoff")
         };
         Assert.All(receipts, r => Assert.True(r.Applied, r.Error));
         Assert.Equal("owner", _f.Text("SELECT answered_by FROM engine_needs_me"));
@@ -190,17 +192,30 @@ public sealed class EngineSocketTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Handoff_ids_remain_handoff_ids_and_the_window_cannot_request_or_report_them()
+    public async Task Window_requests_handoff_with_session_version_and_epoch_but_cannot_report_outcome()
     {
         _f.SeedSession("session", epoch: 7);
         _f.Db.Writer.Write("session-version", s => s.Execute("UPDATE engine_session SET version=3 WHERE id='session'"));
         using var socket = await Open();
-        Assert.Equal("forbidden", (await Command(socket, new RequestHandoff("session", "target"), "handoff", epoch: 7)).Error);
+        Assert.Equal("stale_epoch", (await Command(socket, new RequestHandoff("session", "target"), "handoff", version: 3, epoch: 6)).Error);
+        Assert.Equal("version_conflict", (await Command(socket, new RequestHandoff("session", "target"), "handoff", version: 0, epoch: 7)).Error);
         Assert.Equal(0, _f.Count("engine_handoff"));
-        // Trusted in-process handoff validation uses the session's version/epoch for the request.
-        Assert.Equal("stale_epoch", _f.Apply(new RequestHandoff("session", "target"), "handoff", version: 3, epoch: 6).Error);
-        Assert.Equal("version_conflict", _f.Apply(new RequestHandoff("session", "target"), "handoff", version: 0, epoch: 7).Error);
-        Assert.True(_f.Apply(new RequestHandoff("session", "target"), "handoff", version: 3, epoch: 7).Applied);
+        var requested = await Command(socket, new RequestHandoff("session", "target"), "handoff", version: 3, epoch: 7);
+        Assert.True(requested.Applied, requested.Error);
+        Assert.Equal(8, requested.Epoch);
+        Assert.Equal("handing_off", _f.State("engine_session", "session"));
+        Assert.Equal(8, _f.Number("SELECT reserved_epoch FROM engine_session WHERE id='session'"));
+        await Published();
+        await Send(socket, """{"t":"sub","id":7,"stream":"engine","topic":"sessions","key":"session","after":0}""");
+        var page = await Read(socket);
+        Assert.Equal("engine_events", page.GetProperty("t").GetString());
+        var changed = Assert.Single(page.GetProperty("events").EnumerateArray(),
+            e => e.GetProperty("kind").GetString() == "session.changed");
+        Assert.Equal("session", changed.GetProperty("entityId").GetString());
+        Assert.Equal(4, changed.GetProperty("version").GetInt64());
+        Assert.Equal("handing_off", changed.GetProperty("data").GetProperty("state").GetString());
+        Assert.Equal(8, changed.GetProperty("data").GetProperty("epoch").GetInt64());
+        await Send(socket, """{"t":"unsub","id":7}""");
         Assert.Equal("forbidden", (await Command(socket, new HandoffOutcome("accepted", 8, null), "handoff", 1, 8)).Error);
         var target = new EngineActor(ActorKind.System, "target");
         Assert.Equal("stale_epoch", _f.Apply(new HandoffOutcome("accepted", 8, null), "handoff", 1, 7, target).Error);
