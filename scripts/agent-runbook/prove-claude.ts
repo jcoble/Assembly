@@ -25,7 +25,8 @@ process.stdout.write(result.stdout||'');process.stderr.write(result.stderr||'');
 `);
 const command = "'" + process.execPath + "' '" + wrapper + "'";
 writeFileSync(settings, JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command, timeout: 8 }] }], PreCompact: [{ hooks: [{ type: 'command', command, timeout: 8 }] }] } }));
-const env = { ...process.env, HOME: sourceHome, CLAUDE_CONFIG_DIR: join(sourceHome, '.claude') };
+// Preserve the native login profile; forcing the default path selects a different macOS Keychain entry.
+const env = { ...process.env, HOME: sourceHome };
 const runbookEnv = { ...env, HOME: home };
 const id = randomUUID();
 function run(args: string[]) {
@@ -33,8 +34,10 @@ function run(args: string[]) {
   if (result.status !== 0) throw Error('Claude command failed: ' + String(result.stderr || result.stdout).slice(-1600));
   let json: any;
   try { json = JSON.parse(result.stdout); } catch { throw Error('Claude did not return JSON: ' + result.stdout.slice(-1600)); }
-  if (json.is_error) throw Error('Claude provider error: ' + json.result);
-  return json;
+  const providerResult = [json].flat().findLast(row => row?.type === 'result');
+  assert.ok(providerResult && typeof providerResult.result === 'string', 'Claude did not return a structured result.');
+  if (providerResult.is_error) throw Error('Claude provider error: ' + providerResult.result);
+  return providerResult;
 }
 try {
   run(['--session-id', id, 'Reply READY only.']);
