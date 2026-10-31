@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Engine.Reading;
 using Assembly.Application.Features.Engine.Effects;
 using Assembly.Application.Features.Engine.Recording;
 using System.Text.Json.Serialization;
@@ -12,6 +13,8 @@ using Assembly.Application.Features.Engine.Prs;
 namespace Assembly.Application.Features.Engine;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(StreamPage))]
+[JsonSerializable(typeof(SnapshotPage))]
 [JsonSerializable(typeof(Effect))]
 [JsonSerializable(typeof(EffectReceipt))]
 [JsonSerializable(typeof(ClaimEffect))]
