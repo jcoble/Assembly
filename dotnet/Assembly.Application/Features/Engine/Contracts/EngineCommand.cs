@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Engine.Recording;
 using System.Text.Json.Serialization;
 using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
@@ -9,6 +10,9 @@ using Assembly.Application.Features.Engine.Prs;
 namespace Assembly.Application.Features.Engine.Contracts;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(ToolStarted), "tool_started")]
+[JsonDerivedType(typeof(ToolEnded), "tool_ended")]
+[JsonDerivedType(typeof(TurnUsage), "turn_usage")]
 [JsonDerivedType(typeof(ReportPr), "report_pr")]
 [JsonDerivedType(typeof(ObservePr), "observe_pr")]
 [JsonDerivedType(typeof(RequestHandoff), "request_handoff")]

@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Engine.Recording;
 using System.Text.Json.Serialization;
 using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Sessions;
@@ -13,6 +14,9 @@ namespace Assembly.Application.Features.Engine;
 [JsonSerializable(typeof(CommandContext))]
 [JsonSerializable(typeof(CommandResult))]
 [JsonSerializable(typeof(EngineCommand))]
+[JsonSerializable(typeof(ToolStarted))]
+[JsonSerializable(typeof(ToolEnded))]
+[JsonSerializable(typeof(TurnUsage))]
 [JsonSerializable(typeof(ReportPr))]
 [JsonSerializable(typeof(ObservePr))]
 [JsonSerializable(typeof(RequestHandoff))]

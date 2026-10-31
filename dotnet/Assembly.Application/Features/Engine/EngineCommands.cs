@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Engine.Recording;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Engine.Contracts;
@@ -25,13 +26,15 @@ public sealed class EngineCommands
 
     public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command)
     {
-        var canonical = JsonSerializer.Serialize(command, EngineJson.Default.EngineCommand);
+        // Raw boundary arguments are transient: even the journal fingerprint and size check use structural previews.
+        var canonical = RecordingTransitions.JournalJson(command);
         return EngineJournal.Execute(scope, context, canonical, () =>
         {
             if (context.Machine != _machine)
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
+                RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
                 MessageCommand message => MessageTransitions.Apply(scope, context, message),
