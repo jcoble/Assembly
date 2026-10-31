@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
+using Assembly.Application.Features.Engine.NeedsMe;
 
 namespace Assembly.Application.Features.Engine;
 
@@ -16,6 +17,10 @@ namespace Assembly.Application.Features.Engine;
 [JsonSerializable(typeof(CancelRun))]
 [JsonSerializable(typeof(StartStep))]
 [JsonSerializable(typeof(SetStepState))]
+[JsonSerializable(typeof(OpenNeed))]
+[JsonSerializable(typeof(ResolveNeed))]
+[JsonSerializable(typeof(NeedAnswer))]
+[JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
 [JsonSerializable(typeof(long))]
 [JsonSerializable(typeof(EngineEvent))]

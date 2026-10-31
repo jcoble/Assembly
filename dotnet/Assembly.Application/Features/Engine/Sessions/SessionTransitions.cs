@@ -137,6 +137,21 @@ public static class SessionTransitions
         return EngineJournal.Commit(scope, context, session.Version, session.Epoch, events, effects);
     }
 
+    public static IReadOnlyList<EventDraft> RecomputeNeeds(IWriteScope s, CommandContext c, string sessionId)
+    {
+        var session = Find(s, sessionId);
+        if (session is null || session.State is not ("idle" or "running" or "needs_me")) return [];
+        var open = s.QueryFirst("SELECT COUNT(*) FROM engine_needs_me WHERE session_id=$id AND state='open'",
+            r => r.Long(0), new SqlArg("$id", sessionId)) > 0;
+        var activity = session.State == "needs_me" ? session.Activity : session.State;
+        var state = open ? "needs_me" : activity;
+        if (state == session.State) return [];
+        s.Execute("UPDATE engine_session SET state=$state,activity_state=$activity,version=version+1,updated_ms=$now WHERE id=$id",
+            new("$state", state), new("$activity", activity), new("$now", c.NowMs), new("$id", sessionId));
+        return [new("session.changed", "session", sessionId, session.Version + 1, false,
+            new(sessionId, session.RunId, null, session.ParentId, state, session.Epoch))];
+    }
+
     private static Session? Find(IWriteScope scope, string id) => scope.QueryFirst("""
         SELECT version,epoch,state,activity_state,parent_id,run_id FROM engine_session WHERE id=$id
         """, r => new Session(r.Long(0), r.Long(1), r.Text(2), r.Text(3),

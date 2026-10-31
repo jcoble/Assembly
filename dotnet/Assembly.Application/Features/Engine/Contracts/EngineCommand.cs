@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
+using Assembly.Application.Features.Engine.NeedsMe;
 
 namespace Assembly.Application.Features.Engine.Contracts;
 
@@ -12,4 +13,6 @@ namespace Assembly.Application.Features.Engine.Contracts;
 [JsonDerivedType(typeof(CancelRun), "cancel_run")]
 [JsonDerivedType(typeof(StartStep), "start_step")]
 [JsonDerivedType(typeof(SetStepState), "set_step_state")]
+[JsonDerivedType(typeof(OpenNeed), "open_need")]
+[JsonDerivedType(typeof(ResolveNeed), "resolve_need")]
 public abstract record EngineCommand;
