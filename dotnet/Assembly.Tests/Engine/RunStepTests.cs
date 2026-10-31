@@ -77,6 +77,32 @@ public sealed class RunStepTests
         Assert.Equal(1, f.Number("SELECT late FROM engine_step_fact"));
         Assert.Equal("step.late", f.Events().Last().Kind);
     }
+    [Fact]
+    public void Cancel_leaves_failed_step_and_attempt_as_failed()
+    {
+        using var f = new EngineFixture(); Create(f, Def("failed", false), Def("s"));
+        f.SeedSession("worker2", parentId: "owner", runId: "r");
+        Assert.True(Start(f, "failed").Applied);
+        Assert.True(Set(f, "failed", "failed").Applied);
+        Assert.True(f.Apply(new SetSessionState("ended", null, null), "worker", actor: System).Applied);
+        Assert.True(f.Apply(new StartStep("worker2"), "s", 1).Applied);
+        var failedVersion = Version(f, "failed");
+
+        Assert.True(f.Apply(new CancelRun(), "r", 2).Applied);
+        Assert.Equal("failed", f.State("engine_step", "failed"));
+        Assert.Equal(failedVersion, Version(f, "failed"));
+        Assert.Equal("failed", f.Text("SELECT state FROM engine_step_attempt WHERE step_id='failed'"));
+        f.Db.Writer.Write("drain", s => s.Execute("UPDATE engine_outbox SET state='done'"));
+        Assert.True(f.Apply(new SetSessionState("ended", null, null), "worker2", 1, actor: System).Applied);
+
+        Assert.Equal("cancelled", f.State("engine_run", "r"));
+        Assert.Equal("failed", f.State("engine_step", "failed"));
+        Assert.Equal(failedVersion, Version(f, "failed"));
+        Assert.Equal("failed", f.Text("SELECT state FROM engine_step_attempt WHERE step_id='failed'"));
+        Assert.Equal("cancelled", f.State("engine_step", "s"));
+        Assert.Equal("cancelled", f.Text("SELECT state FROM engine_step_attempt WHERE step_id='s'"));
+    }
+
     private static CommandResult Expire(EngineFixture f, EngineActor? actor = null, long? version = null) =>
         f.Db.Writer.Write("expire", s => RunTransitions.ExpireLostOwner(s,
             new(Guid.NewGuid(), f.Machine, actor ?? System, "r", version ?? f.Number("SELECT version FROM engine_run"), 0,

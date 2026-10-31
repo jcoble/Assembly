@@ -118,7 +118,7 @@ public static class RunTransitions
         {
             events.AddRange(s.Query("""
                 UPDATE engine_step SET state='cancelled',version=version+1,updated_ms=$now,ended_ms=$now
-                WHERE run_id=$id AND attempt>0 AND state IN ('running','waiting','failed')
+                WHERE run_id=$id AND attempt>0 AND state IN ('running','waiting')
                 AND EXISTS(SELECT 1 FROM engine_session WHERE id=engine_step.session_id AND state='ended')
                 RETURNING id,version,session_id
                 """, r => StepCancelled(r.Text(0), r.Long(1), r.Text(2), runId, run.Owner),
