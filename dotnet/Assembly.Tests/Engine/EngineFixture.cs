@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Engine;
 using Assembly.Application.Features.Engine.Contracts;
@@ -12,13 +13,15 @@ namespace Assembly.Tests.Engine;
 internal sealed class EngineFixture : IDisposable
 {
     private readonly TempDatabase _file = new();
+    private readonly ITopics _topics;
     public AppDatabase Db { get; private set; }
     public FakeTimeProvider Time { get; } = new(DateTimeOffset.FromUnixTimeMilliseconds(1000));
     public string Machine { get; private set; }
     public int ChildLimit { get; }
 
-    public EngineFixture(int childLimit = 5)
+    public EngineFixture(int childLimit = 5, ITopics? topics = null)
     {
+        _topics = topics ?? new global::Assembly.Infrastructure.Topics.Topics();
         ChildLimit = childLimit;
         Db = OpenDatabase();
         Machine = EngineSchema.Open(Db, Time.GetUtcNow().ToUnixTimeMilliseconds());
@@ -26,10 +29,13 @@ internal sealed class EngineFixture : IDisposable
 
     private AppDatabase OpenDatabase()
     {
-        var db = AppDatabase.Open(_file.Path, Time, new global::Assembly.Infrastructure.Topics.Topics());
+        var db = AppDatabase.Open(_file.Path, Time, _topics);
         RowStore.Open(db);
         return db;
     }
+
+    public CommandResult Apply(CommandContext context, EngineCommand command) =>
+        Db.Writer.Write("engine.command", scope => new EngineCommands(Machine, () => ChildLimit).Apply(scope, context, command));
 
     public void Reopen()
     {
