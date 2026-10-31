@@ -1,4 +1,5 @@
 using Assembly.Infrastructure.Persistence;
+using Microsoft.Data.Sqlite;
 
 namespace Assembly.Tests.Infrastructure.Persistence;
 
@@ -14,7 +15,8 @@ public sealed class ReadSnapshotTests
         Assert.Equal(1, read.QueryFirst("SELECT count(*) FROM snapshot_test", r => r.Long(0)));
         await Task.Run(() => db.Writer.Write("add", s => s.Execute("INSERT INTO snapshot_test VALUES(2)"))).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(1, read.QueryFirst("SELECT count(*) FROM snapshot_test", r => r.Long(0)));
-        Assert.ThrowsAny<Exception>(() => read.Query("INSERT INTO snapshot_test VALUES(3)", r => r.Long(0)));
+        var failure = Assert.Throws<SqliteException>(() => read.Query("INSERT INTO snapshot_test VALUES(3)", r => r.Long(0)));
+        Assert.Equal(8, failure.SqliteErrorCode); // SQLITE_READONLY
     }
 
     [Fact]

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Engine;
 using Assembly.Application.Features.Engine.Contracts;
+using Assembly.Application.Features.Engine.Handoffs;
 using Assembly.Application.Features.Engine.Persistence;
 using Assembly.Application.Features.Engine.Reading;
 
@@ -9,6 +10,37 @@ namespace Assembly.Tests.Engine;
 
 public sealed class StreamTests
 {
+    [Theory]
+    [InlineData("resumed")]
+    [InlineData("failed")]
+    public void Keyed_runs_subscription_sees_handoff_events(string outcome)
+    {
+        using var f = new EngineFixture();
+        f.SeedSession(); f.SeedRun();
+        f.SeedSession("other-session"); f.SeedRun("other", "other-session");
+        Assert.True(f.Apply(new RequestHandoff("s", "target"), "h").Applied);
+        var reader = new EngineReader(f.Db, f.Machine);
+        var requested = Assert.Single(reader.Since("runs", "r", 0, default).Events, e => e.EntityKind == "handoff");
+        Assert.Equal("handoff.requested", requested.Kind);
+        Assert.Equal("h", requested.EntityId);
+        Assert.True(EngineReader.Matches(requested, "runs", "r"));
+        Assert.False(EngineReader.Matches(requested, "runs", "other"));
+        var target = new EngineActor(ActorKind.System, "target");
+        Assert.True(f.Apply(new HandoffOutcome("accepted", 1, null), "h", version: 1, epoch: 1, actor: target).Applied);
+        Assert.True(f.Apply(new HandoffOutcome(outcome, 1, null), "h", version: 2, epoch: 1, actor: target).Applied);
+        f.Reopen();
+        reader = new EngineReader(f.Db, f.Machine);
+        var handoffs = reader.Since("runs", "r", 0, default).Events.Where(e => e.EntityKind == "handoff").ToArray();
+        Assert.Equal(new[] { "handoff.requested", "handoff.accepted", $"handoff.{outcome}" }, handoffs.Select(e => e.Kind));
+        Assert.All(handoffs, e =>
+        {
+            Assert.Equal("r", e.Data.RunId);
+            Assert.True(EngineReader.Matches(e, "runs", "r"));
+            Assert.False(EngineReader.Matches(e, "runs", "other"));
+        });
+        Assert.Empty(reader.Since("runs", "other", 0, default).Events);
+    }
+
     private static void Event(EngineFixture f, string kind, string id, EngineEventData? data = null) =>
         f.Db.Writer.Write("event", s => EngineJournal.Commit(s,
             new(Guid.NewGuid(), f.Machine, new(ActorKind.Window, "window"), id, 0, 0, 1000),

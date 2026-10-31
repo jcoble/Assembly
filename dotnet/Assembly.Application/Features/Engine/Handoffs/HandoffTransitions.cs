@@ -48,6 +48,7 @@ public static class HandoffTransitions
             """, new("$now", c.NowMs), new("$next", nextEpoch), new("$id", command.SessionId));
         var handoff = new Handoff(1, command.SessionId, session.Holder, command.NewHolder, session.Epoch, nextEpoch, "requested");
         return Commit(s, c, handoff, session with { Version = session.Version + 1, State = "handing_off", ReservedEpoch = nextEpoch },
+            session.RunId,
             [new("", "handoff", command.SessionId, session.RunId,
                 JsonSerializer.SerializeToElement(new HandoffTransfer(c.EntityId, command.SessionId, command.NewHolder, nextEpoch),
                     EngineJson.Default.HandoffTransfer))]);
@@ -71,10 +72,10 @@ public static class HandoffTransitions
             return Reject("unavailable");
         s.Execute("UPDATE engine_handoff SET version=version+1,updated_ms=$now,state=$state,reason=$reason WHERE id=$id",
             new("$now", c.NowMs), new("$state", command.State), new("$reason", command.Reason), new("$id", c.EntityId));
+        var session = FindSession(s, handoff.SessionId)!;
         Session? changedSession = null;
         if (command.State is "resumed" or "failed")
         {
-            var session = FindSession(s, handoff.SessionId)!;
             changedSession = session with
             {
                 Version = session.Version + 1,
@@ -89,13 +90,14 @@ public static class HandoffTransitions
                 """, new("$now", c.NowMs), new("$state", changedSession.State), new("$holder", changedSession.Holder),
                 new("$epoch", changedSession.Epoch), new("$id", handoff.SessionId));
         }
-        return Commit(s, c, handoff with { Version = handoff.Version + 1, State = command.State }, changedSession, []);
+        return Commit(s, c, handoff with { Version = handoff.Version + 1, State = command.State }, changedSession, session.RunId, []);
     }
 
-    private static CommandResult Commit(IWriteScope s, CommandContext c, Handoff handoff, Session? session, IReadOnlyList<EffectDraft> effects)
+    private static CommandResult Commit(IWriteScope s, CommandContext c, Handoff handoff, Session? session, string? runId,
+        IReadOnlyList<EffectDraft> effects)
     {
         List<EventDraft> events = [new($"handoff.{handoff.State}", "handoff", c.EntityId, handoff.Version, false,
-            new(handoff.SessionId, null, null, null, handoff.State, handoff.NextEpoch))];
+            new(handoff.SessionId, runId, null, null, handoff.State, handoff.NextEpoch))];
         if (session is not null)
         {
             events.Add(new("session.changed", "session", handoff.SessionId, session.Version, false,
