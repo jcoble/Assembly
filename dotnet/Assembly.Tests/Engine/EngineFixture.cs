@@ -37,6 +37,11 @@ internal sealed class EngineFixture : IDisposable
     public CommandResult Apply(CommandContext context, EngineCommand command) =>
         Db.Writer.Write("engine.command", scope => new EngineCommands(Machine, () => ChildLimit).Apply(scope, context, command));
 
+    public CommandResult Apply(EngineCommand command, string id, long version = 0, long epoch = 0,
+        EngineActor? actor = null, Guid? commandId = null) =>
+        Apply(new(commandId ?? Guid.NewGuid(), Machine, actor ?? new(ActorKind.Window, "window"),
+            id, version, epoch, Time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+
     public void Reopen()
     {
         Db.Dispose();
