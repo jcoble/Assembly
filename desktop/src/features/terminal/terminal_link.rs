@@ -110,18 +110,26 @@ impl TerminalLink {
     /// The output kept so far, read page by page from the start, or from 4 MB before the end when there's more.
     pub async fn replay(&mut self, cx: &mut AsyncApp) -> Result<Vec<u8>, String> {
         let mut bytes = Vec::new();
+        let mut boundary = None;
         loop {
             let args = json!({ "terminal": self.id, "offset": self.end });
             let piece: OutputPiece = call(cx, "read", args).await?;
-            if bytes.is_empty() && piece.end - piece.offset > REPLAY {
-                self.end = piece.end - REPLAY;
+            // Output may grow during every read. This replay covers only the first response's end;
+            // later bytes belong to live updates (or the next catch-up), including a page straddling that end.
+            let end = *boundary.get_or_insert(piece.end);
+            if bytes.is_empty() && end - piece.offset > REPLAY {
+                self.end = end - REPLAY;
                 continue;
             }
             let data = decode(&piece.data)?;
-            self.end = piece.offset + data.len() as i64;
-            bytes.extend(data);
-            if self.end >= piece.end {
+            let take = data.len().min((end - piece.offset).max(0) as usize);
+            self.end = piece.offset + take as i64;
+            bytes.extend_from_slice(&data[..take]);
+            if self.end >= end {
                 return Ok(bytes);
+            }
+            if take == 0 {
+                return Err("the terminal read made no progress".into());
             }
         }
     }

@@ -30,6 +30,9 @@ struct Terminals {
     running: Vec<(String, String)>,
     /// The output `terminal/read` answers, for every terminal.
     kept: Vec<u8>,
+    /// A paged producer that adds output on each read, for bounded replay tests.
+    read_limit: Option<usize>,
+    grow_reads: usize,
     /// The rows each `sub` is answered with, after its state.
     rows: Vec<Value>,
     /// A shell that ended: (id, owner, its output), which `list` shows with its exit code.
@@ -95,12 +98,19 @@ fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<()>) -> Fake
                         result(info(&terminal, &owner, &args["cols"], &args["rows"]))
                     }
                     "read" => {
+                        if terminals.grow_reads > 0 {
+                            terminals.kept.extend_from_slice(b"xyz");
+                            terminals.grow_reads -= 1;
+                        }
                         let offset = args["offset"].as_u64().unwrap_or_default() as usize;
                         let kept = match &terminals.ended {
                             Some((id, _, kept)) if args["terminal"] == id.as_str() => kept,
                             _ => &terminals.kept,
                         };
-                        let data = STANDARD.encode(&kept[offset.min(kept.len())..]);
+                        let start = offset.min(kept.len());
+                        let end =
+                            (start + terminals.read_limit.unwrap_or(kept.len())).min(kept.len());
+                        let data = STANDARD.encode(&kept[start..end]);
                         result(json!({"offset": offset, "end": kept.len(), "data": data}))
                     }
                     _ => result(json!({})),
@@ -567,3 +577,6 @@ mod mouse;
 
 #[path = "terminal_pane_dock_tests.rs"]
 mod dock;
+
+#[path = "terminal_replay_tests.rs"]
+mod replay;
