@@ -4,6 +4,7 @@ using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
 using Assembly.Application.Features.Engine.NeedsMe;
 using Assembly.Application.Features.Engine.Messages;
+using Assembly.Application.Features.Engine.Handoffs;
 
 namespace Assembly.Application.Features.Engine;
 
@@ -11,6 +12,9 @@ namespace Assembly.Application.Features.Engine;
 [JsonSerializable(typeof(CommandContext))]
 [JsonSerializable(typeof(CommandResult))]
 [JsonSerializable(typeof(EngineCommand))]
+[JsonSerializable(typeof(RequestHandoff))]
+[JsonSerializable(typeof(HandoffOutcome))]
+[JsonSerializable(typeof(HandoffTransfer))]
 [JsonSerializable(typeof(SendMessage))]
 [JsonSerializable(typeof(MessageOutcome))]
 [JsonSerializable(typeof(StartSession))]

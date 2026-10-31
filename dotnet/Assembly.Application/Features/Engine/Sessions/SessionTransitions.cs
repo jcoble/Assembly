@@ -10,7 +10,7 @@ namespace Assembly.Application.Features.Engine.Sessions;
 public static class SessionTransitions
 {
     private sealed record Session(long Version, long Epoch, string State, string Activity,
-        string? ParentId, string? RunId, bool CancelRequested = false);
+        string? ParentId, string? RunId, bool CancelRequested = false, long? ReservedEpoch = null);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
         SessionCommand command, int childLimit)
@@ -21,6 +21,8 @@ public static class SessionTransitions
         if (current is null && scope.QueryFirst("SELECT COUNT(*) FROM sessions WHERE session_id=$id",
                 r => r.Long(0), new SqlArg("$id", context.EntityId)) != 0)
             return Refused(context, "legacy_session_not_managed");
+        if (current?.State == "handing_off")
+            return Refused(context, "handing_off", current);
         if (current is not null && current.Epoch != context.Epoch)
             return Refused(context, "stale_epoch", current);
         if ((current?.Version ?? 0) != context.ExpectedVersion)
@@ -168,10 +170,10 @@ public static class SessionTransitions
     }
 
     private static Session? Find(IWriteScope scope, string id) => scope.QueryFirst("""
-        SELECT version,epoch,state,activity_state,parent_id,run_id,cancel_requested FROM engine_session WHERE id=$id
+        SELECT version,epoch,state,activity_state,parent_id,run_id,cancel_requested,reserved_epoch FROM engine_session WHERE id=$id
         """, r => new Session(r.Long(0), r.Long(1), r.Text(2), r.Text(3),
-            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5), r.Long(6) != 0), new SqlArg("$id", id));
+            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5), r.Long(6) != 0, r.IsNull(7) ? null : r.Long(7)), new SqlArg("$id", id));
 
     private static CommandResult Refused(CommandContext context, string error, Session? current = null) =>
-        new(false, false, error, current?.Version ?? 0, 0, current?.Epoch ?? context.Epoch);
+        new(false, false, error, current?.Version ?? 0, 0, current?.ReservedEpoch ?? current?.Epoch ?? context.Epoch);
 }

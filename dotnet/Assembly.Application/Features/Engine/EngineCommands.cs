@@ -6,6 +6,7 @@ using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
 using Assembly.Application.Features.Engine.NeedsMe;
 using Assembly.Application.Features.Engine.Messages;
+using Assembly.Application.Features.Engine.Handoffs;
 
 namespace Assembly.Application.Features.Engine;
 
@@ -30,6 +31,7 @@ public sealed class EngineCommands
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
+                HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
                 MessageCommand message => MessageTransitions.Apply(scope, context, message),
                 NeedCommand need => NeedTransitions.Apply(scope, context, need),
                 RunCommand run => RunTransitions.Apply(scope, context, run),

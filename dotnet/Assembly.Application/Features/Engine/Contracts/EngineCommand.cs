@@ -3,10 +3,13 @@ using Assembly.Application.Features.Engine.Sessions;
 using Assembly.Application.Features.Engine.Runs;
 using Assembly.Application.Features.Engine.NeedsMe;
 using Assembly.Application.Features.Engine.Messages;
+using Assembly.Application.Features.Engine.Handoffs;
 
 namespace Assembly.Application.Features.Engine.Contracts;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(RequestHandoff), "request_handoff")]
+[JsonDerivedType(typeof(HandoffOutcome), "handoff_outcome")]
 [JsonDerivedType(typeof(SendMessage), "send_message")]
 [JsonDerivedType(typeof(MessageOutcome), "message_outcome")]
 [JsonDerivedType(typeof(StartSession), "start_session")]
