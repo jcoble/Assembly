@@ -4,10 +4,13 @@ using Assembly.Application.Features.Engine.Runs;
 using Assembly.Application.Features.Engine.NeedsMe;
 using Assembly.Application.Features.Engine.Messages;
 using Assembly.Application.Features.Engine.Handoffs;
+using Assembly.Application.Features.Engine.Prs;
 
 namespace Assembly.Application.Features.Engine.Contracts;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
+[JsonDerivedType(typeof(ReportPr), "report_pr")]
+[JsonDerivedType(typeof(ObservePr), "observe_pr")]
 [JsonDerivedType(typeof(RequestHandoff), "request_handoff")]
 [JsonDerivedType(typeof(HandoffOutcome), "handoff_outcome")]
 [JsonDerivedType(typeof(SendMessage), "send_message")]
