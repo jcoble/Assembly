@@ -16,7 +16,7 @@ here updates this file in the same commit. Every other commit says `Architecture
   native views in `core/native_views/`, the backend launcher in `core/backend/`, the palette's command list in
   `core/commands/`) and one folder per
   feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that.
-- `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
+- `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine; both hosts start the engine runtime.
 
 ## The backend: a core in layers, the rest by feature
 

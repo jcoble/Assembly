@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Engine;
+using Assembly.Application.Features.Engine.Contracts;
 using Assembly.Application.Features.Engine.Effects;
 using Assembly.Application.Features.Engine.Persistence;
 using Assembly.Application.Features.Engine.Reading;
@@ -15,6 +16,7 @@ public sealed class EngineRuntime : IAsyncDisposable
 {
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
+    private readonly IAppDatabase _db;
     private readonly EngineTopics _topics;
     private readonly EngineTopics.Subscription _subscription;
     private readonly EngineWorker _worker;
@@ -31,6 +33,7 @@ public sealed class EngineRuntime : IAsyncDisposable
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, Func<int> childLimit,
         IEngineEffects? effects, IEngineRetention? retention)
     {
+        _db = db;
         _topics = topics;
         Machine = EngineSchema.Open(db, time.GetUtcNow().ToUnixTimeMilliseconds());
         Reader = new(db, Machine);
@@ -48,6 +51,13 @@ public sealed class EngineRuntime : IAsyncDisposable
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
         Func<int> childLimit, IEngineEffects? effects = null, IEngineRetention? retention = null) =>
         new(db, topics, time, childLimit, effects, retention);
+
+    internal CommandResult Submit(CommandContext context, EngineCommand command)
+    {
+        var result = _db.Writer.Write("engine.command", scope => Commands.Apply(scope, context, command));
+        if (result.Applied) _worker.Wake();
+        return result;
+    }
 
     public void EffectsAvailable() => _worker.EffectsAvailable();
 
