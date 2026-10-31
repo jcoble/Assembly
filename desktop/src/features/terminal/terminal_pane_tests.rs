@@ -421,25 +421,22 @@ async fn exit_keeps_the_output_and_shows_the_status(cx: &mut TestAppContext) {
 
 // Pins: terminal#12
 #[gpui::test]
-async fn a_remote_session_shows_the_limitation(cx: &mut TestAppContext) {
+async fn a_remote_session_opens_and_reuses_its_shell(cx: &mut TestAppContext) {
     let mut open = open(cx, Terminals::default(), true).await;
     open.until("a's shell", |_, pane| following(pane)).await;
     pick("b", open.cx);
-    open.until("the limitation", |_, pane| pane.status().is_some())
-        .await;
-    open.pane.read_with(open.cx, |pane, _| {
-        assert_eq!(
-            pane.status().as_deref(),
-            Some("Remote terminals aren't available yet.")
-        );
-    });
-    let terminals = open.terminals.lock().unwrap();
-    assert!(
-        terminals
-            .of("start")
-            .iter()
-            .all(|args| args["owner"] == "a")
-    );
+    open.until("b's remote shell", |terminals, pane| {
+        following(pane) && terminals.of("start").len() == 2
+    })
+    .await;
+    pick("a", open.cx);
+    open.until("a again", |_, pane| following(pane)).await;
+    pick("b", open.cx);
+    open.until("b again", |terminals, pane| {
+        following(pane) && terminals.of("list").len() == 4
+    })
+    .await;
+    assert_eq!(open.terminals.lock().unwrap().of("start").len(), 2);
 }
 
 // Pins: terminal#5, terminal#7
@@ -493,7 +490,7 @@ async fn the_size_stays_within_what_the_backend_allows(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
-async fn output_arrives_on_the_terminal_socket_not_the_main_one(cx: &mut TestAppContext) {
+async fn calls_and_output_use_only_the_terminal_socket(cx: &mut TestAppContext) {
     let mut open = open(
         cx,
         Terminals {
@@ -507,11 +504,30 @@ async fn output_arrives_on_the_terminal_socket_not_the_main_one(cx: &mut TestApp
         following(pane) && pane.grid.text().contains("hello")
     })
     .await;
+    open.cx.simulate_keystrokes("x");
+    open.until("typed", |terminals, pane| {
+        !terminals.of("write").is_empty() && !pane.writing()
+    })
+    .await;
+    open.pane
+        .update(open.cx, |pane, cx| pane.resized((120, 40), cx));
+    open.until("resized", |terminals, _| !terminals.of("resize").is_empty())
+        .await;
+    open.pane
+        .read_with(open.cx, |pane, cx| pane.link.as_ref().unwrap().close(cx));
+    open.until("closed", |terminals, _| !terminals.of("close").is_empty())
+        .await;
+    for method in ["start", "list", "read", "write", "resize", "close"] {
+        assert!(
+            !open.terminals.lock().unwrap().of(method).is_empty(),
+            "missing {method}"
+        );
+    }
     let subscriptions: Vec<_> = open
         ._backend
         .on
         .try_iter()
-        .filter(|(_, frame)| frame["t"] == "sub" && frame["topic"] == "terminal")
+        .filter(|(_, frame)| frame["feature"] == "terminal" || frame["topic"] == "terminal")
         .collect();
     assert!(!subscriptions.is_empty());
     assert!(

@@ -66,13 +66,13 @@ pub enum Output {
 impl TerminalLink {
     /// The session's running shell, or a new one in its folder at this size, with the size it has and the output of
     /// the shell it replaces, if that one ended: shown above the new one, as before. The backend picks the folder from
-    /// the owner (StartArgs.cs), refuses a session that isn't this machine's, and drops the ended shell on the start.
+    /// the owner (StartArgs.cs), routes to the machine that owns the session, and drops the ended shell on the start.
     pub async fn open(
         session: &str,
         (cols, rows): (usize, usize),
         cx: &mut AsyncApp,
     ) -> Result<(Self, (usize, usize), Vec<u8>), String> {
-        let list: Vec<TerminalInfo> = call(cx, "list", json!({})).await?;
+        let list: Vec<TerminalInfo> = call(cx, "list", json!({"owner": session})).await?;
         let (mut running, mut ended) = (None, None);
         for info in list {
             if info.owner.as_deref() == Some(session) && info.command.is_none() {
@@ -172,20 +172,20 @@ impl TerminalLink {
         async move { settle(write.await).map(|_| ()) }
     }
 
-    // Nothing waits on a resize or a close: the backend runs a read call to its end even when its answer is dropped
-    // (SocketDispatcher.AnswerAsync), and a resize that fails leaves the old size until the next.
+    // The socket client owns completion; dropping these replies must not cancel forwarded operations.
     pub fn resize(&self, (cols, rows): (usize, usize), cx: &App) {
         let args = json!({ "terminal": self.id, "cols": cols, "rows": rows });
-        drop(start::<Value>(cx, "resize", args));
+        start::<Value>(cx, "resize", args).ignore_reply();
     }
 
     pub fn close(&self, cx: &App) {
-        drop(start::<Value>(cx, "close", json!({ "terminal": self.id })));
+        start::<Value>(cx, "close", json!({ "terminal": self.id })).ignore_reply();
     }
 }
 
 fn start<T: DeserializeOwned>(cx: &App, method: &str, args: Value) -> PendingCall<T> {
-    SocketClient::global(cx)
+    SocketClient::try_terminal(cx)
+        .expect("the terminal socket is started with the window")
         .read(cx)
         .call("terminal", method, args, None)
 }

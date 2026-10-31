@@ -34,6 +34,11 @@ impl<T> PendingCall<T> {
             result: PhantomData,
         }
     }
+    /// Leaves completion with the socket client, without cancelling the backend when this reply is dropped.
+    /// For short operations whose result the window does not display, such as terminal resize and close.
+    pub fn ignore_reply(mut self) {
+        self.answered = true;
+    }
 }
 
 impl<T: DeserializeOwned> Future for PendingCall<T> {

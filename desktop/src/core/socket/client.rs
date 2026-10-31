@@ -2,7 +2,7 @@
 //! subscribes through it; nothing else opens a socket. It emits each `ConnectionState` change. A second one, the
 //! bulk client (`start_bulk`, its own global), is the same client on `/socket/bulk`, which alone carries the large
 //! calls (attachments/*, rows/page and rows/tool), so they never hold up the main socket's calls and topics.
-//! A third client on /socket/terminal carries only terminal output.
+//! A third client on /socket/terminal carries terminal calls and output.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

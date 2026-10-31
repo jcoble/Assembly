@@ -47,7 +47,10 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 
 ## One socket
 
-`/socket/terminal` is the third socket per machine, carrying only the terminal topic.
+`/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
+For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;
+output is relayed onto the local terminal topic. The [TSK-1639 task](https://app.notion.com/p/408394b0689d8122911ae831ac180542)
+holds the terminal routing decisions and verification.
 
 The page talks to the backend over one WebSocket, `/socket`, through one file, `app/src/lib/socket.ts`. The backend's
 side is `Assembly.Infrastructure/Socket/`: a feature registers its calls, saves and topics on `ICallRegistry`

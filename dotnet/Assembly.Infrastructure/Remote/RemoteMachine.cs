@@ -34,8 +34,9 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
     public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
-        Action<string>? turnEnded = null)
+        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null)
     {
+        Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics());
         _turnEnded = turnEnded ?? (_ => { });
         _name = name;
         _hub = hub;
@@ -47,6 +48,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     }
 
     public string? Name => _name;
+    internal RemoteTerminalSocket Terminals { get; }
 
     // A subagent's session, made on the remote by its parent's session, is known here from its parent's row.
     private void AddSubagentSession(string parentSessionId, StoredRow row)
@@ -303,6 +305,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        await Terminals.DisposeAsync();
         await _follower.DisposeAsync();
         _http.Dispose();
     }

@@ -11,4 +11,5 @@ Draft for Jesse to correct.
 - terminal#9: Reopening a running session's terminal reuses its shell. Reopening after exit starts a new shell.
 - terminal#10: Running a separate command does not replace the session's shell.
 - terminal#11: An unknown session cannot start a terminal, even with an explicit folder.
-- terminal#12: A session or helper belonging to another machine cannot start a local shell. Until remote terminals are available, opening it reports that limitation.
+- terminal#12: A remote session's shell starts in its folder on its owning machine, through the local backend. Its machine-qualified id routes write, resize, read and close there; list includes its shell for reuse, and output is relayed on the local terminal socket. Unknown sessions cannot start a shell.
+- terminal#13: All terminal calls and output use /socket/terminal, separately from chat, on both the window-to-backend and backend-to-remote hops. Other feature calls are refused there; terminal calls are refused on the chat socket.

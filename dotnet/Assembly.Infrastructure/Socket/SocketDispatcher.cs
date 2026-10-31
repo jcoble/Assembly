@@ -211,8 +211,8 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     internal async Task<ReadOnlyMemory<byte>> AnswerAsync(InFrame frame, long id, SocketConnection connection, CancellationToken cancelled)
     {
         var name = $"{frame.Feature}/{frame.Method}";
-        if (connection.Terminal)
-            return Error(id, "not_found", $"{name} is on /socket");
+        if ((frame.Feature == "terminal") != connection.Terminal)
+            return Error(id, "not_found", frame.Feature == "terminal" ? $"{name} is on /socket/terminal" : $"{name} is on /socket");
         if (!_calls.TryGetValue(name, out var call))
             return Error(id, "not_found", $"there's no call {name}");
         if (call.Bulk != connection.Bulk)

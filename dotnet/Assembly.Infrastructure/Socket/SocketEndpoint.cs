@@ -9,7 +9,7 @@ namespace Assembly.Infrastructure.Socket;
 /// set a header on a socket; its <c>hello</c> carries the token instead. <paramref name="machine"/> is the name the
 /// <c>welcome</c> gives, this host's. With <paramref name="bulk"/> it is <c>WS /socket/bulk</c> instead, the page's second
 /// socket, which serves only the large calls and no topics.
-/// With <paramref name="terminal"/> it serves only the terminal topic on <c>/socket/terminal</c>.
+/// With <paramref name="terminal"/> it serves only terminal calls and the terminal topic on <c>/socket/terminal</c>.
 /// </summary>
 internal sealed class SocketEndpoint(string token, SocketDispatcher calls, string machine, TimeProvider time, bool bulk = false, bool terminal = false)
 {

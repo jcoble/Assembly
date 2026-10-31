@@ -1,4 +1,4 @@
-//! `TerminalPane` owns the bottom dock's Terminal tab: the open local session's shell, run by the backend
+//! `TerminalPane` owns the bottom dock's Terminal tab: the open session's shell, run by the backend
 //! (terminal_link.rs), shown from an `alacritty_terminal` grid (terminal_grid.rs, drawn by terminal_draw.rs).
 //!
 //! While the tab is shown it opens the session's shell: the running one, or a new one in the session's folder
@@ -6,8 +6,7 @@
 //! come meanwhile, so nothing between the two is lost; a row past a gap (a reconnect) reads the kept output again from
 //! where it got to (terminal#5). Hiding the tab or picking another session lets go of the view and closes nothing on
 //! the backend; the tab leaving the dock closes the shell (g0-host#9). What's typed goes out one write at a time,
-//! what's typed meanwhile in the next, in order (terminal#2). A session on another machine shows that remote
-//! terminals aren't here yet (terminal#12).
+//! what's typed meanwhile in the next, in order (terminal#2). The backend routes remote sessions to their machine (terminal#12).
 
 use std::mem;
 use std::time::Duration;
@@ -25,7 +24,6 @@ use crate::core::socket::update::Update;
 use crate::core::state::appearance::Appearance;
 use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::sessions::Sessions;
 
 /// The layout's name for the tab (default_layout.rs).
 const TERMINAL: &str = "Terminal";
@@ -48,7 +46,7 @@ pub enum Shown {
     Open,
     /// The program ended with this code; its output stays (terminal#7).
     Exited(i32),
-    /// Why there's no terminal: the session is remote, or the backend refused.
+    /// Why there's no terminal: the backend refused.
     Said(String),
 }
 
@@ -158,13 +156,9 @@ impl TerminalPane {
         self.session = wanted.clone();
         self.shown = Shown::Nothing;
         cx.notify();
-        let Some(session) = wanted else {
+        let Some(_) = wanted else {
             return;
         };
-        if remote(&session, cx) {
-            self.shown = Shown::Said("Remote terminals aren't available yet.".into());
-            return;
-        }
         self.shown = Shown::Opening;
         self.open(cx);
     }
@@ -413,19 +407,6 @@ impl TerminalPane {
             _ => None,
         }
     }
-}
-
-/// The session runs on another machine, as the sessions list says.
-fn remote(session: &str, cx: &App) -> bool {
-    Sessions::try_global(cx).is_some_and(|sessions| {
-        (sessions.read(cx).items().iter()).any(|item| {
-            item.session_id == session
-                && item
-                    .machine
-                    .as_deref()
-                    .is_some_and(|machine| !machine.is_empty())
-        })
-    })
 }
 
 impl EventEmitter<PanelEvent> for TerminalPane {}
