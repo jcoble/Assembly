@@ -13,7 +13,6 @@ use std::mem;
 
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
 use gpui_kit::component::{ActiveTheme as _, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::terminal_draw::draw;
@@ -345,10 +344,15 @@ impl TerminalPane {
         self._write = Some(cx.spawn(async move |pane, cx| {
             let written = write.await;
             pane.update(cx, |pane, cx| {
-                if let Err(why) = written {
-                    eprintln!("terminal: a write failed: {why}");
-                }
                 pane.writing = false;
+                if let Err(why) = written {
+                    // As the old app: the keys went nowhere, so the terminal stops and says why.
+                    pane.shown = Shown::Said(format!("The terminal didn't take the keys: {why}"));
+                    (pane._follow, pane._replay) = (None, None);
+                    pane.typed.clear();
+                    cx.notify();
+                    return;
+                }
                 pane.write(cx);
             })
             .ok();
@@ -368,6 +372,7 @@ impl TerminalPane {
     /// The line under the grid, or in its place.
     fn status(&self) -> Option<String> {
         match &self.shown {
+            Shown::Opening => Some("Opening terminal…".into()),
             Shown::Exited(code) => Some(format!("exited with {code}")),
             Shown::Said(why) => Some(why.clone()),
             _ => None,
@@ -469,10 +474,16 @@ impl Render for TerminalPane {
                     window,
                     cx,
                 );
-                pane.child(div().flex_1().min_h_0().p_1().child(grid))
-                    .when_some(self.status(), |pane, status| {
-                        pane.child(note(status.into()))
-                    })
+                // While opening, the note lies over the grid, so the grid measures the room the shell will have.
+                let opening = self.shown == Shown::Opening;
+                let grid = div().relative().flex_1().min_h_0().p_1().child(grid);
+                match self.status() {
+                    Some(status) if opening => {
+                        pane.child(grid.child(note(status.into()).absolute().top_0().left_0()))
+                    }
+                    Some(status) => pane.child(grid).child(note(status.into())),
+                    None => pane.child(grid),
+                }
             }
         }
     }

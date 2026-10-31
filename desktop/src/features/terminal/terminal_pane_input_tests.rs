@@ -81,3 +81,23 @@ async fn focus_changes_reach_a_program_that_asks(cx: &mut TestAppContext) {
         b"\x1b[O\x1b[I".to_vec()
     );
 }
+
+#[gpui::test]
+async fn a_write_that_fails_says_why(cx: &mut TestAppContext) {
+    let terminals = Terminals {
+        refuse_writes: Some("the shell is gone"),
+        ..Default::default()
+    };
+    let mut open = open(cx, terminals, false).await;
+    open.until("the shell started", |_, pane| following(pane))
+        .await;
+    open.cx.simulate_keystrokes("a");
+    open.until("the failure shown", |_, pane| pane.status().is_some())
+        .await;
+    open.pane.read_with(open.cx, |pane, _| {
+        assert_eq!(
+            pane.status().as_deref(),
+            Some("The terminal didn't take the keys: the shell is gone")
+        );
+    });
+}

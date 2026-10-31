@@ -34,6 +34,8 @@ struct Terminals {
     rows: Vec<Value>,
     /// A shell that ended: (id, owner, its output), which `list` shows with its exit code.
     ended: Option<(String, String, Vec<u8>)>,
+    /// `write` fails with this message.
+    refuse_writes: Option<&'static str>,
 }
 
 impl Terminals {
@@ -70,6 +72,9 @@ fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<()>) -> Fake
             (Some("call"), Some(method)) => {
                 terminals.seen.push((method.into(), args.clone()));
                 match method {
+                    "write" if terminals.refuse_writes.is_some() => vec![Reply::Frame(
+                        json!({"t": "error", "id": id, "code": "failed", "message": terminals.refuse_writes}),
+                    )],
                     "list" => {
                         let mut list: Vec<Value> = (terminals.running.iter())
                             .map(|(id, owner)| info(id, owner, &json!(96), &json!(28)))
@@ -211,6 +216,8 @@ fn following(pane: &TerminalPane) -> bool {
 #[gpui::test]
 async fn opening_the_tab_starts_a_shell_in_the_session_folder(cx: &mut TestAppContext) {
     let mut open = open(cx, Terminals::default(), false).await;
+    let opening = open.pane.read_with(open.cx, |pane, _| pane.status());
+    assert_eq!(opening.as_deref(), Some("Opening terminal…"));
     open.until("the shell started", |_, pane| following(pane))
         .await;
     let size = open.pane.read_with(open.cx, |pane, _| pane.size);
