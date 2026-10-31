@@ -65,6 +65,48 @@ public sealed class PrTests
         Assert.Equal("merged", f.State("engine_pr", "p"));
     }
 
+    [Fact]
+    public void Terminal_pr_keeps_its_identity()
+    {
+        using var f = Fixture();
+        Assert.True(f.Apply(Report(), "p", actor: Owner).Applied);
+        Assert.True(f.Apply(new ObservePr("open", "abc", 1000), "p", 1, actor: Observer).Applied);
+        Assert.True(f.Apply(new ObservePr("merged", "abc", 2000), "p", 2, actor: Observer).Applied);
+        var events = f.Count("engine_event");
+        ReportPr[] changedIdentities =
+        [
+            Report() with { Head = "def" },
+            Report() with { Repo = "org/other" },
+            Report() with { Number = 43 }
+        ];
+        foreach (var report in changedIdentities)
+        {
+            var refused = f.Apply(report, "p", 3, actor: Owner);
+            Assert.False(refused.Applied);
+            Assert.Equal("invalid_transition", refused.Error);
+            Assert.Equal(3, refused.Version);
+            Assert.Equal(0, refused.Epoch);
+            Assert.Equal(events, f.Count("engine_event"));
+            Assert.Equal("abc", f.Text("SELECT head FROM engine_pr WHERE id='p'"));
+            Assert.Equal("org/repo", f.Text("SELECT repo FROM engine_pr WHERE id='p'"));
+            Assert.Equal(42, f.Number("SELECT number FROM engine_pr WHERE id='p'"));
+            Assert.Equal(3, f.Number("SELECT version FROM engine_pr WHERE id='p'"));
+        }
+        const string updatedUrl = "https://github.com/org/repo/pull/42?updated";
+        var accepted = f.Apply(Report("closed") with { Url = updatedUrl }, "p", 3,
+            actor: new(ActorKind.Window, "reporter"));
+        Assert.True(accepted.Applied);
+        Assert.Equal(4, accepted.Version);
+        Assert.Equal(events + 1, f.Count("engine_event"));
+        Assert.Equal("merged", f.State("engine_pr", "p"));
+        Assert.Equal("abc", f.Text("SELECT head FROM engine_pr WHERE id='p'"));
+        Assert.Equal("abc", f.Text("SELECT observed_head FROM engine_pr WHERE id='p'"));
+        Assert.Equal(2000, f.Number("SELECT observed_ms FROM engine_pr WHERE id='p'"));
+        Assert.Equal("reporter", f.Text("SELECT reported_by FROM engine_pr WHERE id='p'"));
+        Assert.Equal("closed", f.Text("SELECT reported_state FROM engine_pr WHERE id='p'"));
+        Assert.Equal(updatedUrl, f.Text("SELECT url FROM engine_pr WHERE id='p'"));
+    }
+
     [Theory]
     [InlineData(ActorKind.Session)]
     [InlineData(ActorKind.Window)]

@@ -7,7 +7,7 @@ namespace Assembly.Application.Features.Engine.Prs;
 
 public static class PrTransitions
 {
-    private sealed record Pr(long Version, string RunId, string State, string Head, long? ObservedMs);
+    private sealed record Pr(long Version, string RunId, string State, string Head, long? ObservedMs, string Repo, long Number);
     private sealed record Run(long Version, string Owner, long Epoch, string? TaskUrl, string? PrId, string State);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, PrCommand command)
@@ -39,6 +39,9 @@ public static class PrTransitions
 
     private static CommandResult Report(IWriteScope s, CommandContext c, ReportPr command, Pr? pr, Run run)
     {
+        if (pr is not null && pr.State is ("merged" or "closed") &&
+            (command.Repo != pr.Repo || command.Number != pr.Number || command.Head != pr.Head))
+            return Refused(c, "invalid_transition", pr, run.Epoch);
         if (command.Number <= 0 || string.IsNullOrWhiteSpace(command.Repo) || string.IsNullOrWhiteSpace(command.Head) ||
             !Uri.TryCreate(command.Url, UriKind.Absolute, out var url) || url.Scheme != "https" ||
             pr is not null && pr.RunId != command.RunId || run.PrId is not null && run.PrId != c.EntityId ||
@@ -84,8 +87,9 @@ public static class PrTransitions
     }
 
     private static Pr? Find(IWriteScope s, string id) => s.QueryFirst("""
-        SELECT version,run_id,state,head,observed_ms FROM engine_pr WHERE id=$id
-        """, r => new Pr(r.Long(0), r.Text(1), r.Text(2), r.Text(3), r.IsNull(4) ? null : r.Long(4)), new SqlArg("$id", id));
+        SELECT version,run_id,state,head,observed_ms,repo,number FROM engine_pr WHERE id=$id
+        """, r => new Pr(r.Long(0), r.Text(1), r.Text(2), r.Text(3), r.IsNull(4) ? null : r.Long(4), r.Text(5), r.Long(6)),
+        new SqlArg("$id", id));
 
     private static EventDraft Changed(CommandContext c, long version, string runId, string state, long epoch) =>
         new("pr.changed", "pr", c.EntityId, version, false, new(null, runId, null, null, state, epoch));
