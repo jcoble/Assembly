@@ -363,17 +363,22 @@ public sealed class EffectTests
         var calls = 0;
         Action<EngineEvent> callback = e =>
         {
-            if (++calls == 1) throw new InvalidOperationException("queue full");
+            Interlocked.Increment(ref calls);
             events.Writer.TryWrite(e);
         };
         using var first = runtime.Publisher.Register(callback, out _);
         using var second = runtime.Publisher.Register(callback, out _);
         Assert.True(f.Apply(new SendMessage(null, "s", "first", "prompt"), "first").Applied);
         await Until(events, e => e.EntityId == "first");
+        await Until(events, e => e.EntityId == "first");
+        Assert.Equal(2, Volatile.Read(ref calls));
         first.Dispose();
         Assert.True(f.Apply(new SendMessage(null, "s", "second", "prompt"), "second").Applied);
         await Until(events, e => e.EntityId == "second");
-        Assert.Equal(3, calls);
+        Assert.Equal(3, Volatile.Read(ref calls));
+        using var noMoreDeliveries = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await events.Reader.ReadAsync(noMoreDeliveries.Token));
     }
 
     [Fact]
