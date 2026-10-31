@@ -27,12 +27,12 @@ pub fn cell_size(
 }
 
 /// The grid's lines, filling the pane, and a measure of the space that calls `fitted` with the columns and rows that
-/// fit whenever they change.
+/// fit, where the grid starts in the window and each cell's size, on each paint.
 pub fn draw(
     cells: Vec<GridCell>,
     (rows, cursor): (usize, Option<(usize, usize)>),
     text: (SharedString, Pixels, Pixels),
-    fitted: impl Fn((usize, usize), &mut App) + 'static,
+    fitted: impl Fn(((usize, usize), Point<Pixels>, Size<Pixels>), &mut App) + 'static,
     window: &Window,
     cx: &App,
 ) -> impl IntoElement {
@@ -52,7 +52,8 @@ pub fn draw(
                 fit(bounds.size.width, cell.width),
                 fit(bounds.size.height, cell.height),
             );
-            cx.defer(move |cx| fitted(size, cx));
+            let origin = bounds.origin;
+            cx.defer(move |cx| fitted((size, origin, cell), cx));
         },
         |_, _, _, _| {},
     )
@@ -81,6 +82,9 @@ pub fn draw(
                     if run.cursor {
                         (fg, bg) = (bg, fg);
                     }
+                    if run.selected {
+                        bg = theme.selection;
+                    }
                     div()
                         .flex_none()
                         .w(cell.width * run.columns as f32)
@@ -101,6 +105,7 @@ struct Run {
     bg: Color,
     bold: bool,
     cursor: bool,
+    selected: bool,
 }
 
 /// A line's cells as runs, with a blank for each column before a cell that isn't there and the cursor's cell on its
@@ -115,6 +120,7 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
         bg: Color::Named(NamedColor::Background),
         bold: false,
         wide: false,
+        selected: false,
     };
     let last = line.last().map_or(0, |cell| cell.column + 1);
     let end = last.max(cursor.map_or(0, |column| column + 1));
@@ -132,7 +138,8 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
             Some(run)
                 if !at_cursor
                     && !run.cursor
-                    && (run.fg, run.bg, run.bold) == (cell.fg, cell.bg, cell.bold) =>
+                    && (run.fg, run.bg, run.bold, run.selected)
+                        == (cell.fg, cell.bg, cell.bold, cell.selected) =>
             {
                 run.text.push(cell.text);
                 run.columns += columns;
@@ -144,6 +151,7 @@ fn runs(line: Vec<GridCell>, cursor: Option<usize>) -> Vec<Run> {
                 bg: cell.bg,
                 bold: cell.bold,
                 cursor: at_cursor,
+                selected: cell.selected,
             }),
         }
     }

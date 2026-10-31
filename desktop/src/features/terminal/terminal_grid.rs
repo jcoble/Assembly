@@ -3,7 +3,9 @@
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::VoidListener;
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, Processor};
@@ -24,7 +26,12 @@ pub struct GridCell {
     pub bold: bool,
     /// A double-width character, which covers this column and the next.
     pub wide: bool,
+    /// Inside the mouse selection.
+    pub selected: bool,
 }
+
+/// The lines kept above the screen to scroll back to, as the old app's terminal kept.
+const HISTORY: usize = 8000;
 
 /// A size in cells, which is how `Term` is told one.
 struct Cells(usize, usize);
@@ -46,7 +53,14 @@ impl Dimensions for Cells {
 impl TerminalGrid {
     pub fn new(cols: usize, rows: usize) -> Self {
         Self {
-            term: Term::new(Config::default(), &Cells(cols, rows), VoidListener),
+            term: Term::new(
+                Config {
+                    scrolling_history: HISTORY,
+                    ..Config::default()
+                },
+                &Cells(cols, rows),
+                VoidListener,
+            ),
             parser: Processor::new(),
         }
     }
@@ -61,6 +75,49 @@ impl TerminalGrid {
         self.term.resize(Cells(cols, rows));
     }
 
+    /// Moves the view `lines` back into the history, or forward when negative; it stops at either end.
+    pub fn scroll(&mut self, lines: i32) {
+        self.term.scroll_display(Scroll::Delta(lines));
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.term.scroll_display(Scroll::Bottom);
+    }
+
+    /// A full-screen program (an editor, a pager) shows its own screen with no history: the wheel goes to it as
+    /// arrow keys, as xterm sends them.
+    pub fn wheel_sends_arrows(&self) -> bool {
+        (self.term.mode()).contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
+    }
+
+    /// Starts a selection at a cell of the screen as shown, on its left or right half.
+    pub fn select_start(&mut self, column: usize, line: usize, right: bool) {
+        let (point, side) = self.point(column, line, right);
+        self.term.selection = Some(Selection::new(SelectionType::Simple, point, side));
+    }
+
+    /// Moves the selection's other end.
+    pub fn select_to(&mut self, column: usize, line: usize, right: bool) {
+        let (point, side) = self.point(column, line, right);
+        if let Some(selection) = &mut self.term.selection {
+            selection.update(point, side);
+        }
+    }
+
+    /// The selected text, lines joined by line breaks; none when nothing is selected.
+    pub fn selection_text(&self) -> Option<String> {
+        self.term
+            .selection_to_string()
+            .filter(|text| !text.is_empty())
+    }
+
+    /// A cell of the screen as shown, as a point of the whole grid, history included.
+    fn point(&self, column: usize, line: usize, right: bool) -> (Point, Side) {
+        let offset = self.term.grid().display_offset() as i32;
+        let point = Point::new(Line(line as i32 - offset), Column(column));
+        (point, if right { Side::Right } else { Side::Left })
+    }
+
     /// Its size in columns and rows.
     #[cfg(test)]
     pub fn size(&self) -> (usize, usize) {
@@ -72,6 +129,7 @@ impl TerminalGrid {
     pub fn cells(&self) -> Vec<GridCell> {
         let content = self.term.renderable_content();
         let offset = content.display_offset as i32;
+        let selection = content.selection;
         content
             .display_iter
             .filter(|cell| {
@@ -92,15 +150,19 @@ impl TerminalGrid {
                     bg,
                     bold: cell.flags.contains(Flags::BOLD),
                     wide: cell.flags.contains(Flags::WIDE_CHAR),
+                    selected: selection.is_some_and(|range| range.contains(cell.point)),
                 }
             })
             .collect()
     }
 
-    /// The cursor's column and screen line.
-    pub fn cursor(&self) -> (usize, usize) {
-        let point = self.term.grid().cursor.point;
-        (point.column.0, point.line.0.max(0) as usize)
+    /// The cursor's column and screen line, while its line is on the screen.
+    pub fn cursor(&self) -> Option<(usize, usize)> {
+        let grid = self.term.grid();
+        let line = grid.cursor.point.line.0 + grid.display_offset() as i32;
+        // Scrolled back far enough, the cursor's line is below the screen.
+        (line < grid.screen_lines() as i32)
+            .then(|| (grid.cursor.point.column.0, line.max(0) as usize))
     }
 
     /// The program asked for application cursor keys, so arrows send `ESC O` rather than `ESC [`.

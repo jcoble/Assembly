@@ -538,3 +538,6 @@ async fn an_ended_shell_keeps_its_output_above_the_new_one(cx: &mut TestAppConte
 
 #[path = "terminal_pane_input_tests.rs"]
 mod input;
+
+#[path = "terminal_pane_mouse_tests.rs"]
+mod mouse;

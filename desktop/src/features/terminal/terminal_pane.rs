@@ -58,6 +58,13 @@ pub struct TerminalPane {
     /// The columns and rows the pane has room for, once it has measured itself.
     size: (usize, usize),
     measured: bool,
+    /// Where the grid starts in the window and each cell's size, as last drawn: what the mouse points at.
+    origin: Point<Pixels>,
+    cell: Size<Pixels>,
+    /// A left-button drag is selecting.
+    selecting: bool,
+    /// The wheel's movement not yet a whole line.
+    wheeled: Pixels,
     link: Option<TerminalLink>,
     /// Rows that came while the kept output was being read; `None` while following.
     held: Option<Vec<Update>>,
@@ -97,6 +104,10 @@ impl TerminalPane {
             shown: Shown::Nothing,
             size: FIRST_SIZE,
             measured: false,
+            origin: Point::default(),
+            cell: Size::default(),
+            selecting: false,
+            wheeled: px(0.),
             link: None,
             held: None,
             typed: Vec::new(),
@@ -275,14 +286,23 @@ impl TerminalPane {
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        // Cmd on the Mac, Control-Shift elsewhere, as terminals take Copy and Paste.
+        let shortcut = |key: &str| {
+            keystroke.key == key && (modifiers.platform || (modifiers.control && modifiers.shift))
+        };
+        if shortcut("c") {
+            if let Some(text) = self.grid.selection_text() {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                cx.stop_propagation();
+            }
+            return;
+        }
         if self.shown != Shown::Open {
             return;
         }
-        let keystroke = &event.keystroke;
-        let paste = keystroke.key == "v"
-            && (keystroke.modifiers.platform
-                || (keystroke.modifiers.control && keystroke.modifiers.shift));
-        let bytes = match paste {
+        let bytes = match shortcut("v") {
             true => (cx.read_from_clipboard().and_then(|item| item.text()))
                 .map(|text| pasted(&text, self.grid.bracketed_paste())),
             false => key_bytes(keystroke, self.grid.app_cursor()),
@@ -291,6 +311,7 @@ impl TerminalPane {
             return;
         };
         cx.stop_propagation();
+        self.grid.scroll_to_bottom();
         self.typed.extend(bytes);
         self.write(cx);
     }
@@ -411,10 +432,10 @@ impl Render for TerminalPane {
             .id("terminal-pane")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|pane, _, window, cx| window.focus(&pane.focus, cx)),
-            )
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
+            .on_mouse_move(cx.listener(Self::mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
+            .on_scroll(cx.listener(Self::wheel))
             .size_full()
             .text_size(px(13.));
         let note = |text: SharedString| div().p_2().text_color(muted).child(text);
@@ -423,10 +444,16 @@ impl Render for TerminalPane {
             Shown::Said(why) => pane.child(note(why.clone().into())),
             _ => {
                 let this = cx.entity().downgrade();
-                let fitted = move |size, cx: &mut App| {
-                    this.update(cx, |pane, cx| pane.resized(size, cx)).ok();
+                let fitted = move |(size, origin, cell), cx: &mut App| {
+                    this.update(cx, |pane, cx| {
+                        (pane.origin, pane.cell) = (origin, cell);
+                        pane.resized(size, cx);
+                    })
+                    .ok();
                 };
-                let cursor = (self.shown == Shown::Open).then(|| self.grid.cursor());
+                let cursor = (self.shown == Shown::Open)
+                    .then(|| self.grid.cursor())
+                    .flatten();
                 let grid = draw(
                     self.grid.cells(),
                     (self.size.1, cursor),
@@ -443,6 +470,9 @@ impl Render for TerminalPane {
         }
     }
 }
+
+#[path = "terminal_pane_mouse.rs"]
+mod mouse;
 
 #[cfg(test)]
 #[path = "terminal_pane_tests.rs"]
