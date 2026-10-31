@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Engine.Effects;
 using Assembly.Application.Features.Engine.Recording;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
@@ -34,6 +35,7 @@ public sealed class EngineCommands
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
+                EffectCommand effect => EffectTransitions.Apply(scope, context, effect),
                 RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),

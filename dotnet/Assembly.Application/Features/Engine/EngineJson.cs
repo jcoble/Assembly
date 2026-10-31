@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Engine.Effects;
 using Assembly.Application.Features.Engine.Recording;
 using System.Text.Json.Serialization;
 using Assembly.Application.Features.Engine.Contracts;
@@ -11,6 +12,16 @@ using Assembly.Application.Features.Engine.Prs;
 namespace Assembly.Application.Features.Engine;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(Effect))]
+[JsonSerializable(typeof(EffectReceipt))]
+[JsonSerializable(typeof(ClaimEffect))]
+[JsonSerializable(typeof(RecoverEffect))]
+[JsonSerializable(typeof(EnableEffect))]
+[JsonSerializable(typeof(CompleteEffect))]
+[JsonSerializable(typeof(SessionEffectData))]
+[JsonSerializable(typeof(AnswerEffectData))]
+[JsonSerializable(typeof(MessageEffectData))]
+[JsonSerializable(typeof(HandoffEffectData))]
 [JsonSerializable(typeof(CommandContext))]
 [JsonSerializable(typeof(CommandResult))]
 [JsonSerializable(typeof(EngineCommand))]

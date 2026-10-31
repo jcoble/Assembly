@@ -108,6 +108,7 @@ public static class EngineSchema
         CREATE UNIQUE INDEX engine_needs_me_provider_request ON engine_needs_me(session_id,provider_request_id)
             WHERE provider_request_id IS NOT NULL;
         CREATE INDEX engine_outbox_state_next ON engine_outbox(state,next_ms);
+        CREATE INDEX engine_outbox_session_order ON engine_outbox(session_id,event_seq);
         CREATE INDEX engine_tool_call_session_time ON engine_tool_call(session_id,started_ms);
         CREATE INDEX engine_tool_call_run_time ON engine_tool_call(run_id,started_ms);
         CREATE INDEX engine_tool_call_step_attempt_time ON engine_tool_call(step_id,attempt,started_ms);

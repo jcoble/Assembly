@@ -133,7 +133,7 @@ public static class RunTransitions
             SELECT CASE
               WHEN state='cancelling' THEN CASE WHEN
                 NOT EXISTS(SELECT 1 FROM engine_step st JOIN engine_session se ON se.id=st.session_id
-                    WHERE st.run_id=$id AND st.attempt>0 AND se.state!='ended')
+                    WHERE st.run_id=$id AND st.attempt>0 AND st.state IN ('running','waiting') AND se.state!='ended')
                 AND NOT EXISTS(SELECT 1 FROM engine_outbox WHERE run_id=$id AND state!='done')
                 THEN 'cancelled' ELSE 'cancelling' END
               WHEN EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND required=1 AND state='failed' AND attempt>=max_attempts) THEN 'failed'

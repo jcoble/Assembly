@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Engine.Effects;
 using Assembly.Application.Features.Engine.Recording;
 using System.Text.Json.Serialization;
 using Assembly.Application.Features.Engine.Sessions;
@@ -9,6 +10,10 @@ using Assembly.Application.Features.Engine.Prs;
 
 namespace Assembly.Application.Features.Engine.Contracts;
 
+[JsonDerivedType(typeof(ClaimEffect), "claim_effect")]
+[JsonDerivedType(typeof(RecoverEffect), "recover_effect")]
+[JsonDerivedType(typeof(EnableEffect), "enable_effect")]
+[JsonDerivedType(typeof(CompleteEffect), "complete_effect")]
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "kind")]
 [JsonDerivedType(typeof(ToolStarted), "tool_started")]
 [JsonDerivedType(typeof(ToolEnded), "tool_ended")]
