@@ -1,3 +1,16 @@
+using System.Net.Http.Headers;
+using System.Net.WebSockets;
+using System.Text;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Desktop.Serve;
+using Assembly.Infrastructure.Chat.Attachments;
+using Assembly.Infrastructure.Http;
+using Assembly.Infrastructure.Machines;
+using Assembly.Infrastructure.Mcp;
+using Assembly.Tests.Features.Chat.Sessions;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Machines;
@@ -13,6 +26,68 @@ namespace Assembly.Tests.Draft.Board;
 
 public sealed class BoardRemoteTests
 {
+    // Pins: remote#18
+    [Fact]
+    public async Task A_board_answer_delivered_on_the_remote_has_the_desktop_follow_its_turn()
+    {
+        using var source = new BoardQueryTests.Fixture();
+        var sessions = SessionStore.Open(source.Db, source.Time, "unused");
+        var rows = RowStore.Open(source.Db);
+        using var hub = new LiveHub(rows, topics: source.Topics);
+        var launcher = new FakeLauncher();
+        await using var work = new BackgroundWork(source.Time, TextWriter.Null);
+        await using var registry = new SessionRegistry(hub, sessions, launcher, source.Time, TextWriter.Null, work);
+        var machines = new MachineSet(new LocalMachine(hub, sessions, registry, new AttachmentStore("unused")));
+        registry.Helpers.Delivery.Machines = machines;
+        await using var tools = new BoardTools(sessions, registry, source.Transitions, source.Queries, CancellationToken.None);
+        await using var app = ApiServer.Build(new ApiServices(hub, sessions, machines, new AttachmentStore("unused"),
+            "board-test", registry.Helpers, source.Db.Writer, source.Topics,
+            [new WorkflowCalls(source.Queries, tools.AnswerAsync), new RowsFeature(hub, rows, sessions, machines)], tools), 0, out _);
+        await app.StartAsync();
+        var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+        var home = Directory.CreateTempSubdirectory("assembly-board-remote-").FullName;
+        try
+        {
+            await using var desktop = await DesktopBackend.StartAsync(home, "desktop-test", 0, new FakeLauncher(), TextWriter.Null,
+                new RemoteConfig("Workbox Test", address, "board-test"));
+            using var http = new HttpClient { BaseAddress = desktop.Address };
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "desktop-test");
+            using var created = await http.PostAsync("/sessions", new StringContent(
+                """{"agent":"codex","repoUrl":"project","machine":"Workbox Test"}""", Encoding.UTF8, "application/json"));
+            created.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await created.Content.ReadAsStringAsync());
+            var sessionId = body.RootElement.GetProperty("sessionId").GetString()!;
+            tools.Update(sessionId, source.Report(question: source.Ask()));
+            using var socket = new ClientWebSocket();
+            await socket.ConnectAsync(new UriBuilder(desktop.Address) { Scheme = "ws", Path = "/socket" }.Uri, CancellationToken.None);
+            await BoardSocketTests.Send(socket, """{"t":"hello","protocol":1,"token":"desktop-test"}""");
+            await BoardSocketTests.Read(socket);
+            // Watching the rail does not open a chat or make the machine follow its rows.
+            await BoardSocketTests.Send(socket, """{"t":"sub","id":0,"topic":"sessionRail"}""");
+            await BoardSocketTests.Read(socket);
+            var answer = source.Answer() with { MachineId = "Workbox Test" };
+            await BoardSocketTests.Send(socket, """{"t":"call","id":1,"feature":"board","method":"answer","args":""" +
+                JsonSerializer.Serialize(answer, WorkflowJson.Default.BoardAnswerArgs) + "}");
+            var agent = await launcher.NextAsync();
+            await agent.StartAsync();
+            var prompt = await agent.ReadAsync("session/prompt");
+            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.CloseAsync();
+            using var copiedDb = TestDatabase.Open(Path.Combine(home, "assembly.db"));
+            var copied = RowStore.Open(copiedDb);
+            var accepted = false;
+            while (!accepted || copied.LastTurnEnd(sessionId) == 0)
+            {
+                var frame = await BoardSocketTests.Read(socket);
+                if (frame.GetProperty("t").GetString() == "result" && frame.GetProperty("id").GetInt64() == 1) accepted = true;
+            }
+            var remoteRows = rows.RowsAfter(sessionId, 0);
+            Assert.Contains(remoteRows, row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "started");
+            Assert.Equal(remoteRows.Select(RowWire.ToJson), copied.RowsAfter(sessionId, 0).Select(RowWire.ToJson));
+        }
+        finally { Directory.Delete(home, recursive: true); }
+    }
+
     [Fact]
     public void ReplayOver100Events()
     {
