@@ -18,10 +18,10 @@ impl TerminalPane {
         let Some((column, line, right)) = self.cell_at(event.position) else {
             return;
         };
-        if let Some(button) = button_code(event.button) {
-            if self.report_mouse(button, event.position, event.modifiers, false, cx) {
-                return;
-            }
+        if let Some(button) = button_code(event.button)
+            && self.report_mouse(button, event.position, event.modifiers, false, cx)
+        {
+            return;
         }
         if event.button != MouseButton::Left {
             return;
