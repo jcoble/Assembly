@@ -26,6 +26,14 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
         if (!ValidState(args.State) || args.Question is not null && args.AnswerReceived is not null ||
             args.ChangedPaths is { Length: > 32 }) throw new CallFailed("invalid_argument");
         if (args.ChangedPaths is { } paths) foreach (var path in paths) Text(path, 240, true);
+        if (args.Steps is { } steps)
+            foreach (var step in steps)
+            {
+                Text(step?.Text, 240, true);
+                if (step is null || step.State is not ("future" or "running" or "done" or "failed" or "retried" or "waiting" or "skipped" or "closed") ||
+                    step.Badge is not (null or "needs-you" or "high-impact" or "changed" or "answered" or "approved") ||
+                    step.Progress is < 0 or > 100) throw new CallFailed("invalid_argument");
+            }
         if (args.Question is { } ask)
         {
             Text(ask.QuestionKey, 80, true); Text(ask.Prompt, 1200, true); Text(ask.Recommendation, 300);
@@ -35,6 +43,8 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
         {
             var task = ReadTask(scope, "local", args.TaskKey);
             if (task is not null && task.CreatorSessionId != creator) throw new CallFailed("not_owner");
+            var oldSteps = ReadSteps(scope, args.TaskKey);
+            var sameSteps = args.Steps is null || oldSteps is not null && args.Steps.SequenceEqual(oldSteps);
             var now = Now;
             var next = task is null
                 ? new BoardTask("local", args.TaskKey, creator, project, args.Title, args.Summary, args.State,
@@ -72,7 +82,7 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
                 if (old is { Answer: null } && old.Generation == requested.ExpectedGeneration + 1 &&
                     old.Kind == requested.Kind && old.Prompt == requested.Prompt && old.Recommendation == requested.Recommendation)
                 {
-                    if (next == task && args.ChangedPaths is null)
+                    if (next == task && args.ChangedPaths is null && sameSteps)
                         return new BoardUpdateResult("local", args.TaskKey, task!.Revision, old.QuestionKey, old.Generation, null);
                 }
                 else
@@ -83,7 +93,7 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
                     kind = "question_asked";
                 }
             }
-            if (task is not null && next == task && question is null &&
+            if (task is not null && next == task && question is null && sameSteps &&
                 (args.ChangedPaths is null || scope.QueryFirst(
                     "SELECT json_extract(payload_json,'$.changedPaths') FROM board_events WHERE machine_id='local' AND task_key=$task ORDER BY seq DESC LIMIT 1;",
                     r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$task", args.TaskKey)) ==
@@ -93,7 +103,7 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
                     : new("local", args.TaskKey, task.Revision, args.Question?.QuestionKey,
                         args.Question is null ? null : args.Question.ExpectedGeneration + 1, null);
             next = next with { UpdatedAt = now, Revision = next.Revision + 1 };
-            Commit(scope, next, question, kind, args.ChangedPaths, now);
+            Commit(scope, next, question, kind, args.ChangedPaths, now, args.Steps ?? oldSteps);
             if (previous is not null)
                 return new("local", next.TaskKey, next.Revision, previous.QuestionKey, previous.Generation, previous);
             var accepted = question?.AnswerKey is null ? null : Acceptance(question);
@@ -207,10 +217,15 @@ public sealed class WorkflowTransitions(IAppDatabase db, TimeProvider time)
         "SELECT " + WorkflowQueries.QuestionRow + " FROM board_questions q WHERE machine_id=$machine AND task_key=$task AND question_key=$question;",
         r => JsonSerializer.Deserialize(r.Text(0), WorkflowSchema.Default.BoardQuestion)!, new SqlArg("$machine", machine), new SqlArg("$task", task), new SqlArg("$question", question));
 
-    private static void Commit(IWriteScope scope, BoardTask task, BoardQuestion? question, string kind, string[]? paths, long now)
+    private static IReadOnlyList<BoardStep>? ReadSteps(IWriteScope scope, string key) => scope.QueryFirst(
+        "SELECT json_extract(payload_json,'$.steps') FROM board_events WHERE machine_id='local' AND task_key=$task ORDER BY seq DESC LIMIT 1;",
+        r => r.IsNull(0) ? null : JsonSerializer.Deserialize(r.Text(0), WorkflowSchema.Default.IReadOnlyListBoardStep), new SqlArg("$task", key));
+
+    private static void Commit(IWriteScope scope, BoardTask task, BoardQuestion? question, string kind, string[]? paths, long now,
+        IReadOnlyList<BoardStep>? steps = null)
     {
         var seq = scope.QueryFirst("SELECT COALESCE(MAX(seq),0)+1 FROM board_events WHERE machine_id='local';", r => r.Long(0));
-        var item = new BoardEvent("local", seq, task.TaskKey, kind, now, task, question is null ? [] : [question], paths);
+        var item = new BoardEvent("local", seq, task.TaskKey, kind, now, task, question is null ? [] : [question], paths, steps ?? ReadSteps(scope, task.TaskKey));
         var json = JsonSerializer.Serialize(item, WorkflowSchema.Default.BoardEvent);
         if (Encoding.UTF8.GetByteCount(json) > 24 * 1024) throw new CallFailed("invalid_argument");
         PutTask(scope, task);

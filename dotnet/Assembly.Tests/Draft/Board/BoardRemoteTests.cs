@@ -26,6 +26,33 @@ namespace Assembly.Tests.Draft.Board;
 
 public sealed class BoardRemoteTests
 {
+    // Pins: board#6
+    [Fact]
+    public async Task StepSnapshotsReplayOnce()
+    {
+        await using var source = new BoardSocketTests.Host();
+        await source.StartAsync();
+        using var desktop = new BoardQueryTests.Fixture();
+        var steps = BoardQueryTests.Fixture.Steps();
+        source.F.Transitions.Update("session", "project", source.F.Report() with { Steps = steps });
+        var copied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var changes = 0;
+        var sub = desktop.Topics.Subscribe("board", null, _ => { }, (_, _) => { changes++; copied.TrySetResult(); });
+        await using var mirror = new RemoteWorkflowMirror(new("Workbox Test", source.Address, "board-test"),
+            desktop.Queries, desktop.Transitions, () => { });
+        mirror.Reconnect();
+        await copied.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var item = Assert.Single(source.F.Queries.Changes(new(0), CancellationToken.None).Events);
+        desktop.Transitions.Apply(item, "Workbox Test");
+        var detail = desktop.Detail(machine: "Workbox Test");
+        Assert.Equal(steps, detail.Steps);
+        Assert.Single(detail.Feed);
+        Assert.Equal(1, changes);
+        Assert.Equal(1, desktop.Queries.Applied("Workbox Test", CancellationToken.None));
+        Assert.Equal(steps, (await mirror.TaskAsync(new("Workbox Test", "task", null, null), CancellationToken.None)).Steps);
+        desktop.Topics.Unsubscribe(sub);
+    }
+
     // Pins: remote#18
     [Fact]
     public async Task A_board_answer_delivered_on_the_remote_has_the_desktop_follow_its_turn()

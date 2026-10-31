@@ -60,8 +60,13 @@ public sealed class WorkflowQueries(IAppDatabase db, string? remote = null)
         Convert.ToBase64String(Encoding.UTF8.GetBytes(json)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     internal const string PageSql = """
-        WITH filtered AS (
-         SELECT t.machine_id,t.task_key,t.updated_at, json_object('machineId',t.machine_id,'taskKey',t.task_key,'creatorSessionId',t.creator_session_id,'project',t.project,'title',t.title,'summary',t.summary,'state',t.state,'taskUrl',t.task_url,'prUrl',t.pr_url,'startedAt',t.started_at,'endedAt',t.ended_at,'updatedAt',t.updated_at,'revision',t.revision) AS task, json_object('stepsDone',NULL,'stepsFailed',NULL,'stepsSkipped',NULL,'tools',NULL,'files',
+        WITH snapshots AS (
+         SELECT e.machine_id,e.task_key,json_extract(e.payload_json,'$.steps') AS steps FROM board_events e
+         WHERE e.seq=(SELECT MAX(seq) FROM board_events WHERE machine_id=e.machine_id AND task_key=e.task_key)
+        ), filtered AS (
+         SELECT t.machine_id,t.task_key,t.updated_at, json_object('machineId',t.machine_id,'taskKey',t.task_key,'creatorSessionId',t.creator_session_id,'project',t.project,'title',t.title,'summary',t.summary,'state',t.state,'taskUrl',t.task_url,'prUrl',t.pr_url,'startedAt',t.started_at,'endedAt',t.ended_at,'updatedAt',t.updated_at,'revision',t.revision) AS task, json_object( 'stepsDone',(SELECT CASE WHEN s.steps IS NOT NULL THEN COUNT(*) END FROM json_each(s.steps) WHERE json_extract(value,'$.state')='done'),
+            'stepsFailed',(SELECT CASE WHEN s.steps IS NOT NULL THEN COUNT(*) END FROM json_each(s.steps) WHERE json_extract(value,'$.state')='failed'),
+            'stepsSkipped',(SELECT CASE WHEN s.steps IS NOT NULL THEN COUNT(*) END FROM json_each(s.steps) WHERE json_extract(value,'$.state')='skipped'),'tools',NULL,'files',
             CASE WHEN EXISTS(SELECT 1 FROM board_events e WHERE e.machine_id=t.machine_id AND e.task_key=t.task_key
               AND json_type(e.payload_json,'$.changedPaths')='array')
             THEN (SELECT COUNT(DISTINCT p.value) FROM board_events e, json_each(e.payload_json,'$.changedPaths') p
@@ -69,7 +74,7 @@ public sealed class WorkflowQueries(IAppDatabase db, string? remote = null)
          (SELECT COUNT(*) FROM board_questions q WHERE q.machine_id=t.machine_id AND q.task_key=t.task_key AND q.answer_json IS NULL) AS questions,
          CASE WHEN EXISTS(SELECT 1 FROM board_questions q WHERE q.machine_id=t.machine_id AND q.task_key=t.task_key AND q.answer_json IS NULL)
          THEN 0 WHEN t.state IN ('completed','failed','cancelled') THEN 2 ELSE 1 END AS g
-         FROM board_tasks t WHERE ($project IS NULL OR t.project=$project) AND ($state IS NULL OR t.state=$state)
+         FROM board_tasks t LEFT JOIN snapshots s ON s.machine_id=t.machine_id AND s.task_key=t.task_key WHERE ($project IS NULL OR t.project=$project) AND ($state IS NULL OR t.state=$state)
         ), paged AS (
          SELECT task,metrics,questions,g,updated_at,machine_id,task_key FROM filtered WHERE $cg IS NULL OR g>$cg OR (g=$cg AND
          (updated_at<$cu OR (updated_at=$cu AND (machine_id>$cm COLLATE BINARY OR (machine_id=$cm AND task_key>$ck COLLATE BINARY)))))
@@ -88,18 +93,24 @@ public sealed class WorkflowQueries(IAppDatabase db, string? remote = null)
         """;
 
     internal const string TaskSql = """
-        WITH questions AS (
+        WITH snapshot AS (
+         SELECT json_extract(payload_json,'$.steps') AS steps FROM board_events
+         WHERE machine_id=$machine AND task_key=$task ORDER BY seq DESC LIMIT 1
+        ), questions AS (
          SELECT q.asked_at,q.question_key, json_object('machineId',q.machine_id,'taskKey',q.task_key,'questionKey',q.question_key,'generation',q.generation,'kind',q.kind,'prompt',q.prompt,'recommendation',q.recommendation,'askedAt',q.asked_at,'answer',json(q.answer_json),'answeredAt',q.answered_at,'answerKey',q.answer_key,'deliveryClientId',q.delivery_client_id,'deliveryTurnId',q.delivery_turn_id,'deliveryState',q.delivery_state,'acceptedRevision',q.accepted_revision) AS item FROM board_questions q
          WHERE q.machine_id=$machine AND q.task_key=$task AND
          ($qa IS NULL OR asked_at>$qa OR (asked_at=$qa AND question_key>$qk COLLATE BINARY))
          ORDER BY asked_at,question_key COLLATE BINARY LIMIT 51
         ), shown AS (SELECT asked_at,question_key,item FROM questions LIMIT 50),
          feed AS (
-         SELECT e.seq,json_set(e.payload_json,'$.machineId',e.machine_id,'$.seq',e.seq,'$.taskKey',e.task_key,'$.kind',e.kind,'$.occurredAt',e.occurred_at) AS item FROM board_events e WHERE e.machine_id=$machine AND e.task_key=$task AND
+         SELECT e.seq,json_set(json_remove(e.payload_json,'$.steps'),'$.machineId',e.machine_id,'$.seq',e.seq,'$.taskKey',e.task_key,'$.kind',e.kind,'$.occurredAt',e.occurred_at) AS item FROM board_events e WHERE e.machine_id=$machine AND e.task_key=$task AND
          ($before IS NULL OR e.seq<$before) ORDER BY seq DESC LIMIT 101
         ), visible AS (SELECT seq,item FROM feed LIMIT 100)
         SELECT json_object('task',json(json_object('machineId',t.machine_id,'taskKey',t.task_key,'creatorSessionId',t.creator_session_id,'project',t.project,'title',t.title,'summary',t.summary,'state',t.state,'taskUrl',t.task_url,'prUrl',t.pr_url,'startedAt',t.started_at,'endedAt',t.ended_at,'updatedAt',t.updated_at,'revision',t.revision)),'questions',json((SELECT json_group_array(json(item)) FROM shown)),
-         'feed',json((SELECT json_group_array(json(item)) FROM visible)),'metrics',json(json_object('stepsDone',NULL,'stepsFailed',NULL,'stepsSkipped',NULL,'tools',NULL,'files',
+         'steps',json(COALESCE(s.steps,'[]')),
+         'feed',json((SELECT json_group_array(json(item)) FROM visible)),'metrics',json(json_object( 'stepsDone',(SELECT CASE WHEN s.steps IS NOT NULL THEN COUNT(*) END FROM json_each(s.steps) WHERE json_extract(value,'$.state')='done'),
+            'stepsFailed',(SELECT CASE WHEN s.steps IS NOT NULL THEN COUNT(*) END FROM json_each(s.steps) WHERE json_extract(value,'$.state')='failed'),
+            'stepsSkipped',(SELECT CASE WHEN s.steps IS NOT NULL THEN COUNT(*) END FROM json_each(s.steps) WHERE json_extract(value,'$.state')='skipped'),'tools',NULL,'files',
             CASE WHEN EXISTS(SELECT 1 FROM board_events e WHERE e.machine_id=t.machine_id AND e.task_key=t.task_key
               AND json_type(e.payload_json,'$.changedPaths')='array')
             THEN (SELECT COUNT(DISTINCT p.value) FROM board_events e, json_each(e.payload_json,'$.changedPaths') p
@@ -107,7 +118,7 @@ public sealed class WorkflowQueries(IAppDatabase db, string? remote = null)
          'nextBeforeSeq',CASE WHEN (SELECT COUNT(*) FROM feed)>100 THEN (SELECT MIN(seq) FROM visible) ELSE NULL END,
          'nextQuestionCursor',CASE WHEN (SELECT COUNT(*) FROM questions)>50 THEN
          (SELECT json_object('askedAt',asked_at,'questionKey',question_key) FROM shown LIMIT 1 OFFSET 49)||'' ELSE NULL END)
-         FROM board_tasks t WHERE t.machine_id=$machine AND t.task_key=$task;
+         FROM board_tasks t LEFT JOIN snapshot s ON 1=1 WHERE t.machine_id=$machine AND t.task_key=$task;
         """;
 
     internal const string ChangesSql = """
