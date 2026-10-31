@@ -9,9 +9,14 @@ namespace Assembly.Infrastructure.Engine;
 public sealed class EnginePublisher(IAppDatabase db)
 {
     private readonly Lock _gate = new();
-    private readonly List<Action<EngineEvent>> _consumers = [];
+    private readonly List<Consumer> _consumers = [];
     private readonly Dictionary<string, Reader> _readers = [];
     private long _published;
+    private sealed class Consumer(Action<EngineEvent> onEvent)
+    {
+        public Action<EngineEvent> OnEvent { get; } = onEvent;
+    }
+
     private sealed class Reader(long through, Action reset)
     {
         public long Through { get; set; } = through;
@@ -23,12 +28,13 @@ public sealed class EnginePublisher(IAppDatabase db)
 
     public IDisposable Register(Action<EngineEvent> onEvent, out long publishedThrough)
     {
+        var consumer = new Consumer(onEvent);
         lock (_gate)
         {
-            _consumers.Add(onEvent);
+            _consumers.Add(consumer);
             publishedThrough = _published;
         }
-        return new Registration(() => { lock (_gate) _consumers.Remove(onEvent); });
+        return new Registration(() => { lock (_gate) _consumers.Remove(consumer); });
     }
 
     public IDisposable TrackReader(string id, long through, Action reset)
@@ -81,7 +87,7 @@ public sealed class EnginePublisher(IAppDatabase db)
                 lock (_gate)
                 {
                     foreach (var consumer in _consumers.ToArray())
-                        try { consumer(item); } catch { _consumers.Remove(consumer); }
+                        try { consumer.OnEvent(item); } catch { _consumers.Remove(consumer); }
                     _published = item.Seq;
                 }
             }

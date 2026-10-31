@@ -329,6 +329,54 @@ public sealed class EffectTests
     }
 
     [Fact]
+    public void Later_effect_waits_for_uncertain_earlier_one()
+    {
+        using var f = new EngineFixture();
+        Answer(f);
+        Assert.True(f.Apply(new SendMessage(null, "s", "later", "prompt"), "later").Applied);
+        const string later = "send/later";
+        var system = new EngineActor(ActorKind.System, "test");
+        Assert.True(f.Apply(new ClaimEffect(), "answer/n", actor: system).Applied);
+        Assert.True(f.Apply(new CompleteEffect(Receipt(EffectDisposition.Unknown)), "answer/n", 1, actor: system).Applied);
+        Assert.Equal("uncertain", f.State("engine_outbox", "answer/n"));
+        Assert.Equal("unavailable", f.Apply(new ClaimEffect(), later, actor: system).Error);
+
+        f.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(f.Apply(new ClaimEffect(), "answer/n", 2, actor: system).Applied);
+        Assert.True(f.Apply(new CompleteEffect(Receipt(EffectDisposition.Unavailable)), "answer/n", 3, actor: system).Applied);
+        Assert.Equal("unavailable", f.Apply(new ClaimEffect(), later, actor: system).Error);
+        Assert.True(f.Apply(new EnableEffect(), "answer/n", 4, actor: system).Applied);
+        Assert.True(f.Apply(new ClaimEffect(), "answer/n", 5, actor: system).Applied);
+        Assert.True(f.Apply(new CompleteEffect(Receipt(EffectDisposition.Confirmed)), "answer/n", 6, actor: system).Applied);
+        Assert.Equal("done", f.State("engine_outbox", "answer/n"));
+        Assert.True(f.Apply(new ClaimEffect(), later, actor: system).Applied);
+    }
+
+    [Fact]
+    public async Task Disposing_duplicate_delegate_registration_preserves_the_other_registration()
+    {
+        var topics = new Topics();
+        using var f = new EngineFixture(topics: topics);
+        f.SeedSession();
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        var events = Channel.CreateUnbounded<EngineEvent>();
+        var calls = 0;
+        Action<EngineEvent> callback = e =>
+        {
+            if (++calls == 1) throw new InvalidOperationException("queue full");
+            events.Writer.TryWrite(e);
+        };
+        using var first = runtime.Publisher.Register(callback, out _);
+        using var second = runtime.Publisher.Register(callback, out _);
+        Assert.True(f.Apply(new SendMessage(null, "s", "first", "prompt"), "first").Applied);
+        await Until(events, e => e.EntityId == "first");
+        first.Dispose();
+        Assert.True(f.Apply(new SendMessage(null, "s", "second", "prompt"), "second").Applied);
+        await Until(events, e => e.EntityId == "second");
+        Assert.Equal(3, calls);
+    }
+
+    [Fact]
     public void Same_commit_effects_use_insertion_order()
     {
         using var f = new EngineFixture();

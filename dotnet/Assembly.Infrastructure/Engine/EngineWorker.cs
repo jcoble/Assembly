@@ -95,7 +95,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         Candidate? claim = null;
         if (effects is not null && _active is null)
         {
-            claim = Candidates(s, $"state IN ('pending','uncertain') AND (next_ms IS NULL OR next_ms<={now}) AND {EffectTransitions.NoEarlierPending}", 1).FirstOrDefault();
+            claim = Candidates(s, $"state IN ('pending','uncertain') AND (next_ms IS NULL OR next_ms<={now}) AND {EffectTransitions.NoEarlierUnresolved}", 1).FirstOrDefault();
             if (claim is not null && !Apply(s, claim, new ClaimEffect()).Applied) claim = null;
         }
         var deadline = s.QueryFirst("""
@@ -105,7 +105,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
                   WHERE state NOT IN ('succeeded','failed','cancelled','cancelling') AND owner_lost_ms IS NOT NULL)
             """, r => r.IsNull(0) ? (long?)null : r.Long(0));
         if (effects is not null && _active is null && claim is null)
-            deadline = Earlier(deadline, s.QueryFirst($"SELECT MIN(next_ms) FROM engine_outbox WHERE state IN ('pending','uncertain') AND {EffectTransitions.NoEarlierPending}",
+            deadline = Earlier(deadline, s.QueryFirst($"SELECT MIN(next_ms) FROM engine_outbox WHERE state IN ('pending','uncertain') AND {EffectTransitions.NoEarlierUnresolved}",
                 r => r.IsNull(0) ? (long?)null : r.Long(0)));
         _retentionDeadline = retention.NextDeadlineMs(s, now);
         return (claim, Earlier(deadline, _retentionDeadline), needs.Count == 100 || runs.Count == 100);

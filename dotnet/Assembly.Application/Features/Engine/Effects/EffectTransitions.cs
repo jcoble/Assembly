@@ -13,9 +13,9 @@ namespace Assembly.Application.Features.Engine.Effects;
 public static class EffectTransitions
 {
     // Shared by selection and the SQL claim guard; ids are deliberately not an ordering key.
-    public const string NoEarlierPending = """
+    public const string NoEarlierUnresolved = """
         NOT EXISTS (SELECT 1 FROM engine_outbox earlier
-          WHERE earlier.session_id=engine_outbox.session_id AND earlier.state IN ('pending','inflight')
+          WHERE earlier.session_id=engine_outbox.session_id AND earlier.state NOT IN ('done','failed','dead')
           AND (earlier.event_seq<engine_outbox.event_seq OR
             (earlier.event_seq=engine_outbox.event_seq AND earlier.rowid<engine_outbox.rowid)))
         """;
@@ -51,7 +51,7 @@ public static class EffectTransitions
                 if (s.Execute($"""
                     UPDATE engine_outbox SET state='inflight',attempt=attempt+1,version=version+1,updated_ms=$now,next_ms=NULL
                     WHERE id=$id AND version=$version AND state IN ('pending','uncertain')
-                      AND (next_ms IS NULL OR next_ms<=$now) AND {NoEarlierPending}
+                      AND (next_ms IS NULL OR next_ms<=$now) AND {NoEarlierUnresolved}
                     """, new("$id", c.EntityId), new("$version", c.ExpectedVersion), new("$now", c.NowMs)) != 1)
                     return Reject("unavailable");
                 return Commit(s, c, row.Version + 1, "inflight");
