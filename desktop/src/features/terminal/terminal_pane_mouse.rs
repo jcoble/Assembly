@@ -80,6 +80,8 @@ impl TerminalPane {
         let y = ((position.y - self.origin.y) / self.cell.height).max(0.);
         let column = (x as usize).min(self.size.0 - 1);
         let line = (y as usize).min(self.size.1 - 1);
-        Some((column, line, x.fract() >= 0.5))
+        // Past the last column is its right half, so a drag there takes that column.
+        let right = x >= self.size.0 as f32 || x.fract() >= 0.5;
+        Some((column, line, right))
     }
 }

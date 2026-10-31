@@ -103,3 +103,37 @@ async fn the_wheel_sends_arrows_to_a_full_screen_program(cx: &mut TestAppContext
         .collect();
     assert_eq!(sent, b"\x1b[A\x1b[A".to_vec());
 }
+
+#[gpui::test]
+async fn a_drag_past_the_right_edge_takes_the_last_column(cx: &mut TestAppContext) {
+    let mut open = open(cx, Terminals::default(), false).await;
+    open.until("the shell started", |_, pane| following(pane))
+        .await;
+    let cols = open.pane.read_with(open.cx, |pane, _| pane.size.0);
+    let line = "x".repeat(cols);
+    let row = json!({"seq": cols, "prevSeq": 0, "data": STANDARD.encode(&line)});
+    open.pane.update(open.cx, |pane, cx| {
+        pane.output(
+            super::Update::Change {
+                key: "term-1".into(),
+                item: row,
+            },
+            cx,
+        )
+    });
+    open.cx.run_until_parked();
+    let (from, to) = (
+        at(&mut open, 0.2, 0.5),
+        at(&mut open, cols as f32 + 0.3, 0.5),
+    );
+    let none = Modifiers::none();
+    open.cx.simulate_mouse_down(from, MouseButton::Left, none);
+    open.cx.simulate_mouse_move(to, MouseButton::Left, none);
+    open.cx.simulate_mouse_up(to, MouseButton::Left, none);
+    open.cx.simulate_keystrokes("ctrl-shift-c");
+    open.cx.run_until_parked();
+    let copied = open
+        .cx
+        .update(|_, cx| cx.read_from_clipboard().and_then(|item| item.text()));
+    assert_eq!(copied.map(|text| text.len()), Some(cols));
+}

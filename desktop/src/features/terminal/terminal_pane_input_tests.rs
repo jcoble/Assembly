@@ -101,3 +101,22 @@ async fn a_write_that_fails_says_why(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn reopening_a_program_that_asks_for_focus_reports_tells_it(cx: &mut TestAppContext) {
+    let terminals = Terminals {
+        kept: b"\x1b[?1004h".to_vec(),
+        ..Default::default()
+    };
+    let mut open = open(cx, terminals, false).await;
+    open.cx.update(|window, _| window.activate_window());
+    open.until("told it has the focus", |terminals, pane| {
+        !terminals.of("write").is_empty() && !pane.writing()
+    })
+    .await;
+    let first = open.terminals.lock().unwrap().of("write")[0]["data"].clone();
+    assert_eq!(
+        STANDARD.decode(first.as_str().unwrap()).unwrap(),
+        b"\x1b[I".to_vec()
+    );
+}

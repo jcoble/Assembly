@@ -434,7 +434,8 @@ impl Panel for TerminalPane {
 
 impl Render for TerminalPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if mem::take(&mut self.focus_wanted) {
+        // After the replay, so a program that asked for focus reports hears it has the focus.
+        if self.held.is_none() && mem::take(&mut self.focus_wanted) {
             let focus = self.focus.clone();
             window.defer(cx, move |window, cx| window.focus(&focus, cx));
         }
