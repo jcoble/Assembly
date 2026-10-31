@@ -53,10 +53,30 @@ public sealed class CommandTests
         Assert.Equal(1, f.Count("engine_outbox"));
         Assert.Equal(1, f.Count("engine_command_receipt"));
         Assert.Equal(1, f.Number("SELECT version FROM engine_session"));
-        Assert.Equal($"{context.CommandId:N}:start", f.Text("SELECT id FROM engine_outbox"));
+        Assert.Equal($"{context.CommandId:N}-0", f.Text("SELECT id FROM engine_outbox"));
         var hash = f.Text("SELECT fingerprint FROM engine_command_receipt");
         Assert.Equal(64, hash!.Length);
         Assert.DoesNotContain("start", hash);
+    }
+
+    [Fact]
+    public void Effect_ids_are_derived_from_the_command()
+    {
+        using var f = new EngineFixture();
+        var context = Context(f);
+        using var payload = JsonDocument.Parse("{}");
+        CommandResult Apply() => f.Db.Writer.Write("test.effects", scope => EngineJournal.Execute(scope, context, "{}",
+            () => EngineJournal.Commit(scope, context, 0, 0, [],
+                [new(Guid.NewGuid().ToString(), "start", null, null, payload.RootElement),
+                 new(Guid.NewGuid().ToString(), "stop", null, null, payload.RootElement)])));
+        var first = Apply();
+        var rows = f.Db.Query("SELECT id,kind FROM engine_outbox ORDER BY id", r => (Id: r.Text(0), Kind: r.Text(1)), default);
+        Assert.Equal(new[] { ($"{context.CommandId:N}-0", "start"), ($"{context.CommandId:N}-1", "stop") }, rows);
+        Assert.Equal(2, f.Count("engine_outbox"));
+
+        Assert.Equal(first, Apply());
+        Assert.Equal(2, f.Count("engine_outbox"));
+        Assert.Equal(rows, f.Db.Query("SELECT id,kind FROM engine_outbox ORDER BY id", r => (Id: r.Text(0), Kind: r.Text(1)), default));
     }
 
     [Fact]
