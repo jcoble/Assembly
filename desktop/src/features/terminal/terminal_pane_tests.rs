@@ -564,3 +564,6 @@ mod input;
 
 #[path = "terminal_pane_mouse_tests.rs"]
 mod mouse;
+
+#[path = "terminal_pane_dock_tests.rs"]
+mod dock;
