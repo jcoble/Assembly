@@ -91,7 +91,6 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             var context = Context(run);
             EngineJournal.Execute(s, context, "expire_lost_owner", () => RunTransitions.ExpireLostOwner(s, context, run.Id));
         }
-        if (_retentionDeadline <= now) retention.Apply(s, now);
         Candidate? claim = null;
         if (effects is not null && _active is null)
         {
@@ -107,6 +106,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         if (effects is not null && _active is null && claim is null)
             deadline = Earlier(deadline, s.QueryFirst($"SELECT MIN(next_ms) FROM engine_outbox WHERE state IN ('pending','uncertain') AND {EffectTransitions.NoEarlierUnresolved}",
                 r => r.IsNull(0) ? (long?)null : r.Long(0)));
+        retention.Apply(s, now);
         _retentionDeadline = retention.NextDeadlineMs(s, now);
         return (claim, Earlier(deadline, _retentionDeadline), needs.Count == 100 || runs.Count == 100);
     }

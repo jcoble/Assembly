@@ -4,6 +4,7 @@ using Assembly.Application.Features.Engine;
 using Assembly.Application.Features.Engine.Effects;
 using Assembly.Application.Features.Engine.Persistence;
 using Assembly.Application.Features.Engine.Reading;
+using Assembly.Application.Features.Engine.Retention;
 using EngineTopics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Engine;
@@ -26,14 +27,15 @@ public sealed class EngineRuntime : IAsyncDisposable
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, Func<int> childLimit,
-        IEngineEffects? effects, IEngineRetention retention)
+        IEngineEffects? effects, IEngineRetention? retention)
     {
         _topics = topics;
         Machine = EngineSchema.Open(db, time.GetUtcNow().ToUnixTimeMilliseconds());
         Reader = new(db, Machine);
         Commands = new(Machine, childLimit);
         Publisher = new(db);
-        _worker = new(db, Commands, Machine, time, effects, retention);
+        _worker = new(db, Commands, Machine, time, effects, retention ?? new EngineRetention(
+            () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
         _subscription = topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => _wake.Writer.TryWrite(true));
         _publisherTask = Task.Run(PublishAsync);
         _workerTask = Task.Run(() => _worker.RunAsync(_stop.Token));
@@ -42,7 +44,7 @@ public sealed class EngineRuntime : IAsyncDisposable
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
         Func<int> childLimit, IEngineEffects? effects = null, IEngineRetention? retention = null) =>
-        new(db, topics, time, childLimit, effects, retention ?? new NoRetention());
+        new(db, topics, time, childLimit, effects, retention);
 
     public void EffectsAvailable() => _worker.EffectsAvailable();
 
@@ -53,8 +55,8 @@ public sealed class EngineRuntime : IAsyncDisposable
             while (await _wake.Reader.WaitToReadAsync(_stop.Token))
             {
                 while (_wake.Reader.TryRead(out _)) { }
-                _worker.Wake();
                 Publisher.Drain(_stop.Token);
+                _worker.Wake();
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }

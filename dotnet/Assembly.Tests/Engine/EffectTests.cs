@@ -501,6 +501,7 @@ public sealed class EffectTests
         public long? NextDeadlineMs(IReadScope s, long nowMs) => HasApplied ? null : deadline;
         public void Apply(IWriteScope s, long nowMs)
         {
+            if (nowMs < deadline || HasApplied) return;
             Assert.Equal(deadline, nowMs);
             Assert.Equal(1, s.QueryFirst("SELECT COUNT(*) FROM engine_meta", r => r.Long(0)));
             Calls++;
