@@ -8,6 +8,7 @@ using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Infrastructure.Socket;
 
@@ -19,7 +20,7 @@ namespace Assembly.Infrastructure.Socket;
 /// <c>timeout</c>; an exception other than <see cref="CallFailed"/> is logged at Error. A topic's <c>sub</c> gets its
 /// state, then its changes (5.7).
 /// </summary>
-internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, TimeProvider time, ILogger log) : ICallRegistry
+internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, TimeProvider time, ILogger log, EngineSocketStream? engine = null) : ICallRegistry
 {
     // No call runs longer, saves included (plan 5.1). Long work is started by a call and reports on a topic.
     internal static readonly TimeSpan Limit = TimeSpan.FromSeconds(30);
@@ -117,12 +118,30 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// Subscribes the socket to a <c>sub</c> frame's topic: its state is read and queued, and the subscription registered,
     /// under the Topics lock. Null when there's nothing to subscribe to; the socket has been answered with an error.
     /// </summary>
-    internal TopicSet.Subscription? Subscribe(InFrame frame, long id, SocketConnection connection)
+    internal ISocketSubscription? Subscribe(InFrame frame, long id, SocketConnection connection)
     {
         if (connection.Bulk)
         {
             connection.Send(Error(id, "not_found", "there are no topics on /socket/bulk"));
             return null;
+        }
+        if (frame.Stream is not null)
+        {
+            if (frame.Stream != "engine" || engine is null)
+            {
+                connection.Send(Error(id, "not_found", "Unknown socket stream"));
+                return null;
+            }
+            try
+            {
+                return engine.Subscribe(id, frame.Topic!, frame.Key, frame.After,
+                    (text, from) => connection.Send(Encoding.UTF8.GetBytes(text), from), connection.Closed, connection.Abort);
+            }
+            catch (ArgumentException error)
+            {
+                connection.Send(Error(id, "bad_args", error.Message));
+                return null;
+            }
         }
         if (!_topics.TryGetValue(frame.Topic!, out var topic))
         {
@@ -187,7 +206,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }
     }
 
-    internal void Unsubscribe(TopicSet.Subscription subscription) => topics.Unsubscribe(subscription);
+    internal void Unsubscribe(ISocketSubscription subscription) => subscription.Dispose();
 
     public void Closed(Action<string> connection) => _closedHooks.Add(connection);
 

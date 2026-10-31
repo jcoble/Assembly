@@ -1,4 +1,7 @@
 using System.Text.Json;
+using Assembly.Application.Features.Chat.Helpers;
+using Assembly.Application.Features.Engine.Effects;
+using Assembly.Infrastructure.Engine;
 using Assembly.Application.Features.Workflows;
 using Assembly.Infrastructure.Workflows;
 using Microsoft.AspNetCore.Builder;
@@ -41,6 +44,7 @@ namespace Assembly.Desktop.Serve;
 /// </summary>
 public sealed class DesktopBackend : IAsyncDisposable
 {
+    private readonly EngineRuntime _engine;
     private readonly AppDatabase _db;
     private readonly BoardTools _board;
     private readonly CancellationTokenSource _hostStop;
@@ -58,8 +62,9 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly TerminalHost _terminals;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop)
+        WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, EngineRuntime engine)
     {
+        _engine = engine;
         _homeLock = homeLock;
         _terminals = terminals;
         _board = board;
@@ -92,7 +97,8 @@ public sealed class DesktopBackend : IAsyncDisposable
     /// production startup imports SSH settings with savedRemote. Utility CLIs name new sessions.
     /// </summary>
     public static async Task<DesktopBackend> StartAsync(string home, string token, int port, IAgentLauncher launcher, TextWriter log, RemoteConfig? remote = null,
-        RemoteTunnel? tunnel = null, (string Claude, string Codex)? utilityClis = null, SavedMachine? savedRemote = null)
+        RemoteTunnel? tunnel = null, (string Claude, string Codex)? utilityClis = null, SavedMachine? savedRemote = null,
+        IEngineEffects? engineEffects = null, Action<EngineRuntime>? engineStarted = null)
     {
         Directory.CreateDirectory(home);
         // Before the database opens, so a second backend on this home writes nothing into the live one's; released if
@@ -100,7 +106,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         var homeLock = HomeLock.Take(home);
         try
         {
-            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis, savedRemote);
+            return await StartAsync(homeLock, home, token, port, launcher, log, remote, tunnel, utilityClis, savedRemote, engineEffects, engineStarted);
         }
         catch
         {
@@ -110,112 +116,152 @@ public sealed class DesktopBackend : IAsyncDisposable
     }
 
     private static async Task<DesktopBackend> StartAsync(FileStream homeLock, string home, string token, int port, IAgentLauncher launcher, TextWriter log,
-        RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote)
+        RemoteConfig? remote, RemoteTunnel? tunnel, (string Claude, string Codex)? utilityClis, SavedMachine? savedRemote,
+        IEngineEffects? engineEffects, Action<EngineRuntime>? engineStarted)
     {
         var database = Path.Combine(home, "assembly.db");
         var topics = new Topics();
         var db = AppDatabase.Open(database, TimeProvider.System, topics);
-        WorkflowSchema.Open(db);
-        var boardQueries = new WorkflowQueries(db, remote?.Name);
-        var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
-        boardTransitions.Recover();
-        // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
-        // before the API starts, so no session makes a checkout in sessions/ first.
-        var checkouts = Path.Combine(home, "sessions");
-        AdapterLauncher.MoveOldCheckouts(home, checkouts, log);
-        var store = RowStore.Open(db);
-        // Filled before recovery, whose closing rows go through the hub and so update it.
-        var summaries = SessionSummaries.Load(store);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
-        // App Nap is held while any session has a run open, here or on a remote.
-        var diagnostics = new DiagnosticsHost(Path.Combine(home, "soak-results"));
-        var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
-        {
-            sessionStore.PublishSummary(session);
-            diagnostics.HoldActivity(summaries.AnyRunOpen);
-        });
-        var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            runsHere: session => sessionStore.Get(session) is not { Machine: not null });
-        if (closed > 0)
-            log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
-        // Loading the summaries tells nobody: a remote's run left open holds it from the start.
-        diagnostics.HoldActivity(summaries.AnyRunOpen);
-        var work = new BackgroundWork(TimeProvider.System, log);
-        var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, titler: utilityClis is { } clis
-            ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log))
-            : null);
-        var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
-        var profiles = new MachineStore(db);
-        var status = new MachineStatus(topics, []);
-        var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
-        sessions.Helpers.Delivery.Machines = machines;
-
-        Uri? address = null;
-        Action dropSockets = () => { };
-        var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
-        var clock = new BackendClock(topics, TimeProvider.System, work);
+        EngineRuntime? engine = null;
+        WebApplication? app = null;
+        SessionRegistry? sessions = null;
+        BackgroundWork? work = null;
+        LiveHub? hub = null;
         RemoteConnections? connections = null;
-        var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, store: profiles,
-            connection: (name, connect, cancel) => connections!.ConnectionAsync(name, connect, cancel));
-        connections = new RemoteConnections(profiles, machines, status, hub, sessionStore, topics, log,
-            machinesFeature, sessions.Helpers.Row.TurnEnded,
-            open: remote is null ? null : (profile, cancel) =>
+        MachinesFeature? machinesFeature = null;
+        TerminalHost? terminals = null;
+        BoardTools? board = null;
+        RemoteWorkflowMirror? boardMirror = null;
+        Topics.Subscription? boardMachines = null;
+        CancellationTokenSource? hostStop = null;
+        try
+        {
+            WorkflowSchema.Open(db);
+            var boardQueries = new WorkflowQueries(db, remote?.Name);
+            var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
+            boardTransitions.Recover();
+            // After the database opens, so a database the rename can't copy first stops with the checkouts left alone, and
+            // before the API starts, so no session makes a checkout in sessions/ first.
+            var checkouts = Path.Combine(home, "sessions");
+            AdapterLauncher.MoveOldCheckouts(home, checkouts, log);
+            var store = RowStore.Open(db);
+            // Filled before recovery, whose closing rows go through the hub and so update it.
+            var summaries = SessionSummaries.Load(store);
+            var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
+            // App Nap is held while any session has a run open, here or on a remote.
+            var diagnostics = new DiagnosticsHost(Path.Combine(home, "soak-results"));
+            hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
             {
-                cancel.ThrowIfCancellationRequested();
-                return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((remote, tunnel));
+                sessionStore.PublishSummary(session);
+                diagnostics.HoldActivity(summaries.AnyRunOpen);
             });
-        connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
-        // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
-        var startupName = savedRemote?.Name ?? remote?.Name;
-        if (startupName is not null) await connections.ReadyAsync(startupName);
-        var startup = connections.StartupSnapshot(startupName);
-        var hostStop = new CancellationTokenSource();
-        var board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
-        var boardMirror = startup is { } connected ? new RemoteWorkflowMirror(startupName!, () => connections.StartupSnapshot(startupName)?.Config,
-            boardQueries, boardTransitions, connected.Unreachable) : null;
-        if (boardMirror is not null)
-            boardMirror.AnswerDelivered += (sessionId, runId) =>
-                connections.StartupSnapshot(boardMirror.Name)?.Machine.WatchRun(sessionId, runId);
-        var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
-        clock.Ticked += machinesFeature.Tick;
-        var boardMachines = boardMirror is null ? null : topics.Subscribe("machines", null, _ =>
-        {
-            foreach (var item in status.Items)
-                if (item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
-            clock.Start();
-        }, (_, json) =>
-        {
-            // A removed machine is published as null; the mirror only follows its own machine's reachability.
-            var item = JsonSerializer.Deserialize(json, SessionsJson.Default.MachineItem);
-            if (item is not null && item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
-        });
-        boardMirror?.Reconnect();
-        var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
-        var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-            [new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
-                new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
-                new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
-                new FilesFeature(sessionStore),
-                new WorktreesFeature(sessionStore),
-                new SourceControlFeature(sessionStore),
-                new DiagnosticsFeature(diagnostics, () =>
+            var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                runsHere: session => sessionStore.Get(session) is not { Machine: not null });
+            if (closed > 0)
+                log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
+            // Loading the summaries tells nobody: a remote's run left open holds it from the start.
+            diagnostics.HoldActivity(summaries.AnyRunOpen);
+            work = new BackgroundWork(TimeProvider.System, log);
+            var limits = new HelperLimits();
+            sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, limits, titler: utilityClis is { } clis
+                ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log))
+                : null);
+            var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
+            var profiles = new MachineStore(db);
+            var status = new MachineStatus(topics, []);
+            var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
+            sessions.Helpers.Delivery.Machines = machines;
+
+            Uri? address = null;
+            Action dropSockets = () => { };
+            var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
+            var clock = new BackendClock(topics, TimeProvider.System, work);
+            machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, store: profiles,
+                connection: (name, connect, cancel) => connections!.ConnectionAsync(name, connect, cancel));
+            connections = new RemoteConnections(profiles, machines, status, hub, sessionStore, topics, log,
+                machinesFeature, sessions.Helpers.Row.TurnEnded,
+                open: remote is null ? null : (profile, cancel) =>
                 {
-                    hub.CloseSubscriptions();
-                    dropSockets();
-                })], board), port, out dropSockets, routes =>
+                    cancel.ThrowIfCancellationRequested();
+                    return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((remote, tunnel));
+                });
+            connections.Start(savedRemote ?? (remote is null ? null : new SavedMachine(remote.Name, remote.Name)));
+            // Direct test endpoints use the same owner; their callers historically expect routing ready on return.
+            var startupName = savedRemote?.Name ?? remote?.Name;
+            if (startupName is not null) await connections.ReadyAsync(startupName);
+            var startup = connections.StartupSnapshot(startupName);
+            hostStop = new CancellationTokenSource();
+            board = new BoardTools(sessionStore, sessions, boardTransitions, boardQueries, hostStop.Token);
+            boardMirror = startup is { } connected ? new RemoteWorkflowMirror(startupName!, () => connections.StartupSnapshot(startupName)?.Config,
+                boardQueries, boardTransitions, connected.Unreachable) : null;
+            if (boardMirror is not null)
+                boardMirror.AnswerDelivered += (sessionId, runId) =>
+                    connections.StartupSnapshot(boardMirror.Name)?.Machine.WatchRun(sessionId, runId);
+            var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
+            clock.Ticked += machinesFeature.Tick;
+            boardMachines = boardMirror is null ? null : topics.Subscribe("machines", null, _ =>
+            {
+                foreach (var item in status.Items)
+                    if (item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
+                clock.Start();
+            }, (_, json) =>
+            {
+                // A removed machine is published as null; the mirror only follows its own machine's reachability.
+                var item = JsonSerializer.Deserialize(json, SessionsJson.Default.MachineItem);
+                if (item is not null && item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
+            });
+            boardMirror?.Reconnect();
+            terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
+            engine = EngineRuntime.Start(db, topics, TimeProvider.System, () => limits.UnfinishedHelpers, engineEffects);
+            engineStarted?.Invoke(engine);
+            app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
+                [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                    new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
+                    new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
+                    new FilesFeature(sessionStore),
+                    new WorktreesFeature(sessionStore),
+                    new SourceControlFeature(sessionStore),
+                    new DiagnosticsFeature(diagnostics, () =>
+                    {
+                        hub.CloseSubscriptions();
+                        dropSockets();
+                    })], board, Engine: engine), port, out dropSockets, routes =>
+            {
+                MachineFeatureList.Add(routes, new FeatureContext(db));
+                DesktopFeatureList.Add(routes, new FeatureContext(db));
+                new DebugRoutes(hub).Map(routes);
+                page.Map(routes);
+            });
+            app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
+            await app.StartAsync();
+            var backend = new DesktopBackend(homeLock, db, hub, sessions, work, connections, app, diagnostics, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, engine);
+            address = backend.Address;
+            // Sessions here join this machine's MCP server, on the API's port.
+            sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
+            return backend;
+        }
+        catch
         {
-            MachineFeatureList.Add(routes, new FeatureContext(db));
-            DesktopFeatureList.Add(routes, new FeatureContext(db));
-            new DebugRoutes(hub).Map(routes);
-            page.Map(routes);
-        });
-        app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
-        await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, connections, app, diagnostics, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop);
-        address = backend.Address;
-        // Sessions here join this machine's MCP server, on the API's port.
-        sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
-        return backend;
+            if (app is not null)
+            {
+                await app.StopAsync();
+                await app.DisposeAsync();
+            }
+            if (engine is not null) await engine.DisposeAsync();
+            if (hostStop is not null) await hostStop.CancelAsync();
+            if (boardMachines is not null) topics.Unsubscribe(boardMachines);
+            if (boardMirror is not null) await boardMirror.DisposeAsync();
+            if (board is not null) await board.DisposeAsync();
+            if (connections is not null) await connections.DisposeAsync();
+            if (machinesFeature is not null) await machinesFeature.DisposeAsync();
+            if (terminals is not null) await terminals.DisposeAsync();
+            if (sessions is not null) await sessions.DisposeAsync();
+            if (work is not null) await work.DisposeAsync();
+            hub?.Dispose();
+            hostStop?.Dispose();
+            db.Dispose();
+            throw;
+        }
     }
 
     public Task WaitForShutdownAsync() => _app.WaitForShutdownAsync();
@@ -239,6 +285,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _hostStop.CancelAsync();
         await _app.StopAsync();
         await _app.DisposeAsync();
+        await _engine.DisposeAsync();
         if (_boardMachines is not null) _topics.Unsubscribe(_boardMachines);
         if (_boardMirror is not null) await _boardMirror.DisposeAsync();
         await _board.DisposeAsync();

@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common;
-using TopicSet = Assembly.Infrastructure.Topics.Topics;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Infrastructure.Socket;
 
@@ -23,17 +23,17 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private static long _last;
 
     private readonly CancellationTokenSource _closed = new();
-    private readonly Channel<(ReadOnlyMemory<byte> Frame, TopicSet.Subscription? From)> _outbox =
-        Channel.CreateUnbounded<(ReadOnlyMemory<byte>, TopicSet.Subscription?)>(new() { SingleReader = true });
+    private readonly Channel<(ReadOnlyMemory<byte> Frame, ISocketSubscription? From)> _outbox =
+        Channel.CreateUnbounded<(ReadOnlyMemory<byte>, ISocketSubscription?)>(new() { SingleReader = true });
     private readonly Channel<Func<Task>> _writes = Channel.CreateUnbounded<Func<Task>>(new() { SingleReader = true });
     // The last write queued under each order key, until it ends. Only the receive loop adds one.
     private readonly Dictionary<string, Task> _ordered = [];
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
-    // The running calls' answers, waited for as the socket ends.
+    // Running answers and subscription work, waited for as the socket ends.
     private readonly BackgroundWork _answers = new(time, Console.Error);
     // This socket's subscriptions, by their sub id. Only the receive loop, and then its finally, touch it.
-    private readonly Dictionary<long, TopicSet.Subscription> _subscriptions = [];
+    private readonly Dictionary<long, ISocketSubscription> _subscriptions = [];
     private long _waiting;
     // Why the socket closes, once the receive loop ends; closed after the last answer is sent, since a socket can't
     // send two things at once.
@@ -188,7 +188,10 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
                 if (_subscriptions.ContainsKey(id))
                     Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", $"subscription {id} is already open"), SocketJson.Default.ErrorFrame));
                 else if (calls.Subscribe(sub, id, this) is { } subscription)
+                {
                     _subscriptions[id] = subscription;
+                    _answers.Start($"subscription {id}", _ => subscription.Completion);
+                }
                 return true;
             case { T: "unsub", Id: { } id }:
                 if (_subscriptions.Remove(id, out var unsubscribed))
@@ -198,6 +201,19 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
                 // Never disposed, so a cancel racing the call's end is safe.
                 if (_running.TryGetValue(id, out var running))
                     await running.CancelAsync();
+                return true;
+            case { T: "ack", Id: { } id } ack:
+                try
+                {
+                    if (ack.Stream != "engine" || ack.After is not { } after ||
+                        !_subscriptions.TryGetValue(id, out var acknowledged) || acknowledged is not IEngineSubscription engine)
+                        throw new ArgumentException("Unknown engine subscription");
+                    engine.Acknowledge(after);
+                }
+                catch (ArgumentException error)
+                {
+                    Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", error.Message), SocketJson.Default.ErrorFrame));
+                }
                 return true;
             default:
                 _closing = ((WebSocketCloseStatus)4400, "not a frame this protocol has");
@@ -218,12 +234,14 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         }
     }
 
+    internal void Abort() => socket.Abort();
+
     /// <summary>
     /// Queues a frame for the sender and returns at once, so a publish under the writer's lock never waits on a socket.
     /// Answers, states and changes share this one queue, so a write's change goes out before its result. A frame
     /// <paramref name="from"/> a subscription that has closed by its turn isn't sent: a closed tab really stops.
     /// </summary>
-    internal void Send(ReadOnlyMemory<byte> frame, TopicSet.Subscription? from = null)
+    internal void Send(ReadOnlyMemory<byte> frame, ISocketSubscription? from = null)
     {
         // A page that stops reading is closed, and so is one sent a change over 4 MB; it reconnects and loads again.
         if (frame.Length > MaxFrame || Interlocked.Add(ref _waiting, frame.Length) > MaxWaiting)
@@ -238,7 +256,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         {
             try
             {
-                if (socket.State == WebSocketState.Open && from is not { Open: false })
+                if (socket.State == WebSocketState.Open && from?.Closed.IsCancellationRequested != true)
                     await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
             }
             catch (Exception error) when (error is WebSocketException or ObjectDisposedException)

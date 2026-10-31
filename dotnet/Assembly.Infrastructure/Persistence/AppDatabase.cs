@@ -55,6 +55,8 @@ public sealed class AppDatabase : IAppDatabase, IDisposable
     /// <summary>Opens the file. Its writer reads the time from <paramref name="time"/> and sends publishes to <paramref name="topics"/>.</summary>
     public static AppDatabase Open(string path, TimeProvider time, ITopics topics) => new(path, time, topics);
 
+    public IReadSnapshot OpenSnapshot(CancellationToken cancellationToken) => new ReadSnapshot(_reads, cancellationToken);
+
     public List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args)
     {
         using var db = new SqliteConnection(_reads);

@@ -125,7 +125,7 @@ rm -rf "$r"
 
 # A filter that matches no test is a failure, not a pass with nothing run.
 r=$(dotnet_repo_with 70-architecture.sh)
-sed -i 's/^namespace Assembly.Tests.Architecture;/namespace Assembly.Tests.Moved;/' "$r/dotnet/Assembly.Tests/Architecture/ArchitectureTests.cs"
+sed -i 's/^namespace Assembly.Tests.Architecture;/namespace Assembly.Tests.Moved;/' "$r"/dotnet/Assembly.Tests/Architecture/*.cs
 expect 1 "architecture: no architecture test found fails" "$r" 70-architecture.sh
 rm -rf "$r"
 

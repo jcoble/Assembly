@@ -10,6 +10,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Calls;
 
 using Assembly.Infrastructure.Mcp;
+using Assembly.Infrastructure.Engine;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
@@ -20,4 +21,5 @@ namespace Assembly.Infrastructure.Http;
 /// the host's features on the socket.
 /// </summary>
 public sealed record ApiServices(LiveHub Hub, SessionStore SessionStore, MachineSet Machines, AttachmentStore Attachments, string Token,
-    HelperSessions? Helpers = null, IAtomicWriter? Writer = null, Topics.Topics? Topics = null, IReadOnlyList<IFeature>? Features = null, BoardTools? Board = null);
+    HelperSessions? Helpers = null, IAtomicWriter? Writer = null, Topics.Topics? Topics = null, IReadOnlyList<IFeature>? Features = null, BoardTools? Board = null,
+    EngineRuntime? Engine = null);

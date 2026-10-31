@@ -17,7 +17,7 @@ here updates this file in the same commit. Every other commit says `Architecture
   `core/commands/`) and one folder per
   feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that. The Terminal tab, `features/terminal/`,
   keeps an `alacritty_terminal` grid fed by the backend's `terminal` topic and draws it with GPUI text.
-- `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
+- `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine; both hosts start the engine runtime.
 
 ## The backend: a core in layers, the rest by feature
 
@@ -29,11 +29,13 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
   - `Common/`: the contracts every feature uses (database, agents, machines) and the ACP protocol code.
     `Common/Acp/V1/` is the one place that knows ACP's shapes and each provider's quirks.
   - `Features/<Feature>/`: everything one feature is: its records, its rules, its tables and its plain SQL. A
-    feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase` and
-    writes through `IAtomicWriter`. Each write is one transaction with its audit row, and the changes it publishes
-    (`IWriteScope.Publish`) go to `ITopics` only after it commits.
+    feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase`
+    (reads needing one consistent view use `IAppDatabase.OpenSnapshot`) and writes through `IAtomicWriter`.
+    Each write is one transaction with its audit row, and the changes it publishes (`IWriteScope.Publish`) go to `ITopics` only after it commits.
+  The engine (`Features/Engine/`) keeps its durable operational state in prefixed `engine_` tables in the same database, written only through `IAtomicWriter`.
 - `Assembly.Infrastructure/`: references Application. SQLite and the one writer, starting agent processes and git,
   the local and remote machines, and the files and native calls behind a feature (`Infrastructure/<Feature>/`).
+  `Infrastructure/Engine/` hosts the engine runtime, including its committed-event publisher and durable outbox worker.
   A session's folder on disk is `SessionStore.Root` (on its `sessions` item as `root`); anything that reads inside it
   turns a relative path into a full one with `Infrastructure/Chat/SessionPaths`, which refuses paths outside it.
   `Infrastructure/Chat/Files/` lists, searches and reads it for the window's Files and Search tabs and its read-only file tabs.
@@ -46,6 +48,8 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
 A host's `Program.cs` only reads its arguments, registers the layers and maps its endpoints.
 
 ## One socket
+
+The authenticated `/socket` also carries the engine's six filtered topics through `stream:"engine"`, with snapshot/catch-up pages and reader acknowledgements; omitting `stream` preserves the existing topics.
 
 `/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
 For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;
