@@ -37,6 +37,8 @@ jobs:
         with:
           node-version: 24
       - run: npm install -g pnpm@11.5.1 && pnpm install --frozen-lockfile
+      - name: Agent runbook behavior
+        run: node --test ../scripts/agent-runbook/runbook.test.ts
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
