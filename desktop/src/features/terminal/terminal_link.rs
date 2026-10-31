@@ -64,22 +64,35 @@ pub enum Output {
 }
 
 impl TerminalLink {
-    /// The session's running shell, or a new one in its folder at this size, with the size it has. The backend picks
-    /// the folder from the owner (StartArgs.cs), and refuses a session that isn't this machine's.
+    /// The session's running shell, or a new one in its folder at this size, with the size it has and the output of
+    /// the shell it replaces, if that one ended: shown above the new one, as before. The backend picks the folder from
+    /// the owner (StartArgs.cs), refuses a session that isn't this machine's, and drops the ended shell on the start.
     pub async fn open(
         session: &str,
         (cols, rows): (usize, usize),
         cx: &mut AsyncApp,
-    ) -> Result<(Self, (usize, usize)), String> {
+    ) -> Result<(Self, (usize, usize), Vec<u8>), String> {
         let list: Vec<TerminalInfo> = call(cx, "list", json!({})).await?;
-        let running = list.into_iter().find(|info| {
-            info.owner.as_deref() == Some(session)
-                && info.command.is_none()
-                && info.exit_code.is_none()
-        });
+        let (mut running, mut ended) = (None, None);
+        for info in list {
+            if info.owner.as_deref() == Some(session) && info.command.is_none() {
+                match info.exit_code {
+                    None => running = Some(info),
+                    Some(_) => ended = Some(info),
+                }
+            }
+        }
+        let mut before = Vec::new();
         let info = match running {
             Some(info) => info,
             None => {
+                if let Some(ended) = ended {
+                    let mut link = Self {
+                        id: ended.id,
+                        end: 0,
+                    };
+                    before = link.replay(cx).await?;
+                }
                 let args = json!({ "owner": session, "cols": cols, "rows": rows });
                 call::<TerminalInfo>(cx, "start", args).await?
             }
@@ -90,6 +103,7 @@ impl TerminalLink {
                 end: 0,
             },
             (info.cols, info.rows),
+            before,
         ))
     }
 

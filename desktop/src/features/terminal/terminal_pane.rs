@@ -143,7 +143,8 @@ impl TerminalPane {
         self._follow = Some(cx.spawn(async move |pane, cx| {
             let opened = TerminalLink::open(&session, size, cx).await;
             let subscription = pane.update(cx, |pane, cx| match opened {
-                Ok((link, started)) => {
+                Ok((link, started, before)) => {
+                    pane.grid.feed(&before);
                     let subscription = match link.follow(cx) {
                         Ok(subscription) => subscription,
                         Err(why) => {
@@ -269,10 +270,8 @@ impl TerminalPane {
             && (keystroke.modifiers.platform
                 || (keystroke.modifiers.control && keystroke.modifiers.shift));
         let bytes = match paste {
-            true => cx
-                .read_from_clipboard()
-                .and_then(|item| item.text())
-                .map(String::into_bytes),
+            true => (cx.read_from_clipboard().and_then(|item| item.text()))
+                .map(|text| pasted(&text, self.grid.bracketed_paste())),
             false => key_bytes(keystroke, self.grid.app_cursor()),
         };
         let Some(bytes) = bytes else {
@@ -337,6 +336,16 @@ fn remote(session: &str, cx: &App) -> bool {
                     .is_some_and(|machine| !machine.is_empty())
         })
     })
+}
+
+/// A paste as xterm sends it: line breaks as Return, and between the bracketed-paste marks when the program asked for
+/// them, so a shell or an agent takes several lines as one paste rather than running each.
+fn pasted(text: &str, bracketed: bool) -> Vec<u8> {
+    let text = text.replace("\r\n", "\r").replace('\n', "\r");
+    match bracketed {
+        true => format!("\x1b[200~{text}\x1b[201~").into_bytes(),
+        false => text.into_bytes(),
+    }
 }
 
 /// The bytes a key sends to the program, as xterm sends them; none for a key the window keeps (a Cmd shortcut).

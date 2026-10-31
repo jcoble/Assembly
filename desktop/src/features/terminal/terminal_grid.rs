@@ -108,6 +108,11 @@ impl TerminalGrid {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// The program asked for pastes to come between `ESC [200~` and `ESC [201~`.
+    pub fn bracketed_paste(&self) -> bool {
+        self.term.mode().contains(TermMode::BRACKETED_PASTE)
+    }
+
     /// The screen as text, each line's trailing blanks dropped and the blank lines at the end too.
     #[cfg(test)]
     pub fn text(&self) -> String {

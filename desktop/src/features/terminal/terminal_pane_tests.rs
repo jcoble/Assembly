@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use gpui::TestAppContext;
 use gpui_kit::component::dock::BasePanel as _;
-use gpui_kit::{Entity, Subscription, VisualTestContext, px};
+use gpui_kit::{ClipboardItem, Entity, Subscription, VisualTestContext, px};
 use serde_json::{Value, json};
 
 use super::{Shown, TerminalPane};
@@ -32,6 +32,8 @@ struct Terminals {
     kept: Vec<u8>,
     /// The rows each `sub` is answered with, after its state.
     rows: Vec<Value>,
+    /// A shell that ended: (id, owner, its output), which `list` shows with its exit code.
+    ended: Option<(String, String, Vec<u8>)>,
 }
 
 impl Terminals {
@@ -68,11 +70,17 @@ fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<()>) -> Fake
             (Some("call"), Some(method)) => {
                 terminals.seen.push((method.into(), args.clone()));
                 match method {
-                    "list" => result(Value::Array(
-                        (terminals.running.iter())
+                    "list" => {
+                        let mut list: Vec<Value> = (terminals.running.iter())
                             .map(|(id, owner)| info(id, owner, &json!(96), &json!(28)))
-                            .collect(),
-                    )),
+                            .collect();
+                        if let Some((id, owner, _)) = &terminals.ended {
+                            let mut ended = info(id, owner, &json!(96), &json!(28));
+                            ended["exitCode"] = json!(1);
+                            list.push(ended);
+                        }
+                        result(Value::Array(list))
+                    }
                     "start" => {
                         let (terminal, owner) = (
                             format!("term-{}", terminals.running.len() + 1),
@@ -83,7 +91,10 @@ fn backend(terminals: Arc<Mutex<Terminals>>, heard: UnboundedSender<()>) -> Fake
                     }
                     "read" => {
                         let offset = args["offset"].as_u64().unwrap_or_default() as usize;
-                        let kept = &terminals.kept;
+                        let kept = match &terminals.ended {
+                            Some((id, _, kept)) if args["terminal"] == id.as_str() => kept,
+                            _ => &terminals.kept,
+                        };
                         let data = STANDARD.encode(&kept[offset.min(kept.len())..]);
                         result(json!({"offset": offset, "end": kept.len(), "data": data}))
                     }
@@ -501,4 +512,53 @@ async fn output_arrives_on_the_terminal_socket_not_the_main_one(cx: &mut TestApp
             .iter()
             .all(|(path, _)| path == "/socket/terminal")
     );
+}
+
+// Pins: terminal#7
+#[gpui::test]
+async fn an_ended_shell_keeps_its_output_above_the_new_one(cx: &mut TestAppContext) {
+    let ended = Some(("term-0".to_string(), "a".to_string(), b"old\r\n".to_vec()));
+    let terminals = Terminals {
+        kept: b"new\r\n".to_vec(),
+        ended,
+        ..Default::default()
+    };
+    let mut open = open(cx, terminals, false).await;
+    open.until("the new shell", |_, pane| {
+        following(pane) && pane.grid.text() == "old\nnew"
+    })
+    .await;
+    let terminals = open.terminals.lock().unwrap();
+    assert_eq!(terminals.of("start").len(), 1);
+    assert_eq!(
+        terminals.of("read")[0],
+        json!({"terminal": "term-0", "offset": 0})
+    );
+}
+
+#[gpui::test]
+async fn a_paste_is_bracketed_when_the_program_asks(cx: &mut TestAppContext) {
+    let on = STANDARD.encode(b"\x1b[?2004h");
+    let terminals = Terminals {
+        rows: vec![json!({"seq": 8, "prevSeq": 0, "data": on})],
+        ..Default::default()
+    };
+    let mut open = open(cx, terminals, false).await;
+    open.until("bracketed paste on", |_, pane| {
+        following(pane) && pane.grid.bracketed_paste()
+    })
+    .await;
+    let focus = open.pane.read_with(open.cx, |pane, _| pane.focus.clone());
+    open.cx.update(|window, cx| {
+        window.focus(&focus, cx);
+        cx.write_to_clipboard(ClipboardItem::new_string("one\ntwo".into()));
+    });
+    open.cx.simulate_keystrokes("ctrl-shift-v");
+    open.until("pasted", |terminals, pane| {
+        terminals.of("write").len() == 1 && !pane.writing()
+    })
+    .await;
+    let written = open.terminals.lock().unwrap().of("write")[0]["data"].clone();
+    let written = STANDARD.decode(written.as_str().unwrap()).unwrap();
+    assert_eq!(written, b"\x1b[200~one\rtwo\x1b[201~".to_vec());
 }
