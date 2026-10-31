@@ -6,6 +6,7 @@ pub mod board_feed;
 pub mod board_pane;
 pub mod board_payload;
 pub mod board_question;
+pub mod board_rows;
 pub mod board_state;
 
 gpui_kit::actions!(board, [OpenBoard]);

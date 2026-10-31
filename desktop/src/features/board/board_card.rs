@@ -1,8 +1,9 @@
 //! One Board card. At rest it's at most four lines: the state and title, the project and machine, the summary, and a
 //! line of facts when there are any. Its state is a plain word; Needs you leads only for an unresolved question (the
 //! backend's attention group 0), and a PR link is only a link, never Completed or Merged. A remote card names its
-//! machine, and says offline when the machines list does. The expanded card adds its questions (board_question), its
-//! feed (board_feed) and the session that reported it. There are no retry, pause or start controls.
+//! machine, and says offline when the machines list does. The expanded card adds its run rows (board_rows), its
+//! questions (board_question), its feed (board_feed) and the session that reported it. There are no retry, pause or
+//! start controls.
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
@@ -10,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::board_pane::BoardPane;
-use super::{board_feed, board_question};
+use super::{board_feed, board_question, board_rows};
 use crate::core::intents::open_session::OpenSession;
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::state::machines::Machines;
@@ -225,13 +226,14 @@ fn detail(
             BoardPane::earlier_events,
         ),
     );
-    body.children(
-        questions
-            .iter()
-            .map(|q| board_question::question(pane, q, window, cx)),
-    )
-    .when(more_questions, |body| body.child(show_questions))
-    .child(feed)
-    .when(earlier, |body| body.child(show_events))
-    .child(link)
+    body.children(board_rows::draw(&detail.steps, pane.now, cx))
+        .children(
+            questions
+                .iter()
+                .map(|q| board_question::question(pane, q, window, cx)),
+        )
+        .when(more_questions, |body| body.child(show_questions))
+        .child(feed)
+        .when(earlier, |body| body.child(show_events))
+        .child(link)
 }
