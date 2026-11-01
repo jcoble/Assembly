@@ -205,6 +205,9 @@ public sealed partial class SessionHost
                     case SessionMessage:
                         // The host already recorded this prompt; user_message is its provider acknowledgement.
                         break;
+                    case ProviderSessionMessage:
+                        // Provider-native traffic is observed provenance, not an Assembly delivery or another user prompt.
+                        break;
                     case SubagentChanged subagent:
                         // What the child asks (a permission, a question) AcpClient sends to this session's policy, as its parent's.
                         Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
