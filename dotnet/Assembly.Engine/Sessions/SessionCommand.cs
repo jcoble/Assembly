@@ -7,3 +7,5 @@ public sealed record StartSession(string Provider, string Model, string Folder, 
     string? ParentId, string? RunId, string? TaskUrl) : SessionCommand;
 public sealed record SetSessionState(string State, string? ProviderSessionId, string? Reason) : SessionCommand;
 public sealed record StopSession() : SessionCommand;
+
+public sealed record LinkTask(string TaskUrl) : SessionCommand;
