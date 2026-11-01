@@ -11,12 +11,12 @@ public sealed class SessionTests
         new("codex", "m", "/repo", "x", parent, run, null);
 
     [Fact]
-    public void Child_cannot_start_grandchild()
+    public void Default_depth_refuses_grandchild()
     {
         using var f = new EngineFixture();
         f.SeedSession("root"); f.SeedSession("child", parentId: "root");
         var r = f.Apply(Start("child"), "grandchild", actor: new(ActorKind.Session, "child"));
-        Assert.Equal("ask your starter to start it", r.Error);
+        Assert.Equal("depth_limit", r.Error);
         Assert.Equal(2, f.Count("engine_session")); Assert.Empty(f.Events());
     }
 
@@ -83,7 +83,7 @@ public sealed class SessionTests
     [Fact]
     public async Task Concurrent_children_obey_setting()
     {
-        using var f = new EngineFixture(childLimit: 2); f.SeedSession("root");
+        using var f = new EngineFixture(limits: new(() => 1, () => 2)); f.SeedSession("root");
         var results = await Task.WhenAll(Enumerable.Range(0, 3).Select(i => Task.Run(() =>
             f.Apply(Start("root"), $"child-{i}", actor: new(ActorKind.Session, "root")))));
         Assert.Equal(2, results.Count(r => r.Applied));

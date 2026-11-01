@@ -13,7 +13,7 @@ public static class SessionTransitions
         string? ParentId, string? RunId, bool CancelRequested = false, long? ReservedEpoch = null);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
-        SessionCommand command, int childLimit)
+        SessionCommand command, int depthLimit, int childLimit)
     {
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
@@ -28,7 +28,7 @@ public static class SessionTransitions
         if ((current?.Version ?? 0) != context.ExpectedVersion)
             return Refused(context, "version_conflict", current);
         if (command is StartSession start)
-            return current is null ? Start(scope, context, start, childLimit) : Refused(context, "invalid_transition", current);
+            return current is null ? Start(scope, context, start, depthLimit, childLimit) : Refused(context, "invalid_transition", current);
         if (current is null)
             return Refused(context, "bad_args");
         return command switch
@@ -39,7 +39,7 @@ public static class SessionTransitions
         };
     }
 
-    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int childLimit)
+    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit)
     {
         if (string.IsNullOrWhiteSpace(command.Provider) || string.IsNullOrWhiteSpace(command.Model) ||
             string.IsNullOrWhiteSpace(command.Folder) || string.IsNullOrWhiteSpace(command.Title))
@@ -53,8 +53,22 @@ public static class SessionTransitions
             parent = Find(scope, command.ParentId);
             if (parent is null)
                 return Refused(context, "bad_args");
-            if (parent.ParentId is not null)
-                return Refused(context, "ask your starter to start it");
+            var ancestry = scope.QueryFirst("""
+                WITH RECURSIVE ancestors(id,parent_id) AS (
+                    SELECT id,parent_id FROM engine_session WHERE id=$parent
+                    UNION
+                    SELECT p.id,p.parent_id
+                    FROM engine_session p JOIN ancestors a ON p.id=a.parent_id
+                    LIMIT $ancestorBudget
+                )
+                SELECT COUNT(*),COALESCE(MAX(CASE WHEN parent_id IS NULL THEN 1 ELSE 0 END),0)
+                FROM ancestors
+                """, r => (Count: r.Long(0), Root: r.Long(1)),
+                new("$parent", command.ParentId), new("$ancestorBudget", (long)depthLimit + 1L));
+            if (ancestry.Count > depthLimit)
+                return Refused(context, "depth_limit");
+            if (ancestry.Count == 0 || ancestry.Root == 0)
+                return Refused(context, "bad_args");
             if (parent.State == "ended")
                 return Refused(context, "invalid_transition");
         }

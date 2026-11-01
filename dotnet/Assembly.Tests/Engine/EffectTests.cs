@@ -41,7 +41,7 @@ public sealed class EffectTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         var fake = new FakeEffects { Execute = (e, _) => Task.FromResult(Receipt(e.Attempt == 1 ? EffectDisposition.TransientFailure : EffectDisposition.Confirmed)) };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         Answer(f);
@@ -72,7 +72,7 @@ public sealed class EffectTests
             return Receipt(EffectDisposition.Confirmed);
         }
         };
-        var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         Answer(f);
         await fake.ExternalSuccess.WaitAsync(Timeout);
         await runtime.DisposeAsync();
@@ -80,7 +80,7 @@ public sealed class EffectTests
         Assert.Equal("inflight", f.State("engine_outbox", "answer/n"));
         f.Reopen();
         var restarted = new FakeEffects { Execute = (_, _) => throw new Xunit.Sdk.XunitException("Replayed uncertain effect"), Reconcile = (_, _) => Task.FromResult(Receipt(EffectDisposition.Confirmed)) };
-        await using var next = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, restarted);
+        await using var next = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), restarted);
         var recoveredEvents = Channel.CreateUnbounded<EngineEvent>();
         using var recoveredConsumer = next.Publisher.Register(e => recoveredEvents.Writer.TryWrite(e), out _);
         await restarted.Reconciled.WaitAsync(Timeout);
@@ -96,7 +96,7 @@ public sealed class EffectTests
     {
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         Assert.Throws<InvalidOperationException>(() => f.Db.Writer.Write<int>("rollback", s => { runtime.Commands.Apply(s, new(Guid.NewGuid(), f.Machine, new(ActorKind.Window, "test"), "rollback", 0, 0, 1000), new StartSession("codex", "m", "/test", "title", null, null, null)); throw new InvalidOperationException(); }));
@@ -123,7 +123,7 @@ public sealed class EffectTests
         Assert.True(f.Apply(new RequestHandoff("s", "workbox-test"), "h", 0).Applied);
         var release = new TaskCompletionSource<EffectReceipt>(TaskCreationOptions.RunContinuationsAsynchronously);
         var fake = new FakeEffects { Execute = (e, ct) => e.Kind == "send" ? release.Task.WaitAsync(ct) : Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new HandoffEffectData("accepted", 1, null), EngineJson.Default.HandoffEffectData), null)) };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         await fake.FirstAttempt.WaitAsync(Timeout);
         Assert.Equal("send", Assert.Single(fake.Attempts).Kind);
         Assert.Equal("pending", f.Text("SELECT state FROM engine_outbox WHERE kind='handoff'"));
@@ -138,7 +138,7 @@ public sealed class EffectTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         var fake = new FakeEffects { Execute = (e, _) => Task.FromResult(Receipt(e.Attempt == 1 ? EffectDisposition.Unavailable : EffectDisposition.Confirmed)) };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         Answer(f);
@@ -156,7 +156,7 @@ public sealed class EffectTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         var fake = new FakeEffects { Execute = (_, _) => Task.FromResult(Receipt(EffectDisposition.Unknown)), Reconcile = (_, _) => Task.FromResult(Receipt(EffectDisposition.Confirmed)) };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         Answer(f);
@@ -217,7 +217,7 @@ public sealed class EffectTests
         Assert.True(f.Apply(new CancelRun(), "r").Applied);
         var stopAck = new TaskCompletionSource<EffectReceipt>(TaskCreationOptions.RunContinuationsAsynchronously);
         var fake = new FakeEffects { Execute = (e, ct) => e.Kind == "stop" ? stopAck.Task.WaitAsync(ct) : Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new MessageEffectData("next_turn", null, null), EngineJson.Default.MessageEffectData), null)) };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         await fake.FirstAttempt.WaitAsync(Timeout);
@@ -242,7 +242,7 @@ public sealed class EffectTests
         var v = f.Number("SELECT version FROM engine_session WHERE id='s'");
         Assert.True(f.Apply(new SetSessionState("lost", null, null), "s", v, actor: new(ActorKind.System, "test")).Applied);
         var fake = new FakeEffects { Execute = async (_, ct) => { await Task.Delay(System.Threading.Timeout.Infinite, ct); return Receipt(EffectDisposition.Confirmed); } };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         await fake.FirstAttempt.WaitAsync(Timeout);
@@ -264,7 +264,7 @@ public sealed class EffectTests
         f.SeedStep(state: "running", sessionId: "s", attempt: 1);
         Assert.True(f.Apply(new CancelRun(), "r").Applied);
         var fake = new FakeEffects { Execute = (_, _) => Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new SessionEffectData("idle", null, null), EngineJson.Default.SessionEffectData), null)) };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         if (f.Text("SELECT state FROM engine_outbox") != "done")
@@ -280,7 +280,7 @@ public sealed class EffectTests
         using var f = new EngineFixture(topics: topics);
         f.SeedSession();
         for (var i = 0; i < 205; i++) Assert.True(f.Apply(new SendMessage(null, "s", "hello", "prompt"), $"m{i}").Applied);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out var cut);
         var calls = 0;
@@ -358,7 +358,7 @@ public sealed class EffectTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         f.SeedSession();
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         var events = Channel.CreateUnbounded<EngineEvent>();
         var calls = 0;
         Action<EngineEvent> callback = e =>
@@ -411,7 +411,7 @@ public sealed class EffectTests
             Execute = (_, _) => Task.FromResult(Receipt(EffectDisposition.Unknown)),
             Reconcile = (_, _) => Task.FromResult(Receipt(++calls == 1 ? EffectDisposition.Unavailable : EffectDisposition.Confirmed))
         };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         Answer(f);
@@ -435,7 +435,7 @@ public sealed class EffectTests
             Execute = (_, _) => Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed,
             JsonSerializer.SerializeToElement(new SessionEffectData("idle", "provider-session", null), EngineJson.Default.SessionEffectData), null))
         };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         Assert.True(f.Apply(new StartSession("codex", "model", "/test", "Test", null, null, null), "s").Applied);
@@ -455,7 +455,7 @@ public sealed class EffectTests
             JsonSerializer.SerializeToElement(new AnswerEffectData("wrong-request"), EngineJson.Default.AnswerEffectData), null)),
             Reconcile = (_, _) => Task.FromResult(Receipt(EffectDisposition.Confirmed))
         };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         Answer(f);
@@ -483,7 +483,7 @@ public sealed class EffectTests
             Execute = (_, _) => Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed,
             JsonSerializer.SerializeToElement(new SessionEffectData("idle", null, null), EngineJson.Default.SessionEffectData), null))
         };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), fake);
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         if (f.Text("SELECT state FROM engine_outbox") != "done")
@@ -516,7 +516,7 @@ public sealed class EffectTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         var retention = new Retention(2000);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, retention: retention);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), retention: retention);
         // A command publication proves the startup pass was observed without using a sleep.
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var consumer = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);

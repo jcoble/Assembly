@@ -129,7 +129,7 @@ public static class EffectTransitions
             var data = receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)!;
             // Two independently queued stop intents can observe the same already-acknowledged stop.
             if (effect.Kind != "stop" || session.State != data.State || session.CancelRequested)
-                result = SessionTransitions.Apply(s, target, new SetSessionState(data.State, data.ProviderSessionId, data.Reason), 0);
+                result = SessionTransitions.Apply(s, target, new SetSessionState(data.State, data.ProviderSessionId, data.Reason), 0, 0);
             if (effect.Kind == "stop" && result is not { Applied: false }) CancelStoppedSteps(s, target);
         }
         if (effect.Kind == "send")

@@ -1,6 +1,7 @@
 using Assembly.Application.Features.Workflows;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Engine.Effects;
+using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Engine;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -84,7 +85,8 @@ public static class ServeRun
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
-        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, () => limits.UnfinishedHelpers, engineEffects);
+        var sessionLimits = new SessionLimits(() => 1, () => 5);
+        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects);
         await using var machineCalls = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
         await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board, Engine: engine), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));

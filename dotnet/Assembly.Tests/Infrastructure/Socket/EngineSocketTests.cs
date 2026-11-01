@@ -43,7 +43,7 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
     {
         _f = new(topics: _topics);
         _database = new(_f.Db);
-        _runtime = EngineRuntime.Start(_database, _topics, _f.Time, () => 5);
+        _runtime = EngineRuntime.Start(_database, _topics, _f.Time, new(() => 1, () => 5));
         var calls = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
         new EngineCalls(_runtime, _f.Time).Register(calls);
         calls.Topic("sessions", TestJson.Default.Note, n => n.Text, (_, _) => [new Note("legacy")]);

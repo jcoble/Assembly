@@ -1,4 +1,6 @@
 using Assembly.Engine.Execution;
+using Assembly.Engine.Hosting;
+using Assembly.Engine.Sessions;
 using System.Threading.Channels;
 using Assembly.Application.Common.Database;
 using Assembly.Engine;
@@ -13,7 +15,7 @@ using EngineTopics = Assembly.Infrastructure.Topics.Topics;
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Hosts dispose this owner before disposing the database.</summary>
-public sealed class EngineRuntime : IAsyncDisposable
+public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
 {
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
@@ -36,7 +38,7 @@ public sealed class EngineRuntime : IAsyncDisposable
     public UsageQueries Usage { get; }
     public EnginePublisher Publisher { get; }
 
-    private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, Func<int> childLimit,
+    private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, SessionLimits limits,
         IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit)
     {
         _db = db;
@@ -44,7 +46,7 @@ public sealed class EngineRuntime : IAsyncDisposable
         Machine = EngineSchema.Open(db, time.GetUtcNow().ToUnixTimeMilliseconds());
         Reader = new(db, Machine);
         Usage = new(db);
-        Commands = new(Machine, childLimit, messageLimit);
+        Commands = new(Machine, limits, messageLimit);
         Publisher = new(db);
         _worker = new(db, Commands, Machine, time, effects, retention ?? new EngineRetention(
             () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
@@ -56,13 +58,13 @@ public sealed class EngineRuntime : IAsyncDisposable
     }
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
-        Func<int> childLimit, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null) =>
-        new(db, topics, time, childLimit, effects, retention, messageLimit);
+        SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null) =>
+        new(db, topics, time, limits, effects, retention, messageLimit);
 
-    internal CommandResult Submit(CommandContext context, EngineCommand command)
+    T IEngineRuntime.Write<T>(Func<IWriteScope, T> body)
     {
-        var result = _db.Writer.Write("engine.command", scope => Commands.Apply(scope, context, command));
-        if (result.Applied) _worker.Wake();
+        var result = _db.Writer.Write("engine.command", body);
+        _worker.Wake();
         return result;
     }
 
@@ -91,6 +93,14 @@ public sealed class EngineRuntime : IAsyncDisposable
         lock (_mirrorsGate) _mirrorChanges.Add(machine);
         _wake.Writer.TryWrite(true);
     }
+    T IEngineRuntime.Read<T>(Func<IReadScope, T> body, CancellationToken cancellationToken)
+    {
+        using var snapshot = _db.OpenSnapshot(cancellationToken);
+        return body(snapshot);
+    }
+
+    internal CommandResult Submit(CommandContext context, EngineCommand command) =>
+        ((IEngineRuntime)this).Write(scope => Commands.Apply(scope, context, command));
 
     public void EffectsAvailable() => _worker.EffectsAvailable();
 

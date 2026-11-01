@@ -35,7 +35,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         private bool _running;
         public int MachineCalls;
         public event Action? RetentionCommitted;
-        private EngineRuntime StartRuntime() => EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time, () => 5);
+        private EngineRuntime StartRuntime() => EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time, new(() => 1, () => 5));
         private readonly bool _windowCalls;
         public Host(bool windowCalls = false) { _windowCalls = windowCalls; Fixture = new(topics: Topics); Runtime = StartRuntime(); }
         public async Task Start(int port = 0)

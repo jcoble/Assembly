@@ -16,14 +16,14 @@ namespace Assembly.Engine;
 public sealed class EngineCommands
 {
     private readonly string _machine;
-    private readonly Func<int> _childLimit;
+    private readonly SessionLimits _limits;
     private readonly Func<int> _messageLimit;
 
-    public EngineCommands(string machine, Func<int> childLimit, Func<int>? messageLimit = null)
+    public EngineCommands(string machine, SessionLimits limits, Func<int>? messageLimit = null)
     {
         _machine = machine;
-        ArgumentNullException.ThrowIfNull(childLimit);
-        _childLimit = childLimit;
+        ArgumentNullException.ThrowIfNull(limits);
+        _limits = limits;
         _messageLimit = messageLimit ?? (() => 20);
     }
 
@@ -45,9 +45,16 @@ public sealed class EngineCommands
                 NeedCommand need => NeedTransitions.Apply(scope, context, need),
                 RunCommand run => RunTransitions.Apply(scope, context, run),
                 StepCommand step => StepTransitions.Apply(scope, context, step),
-                SessionCommand session => SessionTransitions.Apply(scope, context, session, _childLimit()),
+                SessionCommand session => ApplySession(scope, context, session),
                 _ => new(false, false, "unsupported_command", context.ExpectedVersion, 0, context.Epoch)
             };
         });
+    }
+
+    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command)
+    {
+        var depth = _limits.ReadDepth();
+        var children = _limits.ReadChildren();
+        return SessionTransitions.Apply(scope, context, command, depth, children);
     }
 }

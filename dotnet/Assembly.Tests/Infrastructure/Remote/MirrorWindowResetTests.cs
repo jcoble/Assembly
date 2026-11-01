@@ -21,7 +21,7 @@ public sealed class MirrorWindowResetTests
         // Separate topic delivery lets this schedule the real runtime publisher deterministically.
         // All state and reads still go through the fixture's actual SQLite database and atomic writer.
         using var f = new EngineFixture();
-        await using var runtime = EngineRuntime.Start(f.Db, new TopicSet(), f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, new TopicSet(), f.Time, new(() => 1, () => 5));
         const string machine = "workbox-test-engine";
         f.Db.Writer.Write("test.mirror", s =>
         {

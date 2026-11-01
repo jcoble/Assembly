@@ -200,7 +200,7 @@ public sealed class RetentionTests
             () => publisher.Task.GetAwaiter().GetResult().PublishedThrough,
             () => publisher.Task.GetAwaiter().GetResult().MinimumReaderAck,
             through => publisher.Task.GetAwaiter().GetResult().InvalidateReadersBefore(through)));
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, retention: observed);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), retention: observed);
         publisher.SetResult(runtime.Publisher);
         await observed.Until(f, p => p.Floor > 0 && p.Bytes == 8 && runtime.Publisher.PublishedThrough == 11000);
         Assert.Null(f.Text("SELECT input_preview FROM engine_tool_call WHERE id='expired'"));
@@ -228,7 +228,7 @@ public sealed class RetentionTests
             () => publisher.Task.GetAwaiter().GetResult().PublishedThrough,
             () => publisher.Task.GetAwaiter().GetResult().MinimumReaderAck,
             through => publisher.Task.GetAwaiter().GetResult().InvalidateReadersBefore(through)));
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, retention: observed);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), retention: observed);
         var resets = 0;
         using var reader = runtime.Publisher.TrackReader("slow", 0, () => Interlocked.Increment(ref resets));
         publisher.SetResult(runtime.Publisher);

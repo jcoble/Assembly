@@ -11,4 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Assembly.Application\Assembly.Application.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.Core" />
+  </ItemGroup>
 </Project>
