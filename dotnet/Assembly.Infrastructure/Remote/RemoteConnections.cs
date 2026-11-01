@@ -1,3 +1,5 @@
+using Assembly.Application.Common.Database;
+using Assembly.Infrastructure.Engine;
 using System.Text.Json;
 using System.Collections.Concurrent;
 using Assembly.Application.Common.Machines;
@@ -11,6 +13,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
 {
     private readonly Lock _gate = new();
     private readonly MachineStore _store;
+    private readonly IAtomicWriter _writer;
     private readonly MachineSet _machines;
     private readonly MachineStatus _status;
     private readonly LiveHub _hub;
@@ -24,16 +27,17 @@ internal sealed class RemoteConnections : IAsyncDisposable
     private readonly Dictionary<string, Task> _pending = [];
     // Includes running work and every waiter, independently of the queue tail.
     private readonly Dictionary<string, HashSet<CancellationTokenSource>> _operations = [];
-    private readonly ConcurrentDictionary<string, (RemoteMachine Machine, RemoteOutbox Outbox, IAsyncDisposable? Tunnel, MachineStatus Status, RemoteConfig Config)> _active = new();
+    private readonly ConcurrentDictionary<string, (RemoteMachine Machine, RemoteOutbox Outbox, EngineMirror Mirror, IAsyncDisposable? Tunnel, MachineStatus Status, RemoteConfig Config)> _active = new();
     private bool _disposed;
 
-    public RemoteConnections(MachineStore store, MachineSet machines, MachineStatus status, LiveHub hub, SessionStore sessions,
+    public RemoteConnections(MachineStore store, IAtomicWriter writer, MachineSet machines, MachineStatus status, LiveHub hub, SessionStore sessions,
         global::Assembly.Infrastructure.Topics.Topics topics, TextWriter log, MachinesFeature feature,
         Action<string>? turnEnded = null,
         Func<SavedMachine, CancellationToken, Task<(RemoteConfig Config, IAsyncDisposable? Tunnel)>>? open = null)
     {
         (_store, _machines, _status, _hub, _sessions, _topics, _log, _feature, _turnEnded) =
             (store, machines, status, hub, sessions, topics, log, feature, turnEnded);
+        _writer = writer;
         _store.Status = status;
         _open = open ?? OpenAsync;
         // A private commit notice avoids counting this owner as a window watching machines (which keeps probes awake).
@@ -118,7 +122,8 @@ internal sealed class RemoteConnections : IAsyncDisposable
                         if (tunnel is RemoteTunnel ssh) ssh.Exited += () => scoped.Unreachable(name, "ssh tunnel exited");
                         var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded, _topics);
                         var outbox = new RemoteOutbox(remote, _sessions, _hub, _machines.Named(null)!, _log);
-                        _active[name] = (remote, outbox, tunnel, scoped, opened.Config with { Name = name });
+                        var mirror = new EngineMirror(remote, _writer, TimeProvider.System, _log);
+                        _active[name] = (remote, outbox, mirror, tunnel, scoped, opened.Config with { Name = name });
                         tunnel = null;
                         _machines.Set(remote);
                         remote.WatchRunning(followed.Concat(_store.RunningTurns(name)), _store.RunningHelpers(name));
@@ -160,11 +165,15 @@ internal sealed class RemoteConnections : IAsyncDisposable
             if (_active.TryRemove(name, out var old))
             {
                 old.Status.Stop();
-                try { await old.Outbox.DisposeAsync(); }
+                try { await old.Mirror.DisposeAsync(); }
                 finally
                 {
-                    try { await old.Machine.DisposeAsync(); }
-                    finally { if (old.Tunnel is not null) await old.Tunnel.DisposeAsync(); }
+                    try { await old.Outbox.DisposeAsync(); }
+                    finally
+                    {
+                        try { await old.Machine.DisposeAsync(); }
+                        finally { if (old.Tunnel is not null) await old.Tunnel.DisposeAsync(); }
+                    }
                 }
             }
         }

@@ -2,6 +2,9 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
+using Assembly.Engine;
+using Assembly.Engine.Reading;
+using System.Threading.Channels;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
@@ -29,7 +32,9 @@ internal sealed partial class RemoteMachine
                     pending.TrySetException(Unreachable("machine socket closed", $"{_name}: machine socket closed"));
                 _calls.Clear();
                 _socketFailure = null;
-                return _socket = socket;
+                _socket = socket;
+                SocketOpened?.Invoke();
+                return socket;
             }
             catch (Exception error) when (error is WebSocketException or IOException)
             {
@@ -52,8 +57,12 @@ internal sealed partial class RemoteMachine
         }
     }
 
-    private async Task<JsonElement> CallAsync(string feature, string method, object args, CancellationToken cancellationToken)
+    private Task<JsonElement> CallAsync(string feature, string method, object args, CancellationToken cancellationToken) =>
+        CallAsync(feature, method, JsonSerializer.SerializeToElement(args, args.GetType(), SessionsJson.Default), false, cancellationToken);
+
+    internal async Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken)
     {
+        if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken);
         if (_socket is not { State: WebSocketState.Open })
             throw _socketFailure ?? Unreachable("machine socket closed", $"{_name}: machine socket closed");
         var id = Interlocked.Increment(ref _nextSub);
@@ -64,7 +73,7 @@ internal sealed partial class RemoteMachine
             if (_socket is not { State: WebSocketState.Open } socket)
                 throw _socketFailure ?? Unreachable("machine socket closed", $"{_name}: machine socket closed");
             _calls.Add(id, pending);
-            var json = JsonSerializer.Serialize(args, args.GetType(), SessionsJson.Default);
+            var json = args.GetRawText();
             await SendFrameAsync(socket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{json}}}", cancellationToken);
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)
@@ -107,6 +116,8 @@ internal sealed partial class RemoteMachine
     private readonly SemaphoreSlim _socketSend = new(1), _bulkCall = new(1);
     private readonly Dictionary<long, (string Session, System.Threading.Channels.Channel<JsonElement> Frames)> _subscriptions = [];
     private readonly Dictionary<long, TaskCompletionSource<JsonElement>> _calls = [];
+    private readonly Dictionary<long, Channel<JsonElement>> _engineSubscriptions = [];
+    internal event Action? SocketOpened;
     private ClientWebSocket? _socket, _bulkSocket;
     private long _sessionsSub;
     private MachineUnreachable? _socketFailure;
@@ -177,7 +188,12 @@ internal sealed partial class RemoteMachine
                     await _socketSend.WaitAsync(_socketStop.Token);
                     try
                     {
-                        if (frame.TryGetProperty("id", out var callId) && _calls.Remove(callId.GetInt64(), out var pending))
+                        if (frame.TryGetProperty("id", out var engineId) && _engineSubscriptions.TryGetValue(engineId.GetInt64(), out var engineFrames)
+                            && frame.GetProperty("t").GetString() is "engine_snapshot" or "engine_events" or "error")
+                        {
+                            if (!engineFrames.Writer.TryWrite(frame)) throw new IOException("remote engine queue is full");
+                        }
+                        else if (frame.TryGetProperty("id", out var callId) && _calls.Remove(callId.GetInt64(), out var pending))
                             pending.TrySetResult(frame);
                         else if (frame.TryGetProperty("sub", out var sub))
                         {
@@ -195,7 +211,7 @@ internal sealed partial class RemoteMachine
                     copied |= frame.GetProperty("t").GetString() == "rows";
                 }
             }
-            catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException or MachineUnreachable)
+            catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException or MachineUnreachable or ObjectDisposedException)
             {
                 if (_socketStop.IsCancellationRequested) break;
                 if (error is not MachineUnreachable) _status.Unreachable(_name, "machine socket closed");
@@ -224,26 +240,83 @@ internal sealed partial class RemoteMachine
         }
     }
 
-    private async Task<IReadOnlyList<StoredRow>> ReadRowsAsync(string session, long after, CancellationToken cancellationToken)
+    internal async IAsyncEnumerable<JsonElement> EngineFramesAsync(Func<(long? After, CursorAt? At)> cursor,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
-        await _bulkCall.WaitAsync(cancellationToken);
+        var id = Interlocked.Increment(ref _nextSub);
+        // Snapshot pages are pulled. Event pages remain bounded by the socket's existing receive path.
+        var frames = Channel.CreateBounded<JsonElement>(16);
+        await _socketSend.WaitAsync(ct);
+        try
+        {
+            if (_socket is not { State: WebSocketState.Open } socket)
+                throw Unreachable("machine socket closed", $"{_name}: machine socket closed");
+            _engineSubscriptions.Add(id, frames);
+            var (after, at) = cursor();
+            var position = after is null ? "" : $",\"after\":{after}";
+            if (at is not null) position += $",\"at\":{JsonSerializer.Serialize(at, EngineJson.Default.CursorAt)}";
+            await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{id},\"stream\":\"engine\",\"topic\":\"mirror\"{position}}}", ct);
+        }
+        catch { _engineSubscriptions.Remove(id); throw; }
+        finally { _socketSend.Release(); }
+        try
+        {
+            await foreach (var frame in frames.Reader.ReadAllAsync(ct)) yield return frame;
+        }
+        finally
+        {
+            await _socketSend.WaitAsync(CancellationToken.None);
+            try
+            {
+                _engineSubscriptions.Remove(id);
+                if (_socket is { State: WebSocketState.Open } socket)
+                    try { await SendFrameAsync(socket, $"{{\"t\":\"unsub\",\"id\":{id}}}", _socketStop.Token); }
+                    catch (Exception error) when (error is WebSocketException or OperationCanceledException) { socket.Abort(); }
+            }
+            finally { _socketSend.Release(); }
+        }
+    }
+
+    internal async Task SendAsync(string frame, CancellationToken ct)
+    {
+        await _socketSend.WaitAsync(ct);
+        try
+        {
+            if (_socket is not { State: WebSocketState.Open } socket)
+                throw Unreachable("machine socket closed", $"{_name}: machine socket closed");
+            await SendFrameAsync(socket, frame, ct);
+        }
+        finally { _socketSend.Release(); }
+    }
+
+    private async Task<IReadOnlyList<StoredRow>> ReadRowsAsync(string session, long after, CancellationToken ct)
+    {
+        var args = JsonSerializer.Deserialize($"{{\"session\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after},\"limit\":{RowsFeature.PageLimit}}}", EngineJson.Default.JsonElement);
+        var result = await CallAsync("rows", "after", args, true, ct);
+        return result.GetProperty("rows").EnumerateArray().Select(RowWire.Read).ToArray();
+    }
+
+    private async Task<JsonElement> BulkCallAsync(string feature, string method, JsonElement args, CancellationToken ct)
+    {
+        await _bulkCall.WaitAsync(ct);
         try
         {
             if (_bulkSocket is not { State: WebSocketState.Open })
             {
                 _bulkSocket?.Dispose();
                 _bulkSocket = new ClientWebSocket();
-                await OpenSocketAsync(_bulkSocket, "/socket/bulk", cancellationToken);
+                await OpenSocketAsync(_bulkSocket, "/socket/bulk", ct);
             }
-            await SendFrameAsync(_bulkSocket,
-                $"{{\"t\":\"call\",\"id\":1,\"feature\":\"rows\",\"method\":\"after\",\"args\":{{\"session\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after},\"limit\":{RowsFeature.PageLimit}}}}}", cancellationToken);
-            var frame = await ReadFrameAsync(_bulkSocket, cancellationToken);
-            if (frame.GetProperty("t").GetString() != "result") throw new IOException("remote rows read failed");
-            return frame.GetProperty("result").GetProperty("rows").EnumerateArray().Select(RowWire.Read).ToArray();
+            var id = Interlocked.Increment(ref _nextSub);
+            await SendFrameAsync(_bulkSocket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{args.GetRawText()}}}", ct);
+            var frame = await ReadFrameAsync(_bulkSocket, ct);
+            if (frame.GetProperty("id").GetInt64() != id) throw new IOException("remote bulk response id differs");
+            if (frame.GetProperty("t").GetString() != "result") throw new CallFailed(frame.GetProperty("message").GetString()!);
+            return frame.GetProperty("result");
         }
         catch
         {
-            if (!cancellationToken.IsCancellationRequested) _socket?.Abort();
+            if (!ct.IsCancellationRequested) _socket?.Abort();
             _bulkSocket?.Dispose();
             _bulkSocket = null;
             throw;

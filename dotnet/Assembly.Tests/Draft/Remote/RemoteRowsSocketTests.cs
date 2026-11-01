@@ -131,7 +131,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         {
             await ReadAsync(socket);
             await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{RowStore.FormatVersion}}}""");
-            await ReadAsync(socket);
+            using var call = JsonDocument.Parse(await ReadAsync(socket));
             // The catch-up has read no rows. The send's user and started rows arrive afterwards,
             // through the live subscription, even if its empty read response is still in flight.
             var batch = new RowBatch();
@@ -140,7 +140,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
             batch.Rows.Add(new NewRow("run-1", null, RowKind.Turn,
                 JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
             _remoteHub.Publish("s", batch);
-            await SendAsync(socket, """{"t":"result","id":1,"result":{"rows":[]}}""");
+            await SendAsync(socket, $$$"""{"t":"result","id":{{{call.RootElement.GetProperty("id")}}},"result":{"rows":[]}}""");
         };
         try
         {

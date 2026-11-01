@@ -67,7 +67,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         var profiles = new MachineStore(_db);
         var feature = _feature = new MachinesFeature(machines, status, _clock.Start, _time, store: profiles,
             connection: (name, connect, cancel) => _connections.ConnectionAsync(name, connect, cancel));
-        _connections = new RemoteConnections(profiles, machines, status, _hub, _sessions, topics, TextWriter.Null,
+        _connections = new RemoteConnections(profiles, _db.Writer, machines, status, _hub, _sessions, topics, TextWriter.Null,
             feature, open: (profile, cancel) =>
             {
                 cancel.ThrowIfCancellationRequested();

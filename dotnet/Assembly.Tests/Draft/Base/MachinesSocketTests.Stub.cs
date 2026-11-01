@@ -141,6 +141,11 @@ public sealed partial class MachinesSocketTests
                                 var id = json.GetProperty("id");
                                 var method = json.GetProperty("method").GetString();
                                 var feature = json.GetProperty("feature").GetString();
+                                if (feature == "engine")
+                                {
+                                    await Send($$"""{"t":"error","id":{{id}},"code":"not_found","message":"Unknown engine call"}""");
+                                    break;
+                                }
                                 string result;
                                 string? custom;
                                 try { custom = Reply?.Invoke(feature!, method!); }

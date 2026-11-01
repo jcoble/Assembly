@@ -7,6 +7,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Persistence;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Data.Sqlite;
 
 namespace Assembly.Tests.Engine;
 
@@ -45,6 +46,35 @@ internal sealed class EngineFixture : IDisposable
     public void Reopen()
     {
         Db.Dispose();
+        Db = OpenDatabase();
+        Machine = EngineSchema.Open(Db, Time.GetUtcNow().ToUnixTimeMilliseconds());
+    }
+
+    // Isolated fixture backups only; the caller stops its host/runtime before restoring.
+    public void BackupTo(string path)
+    {
+        var partial = path + ".partial";
+        using (var source = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _file.Path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString()))
+        using (var target = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = partial, Pooling = false }.ToString()))
+        {
+            source.Open(); target.Open(); source.BackupDatabase(target);
+        }
+        using (var saved = new FileStream(partial, FileMode.Open, FileAccess.ReadWrite)) saved.Flush(true);
+        File.Move(partial, path, true);
+    }
+
+    public void RestoreFrom(string path)
+    {
+        using (var reads = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = _file.Path, Mode = SqliteOpenMode.ReadOnly, Pooling = true }.ToString()))
+        {
+            reads.Open();
+            SqliteConnection.ClearPool(reads);
+        }
+        Db.Dispose();
+        var partial = _file.Path + ".restore";
+        File.Copy(path, partial);
+        using (var saved = new FileStream(partial, FileMode.Open, FileAccess.ReadWrite)) saved.Flush(true);
+        File.Move(partial, _file.Path, true);
         Db = OpenDatabase();
         Machine = EngineSchema.Open(Db, Time.GetUtcNow().ToUnixTimeMilliseconds());
     }

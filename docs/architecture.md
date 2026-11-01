@@ -53,6 +53,10 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 ## One socket
 
 The authenticated `/socket` also carries the engine's six filtered topics and local display-only `mirror` topic through `stream:"engine"`, with cursor fingerprints, client-pulled mirror snapshots, catch-up pages and reader acknowledgements; `engine/machine` reports the local identity and watermark, and omitting `stream` preserves the existing topics.
+Each active remote has one `EngineMirror` on that same socket. Socket-open events restart its identity check and
+subscription; it has no timer. `MirrorApply` copies remote display rows and journal events through the existing
+atomic writer, hiding partial snapshot generations until promotion. Mirror application never transitions local
+entities or queues effects; acknowledgements and page pulls follow committed writes.
 
 `/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
 For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;

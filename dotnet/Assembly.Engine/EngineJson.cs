@@ -1,4 +1,5 @@
 using Assembly.Engine.Reading;
+using Assembly.Engine.Mirror;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Recording;
 using System.Text.Json.Serialization;
@@ -13,6 +14,8 @@ using Assembly.Engine.Prs;
 namespace Assembly.Engine;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(MirrorNotice))]
+[JsonSerializable(typeof(CursorAt))]
 [JsonSerializable(typeof(StreamPage))]
 [JsonSerializable(typeof(SnapshotPage))]
 [JsonSerializable(typeof(Effect))]
