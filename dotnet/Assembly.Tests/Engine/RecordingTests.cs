@@ -1,8 +1,8 @@
 using Microsoft.Data.Sqlite;
 using System.Text;
 using System.Text.Json;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Recording;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Recording;
 
 namespace Assembly.Tests.Engine;
 

@@ -1,7 +1,7 @@
 using System.Text.Json;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Messages;
-using Assembly.Application.Features.Engine.Sessions;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Messages;
+using Assembly.Engine.Sessions;
 using Microsoft.Data.Sqlite;
 
 namespace Assembly.Tests.Engine;
@@ -126,7 +126,7 @@ public sealed class MessageTests
         Assert.True(f.Apply(new SendMessage(null, "b", "hi", "prompt"), "m").Applied);
         Assert.Equal("window", f.Text("SELECT sender_kind FROM engine_message"));
         var payload = JsonSerializer.Deserialize(f.Text("SELECT payload_json FROM engine_outbox")!,
-            global::Assembly.Application.Features.Engine.EngineJson.Default.SendMessage);
+            global::Assembly.Engine.EngineJson.Default.SendMessage);
         Assert.Equal(new SendMessage(null, "b", "hi", "prompt"), payload);
         Assert.Null(f.Text("SELECT from_session_id FROM engine_message"));
         Assert.Equal("forbidden", f.Apply(new MessageOutcome("failed", null, null), "m", version: 1).Error);

@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Helpers;
-using Assembly.Application.Features.Engine.Effects;
+using Assembly.Engine.Effects;
 using Assembly.Infrastructure.Engine;
 using Assembly.Application.Features.Workflows;
 using Assembly.Infrastructure.Workflows;
