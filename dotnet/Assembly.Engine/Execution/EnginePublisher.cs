@@ -77,7 +77,8 @@ public sealed class EnginePublisher(IAppDatabase db)
         {
             var events = db.Query("""
                 SELECT machine,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json
-                FROM engine_event WHERE seq>$after ORDER BY seq LIMIT 100
+                FROM engine_event WHERE machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
+                    AND seq>$after ORDER BY seq LIMIT 100
                 """, r => new EngineEvent(r.Text(0), r.Long(1), r.Text(2), r.Text(3), r.Text(4), r.Long(5), r.Long(6),
                     r.Long(7) != 0, JsonSerializer.Deserialize(r.Text(8), EngineJson.Default.EngineEventData)!),
                 cancellationToken, new SqlArg("$after", PublishedThrough));

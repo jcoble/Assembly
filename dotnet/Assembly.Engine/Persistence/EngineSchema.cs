@@ -14,16 +14,24 @@ public static class EngineSchema
             """);
         var meta = scope.QueryFirst("SELECT schema_version,machine_id FROM engine_meta WHERE singleton=1",
             r => (Version: r.Long(0), Machine: r.Text(1)));
-        if (meta.Version > 1)
+        if (meta.Version > 2)
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
         if (meta.Version == 1)
+        {
+            scope.Execute(UpgradeVersion1);
+            scope.Execute(CreateMirrors);
+            scope.Execute("UPDATE engine_meta SET schema_version=2 WHERE singleton=1");
+            return meta.Machine;
+        }
+        if (meta.Version == 2)
             return meta.Machine;
 
         scope.Execute(Create);
+        scope.Execute(CreateMirrors);
         var machine = Guid.NewGuid().ToString("N");
         scope.Execute("""
             INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-            VALUES(1,1,$machine,1,0,0);
+            VALUES(1,2,$machine,1,0,0);
             """, new SqlArg("$machine", machine));
         return machine;
     });
@@ -31,6 +39,33 @@ public static class EngineSchema
     private const string Shared = """
         id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
         created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+        """;
+
+    private const string EventColumns = $"""
+        {Shared}
+        seq INTEGER NOT NULL, kind TEXT NOT NULL, entity_kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+        entity_version INTEGER NOT NULL, at_ms INTEGER NOT NULL, late INTEGER NOT NULL,
+        data_json TEXT NOT NULL CHECK(json_valid(data_json)), UNIQUE(machine,seq)
+        """;
+
+    private const string UpgradeVersion1 = $"""
+        CREATE TABLE engine_event_v2 ({EventColumns});
+        INSERT INTO engine_event_v2(id,version,machine,created_ms,updated_ms,task_url,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json)
+        SELECT id,version,machine,created_ms,updated_ms,task_url,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json FROM engine_event;
+        DROP TABLE engine_event;
+        ALTER TABLE engine_event_v2 RENAME TO engine_event;
+        CREATE INDEX engine_event_machine_seq ON engine_event(machine,seq);
+        """;
+
+    private const string CreateMirrors = """
+        CREATE TABLE engine_mirror (
+            machine TEXT PRIMARY KEY, name TEXT NOT NULL, generation INTEGER NOT NULL, through INTEGER NOT NULL,
+            at_json TEXT CHECK(at_json IS NULL OR json_valid(at_json)), retained_after INTEGER NOT NULL,
+            state TEXT NOT NULL CHECK(state IN ('snapshotting','live','retired')), updated_ms INTEGER NOT NULL);
+        CREATE TABLE engine_mirror_row (
+            machine TEXT NOT NULL REFERENCES engine_mirror(machine), entity_kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+            generation INTEGER NOT NULL, version INTEGER NOT NULL, row_json TEXT NOT NULL CHECK(json_valid(row_json)),
+            PRIMARY KEY(machine,generation,entity_kind,entity_id));
         """;
 
     private const string Create = $$"""
@@ -78,10 +113,8 @@ public static class EngineSchema
             step_id TEXT REFERENCES engine_step(id), attempt INTEGER, epoch INTEGER NOT NULL, provider_turn_id TEXT NOT NULL,
             input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, cost_nanodollars INTEGER,
             duration_ms INTEGER, late INTEGER NOT NULL, UNIQUE(session_id,provider_turn_id));
-        CREATE TABLE engine_event ({{Shared}}
-            seq INTEGER NOT NULL UNIQUE, kind TEXT NOT NULL, entity_kind TEXT NOT NULL, entity_id TEXT NOT NULL,
-            entity_version INTEGER NOT NULL, at_ms INTEGER NOT NULL, late INTEGER NOT NULL,
-            data_json TEXT NOT NULL CHECK(json_valid(data_json)));
+        CREATE TABLE engine_event ({{EventColumns}});
+        CREATE INDEX engine_event_machine_seq ON engine_event(machine,seq);
         -- event_seq is provenance: events may be compacted while an effect remains durable.
         CREATE TABLE engine_outbox ({{Shared}}
             event_seq INTEGER NOT NULL, session_id TEXT REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
