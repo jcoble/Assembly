@@ -53,7 +53,7 @@ internal static class Schema
         CREATE INDEX IF NOT EXISTS rows_item ON rows(session_id, item_id, kind, seq);
         CREATE INDEX IF NOT EXISTS rows_summary ON rows(session_id, kind, item_id, seq) WHERE {SummaryKinds};
         CREATE TABLE IF NOT EXISTS tool_details(session_id TEXT NOT NULL, item_id TEXT NOT NULL, input TEXT, output TEXT,
-          diff TEXT, path TEXT, PRIMARY KEY (session_id, item_id));
+          diff TEXT, path TEXT, output_source TEXT, acp_session_id TEXT, PRIMARY KEY (session_id, item_id));
         """;
 
     /// <summary>

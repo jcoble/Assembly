@@ -19,8 +19,9 @@ public sealed class RowConverter
     public const long CoalesceMs = 100;
 
     private readonly OrderedDictionary<string, OpenTool> _tools = new();
-    // This turn's finished tool calls, so an update that arrives after the end adds nothing.
-    private readonly HashSet<string> _finishedTools = [];
+    // Completed calls still accept explicit late patches under their original run.
+    private readonly Dictionary<string, OpenTool> _finishedTools = [];
+    private readonly HashSet<string> _retainedTools = [];
     // Tools a turn's end marked failed while they were still running, by id.
     private readonly Dictionary<string, OpenTool> _endedTools = [];
     // How many times each agent message id has been opened, so text or thinking that resumes after a tool is its own item.
@@ -49,7 +50,7 @@ public sealed class RowConverter
     public decimal? SessionCost => _sessionCost;
 
     /// <summary>Whether this session made the tool call, still running or finished this turn.</summary>
-    public bool KnowsTool(string toolCallId) => _tools.ContainsKey(toolCallId) || _finishedTools.Contains(toolCallId);
+    public bool KnowsTool(string toolCallId) => _tools.ContainsKey(toolCallId) || _finishedTools.ContainsKey(toolCallId);
 
     /// <summary>Whether a tool call is still running.</summary>
     public bool HasOpenTools => _tools.Count > 0;
@@ -68,6 +69,20 @@ public sealed class RowConverter
                 Add(batch, null, RowKind.Turn, new TurnPayload("started", started.Reason), RowJsonContext.Rows.TurnPayload, started.At);
                 break;
             case TaskChanged task:
+                if (task.ToolCallId is { } retained)
+                {
+                    if (task.Running) _retainedTools.Add(retained);
+                    else
+                    {
+                        _retainedTools.Remove(retained);
+                        // Session loss/close stops retained work without claiming a provider completion.
+                        if (task.State == "stopped" && _tools.Remove(retained, out var abandoned))
+                        {
+                            WriteTool(batch, abandoned, task.At, failed: true);
+                            _endedTools[retained] = abandoned;
+                        }
+                    }
+                }
                 var runId = _taskRuns.TryGetValue(task.TaskId, out var startedIn) ? startedIn : _taskRuns[task.TaskId] = _turn?.RunId ?? _lastRunId;
                 var payload = new TaskPayload(task.Name, task.State, task.CanStop, task.ToolCallId);
                 batch.Rows.Add(new NewRow(runId, $"task:{task.TaskId}", RowKind.Task,
@@ -102,6 +117,9 @@ public sealed class RowConverter
                 break;
             case ToolCallChanged change:
                 ChangeTool(batch, change);
+                break;
+            case TerminalChanged terminal:
+                batch.Terminals.Add(terminal);
                 break;
             case PlanChanged plan:
                 var items = plan.Entries.Select(entry => new PlanItem(entry.Text, entry.Status)).ToList();
@@ -221,23 +239,25 @@ public sealed class RowConverter
 
     private void ChangeTool(RowBatch batch, ToolCallChanged change)
     {
-        if (_finishedTools.Contains(change.ToolCallId))
-            return;
+        if (_finishedTools.Remove(change.ToolCallId, out var finished))
+            _tools[change.ToolCallId] = finished;
         // A tool the turn's end failed may still finish (a backgrounded command); any other word on it after the end
         // (Codex's bare update for a command stopped as the turn ended) leaves it as it ended.
         if (_endedTools.TryGetValue(change.ToolCallId, out var ended))
         {
-            if (change.Fields.Status is not ("completed" or "failed"))
+            var newProvider = change.Fields.AcpSessionId is { } current && ended.AcpSessionId is { } previous && current != previous;
+            if (!newProvider && change.Fields.Status is not ("completed" or "failed" or "cancelled"))
                 return;
             _endedTools.Remove(change.ToolCallId);
-            _tools[change.ToolCallId] = ended;
+            if (!newProvider) _tools[change.ToolCallId] = ended;
         }
-        if (change.Started || !_tools.ContainsKey(change.ToolCallId))
+        if (!_tools.TryGetValue(change.ToolCallId, out var known)
+            || change.Fields.AcpSessionId is { } provider && known.AcpSessionId is { } prior && provider != prior)
         {
             // What the agent said before it reached for a tool is a finished message.
             CloseMessage(batch, change.At);
             CloseThinking(batch, change.At);
-            _tools[change.ToolCallId] = new OpenTool(change.ToolCallId);
+            _tools[change.ToolCallId] = new OpenTool(change.ToolCallId, _turn?.RunId ?? _lastRunId);
             if (_turn is not null)
                 _turn.ToolCalls++;
         }
@@ -247,8 +267,9 @@ public sealed class RowConverter
         WriteTool(batch, tool, change.At, failed: false);
         if (tool.IsDone)
         {
+            tool.ReleaseCompletedSnapshot();
             _tools.Remove(tool.ItemId);
-            _finishedTools.Add(tool.ItemId);
+            _finishedTools[tool.ItemId] = tool;
         }
     }
 
@@ -257,13 +278,13 @@ public sealed class RowConverter
         // A run's end closes what it left open: the message keeps its text, thinking is done, and a tool still running failed.
         CloseThinking(batch, at);
         CloseMessage(batch, at);
-        foreach (var tool in _tools.Values)
+        foreach (var tool in _tools.Values.ToArray())
         {
+            if (_retainedTools.Contains(tool.ItemId)) continue;
             WriteTool(batch, tool, at, failed: true);
             _endedTools[tool.ItemId] = tool;
+            _tools.Remove(tool.ItemId);
         }
-        _tools.Clear();
-        _finishedTools.Clear();
         _segments.Clear();
         foreach (var (id, text) in _replacedThought)
         {
@@ -325,7 +346,8 @@ public sealed class RowConverter
     {
         var (line, detail) = tool.TakeChanges(failed);
         if (line is not null)
-            Add(batch, tool.ItemId, RowKind.Tool, line, RowJsonContext.Rows.ToolPayload, at);
+            batch.Rows.Add(new NewRow(tool.RunId, tool.ItemId, RowKind.Tool,
+                JsonSerializer.SerializeToElement(line, RowJsonContext.Rows.ToolPayload), at));
         if (detail is not null)
             batch.Details.Add(detail);
     }

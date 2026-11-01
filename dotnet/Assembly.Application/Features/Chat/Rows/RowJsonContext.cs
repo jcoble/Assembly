@@ -2,6 +2,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Domain.Rows;
+using Assembly.Domain.Events;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
@@ -26,6 +27,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(IReadOnlyList<FileTouched>))]
 [JsonSerializable(typeof(SessionAttachments))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(TerminalExit))]
+[JsonSerializable(typeof(IReadOnlyList<ToolTerminalState>))]
 internal sealed partial class RowJsonContext : JsonSerializerContext
 {
     /// <summary>

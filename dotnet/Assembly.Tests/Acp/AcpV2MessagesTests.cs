@@ -39,12 +39,11 @@ public sealed class AcpV2MessagesTests
         Assert.Equal("m-1", JsonSerializer.Deserialize("""{"messageId":"m-1"}""", AcpJsonContext.Default.PromptResponse)!.MessageId);
 
     [Fact]
-    public void State_update_reads_stop_reason_error_and_background()
+    public void State_update_reads_stop_reason_and_error()
     {
-        var state = JsonSerializer.Deserialize("""{"state":"idle","stopReason":"error","error":{"code":-32603,"message":"failed","data":{"detail":"x"}},"background":[{"id":"b-1","title":"Build","state":"running"}]}""", AcpJsonContext.Default.StateUpdate)!;
+        var state = JsonSerializer.Deserialize("""{"state":"idle","stopReason":"error","error":{"code":-32603,"message":"failed","data":{"detail":"x"}}}""", AcpJsonContext.Default.StateUpdate)!;
         Assert.Equal("error", state.StopReason);
         Assert.Equal(-32603, state.Error!.Code);
-        Assert.Equal("b-1", Assert.Single(state.Background!).Id);
     }
 
     [Fact]

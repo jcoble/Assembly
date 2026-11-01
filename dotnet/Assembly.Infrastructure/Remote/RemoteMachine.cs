@@ -137,7 +137,11 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         var call = await ReadJsonAsync(response, cancellationToken);
-        return new StoredToolCall(Text(call, "summary"), Text(call, "input"), Text(call, "output"), Text(call, "diff"), Text(call, "path"));
+        return new StoredToolCall(Text(call, "summary"), Text(call, "input"), Text(call, "output"), Text(call, "diff"), Text(call, "path"),
+            call.TryGetProperty("outputBytes", out var bytes) && bytes.ValueKind == JsonValueKind.Number ? bytes.GetInt64() : null,
+            call.TryGetProperty("outputTruncated", out var truncated) && truncated.ValueKind == JsonValueKind.True,
+            call.TryGetProperty("terminals", out var terminals) && terminals.ValueKind == JsonValueKind.Array
+                ? terminals.Deserialize(RowJsonContext.Rows.IReadOnlyListToolTerminalState) : null);
     }
 
     public async Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)

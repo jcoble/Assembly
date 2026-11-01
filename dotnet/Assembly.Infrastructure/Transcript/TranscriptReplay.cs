@@ -17,6 +17,7 @@ public static class TranscriptReplay
     {
         var events = new List<AgentEvent>();
         long? openPrompt = null;
+        string? promptSession = null;
         var turns = 0;
         var readers = new Dictionary<string, UpdateReader>();
         foreach (var line in File.ReadLines(path))
@@ -32,6 +33,7 @@ public static class TranscriptReplay
             {
                 case "out" when MethodOf(message) == AcpMethods.SessionPrompt:
                     openPrompt = message.GetProperty("id").GetInt64();
+                    promptSession = message.GetProperty("params").GetProperty("sessionId").GetString();
                     var text = message.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString()!;
                     events.Add(new TurnStarted(at, $"run-{++turns}", text));
                     break;
@@ -47,6 +49,8 @@ public static class TranscriptReplay
                         throw new InvalidDataException("An ACP v2 prompt response must acknowledge its messageId.");
                     if (message.TryGetProperty("error", out var error))
                     {
+                        if (promptSession is { } native && readers.TryGetValue(native, out var promptReader))
+                            events.AddRange(promptReader.RetainOutstanding(at));
                         events.Add(UpdateReader.TurnFailure(JsonRpcException.FromError(error), at));
                         openPrompt = null;
                     }

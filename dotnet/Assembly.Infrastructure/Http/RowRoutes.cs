@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Assembly.Application.Features.Chat.Rows;
@@ -74,6 +75,13 @@ internal sealed class RowRoutes(LiveHub hub, SessionStore sessionStore, MachineS
             json.WriteString("output", call.Output);
             json.WriteString("diff", call.Diff);
             json.WriteString("path", call.Path);
+            if (call.OutputBytes is { } bytes) json.WriteNumber("outputBytes", bytes);
+            json.WriteBoolean("outputTruncated", call.OutputTruncated);
+            if (call.Terminals is { } terminals)
+            {
+                json.WritePropertyName("terminals");
+                JsonSerializer.Serialize(json, terminals, RowJsonContext.Rows.IReadOnlyListToolTerminalState);
+            }
             json.WriteEndObject();
         });
     }
