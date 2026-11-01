@@ -33,14 +33,14 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, Func<int> childLimit,
-        IEngineEffects? effects, IEngineRetention? retention)
+        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit)
     {
         _db = db;
         _topics = topics;
         Machine = EngineSchema.Open(db, time.GetUtcNow().ToUnixTimeMilliseconds());
         Reader = new(db, Machine);
         Usage = new(db);
-        Commands = new(Machine, childLimit);
+        Commands = new(Machine, childLimit, messageLimit);
         Publisher = new(db);
         _worker = new(db, Commands, Machine, time, effects, retention ?? new EngineRetention(
             () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
@@ -51,8 +51,8 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     }
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
-        Func<int> childLimit, IEngineEffects? effects = null, IEngineRetention? retention = null) =>
-        new(db, topics, time, childLimit, effects, retention);
+        Func<int> childLimit, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null) =>
+        new(db, topics, time, childLimit, effects, retention, messageLimit);
 
     T IEngineRuntime.Write<T>(Func<IWriteScope, T> body)
     {

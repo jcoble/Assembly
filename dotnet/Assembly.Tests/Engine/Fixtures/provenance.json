@@ -1,0 +1,34 @@
+{
+  "note": "Test-only isolated git archive exports; actual old producer APIs, no rewritten migration or manual SendMessage serializer. SQL export emits original DDL/data; all DDL precedes data and deferred FK validation is enabled during fixture loading. Crash generator disposes the owned runtime and waits for cancellation before backup. No owner DB/services.",
+  "generator": "OldProducerFixtureGenerator.cs.txt",
+  "fixtures": [
+    {
+      "file": "old-v1.sql",
+      "producer": "8b2b6900e29ac6ee6d94fe805d45e8a2347689a7",
+      "sha256": "44f421bd0e3f4ae9ba8dd692ccf5a6d183352726d73fd33f3849ce6db10f37ed",
+      "capture": "Old EngineSchema.Open + EngineCommands.Apply fixed contexts; old RowStore.Commit; fixture seed helpers",
+      "providerInsertions": null
+    },
+    {
+      "file": "old-v1-crash.sql",
+      "producer": "8b2b6900e29ac6ee6d94fe805d45e8a2347689a7",
+      "sha256": "1ca3156861680c1aa9501ab602a882114733d8fd1f3d1eccbd8adc05371016f0",
+      "capture": "Old EngineRuntime + FakeEffects.SucceededExternally once; DisposeAsync before completion",
+      "providerInsertions": 1
+    },
+    {
+      "file": "old-v2.sql",
+      "producer": "779d890f4da18ad5b5314228617efec61b146406",
+      "sha256": "fe1c55b0d53fcafd51e6c753a993c84fc8e3419b654dd0ee92af126e34d76951",
+      "capture": "Old EngineSchema.Open + EngineCommands.Apply fixed contexts; old RowStore.Commit; fixture seed helpers",
+      "providerInsertions": null
+    },
+    {
+      "file": "old-v2-crash.sql",
+      "producer": "779d890f4da18ad5b5314228617efec61b146406",
+      "sha256": "23e0beb4735fd1cb599f5da65eeee5ec8945d34ef76dab974589396e8c845f83",
+      "capture": "Old EngineRuntime + FakeEffects.SucceededExternally once; DisposeAsync before completion",
+      "providerInsertions": 1
+    }
+  ]
+}

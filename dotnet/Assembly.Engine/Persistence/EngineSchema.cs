@@ -14,27 +14,40 @@ public static class EngineSchema
             """);
         var meta = scope.QueryFirst("SELECT schema_version,machine_id FROM engine_meta WHERE singleton=1",
             r => (Version: r.Long(0), Machine: r.Text(1)));
-        if (meta.Version > 2)
+        if (meta.Version is < 0 or > 3)
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version == 1)
+        if (meta.Version == 3)
+            return meta.Machine;
+        if (meta.Version is 1 or 2)
         {
-            scope.Execute(UpgradeVersion1);
-            scope.Execute(CreateMirrors);
-            scope.Execute("UPDATE engine_meta SET schema_version=2 WHERE singleton=1");
+            if (meta.Version == 1)
+            {
+                scope.Execute(UpgradeVersion1);
+                scope.Execute(CreateMirrors);
+            }
+            scope.Execute(UpgradeDelivery);
+            Messages.MessageSchemaUpgrade.Apply(scope, meta.Machine, nowMs);
+            scope.Execute("UPDATE engine_meta SET schema_version=3 WHERE singleton=1");
             return meta.Machine;
         }
-        if (meta.Version == 2)
-            return meta.Machine;
-
         scope.Execute(Create);
         scope.Execute(CreateMirrors);
         var machine = Guid.NewGuid().ToString("N");
         scope.Execute("""
             INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-            VALUES(1,2,$machine,1,0,0);
+            VALUES(1,3,$machine,1,0,0);
             """, new SqlArg("$machine", machine));
         return machine;
     });
+
+    private const string UpgradeDelivery = """
+        ALTER TABLE engine_message ADD COLUMN delivery TEXT NOT NULL DEFAULT 'wait';
+        ALTER TABLE engine_message ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE engine_message ADD COLUMN in_flight INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE engine_message ADD COLUMN sender_label TEXT NOT NULL DEFAULT '';
+        ALTER TABLE engine_session ADD COLUMN can_steer INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE engine_message ADD COLUMN client_id TEXT NULL;
+        """;
 
     private const string Shared = """
         id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
@@ -74,7 +87,7 @@ public static class EngineSchema
             state TEXT NOT NULL, activity_state TEXT NOT NULL,
             parent_id TEXT REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
             provider_session_id TEXT, holder TEXT NOT NULL, epoch INTEGER NOT NULL,
-            reserved_epoch INTEGER, cancel_requested INTEGER NOT NULL, lost_ms INTEGER);
+            reserved_epoch INTEGER, cancel_requested INTEGER NOT NULL, lost_ms INTEGER, can_steer INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE engine_run ({{Shared}}
             owner_session_id TEXT NOT NULL REFERENCES engine_session(id), worktree TEXT, branch TEXT,
             pr_id TEXT REFERENCES engine_pr(id), state TEXT NOT NULL, owner_loss_limit_ms INTEGER NOT NULL,
@@ -95,7 +108,9 @@ public static class EngineSchema
             from_session_id TEXT REFERENCES engine_session(id), sender_kind TEXT NOT NULL,
             to_session_id TEXT NOT NULL REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
             step_id TEXT REFERENCES engine_step(id), text TEXT NOT NULL, mode TEXT NOT NULL, state TEXT NOT NULL,
-            provider_turn_id TEXT, reason TEXT);
+            provider_turn_id TEXT, reason TEXT, delivery TEXT NOT NULL DEFAULT 'wait',
+            attempt INTEGER NOT NULL DEFAULT 0, in_flight INTEGER NOT NULL DEFAULT 0,
+            sender_label TEXT NOT NULL DEFAULT '', client_id TEXT NULL);
         CREATE TABLE engine_handoff ({{Shared}}
             session_id TEXT NOT NULL REFERENCES engine_session(id), old_holder TEXT NOT NULL, new_holder TEXT NOT NULL,
             old_epoch INTEGER NOT NULL, next_epoch INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT);
