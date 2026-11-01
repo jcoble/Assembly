@@ -69,12 +69,14 @@ public sealed class UpdateReaderTests
     }
 
     [Fact]
-    public void Background_list_becomes_task_changes_and_empty_list_ends_them()
+    public void Known_in_progress_tool_is_retained_at_idle_and_only_its_status_settles_it()
     {
         var reader = new UpdateReader();
-        var task = Assert.IsType<TaskChanged>(Assert.Single(reader.Read(Update("""{"sessionUpdate":"state_update","state":"idle","background":[{"id":"b","title":"Build","state":"running"}]}"""))));
+        reader.Read(Update("""{"sessionUpdate":"tool_call_update","toolCallId":"b","title":"Build","status":"in_progress"}"""));
+        var task = Assert.Single(reader.Read(Update("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""")).OfType<TaskChanged>());
         Assert.Equal("running", task.State); Assert.False(task.CanStop);
-        var ended = Assert.IsType<TaskChanged>(Assert.Single(reader.Read(Update("""{"sessionUpdate":"state_update","state":"idle","background":[]}"""))));
+        Assert.Empty(reader.Read(Update("""{"sessionUpdate":"state_update","state":"unknown","background":[]}""")).OfType<TaskChanged>());
+        var ended = Assert.Single(reader.Read(Update("""{"sessionUpdate":"tool_call_update","toolCallId":"b","status":"completed"}""")).OfType<TaskChanged>());
         Assert.Equal("completed", ended.State);
     }
 

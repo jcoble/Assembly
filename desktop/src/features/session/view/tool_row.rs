@@ -122,6 +122,7 @@ impl ToolRow {
             ToolState::Failed if self.denied => StepState::Unfinished,
             ToolState::Completed => StepState::Done,
             ToolState::Failed => StepState::Failed,
+            ToolState::Cancelled => StepState::Unfinished,
         };
         let tags = [
             self.tool

@@ -414,6 +414,13 @@ public sealed partial class SessionHost : IPermissionPolicy
         {
             _shuttingDown = true;
             _turn?.Stopping.Cancel();
+            if (_kept is { } kept && (_turn is null || _turn.SelfStarted))
+            {
+                if (_turn is { SelfStarted: true })
+                    EndSelfRun(new TurnEnded(Now(), "cancelled", null));
+                _kept = null;
+                _lastTurn = Task.Run(() => CloseKeptAsync(kept, lost: false));
+            }
             return _lastTurn;
         }
     }
@@ -508,6 +515,9 @@ public sealed partial class SessionHost : IPermissionPolicy
                 // and tells us of only after its answer (Codex's async_task_spawned can follow the prompt's result).
                 toolsOpen = _converter.HasOpenTools;
                 var ended = end(Now());
+                if (!lost && !_shuttingDown)
+                    foreach (var task in _updateReader.RetainOutstanding(ended.At))
+                        Track(task);
                 Apply(ended);
                 title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };
                 if (title)

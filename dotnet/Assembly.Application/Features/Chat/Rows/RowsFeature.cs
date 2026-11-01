@@ -105,8 +105,8 @@ internal sealed class RowsFeature : IFeature
                 throw new CallFailed("unknown tool call");
             var (output, outputBytes) = Cut(tool.Output);
             var (diff, diffBytes) = Cut(tool.Diff);
-            return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, output != tool.Output || diff != tool.Diff,
-                outputBytes, diffBytes);
+            return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, tool.OutputTruncated || output != tool.Output || diff != tool.Diff,
+                tool.OutputBytes ?? outputBytes, diffBytes, tool.Terminals);
         }, bulk: true);
         // The drawer's Context tab: what the session's tool calls changed, from this machine's copy of its rows.
         calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
@@ -125,7 +125,7 @@ internal sealed class RowsFeature : IFeature
     }
 
     // The text cut to at most ToolCap bytes, at a whole character, and its full size in bytes.
-    private static (string? Text, long Bytes) Cut(string? text)
+    internal static (string? Text, long Bytes) Cut(string? text)
     {
         if (text is null)
             return (null, 0);
@@ -174,5 +174,5 @@ internal sealed class RowsFeature : IFeature
     /// <c>truncated</c> set and the full sizes in <c>outputBytes</c> and <c>diffBytes</c>.
     /// </summary>
     internal sealed record ToolDetail(string? Summary, string? Input, string? Output, string? Diff, string? Path, bool Truncated,
-        long OutputBytes, long DiffBytes);
+        long OutputBytes, long DiffBytes, IReadOnlyList<ToolTerminalState>? Terminals = null);
 }

@@ -18,6 +18,7 @@ public sealed class UpdateReader
     private readonly Dictionary<string, SubagentChanged> _subagents = [];
     private readonly Dictionary<string, ProviderSessionMessage> _providerMessages = [];
     private bool _running;
+    private bool _idle;
     private string? _lastStop;
 
     /// <summary>Applies updates in arrival order; one reader belongs to one provider session.</summary>
@@ -71,19 +72,46 @@ public sealed class UpdateReader
             case "tool_call_content_chunk":
                 if (String(update, "toolCallId") is not { } id) break;
                 var started = !_tools.TryGetValue(id, out var previous);
-                var patch = ToolCall(update, at, started)!.Fields;
                 if (!_toolContent.TryGetValue(id, out var toolContent)) _toolContent[id] = toolContent = [];
                 if (update.TryGetProperty("content", out _))
                 {
                     if (notification.Kind == "tool_call_update") toolContent.Clear();
                     toolContent.AddRange(ContentItems(update).Select(item => item.Clone()));
                 }
+                string? Patch(string key, string? prior) => update.TryGetProperty(key, out _) ? String(update, key) : prior;
                 var fields = new ToolCallFields(
-                    patch.Name ?? previous?.Name, patch.Kind ?? previous?.Kind, patch.Title ?? previous?.Title,
-                    patch.Status ?? previous?.Status, patch.Input ?? previous?.Input, patch.Output ?? previous?.Output,
-                    ContentText(toolContent), Diffs(toolContent), patch.Paths ?? previous?.Paths, ContentReplaced: true);
+                    update.TryGetProperty("name", out _) ? String(update, "name") : ClaudeToolName(update) ?? previous?.Name,
+                    Patch("kind", previous?.Kind) ?? "other", Patch("title", previous?.Title),
+                    Patch("status", previous?.Status) ?? "pending",
+                    update.TryGetProperty("rawInput", out var input) ? input.ValueKind == JsonValueKind.Null ? null : input.Clone() : previous?.Input,
+                    update.TryGetProperty("rawOutput", out var output) ? AsText(output) : previous?.Output,
+                    ContentText(toolContent), Diffs(toolContent),
+                    update.TryGetProperty("locations", out _) ? Paths(update) : previous?.Paths, ContentReplaced: true,
+                    TerminalIds: Array.AsReadOnly(toolContent.Where(item => String(item, "type") == "terminal")
+                        .Select(item => String(item, "terminalId")).OfType<string>().Distinct().ToArray()),
+                    AcpSessionId: notification.SessionId, Snapshot: true);
                 _tools[id] = fields;
                 events.Add(new ToolCallChanged(at, id, started, fields));
+                if (update.TryGetProperty("status", out _) && fields.Status is "completed" or "failed" or "cancelled")
+                {
+                    if (_background.Remove(id, out var work))
+                        events.Add(work with { At = at, State = fields.Status == "cancelled" ? "stopped" : fields.Status });
+                }
+                else if (_idle && fields.Status == "in_progress")
+                    events.AddRange(RetainOutstanding(at));
+                break;
+            case "terminal_update":
+            case "terminal_output_chunk":
+                if (String(update, "terminalId") is not { } terminalId) break;
+                var replaced = notification.Kind == "terminal_update" && update.TryGetProperty("output", out _);
+                var data = notification.Kind == "terminal_output_chunk" ? String(update, "data")
+                    : update.TryGetProperty("output", out var terminalOutput) ? String(terminalOutput, "data") : null;
+                var exitReplaced = update.TryGetProperty("exitStatus", out var exit);
+                events.Add(new TerminalChanged(at, terminalId, data, replaced,
+                    update.TryGetProperty("command", out _), String(update, "command"),
+                    update.TryGetProperty("cwd", out _), String(update, "cwd"),
+                    exitReplaced, exit.ValueKind == JsonValueKind.Object ? new TerminalExit(Long(exit, "exitCode"), String(exit, "signal")) : null,
+                    notification.SessionId));
                 break;
             case "subagent_update":
                 if (String(update, "sessionId") is not { } childId) break;
@@ -120,14 +148,19 @@ public sealed class UpdateReader
                 if (update.Deserialize(AcpJsonContext.Default.StateUpdate) is not { } state) break;
                 if (state.State is "running" or "requires_action")
                 {
+                    _idle = false;
                     if (!_running) events.Add(new TurnStarted(at, Guid.NewGuid().ToString(), ""));
                     _running = true;
                     _lastStop = null;
                 }
-                else if (state.State == "idle" && (_running || state.StopReason != _lastStop))
+                else if (state.State == "idle")
                 {
+                    _idle = true;
+                    events.AddRange(RetainOutstanding(at));
+                    var shouldEnd = _running || state.StopReason != _lastStop;
                     _running = false;
                     _lastStop = state.StopReason;
+                    if (!shouldEnd) break;
                     if (state.StopReason == "error")
                         events.Add(new TurnFailed(at, state.Error?.Message ?? "The agent failed.", state.Error?.Code.ToString(CultureInfo.InvariantCulture)));
                     else if (state.StopReason is { } reason)
@@ -136,21 +169,10 @@ public sealed class UpdateReader
                     if (state.ReportedUsage is { } report)
                         events.Add(new UsageReported(at, report.CostUsd, report.Model, report.Used, report.Size));
                 }
-                if (state.Background is not null)
+                else if (state.State == "unknown")
                 {
-                    var present = state.Background.Select(work => work.Id).ToHashSet();
-                    foreach (var ended in _background.Values.Where(work => !present.Contains(work.TaskId)).ToArray())
-                    {
-                        events.Add(ended with { At = at, State = "completed" });
-                        _background.Remove(ended.TaskId);
-                    }
-                    foreach (var work in state.Background)
-                    {
-                        var task = new TaskChanged(at, work.Id, work.Title ?? "", work.State ?? "running", false, work.ToolCallId);
-                        if (!_background.TryGetValue(work.Id, out var known) || known with { At = at } != task) events.Add(task);
-                        if (task.Running) _background[work.Id] = task;
-                        else _background.Remove(work.Id);
-                    }
+                    _running = false;
+                    _idle = false;
                 }
                 break;
             case "usage_update": // Also emitted by both adapters at protocol 2.
@@ -176,20 +198,17 @@ public sealed class UpdateReader
     public static TurnFailed TurnFailure(JsonRpcException error, long at) =>
         new(at, error.Message, error.Code.ToString(CultureInfo.InvariantCulture));
 
-    private static ToolCallChanged? ToolCall(JsonElement update, long at, bool started)
+    internal IReadOnlyList<TaskChanged> RetainOutstanding(long at)
     {
-        if (String(update, "toolCallId") is not { } id)
-            return null;
-
-        var fields = new ToolCallFields(
-            Name: String(update, "name") ?? ClaudeToolName(update),
-            Kind: String(update, "kind"),
-            Title: String(update, "title"),
-            Status: String(update, "status"),
-            Input: update.TryGetProperty("rawInput", out var input) && input.ValueKind == JsonValueKind.Object ? input.Clone() : null,
-            Output: update.TryGetProperty("rawOutput", out var output) ? AsText(output) : null,
-            Paths: Paths(update));
-        return new ToolCallChanged(at, id, started, fields);
+        List<TaskChanged> retained = [];
+        foreach (var (id, fields) in _tools)
+        {
+            if (fields.Status != "in_progress" || _background.ContainsKey(id)) continue;
+            var task = new TaskChanged(at, id, fields.Name ?? fields.Title ?? "", "running", false, id, Tracked: true);
+            _background[id] = task;
+            retained.Add(task);
+        }
+        return retained;
     }
 
     private static PlanChanged? Plan(JsonElement update, long at)
@@ -250,7 +269,7 @@ public sealed class UpdateReader
             .Where(item => String(item, "type") == "diff" && String(item, "path") is not null && String(item, "newText") is not null)
             .Select(item => new FileDiff(String(item, "path")!, String(item, "oldText"), String(item, "newText")!))
             .ToList();
-        return diffs.Count == 0 ? null : diffs;
+        return diffs.Count == 0 ? null : Array.AsReadOnly(diffs.ToArray());
     }
 
     private static IReadOnlyList<string>? Paths(JsonElement update)
@@ -258,7 +277,7 @@ public sealed class UpdateReader
         if (!update.TryGetProperty("locations", out var locations) || locations.ValueKind != JsonValueKind.Array)
             return null;
         var paths = locations.EnumerateArray().Select(location => String(location, "path")).OfType<string>().ToList();
-        return paths.Count == 0 ? null : paths;
+        return paths.Count == 0 ? null : Array.AsReadOnly(paths.ToArray());
     }
 
     private static IEnumerable<JsonElement> ContentItems(JsonElement update) =>

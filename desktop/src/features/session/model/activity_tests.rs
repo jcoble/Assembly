@@ -89,3 +89,23 @@ fn a_running_step_counts_from_its_own_start_when_one_beside_it_finished_first() 
     let items = vec![tool("a", 3_000, "completed"), tool("b", 1_500, "started")];
     assert_eq!(steps(&items, "r1", 1_000, 5_000)[1].took_ms, 3_500);
 }
+
+#[test]
+fn cancelled_step_duration_stops_at_its_observed_row_while_the_next_step_keeps_running() {
+    let items = vec![
+        tool("cancelled", 4000, "cancelled"),
+        tool("next", 4500, "started"),
+    ];
+    let earlier = steps(&items, "r1", 1000, 6000);
+    let later = steps(&items, "r1", 1000, 9000);
+    assert_eq!(
+        earlier[0],
+        Step {
+            at: 0,
+            took_ms: 3000
+        }
+    );
+    assert_eq!(later[0], earlier[0]);
+    assert_eq!(earlier[1].took_ms, 2000);
+    assert_eq!(later[1].took_ms, 5000);
+}

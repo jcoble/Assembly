@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace Assembly.Application.Common.Acp.Messages;
 
 public sealed record StateUpdate(string State, string? StopReason = null, AcpError? Error = null,
-    UsageReport? Usage = null, IReadOnlyList<BackgroundActivity>? Background = null,
+    UsageReport? Usage = null,
     [property: JsonPropertyName("_meta")] JsonElement? Meta = null)
 {
     // Both adapters also carry token totals in their quota extension. Codex 2.5.0 uses this at protocol 2.
@@ -29,5 +29,3 @@ public sealed record StateUpdate(string State, string? StopReason = null, AcpErr
 public sealed record UsageReport(long? InputTokens = null, long? OutputTokens = null,
     long? CachedReadTokens = null, long? CachedWriteTokens = null, decimal? CostUsd = null,
     string? Model = null, long? Used = null, long? Size = null);
-
-public sealed record BackgroundActivity(string Id, string? Title = null, string? State = null, string? ToolCallId = null);
