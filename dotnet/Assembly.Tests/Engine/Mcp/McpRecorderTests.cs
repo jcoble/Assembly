@@ -43,7 +43,7 @@ public sealed class McpRecorderTests
                 Fixture.SeedStep("st", state: "running", sessionId: "s", attempt: 2);
             }
             else if (seed) Fixture.SeedSession(state: state, epoch: epoch);
-            Runtime = EngineRuntime.Start(Fixture.Db, Topics, Fixture.Time, () => 5);
+            Runtime = EngineRuntime.Start(Fixture.Db, Topics, Fixture.Time, new(() => 1, () => 5));
             Gate = new(Runtime, new(() => 1, () => 5), Fixture.Time);
             _server = McpServer.Create(new StreamServerTransport(_input, _output), new());
         }

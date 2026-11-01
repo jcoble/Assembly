@@ -142,7 +142,7 @@ public sealed class DeliveryTests
         f.SeedSession("a");
         f.SeedSession();
         int limit = 1;
-        var commands = new Assembly.Engine.EngineCommands(f.Machine, () => 5, () => limit);
+        var commands = new Assembly.Engine.EngineCommands(f.Machine, new(() => 1, () => 5), () => limit);
         Assembly.Engine.Contracts.CommandResult Send(string id) => f.Db.Writer.Write("test.limit", scope => commands.Apply(scope, new(Guid.NewGuid(), f.Machine, new(ActorKind.Session, "a"), id, 0, 0, 1000), new SendMessage("a", "s", "hi", "prompt")));
         Assert.True(Send("one").Applied);
         Assert.Equal("message_limit", Send("two").Error);

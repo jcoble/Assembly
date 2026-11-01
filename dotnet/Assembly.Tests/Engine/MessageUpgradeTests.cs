@@ -66,7 +66,7 @@ public sealed class MessageUpgradeTests
                 return Rows($"SELECT {string.Join(',', columns)} FROM [{t}] ORDER BY rowid");
             }));
         }
-        public CommandResult Apply(EngineCommand command, string id, long version = 0) => Db.Writer.Write("test.command", s => new EngineCommands(Machine, () => 5).Apply(s, new(Guid.NewGuid(), Machine, new(ActorKind.System, "adapter"), id, version, 0, 10000), command));
+        public CommandResult Apply(EngineCommand command, string id, long version = 0) => Db.Writer.Write("test.command", s => new EngineCommands(Machine, new(() => 1, () => 5)).Apply(s, new(Guid.NewGuid(), Machine, new(ActorKind.System, "adapter"), id, version, 0, 10000), command));
         public void Write(string sql) => Db.Writer.Write("test.arrange", s => s.Execute(sql));
         public void Dispose()
         {
@@ -172,7 +172,7 @@ public sealed class MessageUpgradeTests
         Assert.Equal(retry, f.Rows("SELECT attempt,receipt_json,last_error,event_seq,rowid,payload_json FROM engine_outbox WHERE id='send/transient'"));
         var ledger = new HashSet<string>();
         var fake = Fake((e, _) => { if (e.Kind != "send" || e.SessionId is not ("pending" or "transient")) return Task.FromResult(Unavailable()); var intent = e.Payload.Deserialize(EngineJson.Default.DeliverMessage)!; Assert.True(ledger.Add(intent.ClientId)); return Task.FromResult(Delivered()); });
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/pending/1", "done");
         await State(f, events, "send/transient/1", "done");
@@ -194,7 +194,7 @@ public sealed class MessageUpgradeTests
         f.Upgrade();
         Assert.Equal(old, f.Rows("SELECT id,rowid,event_seq,attempt,version,state,receipt_json FROM engine_outbox WHERE id='send/inflight'"));
         var fake = Fake(reconcile: (e, _) => { if (e.Id != "send/inflight") return Task.FromResult(Unavailable()); var intent = e.Payload.Deserialize(EngineJson.Default.DeliverMessage)!; Assert.Equal("send/inflight", intent.ClientId); Assert.Equal("inflight", intent.MessageId); return Task.FromResult(Delivered()); });
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/inflight", "done");
         Assert.DoesNotContain("send/inflight", Executed(fake));
@@ -210,7 +210,7 @@ public sealed class MessageUpgradeTests
         f.Upgrade();
         var receipt = f.Text("SELECT receipt_json FROM engine_outbox WHERE id='send/unknown-unavailable'");
         var fake = Fake(reconcile: (e, _) => Task.FromResult(e.Id == "send/unknown-unavailable" ? Delivered() : Unavailable()));
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message WHERE id='unknown-unavailable'"));
         Assert.Equal(receipt, f.Text("SELECT receipt_json FROM engine_outbox WHERE id='send/unknown-unavailable'"));
@@ -229,7 +229,7 @@ public sealed class MessageUpgradeTests
         f.Upgrade();
         Assert.True(f.Apply(new OpenNeed("unavailable", null, null, "question", "Wait?", [], null, null, null), "new-need").Applied);
         var fake = Fake((e, _) => Task.FromResult(e.SessionId == "unavailable" ? Delivered() : Unavailable()));
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         runtime.EffectsAvailable();
         await State(f, events, "send/unavailable", "dead");
@@ -237,7 +237,7 @@ public sealed class MessageUpgradeTests
         Assert.DoesNotContain(Attempts(fake), e => e.SessionId == "unavailable");
         // Task7 owns need resolution release; after resolution the existing state push triggers Task6's guarded release.
         var context = new CommandContext(Guid.NewGuid(), f.Machine, new(ActorKind.Window, "window"), "new-need", 1, 0, 10000);
-        Assert.True(f.Db.Writer.Write("test.resolve", s => new EngineCommands(f.Machine, () => 5).Apply(s, context, new ResolveNeed("dismissed", null))).Applied);
+        Assert.True(f.Db.Writer.Write("test.resolve", s => new EngineCommands(f.Machine, new(() => 1, () => 5)).Apply(s, context, new ResolveNeed("dismissed", null))).Applied);
         Assert.True(f.Apply(new SetSessionState("running", null, null), "unavailable", f.Number("SELECT version FROM engine_session WHERE id='unavailable'")).Applied);
         Assert.True(f.Apply(new SetSessionState("idle", null, null), "unavailable", f.Number("SELECT version FROM engine_session WHERE id='unavailable'")).Applied);
         await State(f, events, "send/unavailable/2", "done");
@@ -261,7 +261,7 @@ public sealed class MessageUpgradeTests
             }
             return Task.FromResult(Unavailable());
         });
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/inflight/2", "done");
         await State(f, events, "send/uncertain", "unavailable");
@@ -286,7 +286,7 @@ public sealed class MessageUpgradeTests
         f.Upgrade();
         var ack = new TaskCompletionSource<EffectReceipt>(TaskCreationOptions.RunContinuationsAsynchronously);
         var fake = Fake((e, ct) => e.Id == "message-stop/held" ? ack.Task.WaitAsync(ct) : Task.FromResult(e.SessionId == "held" ? Delivered() : Unavailable()));
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "message-stop/held", "inflight");
         Assert.Equal("held", f.Text("SELECT state FROM engine_message WHERE id='held'"));
@@ -335,7 +335,7 @@ public sealed class MessageUpgradeTests
             var guid = new Guid(bytes);
             var context = new CommandContext(guid, f.Machine, new(system ? ActorKind.System : ActorKind.Window, system ? "adapter" : "window"), id, v, 0, 1000);
             var stored = f.Text($"SELECT result_json FROM engine_command_receipt WHERE command_id='{guid:N}'");
-            var actual = f.Db.Writer.Write("test.replay", s => new EngineCommands(f.Machine, () => 5).Apply(s, context, command));
+            var actual = f.Db.Writer.Write("test.replay", s => new EngineCommands(f.Machine, new(() => 1, () => 5)).Apply(s, context, command));
             Assert.Equal(stored, JsonSerializer.Serialize(actual, EngineJson.Default.CommandResult));
         }
         Replay(1, "pending", 0, false, new SendMessage(null, "pending", "body pending", "prompt"));
@@ -352,7 +352,7 @@ public sealed class MessageUpgradeTests
         using var f = new OldDb(version);
         f.Upgrade();
         var fake = Fake((e, _) => Task.FromResult(e.SessionId == "child-parent" ? Delivered() : Unavailable()));
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/child-ended/child/x/1", "done");
         Assert.Equal("next_turn", f.Text("SELECT state FROM engine_message WHERE id='child-ended/child/x'"));
@@ -374,7 +374,7 @@ public sealed class MessageUpgradeTests
         Assert.Equal(3, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_event WHERE entity_id='send/pending' AND json_extract(data_json,'$.state')='dead'"));
         var fake = Fake((e, _) => Task.FromResult(e.SessionId == "pending" ? Delivered() : Unavailable()));
-        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, new(() => 1, () => 5), fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/pending/1", "done");
         Assert.Single(Attempts(fake), e => e.SessionId == "pending");

@@ -31,7 +31,7 @@ public sealed class McpGate(IEngineRuntime runtime, SessionLimits limits, TimePr
                 ORDER BY updated_ms DESC,id LIMIT 1)
             WHERE s.id=$id
             """, r => new CallerRow(r.Text(0), r.Long(1), r.Text(2), r.IsNull(3) ? null : r.Text(3),
-                checked((int)r.Long(4)), r.IsNull(5) ? null : r.Text(5), r.IsNull(6) ? null : r.Text(6),
+                r.Long(4), r.IsNull(5) ? null : r.Text(5), r.IsNull(6) ? null : r.Text(6),
                 r.IsNull(7) ? null : checked((int)r.Long(7)), r.Text(8), r.Text(9), r.Text(10), r.Text(11)),
             new SqlArg("$id", caller.SessionId));
         if (row is null || row.State is "ended" or "lost") return null;

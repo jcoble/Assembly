@@ -5,6 +5,7 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
+using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Persistence;
 using Microsoft.Extensions.Time.Testing;
 
@@ -17,12 +18,15 @@ internal sealed class EngineFixture : IDisposable
     public AppDatabase Db { get; private set; }
     public FakeTimeProvider Time { get; } = new(DateTimeOffset.FromUnixTimeMilliseconds(1000));
     public string Machine { get; private set; }
-    public int ChildLimit { get; }
+    public string DatabasePath => _file.Path;
+    public SessionLimits Limits { get; }
+    private readonly Func<int>? _messageLimit;
 
-    public EngineFixture(int childLimit = 5, ITopics? topics = null)
+    public EngineFixture(SessionLimits? limits = null, ITopics? topics = null, Func<int>? messageLimit = null)
     {
         _topics = topics ?? new global::Assembly.Infrastructure.Topics.Topics();
-        ChildLimit = childLimit;
+        Limits = limits ?? new(() => 1, () => 5);
+        _messageLimit = messageLimit;
         Db = OpenDatabase();
         Machine = EngineSchema.Open(Db, Time.GetUtcNow().ToUnixTimeMilliseconds());
     }
@@ -35,7 +39,7 @@ internal sealed class EngineFixture : IDisposable
     }
 
     public CommandResult Apply(CommandContext context, EngineCommand command) =>
-        Db.Writer.Write("engine.command", scope => new EngineCommands(Machine, () => ChildLimit).Apply(scope, context, command));
+        Db.Writer.Write("engine.command", scope => new EngineCommands(Machine, Limits, _messageLimit).Apply(scope, context, command));
 
     public CommandResult Apply(EngineCommand command, string id, long version = 0, long epoch = 0,
         EngineActor? actor = null, Guid? commandId = null) =>

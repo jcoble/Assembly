@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Engine.Effects;
+using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Engine;
 using Assembly.Application.Features.Workflows;
 using Assembly.Infrastructure.Workflows;
@@ -137,6 +138,10 @@ public sealed class DesktopBackend : IAsyncDisposable
         try
         {
             WorkflowSchema.Open(db);
+            var preferences = new PreferenceStore(db);
+            var sessionLimits = new SessionLimits(
+                () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
+                () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
             var boardQueries = new WorkflowQueries(db, remote?.Name);
             var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
             boardTransitions.Recover();
@@ -164,7 +169,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             work = new BackgroundWork(TimeProvider.System, log);
             var limits = new HelperLimits();
             sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, limits, titler: utilityClis is { } clis
-                ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log))
+                ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, preferences, TimeProvider.System, log))
                 : null);
             var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
             var profiles = new MachineStore(db);
@@ -212,7 +217,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             });
             boardMirror?.Reconnect();
             terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
-            engine = EngineRuntime.Start(db, topics, TimeProvider.System, () => limits.UnfinishedHelpers, engineEffects);
+            engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects);
             engineStarted?.Invoke(engine);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
                 [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),

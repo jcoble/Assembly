@@ -21,7 +21,7 @@ public sealed class McpGateTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         f.SeedSession();
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         string[] tables = ["engine_session", "engine_message", "engine_event", "engine_outbox", "engine_command_receipt"];
         var before = tables.Select(f.Count).ToArray();
         var publications = 0;
@@ -47,7 +47,7 @@ public sealed class McpGateTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         f.SeedSession(state: state, epoch: epoch);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         var gate = Gate(runtime, f);
         Assert.Equal(code, Assert.Throws<McpRefused>(() => gate.Write<int>(new("s", 0), _ => throw new InvalidOperationException())).Refusal.Code);
         Assert.Equal(code, Assert.Throws<McpRefused>(() => gate.Read<int>(new("s", 0), (_, _) => throw new InvalidOperationException(), default)).Refusal.Code);
@@ -65,7 +65,7 @@ public sealed class McpGateTests
         f.SeedRun(ownerSessionId: "owner");
         f.SeedSession("child", "running", "owner", "r", "claude");
         f.SeedStep("st", state: stepState, sessionId: "child", attempt: 2);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         var expected = new CallerRow("child", 0, "running", "owner", 1, "r", "st", 2, "claude", "model", "/test", "Test");
         Assert.Equal(expected, Gate(runtime, f).Read(new("child", 0), (row, _) => row, default));
         Assert.Equal(expected, Gate(runtime, f).Write(new("child", 0), w => w.Caller));
@@ -78,7 +78,7 @@ public sealed class McpGateTests
     {
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         IEngineRuntime port = runtime;
         IReadScope? captured = null;
         long Read() => port.Read(scope =>
@@ -98,7 +98,7 @@ public sealed class McpGateTests
     {
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         var entered = false;
@@ -131,7 +131,7 @@ public sealed class McpGateTests
                     : JsonSerializer.SerializeToElement(new MessageEffectData("next_turn", null, null), EngineJson.Default.MessageEffectData), null));
         }
         };
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5, effects);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5), effects);
         Gate(runtime, f).Write(new("s", 0), w =>
         {
             w.Apply("child", 0, 0, new StartSession("codex", "m", "/f", "Child", "s", null, null));
@@ -146,7 +146,7 @@ public sealed class McpGateTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         f.SeedSession(epoch: 7);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         Gate(runtime, f).Read(new("s", 7), (caller, scope) =>
         {
             f.Db.Writer.Write("test.epoch", write => write.Execute("UPDATE engine_session SET epoch=8 WHERE id='s'"));
@@ -164,7 +164,7 @@ public sealed class McpGateTests
         using var f = new EngineFixture(topics: topics);
         f.SeedSession();
         for (var i = 0; i < 5; i++) f.SeedSession($"child-{i}", parentId: "s");
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         var error = Assert.Throws<McpRefused>(() => Gate(runtime, f).Write(new("s", 0), w =>
             w.Apply("sixth", 0, 0, new StartSession("codex", "m", "/f", "Child", "s", null, null))));
         Assert.Equal("child_limit", error.Refusal.Code);
@@ -177,7 +177,7 @@ public sealed class McpGateTests
         var topics = new Topics();
         using var f = new EngineFixture(topics: topics);
         f.SeedSession(epoch: 7);
-        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, new(() => 1, () => 5));
         Gate(runtime, f).Write(new("s", 7), w =>
         {
             Assert.Equal(7, w.EpochOf("s"));

@@ -34,12 +34,12 @@ public sealed class McpWrite
         {
             "depth_limit" => new Dictionary<string, string>
             {
-                ["depth"] = (Caller.Depth + 1).ToString(CultureInfo.InvariantCulture),
-                ["limit"] = Math.Clamp(_limits.Depth(), 1, 3).ToString(CultureInfo.InvariantCulture)
+                ["depth"] = (Caller.Depth + 1L).ToString(CultureInfo.InvariantCulture),
+                ["limit"] = _limits.ReadDepth().ToString(CultureInfo.InvariantCulture)
             },
             "child_limit" => new Dictionary<string, string>
             {
-                ["limit"] = Math.Clamp(_limits.Children(), 1, 10).ToString(CultureInfo.InvariantCulture)
+                ["limit"] = _limits.ReadChildren().ToString(CultureInfo.InvariantCulture)
             },
             "invalid_transition" when command is Runs.SetStepState step => new Dictionary<string, string> { ["state"] = step.State },
             _ => null
