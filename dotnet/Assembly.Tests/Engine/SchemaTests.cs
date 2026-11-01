@@ -78,12 +78,12 @@ public sealed class SchemaTests
     }
 
     [Fact]
-    public void Unsupported_schema_does_not_serve()
+    public void Version_3_refuses()
     {
         using var f = new EngineFixture();
-        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=2"));
+        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=3"));
         Assert.Throws<InvalidOperationException>(() => EngineSchema.Open(f.Db, 1000));
-        Assert.Equal(2, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(3, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
     }
 
     [Fact]
@@ -154,4 +154,213 @@ public sealed class SchemaTests
         Assert.Equal(1, f.Count("engine_step_fact"));
         Assert.Equal("answered", f.State("engine_needs_me", "need"));
     }
+
+    [Fact]
+    public void Version_1_upgrades_in_place()
+    {
+        using var file = new TempDatabase();
+        using var db = TestDatabase.Open(file.Path);
+        SeedVersion1(db);
+        var before = StoredRows(db);
+        var indexes = db.Query("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name", r => r.Text(0), default);
+
+        Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
+
+        Assert.Equal(2, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(before, StoredRows(db));
+        Assert.Equal(new long[] { 1, 2, 3 }, db.Query("SELECT seq FROM engine_event ORDER BY seq", r => r.Long(0), default));
+        Assert.Equal(new long[] { 4, 1, 2 }, db.QueryFirst("SELECT next_seq,retained_after,snapshot_seq FROM engine_meta", r => new[] { r.Long(0), r.Long(1), r.Long(2) }, default));
+        Assert.All(indexes, name => Assert.Equal(1, db.QueryFirst("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=$name", r => r.Long(0), default, new SqlArg("$name", name))));
+        Assert.Empty(db.Query("PRAGMA foreign_key_check", r => r.Text(0), default));
+        Assert.Equal("original-machine", EngineSchema.Open(db, 3000));
+        Assert.Equal(before, StoredRows(db));
+        Assert.Throws<SqliteException>(() => db.Writer.Write("invalid.event", s => s.Execute("UPDATE engine_event SET data_json='invalid' WHERE seq=1")));
+        Assert.Throws<SqliteException>(() => db.Writer.Write("duplicate.event", s => s.Execute("UPDATE engine_event SET seq=1 WHERE seq=2")));
+        Assert.Throws<SqliteException>(() => db.Writer.Write("invalid.link", s => s.Execute("UPDATE engine_step SET run_id='missing'")));
+    }
+
+    [Fact]
+    public void Failed_upgrade_rolls_back_schema_rows_and_version()
+    {
+        using var file = new TempDatabase();
+        using var db = TestDatabase.Open(file.Path);
+        SeedVersion1(db);
+        // A late DDL failure must undo the event table replacement as well as the version change.
+        db.Writer.Write("test.block-upgrade", s => s.Execute("CREATE TABLE engine_mirror_row(blocker TEXT)"));
+        var before = StoredRows(db);
+        var schema = db.Query("SELECT sql FROM sqlite_master ORDER BY name", r => r.IsNull(0) ? null : r.Text(0), default);
+        Assert.Throws<SqliteException>(() => EngineSchema.Open(db, 2000));
+        Assert.Equal(1, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(before, StoredRows(db));
+        Assert.Equal(schema, db.Query("SELECT sql FROM sqlite_master ORDER BY name", r => r.IsNull(0) ? null : r.Text(0), default));
+        db.Writer.Write("test.unblock-upgrade", s => s.Execute("DROP TABLE engine_mirror_row"));
+        Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
+    }
+
+    [Fact]
+    public void Mirror_tables_enforce_identity_state_json_and_parent()
+    {
+        using var f = new EngineFixture();
+        void Write(string sql) => f.Db.Writer.Write("test.mirror-schema", s => s.Execute(sql));
+        Write("INSERT INTO engine_mirror VALUES('remote','Workbox',1,3,NULL,0,'snapshotting',1000)");
+        Write("INSERT INTO engine_mirror_row VALUES('remote','run','r',1,2,'{}')");
+        Write("INSERT INTO engine_mirror_row VALUES('remote','run','r',2,3,'{}')");
+        Assert.Throws<SqliteException>(() => Write("INSERT INTO engine_mirror_row VALUES('remote','run','r',1,2,'{}')"));
+        Assert.Throws<SqliteException>(() => Write("INSERT INTO engine_mirror_row VALUES('unknown','run','r',1,2,'{}')"));
+        Assert.Throws<SqliteException>(() => Write("UPDATE engine_mirror_row SET row_json='bad'"));
+        Assert.Throws<SqliteException>(() => Write("UPDATE engine_mirror SET at_json='bad'"));
+        Assert.Throws<SqliteException>(() => Write("UPDATE engine_mirror SET state='unknown'"));
+        Write("UPDATE engine_mirror SET state='live',at_json='{}'");
+        Write("UPDATE engine_mirror SET state='retired'");
+        Assert.Equal(2, f.Count("engine_mirror_row"));
+    }
+
+    private static string[] StoredRows(IAppDatabase db)
+    {
+        var tables = db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'engine_%' AND name NOT IN ('engine_meta','engine_mirror','engine_mirror_row') ORDER BY name", r => r.Text(0), default);
+        return tables.SelectMany(table =>
+        {
+            var columns = db.Query($"PRAGMA table_info({table})", r => r.Text(1), default);
+            return db.Query($"SELECT json_array({string.Join(',', columns)}) FROM {table} ORDER BY 1", r => table + ":" + r.Text(0), default);
+        }).ToArray();
+    }
+
+    private static void SeedVersion1(IAppDatabase db) => db.Writer.Write("test.actual-v1", s =>
+    {
+        s.Execute(Version1);
+        s.Execute("""
+            INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,activity_state,holder,epoch,cancel_requested)
+            VALUES('s',2,'original-machine',10,20,'codex','model','/test','Original','idle','idle','original-machine',0,0);
+            INSERT INTO engine_run(id,version,machine,created_ms,updated_ms,owner_session_id,state,owner_loss_limit_ms)
+            VALUES('r',1,'original-machine',10,20,'s','succeeded',60000);
+            UPDATE engine_session SET run_id='r';
+            INSERT INTO engine_step(id,version,machine,created_ms,updated_ms,run_id,name,state,attempt,max_attempts,required,rule_skippable)
+            VALUES('step',1,'original-machine',10,20,'r','Original step','succeeded',1,1,1,0);
+            INSERT INTO engine_step(id,version,machine,created_ms,updated_ms,run_id,name,state,attempt,max_attempts,required,rule_skippable)
+            VALUES('next',0,'original-machine',10,20,'r','Next step','pending',0,1,1,0);
+            INSERT INTO engine_step_dependency VALUES('next','step',0);
+            INSERT INTO engine_step_attempt VALUES('step',1,'succeeded',10,20,'{}','done',0);
+            INSERT INTO engine_step_fact VALUES('fact','step',1,'outcome',20,'{}',0);
+            INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,kind,text,options_json,state,answer_json,provider_request_id)
+            VALUES('need',1,'original-machine',10,20,'s','question','Keep?','[]','answered','{"yes":true}','request');
+            INSERT INTO engine_message(id,version,machine,created_ms,updated_ms,sender_kind,to_session_id,text,mode,state)
+            VALUES('message',1,'original-machine',10,20,'window','s','Original message','queue','delivered');
+            INSERT INTO engine_handoff(id,version,machine,created_ms,updated_ms,session_id,old_holder,new_holder,old_epoch,next_epoch,state)
+            VALUES('handoff',1,'original-machine',10,20,'s','original-machine','target',0,1,'failed');
+            INSERT INTO engine_pr(id,version,machine,created_ms,updated_ms,run_id,repo,state)
+            VALUES('pr',1,'original-machine',10,20,'r','repo','merged');
+            INSERT INTO engine_tool_call(id,version,machine,created_ms,updated_ms,session_id,epoch,boundary,boundary_id,tool,input_preview,input_bytes,started_ms,late)
+            VALUES('tool',1,'original-machine',10,20,'s',0,'provider','call','read','Object(1)',12,10,0);
+            INSERT INTO engine_usage(id,version,machine,created_ms,updated_ms,session_id,epoch,provider_turn_id,input_tokens,late)
+            VALUES('usage',1,'original-machine',10,20,'s',0,'turn',12,0);
+            INSERT INTO engine_outbox(id,version,machine,created_ms,updated_ms,event_seq,session_id,kind,payload_json,state,attempt,receipt_json)
+            VALUES('effect',1,'original-machine',10,20,3,'s','send','{}','done',1,'{"ok":true}');
+            INSERT INTO engine_command_receipt VALUES('receipt','fingerprint','{"applied":true}');
+            WITH numbers(n) AS (VALUES(1),(2),(3))
+            INSERT INTO engine_event(id,version,machine,created_ms,updated_ms,task_url,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json)
+            SELECT 'original-machine:'||n,n,'original-machine',10,20,'https://example.com/task',n,'changed','run','r',n,20,0,'{"runId":"r"}' FROM numbers;
+            """);
+        return 0;
+    });
+
+    // Frozen v1 DDL from accepted producer 13d68677; never generated from the schema under test.
+    private const string Version1 = """
+        CREATE TABLE engine_meta (
+            singleton INTEGER PRIMARY KEY CHECK(singleton = 1), schema_version INTEGER NOT NULL,
+            machine_id TEXT NOT NULL, next_seq INTEGER NOT NULL, retained_after INTEGER NOT NULL,
+            snapshot_seq INTEGER NOT NULL);
+        CREATE TABLE engine_session (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            provider TEXT NOT NULL, model TEXT NOT NULL, folder TEXT NOT NULL, title TEXT NOT NULL,
+            state TEXT NOT NULL, activity_state TEXT NOT NULL,
+            parent_id TEXT REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
+            provider_session_id TEXT, holder TEXT NOT NULL, epoch INTEGER NOT NULL,
+            reserved_epoch INTEGER, cancel_requested INTEGER NOT NULL, lost_ms INTEGER);
+        CREATE TABLE engine_run (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            owner_session_id TEXT NOT NULL REFERENCES engine_session(id), worktree TEXT, branch TEXT,
+            pr_id TEXT REFERENCES engine_pr(id), state TEXT NOT NULL, owner_loss_limit_ms INTEGER NOT NULL,
+            owner_lost_ms INTEGER);
+        CREATE TABLE engine_step (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            run_id TEXT NOT NULL REFERENCES engine_run(id), name TEXT NOT NULL,
+            session_id TEXT REFERENCES engine_session(id), state TEXT NOT NULL, attempt INTEGER NOT NULL,
+            max_attempts INTEGER NOT NULL, required INTEGER NOT NULL, rule_skippable INTEGER NOT NULL,
+            started_ms INTEGER, ended_ms INTEGER, proof_json TEXT CHECK(proof_json IS NULL OR json_valid(proof_json)),
+            outcome_reason TEXT);
+        CREATE TABLE engine_needs_me (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            session_id TEXT NOT NULL REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
+            step_id TEXT REFERENCES engine_step(id), kind TEXT NOT NULL, text TEXT NOT NULL,
+            options_json TEXT NOT NULL CHECK(json_valid(options_json)), provider_request_id TEXT, chat_row_id TEXT,
+            state TEXT NOT NULL, deadline_ms INTEGER,
+            answer_json TEXT CHECK(answer_json IS NULL OR json_valid(answer_json)), answered_by TEXT, answered_ms INTEGER);
+        CREATE TABLE engine_message (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            from_session_id TEXT REFERENCES engine_session(id), sender_kind TEXT NOT NULL,
+            to_session_id TEXT NOT NULL REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
+            step_id TEXT REFERENCES engine_step(id), text TEXT NOT NULL, mode TEXT NOT NULL, state TEXT NOT NULL,
+            provider_turn_id TEXT, reason TEXT);
+        CREATE TABLE engine_handoff (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            session_id TEXT NOT NULL REFERENCES engine_session(id), old_holder TEXT NOT NULL, new_holder TEXT NOT NULL,
+            old_epoch INTEGER NOT NULL, next_epoch INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT);
+        CREATE TABLE engine_pr (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            run_id TEXT NOT NULL REFERENCES engine_run(id), repo TEXT NOT NULL, number INTEGER, head TEXT,
+            state TEXT NOT NULL, reported_by TEXT, reported_state TEXT, observed_head TEXT, observed_ms INTEGER, url TEXT);
+        CREATE TABLE engine_tool_call (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            session_id TEXT NOT NULL REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
+            step_id TEXT REFERENCES engine_step(id), attempt INTEGER, epoch INTEGER NOT NULL, boundary TEXT NOT NULL,
+            boundary_id TEXT NOT NULL, tool TEXT NOT NULL, input_preview TEXT, output_preview TEXT,
+            input_bytes INTEGER NOT NULL, output_bytes INTEGER, started_ms INTEGER NOT NULL, ended_ms INTEGER,
+            outcome TEXT, late INTEGER NOT NULL, UNIQUE(boundary,boundary_id));
+        CREATE TABLE engine_usage (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            session_id TEXT NOT NULL REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
+            step_id TEXT REFERENCES engine_step(id), attempt INTEGER, epoch INTEGER NOT NULL, provider_turn_id TEXT NOT NULL,
+            input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, cost_nanodollars INTEGER,
+            duration_ms INTEGER, late INTEGER NOT NULL, UNIQUE(session_id,provider_turn_id));
+        CREATE TABLE engine_event (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            seq INTEGER NOT NULL UNIQUE, kind TEXT NOT NULL, entity_kind TEXT NOT NULL, entity_id TEXT NOT NULL,
+            entity_version INTEGER NOT NULL, at_ms INTEGER NOT NULL, late INTEGER NOT NULL,
+            data_json TEXT NOT NULL CHECK(json_valid(data_json)));
+        -- event_seq is provenance: events may be compacted while an effect remains durable.
+        CREATE TABLE engine_outbox (id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
+        created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
+            event_seq INTEGER NOT NULL, session_id TEXT REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
+            kind TEXT NOT NULL, payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), state TEXT NOT NULL,
+            attempt INTEGER NOT NULL, next_ms INTEGER, receipt_json TEXT CHECK(receipt_json IS NULL OR json_valid(receipt_json)),
+            last_error TEXT);
+        CREATE TABLE engine_command_receipt (
+            command_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result_json TEXT NOT NULL CHECK(json_valid(result_json)));
+        CREATE TABLE engine_step_dependency (
+            step_id TEXT NOT NULL REFERENCES engine_step(id), dependency_id TEXT NOT NULL REFERENCES engine_step(id),
+            optional INTEGER NOT NULL, PRIMARY KEY(step_id,dependency_id));
+        CREATE TABLE engine_step_attempt (
+            step_id TEXT NOT NULL REFERENCES engine_step(id), attempt INTEGER NOT NULL, state TEXT NOT NULL,
+            started_ms INTEGER, ended_ms INTEGER, proof_json TEXT CHECK(proof_json IS NULL OR json_valid(proof_json)),
+            reason TEXT, late INTEGER NOT NULL, PRIMARY KEY(step_id,attempt));
+        CREATE TABLE engine_step_fact (
+            id TEXT PRIMARY KEY, step_id TEXT NOT NULL REFERENCES engine_step(id), attempt INTEGER NOT NULL,
+            kind TEXT NOT NULL, at_ms INTEGER NOT NULL, data_json TEXT NOT NULL CHECK(json_valid(data_json)), late INTEGER NOT NULL);
+        CREATE INDEX engine_session_parent_state ON engine_session(parent_id,state);
+        CREATE INDEX engine_session_run_state ON engine_session(run_id,state);
+        CREATE INDEX engine_step_run_state ON engine_step(run_id,state);
+        CREATE INDEX engine_message_recipient_state ON engine_message(to_session_id,state);
+        CREATE INDEX engine_needs_me_state_deadline ON engine_needs_me(state,deadline_ms);
+        CREATE UNIQUE INDEX engine_needs_me_provider_request ON engine_needs_me(session_id,provider_request_id)
+            WHERE provider_request_id IS NOT NULL;
+        CREATE INDEX engine_outbox_state_next ON engine_outbox(state,next_ms);
+        CREATE INDEX engine_outbox_session_order ON engine_outbox(session_id,event_seq);
+        CREATE INDEX engine_tool_call_session_time ON engine_tool_call(session_id,started_ms);
+        CREATE INDEX engine_tool_call_run_time ON engine_tool_call(run_id,started_ms);
+        CREATE INDEX engine_tool_call_step_attempt_time ON engine_tool_call(step_id,attempt,started_ms);
+        CREATE INDEX engine_usage_session_time ON engine_usage(session_id,created_ms);
+        CREATE INDEX engine_usage_run_time ON engine_usage(run_id,created_ms);
+        CREATE INDEX engine_usage_step_attempt_time ON engine_usage(step_id,attempt,created_ms);
+        INSERT INTO engine_meta VALUES(1,1,'original-machine',4,1,2);
+        """;
 }

@@ -21,14 +21,14 @@ public sealed class EngineReader(IAppDatabase db, string machine)
         if (through is { } cut) meta.High = Math.Min(meta.High, cut);
         if (after < meta.Floor) return new(after, after, [], false, true);
 
-        // Bound the global scan before filtering: unrelated topics are not gaps.
+        // Bound the local machine's scan before topic filtering: unrelated topics are not gaps.
         var scanned = read.Query("""
             SELECT machine,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json
-            FROM engine_event WHERE seq>$after AND seq<=$high ORDER BY seq LIMIT 200
+            FROM engine_event WHERE machine=$machine AND seq>$after AND seq<=$high ORDER BY seq LIMIT 200
             """, r => new EngineEvent(r.Text(0), r.Long(1), r.Text(2), r.Text(3), r.Text(4),
                 r.Long(5), r.Long(6), r.Long(7) != 0,
                 JsonSerializer.Deserialize(r.Text(8), EngineJson.Default.EngineEventData)!),
-            new SqlArg("$after", after), new SqlArg("$high", meta.High));
+            new SqlArg("$after", after), new SqlArg("$high", meta.High), new SqlArg("$machine", machine));
         var scannedThrough = after;
         List<EngineEvent> events = [];
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new StreamPage(after, meta.High, [], false, false),

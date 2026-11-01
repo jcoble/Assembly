@@ -70,7 +70,10 @@ public sealed class EngineRetention(Func<long> publishedThrough, Func<long> mini
                 // Current tables are the durable checkpoint at this high-water; sequence allocation never rewinds.
                 scope.Execute("UPDATE engine_meta SET snapshot_seq=$high,retained_after=$floor WHERE singleton=1",
                     new("$high", meta.High), new("$floor", floor));
-                removed = scope.Execute("DELETE FROM engine_event WHERE seq<=$floor", new SqlArg("$floor", floor));
+                removed = scope.Execute("""
+                    DELETE FROM engine_event WHERE machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
+                        AND seq<=$floor
+                    """, new SqlArg("$floor", floor));
             }
         }
         return new(floor, removed, beforeBytes - TotalPreviewBytes(scope));
