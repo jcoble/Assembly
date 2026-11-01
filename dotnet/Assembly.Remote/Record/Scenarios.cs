@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 
@@ -18,8 +19,12 @@ public static class Scenarios
     [
         new("text", NoFiles, async c =>
         {
-            // High effort makes Claude think first, so the fixture has thinking as well as text.
-            await c.Agent.Client.SetConfigOptionAsync(c.SessionId, "effort", "high", c.Deadline);
+            // Request the advertised high effort; thinking is captured only when the adapter emits it.
+            var thought = c.ConfigOptions.EnumerateArray().First(option =>
+                option.TryGetProperty("category", out var category) && category.GetString() == "thought_level"
+                && option.GetProperty("type").GetString() == "select"
+                && option.GetProperty("options").EnumerateArray().Any(value => value.GetProperty("value").GetString() == "high"));
+            await c.Agent.Client.SetConfigOptionAsync(c.SessionId, thought.GetProperty("configId").GetString()!, "high", c.Deadline);
             return await PromptAsync(c,
                 "Explain what a mutex is in two short paragraphs. Include one small C# code block, " +
                 "a markdown table with two columns and three rows, and a bulleted list with a nested item. Don't use any tools.");
@@ -47,7 +52,7 @@ public static class Scenarios
         {
             var turn = c.Updates.BeginTurn();
             var prompt = c.Agent.Client.PromptAsync(c.SessionId, [TextBlock.Of("Write the numbers from 1 to 300, one per line, with no other text.")], c.Deadline).Ended;
-            await Task.WhenAny(turn.FirstText, Task.Delay(TimeSpan.FromSeconds(30)));
+            await turn.FirstText.WaitAsync(TimeSpan.FromSeconds(30), c.Deadline);
             await c.Agent.Client.CancelAsync(c.SessionId, c.Deadline);
             return $"stop {(await prompt).StopReason}";
         }),
@@ -55,7 +60,7 @@ public static class Scenarios
         {
             var turn = c.Updates.BeginTurn();
             var prompt = c.Agent.Client.PromptAsync(c.SessionId, [TextBlock.Of("Write the numbers from 1 to 300, one per line, with no other text.")], c.Deadline).Ended;
-            await Task.WhenAny(turn.FirstText, Task.Delay(TimeSpan.FromSeconds(30)));
+            await turn.FirstText.WaitAsync(TimeSpan.FromSeconds(30), c.Deadline);
             c.Agent.Kill();
             await c.Agent.Exited;
             try
@@ -87,35 +92,53 @@ public static class Scenarios
 
     private static async Task<string> SlashAsync(ScenarioContext c, string command)
     {
-        // The list comes as an update just after session/new.
-        await Task.Delay(TimeSpan.FromSeconds(3), c.Deadline);
+        // session/new supplies initial commands; later notifications can supply an updated list.
+        if (c.AvailableCommands.ValueKind != JsonValueKind.Array)
+            await c.Updates.WaitForAsync(update => update.Kind == "available_commands_update", c.Deadline);
         return await PromptAsync(c, command);
     }
 
     // A command left running after the foreground turn ends.
     private static async Task<string> BackgroundAsync(ScenarioContext c)
     {
+        using var completion = CancellationTokenSource.CreateLinkedTokenSource(c.Deadline);
+        completion.CancelAfter(TimeSpan.FromSeconds(90));
+        var finished = c.Updates.WaitForAsync(update =>
+            update.Kind is "agent_message" or "agent_message_chunk"
+            && update.Update.GetRawText().Contains("finished", StringComparison.OrdinalIgnoreCase), completion.Token);
         var summary = await PromptAsync(c,
             "Start this shell command in the background, without waiting for it: sleep 15 && echo finished. " +
             "Reply with just: started. When it finishes, tell me in one line what it printed.");
         var after = c.Updates.BeginTurn();
-        await Task.Delay(TimeSpan.FromSeconds(60), c.Deadline);
+        try { await finished; }
+        catch (OperationCanceledException) when (!c.Deadline.IsCancellationRequested)
+        { return $"{summary}; no finished message within 90 seconds; after the turn: {after.KindSummary}"; }
         return $"{summary}; after the turn: {after.KindSummary}";
     }
 
     private static async Task<string> SteerBackgroundAsync(ScenarioContext c)
     {
         var turn = c.Updates.BeginTurn();
+        var running = c.Updates.WaitForAsync(update => update.Kind == "tool_call_update"
+            && update.Update.TryGetProperty("status", out var status) && status.GetString() == "in_progress", c.Deadline);
         var prompt = c.Agent.Client.PromptAsync(c.SessionId, [TextBlock.Of(
             "Run this in the foreground with your Bash tool (not in the background), with a 120000 ms timeout: " +
             "for i in $(seq 1 30); do echo step $i; sleep 1; done. Then tell me the last line it printed.")], c.Deadline).Ended;
-        // Late enough that the loop is running (the agent starts it some seconds in).
-        await Task.Delay(TimeSpan.FromSeconds(14), c.Deadline);
+        var executing = await running;
+        var toolId = executing.Update.GetProperty("toolCallId").GetString();
+        using var completion = CancellationTokenSource.CreateLinkedTokenSource(c.Deadline);
+        completion.CancelAfter(TimeSpan.FromSeconds(60));
+        var completed = c.Updates.WaitForAsync(update => update.Kind == "tool_call_update"
+            && update.Update.GetProperty("toolCallId").GetString() == toolId
+            && update.Update.TryGetProperty("status", out var status) && status.GetString() is "completed" or "failed", completion.Token);
         var steered = await c.Agent.Client.SteerAsync(c.SessionId, [TextBlock.Of("Also, once the loop is done, say how many files are in this folder.")], c.Deadline);
         var response = await prompt;
         await c.Updates.DrainAsync();
         var after = c.Updates.BeginTurn();
-        await Task.Delay(TimeSpan.FromSeconds(60), c.Deadline);
+        try { await completed; }
+        catch (OperationCanceledException) when (!c.Deadline.IsCancellationRequested)
+        { return $"steer {steered}; stop {response.StopReason}; no tool completion within 60 seconds; after the turn: {after.KindSummary}"; }
+        await c.Updates.DrainAsync();
         return $"steer {steered}; stop {response.StopReason}; updates: {turn.KindSummary}; after the turn: {after.KindSummary}";
     }
 

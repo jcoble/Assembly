@@ -35,18 +35,25 @@ public sealed class TurnLog
     public void Add(SessionNotification update)
     {
         var kind = update.Kind;
-        var text = kind == "agent_message_chunk" ? TextOf(update.Update) : null;
+        var text = kind is "agent_message_chunk" or "agent_message" ? TextOf(update.Update) : null;
         lock (_gate)
         {
             _kinds[kind] = _kinds.GetValueOrDefault(kind) + 1;
             if (text is not null)
+            {
+                if (kind == "agent_message") _text.Clear();
                 _text.Append(text);
+            }
         }
         if (text is not null)
             _firstText.TrySetResult();
     }
 
     private static string? TextOf(JsonElement update) =>
+        update.TryGetProperty("content", out var blocks) && blocks.ValueKind == JsonValueKind.Array
+            ? string.Concat(blocks.EnumerateArray().Where(block => block.TryGetProperty("type", out var type) && type.GetString() == "text")
+                .Select(block => block.GetProperty("text").GetString()))
+            :
         update.TryGetProperty("content", out var content)
         && content.TryGetProperty("type", out var type) && type.GetString() == "text"
         && content.TryGetProperty("text", out var text)
