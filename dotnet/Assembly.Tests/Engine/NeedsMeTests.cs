@@ -145,7 +145,7 @@ public sealed class NeedsMeTests
         Assert.Equal("stale_epoch", f.Apply(open, "n", epoch: 1, actor: Adapter).Error);
         Assert.Equal("version_conflict", f.Apply(open, "n", version: 1, actor: Adapter).Error);
         Assert.Equal(0, f.Count("engine_needs_me")); Assert.Equal(before, f.Count("engine_event"));
-        Assert.True(f.Apply(open, "n", actor: new(ActorKind.Session, "s")).Applied);
+        Assert.True(f.Apply(open, "n", actor: Adapter).Applied);
         Assert.Equal("bad_args", f.Apply(new ResolveNeed("answered", null), "n", version: 1).Error);
         Assert.Equal("version_conflict", f.Apply(new ResolveNeed("answered", Allow), "n").Error);
         Assert.Equal("stale_epoch", f.Apply(new ResolveNeed("answered", Allow), "n", version: 1, epoch: 1).Error);

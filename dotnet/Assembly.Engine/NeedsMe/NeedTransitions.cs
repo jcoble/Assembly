@@ -12,7 +12,7 @@ public static class NeedTransitions
 {
     private sealed record Need(string Id, long Version, string SessionId, string? RunId, string? StepId,
         string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline);
-    private sealed record Session(long Epoch, string State, string? RunId);
+    private sealed record Session(long Epoch, string State, string? RunId, string? ParentId);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command)
     {
@@ -47,6 +47,16 @@ public static class NeedTransitions
         if (c.Epoch != session.Epoch) return Refused(c, "stale_epoch", epoch: session.Epoch);
         if (c.Actor.Kind != ActorKind.System && (c.Actor.Kind != ActorKind.Session || c.Actor.Id != command.SessionId))
             return Refused(c, "forbidden");
+        if (c.Actor.Kind == ActorKind.Session)
+        {
+            if (session.ParentId is not null) return Refused(c, "owner_reserved");
+            if (command.Kind == "permission" || command.StepId is not null ||
+                command.Kind == "choice" && command.Options.Count > 8 ||
+                command.RunId is not null && s.QueryFirst(
+                    "SELECT owner_session_id FROM engine_run WHERE id=$id", r => r.Text(0),
+                    new SqlArg("$id", command.RunId)) != command.SessionId)
+                return Refused(c, "bad_args");
+        }
         var options = JsonSerializer.Serialize(command.Options, EngineJson.Default.IReadOnlyListString);
         var current = command.ProviderRequestId is null ? null : s.QueryFirst(
             "SELECT id FROM engine_needs_me WHERE session_id=$session AND provider_request_id=$request",
@@ -135,13 +145,22 @@ public static class NeedTransitions
         if (answer is not null && need.RequestId is not null && !alreadySettled)
             effects.Add(new($"answer/{need.Id}", "answer", need.SessionId, need.RunId,
                 JsonSerializer.SerializeToElement(new NeedAnswer(need.Id, need.RequestId, answer.Value), EngineJson.Default.NeedAnswer)));
-        return Commit(s, c, updated, [Changed(c, updated, "needs_me.answered", command.Reason)], effects);
+        List<EventDraft> events = [Changed(c, updated, "needs_me.answered", command.Reason)];
+        if (need.RequestId is null)
+            events.AddRange(MessageTransitions.NeedResolved(s, c, need.Id, need.SessionId, command.State, command.Answer));
+        return Commit(s, c, updated, events, effects);
     }
 
     private static CommandResult Commit(IWriteScope s, CommandContext c, Need need, List<EventDraft> events, List<EffectDraft> effects)
     {
         events.AddRange(SessionTransitions.RecomputeNeeds(s, c, need.SessionId));
-        if (need.State != "open") events.AddRange(MessageRelease.Next(s, c, need.SessionId, effects));
+        if (need.State != "open")
+            foreach (var released in MessageRelease.Next(s, c, need.SessionId, effects))
+            {
+                // An inserted answer may be released in this transaction; publish its final revision once.
+                events.RemoveAll(e => e.EntityKind == "message" && e.EntityId == released.EntityId);
+                events.Add(released);
+            }
         if (need.RunId is not null) events.AddRange(RunTransitions.Recompute(s, c, need.RunId));
         return EngineJournal.Commit(s, c, need.Version, c.Epoch, events, effects);
     }
@@ -149,8 +168,8 @@ public static class NeedTransitions
     private static EventDraft Changed(CommandContext c, Need need, string kind, string? reason = null) =>
         new(kind, "needs_me", need.Id, need.Version, false, new(need.SessionId, need.RunId, need.StepId, null, need.State, c.Epoch, reason));
     private static Session? FindSession(IWriteScope s, string id) => s.QueryFirst(
-        "SELECT epoch,state,run_id FROM engine_session WHERE id=$id",
-        r => new Session(r.Long(0), r.Text(1), r.IsNull(2) ? null : r.Text(2)), new SqlArg("$id", id));
+        "SELECT epoch,state,run_id,parent_id FROM engine_session WHERE id=$id",
+        r => new Session(r.Long(0), r.Text(1), r.IsNull(2) ? null : r.Text(2), r.IsNull(3) ? null : r.Text(3)), new SqlArg("$id", id));
     private static Need? Find(IWriteScope s, string id) => s.QueryFirst("""
         SELECT id,version,session_id,run_id,step_id,kind,text,options_json,provider_request_id,chat_row_id,state,deadline_ms
         FROM engine_needs_me WHERE id=$id

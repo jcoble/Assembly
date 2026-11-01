@@ -123,6 +123,24 @@ public static class MessageTransitions
         return events;
     }
 
+    public static IReadOnlyList<EventDraft> NeedResolved(IWriteScope s, CommandContext c, string needId,
+        string sessionId, string state, JsonElement? answer)
+    {
+        var id = $"need-answer/{needId}";
+        if (FindRecipient(s, sessionId)?.State == "ended" || Find(s, id) is not null)
+            return [];
+        var text = state switch
+        {
+            "answered" => $"Jesse answered your question {needId}: {(answer!.Value.ValueKind == JsonValueKind.String ? answer.Value.GetString() : JsonSerializer.Serialize(answer.Value, EngineJson.Default.JsonElement))}",
+            "dismissed" => $"Jesse dismissed your question {needId}.",
+            _ => $"Your question {needId} closed without an answer ({state})."
+        };
+        var message = new Message(id, 1, null, sessionId, text, "prompt", "queued");
+        Insert(s, c, message, "system", null);
+        // NeedTransitions releases only after restoring session activity, using its current version.
+        return [Changed(c, message)];
+    }
+
     public static IReadOnlyList<EventDraft> ReleaseHeld(IWriteScope s, CommandContext c, string sessionId,
         bool ended, IList<EffectDraft> effects)
     {
