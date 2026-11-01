@@ -17,7 +17,7 @@ public sealed class RecordWatcherTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var turn = watcher.BeginTurn();
         var waiting = watcher.WaitForAsync(update => update.Kind == "state_update", deadline.Token);
-        await channel.Writer.WriteAsync(Update("""{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello"}}"""));
+        await channel.Writer.WriteAsync(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"m","content":{"type":"text","text":"hello"}}"""));
         await channel.Writer.WriteAsync(Update("""{"sessionUpdate":"state_update","state":"idle"}"""));
         await waiting;
         await watcher.DrainAsync();
@@ -44,7 +44,7 @@ public sealed class RecordWatcherTests
     }
 
     [Fact]
-    public async Task Replacement_text_signals_first_text_and_replaces_the_current_turn()
+    public async Task Replacement_text_signals_first_text_and_replaces_the_current_message()
     {
         var turn = new TurnLog();
         turn.Add(Update("""{"sessionUpdate":"agent_message","messageId":"m","content":[{"type":"text","text":"whole"}]}"""));
@@ -53,5 +53,70 @@ public sealed class RecordWatcherTests
         Assert.Equal("whole later", turn.Text);
         turn.Add(Update("""{"sessionUpdate":"agent_message","messageId":"m","content":[]}"""));
         Assert.Equal("", turn.Text);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    public void A_clear_changes_only_its_message_and_later_chunks_append(string content)
+    {
+        var turn = new TurnLog();
+        turn.Add(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"first","content":{"type":"text","text":"one"}}"""));
+        turn.Add(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"second","content":{"type":"text","text":"two"}}"""));
+        turn.Add(Update($$"""{"sessionUpdate":"agent_message","messageId":"second","content":{{content}}}"""));
+        Assert.Equal("one", turn.Text);
+        turn.Add(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"second","content":{"type":"text","text":"fresh"}}"""));
+        Assert.Equal("onefresh", turn.Text);
+    }
+
+    [Fact]
+    public void Replacements_preserve_other_messages_and_first_arrival_order()
+    {
+        var turn = new TurnLog();
+        turn.Add(Update("""{"sessionUpdate":"agent_message","messageId":"first","content":[{"type":"text","text":"one"}]}"""));
+        turn.Add(Update("""{"sessionUpdate":"agent_message","messageId":"second","content":[{"type":"text","text":"two"}]}"""));
+        turn.Add(Update("""{"sessionUpdate":"agent_message","messageId":"second","content":[{"type":"text","text":"updated"}]}"""));
+        turn.Add(Update("""{"sessionUpdate":"agent_message","messageId":"first"}"""));
+        Assert.Equal("oneupdated", turn.Text);
+        turn.Add(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"first","content":{"type":"text","text":" later"}}"""));
+        turn.Add(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"second","content":{"type":"text","text":"!"}}"""));
+        Assert.Equal("one laterupdated!", turn.Text);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(",\"content\":null")]
+    [InlineData(",\"content\":[]")]
+    [InlineData(",\"content\":[{\"type\":\"text\",\"text\":\"\"}]")]
+    [InlineData(",\"content\":[{\"type\":\"image\",\"data\":\"\",\"mimeType\":\"image/png\"}]")]
+    public async Task Empty_or_omitted_content_does_not_signal_first_text(string content)
+    {
+        var turn = new TurnLog();
+        turn.Add(Update($$"""{"sessionUpdate":"agent_message","messageId":"m"{{content}}}"""));
+        turn.Add(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"m","content":{"type":"text","text":""}}"""));
+        Assert.Equal("", turn.Text);
+        Assert.False(turn.FirstText.IsCompleted);
+        turn.Add(Update("""{"sessionUpdate":"agent_message_chunk","messageId":"m","content":{"type":"text","text":"real"}}"""));
+        await turn.FirstText.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("real", turn.Text);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    public async Task A_clear_does_not_fault_the_watcher_or_block_later_events(string content)
+    {
+        var channel = Channel.CreateUnbounded<SessionNotification>();
+        var watcher = new UpdateWatcher(channel.Reader);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var turn = watcher.BeginTurn();
+        var waiting = watcher.WaitForAsync(update => update.Kind == "state_update", deadline.Token);
+        await channel.Writer.WriteAsync(Update($$"""{"sessionUpdate":"agent_message","messageId":"m","content":{{content}}}"""));
+        await channel.Writer.WriteAsync(Update("""{"sessionUpdate":"state_update","state":"idle"}"""));
+        channel.Writer.Complete();
+        await waiting;
+        await watcher.Completion.WaitAsync(deadline.Token);
+        Assert.Equal("", turn.Text);
+        Assert.False(turn.FirstText.IsCompleted);
     }
 }
