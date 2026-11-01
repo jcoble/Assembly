@@ -120,15 +120,18 @@ public static class RecordingTransitions
         if (string.IsNullOrWhiteSpace(a.SessionId) || a.Epoch < 0 || a.Attempt < 0 ||
             a.StepId is not null && (a.RunId is null || a.Attempt is null) || a.StepId is null && a.Attempt is not null)
             return ("bad_args", false);
-        var session = s.QueryFirst("SELECT state FROM engine_session WHERE id=$id", r => r.Text(0), new SqlArg("$id", a.SessionId));
+        var session = s.QueryFirst("SELECT state,run_id FROM engine_session WHERE id=$id", r => new { State = r.Text(0), RunId = r.IsNull(1) ? null : r.Text(1) }, new SqlArg("$id", a.SessionId));
         if (session is null) return ("bad_args", false);
-        var late = session == "ended";
+        var late = session.State == "ended";
         if (a.RunId is not null)
         {
             var run = s.QueryFirst("SELECT state,owner_session_id FROM engine_run WHERE id=$id",
                 r => new { State = r.Text(0), OwnerSessionId = r.Text(1) }, new SqlArg("$id", a.RunId));
             if (run is null) return ("bad_args", false);
-            if (run.OwnerSessionId != a.SessionId) return ("attribution_mismatch", false);
+            if (run.OwnerSessionId != a.SessionId && session.RunId != a.RunId &&
+                (a.StepId is null || s.QueryFirst("SELECT COUNT(*) FROM engine_step WHERE id=$step AND run_id=$run AND session_id=$session",
+                    r => r.Long(0), new SqlArg("$step", a.StepId), new SqlArg("$run", a.RunId), new SqlArg("$session", a.SessionId)) == 0))
+                return ("attribution_mismatch", false);
             late |= RunTransitions.IsTerminal(run.State);
         }
         if (a.StepId is not null)
