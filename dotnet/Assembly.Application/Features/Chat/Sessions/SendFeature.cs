@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
@@ -81,7 +82,16 @@ internal sealed class SendFeature : IFeature
             : "clientId must be 1 to 64 letters, digits, - or _";
 
     /// <summary><c>ClientId</c>, when given, names the message, so a resend of it answers the first send's run.</summary>
-    internal sealed record SendArgs([property: JsonRequired] string Session, [property: JsonRequired] string Text, string? ClientId = null);
+    internal sealed record SendArgs([property: JsonRequired] string Session, [property: JsonRequired] string Text, string? ClientId = null,
+        IReadOnlyList<string>? AttachmentIds = null, long? Epoch = null);
+
+    internal static OwnerPromptRequest OwnerRequest(SendArgs args)
+    {
+        if (args.Epoch < 0) throw new CallFailed("epoch must be nonnegative");
+        if (args.ClientId is not null && ClientIdError(args.ClientId) is { } error) throw new CallFailed(error);
+        return new(args.Session, args.Text, args.ClientId ?? Guid.NewGuid().ToString("N"),
+            args.AttachmentIds?.ToArray() ?? [], args.Epoch);
+    }
 
     internal sealed record Sent(string RunId);
 

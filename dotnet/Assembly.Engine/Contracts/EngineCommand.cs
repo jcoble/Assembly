@@ -23,6 +23,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(RequestHandoff), "request_handoff")]
 [JsonDerivedType(typeof(HandoffOutcome), "handoff_outcome")]
 [JsonDerivedType(typeof(SendMessage), "send_message")]
+[JsonDerivedType(typeof(SendOwnerPrompt), "send_owner_prompt")]
 [JsonDerivedType(typeof(MessageOutcome), "message_outcome")]
 [JsonDerivedType(typeof(StartSession), "start_session")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]

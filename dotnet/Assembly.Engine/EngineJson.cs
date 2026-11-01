@@ -40,6 +40,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(HandoffOutcome))]
 [JsonSerializable(typeof(HandoffTransfer))]
 [JsonSerializable(typeof(SendMessage))]
+[JsonSerializable(typeof(SendOwnerPrompt))]
 [JsonSerializable(typeof(DeliverMessage))]
 [JsonSerializable(typeof(MessageOutcome))]
 [JsonSerializable(typeof(StartSession))]
