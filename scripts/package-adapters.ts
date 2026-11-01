@@ -192,11 +192,11 @@ function publishBundles(assetPath: string, versions: Versions, tag: string, comm
   gh(["edit", tag, "--draft=false", "--latest=false"]);
 }
 
-function compareWithLastProviderRelease(target: string, currentBundle: string, scratch: string) {
+export function compareWithLastProviderRelease(target: string, currentBundle: string, scratch: string, log = console.log) {
   const tag = latestProviderTag(target);
   const current = join(currentBundle, entrypoint("claude-agent-acp"));
   if (!tag) {
-    compareClaudeEntrypoints(undefined, current);
+    compareClaudeEntrypoints(undefined, current, undefined, log);
     return;
   }
   const asset = "assembly-adapters-" + target + ".tar.gz";
@@ -211,11 +211,16 @@ function compareWithLastProviderRelease(target: string, currentBundle: string, s
   if (members.some(name => name.startsWith("/") || name.split("/").some(part => part === ".."))) {
     throw new Error("Unsafe path in historical provider archive: " + tag);
   }
-  if (!members.includes(manifest.entrypoints["claude-agent-acp"])) {
-    throw new Error("Historical provider archive is missing its Claude entrypoint: " + tag);
+  const recordedEntrypoint = manifest.entrypoints["claude-agent-acp"];
+  const upstreamEntrypoint = entrypoint("claude-agent-acp");
+  if (!members.includes(recordedEntrypoint)) {
+    throw new Error("Historical provider archive is missing its recorded Claude entrypoint: " + tag);
+  }
+  if (!members.includes(upstreamEntrypoint)) {
+    throw new Error("Historical provider archive is missing the raw Claude upstream entrypoint: " + tag);
   }
   execFileSync("tar", ["-xzf", join(assets, asset), "-C", unpacked]);
-  compareClaudeEntrypoints(join(unpacked, manifest.entrypoints["claude-agent-acp"]), current, tag);
+  compareClaudeEntrypoints(join(unpacked, upstreamEntrypoint), current, tag, log);
 }
 
 async function main() {
