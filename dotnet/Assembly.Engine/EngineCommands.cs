@@ -29,6 +29,8 @@ public sealed class EngineCommands
 
     public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command)
     {
+        if (command is SendOwnerPrompt)
+            return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
         // Raw boundary arguments are transient: even the journal fingerprint and size check use structural previews.
         var canonical = RecordingTransitions.JournalJson(command);
         return EngineJournal.Execute(scope, context, canonical, () =>
@@ -49,6 +51,23 @@ public sealed class EngineCommands
                 _ => new(false, false, "unsupported_command", context.ExpectedVersion, 0, context.Epoch)
             };
         });
+    }
+
+    public CommandResult ApplyOwnerPrompt(IWriteScope scope, CommandContext context, PreparedOwnerPrompt prepared)
+    {
+        var result = EngineJournal.Execute(scope, context, prepared.CanonicalJournal, () =>
+        {
+            if (context.Machine != _machine || prepared.Machine != _machine)
+                return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
+            if (context.Actor.Kind != ActorKind.Window || context.Actor.Id != "owner")
+                return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
+            if (context.ExpectedVersion != 0 || context.Epoch != 0 ||
+                context.EntityId != OwnerPromptIdentity.MessageId(prepared.ToSessionId, prepared.ClientId) ||
+                context.CommandId != OwnerPromptIdentity.CommandId(_machine, prepared.ToSessionId, prepared.ClientId))
+                return new(false, false, "bad_args", context.ExpectedVersion, 0, context.Epoch);
+            return MessageTransitions.Apply(scope, context, prepared.Request, _messageLimit());
+        });
+        return result.Error == "command_id_conflict" ? result with { Error = "client_id_conflict" } : result;
     }
 
     private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command)

@@ -19,7 +19,7 @@ public sealed class OwnerPromptTests
         f.SeedSession(state: "running", epoch: 7);
         var command = new SendOwnerPrompt("s", "Exact original text", "C", [], targetEpoch);
         var context = Context(f, command);
-        var result = f.Apply(context, command);
+        var result = ApplyPrepared(f, context, command);
         Assert.True(result.Applied, result.Error);
         Assert.Equal(1, result.Version); // Busy recipient cannot steer; acceptance remains queued.
         Assert.Equal(7, result.Epoch);
@@ -29,7 +29,7 @@ public sealed class OwnerPromptTests
         Assert.Equal(0, f.Count("engine_outbox"));
         var events = f.Count("engine_event");
         f.Reopen();
-        Assert.Equal(result, f.Apply(context with { NowMs = 3000 }, command));
+        Assert.Equal(result, ApplyPrepared(f, context with { NowMs = 3000 }, command));
         Assert.Equal(events, f.Count("engine_event"));
         Assert.Equal(1, f.Count("engine_message"));
         Assert.Equal(0, f.Count("engine_outbox"));
@@ -43,7 +43,7 @@ public sealed class OwnerPromptTests
     {
         using var f = new EngineFixture(); f.SeedSession();
         var command = new SendOwnerPrompt("s", "Prompt", "C", [], null);
-        var result = f.Apply(Context(f, command) with { Actor = new(kind, id) }, command);
+        var result = ApplyPrepared(f, Context(f, command) with { Actor = new(kind, id) }, command);
         Assert.Equal("forbidden", result.Error);
         Assert.Equal(0, f.Count("engine_message"));
         Assert.Equal(0, f.Count("engine_outbox"));
@@ -56,12 +56,12 @@ public sealed class OwnerPromptTests
         using var f = new EngineFixture(); f.SeedSession();
         var command = new SendOwnerPrompt("s", "Original", "C", [], null);
         var context = Context(f, command);
-        var accepted = f.Apply(context, command);
+        var accepted = ApplyPrepared(f, context, command);
         Assert.True(accepted.Applied, accepted.Error);
         var events = f.Count("engine_event"); var effects = f.Count("engine_outbox");
-        Assert.Equal("client_id_conflict", f.Apply(context, command with { Text = "Changed" }).Error);
+        Assert.Equal("client_id_conflict", ApplyPrepared(f, context, command with { Text = "Changed" }).Error);
         Assert.Equal(events, f.Count("engine_event")); Assert.Equal(effects, f.Count("engine_outbox"));
-        Assert.Equal(accepted, f.Apply(context, command));
+        Assert.Equal(accepted, ApplyPrepared(f, context, command));
     }
 
     [Fact]
@@ -80,25 +80,34 @@ public sealed class OwnerPromptTests
     [Theory]
     [InlineData(null)]
     [InlineData(7L)]
-    public void Generated_replay_round_trip_preserves_original_epoch_and_ordered_attachments(long? targetEpoch)
+    public void Generated_manifest_and_chunks_keep_original_epoch_and_ordered_attachments(long? targetEpoch)
     {
-        var replay = new OwnerPromptReplay("prompt/s/C", "machine", "s", "C", "Original\nAttached image: /upload/s/one.png",
-            ["/upload/s/one.png", "/upload/s/two.jpg"], targetEpoch, 7, "queued", 4, null, "workflow");
-        var json = JsonSerializer.Serialize(replay, SessionsJson.Default.OwnerPromptReplay);
-        var reopened = JsonSerializer.Deserialize(json, SessionsJson.Default.OwnerPromptReplay)!;
-        Assert.Equal(replay.TargetEpoch, reopened.TargetEpoch);
-        Assert.Equal(7, reopened.HeldEpoch);
-        Assert.Equal(replay.AttachmentIds, reopened.AttachmentIds);
-        var request = new OwnerPromptRequest(reopened.ToSessionId, reopened.Text, reopened.ClientId, reopened.AttachmentIds, reopened.TargetEpoch);
-        var wire = JsonSerializer.Serialize(request, SessionsJson.Default.OwnerPromptRequest);
-        var restored = JsonSerializer.Deserialize(wire, SessionsJson.Default.OwnerPromptRequest)!;
-        Assert.Equal(targetEpoch, restored.Epoch);
-        Assert.Equal(replay.Text, restored.Text);
-        Assert.Equal(replay.AttachmentIds, restored.AttachmentIds);
-        var command = new SendOwnerPrompt(restored.Session, restored.Text, restored.ClientId, restored.AttachmentIds, restored.Epoch);
-        var durable = JsonSerializer.Serialize<EngineCommand>(command, global::Assembly.Engine.EngineJson.Default.EngineCommand);
-        var decoded = Assert.IsType<SendOwnerPrompt>(JsonSerializer.Deserialize(durable, global::Assembly.Engine.EngineJson.Default.EngineCommand));
-        Assert.Equal(targetEpoch, decoded.TargetEpoch); Assert.Equal(command.AttachmentIds, decoded.AttachmentIds);
+        var command = new SendOwnerPrompt("s", "Original\nAttached image: /upload/s/one.png",
+            "C", ["/upload/s/one.png", "/upload/s/two.jpg"], targetEpoch);
+        var prepared = OwnerPromptFingerprint.Prepare("engine-machine", command, default);
+        var manifest = new OwnerPromptManifest("C", prepared.ContentSha256, "Original", false,
+            prepared.TextUtf8Bytes, prepared.AttachmentJsonUtf8Bytes, prepared.AttachmentCount, targetEpoch, 7, "queued", 4);
+        var page = new OwnerPromptPage(prepared.Machine, [manifest], null, null);
+        var reopened = JsonSerializer.Deserialize(JsonSerializer.Serialize(page, SessionsJson.Default.OwnerPromptPage), SessionsJson.Default.OwnerPromptPage)!;
+        Assert.Equal("engine-machine", reopened.EngineMachine); // Paired application machine identity is separate.
+        var item = Assert.Single(reopened.Items);
+        Assert.Equal(targetEpoch, item.TargetEpoch); Assert.Equal(7, item.HeldEpoch); Assert.False(item.TextComplete);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(prepared.AttachmentIdsJson);
+        var chunk = new OwnerPromptChunk(prepared.ContentSha256, "attachments", 0, bytes.LongLength, bytes, null);
+        var decoded = JsonSerializer.Deserialize(JsonSerializer.Serialize(chunk, SessionsJson.Default.OwnerPromptChunk), SessionsJson.Default.OwnerPromptChunk)!;
+        var references = JsonSerializer.Deserialize(System.Text.Encoding.UTF8.GetString(decoded.Data), SessionsJson.Default.IReadOnlyListString)!;
+        Assert.Equal(command.AttachmentIds, references);
+        var request = new OwnerPromptRequest(command.ToSessionId, command.Text, item.ClientId, references, item.TargetEpoch);
+        var restored = JsonSerializer.Deserialize(JsonSerializer.Serialize(request, SessionsJson.Default.OwnerPromptRequest), SessionsJson.Default.OwnerPromptRequest)!;
+        Assert.Equal(targetEpoch, restored.Epoch); Assert.Equal(command.Text, restored.Text);
+        Assert.Equal(command.AttachmentIds, restored.AttachmentIds);
+    }
+
+    private static CommandResult ApplyPrepared(EngineFixture f, CommandContext context, SendOwnerPrompt command)
+    {
+        var prepared = OwnerPromptFingerprint.Prepare(f.Machine, command, default);
+        return f.Db.Writer.Write("test.owner-prepared", scope =>
+            new global::Assembly.Engine.EngineCommands(f.Machine, f.Limits).ApplyOwnerPrompt(scope, context, prepared));
     }
 
     private static CommandContext Context(EngineFixture f, SendOwnerPrompt command) => new(

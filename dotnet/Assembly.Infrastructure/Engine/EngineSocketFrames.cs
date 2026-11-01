@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Engine;
 using System.Text.Json.Serialization;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Recording;
@@ -21,6 +22,11 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(OwnerPromptManifest))]
+[JsonSerializable(typeof(OwnerPromptReadArgs))]
+[JsonSerializable(typeof(OwnerPromptPage))]
+[JsonSerializable(typeof(OwnerPromptChunkArgs))]
+[JsonSerializable(typeof(OwnerPromptChunk))]
 [JsonSerializable(typeof(MachineInfo))]
 [JsonSerializable(typeof(WindowCommand))]
 [JsonSerializable(typeof(EngineUsageArgs))]

@@ -32,6 +32,7 @@ public sealed class EngineDoor(EngineRuntime runtime, SessionStore sessions, Mac
         }
         ValidateLocal(request);
         var command = new SendOwnerPrompt(request.Session, request.Text, request.ClientId, request.AttachmentIds, request.Epoch);
+        var prepared = OwnerPromptFingerprint.Prepare(runtime.Machine, command, cancellationToken);
         var id = OwnerPromptIdentity.MessageId(request.Session, request.ClientId);
         var commandId = OwnerPromptIdentity.CommandId(runtime.Machine, request.Session, request.ClientId);
         return scope =>
@@ -45,7 +46,7 @@ public sealed class EngineDoor(EngineRuntime runtime, SessionStore sessions, Mac
             if (owner.Native) throw new CallFailed("a subagent's session takes prompts from its parent only");
             var context = new CommandContext(commandId, runtime.Machine, new(ActorKind.Window, "owner"), id, 0, 0,
                 time.GetUtcNow().ToUnixTimeMilliseconds());
-            var result = runtime.Commands.Apply(scope, context, command);
+            var result = runtime.Commands.ApplyOwnerPrompt(scope, context, prepared);
             if (!result.Applied) throw new CallFailed(result.Error == "command_id_conflict" ? "client_id_conflict" : result.Error ?? "owner prompt refused");
             return new(request.Session, id, request.ClientId, "queued", result.Version, result.Seq, result.Epoch, null);
         };
