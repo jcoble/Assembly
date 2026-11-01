@@ -69,8 +69,7 @@ public static class ServeRun
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines)], board), options.Port, out _,
-            routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines)], board), options.Port, out _);
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");
         Console.WriteLine($"token: in {options.TokenFile}");

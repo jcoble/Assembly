@@ -28,7 +28,6 @@ using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Remote;
 using Assembly.Infrastructure.Topics;
 using Assembly.Application.Features.Preferences;
-using Assembly.Application.Features.Diagnostics;
 using Assembly.Infrastructure.Clock;
 using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Terminal;
@@ -53,12 +52,12 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly RemoteConnections _connections;
     private readonly WebApplication _app;
     private readonly FileStream _homeLock;
-    private readonly DiagnosticsHost _diagnostics;
+    private readonly TurnActivity _activity;
     private readonly MachinesFeature _machinesFeature;
     private readonly TerminalHost _terminals;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop)
+        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop)
     {
         _homeLock = homeLock;
         _terminals = terminals;
@@ -74,7 +73,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         _sessions = sessions;
         _work = work;
         _app = app;
-        _diagnostics = diagnostics;
+        _activity = activity;
         Address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
     }
 
@@ -82,7 +81,7 @@ public sealed class DesktopBackend : IAsyncDisposable
     public Uri Address { get; }
 
     /// <summary>Whether App Nap is held, while any turn runs.</summary>
-    internal bool ActivityHeld => _diagnostics.ActivityHeld;
+    internal bool ActivityHeld => _activity.Held;
 
     /// <summary>How many of its background works are still running.</summary>
     internal int BackgroundRunning => _work.Running;
@@ -128,18 +127,18 @@ public sealed class DesktopBackend : IAsyncDisposable
         var summaries = SessionSummaries.Load(store);
         var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
         // App Nap is held while any session has a run open, here or on a remote.
-        var diagnostics = new DiagnosticsHost(Path.Combine(home, "soak-results"));
+        var activity = new TurnActivity();
         var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
         {
             sessionStore.PublishSummary(session);
-            diagnostics.HoldActivity(summaries.AnyRunOpen);
+            activity.Hold(summaries.AnyRunOpen);
         });
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             runsHere: session => sessionStore.Get(session) is not { Machine: not null });
         if (closed > 0)
             log.WriteLine($"closed {closed} turn(s) the last run left unfinished");
         // Loading the summaries tells nobody: a remote's run left open holds it from the start.
-        diagnostics.HoldActivity(summaries.AnyRunOpen);
+        activity.Hold(summaries.AnyRunOpen);
         var work = new BackgroundWork(TimeProvider.System, log);
         var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, titler: utilityClis is { } clis
             ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, new PreferenceStore(db), TimeProvider.System, log))
@@ -150,9 +149,6 @@ public sealed class DesktopBackend : IAsyncDisposable
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
         sessions.Helpers.Delivery.Machines = machines;
 
-        Uri? address = null;
-        Action dropSockets = () => { };
-        var page = new PageRoutes(token, Path.Combine(home, "soak-results"), () => address!);
         var clock = new BackendClock(topics, TimeProvider.System, work);
         RemoteConnections? connections = null;
         var machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, store: profiles,
@@ -197,22 +193,10 @@ public sealed class DesktopBackend : IAsyncDisposable
                 new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                 new FilesFeature(sessionStore),
                 new WorktreesFeature(sessionStore),
-                new SourceControlFeature(sessionStore),
-                new DiagnosticsFeature(diagnostics, () =>
-                {
-                    hub.CloseSubscriptions();
-                    dropSockets();
-                })], board), port, out dropSockets, routes =>
-        {
-            MachineFeatureList.Add(routes, new FeatureContext(db));
-            DesktopFeatureList.Add(routes, new FeatureContext(db));
-            new DebugRoutes(hub).Map(routes);
-            page.Map(routes);
-        });
+                new SourceControlFeature(sessionStore)], board), port, out _);
         app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
         await app.StartAsync();
-        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, connections, app, diagnostics, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop);
-        address = backend.Address;
+        var backend = new DesktopBackend(homeLock, db, hub, sessions, work, connections, app, activity, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop);
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
         return backend;
@@ -251,6 +235,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
         await _work.DisposeAsync();
         _hub.Dispose();
+        _activity.Hold(false);
         _db.Dispose();
         _homeLock.Dispose();
     }

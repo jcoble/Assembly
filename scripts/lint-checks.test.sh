@@ -4,6 +4,46 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 failed=0
+source_repo=$(git -C "$here/.." rev-parse --show-toplevel) || exit 1
+
+# The controller stages authorized source before running; never silently test an older tree.
+source_ready() {
+  local unmerged untracked
+  unmerged=$(git -C "$source_repo" ls-files --unmerged) || return 1
+  if [ -n "$unmerged" ]; then
+    echo "lint fixtures: conflicted index; resolve before validating source" >&2
+    return 1
+  fi
+  if ! git -C "$source_repo" diff --quiet --; then
+    echo "lint fixtures: unstaged source; stage intended authorized changes first" >&2
+    return 1
+  fi
+  untracked=$(git -C "$source_repo" ls-files --others --exclude-standard) || return 1
+  if [ -n "$untracked" ]; then
+    echo "lint fixtures: untracked source; account for intended files before validation" >&2
+    return 1
+  fi
+}
+source_ready || exit 1
+source_head=$(git -C "$source_repo" rev-parse HEAD) || exit 1
+source_tree=$(git -C "$source_repo" write-tree) || exit 1
+printf 'lint fixtures: HEAD commit %s; tested index tree %s\n' "$source_head" "$source_tree"
+
+finish() {
+  local result=$? current_tree
+  trap - EXIT
+  if ! source_ready; then
+    result=1
+  else
+    current_tree=$(git -C "$source_repo" write-tree) || result=1
+    if [ "${current_tree:-}" != "$source_tree" ] || [ "$(git -C "$source_repo" rev-parse HEAD)" != "$source_head" ]; then
+      echo "lint fixtures: source/index changed during validation; recorded tree is stale" >&2
+      result=1
+    fi
+  fi
+  exit "$result"
+}
+trap finish EXIT
 
 # A throwaway repo holding one lint.d script; prints its path.
 repo_with() {
@@ -14,12 +54,13 @@ repo_with() {
   cp "$here/lint.d/$1" "$repo/scripts/lint.d/"
   echo "$repo"
 }
-# The same, holding dotnet/ as committed and an empty app/src (the architecture tests find the root by dotnet/ and app/).
+# Archive .NET source from the recorded prospective tree, including its root helper and Assembly.slnx.
+# The retained desktop/src marker lets the architecture tests locate this scratch root.
 dotnet_repo_with() {
   local repo
   repo=$(repo_with "$1")
-  git -C "$here/.." archive HEAD dotnet | tar -x -C "$repo"
-  mkdir -p "$repo/app/src"
+  git -C "$source_repo" archive "$source_tree" dotnet | tar -x -C "$repo" || return 1
+  mkdir -p "$repo/desktop/src"
   echo "$repo"
 }
 # Commits the repo's tree, so what's staged next is all a commit would change.
@@ -43,26 +84,26 @@ expect 1 "no-engine: dotnet/Assembly.Engine/ coming back fails" "$r" 10-no-engin
 rm -rf "$r"
 
 r=$(repo_with 30-provider-branches.sh)
-mkdir -p "$r/app/src/lib" "$r/dotnet/Assembly.Application/Common/Acp/V1" "$r/dotnet/Assembly.Tests" "$r/shell/src"
-echo "const agent = pick(); // a comment that says claude is fine" >"$r/app/src/lib/a.ts"
+mkdir -p "$r/desktop/src" "$r/dotnet/Assembly.Application/Common/Acp/V1" "$r/dotnet/Assembly.Tests" "$r/desktop/src/core"
+echo "const agent = pick(); // a comment that says claude is fine" >"$r/desktop/src/a.rs"
 echo 'if (name == "claude") { }' >"$r/dotnet/Assembly.Application/Common/Acp/V1/Reader.cs"
 echo 'Assert.True(kind == "codex");' >"$r/dotnet/Assembly.Tests/T.cs"
 expect 0 "provider branches: none outside Acp/V1 and the tests passes" "$r" 30-provider-branches.sh
 for bad in "if (agent === 'claude') go();" "case 'codex': break;" "x = agent == \"antigravity\" ? a : b" \
   "Agent::Claude => run()," "if matches!(a, Agent::Codex) {}" "const label = 'codex' !== agent"; do
-  echo "$bad" >"$r/app/src/lib/a.ts"
+  echo "$bad" >"$r/desktop/src/a.rs"
   expect 1 "provider branches: fails on: $bad" "$r" 30-provider-branches.sh
 done
 rm -rf "$r"
 
 r=$(repo_with 20-file-size.sh)
-mkdir -p "$r/dotnet/Assembly.Domain" "$r/app/src/lib" "$r/app/node_modules/x" "$r/shell/src"
+mkdir -p "$r/dotnet/Assembly.Domain" "$r/desktop/src" "$r/desktop/node_modules/x" "$r/desktop/src/core"
 seq 600 >"$r/dotnet/Assembly.Domain/A.cs"
-printf '%s\n' $(seq 599) >"$r/app/src/lib/B.svelte" && printf 'last' >>"$r/app/src/lib/B.svelte"
-seq 900 >"$r/app/node_modules/x/big.ts"
-seq 900 >"$r/app/src/lib/notes.md"
+printf '%s\n' $(seq 599) >"$r/desktop/src/B.rs" && printf 'last' >>"$r/desktop/src/B.rs"
+seq 900 >"$r/desktop/node_modules/x/big.ts"
+seq 900 >"$r/desktop/src/notes.md"
 expect 0 "file size: 600 lines, and 600 with no final newline, pass" "$r" 20-file-size.sh
-for f in dotnet/Assembly.Domain/A.cs app/src/lib/B.svelte app/src/lib/C.ts shell/src/main.rs app/src/lib/résumé.ts; do
+for f in dotnet/Assembly.Domain/A.cs desktop/src/B.rs desktop/src/C.rs desktop/src/core/main.rs desktop/src/résumé.rs; do
   seq 601 >"$r/$f"
   expect 1 "file size: 601 lines in $f fails" "$r" 20-file-size.sh
   seq 600 >"$r/$f"
@@ -70,10 +111,10 @@ done
 rm -rf "$r"
 
 r=$(repo_with 45-no-select-star.sh)
-mkdir -p "$r/dotnet/Assembly.Application" "$r/app/src/lib"
+mkdir -p "$r/dotnet/Assembly.Application" "$r/desktop/src"
 echo '// One result row, read by column position. So every query names its columns: never SELECT *.' >"$r/dotnet/Assembly.Application/IRow.cs"
 echo 'const string All = "SELECT key, value FROM preferences";' >"$r/dotnet/Assembly.Application/A.cs"
-echo 'const all = "SELECT * FROM notes";' >"$r/app/src/lib/a.ts"
+echo 'const all = "SELECT * FROM notes";' >"$r/desktop/src/a.rs"
 expect 0 "no select star: named columns, a comment saying SELECT *, and code outside dotnet/ pass" "$r" 45-no-select-star.sh
 for bad in 'const string All = "SELECT * FROM preferences";' 'var sql = "select  *  from rows WHERE seq > 1";'; do
   echo "$bad" >"$r/dotnet/Assembly.Application/A.cs"
@@ -99,8 +140,8 @@ rm -rf "$r"
 
 # The two .NET checks fail on a probe in a scratch copy. In the commit hook (LINT_STAGED_ONLY=1) each skips a commit
 # with no .NET file in it, and runs on a .cs change.
-r=$(dotnet_repo_with 50-dotnet-format.sh)
-expect 0 "dotnet format: the committed tree passes" "$r" 50-dotnet-format.sh
+r=$(dotnet_repo_with 50-dotnet-format.sh) || exit 1
+expect 0 "dotnet format: the prospective tree passes" "$r" 50-dotnet-format.sh
 printf 'namespace Assembly.Domain;\n\npublic static class FormatProbe\n{\n        public static int One() => 1;\n}\n' \
   >"$r/dotnet/Assembly.Domain/FormatProbe.cs"
 expect 1 "dotnet format: a badly indented file fails" "$r" 50-dotnet-format.sh
@@ -111,8 +152,8 @@ echo '// touched' >>"$r/dotnet/Assembly.Domain/FormatProbe.cs"
 LINT_STAGED_ONLY=1 expect 1 "dotnet format: the hook runs on a .cs change" "$r" 50-dotnet-format.sh
 rm -rf "$r"
 
-r=$(dotnet_repo_with 70-architecture.sh)
-expect 0 "architecture: the committed tree passes" "$r" 70-architecture.sh
+r=$(dotnet_repo_with 70-architecture.sh) || exit 1
+expect 0 "architecture: the prospective tree passes" "$r" 70-architecture.sh
 printf 'namespace Assembly.Application;\n\npublic static class ArchitectureProbe\n{\n    public static string Read() => System.IO.File.ReadAllText("x");\n}\n' \
   >"$r/dotnet/Assembly.Application/ArchitectureProbe.cs"
 expect 1 "architecture: the core opening a file fails" "$r" 70-architecture.sh
@@ -124,7 +165,7 @@ LINT_STAGED_ONLY=1 expect 1 "architecture: the hook runs on a .cs change" "$r" 7
 rm -rf "$r"
 
 # A filter that matches no test is a failure, not a pass with nothing run.
-r=$(dotnet_repo_with 70-architecture.sh)
+r=$(dotnet_repo_with 70-architecture.sh) || exit 1
 sed -i 's/^namespace Assembly.Tests.Architecture;/namespace Assembly.Tests.Moved;/' "$r/dotnet/Assembly.Tests/Architecture/ArchitectureTests.cs"
 expect 1 "architecture: no architecture test found fails" "$r" 70-architecture.sh
 rm -rf "$r"

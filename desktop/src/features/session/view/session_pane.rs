@@ -565,23 +565,23 @@ fn fade_in(key: String, row: AnyElement, window: &mut Window, cx: &mut App) -> A
 const PAGE_ROWS: usize = 100;
 
 #[cfg(test)]
-#[path = "session_pane_action_tests.rs"]
+#[path = "tests/session_pane_action_tests.rs"]
 mod action_tests;
 #[cfg(test)]
-#[path = "session_pane_activity_tests.rs"]
+#[path = "tests/session_pane_activity_tests.rs"]
 mod activity_tests;
 #[cfg(test)]
-#[path = "session_pane_real_switch_tests.rs"]
+#[path = "tests/session_pane_real_switch_tests.rs"]
 mod real_switch_tests;
 #[cfg(test)]
-#[path = "session_pane_reveal_tests.rs"]
+#[path = "tests/session_pane_reveal_tests.rs"]
 mod reveal_tests;
 #[cfg(test)]
-#[path = "session_pane_switch_tests.rs"]
+#[path = "tests/session_pane_switch_tests.rs"]
 mod switch_tests;
 #[cfg(test)]
-#[path = "session_pane_tests.rs"]
+#[path = "tests/session_pane_tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "session_pane_write_tests.rs"]
+#[path = "tests/session_pane_write_tests.rs"]
 mod write_tests;

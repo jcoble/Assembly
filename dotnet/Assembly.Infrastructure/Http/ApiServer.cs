@@ -11,15 +11,14 @@ using Assembly.Infrastructure.Socket;
 namespace Assembly.Infrastructure.Http;
 
 /// <summary>
-/// The API on 127.0.0.1: the webview's, on the desktop, and the desktop's, on a remote machine. Port 0 picks a free port
-/// (for tests). <paramref name="more"/> maps a host's own routes after the shared ones. <paramref name="dropSockets"/>
-/// ends every open <c>/socket</c> and <c>/socket/bulk</c>, for the debug control's drop.
+/// The API on 127.0.0.1 for the native desktop and remote machine. Port 0 picks a free port (for tests).
+/// <paramref name="more"/> maps a host's own routes after the shared ones. <paramref name="dropSockets"/>
+/// ends every open socket when requested.
 /// </summary>
 public static class ApiServer
 {
-    // How long stopping may take: it drains each socket's queued saves (plan 5.9). Below the shell's wait after SIGTERM,
-    // BACKEND_STOP_WAIT in shell/src/main.rs, so the backend finishes before the shell kills it
-    // (scripts/shutdown-timing.test.sh checks it).
+    // Host shutdown is bounded to 8s, below the native launcher's 10s grace. Lifecycle tests exercise graceful exit,
+    // escalation and reaping.
     public static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(8);
 
     public static WebApplication Build(ApiServices services, int port, out Action dropSockets, Action<WebApplication>? more = null)
@@ -31,8 +30,7 @@ public static class ApiServer
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, port));
 
         var app = builder.Build();
-        // Kestrel waits for open connections when it stops, and the webview's live sockets never close on their
-        // own: close them as stopping starts.
+        // Kestrel waits for open connections when it stops, so close subscriptions as stopping starts.
         app.Lifetime.ApplicationStopping.Register(services.Hub.CloseSubscriptions);
         app.UseWebSockets();
         app.Use(new TokenGuard(services.Token).InvokeAsync);

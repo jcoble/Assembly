@@ -1,7 +1,7 @@
 # On every pull request and every push to main (a lane branch's push runs once, as its pull request): the backend
-# builds with no warnings and its tests pass, the app checks, tests and builds, the shell checks and tests, the window
-# (desktop/) builds, tests and passes clippy, every scripts/*.test.sh passes, the app's guards and lint pass, and (on a
-# pull request) each of its own commits passes scripts/check-commit-msg.sh.
+# builds with no warnings and its tests pass, the app checks, tests and builds, the window (desktop/) builds, tests
+# and passes clippy, every retained scripts/*.test.sh passes, the app's guards and lint pass, and (on a pull request)
+# each of its own commits passes scripts/check-commit-msg.sh.
 name: ci
 on:
   push:
@@ -37,41 +37,9 @@ jobs:
         with:
           node-version: 24
       - run: npm install -g pnpm@11.5.1 && pnpm install --frozen-lockfile
-      - name: Agent runbook behavior
-        run: node --test ../scripts/agent-runbook/runbook.test.ts
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
-  shell:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: shell
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: shell
-      # The .debs, so a slow mirror only costs apt-get update. Keyed on this file, which holds the package list.
-      - uses: actions/cache@v4
-        with:
-          path: ~/.apt-archives
-          key: apt-shell-${{ runner.os }}-${{ hashFiles('.github/workflows/ci.yml') }}
-          restore-keys: apt-shell-${{ runner.os }}-
-      - name: Install Linux build dependencies
-        timeout-minutes: 10
-        run: |
-          mkdir -p ~/.apt-archives/partial
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
-          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 -o Dir::Cache::Archives=$HOME/.apt-archives install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-          sudo chown -R "$USER" ~/.apt-archives
-      # Tauri's build reads the page's folder and the bundled backend's at compile time; the app and dotnet jobs
-      # build the real ones.
-      - run: mkdir -p ../app/build backend
-      - run: cargo check --locked
-      - run: cargo test --locked
   desktop:
     # The GPUI window (desktop/README.md): is formatted, builds, tests and passes clippy with warnings denied. Its guard
     # runs in lint.
@@ -116,19 +84,31 @@ jobs:
       - run: cargo test --locked
         env:
           ASSEMBLY_REAL_BACKEND: "1"
+      - name: Native launcher shutdown timing
+        run: bash ../scripts/shutdown-timing.test.sh
       - run: cargo clippy --locked --all-targets -- -D warnings
   scripts:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Agent runbook behavior
+        run: node --test scripts/agent-runbook/runbook.test.ts
       - name: Every scripts/*.test.sh passes
         run: |
           failed=0
-          for t in scripts/*.test.sh; do echo "== $t"; bash "$t" || failed=1; done
+          # shutdown-timing.test.sh runs in the desktop job with its Rust toolchain and native dependencies.
+          for t in scripts/*.test.sh; do
+            [ "$t" = scripts/shutdown-timing.test.sh ] && continue
+            echo "== $t"
+            bash "$t" || failed=1
+          done
           exit $failed
   lint:
     # The app's guards and scripts/lint.sh. They read the checkout, not its history; lint.sh's .NET checks need dotnet.

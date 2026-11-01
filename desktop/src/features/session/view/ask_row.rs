@@ -419,5 +419,5 @@ fn inline_field(label: String, hint: Option<String>, value: Div, cx: &App) -> Di
 }
 
 #[cfg(test)]
-#[path = "ask_row_tests.rs"]
+#[path = "tests/ask_row_tests.rs"]
 mod tests;

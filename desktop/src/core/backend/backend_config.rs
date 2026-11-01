@@ -1,7 +1,7 @@
-//! `BackendConfig` owns how the backend is started, from the lane file `shell/assembly.sh` writes
-//! (`backend/lane.json`: port, home, tokenFile, remotePort, remoteTokenFile), as the old shell read it
-//! (shell/src/main.rs `read_lane`). The program is `Assembly.Desktop` in the same backend folder. `ASSEMBLY_REMOTE`
-//! names a remote machine (such as `workbox-test`) to pass as `--remote`.
+//! `BackendConfig` owns how the backend is started, from the `backend/lane.json` file written by
+//! `scripts/app-dev.ts` (port, home, tokenFile, remotePort, remoteTokenFile). The program is `Assembly.Desktop`
+//! in the same backend folder. `ASSEMBLY_REMOTE` names a remote machine (such as `workbox-test`) to pass as
+//! `--remote`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -76,7 +76,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_the_lane_file_the_shell_writes() {
+    fn reads_the_lane_file_the_native_dev_launcher_writes() {
         let dir = lane(
             r#"{ "port": 18877, "home": "/h", "tokenFile": "/h/token.env", "remotePort": 9877, "remoteTokenFile": "/r/token.env" }"#,
         );
@@ -86,6 +86,7 @@ mod tests {
         assert_eq!(config.home, PathBuf::from("/h"));
         assert_eq!(config.token_file, PathBuf::from("/h/token.env"));
         assert_eq!(config.remote.as_deref(), Some("workbox-test"));
+        assert_eq!(config.stop_grace, Duration::from_secs(10));
     }
 
     #[test]

@@ -4,13 +4,15 @@
 #   scripts/check-commit-msg.sh --commit <id> <branch>  CI, on each of a pull request's own commits
 # A message has no Co-Authored-By line and ends with `Committed-by: <name>`. On a tsk-<n> branch it has
 # `Task: TSK-<n> https://app.notion.com/p/<page id>`. A fix commit (subject starting "fix") changes a test
-# (dotnet/Assembly.Tests/, app/test/, a scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or anything under
-# desktop/tests/) or says why not with a `No-test: <reason>` line. A commit that doesn't change docs/architecture.md says
-# `Architecture: unchanged`.
+# (dotnet/Assembly.Tests/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/)
+# or says why not with a `No-test: <reason>` line. Historical app/test paths count only in --commit mode
+# for a commit containing the old app manifest. Architecture is unchanged or updated at the canonical Notion page.
 set -euo pipefail
 
+historical_app=false
 if [ "${1:-}" = --commit ]; then
   commit=${2:?usage: check-commit-msg.sh --commit <id> <branch>} branch=${3:-}
+  if git cat-file -e "$commit:app/package.json" 2>/dev/null; then historical_app=true; fi
   message=$(git log -1 --format=%B "$commit" | git stripspace --strip-comments)
   changed=$(git -c core.quotePath=false diff-tree --root --no-commit-id --name-only -r --diff-filter=ACMR "$commit")
 else
@@ -37,12 +39,14 @@ case "$branch" in
     ;;
 esac
 
-grep -qFx 'docs/architecture.md' <<<"$changed" || grep -Eiq '^Architecture: unchanged' <<<"$message" \
-  || stop "update docs/architecture.md in this commit, or say Architecture: unchanged when it describes nothing this changes."
+grep -Eiq '^Architecture: unchanged$' <<<"$message" \
+  || grep -qFx 'Architecture: updated https://app.notion.com/p/409394b0689d8184906cd246dc89acd1' <<<"$message" \
+  || stop "add Architecture: unchanged, or Architecture: updated https://app.notion.com/p/409394b0689d8184906cd246dc89acd1."
 
 if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
-  grep -Eq '^(dotnet/Assembly\.Tests/|app/test/|scripts/[^/]+\.test\.sh$|desktop/src/(.*/)?([^/]*_)?tests\.rs$|desktop/tests/)' <<<"$changed" \
+  grep -Eq '^(dotnet/Assembly\.Tests/|scripts/[^/]+\.test\.sh$|desktop/src/(.*/)?([^/]*_)?tests\.rs$|desktop/tests/)' <<<"$changed" \
+    || { [ "$historical_app" = true ] && grep -q '^app/test/' <<<"$changed"; } \
     || grep -Eq '^No-test:[[:space:]]*[^[:space:]]' <<<"$(tail -n +2 <<<"$message")" \
-    || stop "a fix commit changes a test (dotnet/Assembly.Tests/, app/test/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/), or says why not with No-test: <reason>."
+    || stop "a fix commit changes a test (dotnet/Assembly.Tests/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/), or says why not with No-test: <reason>."
 fi
 exit 0

@@ -311,5 +311,5 @@ impl Draw<'_> {
 }
 
 #[cfg(test)]
-#[path = "markdown_view_tests.rs"]
+#[path = "tests/markdown_view_tests.rs"]
 mod tests;

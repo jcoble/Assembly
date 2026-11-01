@@ -13,13 +13,11 @@ using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Agents;
 using Assembly.Desktop.Serve;
-using Assembly.Infrastructure.Diagnostics;
 using Assembly.Infrastructure.Http;
 using Assembly.Tests.Features.Chat.Sessions;
 
 using Assembly.Tests.Features.Diagnostics;
 using Assembly.Tests.Infrastructure.Remote;
-using Assembly.Tests.Infrastructure.Socket;
 namespace Assembly.Tests.Infrastructure.Http;
 
 /// <summary>Assembly.Desktop's backend on a free port, with a scripted agent behind it.</summary>
@@ -88,9 +86,10 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     [Fact]
     public async Task A_running_turn_holds_app_nap_until_it_ends()
     {
-        var sessionId = await CreateSessionAsync();
+        using var socket = await OpenSocketAsync();
+        var sessionId = await CreateSocketSessionAsync(socket);
         Assert.False(_backend.ActivityHeld);
-        await SendAsync(sessionId);
+        await SendSocketTurnAsync(socket, sessionId);
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
@@ -103,16 +102,75 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task The_socket_serves_the_desktops_preferences()
+    public async Task The_socket_saves_preferences_across_a_desktop_backend_restart()
     {
-        using var socket = new ClientWebSocket();
-        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket"), CancellationToken.None);
-        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
-        Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
+        using (var socket = await OpenSocketAsync())
+        {
+            await SendTextAsync(socket, """{"t":"call","id":1,"feature":"preferences","method":"set","args":{"key":"theme","value":"dark"}}""");
+            Assert.Equal("""{"t":"result","id":1,"result":null}""", await ReadTextAsync(socket));
+        }
 
-        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"preferences","method":"set","args":{"key":"theme","value":"dark"}}""");
+        await DisposeBackendAsync();
+        _backend = await DesktopBackend.StartAsync(_home, Token, port: 0, _launcher, _log);
+        _disposed = false;
 
-        Assert.Equal("""{"t":"result","id":1,"result":null}""", await ReadTextAsync(socket));
+        using var reopened = await OpenSocketAsync();
+        await SendTextAsync(reopened, """{"t":"sub","id":1,"topic":"preferences"}""");
+        Assert.Equal("""{"t":"state","sub":1,"items":[{"key":"theme","item":{"key":"theme","value":"dark"}}]}""", await ReadTextAsync(reopened));
+    }
+
+    [Fact]
+    public async Task Shutdown_releases_activity_while_a_local_turn_is_running()
+    {
+        using var socket = await OpenSocketAsync();
+        var sessionId = await CreateSocketSessionAsync(socket);
+        await SendSocketTurnAsync(socket, sessionId);
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        await agent.ReadAsync("session/prompt");
+        Assert.True(_backend.ActivityHeld);
+
+        await DisposeBackendAsync();
+
+        Assert.False(_backend.ActivityHeld);
+        Assert.Equal(0, _backend.BackgroundRunning);
+        Assert.True(agent.Disposed);
+    }
+
+    [Theory]
+    [InlineData("/page/memory.sample", "{}")]
+    [InlineData("/page/attachment.thumbnail", "{}")]
+    [InlineData("/page/attachment.thumbnail_path", "{}")]
+    [InlineData("/page/attachment.upload_path", "{}")]
+    [InlineData("/page/soak.append", "{\"name\":\"removed.csv\",\"line\":\"a,b\"}")]
+    [InlineData("/debug/drop", "{}")]
+    [InlineData("/preferences/get", "{}")]
+    [InlineData("/preferences/set", "{\"values\":{\"theme\":\"dark\"}}")]
+    public async Task Removed_webview_HTTP_calls_are_not_found(string path, string body)
+    {
+        using var answer = await _http.PostAsync(path, Json(body));
+        Assert.Equal(HttpStatusCode.NotFound, answer.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("/socket", "wrong-token")]
+    [InlineData("/socket/bulk", "wrong-token")]
+    [InlineData("/socket/terminal", "wrong-token")]
+    [InlineData("/socket", "")]
+    public async Task Native_sockets_require_the_owner_token_in_the_hello(string path, string token)
+    {
+        using (var accepted = await OpenSocketAsync(path))
+            Assert.Equal(WebSocketState.Open, accepted.State);
+
+        using var refused = new ClientWebSocket();
+        // A bearer header alone must not authorize an invalid first-frame token.
+        refused.Options.SetRequestHeader("Authorization", $"Bearer {Token}");
+        await refused.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}{path}"), CancellationToken.None);
+        await SendTextAsync(refused, $$"""{"t":"hello","token":"{{token}}","protocol":1}""");
+        var buffer = new byte[1024];
+        var answer = await refused.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(WebSocketMessageType.Close, answer.MessageType);
+        Assert.Equal(4401, (int)refused.CloseStatus!);
     }
 
     [Fact]
@@ -139,21 +197,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"rows","key":"no-such-session"}""");
 
         Assert.Equal("""{"t":"state","sub":1,"seq":0,"items":[]}""", await ReadTextAsync(socket));
-    }
-
-    [Fact]
-    // The desktop's drop ends every open socket, the caller's too, so the window's reconnect can be tried.
-    public async Task The_desktops_drop_ends_every_open_socket()
-    {
-        using var other = await OpenSocketAsync();
-        using var bulk = await OpenSocketAsync("/socket/bulk");
-        using var socket = await OpenSocketAsync();
-
-        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"diagnostics","method":"drop","args":{}}""");
-
-        await SocketTests.AssertEndsAsync(other);
-        await SocketTests.AssertEndsAsync(bulk);
-        await SocketTests.AssertEndsAsync(socket);
     }
 
     // The large calls' socket takes the same hello; any other path under /socket is no socket, even with the token.
@@ -236,6 +279,22 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"unknown session"}""", await ReadTextAsync(socket));
     }
 
+    private static async Task<string> CreateSocketSessionAsync(WebSocket socket)
+    {
+        await SendTextAsync(socket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","repoUrl":"https://github.com/o/r"}}""");
+        using var answer = JsonDocument.Parse(await ReadTextAsync(socket));
+        Assert.Equal("result", answer.RootElement.GetProperty("t").GetString());
+        return answer.RootElement.GetProperty("result").GetProperty("sessionId").GetString()!;
+    }
+
+    private static async Task SendSocketTurnAsync(WebSocket socket, string sessionId)
+    {
+        await SendTextAsync(socket, $$$"""{"t":"call","id":2,"feature":"send","method":"send","args":{"session":"{{{sessionId}}}","text":"hi"}}""");
+        using var answer = JsonDocument.Parse(await ReadTextAsync(socket));
+        Assert.Equal("result", answer.RootElement.GetProperty("t").GetString());
+        Assert.False(string.IsNullOrEmpty(answer.RootElement.GetProperty("result").GetProperty("runId").GetString()));
+    }
+
     private static Task SendTextAsync(WebSocket socket, string text) =>
         socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
 
@@ -262,28 +321,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Debug_drop_closes_the_webviews_sockets_and_a_reopened_one_gets_what_it_missed()
-    {
-        var sessionId = await CreateSessionAsync();
-        await SendAsync(sessionId);
-        var agent = await _launcher.NextAsync();
-        await agent.StartAsync();
-        var prompt = await agent.ReadAsync("session/prompt");
-        using var first = await OpenLiveAsync(sessionId, after: 0);
-        Assert.Equal([1L, 2L], (await ApiTests.ReadRowsAsync(first, 2)).Select(row => row.GetProperty("seq").GetInt64()));
-
-        using var anonymous = new HttpClient { BaseAddress = _backend.Address };
-        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsync("/debug/drop", Json("""{"ms":5000}"""))).StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, (await _http.PostAsync("/debug/drop", Json("""{"ms":5000}"""))).StatusCode);
-        await ClosedAsync(first);
-
-        await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        using var second = await OpenLiveAsync(sessionId, after: 2);
-        ApiTests.AssertCaughtUpFrom(2, await ApiTests.ReadUntilTurnEndsAsync(second));
-    }
-
-    [Fact]
     public async Task Stopping_closes_the_webviews_sockets_first_so_it_stops_quickly()
     {
         var sessionId = await CreateSessionAsync();
@@ -293,27 +330,6 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await DisposeBackendAsync();
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(3), $"stopping took {clock.Elapsed.TotalSeconds:0.0} s");
         await ClosedAsync(socket);
-    }
-
-    [Fact]
-    public async Task The_page_uploads_an_image_by_its_path_and_appends_soak_lines_and_an_unknown_call_is_404()
-    {
-        var sessionId = await CreateSessionAsync();
-        var image = Path.Combine(_home, "shot.png");
-        await File.WriteAllBytesAsync(image, [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
-
-        var uploaded = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { sessionId, path = image })));
-        var soak = await _http.PostAsync("/page/soak.append", Json("""{"name":"run.csv","line":"a,b"}"""));
-        var notAnImage = await _http.PostAsync("/page/attachment.upload_path", Json(JsonSerializer.Serialize(new { sessionId, path = _home })));
-        var unknown = await _http.PostAsync("/page/token.get", null);
-
-        var result = JsonDocument.Parse(await uploaded.Content.ReadAsStringAsync()).RootElement;
-        Assert.False(string.IsNullOrEmpty(result.GetProperty("result").GetProperty("path").GetString()), result.ToString());
-        Assert.Equal(HttpStatusCode.OK, soak.StatusCode);
-        Assert.Equal("a,b\n", await File.ReadAllTextAsync(Path.Combine(_home, "soak-results", "run.csv")));
-        Assert.Equal(HttpStatusCode.BadRequest, notAnImage.StatusCode);
-        Assert.Equal("Only files can be attached", JsonDocument.Parse(await notAnImage.Content.ReadAsStringAsync()).RootElement.GetProperty("error").GetString());
-        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 
     [Fact]

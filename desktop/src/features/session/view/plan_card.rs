@@ -83,5 +83,5 @@ impl RenderOnce for PlanCard {
 }
 
 #[cfg(test)]
-#[path = "plan_card_tests.rs"]
+#[path = "tests/plan_card_tests.rs"]
 mod tests;

@@ -87,21 +87,40 @@ public sealed class ApiTests : IAsyncLifetime
         await Assert.ThrowsAsync<WebSocketException>(() => refused.ConnectAsync(SocketUri("/live?session=x&after=0&token=wrong"), CancellationToken.None));
     }
 
-    [Fact]
-    public async Task The_webview_origins_get_cors_and_preflights_need_no_token()
+    [Theory]
+    [InlineData("tauri://localhost")]
+    [InlineData("http://tauri.localhost")]
+    [InlineData("http://localhost:1430")]
+    [InlineData("http://localhost:1431")]
+    [InlineData("http://localhost:1432")]
+    [InlineData("http://localhost:1433")]
+    [InlineData("http://localhost:1434")]
+    [InlineData("http://localhost:1435")]
+    [InlineData("http://localhost:1436")]
+    [InlineData("http://localhost:1437")]
+    [InlineData("http://localhost:1438")]
+    [InlineData("http://localhost:1439")]
+    [InlineData("https://example.com")]
+    public async Task Browser_origins_get_no_cors_allowance_and_HTTP_auth_is_preserved(string origin)
     {
         using var anonymous = new HttpClient { BaseAddress = _base };
         using var preflight = new HttpRequestMessage(HttpMethod.Options, "/sessions/x/send");
-        preflight.Headers.Add("Origin", "tauri://localhost");
-        var answer = await anonymous.SendAsync(preflight);
-
+        preflight.Headers.Add("Origin", origin);
+        using var answer = await anonymous.SendAsync(preflight);
         Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
-        Assert.Equal("tauri://localhost", answer.Headers.GetValues("Access-Control-Allow-Origin").Single());
         Assert.Equal("Authorization, Content-Type", answer.Headers.GetValues("Access-Control-Allow-Headers").Single());
+        Assert.False(answer.Headers.Contains("Access-Control-Allow-Origin"));
 
-        using var other = new HttpRequestMessage(HttpMethod.Get, "/sessions");
-        other.Headers.Add("Origin", "https://example.com");
-        var listed = await _http.SendAsync(other);
+        using var unauthorized = new HttpRequestMessage(HttpMethod.Get, "/sessions");
+        unauthorized.Headers.Add("Origin", origin);
+        using var denied = await anonymous.SendAsync(unauthorized);
+        Assert.Equal(HttpStatusCode.Unauthorized, denied.StatusCode);
+        Assert.False(denied.Headers.Contains("Access-Control-Allow-Origin"));
+
+        using var authorized = new HttpRequestMessage(HttpMethod.Get, "/sessions");
+        authorized.Headers.Add("Origin", origin);
+        using var listed = await _http.SendAsync(authorized);
+        Assert.Equal(HttpStatusCode.OK, listed.StatusCode);
         Assert.False(listed.Headers.Contains("Access-Control-Allow-Origin"));
         Assert.Equal("no-store", listed.Headers.CacheControl?.ToString());
     }
