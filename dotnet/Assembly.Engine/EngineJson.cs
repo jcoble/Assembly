@@ -44,6 +44,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(MessageOutcome))]
 [JsonSerializable(typeof(StartSession))]
 [JsonSerializable(typeof(SetSessionState))]
+[JsonSerializable(typeof(ReportCapabilities))]
 [JsonSerializable(typeof(StopSession))]
 [JsonSerializable(typeof(LinkTask))]
 [JsonSerializable(typeof(StartRun))]

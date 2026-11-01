@@ -20,6 +20,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private readonly IAppDatabase _db;
+    private readonly TimeProvider _time;
     private readonly EngineTopics _topics;
     private readonly EngineTopics.Subscription _subscription;
     private readonly EngineTopics.Subscription _mirrorSubscription;
@@ -42,6 +43,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit)
     {
         _db = db;
+        _time = time;
         _topics = topics;
         Machine = EngineSchema.Open(db, time.GetUtcNow().ToUnixTimeMilliseconds());
         Reader = new(db, Machine);
@@ -101,6 +103,37 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
 
     internal CommandResult Submit(CommandContext context, EngineCommand command) =>
         ((IEngineRuntime)this).Write(scope => Commands.Apply(scope, context, command));
+
+    /// <summary>Reads the owning entity's version and epoch in the same writer as its fact.</summary>
+    internal CommandResult SubmitCurrent(string kind, string entityId, EngineCommand command) =>
+        ((IEngineRuntime)this).Write(scope =>
+        {
+            var sql = kind switch
+            {
+                "session" => "SELECT version,epoch FROM engine_session WHERE id=$id AND machine=$machine",
+                "needs_me" => "SELECT n.version,s.epoch FROM engine_needs_me n JOIN engine_session s ON s.id=n.session_id WHERE n.id=$id AND s.machine=$machine",
+                "tool_call" => "SELECT version,epoch FROM engine_tool_call WHERE id=$id AND machine=$machine",
+                "usage" => "SELECT version,epoch FROM engine_usage WHERE id=$id AND machine=$machine",
+                _ => throw new ArgumentOutOfRangeException(nameof(kind))
+            };
+            var current = scope.QueryFirst(sql, r => ((long Version, long Epoch)?)(r.Long(0), r.Long(1)),
+                new SqlArg("$id", entityId), new SqlArg("$machine", Machine));
+            var sessionId = command switch
+            {
+                global::Assembly.Engine.NeedsMe.OpenNeed open => open.SessionId,
+                ToolStarted start => start.Attribution.SessionId,
+                TurnUsage usage => usage.Attribution.SessionId,
+                _ => null
+            };
+            var creationEpoch = sessionId is null ? null : scope.QueryFirst(
+                "SELECT epoch FROM engine_session WHERE id=$id AND machine=$machine",
+                r => (long?)r.Long(0), new SqlArg("$id", sessionId), new SqlArg("$machine", Machine));
+            if (current is null && creationEpoch is null)
+                return new CommandResult(false, false, "bad_args", 0, 0, 0);
+            var epoch = current?.Epoch ?? creationEpoch!.Value;
+            return Commands.Apply(scope, new(Guid.NewGuid(), Machine, new(ActorKind.System, "adapter"),
+                entityId, current?.Version ?? 0, epoch, _time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+        });
 
     public void EffectsAvailable() => _worker.EffectsAvailable();
 
