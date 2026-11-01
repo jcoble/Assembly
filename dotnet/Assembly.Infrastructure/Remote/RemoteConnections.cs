@@ -79,6 +79,15 @@ internal sealed class RemoteConnections : IAsyncDisposable
         return (active.Machine, active.Config, () => active.Status.Unreachable(name, "Board connection closed"));
     }
 
+    internal RemoteMachine? ByEngineMachine(IAppDatabase db, string machine)
+    {
+        var name = db.QueryFirst("SELECT name FROM engine_mirror WHERE machine=$machine AND state<>'retired'",
+            row => row.Text(0), CancellationToken.None, new SqlArg("$machine", machine))
+            ?? throw new KeyNotFoundException("Unknown remote engine machine");
+        return _active.TryGetValue(name, out var active) ? active.Machine
+            : throw new MachineUnreachable(name, $"{name}: machine socket is disconnected");
+    }
+
     private Task Queue(string name, bool connect, bool probe = false, CancellationToken cancel = default)
     {
         lock (_gate)
