@@ -90,14 +90,81 @@ public sealed class UpdateReaderTests
     }
 
     [Fact]
-    public void Task_tool_updates_show_subagent_progress_without_creating_an_engine_session()
+    public void Task_tool_remains_a_tool_without_inventing_a_native_child_id()
+    {
+        var events = new UpdateReader().Read(Update("""{"sessionUpdate":"tool_call_update","toolCallId":"tool","name":"Task","status":"in_progress"}"""));
+        Assert.IsType<ToolCallChanged>(Assert.Single(events));
+    }
+
+    [Fact]
+    public void Native_subagent_patches_preserve_omission_clear_null_and_replace_state_snapshots()
     {
         var reader = new UpdateReader();
-        var events = reader.Read(Update("""{"sessionUpdate":"tool_call_update","toolCallId":"child","name":"Task","title":"Review","status":"in_progress"}"""));
-        Assert.Equal("running", Assert.Single(events.OfType<SubagentChanged>()).State);
-        var ended = reader.Read(Update("""{"sessionUpdate":"tool_call_update","toolCallId":"child","status":"completed"}"""));
-        Assert.Equal("idle", Assert.Single(ended.OfType<SubagentChanged>()).State);
+        SubagentChanged Read(string fields) => Assert.IsType<SubagentChanged>(Assert.Single(reader.Read(Update(
+            "{\"sessionUpdate\":\"subagent_update\",\"sessionId\":\"native\"," + fields + "}"))));
+        var unknown = Read("\"title\":\"Review\",\"description\":\"Role\",\"capabilities\":{\"cancel\":{}}");
+        Assert.Equal("unknown", unknown.State);
+        Assert.True(unknown.CanCancel);
+        var running = Read("\"state\":{\"state\":\"running\"}");
+        Assert.Equal("Review", running.Title);
+        var idle = Read("\"state\":{\"state\":\"idle\",\"stopReason\":\"error\",\"error\":{\"code\":-32603,\"message\":\"failed\"}}");
+        Assert.Equal("failed", idle.Error);
+        var replaced = Read("\"state\":{\"state\":\"running\"},\"capabilities\":{}");
+        Assert.Null(replaced.StopReason);
+        Assert.Null(replaced.Error);
+        Assert.False(replaced.CanCancel);
+        var cleared = Read("\"state\":null,\"title\":null,\"description\":null,\"capabilities\":null");
+        Assert.Equal("unknown", cleared.State);
+        Assert.Null(cleared.Title);
+        Assert.Null(cleared.Description);
+        Assert.False(cleared.CanCancel);
+        var omitted = Read("\"capabilities\":{\"cancel\":null}");
+        Assert.Equal(cleared with { At = omitted.At }, omitted);
     }
+
+    [Fact]
+    public void Provider_messages_resolve_sparse_participants_and_content_without_becoming_user_acknowledgements()
+    {
+        var reader = new UpdateReader();
+        ProviderSessionMessage Read(string fields, bool chunk = false) => Assert.IsType<ProviderSessionMessage>(Assert.Single(reader.Read(Update(
+            "{\"sessionUpdate\":\"" + (chunk ? "session_message_chunk" : "session_message") + "\",\"messageId\":\"native-message\"," + fields + "}"))));
+        var first = Read("\"content\":{\"type\":\"text\",\"text\":\"one\"}", chunk: true);
+        Assert.Null(first.SenderSessionId);
+        var linked = Read("\"senderSessionId\":\"parent\",\"recipientSessionId\":\"child\",\"senderMessageId\":\"outgoing\",\"recipientMessageId\":\"incoming\"");
+        Assert.Equal("one", Assert.Single(linked.Content).GetProperty("text").GetString());
+        var chunked = Read("\"content\":{\"type\":\"text\",\"text\":\"two\"}", chunk: true);
+        Assert.Equal(2, chunked.Content.Count);
+        Assert.Single(first.Content); // Later chunks cannot mutate earlier event snapshots.
+        var replaced = Read("\"content\":[{\"type\":\"text\",\"text\":\"replacement\"}],\"senderMessageId\":null");
+        Assert.Equal("replacement", Assert.Single(replaced.Content).GetProperty("text").GetString());
+        Assert.Equal("parent", replaced.SenderSessionId);
+        Assert.Equal("child", replaced.RecipientSessionId);
+        Assert.Null(replaced.SenderMessageId);
+        Assert.Equal("incoming", replaced.RecipientMessageId);
+        Assert.Empty(Read("\"content\":null,\"senderSessionId\":null,\"recipientSessionId\":null,\"recipientMessageId\":null").Content);
+        Assert.Empty(Read("\"content\":[]").Content);
+        Assert.IsType<SessionMessage>(Assert.Single(reader.Read(Update("""{"sessionUpdate":"user_message","messageId":"ack","content":[]}"""))));
+    }
+
+    [Fact]
+    public void Genuine_Claude_native_message_provenance_survives_replay_separately_from_prompt_ack()
+    {
+        var events = Assembly.Tests.Fixtures.FixtureReplay.Events("acp-v2/claude-native-subagents.jsonl");
+        var messages = events.OfType<ProviderSessionMessage>().ToList();
+        Assert.Equal(3, messages.Count);
+        Assert.Empty(events.OfType<SessionMessage>());
+        Assert.Equal(messages[0].MessageId, messages[1].MessageId);
+        Assert.Equal(messages[0].MessageId, messages[0].RecipientMessageId);
+        Assert.Null(messages[1].RecipientMessageId);
+        Assert.NotEqual(messages[0].SessionId, messages[1].SessionId);
+        Assert.NotNull(messages[1].SenderMessageId);
+        var child = Assert.Single(events.OfType<SubagentChanged>().Select(e => e.AcpSessionId).Distinct());
+        Assert.Equal(child, messages[0].RecipientSessionId);
+        Assert.Equal(child, messages[2].SenderSessionId);
+        Assert.Equal(2, messages[2].Content.Count);
+        Assert.Empty(new RowConverter().Apply(messages[0]).Rows);
+    }
+
     [Fact]
     public void Official_v2_tool_content_chunks_append_and_item_plans_replace_by_id()
     {
