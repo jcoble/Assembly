@@ -13,6 +13,7 @@ public sealed class EnginePublisher(IAppDatabase db, string? machine = null, lon
     private readonly Dictionary<string, Reader> _readers = [];
     private long _published = publishedThrough;
     private long? _generation = generation;
+    private long _resetVersion;
     private sealed class Consumer(Action<EngineEvent> onEvent, Action? reset)
     {
         public Action<EngineEvent> OnEvent { get; } = onEvent;
@@ -83,6 +84,7 @@ public sealed class EnginePublisher(IAppDatabase db, string? machine = null, lon
     {
         lock (_gate)
         {
+            _resetVersion++;
             _published = through;
             _generation = generation;
             _readers.Clear();
@@ -95,6 +97,9 @@ public sealed class EnginePublisher(IAppDatabase db, string? machine = null, lon
     {
         while (true)
         {
+            long version, after;
+            long? currentGeneration;
+            lock (_gate) { version = _resetVersion; after = _published; currentGeneration = _generation; }
             var events = db.Query("""
                 SELECT machine,seq,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json
                 FROM engine_event WHERE machine=COALESCE($machine,(SELECT machine_id FROM engine_meta WHERE singleton=1))
@@ -103,14 +108,18 @@ public sealed class EnginePublisher(IAppDatabase db, string? machine = null, lon
                     ORDER BY seq LIMIT 100
                 """, r => new EngineEvent(r.Text(0), r.Long(1), r.Text(2), r.Text(3), r.Text(4), r.Long(5), r.Long(6),
                     r.Long(7) != 0, JsonSerializer.Deserialize(r.Text(8), EngineJson.Default.EngineEventData)!),
-                cancellationToken, new SqlArg("$after", PublishedThrough), new SqlArg("$machine", machine), new SqlArg("$generation", _generation));
+                cancellationToken, new SqlArg("$after", after), new SqlArg("$machine", machine), new SqlArg("$generation", currentGeneration));
             foreach (var item in events)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 lock (_gate)
                 {
+                    if (version != _resetVersion) return;
                     foreach (var consumer in _consumers.ToArray())
+                    {
                         try { consumer.OnEvent(item); } catch { _consumers.Remove(consumer); }
+                        if (version != _resetVersion) return;
+                    }
                     _published = item.Seq;
                 }
             }

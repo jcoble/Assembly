@@ -54,13 +54,14 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
         private readonly Action<string, ISocketSubscription?> _send;
         private readonly Action _overflow;
         private readonly CancellationTokenSource _closed;
-        private readonly Channel<(EngineEvent? Event, int Bytes)> _pending = Channel.CreateUnbounded<(EngineEvent?, int)>(new() { SingleReader = true });
+        private readonly Channel<(EngineEvent? Event, int Bytes, int Version)> _pending = Channel.CreateUnbounded<(EngineEvent?, int, int)>(new() { SingleReader = true });
         private readonly Lock _cursor = new();
         private long _through;
         private long _ack;
         private long _buffered;
         private int _disposed;
         private int _snapshotVersion;
+        private int _activeVersion;
         private TaskCompletionSource? _next;
         private IDisposable? _reader;
 
@@ -88,7 +89,7 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
         private void Reset()
         {
             Interlocked.Increment(ref _snapshotVersion);
-            _pending.Writer.TryWrite((null, 0));
+            _pending.Writer.TryWrite((null, 0, Volatile.Read(ref _snapshotVersion)));
             lock (_cursor)
             {
                 _next?.TrySetResult();
@@ -107,7 +108,7 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
                 _overflow();
                 return;
             }
-            _pending.Writer.TryWrite((item, bytes));
+            _pending.Writer.TryWrite((item, bytes, Volatile.Read(ref _snapshotVersion)));
         }
 
         private async Task RunAsync(long? after, long cut, IDisposable registration)
@@ -118,19 +119,22 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
                 {
                     _through = cursor;
                     _reader = Track(cursor);
-                    await ReplayAsync(Math.Max(cut, cursor));
+                    await ReplayAsync(Math.Max(cut, cursor), _activeVersion);
                 }
                 else await SnapshotAsync();
-                await foreach (var (item, bytes) in _pending.Reader.ReadAllAsync(Closed))
+                await SynchronizeAsync();
+                await foreach (var (item, bytes, version) in _pending.Reader.ReadAllAsync(Closed))
                 {
                     Interlocked.Add(ref _buffered, -bytes);
-                    if (item is null) { await SnapshotAsync(); continue; }
+                    // Reset takes priority over the FIFO, including events queued before its wake marker.
+                    await SynchronizeAsync();
+                    if (item is null || version != _activeVersion) continue;
                     if (item.Seq <= _through) continue;
                     // A publisher cursor is contiguous; a broken cursor must reload current state.
                     if (item.Seq != _through + 1) { await SnapshotAsync(); continue; }
-                    if (_topic == "mirror") await ReplayAsync(item.Seq);
+                    if (_topic == "mirror") await ReplayAsync(item.Seq, version);
                     else Events(_through, item.Seq, EngineReader.Matches(item, _topic, _key) ? [item] : [], false,
-                        null, new(item.Kind, item.EntityId, item.Version));
+                        null, new(item.Kind, item.EntityId, item.Version), version);
                 }
             }
             catch (OperationCanceledException) when (Closed.IsCancellationRequested) { }
@@ -154,14 +158,28 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
             _overflow();
         });
 
-        private async Task ReplayAsync(long cut)
+        private async Task SynchronizeAsync()
+        {
+            while (_activeVersion != Volatile.Read(ref _snapshotVersion))
+                await SnapshotAsync();
+        }
+
+        private async Task ReplayAsync(long cut, int version)
         {
             do
             {
                 Closed.ThrowIfCancellationRequested();
-                var page = _runtime.Reader.Since(_topic, _key, _through, Closed, cut, _machine);
+                if (version != Volatile.Read(ref _snapshotVersion)) return;
+                StreamPage page;
+                try { page = _runtime.Reader.Since(_topic, _key, _through, Closed, cut, _machine); }
+                catch (ArgumentException error) when (_machine != _runtime.Machine && error.Message == "cursor_ahead" && version != Volatile.Read(ref _snapshotVersion))
+                {
+                    // Promotion may rewind the database while an old replay is reading it.
+                    return;
+                }
+                if (version != Volatile.Read(ref _snapshotVersion)) return;
                 if (page.SnapshotRequired) { await SnapshotAsync(); return; }
-                Events(page.After, page.Through, page.Events, page.HasMore, page.Rows, page.At);
+                if (!Events(page.After, page.Through, page.Events, page.HasMore, page.Rows, page.At, version)) return;
             } while (_through < cut);
         }
 
@@ -192,22 +210,26 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
                         next = _next.Task;
                     }
                     Send(frame);
+                    if (version != Volatile.Read(ref _snapshotVersion)) return;
                     // A partial snapshot cannot be acknowledged as complete.
-                    if (!more) { _through = page.Through; _ack = page.Through; }
+                    if (!more) { _through = page.Through; _ack = page.Through; _activeVersion = version; }
                 }
                 if (next is not null) await next.WaitAsync(Closed);
             } while (more);
         }
 
-        private void Events(long after, long through, IReadOnlyList<EngineEvent> events, bool more,
-            IReadOnlyList<JsonElement>? rows, CursorAt? at)
+        private bool Events(long after, long through, IReadOnlyList<EngineEvent> events, bool more,
+            IReadOnlyList<JsonElement>? rows, CursorAt? at, int version)
         {
             var frame = JsonSerializer.Serialize(new EngineEventsFrame(_id, _machine, after, through, events, more, rows, at),
                 EngineSocketJson.Default.EngineEventsFrame);
             lock (_cursor)
             {
+                if (version != Volatile.Read(ref _snapshotVersion)) return false;
                 Send(frame);
+                if (version != Volatile.Read(ref _snapshotVersion)) return false;
                 _through = through;
+                return true;
             }
         }
 
