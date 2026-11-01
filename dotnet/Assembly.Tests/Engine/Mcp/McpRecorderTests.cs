@@ -177,6 +177,56 @@ public sealed class McpRecorderTests
         Assert.DoesNotContain("secret", h.Text("output_preview")!);
     }
 
+    [Fact]
+    public async Task Mcp_calls_are_counted_apart_while_both_attributed_audits_remain()
+    {
+        await using var h = new Harness(worker: true);
+        var f = h.Fixture;
+        var attribution = new Attribution("s", "r", "st", 2, 0);
+        Assert.True(f.Apply(new ToolStarted(attribution, "acp", "provider-call", "probe",
+            JsonSerializer.SerializeToElement(new { acpKey = "input" }), 18), "acp", actor: Recorder).Applied);
+        f.Time.Advance(TimeSpan.FromMilliseconds(100));
+        Assert.True(f.Apply(new ToolEnded(attribution, "ok", JsonSerializer.SerializeToElement(new { acpResult = "output" }), 22), "acp", actor: Recorder).Applied);
+        var acpInput = f.Text("SELECT input_preview FROM engine_tool_call WHERE id='acp'");
+        var acpOutput = f.Text("SELECT output_preview FROM engine_tool_call WHERE id='acp'");
+        string? mcpInput = null;
+        var args = new Dictionary<string, JsonElement> { ["mcpKey"] = JsonSerializer.SerializeToElement("input") };
+        await h.Call((_, _) =>
+        {
+            mcpInput = f.Text("SELECT input_preview FROM engine_tool_call WHERE boundary='mcp'");
+            var running = new UsageQueries(f.Db).Sum("session", "s", default);
+            Assert.Equal(1, running.ToolCalls);
+            Assert.Equal(100, running.ToolDurationMs);
+            Assert.Equal(1, McpCalls(running));
+            f.Time.Advance(TimeSpan.FromMilliseconds(25));
+            return ValueTask.FromResult(Answer("mcp-output"));
+        }, args);
+        var audits = f.Db.Query("""
+            SELECT boundary,session_id,run_id,step_id,attempt,epoch,input_preview,output_preview,input_bytes,output_bytes
+            FROM engine_tool_call ORDER BY boundary
+            """, row => (Boundary: row.Text(0), Session: row.Text(1), Run: row.Text(2), Step: row.Text(3),
+                Attempt: row.Long(4), Epoch: row.Long(5), Input: row.Text(6), Output: row.Text(7), InputBytes: row.Long(8), OutputBytes: row.Long(9)), default);
+        Assert.Equal(new[] { "acp", "mcp" }, audits.Select(a => a.Boundary));
+        Assert.All(audits, a =>
+        {
+            Assert.Equal("s", a.Session); Assert.Equal("r", a.Run); Assert.Equal("st", a.Step);
+            Assert.Equal(2, a.Attempt); Assert.Equal(0, a.Epoch);
+            Assert.NotEmpty(a.Input); Assert.NotEmpty(a.Output); Assert.True(a.InputBytes > 0); Assert.True(a.OutputBytes > 0);
+        });
+        Assert.Equal(acpInput, audits[0].Input); Assert.Equal(acpOutput, audits[0].Output); Assert.Equal(mcpInput, audits[1].Input);
+        var rows = f.Count("engine_tool_call"); var events = f.Count("engine_event");
+        foreach (var (kind, id) in new[] { ("session", "s"), ("run", "r"), ("step", "st") })
+        {
+            var sum = new UsageQueries(f.Db).Sum(kind, id, default);
+            Assert.Equal(1, sum.ToolCalls); Assert.Equal(1, McpCalls(sum)); Assert.Equal(100, sum.ToolDurationMs);
+            Assert.Null(sum.InputTokens); Assert.Null(sum.CostNanodollars); Assert.Null(sum.TurnDurationMs);
+        }
+        Assert.Equal(rows, f.Count("engine_tool_call")); Assert.Equal(events, f.Count("engine_event"));
+    }
+
+    private static long McpCalls(UsageTotals totals) => JsonSerializer.SerializeToElement(totals,
+        EngineSocketJson.Default.UsageTotals).GetProperty("mcpCalls").GetInt64();
+
     private sealed class FailingRuntime(IEngineRuntime inner, int failAt) : IEngineRuntime
     {
         private int _writes;

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Assembly.Engine.Contracts;
 
 namespace Assembly.Engine.Recording;
@@ -11,5 +12,6 @@ public sealed record ToolEnded(Attribution Attribution, string Outcome, JsonElem
     long OutputBytes) : RecordingCommand;
 public sealed record TurnUsage(Attribution Attribution, string ProviderTurnId, long? InputTokens,
     long? OutputTokens, long? CachedTokens, long? CostNanodollars, long? DurationMs) : RecordingCommand;
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Skip)]
 public sealed record UsageTotals(long? InputTokens, long? OutputTokens, long? CachedTokens,
-    long? CostNanodollars, long? ToolDurationMs, long? TurnDurationMs, long ToolCalls);
+    long? CostNanodollars, long? ToolDurationMs, long? TurnDurationMs, long ToolCalls, long McpCalls = 0);
