@@ -1,9 +1,9 @@
-using Assembly.Application.Features.Engine.Persistence;
+using Assembly.Engine.Persistence;
 using Microsoft.Data.Sqlite;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
-using Assembly.Application.Features.Engine;
-using Assembly.Application.Features.Engine.Contracts;
+using Assembly.Engine;
+using Assembly.Engine.Contracts;
 using Assembly.Application.Common.Database;
 
 namespace Assembly.Tests.Engine;

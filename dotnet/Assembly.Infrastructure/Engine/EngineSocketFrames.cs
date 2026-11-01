@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Recording;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Recording;
 
 namespace Assembly.Infrastructure.Engine;
 

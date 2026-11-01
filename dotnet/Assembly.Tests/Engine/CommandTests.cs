@@ -1,9 +1,9 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Topics;
-using Assembly.Application.Features.Engine;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Persistence;
+using Assembly.Engine;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Persistence;
 using Microsoft.Data.Sqlite;
 
 namespace Assembly.Tests.Engine;

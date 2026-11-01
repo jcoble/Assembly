@@ -1,10 +1,10 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
-using Assembly.Application.Features.Engine;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Handoffs;
-using Assembly.Application.Features.Engine.Messages;
-using Assembly.Application.Features.Engine.Sessions;
+using Assembly.Engine;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Handoffs;
+using Assembly.Engine.Messages;
+using Assembly.Engine.Sessions;
 
 namespace Assembly.Tests.Engine;
 

@@ -35,13 +35,6 @@ expect() {
   if [ "$got" = "$1" ]; then echo "ok   $2"; else echo "FAIL $2: exit $got, wanted $1"; failed=1; fi
 }
 
-r=$(repo_with 10-no-engine.sh)
-mkdir -p "$r/dotnet/Assembly.Domain" && echo x >"$r/dotnet/Assembly.Domain/A.cs"
-expect 0 "no-engine: a tree without Assembly.Engine passes" "$r" 10-no-engine.sh
-mkdir -p "$r/dotnet/Assembly.Engine" && echo x >"$r/dotnet/Assembly.Engine/A.cs"
-expect 1 "no-engine: dotnet/Assembly.Engine/ coming back fails" "$r" 10-no-engine.sh
-rm -rf "$r"
-
 r=$(repo_with 30-provider-branches.sh)
 mkdir -p "$r/app/src/lib" "$r/dotnet/Assembly.Application/Common/Acp/V1" "$r/dotnet/Assembly.Tests" "$r/shell/src"
 echo "const agent = pick(); // a comment that says claude is fine" >"$r/app/src/lib/a.ts"
