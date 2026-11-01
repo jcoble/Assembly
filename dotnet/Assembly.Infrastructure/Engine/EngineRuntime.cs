@@ -20,11 +20,16 @@ public sealed class EngineRuntime : IAsyncDisposable
     private readonly IAppDatabase _db;
     private readonly EngineTopics _topics;
     private readonly EngineTopics.Subscription _subscription;
+    private readonly EngineTopics.Subscription _mirrorSubscription;
+    private readonly Lock _mirrorsGate = new();
+    private readonly Dictionary<string, (EnginePublisher Publisher, long Generation)> _mirrors = [];
+    private readonly HashSet<string> _mirrorChanges = [];
     private readonly EngineWorker _worker;
     private readonly Task _publisherTask;
     private readonly Task _workerTask;
     private Task? _dispose;
     private readonly Lock _disposeGate = new();
+    internal CancellationToken Stopping => _stop.Token;
     public string Machine { get; }
     public EngineCommands Commands { get; }
     public EngineReader Reader { get; }
@@ -44,6 +49,7 @@ public sealed class EngineRuntime : IAsyncDisposable
         _worker = new(db, Commands, Machine, time, effects, retention ?? new EngineRetention(
             () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
         _subscription = topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => _wake.Writer.TryWrite(true));
+        _mirrorSubscription = topics.Subscribe("__engine_mirrored", null, _ => { }, (machine, _) => MirrorChanged(machine!));
         _publisherTask = Task.Run(PublishAsync);
         _workerTask = Task.Run(() => _worker.RunAsync(_stop.Token));
         _wake.Writer.TryWrite(true); // catch up the durable log even without a new commit
@@ -60,6 +66,32 @@ public sealed class EngineRuntime : IAsyncDisposable
         return result;
     }
 
+    public EnginePublisher PublisherFor(string machine)
+    {
+        if (machine == Machine) return Publisher;
+        lock (_mirrorsGate)
+        {
+            var meta = MirrorMeta(machine);
+            if (!_mirrors.TryGetValue(machine, out var current))
+            {
+                current = (new(_db, machine, meta.Through, () => MirrorChanged(machine), meta.Generation), meta.Generation);
+                _mirrors.Add(machine, current);
+            }
+            return current.Publisher;
+        }
+    }
+
+    private (long Through, long Generation) MirrorMeta(string machine) => _db.QueryFirst(
+        "SELECT through,generation FROM engine_mirror WHERE machine=$machine AND state<>'retired'",
+        r => ((long Through, long Generation)?)(r.Long(0), r.Long(1)), _stop.Token, new SqlArg("$machine", machine))
+        ?? throw new KeyNotFoundException("Unknown mirror machine");
+
+    private void MirrorChanged(string machine)
+    {
+        lock (_mirrorsGate) _mirrorChanges.Add(machine);
+        _wake.Writer.TryWrite(true);
+    }
+
     public void EffectsAvailable() => _worker.EffectsAvailable();
 
     private async Task PublishAsync()
@@ -70,6 +102,31 @@ public sealed class EngineRuntime : IAsyncDisposable
             {
                 while (_wake.Reader.TryRead(out _)) { }
                 Publisher.Drain(_stop.Token);
+                string[] changed;
+                lock (_mirrorsGate) { changed = _mirrorChanges.ToArray(); _mirrorChanges.Clear(); }
+                foreach (var machine in changed)
+                {
+                    (long Through, long Generation) meta;
+                    try { meta = MirrorMeta(machine); }
+                    catch (KeyNotFoundException) { continue; } // A replaced remote may already be retired.
+                    EnginePublisher? publisher = null;
+                    bool reset = false;
+                    lock (_mirrorsGate)
+                    {
+                        if (_mirrors.TryGetValue(machine, out var current))
+                        {
+                            publisher = current.Publisher;
+                            reset = current.Generation != meta.Generation;
+                            _mirrors[machine] = (publisher, meta.Generation);
+                        }
+                    }
+                    // A newly opened publisher already represents this generation. Delayed notices must not
+                    // reset its readers or release their acknowledgements a second time.
+                    if (reset) publisher!.Reset(meta.Through, meta.Generation);
+                    else publisher?.Drain(_stop.Token);
+                    _db.Writer.Write("engine.mirror.retention", scope => EngineRetention.ApplyMirror(scope, machine,
+                        publisher?.MinimumReaderAck ?? long.MaxValue));
+                }
                 _worker.Wake();
             }
         }
@@ -84,6 +141,7 @@ public sealed class EngineRuntime : IAsyncDisposable
     private async Task StopAsync()
     {
         _topics.Unsubscribe(_subscription);
+        _topics.Unsubscribe(_mirrorSubscription);
         await _stop.CancelAsync();
         try { await Task.WhenAll(_workerTask, _publisherTask); }
         finally { _stop.Dispose(); }

@@ -18,6 +18,9 @@ public sealed class EngineSnapshot : IDisposable
     private readonly int _budget;
 
     internal EngineSnapshot(IReadSnapshot read, long through, string topic, string? key, string[] kinds, string machine)
+        : this(read, through, topic, key, machine, LocalQuery(topic, kinds)) { }
+
+    internal EngineSnapshot(IReadSnapshot read, long through, string topic, string? key, string machine, string sql)
     {
         _read = read;
         Through = through;
@@ -25,14 +28,19 @@ public sealed class EngineSnapshot : IDisposable
         _budget = topic == "mirror" ? 1024 * 1024 : 64 * 1024;
         _key = key;
         _machine = machine;
+        _sql = $"""
+            SELECT kind,id,item FROM ({sql})
+            WHERE kind>$kind OR (kind=$kind AND id>$id) ORDER BY kind,id LIMIT 201
+            """;
+    }
+
+    private static string LocalQuery(string topic, string[] kinds)
+    {
         var selects = kinds.Select(kind => $"""
             SELECT '{kind}' AS kind,t.id AS id,{(topic == "mirror" ? DisplayQueries.MirrorJson(kind) : DisplayQueries.Json(kind))} AS item
             FROM engine_{kind} t WHERE t.machine=$machine AND ($key IS NULL OR {DisplayQueries.KeyPredicate(topic, kind)})
             """);
-        _sql = $"""
-            SELECT kind,id,item FROM ({string.Join(" UNION ALL ", selects)})
-            WHERE kind>$kind OR (kind=$kind AND id>$id) ORDER BY kind,id LIMIT 201
-            """;
+        return string.Join(" UNION ALL ", selects);
     }
 
     public SnapshotPage ReadNext()

@@ -57,6 +57,12 @@ Each active remote has one `EngineMirror` on that same socket. Socket-open event
 subscription; it has no timer. `MirrorApply` copies remote display rows and journal events through the existing
 atomic writer, hiding partial snapshot generations until promotion. Mirror application never transitions local
 entities or queues effects; acknowledgements and page pulls follow committed writes.
+The window can select a machine on an engine subscription or entity read. Local reads keep their existing path;
+foreign reads use only the mirror's current generation and cursor. One lazy publisher per selected mirror shares
+its runtime's existing wake loop, and generation promotion pushes a fresh snapshot to its active subscriptions.
+Publisher drains bind the captured generation, so replacement history stays hidden until those subscriptions reset.
+Mirror retention uses the same atomic writer, keeps the newest 10,000 events and respects that mirror's window
+acknowledgements. Runtime shutdown cancels the streams and removes its single mirrored-change subscription.
 
 `/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
 For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;

@@ -34,11 +34,15 @@ internal sealed class TwoHosts : IAsyncDisposable
         public SocketEndpoint Endpoint { get; private set; } = null!;
         private bool _running;
         public int MachineCalls;
-        public Host() { Fixture = new(topics: Topics); Runtime = EngineRuntime.Start(Fixture.Db, Topics, Fixture.Time, () => 5); }
+        public event Action? RetentionCommitted;
+        private EngineRuntime StartRuntime() => EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time, () => 5);
+        private readonly bool _windowCalls;
+        public Host(bool windowCalls = false) { _windowCalls = windowCalls; Fixture = new(topics: Topics); Runtime = StartRuntime(); }
         public async Task Start(int port = 0)
         {
             var calls = new SocketDispatcher(Fixture.Db.Writer, Topics, Fixture.Time, NullLogger.Instance, new EngineSocketStream(Runtime));
-            calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, (_, c) => { Interlocked.Increment(ref MachineCalls); return Task.FromResult(Runtime.Reader.Machine(c.Cancellation)); });
+            if (_windowCalls) new EngineCalls(Runtime, Fixture.Time).Register(calls);
+            else calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, (_, c) => { Interlocked.Increment(ref MachineCalls); return Task.FromResult(Runtime.Reader.Machine(c.Cancellation)); });
             calls.Topic("sessions", SessionsJson.Default.SessionItem, s => s.SessionId, (_, _) => []);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));
@@ -68,7 +72,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             var port = Address.Port;
             await Stop();
             Fixture.RestoreFrom(path);
-            Runtime = EngineRuntime.Start(Fixture.Db, Topics, Fixture.Time, () => 5);
+            Runtime = StartRuntime();
             await Start(port);
         }
         public async Task Stop()
@@ -80,15 +84,33 @@ internal sealed class TwoHosts : IAsyncDisposable
         {
             var port = Address.Port;
             Fixture.Reopen();
-            Runtime = EngineRuntime.Start(Fixture.Db, Topics, Fixture.Time, () => 5);
+            Runtime = StartRuntime();
             await Start(port);
+        }
+        private sealed class ObservedDatabase(IAppDatabase db, Action retained) : IAppDatabase
+        {
+            public IAtomicWriter Writer { get; } = new ObservedWriter(db.Writer, retained);
+            public IReadSnapshot OpenSnapshot(CancellationToken ct) => db.OpenSnapshot(ct);
+            public List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken ct, params SqlArg[] args) => db.Query(sql, map, ct, args);
+            public T? QueryFirst<T>(string sql, Func<IRow, T> map, CancellationToken ct, params SqlArg[] args) => db.QueryFirst(sql, map, ct, args);
+            private sealed class ObservedWriter(IAtomicWriter writer, Action retained) : IAtomicWriter
+            {
+                public T Write<T>(string what, Func<IWriteScope, T> write)
+                {
+                    var result = writer.Write(what, write);
+                    if (what == "engine.mirror.retention") retained();
+                    return result;
+                }
+            }
         }
         public async ValueTask DisposeAsync() { await Stop(); Fixture.Dispose(); }
     }
 
     public Host Remote { get; private set; } = new();
-    public Host Mac { get; } = new();
+    public Host Mac { get; }
+    public TwoHosts(bool windowCalls = false) { Mac = new(windowCalls); }
     public EngineMirror Mirror { get; private set; } = null!;
+    public StringWriter MirrorLog { get; } = new();
     private RemoteMachine? _machine;
     private LiveHub? _hub;
     public async Task Start() { await Remote.Start(); await Mac.Start(); Remote.Fixture.SeedSession(); }
@@ -106,7 +128,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         });
         try
         {
-            Mirror = new(_machine, Mac.Fixture.Db.Writer, mirrorTime ?? TimeProvider.System, TextWriter.Null);
+            Mirror = new(_machine, Mac.Fixture.Db.Writer, mirrorTime ?? TimeProvider.System, MirrorLog);
             await _machine.ProbeAsync(default);
             await applied.Task.WaitAsync(TimeSpan.FromSeconds(30));
         }
@@ -126,5 +148,5 @@ internal sealed class TwoHosts : IAsyncDisposable
     public async Task StartMac() { await Mac.Restart(); await StartMirror(); }
     public async Task ReplaceRemote() { await Remote.DisposeAsync(); Remote = new(); await Remote.Start(); Remote.Fixture.SeedSession(); }
     public string? RowTitle => Mac.Fixture.Text("SELECT json_extract(r.row_json,'$.title') FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation WHERE m.state='live' AND r.entity_id='s'");
-    public async ValueTask DisposeAsync() { await StopMirror(); await Mac.DisposeAsync(); await Remote.DisposeAsync(); }
+    public async ValueTask DisposeAsync() { await StopMirror(); await Mac.DisposeAsync(); await Remote.DisposeAsync(); MirrorLog.Dispose(); }
 }
