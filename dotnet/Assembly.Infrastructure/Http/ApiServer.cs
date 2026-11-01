@@ -58,8 +58,8 @@ public static class ApiServer
                 services.Engine is { } engine ? new EngineSocketStream(engine) : null);
             foreach (var feature in services.Features ?? [])
                 feature.Register(calls);
-            var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System);
-            var bulk = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, bulk: true);
+            var socket = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, engineMachine: services.Engine?.Machine);
+            var bulk = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, bulk: true, engineMachine: services.Engine?.Machine);
             var terminal = new SocketEndpoint(services.Token, calls, Environment.MachineName, TimeProvider.System, terminal: true);
             app.Lifetime.ApplicationStopping.Register(terminal.CloseAll);
             app.Lifetime.ApplicationStopping.Register(socket.CloseAll);

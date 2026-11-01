@@ -22,7 +22,7 @@ internal sealed class MachineForward(Func<string, RemoteMachine?> byMachineId)
     {
         ct.ThrowIfCancellationRequested();
         var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
-        try { return await remote.CallAsync(feature, method, args, bulk, ct); }
+        try { return await remote.CallAsync(feature, method, args, bulk, ct, machine); }
         catch (Exception error) when (error is WebSocketException or IOException or HttpRequestException or ObjectDisposedException)
         {
             throw new MachineUnreachable(remote.Name!, $"{remote.Name}: machine socket closed", error);

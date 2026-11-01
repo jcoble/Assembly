@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
@@ -39,6 +40,11 @@ internal sealed class TwoHosts : IAsyncDisposable
         public event Action? RetentionCommitted;
         private readonly IEngineEffects? _effects;
         public Action? CommandCommitted { get; set; }
+        public Func<Task>? Identifying { get; set; }
+        public Func<Task>? OpeningBulk { get; set; }
+        public bool OmitBulkIdentity { get; set; }
+        public string? BulkIdentity { get; set; }
+        public int OwnerReadCalls;
         internal MachineForward? Forwarder { get; set; }
         private EngineRuntime StartRuntime() => EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time, () => 5, _effects);
         private readonly bool _windowCalls;
@@ -49,16 +55,21 @@ internal sealed class TwoHosts : IAsyncDisposable
             if (_windowCalls)
             {
                 var engineCalls = Forwarder is null ? new EngineCalls(Runtime, Fixture.Time) : new EngineCalls(Runtime, Fixture.Time, Forwarder);
-                engineCalls.Register(calls);
+                engineCalls.Register(new IdentityGate(calls, this));
             }
             else calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, (_, c) => { Interlocked.Increment(ref MachineCalls); return Task.FromResult(Runtime.Reader.Machine(c.Cancellation)); });
             calls.Topic("sessions", SessionsJson.Default.SessionItem, s => s.SessionId, (_, _) => []);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));
             App = builder.Build(); App.UseWebSockets();
-            Endpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time);
-            var bulk = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, bulk: true);
-            App.Map("/socket", Endpoint.HandleAsync); App.Map("/socket/bulk", bulk.HandleAsync);
+            Endpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, engineMachine: Runtime.Machine);
+            var bulk = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, bulk: true, engineMachine: OmitBulkIdentity ? null : BulkIdentity ?? Runtime.Machine);
+            App.Map("/socket", Endpoint.HandleAsync);
+            App.Map("/socket/bulk", async context =>
+            {
+                if (OpeningBulk is { } opening) await opening().WaitAsync(context.RequestAborted);
+                await bulk.HandleAsync(context);
+            });
             App.Lifetime.ApplicationStopping.Register(Endpoint.CloseAll); App.Lifetime.ApplicationStopping.Register(bulk.CloseAll);
             await App.StartAsync();
             _running = true;
@@ -96,6 +107,30 @@ internal sealed class TwoHosts : IAsyncDisposable
             Runtime = StartRuntime();
             await Start(port);
         }
+        private sealed class IdentityGate(ICallRegistry inner, Host host) : ICallRegistry
+        {
+            public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
+                Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false) =>
+                inner.Read(feature, method, args, result, async (value, call) =>
+                {
+                    if (feature == "engine" && method == "machine")
+                    {
+                        Interlocked.Increment(ref host.MachineCalls);
+                        if (host.Identifying is { } identify) await identify().WaitAsync(call.Cancellation);
+                    }
+                    if (feature == "engine" && method is "entity" or "usage") Interlocked.Increment(ref host.OwnerReadCalls);
+                    return await handler(value, call);
+                }, bulk);
+            public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
+                Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
+                Action<TArgs, CallContext>? failed = null, bool bulk = false) => inner.Write(feature, method, args, result, handler, order, failed, bulk);
+            public void Save<T>(string feature, JsonTypeInfo<T> type, Action<string, T, IWriteScope> save) => inner.Save(feature, type, save);
+            public void Closed(Action<string> connection) => inner.Closed(connection);
+            public void Topic<T>(string topic, JsonTypeInfo<T> type, Func<T, string> key,
+                Func<string?, CallContext, IReadOnlyList<T>> state, bool terminal = false) => inner.Topic(topic, type, key, state, terminal);
+            public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
+                Action<string, CallContext>? opened = null) => inner.Rows(topic, state, opened);
+        }
         private sealed class CommandWriter(IAtomicWriter writer, Action committed) : IAtomicWriter
         {
             public T Write<T>(string what, Func<IWriteScope, T> write)
@@ -129,6 +164,7 @@ internal sealed class TwoHosts : IAsyncDisposable
     private readonly bool _forwardCommands;
     private RemoteConnections? _connections;
     private MachinesFeature? _machinesFeature;
+    private MachineStore? _profiles;
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null)
     {
         _forwardCommands = forwardCommands;
@@ -158,7 +194,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         {
             if (_forwardCommands)
             {
-                var profiles = new MachineStore(Mac.Fixture.Db);
+                var profiles = _profiles = new MachineStore(Mac.Fixture.Db);
                 var machines = new MachineSet(new FakeMachine(null, sessions));
                 var status = new MachineStatus(Mac.Topics, []);
                 _machinesFeature = new(machines, status, () => { }, TimeProvider.System);
@@ -186,6 +222,21 @@ internal sealed class TwoHosts : IAsyncDisposable
         try { Observe(); await done.Task.WaitAsync(TimeSpan.FromSeconds(30)); }
         finally { Mac.Topics.Unsubscribe(sub); if (!_forwardCommands) Mirror.CaughtUp -= Observe; }
     }
+    public async Task ReconnectSaved()
+    {
+        _profiles!.Import(new("workbox-test", "isolated"));
+        await _connections!.ReadyAsync("workbox-test");
+        _machine = _connections.StartupSnapshot("workbox-test")!.Value.Machine;
+    }
+    public async Task ReplaceAtSameEndpoint(Host replacement)
+    {
+        var port = Remote.Address.Port;
+        await Remote.DisposeAsync();
+        Remote = replacement;
+        await Remote.Start(port);
+        Remote.Fixture.SeedSession();
+    }
+    internal RemoteMachine ConnectedMachine => _machine!;
     public Task DisconnectMirror() => _connections!.ConnectionAsync("workbox-test", false, default);
     public async Task StopMirror()
     {

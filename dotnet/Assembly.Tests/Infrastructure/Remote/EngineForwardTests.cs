@@ -13,7 +13,7 @@ using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
-public sealed class EngineForwardTests
+public sealed partial class EngineForwardTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(30);
     private static readonly EngineActor Adapter = new(ActorKind.System, "test-adapter");

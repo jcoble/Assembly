@@ -50,9 +50,9 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     /// <summary>Fires as the socket closes; a read's token is linked to it, a write's isn't.</summary>
     public CancellationToken Closed => _closed.Token;
 
-    public async Task RunAsync(byte[] token, string machine, CancellationToken stopping)
+    public async Task RunAsync(byte[] token, string machine, CancellationToken stopping, string? engineMachine = null)
     {
-        if (!await HelloAsync(token, machine, stopping))
+        if (!await HelloAsync(token, machine, stopping, engineMachine))
             return;
         // A drop or the host stopping cancels the reads at once, even one the receive loop is busy with (a sub's state).
         using var stopReads = stopping.Register(_closed.Cancel);
@@ -144,7 +144,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     }
 
     // The first frame must be a hello with this protocol and the token; nothing is sent before it.
-    private async Task<bool> HelloAsync(byte[] token, string machine, CancellationToken stopping)
+    private async Task<bool> HelloAsync(byte[] token, string machine, CancellationToken stopping, string? engineMachine)
     {
         string? text;
         try
@@ -164,7 +164,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             await CloseAsync((WebSocketCloseStatus)4401, "unauthorized");
         else
         {
-            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion), SocketJson.Default.WelcomeFrame),
+            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion, engineMachine), SocketJson.Default.WelcomeFrame),
                 WebSocketMessageType.Text, endOfMessage: true, stopping);
             return true;
         }

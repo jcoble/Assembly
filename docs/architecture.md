@@ -67,6 +67,8 @@ acknowledgements. Runtime shutdown cancels the streams and removes its single mi
 The window forwards commands and unmirrored tool/usage reads to the owning saved machine over its existing live/bulk
 sockets. Both ends enforce the window command allowlist. Forwarded commands keep their identity, version and epoch,
 use a separate write-order key per machine, and return the owner's receipt without changing local engine state.
+Forwarding requires the existing mirror handshake to verify the current live socket's Engine identity; reconnect
+invalidates that binding. Bulk payloads also require the same Engine identity in their optional welcome field.
 
 `/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
 For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;
