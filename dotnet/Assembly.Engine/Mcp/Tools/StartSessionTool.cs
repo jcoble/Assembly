@@ -8,12 +8,12 @@ public sealed record StartSessionArguments(string? Prompt = null, string? Title 
     string? Provider = null, string? Model = null, string? Folder = null, string? TaskUrl = null);
 public sealed record StartSessionAnswer(string SessionId, string MessageId);
 
-public sealed class StartSessionTool(McpGate gate, Func<string, string?> defaultModel, Func<string, bool> folderExists)
+public sealed class StartSessionTool(McpGate gate, Func<IReadOnlyList<string>> configuredProviders, Func<string, bool> folderExists)
     : EngineTool("start_session", "Start a helper session with a task.", """
         {"type":"object","additionalProperties":false,"required":["prompt","title"],"properties":{
             "prompt":{"type":"string","minLength":1,"maxLength":16000},
             "title":{"type":"string","minLength":1,"maxLength":120},
-            "provider":{"type":"string","enum":["claude","codex"]},
+            "provider":{"type":"string","minLength":1},
             "model":{"type":"string","minLength":1},"folder":{"type":"string","minLength":1},
             "taskUrl":{"type":"string","format":"uri"}}}
         """)
@@ -39,18 +39,18 @@ public sealed class StartSessionTool(McpGate gate, Func<string, string?> default
         var answer = gate.Write(caller, write =>
         {
             var provider = args.Provider ?? write.Caller.Provider;
-            string[] providers = ["claude", "codex"];
-            var configured = providers.Where(p => !string.IsNullOrWhiteSpace(defaultModel(p))).ToArray();
+            var configured = configuredProviders();
             if (!configured.Contains(provider, StringComparer.Ordinal))
                 throw Bad("provider", $"must be one of the configured providers: {string.Join(", ", configured)}");
-            var model = args.Model ?? (provider == write.Caller.Provider ? write.Caller.Model : defaultModel(provider));
-            if (string.IsNullOrWhiteSpace(model)) throw Bad("model", "must name a model");
+            var model = args.Model ?? (provider == write.Caller.Provider ? write.Caller.Model : null);
+            if (args.Model is not null && string.IsNullOrWhiteSpace(args.Model)) throw Bad("model", "must name a model");
             var folder = args.Folder ?? write.Caller.Folder;
             if (!Path.IsPathFullyQualified(folder) || !folderExists(folder))
                 throw Bad("folder", "must be an absolute existing folder on this machine");
             var childId = Guid.NewGuid().ToString();
             var messageId = Guid.NewGuid().ToString();
-            write.Apply(childId, 0, 0, new StartSession(provider, model, folder, args.Title, write.Caller.SessionId, null, args.TaskUrl));
+            write.Apply(childId, 0, 0, new StartSession(provider, model, folder, args.Title, write.Caller.SessionId, null, args.TaskUrl,
+                ManagedCheckout: args.Folder is null && write.Caller.ManagedCheckout));
             var prompt = $"Session \"{write.Caller.Title}\" ({write.Caller.SessionId}) started you. Do the task below. Your last reply each turn goes back to it as a message; you can also message it with the Assembly MCP server's send_message tool.\n\n{args.Prompt}";
             write.Apply(messageId, 0, 0, new SendMessage(write.Caller.SessionId, childId, prompt, "prompt"));
             return new StartSessionAnswer(childId, messageId);

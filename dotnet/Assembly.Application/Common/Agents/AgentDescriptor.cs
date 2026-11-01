@@ -10,7 +10,7 @@ namespace Assembly.Application.Common.Agents;
 /// </summary>
 public sealed record AgentDescriptor(
     string Id, string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env,
-    string? Cli = null)
+    string? Cli = null, string? VendorFamily = null)
 {
     /// <summary>The machine's agents, from its agents file's text: <c>[{ "id", "name", "command", "args": [], "env": {}, "cli" }]</c>.</summary>
     public static IReadOnlyList<AgentDescriptor> Parse(string json) =>

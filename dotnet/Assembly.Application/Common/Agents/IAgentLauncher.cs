@@ -9,6 +9,9 @@ public interface IAgentLauncher
     /// <summary>Clones the session's repo into its own folder if it isn't there yet, and returns the folder. Marks the clone.</summary>
     Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken);
 
+    /// <summary>Validates an absolute existing direct working folder, using the ordinary plain folder failure.</summary>
+    void ValidateFolder(string folder);
+
     /// <summary>The agents this machine can run.</summary>
     IReadOnlyList<AgentDescriptor> Agents { get; }
 

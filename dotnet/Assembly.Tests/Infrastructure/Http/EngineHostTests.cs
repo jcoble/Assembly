@@ -22,6 +22,30 @@ public sealed class EngineHostTests
     [Theory]
     [InlineData("desktop")]
     [InlineData("remote")]
+    public async Task Both_real_hosts_use_saved_single_session_limit_preferences(string host)
+    {
+        var home = Directory.CreateTempSubdirectory("assembly-engine-limits-").FullName;
+        try
+        {
+            using (var db = TestDatabase.Open(Path.Combine(home, "assembly.db")))
+            using (var values = JsonDocument.Parse("""{"sessions.depthLimit":3,"sessions.childLimit":1}"""))
+                new Assembly.Application.Features.Preferences.PreferenceStore(db).Save(values.RootElement);
+            await using var running = await Host.Start(host, home, new HostEffects());
+            using var socket = await running.Open();
+            await Command(socket, "root", new StartSession("claude", null, home, "Root", null, null, null));
+            await Command(socket, "a", new StartSession("claude", null, home, "A", "root", null, null));
+            await Command(socket, "b", new StartSession("claude", null, home, "B", "a", null, null));
+            var refused = await Call(socket, "command", JsonSerializer.SerializeToElement(new WindowCommand(Guid.NewGuid(), "other", 0, 0,
+                new StartSession("claude", null, home, "Other", "root", null, null)), EngineSocketJson.Default.WindowCommand));
+            Assert.False(refused.GetProperty("applied").GetBoolean());
+            Assert.Equal("child_limit", refused.GetProperty("error").GetString());
+        }
+        finally { Directory.Delete(home, true); }
+    }
+
+    [Theory]
+    [InlineData("desktop")]
+    [InlineData("remote")]
     public async Task Real_host_drives_core_and_reconnects(string host)
     {
         var home = Directory.CreateTempSubdirectory("assembly-engine-host-").FullName;

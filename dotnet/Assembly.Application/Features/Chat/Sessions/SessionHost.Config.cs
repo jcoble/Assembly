@@ -57,11 +57,10 @@ public sealed partial class SessionHost
             _sessionStore.SetConfigChoice(_sessionId, configId, value);
             return;
         }
+        System.Text.Json.JsonElement options;
         try
         {
-            var set = await session.Adapter.Link.Client.SetConfigOptionAsync(session.AcpSessionId, configId, value, cancellationToken);
-            _sessionStore.SetConfigChoice(_sessionId, configId, value);
-            _sessionStore.SetConfigOptions(_sessionId, set.ConfigOptions.GetRawText());
+            options = (await session.Adapter.Link.Client.SetConfigOptionAsync(session.AcpSessionId, configId, value, cancellationToken)).ConfigOptions;
         }
         catch (JsonRpcException error)
         {
@@ -69,9 +68,11 @@ public sealed partial class SessionHost
         }
         catch (Exception error) when (error is IOException or ObjectDisposedException)
         {
-            // The session is ending; the choice is kept for the next one.
-            _sessionStore.SetConfigChoice(_sessionId, configId, value);
+            // The session is ending; the choice is kept for the next one without confirming model intent.
+            _sessionStore.SetUnconfirmedConfigChoice(_sessionId, configId, value);
             Console.Error.WriteLine($"session {_sessionId}: {configId}={value} wasn't set on the open session: {error.Message}");
+            return;
         }
+        _sessionStore.ConfirmModelSelection(_sessionId, configId, value, options.GetRawText());
     }
 }

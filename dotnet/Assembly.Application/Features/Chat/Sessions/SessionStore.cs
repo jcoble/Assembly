@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Engine;
 
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
@@ -10,7 +11,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// The sessions list, in the same SQLite file as the rows. Writes here are rare (create, title, send) and go through
 /// the file's one writer, like the row commits.
 /// </summary>
-public sealed class SessionStore
+public sealed partial class SessionStore
 {
     private const string Schema = """
         CREATE TABLE IF NOT EXISTS session_info(session_id TEXT PRIMARY KEY, agent TEXT NOT NULL, repo_url TEXT NOT NULL,
@@ -63,9 +64,11 @@ public sealed class SessionStore
     private readonly TimeProvider _time;
     private readonly SessionSummaries? _summaries;
     private readonly string _checkouts;
+    private readonly bool _hasPendingModel;
 
-    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time, SessionSummaries? summaries, string checkouts)
+    private SessionStore(IAppDatabase db, IAtomicWriter writer, TimeProvider time, SessionSummaries? summaries, string checkouts, bool hasPendingModel)
     {
+        _hasPendingModel = hasPendingModel;
         _summaries = summaries;
         _checkouts = checkouts;
         _db = db;
@@ -76,7 +79,7 @@ public sealed class SessionStore
     /// <summary><paramref name="checkouts"/> is the folder holding this machine's sessions' checkouts.</summary>
     public static SessionStore Open(IAppDatabase db, TimeProvider time, string checkouts, SessionSummaries? summaries = null)
     {
-        db.Writer.Write("sessions.schema", scope =>
+        var hasPendingModel = db.Writer.Write("sessions.schema", scope =>
         {
             bool Missing(string sql) => scope.QueryFirst(sql, row => row.Long(0)) == 0;
             Chat.Schema.RenameOldNames(scope);
@@ -106,9 +109,9 @@ public sealed class SessionStore
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
             if (Missing(HasMessageAnswer))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
-            return 0;
+            return !Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='pending_model'");
         });
-        return new SessionStore(db, db.Writer, time, summaries, checkouts);
+        return new SessionStore(db, db.Writer, time, summaries, checkouts, hasPendingModel);
     }
 
     /// <summary>A config's chosen values, from its JSON object; anything not a string is left out.</summary>
@@ -123,7 +126,7 @@ public sealed class SessionStore
     public SessionInfo Create(string agent, string repoUrl)
     {
         var session = new SessionInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now());
-        Change(session.SessionId,
+        CreateOwned(session, null,
             "INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at) VALUES ($id, $agent, $repo, $now, $now);",
             ("$id", session.SessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt));
         return session;
@@ -164,11 +167,11 @@ public sealed class SessionStore
         });
 
     /// <summary>A helper session, which <paramref name="parent"/>'s agent started, on the parent's machine and repo.</summary>
-    public SessionInfo Helper(SessionInfo parent, string agent, string title)
+    public SessionInfo Helper(SessionInfo parent, string agent, string title, string? initiatingSessionId = null)
     {
         var helper = new SessionInfo(Guid.NewGuid().ToString(), agent, parent.RepoUrl, title, null, Now(), parent.Machine,
             ParentSessionId: parent.SessionId, Helper: true);
-        Change(helper.SessionId, """
+        CreateOwned(helper, initiatingSessionId, """
             INSERT INTO session_info(session_id, agent, repo_url, title, created_at, updated_at, machine, parent_session_id, helper)
             VALUES ($id, $agent, $repo, $title, $now, $now, $machine, $parent, 1);
             """, ("$id", helper.SessionId), ("$agent", agent), ("$repo", helper.RepoUrl), ("$title", title), ("$now", helper.UpdatedAt),
@@ -315,8 +318,16 @@ public sealed class SessionStore
     /// the write, so a title arriving meanwhile can't slip past it.
     /// </summary>
     public void SetTitle(string sessionId, string title, string source) =>
-        Change(sessionId, $"UPDATE session_info SET title = $title, title_source = $source WHERE session_id = $id AND {Rank("$source")} >= {Rank("title_source")};",
-            ("$id", sessionId), ("$title", title), ("$source", source));
+        _writer.Write("sessions", scope =>
+        {
+            var before = Get(scope, sessionId)?.Title;
+            scope.Execute($"UPDATE session_info SET title = $title, title_source = $source WHERE session_id = $id AND {Rank("$source")} >= {Rank("title_source")};",
+                new SqlArg("$id", sessionId), new SqlArg("$title", title), new SqlArg("$source", source));
+            var actual = Get(scope, sessionId)?.Title;
+            if (actual is not null && actual != before) _engine?.Titled(scope, sessionId, actual);
+            Publish(scope, sessionId);
+            return 0;
+        });
 
     private static string Rank(string source) => $"(CASE {source} WHEN 'user' THEN 2 WHEN 'helper' THEN 1 ELSE 0 END)";
 
@@ -327,56 +338,6 @@ public sealed class SessionStore
     public void SetSessionCost(string sessionId, decimal total) =>
         Execute("UPDATE session_info SET session_cost = $cost WHERE session_id = $id;",
             ("$id", sessionId), ("$cost", total.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-
-    /// <summary>
-    /// The config options the session's agent last reported for its ACP session (raw JSON), the values chosen for it, and
-    /// the slash commands its agent last sent; with no list of its own, the last one that agent sent here.
-    /// </summary>
-    public SessionConfig Config(string sessionId) =>
-        _db.QueryFirst("""
-            SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands)
-            FROM (SELECT $id AS session_id) t
-            LEFT JOIN session_config c ON c.session_id = t.session_id
-            LEFT JOIN session_commands tc ON tc.session_id = t.session_id
-            LEFT JOIN session_info i ON i.session_id = t.session_id
-            LEFT JOIN agent_commands ac ON ac.agent = i.agent;
-            """, row => new SessionConfig(
-                row.IsNull(0) ? null : row.Text(0),
-                row.IsNull(1) ? new Dictionary<string, string>() : ReadChoices(row.Text(1)),
-                row.IsNull(2) ? null : row.Text(2)), CancellationToken.None, new SqlArg("$id", sessionId))!;
-
-    /// <summary>Saves the slash commands the session's agent sent, as the session's and as that agent's latest.</summary>
-    public void SetCommands(string sessionId, string commands) =>
-        Execute("""
-            INSERT INTO session_commands(session_id, commands) VALUES ($id, $commands)
-            ON CONFLICT(session_id) DO UPDATE SET commands = $commands;
-            INSERT INTO agent_commands(agent, commands) SELECT agent, $commands FROM session_info WHERE session_id = $id
-            ON CONFLICT(agent) DO UPDATE SET commands = $commands;
-            """, ("$id", sessionId), ("$commands", commands));
-
-    public void SetConfigOptions(string sessionId, string options) =>
-        Execute("""
-            INSERT INTO session_config(session_id, options) VALUES ($id, $options)
-            ON CONFLICT(session_id) DO UPDATE SET options = $options;
-            """, ("$id", sessionId), ("$options", options));
-
-    /// <summary>Chooses <paramref name="value"/> for the option: it's applied to every ACP session the session opens from now on.</summary>
-    public void SetConfigChoice(string sessionId, string configId, string value) =>
-        Execute("""
-            INSERT INTO session_config(session_id, choices) VALUES ($id, json_object($config, $value))
-            ON CONFLICT(session_id) DO UPDATE SET choices = json_set(choices, '$."' || $config || '"', $value);
-            """, ("$id", sessionId), ("$config", configId.Replace("\"", "")), ("$value", value));
-
-    /// <summary>The config options of the agent's latest new session: what a session that hasn't opened one yet starts with.</summary>
-    public string? AgentConfig(string agent) =>
-        _db.QueryFirst("SELECT options FROM agent_config WHERE agent = $agent;", row => row.Text(0), CancellationToken.None,
-            new SqlArg("$agent", agent));
-
-    public void SetAgentConfig(string agent, string options) =>
-        Execute("""
-            INSERT INTO agent_config(agent, options) VALUES ($agent, $options)
-            ON CONFLICT(agent) DO UPDATE SET options = $options;
-            """, ("$agent", agent), ("$options", options));
 
     /// <summary>Publishes the session's list item again, for a change to its summary. It goes through the writer, like
     /// every other change to the item, so the items go out in the order they were read.</summary>
@@ -410,20 +371,45 @@ public sealed class SessionStore
     public SessionItem Item(SessionInfo session) =>
         SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(session));
 
-    /// <summary>
-    /// The session's folder on this machine, made on its first send, so it may not exist yet; null for a session that runs
-    /// on another machine, or has no folder.
-    /// </summary>
-    public string? Root(SessionInfo session) => session.Machine is null ? Folder(_checkouts, Top(session)) : null;
+    public SessionItem Item(IReadScope scope, SessionInfo session) =>
+        SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(scope, session));
 
-    /// <summary>
-    /// The session at the top of <paramref name="session"/>'s parents, whose folder its children all work in: itself when it
-    /// has no parent; the walk stops at a parent that's missing or already passed.
-    /// </summary>
+    public string? Root(SessionInfo session) => Location(session)?.Folder;
+    public string? Root(IReadScope scope, SessionInfo session) => Location(scope, session)?.Folder;
+
+    public SessionLocation? Location(SessionInfo session)
+    {
+        using var scope = _db.OpenSnapshot(CancellationToken.None);
+        return Location(scope, session);
+    }
+
+    public SessionLocation? Location(IReadScope scope, SessionInfo session)
+    {
+        if (!string.IsNullOrEmpty(session.Machine)) return null;
+        var current = session;
+        var passed = new HashSet<string>(StringComparer.Ordinal);
+        while (passed.Add(current.SessionId))
+        {
+            if (_engine?.Location(scope, current.SessionId) is { } location) return location;
+            if (current.ParentSessionId is not { } parent || Get(scope, parent) is not { } ancestor) break;
+            current = ancestor;
+        }
+        return Folder(_checkouts, Top(scope, session)) is { } folder ? new(folder, true) : null;
+    }
+
+    public string? ManagedFolder(SessionInfo session) => Folder(_checkouts, Top(session));
+
     public SessionInfo Top(SessionInfo session)
     {
+        using var scope = _db.OpenSnapshot(CancellationToken.None);
+        return Top(scope, session);
+    }
+
+    /// <summary>Resolves the owning ancestor using only the supplied transaction.</summary>
+    public SessionInfo Top(IReadScope scope, SessionInfo session)
+    {
         var passed = new HashSet<string>(StringComparer.Ordinal) { session.SessionId };
-        while (session.ParentSessionId is { } parentId && passed.Add(parentId) && Get(parentId) is { } parent)
+        while (session.ParentSessionId is { } parentId && passed.Add(parentId) && Get(scope, parentId) is { } parent)
             session = parent;
         return session;
     }
@@ -487,14 +473,16 @@ public sealed class SessionStore
 
     private void Publish(IWriteScope scope, string sessionId)
     {
-        if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", sessionId)) is { } session)
-        {
-            // Started sessions belong in the list; a native subagent's is opened from its parent.
-            scope.Publish(SessionsFeature.Topic, sessionId, Item(session), SessionsJson.Default.SessionItem,
-                keyedOnly: session.ParentSessionId is not null && !session.Helper);
-            // The rail hears every session's change.
-            scope.Publish(SessionsFeature.RailTopic, sessionId, new SessionsFeature.RailChange(sessionId), SessionsJson.Default.RailChange);
-        }
+        if (Get(scope, sessionId) is { } session)
+            Publish(scope, session, Item(scope, session));
+    }
+
+    private static void Publish(IWriteScope scope, SessionInfo session, SessionItem item)
+    {
+        // Native subagents remain keyed-only; the rail hears every session's change.
+        scope.Publish(SessionsFeature.Topic, session.SessionId, item, SessionsJson.Default.SessionItem,
+            keyedOnly: session.ParentSessionId is not null && !session.Helper);
+        scope.Publish(SessionsFeature.RailTopic, session.SessionId, new SessionsFeature.RailChange(session.SessionId), SessionsJson.Default.RailChange);
     }
 
     private List<SessionInfo> Query(string sql, params (string Name, object? Value)[] parameters) =>

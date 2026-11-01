@@ -195,8 +195,8 @@ if os.environ["ASSEMBLY_CLAUDEAI_MCP"] == "off":
 node, adapters = os.environ["ASSEMBLY_NODE"], os.environ["ASSEMBLY_ADAPTERS"]
 acp = lambda name: f"{adapters}/node_modules/@agentclientprotocol/{name}/dist/index.js"
 agents = [
-    {"id": "claude", "name": "Claude Code", "command": node, "args": [f"{adapters}/claude-launcher.ts"], "env": claude_env},
-    {"id": "codex", "name": "Codex", "command": node, "args": [acp("codex-acp")], "env": {"CODEX_CONFIG": json.dumps(codex)}},
+    {"id": "claude", "vendorFamily": "claude", "name": "Claude Code", "command": node, "args": [f"{adapters}/claude-launcher.ts"], "env": claude_env},
+    {"id": "codex", "vendorFamily": "codex", "name": "Codex", "command": node, "args": [acp("codex-acp")], "env": {"CODEX_CONFIG": json.dumps(codex)}},
 ]
 for agent in agents:
     if cli := os.environ[f"ASSEMBLY_{agent['id'].upper()}"]:

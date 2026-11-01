@@ -40,15 +40,27 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, SessionLimits limits,
-        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit)
+        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover)
     {
         _db = db;
         _time = time;
         _topics = topics;
-        Machine = EngineSchema.Open(db, time.GetUtcNow().ToUnixTimeMilliseconds());
+        Action<IWriteScope>? projectionSchema = cutover is null ? null : cutover.EnsureSchema;
+        Action<IWriteScope, CommandContext, StartSession>? projectStart = cutover is null ? null : cutover.ProjectStart;
+        Func<string, string>? accountContext = cutover is null ? null : cutover.AccountContext;
+        var now = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var initialized = db.Writer.Write("engine.initialize", scope =>
+        {
+            var schema = EngineSchema.Initialize(scope, now, projectionSchema);
+            var commands = new EngineCommands(schema.Machine, limits, messageLimit, projectStart, accountContext);
+            cutover?.Initialize(scope, commands, schema.Machine, now, schema.PreviousVersion is 1 or 2 or 3);
+            return (Machine: schema.Machine, Commands: commands);
+        });
+        Machine = initialized.Machine;
+        Commands = initialized.Commands;
+        cutover?.Attach(Commands, Machine);
         Reader = new(db, Machine);
         Usage = new(db);
-        Commands = new(Machine, limits, messageLimit);
         Publisher = new(db);
         _worker = new(db, Commands, Machine, time, effects, retention ?? new EngineRetention(
             () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
@@ -60,8 +72,8 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     }
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
-        SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null) =>
-        new(db, topics, time, limits, effects, retention, messageLimit);
+        SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null, SessionCutover? cutover = null) =>
+        new(db, topics, time, limits, effects, retention, messageLimit, cutover);
 
     T IEngineRuntime.Write<T>(Func<IWriteScope, T> body)
     {

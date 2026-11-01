@@ -47,10 +47,16 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
         sessions.Get(id) switch
         {
             { Machine: { Length: > 0 } machine } => throw new CallFailed($"The terminal for a session on {machine} can't be opened here yet."),
-            { } session when SessionStore.Folder(checkouts, sessions.Top(session)) is { } folder && Directory.Exists(folder) => folder,
+            { } session when sessions.Root(session) is { } folder && Directory.Exists(folder) => folder,
             null => throw new CallFailed($"Unknown terminal owner: {id}"),
             _ => null,
         };
+
+    public void ValidateFolder(string folder)
+    {
+        if (!Path.IsPathFullyQualified(folder) || !Directory.Exists(folder))
+            throw new CallFailed(File.Exists(folder) ? $"This session's folder isn't a folder: {folder}" : $"This session's folder no longer exists: {folder}");
+    }
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {

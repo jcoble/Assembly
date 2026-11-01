@@ -2,9 +2,14 @@ using Assembly.Application.Common.Database;
 
 namespace Assembly.Engine.Persistence;
 
+public sealed record EngineSchemaInitialization(string Machine, long? PreviousVersion);
+
 public static class EngineSchema
 {
-    public static string Open(IAppDatabase db, long nowMs) => db.Writer.Write("engine.schema", scope =>
+    public static string Open(IAppDatabase db, long nowMs, Action<IWriteScope>? projectionSchema = null) =>
+        db.Writer.Write("engine.schema", scope => Initialize(scope, nowMs, projectionSchema).Machine);
+
+    public static EngineSchemaInitialization Initialize(IWriteScope scope, long nowMs, Action<IWriteScope>? projectionSchema = null)
     {
         scope.Execute("""
             CREATE TABLE IF NOT EXISTS engine_meta (
@@ -18,27 +23,34 @@ public static class EngineSchema
         {
             scope.Execute(Create);
             scope.Execute(CreateMirrors);
+            projectionSchema?.Invoke(scope);
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,3,$machine,1,0,0);
+                VALUES(1,4,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
-            return machine;
+            return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3))
+        if (meta.Version is not (1 or 2 or 3 or 4))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version == 3)
-            return meta.Machine;
+        if (meta.Version == 4)
+        {
+            projectionSchema?.Invoke(scope);
+            return new(meta.Machine, meta.Version);
+        }
         if (meta.Version == 1)
         {
             scope.Execute(UpgradeVersion1);
             scope.Execute(CreateMirrors);
         }
-        scope.Execute(UpgradeDelivery);
-        Messages.MessageSchemaUpgrade.Apply(scope, meta.Machine, nowMs);
-        scope.Execute("UPDATE engine_meta SET schema_version=3 WHERE singleton=1");
-        return meta.Machine;
-    });
+        if (meta.Version < 3)
+        {
+            scope.Execute(UpgradeDelivery);
+            Messages.MessageSchemaUpgrade.Apply(scope, meta.Machine, nowMs);
+        }
+        SessionSchemaUpgrade.Apply(scope, projectionSchema);
+        return new(meta.Machine, meta.Version);
+    }
 
     private const string UpgradeDelivery = """
         ALTER TABLE engine_message ADD COLUMN delivery TEXT NOT NULL DEFAULT 'wait';
@@ -83,7 +95,9 @@ public static class EngineSchema
 
     private const string Create = $$"""
         CREATE TABLE engine_session ({{Shared}}
-            provider TEXT NOT NULL, model TEXT NOT NULL, folder TEXT NOT NULL, title TEXT NOT NULL,
+            provider TEXT NOT NULL, model TEXT NULL, folder TEXT NOT NULL, title TEXT NOT NULL,
+            account_context TEXT NOT NULL DEFAULT '',
+            managed_checkout INTEGER NOT NULL DEFAULT 0 CHECK(managed_checkout IN (0,1)),
             state TEXT NOT NULL, activity_state TEXT NOT NULL,
             parent_id TEXT REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
             provider_session_id TEXT, holder TEXT NOT NULL, epoch INTEGER NOT NULL,
