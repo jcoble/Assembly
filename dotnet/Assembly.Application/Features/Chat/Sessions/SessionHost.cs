@@ -358,7 +358,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         if (subagent)
             return await StopSubagentAsync(taskId, cancellationToken);
 
-        return false; // ACP v2 stops background work only through session/close.
+        return false; // Generic tool work has no standard ACP v2 current-work cancellation.
     }
 
     /// <summary>Stops a subagent's current work (<c>session/cancel</c> with its child session id); its parent goes on.</summary>

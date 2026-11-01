@@ -17,7 +17,7 @@ internal sealed class Subagents
     public SubagentShown Changed(SessionInfo parent, SubagentChanged change) =>
         Show(change.At, change.AcpSessionId, new SubagentPayload(parent.SessionId,
             change.Title ?? "", change.Description, change.State ?? "unknown", change.StopReason,
-            change.Error, false, null, CanCancel: change.CanCancel ?? false));
+            change.Error, change.CanCancel == true && change.State is "running" or "requires_action", null, CanCancel: change.CanCancel ?? false));
 
     private SubagentShown Show(long at, string id, SubagentPayload payload)
     {

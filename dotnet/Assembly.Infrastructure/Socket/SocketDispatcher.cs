@@ -135,7 +135,12 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             try
             {
                 return engine.Subscribe(id, frame.Topic!, frame.Key, frame.After,
-                    (text, from) => connection.Send(Encoding.UTF8.GetBytes(text), from), connection.Closed, connection.Abort);
+                    (text, from) => connection.Send(Encoding.UTF8.GetBytes(text), from), connection.Closed, connection.Abort, frame.At, frame.Machine);
+            }
+            catch (KeyNotFoundException error)
+            {
+                connection.Send(Error(id, "not_found", error.Message));
+                return null;
             }
             catch (ArgumentException error)
             {
@@ -263,6 +268,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
                 : await Task.Run(() => call.RunAsync(args, context));
             var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
             return Bounded(answer, id);
+        }
+        catch (KeyNotFoundException error)
+        {
+            return Error(id, "not_found", error.Message);
         }
         catch (CallFailed error)
         {

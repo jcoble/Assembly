@@ -52,7 +52,18 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 
 ## One socket
 
-The authenticated `/socket` also carries the engine's six filtered topics through `stream:"engine"`, with snapshot/catch-up pages and reader acknowledgements; omitting `stream` preserves the existing topics.
+The authenticated `/socket` also carries the engine's six filtered topics and local display-only `mirror` topic through `stream:"engine"`, with cursor fingerprints, client-pulled mirror snapshots, catch-up pages and reader acknowledgements; `engine/machine` reports the local identity and watermark, and omitting `stream` preserves the existing topics.
+Each active remote has one `EngineMirror` on that same socket. Socket-open events restart its identity check and
+subscription; it has no timer. `MirrorApply` copies remote display rows and journal events through the existing
+atomic writer, hiding partial snapshot generations until promotion. Mirror application never transitions local
+entities or queues effects; acknowledgements and page pulls follow committed writes.
+The window can select a machine on an engine subscription or entity read. Local reads keep their existing path;
+foreign reads use only the mirror's current generation and cursor. One lazy publisher per selected mirror shares
+its runtime's existing wake loop, and generation promotion pushes a fresh snapshot to its active subscriptions.
+Publisher drains bind the captured generation and fence publication across resets. Streams tag queued work with the
+reset version, prioritize fresh snapshots and fence replay and cursor updates across promotion.
+Mirror retention uses the same atomic writer, keeps the newest 10,000 events and respects that mirror's window
+acknowledgements. Runtime shutdown cancels the streams and removes its single mirrored-change subscription.
 
 `/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
 For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;
@@ -70,7 +81,9 @@ the desktop's first is preferences (B7). The socket exists from plan step B4, an
 page still uses `app/src/lib/call.ts` and `Assembly.Infrastructure/Http/`, their HTTP path, until its own switch, and
 the `/live` socket carries the page's rows. A remote session's rows reach the desktop over the machine socket instead
 (the `rows` topic and the bounded `rows/after` read on the remote's `/socket`), reopened on the backend clock when it
-drops. The only other HTTP is `/mcp`, which the agents use.
+drops. The machine socket also carries agent listing, session and helper creation, sends, run control and config
+calls. Its welcome checks the row format before the machine is reachable, and its `sessions` topic pushes titles
+and activity into the desktop's session store and summaries. The only other HTTP is `/mcp`, which the agents use.
 
 ## Where a new feature goes
 

@@ -387,6 +387,25 @@ public sealed class SessionStore
             return 0;
         });
 
+    /// <summary>Applies a remote push and publishes the desktop's item after the metadata write commits.</summary>
+    public void ApplyRemote(SessionItem item) =>
+        _writer.Write("sessions.remote", scope =>
+        {
+            scope.Execute($"""
+                UPDATE session_info SET
+                  title = CASE WHEN COALESCE(title_source, 'prompt') != 'user' AND helper = 0 AND $title IS NOT NULL
+                    AND {Rank("$source")} >= {Rank("title_source")} THEN $title ELSE title END,
+                  title_source = CASE WHEN COALESCE(title_source, 'prompt') != 'user' AND helper = 0 AND $title IS NOT NULL
+                    AND {Rank("$source")} >= {Rank("title_source")} THEN $source ELSE title_source END,
+                  updated_at = $at
+                WHERE session_id = $id;
+                """, new SqlArg("$id", item.SessionId), new SqlArg("$title", item.Title),
+                new SqlArg("$source", item.TitleSource ?? "prompt"), new SqlArg("$at", item.UpdatedAt));
+            _summaries?.ApplyRemote(item);
+            Publish(scope, item.SessionId);
+            return 0;
+        });
+
     /// <summary>The session's list item: its stored columns and its summary.</summary>
     public SessionItem Item(SessionInfo session) =>
         SessionItem.From(session, _summaries?.Get(session.SessionId) ?? SessionSummary.None, Root(session));

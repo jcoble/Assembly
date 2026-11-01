@@ -79,6 +79,18 @@ public sealed class EngineRetention(Func<long> publishedThrough, Func<long> mini
         return new(floor, removed, beforeBytes - TotalPreviewBytes(scope));
     }
 
+    public static long ApplyMirror(IWriteScope scope, string machine, long minimumReaderAck)
+    {
+        var meta = scope.QueryFirst("SELECT through,retained_after FROM engine_mirror WHERE machine=$machine AND state='live'",
+            r => ((long High, long Floor)?)(r.Long(0), r.Long(1)), new SqlArg("$machine", machine));
+        if (meta is not { } current) return 0;
+        var floor = Math.Max(current.Floor, Math.Min(current.High - KeptEvents, minimumReaderAck));
+        if (floor <= current.Floor) return current.Floor;
+        scope.Execute("DELETE FROM engine_event WHERE machine=$machine AND seq<=$floor; UPDATE engine_mirror SET retained_after=$floor WHERE machine=$machine",
+            new("$machine", machine), new("$floor", floor));
+        return floor;
+    }
+
     private static long TotalPreviewBytes(IReadScope scope) =>
         scope.QueryFirst($"SELECT COALESCE(SUM({PreviewBytes}),0) FROM engine_tool_call", r => r.Long(0));
 

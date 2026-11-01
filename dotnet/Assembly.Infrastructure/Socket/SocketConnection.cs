@@ -164,7 +164,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             await CloseAsync((WebSocketCloseStatus)4401, "unauthorized");
         else
         {
-            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine), SocketJson.Default.WelcomeFrame),
+            await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion), SocketJson.Default.WelcomeFrame),
                 WebSocketMessageType.Text, endOfMessage: true, stopping);
             return true;
         }
@@ -201,6 +201,18 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
                 // Never disposed, so a cancel racing the call's end is safe.
                 if (_running.TryGetValue(id, out var running))
                     await running.CancelAsync();
+                return true;
+            case { T: "next", Id: { } id }:
+                try
+                {
+                    if (!_subscriptions.TryGetValue(id, out var pending) || pending is not IEngineSubscription engineSnapshot)
+                        throw new ArgumentException("Unknown engine subscription");
+                    engineSnapshot.Next();
+                }
+                catch (ArgumentException error)
+                {
+                    Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", error.Message), SocketJson.Default.ErrorFrame));
+                }
                 return true;
             case { T: "ack", Id: { } id } ack:
                 try

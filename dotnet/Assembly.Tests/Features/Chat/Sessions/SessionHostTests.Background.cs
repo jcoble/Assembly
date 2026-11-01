@@ -78,7 +78,8 @@ public sealed partial class SessionHostTests
             var row = (await RowsUntil(row => row.Kind == "subagent"))[^1];
             Assert.Equal("subagent:" + childId, row.ItemId);
             Assert.Equal(_session.SessionId, row.Payload.GetProperty("sessionId").GetString());
-            Assert.False(row.Payload.GetProperty("canStop").GetBoolean());
+            Assert.Equal(row.Payload.GetProperty("canCancel").GetBoolean()
+                && row.Payload.GetProperty("state").GetString() is "running" or "requires_action", row.Payload.GetProperty("canStop").GetBoolean());
             Assert.True(!row.Payload.TryGetProperty("toolCallId", out var tool) || tool.ValueKind == System.Text.Json.JsonValueKind.Null);
             childCount++;
         }

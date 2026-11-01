@@ -60,6 +60,13 @@ internal sealed class SendFeature : IFeature
                 ? _ => new Done(true)
                 : throw new CallFailed("that ask isn't open, or the answer doesn't fit it");
         }, args => OrderOf(args.Session));
+        calls.Write(Feature, "stopTask", SessionsJson.Default.StopTaskArgs, SessionsJson.Default.Done, async (args, call) =>
+        {
+            var session = Session(args.Session);
+            return await _machines.For(session).StopTaskAsync(session, args.Task, call.Cancellation)
+                ? _ => new Done(true)
+                : throw new CallFailed("that task isn't running, or can't be stopped");
+        }, args => OrderOf(args.Session));
     }
 
     /// <summary>The order key of the writes that reach a session's machine.</summary>
@@ -83,6 +90,7 @@ internal sealed class SendFeature : IFeature
     internal sealed record AnswerArgs([property: JsonRequired] string Session, [property: JsonRequired] string Ask,
         [property: JsonRequired] JsonElement Answer);
 
+    internal sealed record StopTaskArgs([property: JsonRequired] string Session, [property: JsonRequired] string Task);
 
     internal sealed record Done(bool Ok);
 }

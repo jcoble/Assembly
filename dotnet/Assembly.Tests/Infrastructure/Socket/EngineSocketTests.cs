@@ -28,7 +28,7 @@ using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Socket;
 
-public sealed class EngineSocketTests : IAsyncLifetime
+public sealed partial class EngineSocketTests : IAsyncLifetime
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(10);
     private readonly TopicSet _topics = new();
@@ -507,10 +507,12 @@ public sealed class EngineSocketTests : IAsyncLifetime
     private sealed class SnapshotGate(IAppDatabase database) : IAppDatabase
     {
         public bool Armed { get; set; }
+        public bool EventPageArmed { get; set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public IAtomicWriter Writer => database.Writer;
+        public WorkerPassObserver Worker { get; } = new(database.Writer);
+        public IAtomicWriter Writer => Worker;
         public List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args) => database.Query(sql, map, cancel, args);
         public T? QueryFirst<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args) => database.QueryFirst(sql, map, cancel, args);
         public IReadSnapshot OpenSnapshot(CancellationToken cancellationToken) => new GatedSnapshot(database.OpenSnapshot(cancellationToken), this, cancellationToken);
@@ -519,7 +521,8 @@ public sealed class EngineSocketTests : IAsyncLifetime
         {
             public List<T> Query<T>(string sql, Func<IRow, T> map, params SqlArg[] args)
             {
-                if (gate.Armed && sql.Contains("SELECT kind,id,item"))
+                if ((gate.Armed && sql.Contains("SELECT kind,id,item")) ||
+                    (gate.EventPageArmed && sql.Contains("FROM engine_event WHERE machine=$machine AND seq>$after")))
                 {
                     gate.Entered.TrySetResult();
                     try { gate.Release.Task.WaitAsync(Wait, cancellation).GetAwaiter().GetResult(); }

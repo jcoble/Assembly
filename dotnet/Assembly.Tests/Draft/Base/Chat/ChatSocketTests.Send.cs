@@ -115,18 +115,19 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task V2_has_no_individual_background_stop_call()
+    public async Task Existing_child_stop_route_reports_a_machine_refusal_for_unsupported_work()
     {
         var session = _sessions.Create("claude", "repo");
         using var socket = await OpenAsync();
 
+        _here.Refuses = true;
         await CallAsync(socket, 1, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
-        Assert.Contains("\"code\":\"not_found\"", await ReadAsync(socket));
-        Assert.Empty(_here.Asked);
+        Assert.Contains("that task isn't running, or can't be stopped", await ReadAsync(socket));
+        Assert.Equal(["stop task task-1"], _here.Asked);
 
         _here.Refuses = true;
         await CallAsync(socket, 2, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
-        Assert.Contains("\"code\":\"not_found\"", await ReadAsync(socket));
+        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
     }
 
     [Fact]
@@ -144,7 +145,7 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "send", "answer", $$$"""{"session":"{{{session.SessionId}}}","ask":"ask-1","answer":{"optionId":"yes"}}""");
         Assert.Equal("""{"t":"error","id":2,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
         await CallAsync(socket, 3, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
-        Assert.Contains("\"code\":\"not_found\"", await ReadAsync(socket));
+        Assert.Contains("\"code\":\"unreachable\"", await ReadAsync(socket));
     }
 
     // A cancel that lands once the machine has started the turn can't stop it, so the send answers its run.

@@ -29,11 +29,8 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.Stop(runId));
 
-    // A helper session's row in its parent's session stops by the helper's session id.
     public Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken) =>
-        sessionStore.Get(taskId) is { Helper: true } helper && helper.ParentSessionId == session.SessionId
-            ? Task.FromResult(sessions.ActiveRun(taskId) is { } run && sessions.Stop(run))
-            : sessions.For(session.SessionId).StopTaskAsync(taskId, cancellationToken);
+        sessions.For(session.SessionId).StopTaskAsync(taskId, cancellationToken);
 
     public string? ActiveRun(SessionInfo session) => sessions.ActiveRun(session.SessionId);
 
