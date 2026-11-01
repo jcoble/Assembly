@@ -8,7 +8,7 @@ namespace Assembly.Engine.Runs;
 public static class StepTransitions
 {
     private sealed record Step(long Version, string RunId, string State, int Attempt, int MaxAttempts,
-        bool RuleSkippable, string? SessionId, string OwnerId, string RunState, long OwnerEpoch);
+        bool RuleSkippable, string? SessionId, string OwnerId, string RunState, long OwnerEpoch, string? Proof, string? Reason);
     private sealed record Worker(string? ParentId, string? RunId, string State, long Epoch);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, StepCommand command)
@@ -33,6 +33,12 @@ public static class StepTransitions
         if (finished && c.Actor.Kind == ActorKind.System)
             return RecordLate(s, c, step, fact, epoch);
         if (c.ExpectedVersion != step.Version) return Refused(c, "version_conflict", step);
+        if (c.Actor.Kind == ActorKind.Session && worker?.State is "ended" or "lost" or "handing_off")
+            return Refused(c, "forbidden", step);
+        if (c.Actor.Kind == ActorKind.Session && fact.State == step.State && fact.Reason == step.Reason &&
+            step.Proof is not null && fact.ProofUrls.SequenceEqual(
+                JsonSerializer.Deserialize(step.Proof, EngineJson.Default.IReadOnlyListString)!))
+            return new(true, false, null, step.Version, 0, epoch);
         if (finished) return Refused(c, "invalid_transition", step);
         if (step.RunState == "cancelling") return Refused(c, "run_cancelling", step);
         var allowed = (step.State, fact.State) is ("running", "waiting" or "succeeded" or "failed" or "cancelled")
@@ -114,10 +120,10 @@ public static class StepTransitions
 
     private static Step? Find(IWriteScope s, string id) => s.QueryFirst("""
         SELECT st.version,st.run_id,st.state,st.attempt,st.max_attempts,st.rule_skippable,st.session_id,
-            r.owner_session_id,r.state,se.epoch FROM engine_step st JOIN engine_run r ON r.id=st.run_id
+            r.owner_session_id,r.state,se.epoch,st.proof_json,st.outcome_reason FROM engine_step st JOIN engine_run r ON r.id=st.run_id
             JOIN engine_session se ON se.id=r.owner_session_id WHERE st.id=$id
         """, r => new Step(r.Long(0), r.Text(1), r.Text(2), (int)r.Long(3), (int)r.Long(4), r.Long(5) != 0,
-            r.IsNull(6) ? null : r.Text(6), r.Text(7), r.Text(8), r.Long(9)), new SqlArg("$id", id));
+            r.IsNull(6) ? null : r.Text(6), r.Text(7), r.Text(8), r.Long(9), r.IsNull(10) ? null : r.Text(10), r.IsNull(11) ? null : r.Text(11)), new SqlArg("$id", id));
     private static Worker? FindWorker(IWriteScope s, string id) => s.QueryFirst("""
         SELECT parent_id,run_id,state,epoch FROM engine_session WHERE id=$id
         """, r => new Worker(r.IsNull(0) ? null : r.Text(0), r.IsNull(1) ? null : r.Text(1), r.Text(2), r.Long(3)), new SqlArg("$id", id));

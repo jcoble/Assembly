@@ -27,6 +27,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(StartSession), "start_session")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]
 [JsonDerivedType(typeof(StopSession), "stop_session")]
+[JsonDerivedType(typeof(LinkTask), "link_task")]
 [JsonDerivedType(typeof(StartRun), "start_run")]
 [JsonDerivedType(typeof(CancelRun), "cancel_run")]
 [JsonDerivedType(typeof(StartStep), "start_step")]

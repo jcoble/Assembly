@@ -6,6 +6,10 @@ namespace Assembly.Engine.Mcp;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow)]
+[JsonSerializable(typeof(ReportArguments))]
+[JsonSerializable(typeof(ReportAnswer))]
+[JsonSerializable(typeof(LinkTaskArguments))]
+[JsonSerializable(typeof(LinkTaskAnswer))]
 [JsonSerializable(typeof(StartSessionArguments))]
 [JsonSerializable(typeof(StartSessionAnswer))]
 [JsonSerializable(typeof(ListSessionsArguments))]

@@ -35,6 +35,7 @@ public static class SessionTransitions
         {
             SetSessionState fact => SetState(scope, context, current, fact),
             StopSession => Stop(scope, context, current),
+            LinkTask link => Link(scope, context, current, link),
             _ => Refused(context, "unsupported_command", current)
         };
     }
@@ -139,6 +140,20 @@ public static class SessionTransitions
         if (command.State is "idle" or "running")
             events.AddRange(MessageRelease.Next(scope, context, context.EntityId, effects));
         return Commit(scope, context, updated, "session.changed", effects, events);
+    }
+
+    private static CommandResult Link(IWriteScope scope, CommandContext context, Session current, LinkTask command)
+    {
+        if (context.Actor.Kind != ActorKind.Session || context.Actor.Id != context.EntityId)
+            return Refused(context, "forbidden", current);
+        if (current.State is "ended" or "lost") return Refused(context, "invalid_transition", current);
+        if (!Uri.TryCreate(command.TaskUrl, UriKind.Absolute, out var url) || url.Scheme != "https" || string.IsNullOrEmpty(url.Host))
+            return Refused(context, "bad_args", current);
+        scope.Execute("UPDATE engine_session SET task_url=$url,version=version+1,updated_ms=$now WHERE id=$id",
+            new("$url", command.TaskUrl), new("$now", context.NowMs), new("$id", context.EntityId));
+        return EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
+            [new("session.changed", "session", context.EntityId, current.Version + 1, false,
+                new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
     }
 
     private static CommandResult Stop(IWriteScope scope, CommandContext context, Session current)
