@@ -15,6 +15,8 @@ public sealed class UpdateReader
     private readonly Dictionary<string, List<JsonElement>> _toolContent = [];
     private readonly Dictionary<string, TaskChanged> _background = [];
     private readonly Dictionary<string, IReadOnlyList<PlanEntry>> _plans = [];
+    private readonly Dictionary<string, SubagentChanged> _subagents = [];
+    private readonly Dictionary<string, ProviderSessionMessage> _providerMessages = [];
     private bool _running;
     private string? _lastStop;
 
@@ -45,6 +47,26 @@ public sealed class UpdateReader
                 events.Add(new SessionMessage(at, String(update, "messageId"),
                     notification.Kind == "user_message" ? MessageText(update) : ChunkText(update) ?? ""));
                 break;
+            case "session_message":
+            case "session_message_chunk":
+                if (String(update, "messageId") is not { } messageId) break;
+                _providerMessages.TryGetValue(messageId, out var message);
+                var blocks = message?.Content ?? [];
+                if (update.TryGetProperty("content", out var messageContent))
+                    blocks = notification.Kind == "session_message"
+                        ? Array.AsReadOnly(messageContent.ValueKind == JsonValueKind.Array
+                            ? messageContent.EnumerateArray().Select(block => block.Clone()).ToArray() : [])
+                        : Array.AsReadOnly(blocks.Append(messageContent.Clone()).ToArray());
+                string? Participant(string field, string? prior) => notification.Kind == "session_message"
+                    && update.TryGetProperty(field, out _) ? String(update, field) : prior;
+                var observed = new ProviderSessionMessage(at, notification.SessionId, messageId,
+                    Participant("senderSessionId", message?.SenderSessionId),
+                    Participant("recipientSessionId", message?.RecipientSessionId),
+                    Participant("senderMessageId", message?.SenderMessageId),
+                    Participant("recipientMessageId", message?.RecipientMessageId), blocks);
+                _providerMessages[messageId] = observed;
+                events.Add(observed);
+                break;
             case "tool_call_update":
             case "tool_call_content_chunk":
                 if (String(update, "toolCallId") is not { } id) break;
@@ -62,11 +84,29 @@ public sealed class UpdateReader
                     ContentText(toolContent), Diffs(toolContent), patch.Paths ?? previous?.Paths, ContentReplaced: true);
                 _tools[id] = fields;
                 events.Add(new ToolCallChanged(at, id, started, fields));
-                if (fields.Name is "Task" or "Agent")
-                    events.Add(new SubagentChanged(at, id, fields.Title, null,
-                        fields.Status is "completed" or "failed" ? "idle" : "running",
-                        fields.Status == "failed" ? "error" : fields.Status == "completed" ? "end_turn" : null,
-                        fields.Status == "failed" ? fields.Output : null, false));
+                break;
+            case "subagent_update":
+                if (String(update, "sessionId") is not { } childId) break;
+                _subagents.TryGetValue(childId, out var child);
+                var childTitle = update.TryGetProperty("title", out _) ? String(update, "title") : child?.Title;
+                var description = update.TryGetProperty("description", out _) ? String(update, "description") : child?.Description;
+                var canCancel = child?.CanCancel ?? false;
+                if (update.TryGetProperty("capabilities", out var capabilities))
+                    canCancel = capabilities.ValueKind == JsonValueKind.Object
+                        && capabilities.TryGetProperty("cancel", out var cancel) && cancel.ValueKind == JsonValueKind.Object;
+                var childState = child?.State ?? "unknown";
+                var stop = child?.StopReason;
+                var error = child?.Error;
+                if (update.TryGetProperty("state", out var snapshot))
+                {
+                    childState = String(snapshot, "state") ?? "unknown";
+                    stop = String(snapshot, "stopReason");
+                    error = snapshot.ValueKind == JsonValueKind.Object && snapshot.TryGetProperty("error", out var failure)
+                        ? String(failure, "message") : null;
+                }
+                var changed = new SubagentChanged(at, childId, childTitle, description, childState, stop, error, canCancel);
+                _subagents[childId] = changed;
+                events.Add(changed);
                 break;
             case "plan_update":
                 if (Plan(update, at) is { } plan && update.TryGetProperty("plan", out var content)

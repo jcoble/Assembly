@@ -176,4 +176,17 @@ public sealed class AcpClientV2Tests
         await run.Ended.WaitAsync(Bounded);
     }
 
+    [Fact]
+    public async Task Config_select_request_uses_the_v2_id_discriminator()
+    {
+        var agent = new FakeAgent(); await using var client = Connect(agent);
+        var setting = client.SetConfigOptionAsync("s", "thought-choice", "high", default);
+        var request = await agent.ReadAsync();
+        await agent.ReplyAsync(request, """{"configOptions":[]}""");
+        await setting.WaitAsync(Bounded);
+        var parameters = request.GetProperty("params");
+        Assert.Equal("id", parameters.GetProperty("type").GetString());
+        Assert.Equal("thought-choice", parameters.GetProperty("configId").GetString());
+        Assert.Equal("high", parameters.GetProperty("value").GetString());
+    }
 }

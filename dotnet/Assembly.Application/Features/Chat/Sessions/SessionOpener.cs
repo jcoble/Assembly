@@ -61,6 +61,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             {
                 resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken);
                 stages.Mark("session resume");
+                if (resumed.AvailableCommands.ValueKind == JsonValueKind.Array)
+                    sessionStore.SetCommands(sessionId, resumed.AvailableCommands.GetRawText());
                 var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
                 return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
             }
@@ -87,6 +89,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         {
             sessionStore.SetAcpSession(sessionId, acp.SessionId);
             stages.Mark("session new");
+            if (acp.AvailableCommands.ValueKind == JsonValueKind.Array)
+                sessionStore.SetCommands(sessionId, acp.AvailableCommands.GetRawText());
             var title = session.Title is null ? Title(firstText) : null;
             if (title is not null)
                 sessionStore.SetTitle(sessionId, title, "prompt");
