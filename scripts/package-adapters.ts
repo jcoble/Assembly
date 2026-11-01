@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 const names = ["claude-agent-acp", "codex-acp"] as const;
 type Versions = Record<(typeof names)[number], string>;
 const targets = ["darwin-arm64", "darwin-x64", "linux-x64"];
+const providerRepo = "jcoble/Assembly";
 const entrypoint = (name: string) => "node_modules/@agentclientprotocol/" + name + "/dist/index.js";
 const claudeLauncher = "claude-launcher.ts";
 
@@ -21,6 +22,69 @@ export function validateVersions(value: unknown): Versions {
     }
   }
   return data as Versions;
+}
+
+export function latestProviderTag(target: string): string | undefined {
+  if (!targets.includes(target)) throw new Error("Unsupported target: " + target);
+  const releases = JSON.parse(execFileSync("gh", ["release", "list", "--repo", providerRepo, "--limit", "1000",
+    "--json", "tagName,isDraft,isPrerelease,publishedAt"], { encoding: "utf8" }));
+  const candidates = releases.filter((release: any) =>
+    typeof release.tagName === "string" && /^assembly-providers-\d+-\d+$/.test(release.tagName) &&
+    release.isDraft !== true && release.isPrerelease !== true)
+    .sort((a: any, b: any) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+  const required = new Set(["assembly-adapters-" + target + ".tar.gz", "assembly-adapters-" + target + ".json"]);
+  for (const release of candidates) {
+    const details = JSON.parse(execFileSync("gh", ["release", "view", release.tagName, "--repo", providerRepo, "--json", "assets"], { encoding: "utf8" }));
+    const assets = new Set((details.assets ?? []).map((asset: any) => asset.name));
+    if ([...required].every(name => assets.has(name))) return release.tagName;
+  }
+  return undefined;
+}
+
+export function validateProviderAsset(manifestPath: string, archivePath: string, target: string) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const file = "assembly-adapters-" + target + ".tar.gz";
+  if (manifest.schemaVersion !== 1 || manifest.target !== target || manifest.archive?.file !== file ||
+    manifest.entrypoints?.["claude-agent-acp"] !== claudeLauncher ||
+    manifest.entrypoints?.["codex-acp"] !== entrypoint("codex-acp")) throw new Error("Mismatched provider manifest: " + target);
+  const versions = validateVersions(manifest.versions);
+  const checksum = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
+  if (manifest.archive.sha256 !== checksum) throw new Error("Corrupted provider archive: " + target);
+  if (names.some(name => manifest.smoke?.[name]?.protocolVersion !== 2 ||
+    manifest.smoke?.[name]?.info?.version !== versions[name] || manifest.smoke?.[name]?.canSteer !== true)) {
+    throw new Error("Mismatched provider smoke proof: " + target);
+  }
+  return manifest;
+}
+
+export function validateHistoricalProviderAsset(manifestPath: string, archivePath: string, target: string) {
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const file = "assembly-adapters-" + target + ".tar.gz";
+  const claudeEntrypoint = manifest.entrypoints?.["claude-agent-acp"];
+  if (manifest.schemaVersion !== 1 || manifest.target !== target || manifest.archive?.file !== file ||
+    typeof claudeEntrypoint !== "string" || claudeEntrypoint.startsWith("/") ||
+    claudeEntrypoint.split(/[\\/]/).some(part => part === ".." || part === "")) {
+    throw new Error("Mismatched historical provider manifest: " + target);
+  }
+  const checksum = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
+  if (manifest.archive.sha256 !== checksum) throw new Error("Corrupted historical provider archive: " + target);
+  return manifest as { entrypoints: Record<string, string> };
+}
+
+export function compareClaudeEntrypoints(previous: string | undefined, current: string, previousTag?: string, log = console.log) {
+  if (!previous) {
+    log("No previous successful provider release; skipping Claude dist/index.js diff (first publication)");
+    return;
+  }
+  const comparison = spawnSync("diff", ["-u", previous, current], { encoding: "utf8" });
+  if (comparison.error) throw comparison.error;
+  if (comparison.status === 0) {
+    log("Claude upstream dist/index.js matches " + previousTag);
+    return;
+  }
+  if (comparison.status !== 1) throw new Error("Claude upstream diff failed: " + comparison.stderr);
+  log("Claude upstream dist/index.js changes since " + previousTag + ":");
+  log(comparison.stdout);
 }
 
 export function smokeAdapter(entry: string, home: string, requireSteering = true): Promise<Record<string, any>> {
@@ -128,6 +192,32 @@ function publishBundles(assetPath: string, versions: Versions, tag: string, comm
   gh(["edit", tag, "--draft=false", "--latest=false"]);
 }
 
+function compareWithLastProviderRelease(target: string, currentBundle: string, scratch: string) {
+  const tag = latestProviderTag(target);
+  const current = join(currentBundle, entrypoint("claude-agent-acp"));
+  if (!tag) {
+    compareClaudeEntrypoints(undefined, current);
+    return;
+  }
+  const asset = "assembly-adapters-" + target + ".tar.gz";
+  const manifestFile = "assembly-adapters-" + target + ".json";
+  const assets = join(scratch, "previous-assets");
+  const unpacked = join(scratch, "previous-bundle");
+  mkdirSync(assets); mkdirSync(unpacked);
+  execFileSync("gh", ["release", "download", tag, "--repo", providerRepo,
+    "--pattern", asset, "--pattern", manifestFile, "--dir", assets]);
+  const manifest = validateHistoricalProviderAsset(join(assets, manifestFile), join(assets, asset), target);
+  const members = execFileSync("tar", ["-tzf", join(assets, asset)], { encoding: "utf8" }).split("\n").filter(Boolean);
+  if (members.some(name => name.startsWith("/") || name.split("/").some(part => part === ".."))) {
+    throw new Error("Unsafe path in historical provider archive: " + tag);
+  }
+  if (!members.includes(manifest.entrypoints["claude-agent-acp"])) {
+    throw new Error("Historical provider archive is missing its Claude entrypoint: " + tag);
+  }
+  execFileSync("tar", ["-xzf", join(assets, asset), "-C", unpacked]);
+  compareClaudeEntrypoints(join(unpacked, manifest.entrypoints["claude-agent-acp"]), current, tag);
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === "resolve") {
@@ -140,13 +230,19 @@ async function main() {
     console.log(result);
     return;
   }
+  if (command === "provider-tag") {
+    const tag = latestProviderTag(args[0]);
+    if (!tag) throw new Error("No eligible published provider release contains the required platform assets");
+    console.log(tag);
+    return;
+  }
   if (command === "publish") {
     const [assetPath, versionsJson, tag, commit] = args;
     publishBundles(assetPath, validateVersions(JSON.parse(versionsJson)), tag, commit);
     return;
   }
   const [target, versionsJson, outputPath] = args;
-  if (command !== "build" || !outputPath) throw new Error("Usage: package-adapters.ts resolve | build <target> <versions-json> <output>");
+  if (command !== "build" || !outputPath) throw new Error("Usage: package-adapters.ts resolve | provider-tag <target> | build <target> <versions-json> <output>");
   if (!targets.includes(target) || target !== process.platform + "-" + process.arch) throw new Error("Build requires a native runner for " + target);
   const versions = validateVersions(JSON.parse(versionsJson));
   const output = resolve(outputPath);
@@ -172,6 +268,7 @@ async function main() {
     const stock = await smokeAdapter(join(unpacked, entrypoint("claude-agent-acp")), join(scratch, "probe-stock-claude"), false).catch(() => undefined);
     if (stock?._meta?.steering?.supported === true) console.log("launcher can be dropped (PR 1499 shipped)");
     else console.log("plain dist/index.js does not yet advertise steering");
+    compareWithLastProviderRelease(target, bundle, scratch);
     const verified = { ...manifest, smoke };
     writeFileSync(join(output, "assembly-adapters-" + target + ".json"), JSON.stringify(verified, null, 2) + "\n");
     console.log(JSON.stringify(verified, null, 2));

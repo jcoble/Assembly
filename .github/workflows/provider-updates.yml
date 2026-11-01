@@ -57,6 +57,7 @@ jobs:
           node-version: 24
       - name: Package and initialize both adapters from the extracted archive
         env:
+          GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
           VERSIONS: ${{ needs.resolve.outputs.versions }}
         run: node scripts/package-adapters.ts build "$TARGET" "$VERSIONS" "$RUNNER_TEMP/adapters"

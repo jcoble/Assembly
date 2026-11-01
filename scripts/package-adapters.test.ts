@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateVersions, smokeAdapter, archiveBundle } from "./package-adapters.ts";
+import { validateVersions, smokeAdapter, archiveBundle, compareClaudeEntrypoints, validateHistoricalProviderAsset } from "./package-adapters.ts";
 
 const versions = { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" };
 function fixture(run: (root: string) => unknown) {
@@ -21,6 +21,65 @@ test("only exact stable versions of both supported adapters are accepted", () =>
   assert.throws(() => validateVersions({ "codex-acp": "2.5.0" }), /exact stable/);
   assert.throws(() => validateVersions({ ...versions, other: "1.0.0" }), /supported adapters/);
 });
+test("provider selection ignores the designated app latest and chooses the newest complete provider release", () => fixture(root => {
+  const releases = [
+    { tagName: "assembly-app-2026.11", isLatest: true, isDraft: false, isPrerelease: false, publishedAt: "2026-11-05T00:00:00Z", assets: [] },
+    { tagName: "assembly-providers-101-1", isLatest: false, isDraft: false, isPrerelease: false, publishedAt: "2026-11-01T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+    { tagName: "assembly-providers-102-1", isLatest: false, isDraft: false, isPrerelease: false, publishedAt: "2026-11-02T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+    { tagName: "assembly-providers-103-1", isLatest: false, isDraft: false, isPrerelease: false, publishedAt: "2026-11-04T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz"] },
+    { tagName: "assembly-providers-104-1", isLatest: false, isDraft: true, isPrerelease: false, publishedAt: "2026-11-06T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+    { tagName: "assembly-providers-105-1", isLatest: false, isDraft: false, isPrerelease: true, publishedAt: "2026-11-07T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+  ];
+  writeFileSync(join(root, "releases.json"), JSON.stringify(releases));
+  writeFileSync(join(root, "gh"), "#!" + process.execPath + "\n" + String.raw`
+const fs = require("node:fs");
+const [group, action, tag] = process.argv.slice(2);
+const releases = JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8"));
+if (group !== "release") throw Error("unexpected gh operation");
+if (action === "list") console.log(JSON.stringify(releases.map(({tagName,isDraft,isPrerelease,publishedAt}) => ({tagName,isDraft,isPrerelease,publishedAt}))));
+else if (action === "view") console.log(JSON.stringify({assets: releases.find(r => r.tagName === tag)?.assets.map(name => ({name})) ?? []}));
+else throw Error("unexpected gh release operation " + action);
+`, { mode: 0o755 });
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "provider-tag", "linux-x64"], {
+    encoding: "utf8", env: { PATH: root + ":" + process.env.PATH, HOME: root, RELEASES: join(root, "releases.json") },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout.trim(), "assembly-providers-102-1");
+}));
+test("stock Claude comparison logs the current upstream diff and the first-publication case", () => fixture(root => {
+  const prior = join(root, "prior-index.js"), current = join(root, "current-index.js"), messages: string[] = [];
+  writeFileSync(prior, "const startup = 'old';\n");
+  writeFileSync(current, "const startup = 'new';\n");
+  compareClaudeEntrypoints(prior, current, "assembly-providers-101-1", line => messages.push(line));
+  assert.match(messages.join("\n"), /Claude upstream dist\/index\.js changes since assembly-providers-101-1/);
+  assert.match(messages.join("\n"), /-const startup = 'old'/);
+  assert.match(messages.join("\n"), /\+const startup = 'new'/);
+  messages.length = 0;
+  compareClaudeEntrypoints(undefined, current, undefined, line => messages.push(line));
+  assert.match(messages[0], /first publication/);
+}));
+test("historical protocol 1 baseline validates its recorded raw entrypoint against a protocol 2 candidate", () => fixture(root => {
+  const archive = join(root, "previous.tar.gz"), manifestPath = join(root, "previous.json");
+  const previous = join(root, "previous-index.js"), current = join(root, "current-index.js"), messages: string[] = [];
+  writeFileSync(archive, "historical archive fixture");
+  const manifest = {
+    schemaVersion: 1, target: "linux-x64", versions: { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" },
+    entrypoints: { "claude-agent-acp": "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js" },
+    archive: { file: "assembly-adapters-linux-x64.tar.gz", sha256: createHash("sha256").update(readFileSync(archive)).digest("hex") },
+    smoke: { "claude-agent-acp": { protocolVersion: 1, agentInfo: { version: "0.99.1" } } },
+  };
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  const baseline = validateHistoricalProviderAsset(manifestPath, archive, "linux-x64");
+  assert.equal(baseline.entrypoints["claude-agent-acp"], "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js");
+  writeFileSync(previous, "const startup = 'protocol-1 baseline';\n");
+  writeFileSync(current, "const startup = 'protocol-2 candidate';\n");
+  compareClaudeEntrypoints(previous, current, "assembly-providers-101-1", line => messages.push(line));
+  assert.match(messages.join("\n"), /protocol-1 baseline/);
+  assert.match(messages.join("\n"), /protocol-2 candidate/);
+  manifest.archive.sha256 = "0".repeat(64);
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  assert.throws(() => validateHistoricalProviderAsset(manifestPath, archive, "linux-x64"), /Corrupted historical provider archive/);
+}));
 test("smoke requires protocol 2 and steering", () => fixture(async root => {
   const entry = join(root, "adapter.cjs");
   writeFileSync(entry, String.raw`const lines = require("node:readline").createInterface({ input: process.stdin });
