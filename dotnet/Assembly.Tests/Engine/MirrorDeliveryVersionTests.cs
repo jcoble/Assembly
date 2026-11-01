@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Mirror;
+using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Reading;
 using Assembly.Engine.Sessions;
 
@@ -94,29 +96,93 @@ public sealed class MirrorDeliveryVersionTests(Xunit.Abstractions.ITestOutputHel
         output.WriteLine($"Original receipts replay exactly: Send version={sent.Version}, outcome version={rereleased.Version}; no new owner/mirror events or mirror effects/receipts.");
     }
 
+    [Fact]
+    public void Actual_mirror_tracks_inserted_need_reply_final_revision_and_resolution_receipt_replay()
+    {
+        using var owner = new EngineFixture();
+        using var mirror = new EngineFixture();
+        owner.SeedSession();
+        var question = new OpenNeed("s", null, null, "question", "Continue?", [], null, null, null);
+        Assert.True(owner.Apply(question, "n", actor: new(ActorKind.Session, "s")).Applied);
+        var reader = new EngineReader(owner.Db, owner.Machine);
+        var mirroredReader = new EngineReader(mirror.Db, mirror.Machine);
+        const string messageId = "need-answer/n";
+        Assert.Null(reader.Entity("message", messageId, default));
+        mirror.Db.Writer.Write("test.mirror-open", s => MirrorApply.Open(s, owner.Machine, "workbox-test", 1000));
+        mirror.Db.Writer.Write("test.mirror-begin", s => MirrorApply.BeginSnapshot(s, owner.Machine, 1000));
+        MirrorCursor cursor;
+        using (var snapshot = reader.Snapshot("mirror", null, default))
+        {
+            SnapshotPage page;
+            do
+            {
+                page = snapshot.ReadNext();
+                mirror.Db.Writer.Write("test.mirror-snapshot", s => { MirrorApply.SnapshotPage(s, owner.Machine, page.Items); return 0; });
+            } while (page.HasMore);
+            cursor = mirror.Db.Writer.Write("test.mirror-end", s => MirrorApply.EndSnapshot(s, owner.Machine, page.Through, page.At, 1000));
+        }
+        Assert.Equal("needs_me", mirroredReader.Entity("session", "s", default, owner.Machine)!.Value.GetProperty("state").GetString());
+        owner.Time.Advance(TimeSpan.FromSeconds(1));
+        var context = Context(owner, "n", 1);
+        var answer = new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes"));
+        var resolved = owner.Apply(context, answer);
+        Assert.True(resolved.Applied);
+        cursor = ApplyPage(owner, mirror, reader, mirroredReader, cursor, 2, 2000, messageId);
+        var reply = mirroredReader.Entity("message", messageId, default, owner.Machine)!.Value;
+        Assert.Equal("Jesse answered your question n: yes", reply.GetProperty("text").GetString());
+        Assert.Equal("system", reply.GetProperty("senderKind").GetString());
+        Assert.Equal(JsonValueKind.Null, reply.GetProperty("fromSessionId").ValueKind);
+        Assert.Equal("prompt", reply.GetProperty("mode").GetString());
+        Assert.Equal(2000, reply.GetProperty("createdMs").GetInt64());
+        foreach (var (kind, id) in new[] { ("needs_me", "n"), ("session", "s") })
+            Assert.Equal(reader.Entity(kind, id, default)!.Value.GetRawText(), mirroredReader.Entity(kind, id, default, owner.Machine)!.Value.GetRawText());
+        Assert.Equal(1, owner.Count("engine_message"));
+        Assert.Equal(1, owner.Count("engine_outbox"));
+        var ownerEvents = owner.Count("engine_event");
+        var mirrorEvents = mirror.Count("engine_event");
+        owner.Reopen();
+        reader = new EngineReader(owner.Db, owner.Machine);
+        Assert.Equal(resolved, owner.Apply(context, answer));
+        Assert.Equal(ownerEvents, owner.Count("engine_event"));
+        Assert.Equal(1, owner.Count("engine_message"));
+        Assert.Equal(1, owner.Count("engine_outbox"));
+        var replay = reader.Since("mirror", null, cursor.Through, default);
+        Assert.Empty(replay.Events);
+        cursor = mirror.Db.Writer.Write("test.mirror-replayed-answer", s => MirrorApply.Events(s, owner.Machine,
+            replay.After, replay.Through, replay.At, replay.Events, replay.Rows!, 2000));
+        Assert.Equal(mirrorEvents, mirror.Count("engine_event"));
+        Assert.Equal(reader.HighWatermark(default), cursor.Through);
+        Assert.Equal(reader.EventAt(cursor.Through, default), cursor.At);
+        Assert.Equal(reply.GetRawText(), mirroredReader.Entity("message", messageId, default, owner.Machine)!.Value.GetRawText());
+        Assert.Equal(0, mirror.Count("engine_message"));
+        Assert.Equal(0, mirror.Count("engine_outbox"));
+        Assert.Equal(0, mirror.Count("engine_command_receipt"));
+        output.WriteLine($"Resolved reply owner/mirror: message={messageId}, final version=2, createdMs=updatedMs=2000, through={cursor.Through}, at={cursor.At}; receipt replay adds no events/effects.");
+    }
+
     private static MirrorCursor ApplyPage(EngineFixture owner, EngineFixture mirror, EngineReader reader,
-        EngineReader mirroredReader, MirrorCursor cursor, long version, long updatedMs)
+        EngineReader mirroredReader, MirrorCursor cursor, long version, long updatedMs, string messageId = "m")
     {
         var page = reader.Since("mirror", null, cursor.Through, default);
         Assert.False(page.SnapshotRequired);
         Assert.False(page.HasMore);
         Assert.Equal(cursor.Through, page.After);
-        var messageEvent = Assert.Single(page.Events, e => e.EntityKind == "message" && e.EntityId == "m");
+        var messageEvent = Assert.Single(page.Events, e => e.EntityKind == "message" && e.EntityId == messageId);
         Assert.Equal(version, messageEvent.Version);
-        var row = Assert.Single(page.Rows!, r => r.GetProperty("entityKind").GetString() == "message");
+        var row = Assert.Single(page.Rows!, r => r.GetProperty("entityKind").GetString() == "message" && r.GetProperty("id").GetString() == messageId);
         Assert.Equal(version, row.GetProperty("version").GetInt64());
         Assert.Equal(updatedMs, row.GetProperty("updatedMs").GetInt64());
         cursor = mirror.Db.Writer.Write("test.mirror-events", s => MirrorApply.Events(s, owner.Machine,
             page.After, page.Through, page.At, page.Events, page.Rows!, updatedMs));
-        var actual = mirroredReader.Entity("message", "m", default, owner.Machine)!.Value;
-        Assert.Equal(reader.Entity("message", "m", default)!.Value.GetRawText(), actual.GetRawText());
+        var actual = mirroredReader.Entity("message", messageId, default, owner.Machine)!.Value;
+        Assert.Equal(reader.Entity("message", messageId, default)!.Value.GetRawText(), actual.GetRawText());
         Assert.Equal(version, actual.GetProperty("version").GetInt64());
         Assert.Equal(updatedMs, actual.GetProperty("updatedMs").GetInt64());
         Assert.Equal("queued", actual.GetProperty("state").GetString());
         Assert.Equal(page.Through, cursor.Through);
         Assert.Equal(page.At, cursor.At);
         Assert.Equal(reader.EventAt(cursor.Through, default), mirroredReader.EventAt(cursor.Through, default, owner.Machine));
-        var replay = mirroredReader.Since("messages", "m", page.After, default, source: owner.Machine);
+        var replay = mirroredReader.Since("messages", messageId, page.After, default, source: owner.Machine);
         Assert.Equal(messageEvent, Assert.Single(replay.Events));
         return cursor;
     }
