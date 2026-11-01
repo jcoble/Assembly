@@ -296,6 +296,52 @@ public sealed class TerminalDetailTests(Xunit.Abstractions.ITestOutputHelper pro
         Assert.Equal("kept", store.ToolCall("legacy", "legacy")!.Output);
     }
 
+    [Fact]
+    public void New_provider_reused_tool_starts_immediately_after_prior_session_stopped_cleanup()
+    {
+        using var file = new TempDatabase(); using var db = TestDatabase.Open(file.Path);
+        var store = RowStore.Open(db); var converter = new RowConverter(); var oldReader = new UpdateReader();
+        store.Commit("S", converter.Apply(new TurnStarted(0, "old-run", "old")));
+        Apply(store, oldReader, converter, Reference, "P1");
+        Apply(store, oldReader, converter, Chunk("b2xk"), "P1");
+        Apply(store, oldReader, converter, """{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "P1");
+        store.Commit("S", converter.Apply(new TaskChanged(2, "C", "", "stopped", false, "C")));
+        Assert.False(converter.HasOpenTools);
+
+        // SessionHost owns one converter across actual provider-session replacement.
+        store.Commit("S", converter.Apply(new TurnStarted(3, "new-run", "new")));
+        var newReader = new UpdateReader();
+        Apply(store, newReader, converter, Reference, "P2");
+        Assert.True(converter.HasOpenTools);
+        Assert.Equal("P2", db.QueryFirst("SELECT acp_session_id FROM tool_details", r => r.Text(0), default));
+        Assert.Null(store.ToolCall("S", "C")!.Output); // P1 data cannot show while P2 is still running.
+        Apply(store, newReader, converter, Chunk("bmV3ZXI="), "P2");
+        Assert.Equal("newer", store.ToolCall("S", "C")!.Output);
+        var current = store.PageBefore("S", long.MaxValue, 100).Rows.Single(row => row.Kind == "tool");
+        Assert.Equal(("new-run", "started"), (current.RunId, current.Payload.GetProperty("state").GetString()));
+        Apply(store, newReader, converter, """{"sessionUpdate":"tool_call_update","toolCallId":"C","status":"completed","content":[]}""", "P2");
+        Assert.False(converter.HasOpenTools);
+        Assert.Equal("newer", store.ToolCall("S", "C")!.Output);
+    }
+
+    [Theory]
+    [InlineData("P1", "P1")]
+    [InlineData(null, "P2")]
+    public void Same_or_unknown_prior_provider_keeps_ended_tool_closed_until_its_explicit_terminal_update(string? prior, string current)
+    {
+        var converter = new RowConverter();
+        converter.Apply(new TurnStarted(0, "old-run", "old"));
+        converter.Apply(new ToolCallChanged(1, "C", true, new ToolCallFields(Name: "original", Status: "pending", AcpSessionId: prior)));
+        converter.Apply(new TurnEnded(2, "end_turn", null));
+        converter.Apply(new TurnStarted(3, "new-run", "new"));
+        var ignored = converter.Apply(new ToolCallChanged(4, "C", false, new ToolCallFields(Status: "in_progress", AcpSessionId: current)));
+        Assert.True(ignored.IsEmpty); Assert.False(converter.HasOpenTools);
+        var late = converter.Apply(new ToolCallChanged(5, "C", false, new ToolCallFields(Status: "completed", Output: "late", AcpSessionId: current)));
+        Assert.Equal("old-run", Assert.Single(late.Rows).RunId);
+        Assert.Equal("late", Assert.Single(late.Details).Output);
+        Assert.False(converter.HasOpenTools);
+    }
+
     // The real SQLite query and mapper run unchanged; measure bytes crossing the database boundary.
     private sealed class MeasuredDatabase(IAppDatabase inner) : IAppDatabase
     {

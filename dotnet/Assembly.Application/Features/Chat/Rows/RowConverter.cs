@@ -245,10 +245,11 @@ public sealed class RowConverter
         // (Codex's bare update for a command stopped as the turn ended) leaves it as it ended.
         if (_endedTools.TryGetValue(change.ToolCallId, out var ended))
         {
-            if (change.Fields.Status is not ("completed" or "failed" or "cancelled"))
+            var newProvider = change.Fields.AcpSessionId is { } current && ended.AcpSessionId is { } previous && current != previous;
+            if (!newProvider && change.Fields.Status is not ("completed" or "failed" or "cancelled"))
                 return;
             _endedTools.Remove(change.ToolCallId);
-            _tools[change.ToolCallId] = ended;
+            if (!newProvider) _tools[change.ToolCallId] = ended;
         }
         if (!_tools.TryGetValue(change.ToolCallId, out var known)
             || change.Fields.AcpSessionId is { } provider && known.AcpSessionId is { } prior && provider != prior)
