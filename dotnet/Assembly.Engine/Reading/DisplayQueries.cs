@@ -27,6 +27,10 @@ internal static class DisplayQueries
         return $"json_object('entityKind','{kind}',{string.Join(",", fields)})";
     }
 
+    internal static string MirrorJson(string kind) => kind == "handoff"
+        ? Json(kind)[..^1] + ",'runId',(SELECT run_id FROM engine_session WHERE id=t.session_id))"
+        : Json(kind);
+
     private static string CamelCase(string column)
     {
         var parts = column.Split('_');
@@ -35,6 +39,7 @@ internal static class DisplayQueries
 
     internal static string[] Kinds(string topic) => topic switch
     {
+        "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr"],
         "runs" => ["run", "step", "handoff"],
         "sessions" => ["session", "handoff"],
         "needs_me" => ["needs_me"],

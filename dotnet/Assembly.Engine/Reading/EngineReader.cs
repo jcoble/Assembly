@@ -6,6 +6,22 @@ namespace Assembly.Engine.Reading;
 
 public sealed class EngineReader(IAppDatabase db, string machine)
 {
+    public MachineInfo Machine(CancellationToken cancellationToken)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        return new(machine, ReadMeta(read, machine).High);
+    }
+
+    public CursorAt? EventAt(long seq, CancellationToken cancellationToken, string? source = null)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        return EventAt(read, seq, source ?? machine);
+    }
+
+    internal static CursorAt? EventAt(IReadSnapshot read, long seq, string source) => read.QueryFirst(
+        "SELECT kind,entity_id,entity_version FROM engine_event WHERE machine=$machine AND seq=$seq",
+        r => new CursorAt(r.Text(0), r.Text(1), r.Long(2)), new("$machine", source), new("$seq", seq));
+
     public long HighWatermark(CancellationToken cancellationToken)
     {
         using var read = db.OpenSnapshot(cancellationToken);
@@ -29,30 +45,55 @@ public sealed class EngineReader(IAppDatabase db, string machine)
                 r.Long(5), r.Long(6), r.Long(7) != 0,
                 JsonSerializer.Deserialize(r.Text(8), EngineJson.Default.EngineEventData)!),
             new SqlArg("$after", after), new SqlArg("$high", meta.High), new SqlArg("$machine", machine));
+        var mirror = topic == "mirror";
+        var candidates = mirror ? MirrorRows(read, scanned, kinds) : [];
+        Dictionary<(string Kind, string Id), JsonElement> rows = [];
         var scannedThrough = after;
         List<EngineEvent> events = [];
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(new StreamPage(after, meta.High, [], false, false),
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new StreamPage(after, meta.High, [], false, false, mirror ? [] : null, EventAt(read, meta.High, machine)),
             EngineJson.Default.StreamPage).Length;
         foreach (var item in scanned)
         {
             if (item.Seq != scannedThrough + 1) return new(after, scannedThrough, events, false, true);
-            if (Matches(item, topic, key, kinds))
+            if (mirror || Matches(item, topic, key, kinds))
             {
                 var size = JsonSerializer.SerializeToUtf8Bytes(item, EngineJson.Default.EngineEvent).Length;
                 if (size > 32 * 1024) throw new InvalidOperationException("Event exceeds the 32 KiB UTF-8 budget.");
-                if (bytes + size + 1 > 64 * 1024) break;
-                bytes += size + 1;
+                var identity = (item.EntityKind, item.EntityId);
+                JsonElement? row = !rows.ContainsKey(identity) && candidates.TryGetValue(identity, out var value) ? value : null;
+                var rowBytes = row is { } display ? JsonSerializer.SerializeToUtf8Bytes(display, EngineJson.Default.JsonElement).Length + 1 : 0;
+                if (events.Count > 0 && bytes + size + 1 + rowBytes > (mirror ? 1024 * 1024 : 64 * 1024)) break;
+                bytes += size + 1 + rowBytes;
                 events.Add(item);
+                if (row is { } current) rows.Add(identity, current);
             }
             scannedThrough = item.Seq;
         }
         if (scanned.Count < 200 && (scanned.Count == 0 || scannedThrough == scanned[^1].Seq) && scannedThrough < meta.High)
             return new(after, scannedThrough, events, false, true);
-        return new(after, scannedThrough, events, scannedThrough < meta.High, false);
+        return new(after, scannedThrough, events, scannedThrough < meta.High, false,
+            mirror ? rows.Values.ToArray() : null, EventAt(read, scannedThrough, machine));
+    }
+
+    private Dictionary<(string Kind, string Id), JsonElement> MirrorRows(IReadSnapshot read,
+        IReadOnlyList<EngineEvent> events, string[] kinds)
+    {
+        Dictionary<(string Kind, string Id), JsonElement> rows = [];
+        foreach (var group in events.Where(e => kinds.Contains(e.EntityKind)).GroupBy(e => e.EntityKind))
+        {
+            var ids = JsonSerializer.Serialize(group.Select(e => e.EntityId).Distinct().ToArray(), EngineJson.Default.IReadOnlyListString);
+            var selected = read.Query($"""
+                SELECT t.id,{DisplayQueries.MirrorJson(group.Key)} FROM engine_{group.Key} t
+                WHERE t.machine=$machine AND t.id IN (SELECT value FROM json_each($ids))
+                """, r => (Id: r.Text(0), Row: DisplayQueries.Parse(r.Text(1))), new("$machine", machine), new("$ids", ids));
+            foreach (var item in selected) rows.Add((group.Key, item.Id), item.Row);
+        }
+        return rows;
     }
 
     private static bool Matches(EngineEvent item, string topic, string? key, string[] kinds)
     {
+        if (topic == "mirror") return true;
         if (!kinds.Contains(item.EntityKind)) return false;
         if (key is null) return true;
         return (topic, item.EntityKind) switch

@@ -33,6 +33,8 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFea
                     args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
                 return runtime.Commands.Apply(scope, context, args.Command);
             }));
+        calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo,
+            (_, call) => Task.FromResult(runtime.Reader.Machine(call.Cancellation)));
         calls.Read("engine", "usage", EngineSocketJson.Default.EngineUsageArgs, EngineSocketJson.Default.UsageTotals,
             (args, call) => Task.FromResult(runtime.Usage.Sum(args.EntityKind, args.EntityId, call.Cancellation)));
         calls.Read("engine", "entity", EngineSocketJson.Default.EngineEntityArgs, EngineSocketJson.Default.NullableJsonElement,

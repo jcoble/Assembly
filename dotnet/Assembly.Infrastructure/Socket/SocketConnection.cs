@@ -202,6 +202,18 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
                 if (_running.TryGetValue(id, out var running))
                     await running.CancelAsync();
                 return true;
+            case { T: "next", Id: { } id }:
+                try
+                {
+                    if (!_subscriptions.TryGetValue(id, out var pending) || pending is not IEngineSubscription engineSnapshot)
+                        throw new ArgumentException("Unknown engine subscription");
+                    engineSnapshot.Next();
+                }
+                catch (ArgumentException error)
+                {
+                    Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", error.Message), SocketJson.Default.ErrorFrame));
+                }
+                return true;
             case { T: "ack", Id: { } id } ack:
                 try
                 {

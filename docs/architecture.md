@@ -52,7 +52,7 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 
 ## One socket
 
-The authenticated `/socket` also carries the engine's six filtered topics through `stream:"engine"`, with snapshot/catch-up pages and reader acknowledgements; omitting `stream` preserves the existing topics.
+The authenticated `/socket` also carries the engine's six filtered topics and local display-only `mirror` topic through `stream:"engine"`, with cursor fingerprints, client-pulled mirror snapshots, catch-up pages and reader acknowledgements; `engine/machine` reports the local identity and watermark, and omitting `stream` preserves the existing topics.
 
 `/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
 For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;

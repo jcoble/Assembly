@@ -12,23 +12,30 @@ namespace Assembly.Infrastructure.Engine;
 public interface IEngineSubscription : ISocketSubscription
 {
     void Acknowledge(long through);
+    void Next();
 }
 
 /// <summary>Durable catch-up followed by buffered publisher events on the same global cursor.</summary>
 public sealed class EngineSocketStream(EngineRuntime runtime)
 {
     public IEngineSubscription Subscribe(long id, string topic, string? key, long? after,
-        Action<string> send, CancellationToken cancellationToken) =>
-        Subscribe(id, topic, key, after, (frame, _) => send(frame), cancellationToken, () => { });
+        Action<string> send, CancellationToken cancellationToken, CursorAt? at = null) =>
+        Subscribe(id, topic, key, after, (frame, _) => send(frame), cancellationToken, () => { }, at);
 
     internal IEngineSubscription Subscribe(long id, string topic, string? key, long? after,
-        Action<string, ISocketSubscription?> send, CancellationToken cancellationToken, Action overflow)
+        Action<string, ISocketSubscription?> send, CancellationToken cancellationToken, Action overflow, CursorAt? at = null)
     {
-        if (topic is not ("runs" or "sessions" or "needs_me" or "messages" or "prs" or "usage"))
+        if (topic is not ("runs" or "sessions" or "needs_me" or "messages" or "prs" or "usage" or "mirror"))
             throw new ArgumentException("Unknown engine topic");
-        if (key is not null && string.IsNullOrWhiteSpace(key)) throw new ArgumentException("Invalid engine key");
+        if (key is not null && (topic == "mirror" || string.IsNullOrWhiteSpace(key))) throw new ArgumentException("Invalid engine key");
         if (after is { } cursor && (cursor < 0 || cursor > runtime.Reader.HighWatermark(cancellationToken)))
             throw new ArgumentException("Invalid engine cursor");
+        if (after is { } fingerprintCursor && at is not null)
+        {
+            var actual = runtime.Reader.EventAt(fingerprintCursor, cancellationToken);
+            if (actual is null && fingerprintCursor > 0) after = null; // compacted cursors re-snapshot
+            else if (actual != at) throw new ArgumentException("Invalid engine cursor");
+        }
         return new Subscription(runtime, id, topic, key, after, send, cancellationToken, overflow);
     }
 
@@ -49,6 +56,7 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
         private long _ack;
         private long _buffered;
         private int _disposed;
+        private TaskCompletionSource? _next;
 
         public CancellationToken Closed { get; }
         public Task Completion { get; }
@@ -92,17 +100,22 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
                 {
                     _through = cursor;
                     reader = Track(cursor);
-                    Replay(Math.Max(cut, cursor));
+                    await ReplayAsync(Math.Max(cut, cursor));
                 }
-                else Snapshot();
-                reader ??= Track(_through);
+                else
+                {
+                    reader = Track(0);
+                    await SnapshotAsync();
+                }
                 await foreach (var (item, bytes) in _pending.Reader.ReadAllAsync(Closed))
                 {
                     Interlocked.Add(ref _buffered, -bytes);
                     if (item.Seq <= _through) continue;
                     // A publisher cursor is contiguous; a broken cursor must reload current state.
-                    if (item.Seq != _through + 1) { Snapshot(); continue; }
-                    Events(_through, item.Seq, EngineReader.Matches(item, _topic, _key) ? [item] : [], false);
+                    if (item.Seq != _through + 1) { await SnapshotAsync(); continue; }
+                    if (_topic == "mirror") await ReplayAsync(item.Seq);
+                    else Events(_through, item.Seq, EngineReader.Matches(item, _topic, _key) ? [item] : [], false,
+                        null, new(item.Kind, item.EntityId, item.Version));
                 }
             }
             catch (OperationCanceledException) when (Closed.IsCancellationRequested) { }
@@ -126,18 +139,18 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
             _overflow();
         });
 
-        private void Replay(long cut)
+        private async Task ReplayAsync(long cut)
         {
             do
             {
                 Closed.ThrowIfCancellationRequested();
                 var page = _runtime.Reader.Since(_topic, _key, _through, Closed, cut);
-                if (page.SnapshotRequired) { Snapshot(); return; }
-                Events(page.After, page.Through, page.Events, page.HasMore);
+                if (page.SnapshotRequired) { await SnapshotAsync(); return; }
+                Events(page.After, page.Through, page.Events, page.HasMore, page.Rows, page.At);
             } while (_through < cut);
         }
 
-        private void Snapshot()
+        private async Task SnapshotAsync()
         {
             using var snapshot = _runtime.Reader.Snapshot(_topic, _key, Closed);
             bool more;
@@ -146,25 +159,52 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
                 Closed.ThrowIfCancellationRequested();
                 var page = snapshot.ReadNext();
                 more = page.HasMore;
-                var frame = JsonSerializer.Serialize(new EngineSnapshotFrame(_id, _runtime.Machine, page.Through, page.Items, more),
+                var frame = JsonSerializer.Serialize(new EngineSnapshotFrame(_id, _runtime.Machine, page.Through, page.Items, more, page.At),
                     EngineSocketJson.Default.EngineSnapshotFrame);
+                Task? next = null;
                 lock (_cursor)
                 {
-                    _send(frame, this);
+                    if (more && _topic == "mirror")
+                    {
+                        _next = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                        next = _next.Task;
+                    }
+                    Send(frame);
                     // A partial snapshot cannot be acknowledged as complete.
                     if (!more) _through = page.Through;
                 }
+                if (next is not null) await next.WaitAsync(Closed);
             } while (more);
         }
 
-        private void Events(long after, long through, IReadOnlyList<EngineEvent> events, bool more)
+        private void Events(long after, long through, IReadOnlyList<EngineEvent> events, bool more,
+            IReadOnlyList<JsonElement>? rows, CursorAt? at)
         {
-            var frame = JsonSerializer.Serialize(new EngineEventsFrame(_id, _runtime.Machine, after, through, events, more),
+            var frame = JsonSerializer.Serialize(new EngineEventsFrame(_id, _runtime.Machine, after, through, events, more, rows, at),
                 EngineSocketJson.Default.EngineEventsFrame);
             lock (_cursor)
             {
-                _send(frame, this);
+                Send(frame);
                 _through = through;
+            }
+        }
+
+        private void Send(string frame)
+        {
+            if (Encoding.UTF8.GetByteCount(frame) > SocketConnection.MaxFrame)
+                throw new InvalidOperationException("Engine frame exceeds the socket budget");
+            _send(frame, this);
+        }
+
+        public void Next()
+        {
+            lock (_cursor)
+            {
+                if (Closed.IsCancellationRequested || _topic != "mirror" || _next is null)
+                    throw new ArgumentException("No pending mirror snapshot");
+                var next = _next;
+                _next = null;
+                next.TrySetResult();
             }
         }
 

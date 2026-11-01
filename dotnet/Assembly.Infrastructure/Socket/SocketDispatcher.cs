@@ -135,7 +135,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             try
             {
                 return engine.Subscribe(id, frame.Topic!, frame.Key, frame.After,
-                    (text, from) => connection.Send(Encoding.UTF8.GetBytes(text), from), connection.Closed, connection.Abort);
+                    (text, from) => connection.Send(Encoding.UTF8.GetBytes(text), from), connection.Closed, connection.Abort, frame.At);
             }
             catch (ArgumentException error)
             {
