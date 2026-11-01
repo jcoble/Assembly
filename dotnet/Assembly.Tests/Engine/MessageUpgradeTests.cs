@@ -235,11 +235,9 @@ public sealed class MessageUpgradeTests
         await State(f, events, "send/unavailable", "dead");
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message WHERE id='unavailable'"));
         Assert.DoesNotContain(Attempts(fake), e => e.SessionId == "unavailable");
-        // Task7 owns need resolution release; after resolution the existing state push triggers Task6's guarded release.
+        // Resolving the last need releases through current guards without another state push.
         var context = new CommandContext(Guid.NewGuid(), f.Machine, new(ActorKind.Window, "window"), "new-need", 1, 0, 10000);
         Assert.True(f.Db.Writer.Write("test.resolve", s => new EngineCommands(f.Machine, () => 5).Apply(s, context, new ResolveNeed("dismissed", null))).Applied);
-        Assert.True(f.Apply(new SetSessionState("running", null, null), "unavailable", f.Number("SELECT version FROM engine_session WHERE id='unavailable'")).Applied);
-        Assert.True(f.Apply(new SetSessionState("idle", null, null), "unavailable", f.Number("SELECT version FROM engine_session WHERE id='unavailable'")).Applied);
         await State(f, events, "send/unavailable/2", "done");
         Assert.Single(Attempts(fake), e => e.SessionId == "unavailable");
     }

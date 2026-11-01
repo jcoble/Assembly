@@ -69,14 +69,15 @@ public sealed class HandoffTests
     public void Inflight_drains_before_transfer()
     {
         using var f = new EngineFixture(); f.SeedSession(epoch: 7);
-        Assert.True(f.Apply(new SendMessage(null, "s", "hello", "prompt"), "m", epoch: 7).Applied);
+        var sent = f.Apply(new SendMessage(null, "s", "hello", "prompt"), "m", epoch: 7);
+        Assert.True(sent.Applied);
         f.Db.Writer.Write("test.inflight", s => s.Execute("UPDATE engine_outbox SET state='inflight' WHERE kind='send'"));
         Assert.True(f.Apply(new RequestHandoff("s", "target"), "h", epoch: 7).Applied);
         var blocked = f.Apply(new HandoffOutcome("accepted", 8, null), "h", version: 1, epoch: 8, actor: Target);
         Assert.Equal("unavailable", blocked.Error); Assert.Equal(8, blocked.Epoch);
         Assert.Equal("requested", f.State("engine_handoff", "h"));
         Assert.Equal("inflight", f.Text("SELECT state FROM engine_outbox WHERE kind='send'"));
-        Assert.True(f.Apply(new MessageOutcome("delivered_to_turn", "turn", null), "m", version: 1, epoch: 7, actor: Target).Applied);
+        Assert.True(f.Apply(new MessageOutcome("delivered_to_turn", "turn", null), "m", version: sent.Version, epoch: 7, actor: Target).Applied);
         f.Db.Writer.Write("test.drain", s => s.Execute("UPDATE engine_outbox SET state='done' WHERE kind='send'"));
         Assert.True(f.Apply(new HandoffOutcome("accepted", 8, null), "h", version: 1, epoch: 8, actor: Target).Applied);
     }

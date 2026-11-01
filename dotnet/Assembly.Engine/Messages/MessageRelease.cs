@@ -26,7 +26,7 @@ public static class MessageRelease
             return [];
         s.Execute("UPDATE engine_message SET version=version+1,in_flight=1,attempt=attempt+1,updated_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", message.Id));
         effects.Add(new($"send/{message.Id}/{message.Attempt + 1}", "send", sessionId, session.Run,
-         JsonSerializer.SerializeToElement(new DeliverMessage(message.Id, sessionId, message.Text, message.Label, session.State == "idle" ? "prompt" : "steer", message.ClientId, session.Version), EngineJson.Default.DeliverMessage)));
+         JsonSerializer.SerializeToElement(new DeliverMessage(message.Id, sessionId, MessageText.Prompt(message.Label, message.Text), message.Label, session.State == "idle" ? "prompt" : "steer", message.ClientId, session.Version), EngineJson.Default.DeliverMessage)));
         return [new("message.changed", "message", message.Id, message.Version + 1, false, new(sessionId, null, null, message.From, "queued", session.Epoch))];
     }
 }

@@ -127,7 +127,7 @@ public sealed class MessageTests
         Assert.Equal("window", f.Text("SELECT sender_kind FROM engine_message"));
         var payload = JsonSerializer.Deserialize(f.Text("SELECT payload_json FROM engine_outbox")!,
             global::Assembly.Engine.EngineJson.Default.DeliverMessage);
-        Assert.Equal(new DeliverMessage("m", "b", "hi", "Jesse", "prompt", "m", 0), payload);
+        Assert.Equal(new DeliverMessage("m", "b", "[message from Jesse]\nhi", "Jesse", "prompt", "m", 0), payload);
         Assert.Null(f.Text("SELECT from_session_id FROM engine_message"));
         Assert.Equal("forbidden", f.Apply(new MessageOutcome("failed", null, null), "m", version: 1).Error);
         Assert.Equal("version_conflict", f.Apply(new MessageOutcome("failed", null, null), "m",

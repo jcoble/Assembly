@@ -89,7 +89,7 @@ public sealed class NeedsMeTests
     [InlineData("dismissed", ActorKind.Window, true)]
     [InlineData("expired", ActorKind.System, true)]
     [InlineData("cancelled", ActorKind.System, true)]
-    [InlineData("answered", ActorKind.System, false)]
+    [InlineData("answered", ActorKind.System, true)]
     [InlineData("dismissed", ActorKind.System, false)]
     [InlineData("expired", ActorKind.Window, false)]
     [InlineData("cancelled", ActorKind.Window, false)]
@@ -99,13 +99,13 @@ public sealed class NeedsMeTests
         using var f = new EngineFixture(); f.SeedSession();
         f.Apply(new OpenNeed("s", null, null, "permission", "Allow?", [], "request", null, 2000), "n", actor: Adapter);
         f.Time.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(2000));
-        var result = f.Apply(new ResolveNeed(state, state == "answered" ? Allow : null), "n", version: 1, actor: new(actor, "resolver"));
+        var result = f.Apply(new ResolveNeed(state, state == "answered" ? Allow : null, actor == ActorKind.System ? "policy_or_cancel" : null), "n", version: 1, actor: new(actor, "resolver"));
         Assert.Equal(allowed, result.Applied);
         if (!allowed) { Assert.Equal("forbidden", result.Error); Assert.Null(Field(f, "answered_by")); return; }
         Assert.Equal("resolver", Field(f, "answered_by")); Assert.Equal(2000, f.Number("SELECT answered_ms FROM engine_needs_me"));
         Assert.Equal(state == "answered" ? "\"allow\"" : "\"deny\"", Field(f, "answer_json"));
         Assert.Equal("already_resolved", f.Apply(new ResolveNeed("answered", Allow), "n", version: 2).Error);
-        Assert.Equal("resolver", Field(f, "answered_by")); Assert.Equal(1, f.Count("engine_outbox"));
+        Assert.Equal("resolver", Field(f, "answered_by")); Assert.Equal(state == "answered" && actor == ActorKind.System ? 0 : 1, f.Count("engine_outbox"));
     }
 
     private static EngineFixture RunningStep()

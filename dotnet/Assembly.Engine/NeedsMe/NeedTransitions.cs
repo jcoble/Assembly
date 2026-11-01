@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Messages;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
@@ -107,8 +108,15 @@ public static class NeedTransitions
     private static CommandResult Resolve(IWriteScope s, CommandContext c, Need need, ResolveNeed command)
     {
         if (command.State is not ("answered" or "dismissed" or "expired" or "cancelled")) return Refused(c, "bad_args", need);
-        var human = command.State is "answered" or "dismissed";
-        if (c.Actor.Kind != (human ? ActorKind.Window : ActorKind.System)) return Refused(c, "forbidden", need);
+        var allowed = c.Actor.Kind switch
+        {
+            ActorKind.Window => command.State is "answered" or "dismissed",
+            ActorKind.System => command.State is "answered" or "expired" or "cancelled",
+            _ => false
+        };
+        if (!allowed) return Refused(c, "forbidden", need);
+        if (c.Actor.Kind == ActorKind.System && command.State is "answered" or "cancelled" && string.IsNullOrWhiteSpace(command.Reason))
+            return Refused(c, "bad_args", need);
         if (command.State == "expired" && (need.Deadline is null || c.NowMs < need.Deadline))
             return Refused(c, "not_expired", need);
         if (command.State == "answered" && (command.Answer is null || command.Answer.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) ||
@@ -122,21 +130,24 @@ public static class NeedTransitions
             new("$actor", c.Actor.Id), new("$id", need.Id));
         var updated = need with { Version = need.Version + 1, State = command.State };
         List<EffectDraft> effects = [];
-        if (answer is not null && need.RequestId is not null)
+        var alreadySettled = c.Actor.Kind == ActorKind.System && (command.State == "answered" ||
+            command.State == "cancelled" && command.Reason is "provider_gone" or "turn_cancelled" or "session_ended");
+        if (answer is not null && need.RequestId is not null && !alreadySettled)
             effects.Add(new($"answer/{need.Id}", "answer", need.SessionId, need.RunId,
                 JsonSerializer.SerializeToElement(new NeedAnswer(need.Id, need.RequestId, answer.Value), EngineJson.Default.NeedAnswer)));
-        return Commit(s, c, updated, [Changed(c, updated, "needs_me.answered")], effects);
+        return Commit(s, c, updated, [Changed(c, updated, "needs_me.answered", command.Reason)], effects);
     }
 
-    private static CommandResult Commit(IWriteScope s, CommandContext c, Need need, List<EventDraft> events, IReadOnlyList<EffectDraft> effects)
+    private static CommandResult Commit(IWriteScope s, CommandContext c, Need need, List<EventDraft> events, List<EffectDraft> effects)
     {
         events.AddRange(SessionTransitions.RecomputeNeeds(s, c, need.SessionId));
+        if (need.State != "open") events.AddRange(MessageRelease.Next(s, c, need.SessionId, effects));
         if (need.RunId is not null) events.AddRange(RunTransitions.Recompute(s, c, need.RunId));
         return EngineJournal.Commit(s, c, need.Version, c.Epoch, events, effects);
     }
 
-    private static EventDraft Changed(CommandContext c, Need need, string kind) =>
-        new(kind, "needs_me", need.Id, need.Version, false, new(need.SessionId, need.RunId, need.StepId, null, need.State, c.Epoch));
+    private static EventDraft Changed(CommandContext c, Need need, string kind, string? reason = null) =>
+        new(kind, "needs_me", need.Id, need.Version, false, new(need.SessionId, need.RunId, need.StepId, null, need.State, c.Epoch, reason));
     private static Session? FindSession(IWriteScope s, string id) => s.QueryFirst(
         "SELECT epoch,state,run_id FROM engine_session WHERE id=$id",
         r => new Session(r.Long(0), r.Text(1), r.IsNull(2) ? null : r.Text(2)), new SqlArg("$id", id));
