@@ -168,6 +168,28 @@ public sealed class DesktopBackendTests : IAsyncLifetime
             other.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}/socket/other"), CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("/socket")]
+    [InlineData("/socket/bulk")]
+    public async Task The_engine_welcome_keeps_the_host_name_and_identifies_the_existing_runtime(string path)
+    {
+        using var socket = new ClientWebSocket();
+        await socket.ConnectAsync(new Uri($"ws://{_backend.Address.Authority}{path}"), CancellationToken.None);
+        await SendTextAsync(socket, $$"""{"t":"hello","token":"{{Token}}","protocol":1}""");
+        using var frame = JsonDocument.Parse(await ReadTextAsync(socket));
+        var welcome = frame.RootElement;
+        Assert.Equal("welcome", welcome.GetProperty("t").GetString());
+        Assert.Equal(Environment.MachineName, welcome.GetProperty("machine").GetString());
+        Assert.Equal(1, welcome.GetProperty("protocol").GetInt32());
+        Assert.Equal(Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion, welcome.GetProperty("format").GetInt32());
+        using var db = new SqliteConnection(new SqliteConnectionStringBuilder
+        { DataSource = Path.Combine(_home, "assembly.db"), Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        await db.OpenAsync();
+        using var read = db.CreateCommand();
+        read.CommandText = "SELECT machine_id FROM engine_meta WHERE singleton=1";
+        Assert.Equal((string)(await read.ExecuteScalarAsync())!, welcome.GetProperty("engine").GetString());
+    }
+
     [Fact]
     public async Task The_terminal_socket_opens_and_takes_the_hello()
     {

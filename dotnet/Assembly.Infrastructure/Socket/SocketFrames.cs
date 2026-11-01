@@ -8,7 +8,8 @@ namespace Assembly.Infrastructure.Socket;
 internal sealed record InFrame(string? T, string? Token, int? Protocol, long? Id, string? Feature, string? Method, JsonElement Args,
     string? Topic, string? Key, long? After, string? Stream = null, CursorAt? At = null, string? Machine = null);
 
-internal sealed record WelcomeFrame(int Protocol, string Machine, int Format)
+internal sealed record WelcomeFrame(int Protocol, string Machine, int Format,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Engine = null)
 {
     [JsonPropertyOrder(-1)]
     public string T => "welcome";
