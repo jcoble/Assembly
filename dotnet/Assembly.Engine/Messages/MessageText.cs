@@ -6,7 +6,7 @@ public static class MessageText
     {
         var quoted = body.Replace("\n[message from ", "\n> [message from ", StringComparison.Ordinal);
         if (quoted.StartsWith("[message from ", StringComparison.Ordinal)) quoted = "> " + quoted;
-        return $"[message from {label}]\n{quoted}";
+        return $"[message from {label.ReplaceLineEndings(" ")}]\n{quoted}";
     }
 
     public static string Label(string? title, string? sessionId, string senderKind) => senderKind switch
