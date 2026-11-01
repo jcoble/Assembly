@@ -32,10 +32,13 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
     feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase`
     (reads needing one consistent view use `IAppDatabase.OpenSnapshot`) and writes through `IAtomicWriter`.
     Each write is one transaction with its audit row, and the changes it publishes (`IWriteScope.Publish`) go to `ITopics` only after it commits.
-  The engine (`Features/Engine/`) keeps its durable operational state in prefixed `engine_` tables in the same database, written only through `IAtomicWriter`.
-- `Assembly.Infrastructure/`: references Application. SQLite and the one writer, starting agent processes and git,
+- `Assembly.Engine/`: references Application for existing database contracts. Owns operational commands, transitions,
+  reads, prefixed `engine_` tables, committed-event publishing and durable outbox execution. Writes go through
+  `IAtomicWriter`; the engine has no SQLite, process, filesystem or transport implementation.
+  [Engine design §17.3](https://app.notion.com/p/40a394b0689d81299136fb94fcf3ccf1) governs this boundary.
+- `Assembly.Infrastructure/`: references Application and Engine. SQLite and the one writer, starting agent processes and git,
   the local and remote machines, and the files and native calls behind a feature (`Infrastructure/<Feature>/`).
-  `Infrastructure/Engine/` hosts the engine runtime, including its committed-event publisher and durable outbox worker.
+  `Infrastructure/Engine/` composes the engine runtime with the host topics and owns its window calls and socket transport.
   A session's folder on disk is `SessionStore.Root` (on its `sessions` item as `root`); anything that reads inside it
   turns a relative path into a full one with `Infrastructure/Chat/SessionPaths`, which refuses paths outside it.
   `Infrastructure/Chat/Files/` lists, searches and reads it for the window's Files and Search tabs and its read-only file tabs.

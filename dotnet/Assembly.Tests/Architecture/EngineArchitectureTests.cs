@@ -2,7 +2,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
-using Assembly.Application.Features.Engine;
+using Assembly.Engine;
 
 namespace Assembly.Tests.Architecture;
 
@@ -19,8 +19,8 @@ public sealed class EngineArchitectureTests
         using var stream = File.OpenRead(assembly.Location);
         using var pe = new PEReader(stream);
         var metadata = pe.GetMetadataReader();
-        var engineTypes = assembly.GetTypes().Where(t => t.Namespace == "Assembly.Application.Features.Engine"
-            || t.Namespace?.StartsWith("Assembly.Application.Features.Engine.", StringComparison.Ordinal) == true).ToArray();
+        var engineTypes = assembly.GetTypes().Where(t => t.Namespace == "Assembly.Engine"
+            || t.Namespace?.StartsWith("Assembly.Engine.", StringComparison.Ordinal) == true).ToArray();
         Assert.NotEmpty(engineTypes);
         foreach (var type in engineTypes)
         {

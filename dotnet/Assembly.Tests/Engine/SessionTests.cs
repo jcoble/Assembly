@@ -1,7 +1,7 @@
 using Assembly.Application.Common.Database;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Sessions;
-using Assembly.Application.Features.Engine.Messages;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
+using Assembly.Engine.Messages;
 
 namespace Assembly.Tests.Engine;
 

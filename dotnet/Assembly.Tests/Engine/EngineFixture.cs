@@ -2,9 +2,9 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Rows;
-using Assembly.Application.Features.Engine;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Persistence;
+using Assembly.Engine;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Persistence;
 using Microsoft.Extensions.Time.Testing;
 

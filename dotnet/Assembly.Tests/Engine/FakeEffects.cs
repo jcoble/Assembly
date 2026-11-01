@@ -1,4 +1,4 @@
-using Assembly.Application.Features.Engine.Effects;
+using Assembly.Engine.Effects;
 
 namespace Assembly.Tests.Engine;
 

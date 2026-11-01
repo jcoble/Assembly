@@ -1,7 +1,7 @@
 using Assembly.Application.Common.Database;
-using Assembly.Application.Features.Engine.Contracts;
-using Assembly.Application.Features.Engine.Runs;
-using Assembly.Application.Features.Engine.Sessions;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Runs;
+using Assembly.Engine.Sessions;
 
 namespace Assembly.Tests.Engine;
 
@@ -69,7 +69,7 @@ public sealed class RunStepTests
             s.Execute("UPDATE engine_outbox SET state='done'");
             var c = new CommandContext(Guid.NewGuid(), f.Machine, System, "r", 3, 0, 1000);
             var events = RunTransitions.Recompute(s, c, "r");
-            return Assembly.Application.Features.Engine.Persistence.EngineJournal.Commit(s, c, 4, 0, events, []);
+            return Assembly.Engine.Persistence.EngineJournal.Commit(s, c, 4, 0, events, []);
         });
         Assert.Equal("cancelled", f.State("engine_run", "r"));
         var late = f.Apply(new SetStepState("succeeded", 1, ["https://example.com/proof"], null, false), "s", oldVersion, actor: System);
@@ -226,7 +226,7 @@ public sealed class RunStepTests
         var id = Guid.NewGuid(); var result = f.Apply(command, "r", commandId: id);
         f.Reopen(); Assert.Equal(result, f.Apply(command, "r", commandId: id));
         var json = """{"kind":"set_step_state","state":"skipped","attempt":0,"proofUrls":[],"reason":"rule","byWorkflowRule":true}""";
-        var fact = global::System.Text.Json.JsonSerializer.Deserialize(json, Assembly.Application.Features.Engine.EngineJson.Default.EngineCommand)!;
+        var fact = global::System.Text.Json.JsonSerializer.Deserialize(json, Assembly.Engine.EngineJson.Default.EngineCommand)!;
         Assert.Equal("forbidden", f.Apply(fact, "s", 1).Error);
         Assert.Equal("pending", f.State("engine_step", "s"));
         Assert.Equal(1, f.Count("engine_event"));
