@@ -1,4 +1,5 @@
 using Assembly.Engine.Execution;
+using Assembly.Engine.Hosting;
 using System.Threading.Channels;
 using Assembly.Application.Common.Database;
 using Assembly.Engine;
@@ -13,7 +14,7 @@ using EngineTopics = Assembly.Infrastructure.Topics.Topics;
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Hosts dispose this owner before disposing the database.</summary>
-public sealed class EngineRuntime : IAsyncDisposable
+public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
 {
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
@@ -53,12 +54,21 @@ public sealed class EngineRuntime : IAsyncDisposable
         Func<int> childLimit, IEngineEffects? effects = null, IEngineRetention? retention = null) =>
         new(db, topics, time, childLimit, effects, retention);
 
-    internal CommandResult Submit(CommandContext context, EngineCommand command)
+    T IEngineRuntime.Write<T>(Func<IWriteScope, T> body)
     {
-        var result = _db.Writer.Write("engine.command", scope => Commands.Apply(scope, context, command));
-        if (result.Applied) _worker.Wake();
+        var result = _db.Writer.Write("engine.command", body);
+        _worker.Wake();
         return result;
     }
+
+    T IEngineRuntime.Read<T>(Func<IReadScope, T> body, CancellationToken cancellationToken)
+    {
+        using var snapshot = _db.OpenSnapshot(cancellationToken);
+        return body(snapshot);
+    }
+
+    internal CommandResult Submit(CommandContext context, EngineCommand command) =>
+        ((IEngineRuntime)this).Write(scope => Commands.Apply(scope, context, command));
 
     public void EffectsAvailable() => _worker.EffectsAvailable();
 
