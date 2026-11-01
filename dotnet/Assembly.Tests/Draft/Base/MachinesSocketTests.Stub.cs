@@ -53,6 +53,8 @@ public sealed partial class MachinesSocketTests
         public int TitleHits;
         public int SendHits;
         public int ConfigSets;
+        public int DropWelcomes;
+        public Func<string, string, string?>? Reply { get; set; }
         public Func<CancellationToken, Task>? BeforeConfig { get; set; }
         public int LiveOpen { get { lock (_liveOpen) return _liveOpen.Values.Sum(); } }
         // The most /live links any one session had open at once, and each session's first /live link, under _liveOpen.
@@ -70,37 +72,13 @@ public sealed partial class MachinesSocketTests
         private TaskCompletionSource Seen(string session) =>
             _liveSeen.TryGetValue(session, out var seen) ? seen : _liveSeen[session] = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public async Task StartAsync()
+        public async Task StartAsync(Action<WebApplication>? map = null)
         {
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
             _app = builder.Build();
             _app.UseWebSockets();
-            _app.MapGet("/version", async (HttpContext context) =>
-            {
-                Interlocked.Increment(ref VersionHits);
-                VersionStarted.TrySetResult();
-                if (DropVersion)
-                {
-                    context.Abort();
-                    return Results.Empty;
-                }
-                if (HangVersion)
-                {
-                    try
-                    {
-                        await Task.Delay(Timeout.Infinite, context.RequestAborted);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        Interlocked.Increment(ref VersionAborted);
-                        VersionCancelled.TrySetResult();
-                        return Results.Empty;
-                    }
-                }
-                return Results.Text($$"""{"formatVersion":{{Format}},"commit":"abc"}""", "application/json");
-            });
             _app.MapGet("/sessions/{id}", () =>
             {
                 Interlocked.Increment(ref TitleHits);
@@ -123,9 +101,27 @@ public sealed partial class MachinesSocketTests
                         switch (json.GetProperty("t").GetString())
                         {
                             case "hello":
-                                await Send("""{"t":"welcome","protocol":1,"machine":"box"}""");
+                                if (!context.Request.Path.Value!.EndsWith("bulk", StringComparison.Ordinal))
+                                {
+                                    Interlocked.Increment(ref VersionHits);
+                                    VersionStarted.TrySetResult();
+                                }
+                                if (DropVersion || Interlocked.Decrement(ref DropWelcomes) >= 0) { context.Abort(); return; }
+                                if (HangVersion)
+                                {
+                                    // The client cancels the hello by closing its owned socket.
+                                    try { await socket.ReceiveAsync(buffer, context.RequestAborted); }
+                                    finally { Interlocked.Increment(ref VersionAborted); VersionCancelled.TrySetResult(); }
+                                    return;
+                                }
+                                await Send($$"""{"t":"welcome","protocol":1,"machine":"box","format":{{Format}}}""");
                                 break;
                             case "sub":
+                                if (json.GetProperty("topic").GetString() == "sessions")
+                                {
+                                    await Send($$"""{"t":"state","sub":{{json.GetProperty("id")}},"items":[]}""");
+                                    break;
+                                }
                                 var session = json.GetProperty("key").GetString()!;
                                 subscriptions.Add(session);
                                 Interlocked.Increment(ref LiveHits);
@@ -139,14 +135,63 @@ public sealed partial class MachinesSocketTests
                                 break;
                             case "unsub":
                                 // This fixture's follower tests only unsubscribe the oldest active session.
-                                Close(subscriptions[0]);
-                                subscriptions.RemoveAt(0);
+                                if (subscriptions.Count > 0) { Close(subscriptions[0]); subscriptions.RemoveAt(0); }
                                 break;
                             case "call":
-                                var after = json.GetProperty("args").GetProperty("after").GetInt64();
-                                var rows = LiveRows.Select(row => JsonDocument.Parse(row).RootElement.GetProperty("row").Clone())
-                                    .Where(row => row.GetProperty("seq").GetInt64() > after).Select(row => row.GetRawText());
-                                await Send("{\"t\":\"result\",\"id\":1,\"result\":{\"rows\":[" + string.Join(',', rows) + "]}}");
+                                var id = json.GetProperty("id");
+                                var method = json.GetProperty("method").GetString();
+                                var feature = json.GetProperty("feature").GetString();
+                                string result;
+                                string? custom;
+                                try { custom = Reply?.Invoke(feature!, method!); }
+                                catch (CallFailed error)
+                                {
+                                    await Send(JsonSerializer.Serialize(new { t = "error", id = id.GetInt64(), code = "failed", message = error.Message }));
+                                    break;
+                                }
+                                if (custom is not null) result = custom;
+                                else if (feature == "machines")
+                                {
+                                    Interlocked.Increment(ref AgentsHits);
+                                    if (Drop) { context.Abort(); return; }
+                                    if (AgentsStatus != 200)
+                                    {
+                                        var code = AgentsStatus is 401 or 403 ? "unreachable" : "failed";
+                                        var message = code == "unreachable" ? "the remote refused this computer's token" : "boom";
+                                        await Send($$"""{"t":"error","id":{{id}},"code":"{{code}}","message":"{{message}}"}""");
+                                        break;
+                                    }
+                                    result = """{"agents":[{"id":"claude","name":"Claude"},{"id":"codex","name":"Codex"}]}""";
+                                }
+                                else if (feature == "config")
+                                {
+                                    if (method == "set") Interlocked.Increment(ref ConfigSets);
+                                    else if (BeforeConfig is not null) await BeforeConfig(context.RequestAborted);
+                                    result = """{"options":[],"choices":{"where":"remote"}}""";
+                                }
+                                else if (feature == "send")
+                                {
+                                    if (method == "send")
+                                    {
+                                        Interlocked.Increment(ref SendHits);
+                                        result = """{"runId":"remote-run"}""";
+                                    }
+                                    else if (StopStatus == 202) result = """{"ok":true}""";
+                                    else
+                                    {
+                                        var message = StopStatus == 404 ? "that run isn't running" : "boom";
+                                        await Send($$"""{"t":"error","id":{{id}},"code":"failed","message":"{{message}}"}""");
+                                        break;
+                                    }
+                                }
+                                else
+                                {
+                                    var after = json.GetProperty("args").GetProperty("after").GetInt64();
+                                    var rows = LiveRows.Select(row => JsonDocument.Parse(row).RootElement.GetProperty("row").Clone())
+                                        .Where(row => row.GetProperty("seq").GetInt64() > after).Select(row => row.GetRawText());
+                                    result = "{\"rows\":[" + string.Join(',', rows) + "]}";
+                                }
+                                await Send($$"""{"t":"result","id":{{id}},"result":{{result}}}""");
                                 break;
                         }
                     }
@@ -154,34 +199,7 @@ public sealed partial class MachinesSocketTests
                 catch (Exception error) when (error is OperationCanceledException or WebSocketException) { }
                 finally { foreach (var session in subscriptions) Close(session); }
             });
-            _app.MapGet("/agents", (HttpContext context) =>
-            {
-                Interlocked.Increment(ref AgentsHits);
-                if (Drop)
-                {
-                    context.Abort();
-                    return Results.Empty;
-                }
-                return AgentsStatus == 200
-                    ? Results.Text("""{"agents":[{"id":"claude","name":"Claude"}]}""", "application/json")
-                    : Results.Text("boom", statusCode: AgentsStatus);
-            });
-            _app.MapGet("/sessions/{id}/config", async (HttpContext context) =>
-            {
-                if (BeforeConfig is not null) await BeforeConfig(context.RequestAborted);
-                return Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json");
-            });
-            _app.MapPost("/sessions/{id}/config", () =>
-            {
-                Interlocked.Increment(ref ConfigSets);
-                return Results.Text("""{"options":[],"choices":{"where":"remote"}}""", "application/json");
-            });
-            _app.MapPost("/sessions/{id}/send", () =>
-            {
-                Interlocked.Increment(ref SendHits);
-                return Results.Text("""{"runId":"remote-run"}""", "application/json");
-            });
-            _app.MapPost("/runs/{id}/stop", () => Results.Text(StopStatus == 500 ? "boom" : "", statusCode: StopStatus));
+            map?.Invoke(_app);
             await _app.StartAsync();
             Address = new Uri(_app.Urls.Single());
         }

@@ -44,11 +44,16 @@ public sealed partial class RemoteMachineTests
         var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
         using var hub = new LiveHub(RowStore.Open(db));
         await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]));
+        await machine.ProbeAsync(CancellationToken.None);
         var session = await machine.CreateSessionAsync("claude", "https://github.com/o/r", CancellationToken.None);
         sessions.SetTitle(session.SessionId, local.Title, local.Source);
         // The next change to the session here is the refresh after its turn: its title, or only its time.
         var refreshed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        topics.Subscribe(SessionsFeature.Topic, session.SessionId, _ => { }, (_, _) => refreshed.TrySetResult());
+        topics.Subscribe(SessionsFeature.Topic, session.SessionId, _ => { }, (_, _) =>
+        {
+            if (sessions.Get(session.SessionId)?.Title == (local.Source == "user" || remoteHelperTitle is null ? local.Title : remoteHelperTitle))
+                refreshed.TrySetResult();
+        });
 
         await machine.SendAsync(session, "Fix the build", null, CancellationToken.None);
         var agent = await _boxLauncher.NextAsync();
@@ -57,7 +62,7 @@ public sealed partial class RemoteMachineTests
         Assert.Equal("Fix the build", (await GetJsonAsync(_box, BoxToken, $"/sessions/{session.SessionId}")).GetProperty("title").GetString());
         if (remoteHelperTitle is not null)
         {
-            using var boxDb = AppDatabase.Open(Path.Combine(_boxHome, "assembly.db"), TimeProvider.System, new global::Assembly.Infrastructure.Topics.Topics());
+            var boxDb = (AppDatabase)typeof(Assembly.Desktop.Serve.DesktopBackend).GetField("_db", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(_box)!;
             SessionStore.Open(boxDb, TimeProvider.System, "checkouts").SetTitle(session.SessionId, remoteHelperTitle, "helper");
         }
         await agent.TextAsync("Hello");

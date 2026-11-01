@@ -1,4 +1,5 @@
 using System.Globalization;
+using Assembly.Tests.Draft.Base;
 using System.Net;
 using System.Net.WebSockets;
 using System.Text;
@@ -84,11 +85,12 @@ public sealed partial class RemoteMachineTests
 
         await _desktop!.DisposeAsync();
         ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
-        await using var down = await StubAsync(_ => { }, () => 500);
+        await using var down = new MachinesSocketTests.StubRemote { DropVersion = true };
+        await down.StartAsync();
         _desktop = await DesktopOnAsync(down, _desktopHome);
 
         // The follower gives up; only Resume or the stop button ends the row.
-        await Until(() => _log.ToString().Contains($"remote session {helperId}: {Box} answered 500"));
+        await Until(() => _log.ToString().Contains($"remote session {helperId}: {Box} didn't answer"));
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
     }
 
@@ -100,40 +102,12 @@ public sealed partial class RemoteMachineTests
         await _desktop!.DisposeAsync();
         ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
         // The first machine socket drops. Its next subscription catches up on the same helper.
-        var links = 0;
-        await using var flaky = await StubAsync(app =>
-        {
-            app.UseWebSockets();
-            app.Map("/socket/{**path}", async (HttpContext context) =>
-            {
-                using var socket = await context.WebSockets.AcceptWebSocketAsync();
-                if (!context.Request.Path.Value!.EndsWith("bulk", StringComparison.Ordinal) && Interlocked.Increment(ref links) == 1) return;
-                try
-                {
-                    var buffer = new byte[4096];
-                    while (true)
-                    {
-                        var received = await socket.ReceiveAsync(buffer, context.RequestAborted);
-                        if (received.MessageType == WebSocketMessageType.Close) break;
-                        using var doc = JsonDocument.Parse(buffer.AsMemory(0, received.Count));
-                        var frame = doc.RootElement;
-                        var reply = frame.GetProperty("t").GetString() switch
-                        {
-                            "hello" => "{\"t\":\"welcome\",\"protocol\":1,\"machine\":\"box\"}",
-                            "sub" => "{\"t\":\"state\",\"sub\":" + frame.GetProperty("id") + ",\"seq\":" + frame.GetProperty("after") + ",\"items\":[]}",
-                            "call" => "{\"t\":\"result\",\"id\":1,\"result\":{\"rows\":[]}}",
-                            _ => null,
-                        };
-                        if (reply is not null) await socket.SendAsync(Encoding.UTF8.GetBytes(reply), WebSocketMessageType.Text, true, context.RequestAborted);
-                    }
-                }
-                catch (Exception error) when (error is WebSocketException or OperationCanceledException) { }
-            });
-        });
+        await using var flaky = new MachinesSocketTests.StubRemote { DropWelcomes = 1 };
+        await flaky.StartAsync();
         _desktop = await DesktopOnAsync(flaky, _desktopHome);
 
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
-        Assert.True(links >= 2);
+        Assert.True(flaky.VersionHits >= 2);
     }
 
     [Fact]
