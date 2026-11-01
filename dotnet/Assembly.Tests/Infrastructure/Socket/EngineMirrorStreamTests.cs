@@ -273,6 +273,100 @@ public sealed partial class EngineSocketTests
         Assert.Equal(700, result.RetainedAfter);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Mature_mirror_snapshot_survives_retention_and_releases_its_cut(bool compactedCursor)
+    {
+        LargeSessions(230, 1000);
+        var compacted = _database.Worker.Pass(30000, 20000);
+        _f.Db.Writer.Write("history", scope =>
+        {
+            for (var i = 0; i < 30000; i++) Journal(scope, "effect", "history");
+            return 0;
+        });
+        await Published();
+        await compacted.WaitAsync(Wait);
+        using var socket = await Open();
+        await MirrorSubscribe(socket, after: compactedCursor ? 1 : null);
+        var page = await Read(socket);
+        Assert.Equal("engine_snapshot", page.GetProperty("t").GetString());
+        Assert.True(page.GetProperty("more").GetBoolean());
+        var cut = page.GetProperty("through").GetInt64();
+        Assert.Equal(30000, cut);
+        var fingerprint = page.GetProperty("at").GetRawText();
+        var items = page.GetProperty("items").EnumerateArray().ToList();
+        // Retention can protect the cut without treating a partial page as a completed wire cursor.
+        await Send(socket, $$"""{"t":"ack","id":3,"stream":"engine","after":{{cut}}}""");
+        Assert.Equal("bad_args", (await Read(socket)).GetProperty("code").GetString());
+        var retained = _database.Worker.Pass(cut + 1);
+        _f.Db.Writer.Write("concurrent", scope =>
+        {
+            scope.Execute("UPDATE engine_session SET title='new-title',version=1 WHERE id='s0229'");
+            Journal(scope, "session", "s0229");
+            return 0;
+        });
+        await Published();
+        // This observes a committed default-retention worker pass while next is still withheld.
+        await retained.WaitAsync(Wait);
+        do
+        {
+            await Send(socket, """{"t":"next","id":3}""");
+            page = await Read(socket);
+            Assert.Equal("engine_snapshot", page.GetProperty("t").GetString());
+            Assert.Equal(cut, page.GetProperty("through").GetInt64());
+            Assert.Equal(fingerprint, page.GetProperty("at").GetRawText());
+            items.AddRange(page.GetProperty("items").EnumerateArray());
+        } while (page.GetProperty("more").GetBoolean());
+        Assert.Equal(230, items.Count);
+        Assert.All(items, item => Assert.NotEqual("new-title", item.GetProperty("title").GetString()));
+        var live = await Read(socket);
+        Assert.Equal(cut, live.GetProperty("after").GetInt64());
+        Assert.Equal(cut + 1, Assert.Single(live.GetProperty("events").EnumerateArray()).GetProperty("seq").GetInt64());
+        Assert.Equal("new-title", Assert.Single(live.GetProperty("rows").EnumerateArray()).GetProperty("title").GetString());
+        await Send(socket, $$"""{"t":"ack","id":3,"stream":"engine","after":{{cut}}}""");
+        await Barrier(socket); // A repeated buffered event would arrive before this result and fail the barrier.
+        Assert.Equal(cut, _runtime.Publisher.MinimumReaderAck);
+        using var closed = new CancellationTokenSource(Wait);
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, closed.Token);
+        Assert.Equal(cut + 1, _runtime.Publisher.MinimumReaderAck);
+    }
+
+    private sealed class WorkerPassObserver(IAtomicWriter writer) : IAtomicWriter
+    {
+        private readonly Lock _gate = new();
+        private (long Through, long Floor, TaskCompletionSource Done)? _waiting;
+
+        public Task Pass(long through, long floor = 0)
+        {
+            lock (_gate)
+            {
+                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _waiting = (through, floor, done);
+                return done.Task;
+            }
+        }
+
+        public T Write<T>(string what, Func<IWriteScope, T> write)
+        {
+            if (what != "engine.worker") return writer.Write(what, write);
+            var pass = writer.Write(what, scope =>
+            {
+                var result = write(scope);
+                var state = scope.QueryFirst("SELECT next_seq-1,retained_after FROM engine_meta WHERE singleton=1",
+                    r => (Through: r.Long(0), Floor: r.Long(1)));
+                return (Result: result, state.Through, state.Floor);
+            });
+            lock (_gate)
+                if (_waiting is { } waiting && pass.Through >= waiting.Through && pass.Floor >= waiting.Floor)
+                {
+                    _waiting = null;
+                    waiting.Done.TrySetResult();
+                }
+            return pass.Result;
+        }
+    }
+
     private void Journal(IWriteScope scope, string kind, string id) => EngineJournal.Commit(scope,
         new(Guid.NewGuid(), _f.Machine, new(ActorKind.System, "test"), id, 0, 0, 1000),
         0, 0, [new("changed", kind, id, 0, false, new(null, null, null, null, null, null))], []);

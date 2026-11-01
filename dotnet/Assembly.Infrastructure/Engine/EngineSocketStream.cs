@@ -57,6 +57,7 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
         private long _buffered;
         private int _disposed;
         private TaskCompletionSource? _next;
+        private IDisposable? _reader;
 
         public CancellationToken Closed { get; }
         public Task Completion { get; }
@@ -93,20 +94,15 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
 
         private async Task RunAsync(long? after, long cut, IDisposable registration)
         {
-            IDisposable? reader = null;
             try
             {
                 if (after is { } cursor)
                 {
                     _through = cursor;
-                    reader = Track(cursor);
+                    _reader = Track(cursor);
                     await ReplayAsync(Math.Max(cut, cursor));
                 }
-                else
-                {
-                    reader = Track(0);
-                    await SnapshotAsync();
-                }
+                else await SnapshotAsync();
                 await foreach (var (item, bytes) in _pending.Reader.ReadAllAsync(Closed))
                 {
                     Interlocked.Add(ref _buffered, -bytes);
@@ -128,7 +124,7 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
             {
                 Dispose();
                 registration.Dispose();
-                reader?.Dispose();
+                _reader?.Dispose();
                 _closed.Dispose();
             }
         }
@@ -152,7 +148,11 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
 
         private async Task SnapshotAsync()
         {
+            // A new snapshot needs only events after its cut, even when replay had an older cursor.
+            _reader?.Dispose();
+            _reader = null;
             using var snapshot = _runtime.Reader.Snapshot(_topic, _key, Closed);
+            _reader = Track(snapshot.Through);
             bool more;
             do
             {

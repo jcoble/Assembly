@@ -511,7 +511,8 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public IAtomicWriter Writer => database.Writer;
+        public WorkerPassObserver Worker { get; } = new(database.Writer);
+        public IAtomicWriter Writer => Worker;
         public List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args) => database.Query(sql, map, cancel, args);
         public T? QueryFirst<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args) => database.QueryFirst(sql, map, cancel, args);
         public IReadSnapshot OpenSnapshot(CancellationToken cancellationToken) => new GatedSnapshot(database.OpenSnapshot(cancellationToken), this, cancellationToken);
