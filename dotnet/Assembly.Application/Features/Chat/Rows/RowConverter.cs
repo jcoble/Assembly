@@ -32,9 +32,9 @@ public sealed class RowConverter
     private string? _messageAgentId;
     private StreamingText? _thinking;
     private string? _thinkingAgentId;
-    private readonly Dictionary<string, (string Item, string? Run)> _messageItems = [];
+    private readonly Dictionary<string, List<(string Item, string? Run)>> _messageItems = [];
     private readonly Dictionary<string, string> _replacedText = [];
-    private readonly Dictionary<string, (string Item, string? Run)> _thoughtItems = [];
+    private readonly Dictionary<string, List<(string Item, string? Run)>> _thoughtItems = [];
     private readonly Dictionary<string, string> _replacedThought = [];
     private decimal? _sessionCost;
     private int _unnamedItems;
@@ -161,8 +161,15 @@ public sealed class RowConverter
         {
             var text = chunk.Replace ? chunk.Text : _replacedText[native] + chunk.Text;
             _replacedText[native] = text;
-            if (!_messageItems.TryGetValue(native, out var item))
-                _messageItems[native] = item = (SegmentId(native, ""), _turn?.RunId ?? _lastRunId);
+            if (!_messageItems.TryGetValue(native, out var items))
+                _messageItems[native] = items = [(SegmentId(native, ""), _turn?.RunId ?? _lastRunId)];
+            // Every segment belongs to the native message being replaced. Clear its earlier display copies
+            // in this same batch, so live upserts and current-row reads cannot retain obsolete text.
+            if (chunk.Replace)
+                foreach (var prior in items.SkipLast(1))
+                    batch.Rows.Add(new NewRow(prior.Run, prior.Item, RowKind.Message,
+                        JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse("")), RowJsonContext.Rows.MessagePayload), chunk.At));
+            var item = items[^1];
             if (_messageAgentId == native) _message = null;
             batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Message,
                 JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse(text)), RowJsonContext.Rows.MessagePayload), chunk.At));
@@ -175,7 +182,7 @@ public sealed class RowConverter
         if (_turn is not null)
             _turn.FirstTextAt ??= chunk.At;
 
-        if (chunk.MessageId is { } id) _messageItems[id] = (_message.ItemId, _turn?.RunId ?? _lastRunId);
+        if (chunk.MessageId is { } id) RememberSegment(_messageItems, id, _message.ItemId);
         _message.Append(chunk.Text);
         if (_message.IsDue(chunk.At))
             SendDelta(batch, chunk.At);
@@ -188,8 +195,15 @@ public sealed class RowConverter
         {
             var text = chunk.Replace ? chunk.Text : _replacedThought[native] + chunk.Text;
             _replacedThought[native] = text;
-            if (!_thoughtItems.TryGetValue(native, out var item))
-                _thoughtItems[native] = item = (SegmentId(native, ":thinking"), _turn?.RunId ?? _lastRunId);
+            if (!_thoughtItems.TryGetValue(native, out var items))
+                _thoughtItems[native] = items = [(SegmentId(native, ":thinking"), _turn?.RunId ?? _lastRunId)];
+            // Every segment belongs to the native message being replaced. Clear its earlier display copies
+            // in this same batch, so live upserts and current-row reads cannot retain obsolete text.
+            if (chunk.Replace)
+                foreach (var prior in items.SkipLast(1))
+                    batch.Rows.Add(new NewRow(prior.Run, prior.Item, RowKind.Thinking,
+                        JsonSerializer.SerializeToElement(new ThinkingPayload("", Done: true), RowJsonContext.Rows.ThinkingPayload), chunk.At));
+            var item = items[^1];
             if (_thinking?.ItemId == item.Item) _thinking = null;
             batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Thinking,
                 JsonSerializer.SerializeToElement(new ThinkingPayload(text, Done: false), RowJsonContext.Rows.ThinkingPayload), chunk.At));
@@ -199,7 +213,7 @@ public sealed class RowConverter
             CloseThinking(batch, chunk.At);
         if (_thinking is null)
             (_thinking, _thinkingAgentId) = (new StreamingText(SegmentId(chunk.MessageId, ":thinking")), chunk.MessageId);
-        if (chunk.MessageId is { } id) _thoughtItems[id] = (_thinking.ItemId, _turn?.RunId ?? _lastRunId);
+        if (chunk.MessageId is { } id) RememberSegment(_thoughtItems, id, _thinking.ItemId);
         _thinking.Append(chunk.Text);
         if (_thinking.IsDue(chunk.At))
             SendThinking(batch, chunk.At);
@@ -253,7 +267,7 @@ public sealed class RowConverter
         _segments.Clear();
         foreach (var (id, text) in _replacedThought)
         {
-            var item = _thoughtItems[id];
+            var item = _thoughtItems[id][^1];
             if (item.Run == _turn?.RunId)
                 batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Thinking,
                     JsonSerializer.SerializeToElement(new ThinkingPayload(text, Done: true), RowJsonContext.Rows.ThinkingPayload), at));
@@ -324,6 +338,13 @@ public sealed class RowConverter
         var key = agentMessageId + suffix;
         var segment = _segments[key] = _segments.GetValueOrDefault(key) + 1;
         return segment == 1 ? key : $"{key}:{segment}";
+    }
+
+    private void RememberSegment(Dictionary<string, List<(string Item, string? Run)>> map, string native, string item)
+    {
+        if (!map.TryGetValue(native, out var items)) map[native] = items = [];
+        var segment = (item, _turn?.RunId ?? _lastRunId);
+        if (items.Count == 0 || items[^1] != segment) items.Add(segment);
     }
 
     private string NextUnnamed() => $"{_turn?.RunId}:{++_unnamedItems}";

@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Assembly.Domain.Events;
 
 /// <summary>
-/// What a tool call update says. Null means not mentioned.
+/// What a tool call update says. Null means not mentioned, except ContentText/Diffs when ContentReplaced is true.
 /// <c>Status</c> is <c>pending</c>, <c>in_progress</c>, <c>completed</c> or <c>failed</c>.
 /// <c>Output</c> is the tool's own output; <c>ContentText</c> is the text the agent shows for it, which is
 /// sometimes only a description until the tool finishes.
@@ -17,4 +17,5 @@ public sealed record ToolCallFields(
     string? Output = null,
     string? ContentText = null,
     IReadOnlyList<FileDiff>? Diffs = null,
-    IReadOnlyList<string>? Paths = null);
+    IReadOnlyList<string>? Paths = null,
+    bool ContentReplaced = false);

@@ -25,8 +25,8 @@ internal sealed class OpenTool(string itemId)
         update.Status ?? _fields.Status,
         update.Input ?? _fields.Input,
         update.Output ?? _fields.Output,
-        update.ContentText ?? _fields.ContentText,
-        update.Diffs ?? _fields.Diffs,
+        update.ContentReplaced ? update.ContentText : update.ContentText ?? _fields.ContentText,
+        update.ContentReplaced ? update.Diffs : update.Diffs ?? _fields.Diffs,
         update.Paths ?? _fields.Paths);
 
     /// <summary>
@@ -39,7 +39,7 @@ internal sealed class OpenTool(string itemId)
         var input = _fields.Input is { } fields && fields.EnumerateObject().Any() ? fields.GetRawText() : null;
         // Some agents fill the shown text with a description while the tool runs, so it counts as output only at the end.
         var output = _fields.Output ?? (IsDone ? _fields.ContentText : null);
-        var path = ToolSummary.Path(_fields.Input) ?? _fields.Diffs?[0].Path ?? _fields.Paths?[0];
+        var path = ToolSummary.Path(_fields.Input) ?? (_fields.Diffs is { Count: > 0 } diffs ? diffs[0].Path : null) ?? _fields.Paths?[0];
         var detail = new ToolDetail(ItemId, input, output, diff?.Text, path);
 
         var state = failed || _fields.Status == "failed" ? "failed" : _fields.Status == "completed" ? "completed" : "started";
@@ -50,11 +50,8 @@ internal sealed class OpenTool(string itemId)
 
         var lineJson = JsonSerializer.Serialize(line, RowJsonContext.Rows.ToolPayload);
         var changedLine = lineJson == _lastLine ? null : line;
-        var changedDetail = new ToolDetail(ItemId,
-            Changed(input, _lastDetail.Input), Changed(output, _lastDetail.Output), Changed(diff?.Text, _lastDetail.Diff), Changed(path, _lastDetail.Path));
+        var changedDetail = detail == _lastDetail ? null : detail with { Replace = true };
         (_lastLine, _lastDetail) = (lineJson, detail);
-        return (changedLine, changedDetail is { Input: null, Output: null, Diff: null, Path: null } ? null : changedDetail);
+        return (changedLine, changedDetail);
     }
-
-    private static string? Changed(string? now, string? before) => now == before ? null : now;
 }

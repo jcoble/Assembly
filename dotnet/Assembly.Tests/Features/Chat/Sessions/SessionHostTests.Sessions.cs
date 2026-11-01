@@ -13,6 +13,47 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 // SessionHostTests, continued: sessions opening, resuming and closing, the shared adapter, stopping and failing.
 public sealed partial class SessionHostTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Reader_state_follows_the_native_session_after_resume(bool resumeFails)
+    {
+        _host.Send("one");
+        var agent = await _launcher.NextAsync();
+        await agent.StartAsync();
+        var first = await agent.ReadAsync("session/prompt");
+        await agent.UpdateAsync("""{"sessionUpdate":"plan_update","plan":{"type":"items","planId":"p-old","entries":[{"content":"Old plan","status":"pending","priority":"high"}]}}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"reused","title":"Old title","status":"completed"}""");
+        await agent.FinishAsync(first, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        await Until(() => _host.ActiveRunId is null);
+
+        _host.Send("two");
+        var resume = await agent.ReadAsync("session/resume");
+        var native = FakeLink.AcpSessionId;
+        if (resumeFails)
+        {
+            await agent.ReplyErrorAsync(resume, -32603, "Transcript missing");
+            native = "new-native";
+            await agent.OpenAsync(native);
+        }
+        else await agent.ReplyAsync(resume, "{}");
+        var second = await agent.ReadAsync("session/prompt");
+        await agent.UpdateAsync("""{"sessionUpdate":"plan_update","plan":{"type":"items","planId":"p-new","entries":[{"content":"New plan","status":"pending","priority":"high"}]}}""", native);
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"reused","status":"in_progress"}""", native);
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"reused","status":"completed"}""", native);
+        await agent.FinishAsync(second, """{"stopReason":"end_turn"}""");
+        await agent.CloseAsync();
+        var rows = await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
+        var plan = Assert.Single(rows, row => row.Kind == "plan").Payload.GetRawText();
+        Assert.Contains("New plan", plan);
+        Assert.Equal(!resumeFails, plan.Contains("Old plan", StringComparison.Ordinal));
+        var tools = rows.Where(row => row.Kind == "tool").ToArray();
+        Assert.NotEmpty(tools);
+        Assert.All(tools, row => Assert.Equal(resumeFails ? "Tool" : "Old title", row.Payload.GetProperty("name").GetString()));
+    }
+
     [Fact]
     public async Task An_agent_that_does_not_steer_refuses_a_message_mid_turn()
     {

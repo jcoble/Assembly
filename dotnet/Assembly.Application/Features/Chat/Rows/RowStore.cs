@@ -298,11 +298,13 @@ public sealed class RowStore
             """
             INSERT INTO tool_details(session_id, item_id, input, output, diff, path) VALUES ($session, $item, $input, $output, $diff, $path)
             ON CONFLICT (session_id, item_id) DO UPDATE SET
-              input = COALESCE(excluded.input, input), output = COALESCE(excluded.output, output),
-              diff = COALESCE(excluded.diff, diff), path = COALESCE(excluded.path, path);
+              input = CASE WHEN $replace THEN excluded.input ELSE COALESCE(excluded.input, input) END,
+              output = CASE WHEN $replace THEN excluded.output ELSE COALESCE(excluded.output, output) END,
+              diff = CASE WHEN $replace THEN excluded.diff ELSE COALESCE(excluded.diff, diff) END,
+              path = CASE WHEN $replace THEN excluded.path ELSE COALESCE(excluded.path, path) END;
             """,
             new SqlArg("$session", sessionId), new SqlArg("$item", detail.ItemId), new SqlArg("$input", detail.Input), new SqlArg("$output", detail.Output),
-            new SqlArg("$diff", detail.Diff), new SqlArg("$path", detail.Path));
+            new SqlArg("$diff", detail.Diff), new SqlArg("$path", detail.Path), new SqlArg("$replace", detail.Replace ? 1 : 0));
 
     private static JsonElement WholeDelta(string text) =>
         JsonSerializer.SerializeToElement(new DeltaPayload(0, SafeMarkdown.Parse(text), text), RowJsonContext.Rows.DeltaPayload);

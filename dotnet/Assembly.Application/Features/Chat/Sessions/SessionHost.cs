@@ -440,6 +440,13 @@ public sealed partial class SessionHost : IPermissionPolicy
                 session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, this);
                 lock (_gate)
                 {
+                    // The previous pump has completed before the session semaphore is released. Switch the
+                    // reader under the same gate used to drain updates, before starting this session's pump.
+                    if (_readerSessionId != session.AcpSessionId)
+                    {
+                        _updateReader = new UpdateReader();
+                        _readerSessionId = session.AcpSessionId;
+                    }
                     turn.Session = session;
                     _titlePending |= session.Titled;
                     turn.Opened.TrySetResult();

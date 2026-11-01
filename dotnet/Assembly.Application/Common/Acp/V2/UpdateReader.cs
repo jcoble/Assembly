@@ -12,6 +12,7 @@ namespace Assembly.Application.Common.Acp.V2;
 public sealed class UpdateReader
 {
     private readonly Dictionary<string, ToolCallFields> _tools = [];
+    private readonly Dictionary<string, List<JsonElement>> _toolContent = [];
     private readonly Dictionary<string, TaskChanged> _background = [];
     private readonly Dictionary<string, IReadOnlyList<PlanEntry>> _plans = [];
     private bool _running;
@@ -49,13 +50,16 @@ public sealed class UpdateReader
                 if (String(update, "toolCallId") is not { } id) break;
                 var started = !_tools.TryGetValue(id, out var previous);
                 var patch = ToolCall(update, at, started)!.Fields;
-                var fields = previous is null ? patch : new ToolCallFields(
-                    patch.Name ?? previous.Name, patch.Kind ?? previous.Kind, patch.Title ?? previous.Title,
-                    patch.Status ?? previous.Status, patch.Input ?? previous.Input, patch.Output ?? previous.Output,
-                    notification.Kind == "tool_call_content_chunk"
-                        ? (previous.ContentText ?? "") + (ChunkText(update) ?? patch.ContentText ?? "")
-                        : patch.ContentText ?? previous.ContentText,
-                    patch.Diffs ?? previous.Diffs, patch.Paths ?? previous.Paths);
+                if (!_toolContent.TryGetValue(id, out var toolContent)) _toolContent[id] = toolContent = [];
+                if (update.TryGetProperty("content", out _))
+                {
+                    if (notification.Kind == "tool_call_update") toolContent.Clear();
+                    toolContent.AddRange(ContentItems(update).Select(item => item.Clone()));
+                }
+                var fields = new ToolCallFields(
+                    patch.Name ?? previous?.Name, patch.Kind ?? previous?.Kind, patch.Title ?? previous?.Title,
+                    patch.Status ?? previous?.Status, patch.Input ?? previous?.Input, patch.Output ?? previous?.Output,
+                    ContentText(toolContent), Diffs(toolContent), patch.Paths ?? previous?.Paths, ContentReplaced: true);
                 _tools[id] = fields;
                 events.Add(new ToolCallChanged(at, id, started, fields));
                 if (fields.Name is "Task" or "Agent")
@@ -144,8 +148,6 @@ public sealed class UpdateReader
             Status: String(update, "status"),
             Input: update.TryGetProperty("rawInput", out var input) && input.ValueKind == JsonValueKind.Object ? input.Clone() : null,
             Output: update.TryGetProperty("rawOutput", out var output) ? AsText(output) : null,
-            ContentText: ContentText(update),
-            Diffs: Diffs(update),
             Paths: Paths(update));
         return new ToolCallChanged(at, id, started, fields);
     }
@@ -192,19 +194,19 @@ public sealed class UpdateReader
             ? String(claude, "toolName")
             : null;
 
-    private static string? ContentText(JsonElement update)
+    private static string? ContentText(IEnumerable<JsonElement> content)
     {
-        var texts = ContentItems(update)
+        var texts = content
             .Where(item => String(item, "type") == "content" && item.TryGetProperty("content", out var inner) && String(inner, "type") == "text")
             .Select(item => String(item.GetProperty("content"), "text"))
             .OfType<string>()
             .ToList();
-        return texts.Count == 0 ? null : string.Join("\n", texts);
+        return texts.Count == 0 ? null : string.Concat(texts);
     }
 
-    private static IReadOnlyList<FileDiff>? Diffs(JsonElement update)
+    private static IReadOnlyList<FileDiff>? Diffs(IEnumerable<JsonElement> content)
     {
-        var diffs = ContentItems(update)
+        var diffs = content
             .Where(item => String(item, "type") == "diff" && String(item, "path") is not null && String(item, "newText") is not null)
             .Select(item => new FileDiff(String(item, "path")!, String(item, "oldText"), String(item, "newText")!))
             .ToList();

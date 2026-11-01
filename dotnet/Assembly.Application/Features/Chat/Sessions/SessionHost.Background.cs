@@ -15,7 +15,8 @@ namespace Assembly.Application.Features.Chat.Sessions;
 // SessionHost, continued: reading the session's updates, the background work they tell of, and closing the session.
 public sealed partial class SessionHost
 {
-    private readonly UpdateReader _updateReader = new();
+    private UpdateReader _updateReader = new();
+    private string? _readerSessionId;
     /// <summary>Closes a session that was kept for background work, once that work and any run on it are done.</summary>
     private async Task CloseKeptAsync(KeptSession kept, bool lost)
     {

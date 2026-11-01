@@ -4,6 +4,7 @@ using Assembly.Application.Common.Acp.V2;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
+using Assembly.Infrastructure.Persistence;
 
 namespace Assembly.Tests.Acp;
 
@@ -135,4 +136,59 @@ public sealed class UpdateReaderTests
         Assert.Equal("second", next[^1].Payload.GetProperty("text").GetString());
     }
 
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    public void Tool_content_chunks_keep_both_diffs_and_replacement_clears_saved_detail(string clear)
+    {
+        // Synthetic regression using the SDK 2.2.0 ToolCallContentChunk/ToolCallUpdate shapes.
+        using var file = new TempDatabase();
+        using (var db = TestDatabase.Open(file.Path))
+        {
+            var store = RowStore.Open(db);
+            var converter = new RowConverter();
+            var reader = new UpdateReader();
+            ToolCallChanged Apply(string json)
+            {
+                var change = Assert.IsType<ToolCallChanged>(Assert.Single(reader.Read(Update(json))));
+                store.Commit("s", converter.Apply(change));
+                return change;
+            }
+            Apply("""{"sessionUpdate":"tool_call_update","toolCallId":"t","status":"in_progress"}""");
+            Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","path":"a.txt","oldText":"old","newText":"new"}}""");
+            var both = Apply("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"diff","path":"b.txt","oldText":"old","newText":"new"}}""");
+            Assert.Equal(new[] { "a.txt", "b.txt" }, both.Fields.Diffs!.Select(diff => diff.Path));
+            var detail = store.ToolCall("s", "t")!;
+            Assert.Contains("a.txt", detail.Diff);
+            Assert.Contains("b.txt", detail.Diff);
+            var line = Assert.Single(store.PageBefore("s", long.MaxValue, 10).Rows);
+            Assert.Equal(2, line.Payload.GetProperty("added").GetInt32());
+            Assert.Equal(2, line.Payload.GetProperty("removed").GetInt32());
+            Apply("""{"sessionUpdate":"tool_call_update","toolCallId":"t","title":"omitted"}""");
+            Assert.Contains("a.txt", store.ToolCall("s", "t")!.Diff);
+            Apply("{\"sessionUpdate\":\"tool_call_update\",\"toolCallId\":\"t\",\"content\":" + clear + "}");
+            Apply("""{"sessionUpdate":"tool_call_update","toolCallId":"t","status":"completed"}""");
+        }
+        using var reopened = TestDatabase.Open(file.Path);
+        var saved = RowStore.Open(reopened);
+        Assert.Null(saved.ToolCall("s", "t")!.Diff);
+        Assert.Null(saved.ToolCall("s", "t")!.Path);
+        var row = Assert.Single(saved.PageBefore("s", long.MaxValue, 10).Rows);
+        Assert.False(row.Payload.GetProperty("hasDetail").GetBoolean());
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("null")]
+    public void Omitted_tool_content_preserves_text_but_explicit_empty_replacement_clears_it(string clear)
+    {
+        var reader = new UpdateReader();
+        reader.Read(Update("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"content","content":{"type":"text","text":"old"}}}"""));
+        var kept = Assert.IsType<ToolCallChanged>(Assert.Single(reader.Read(Update("""{"sessionUpdate":"tool_call_update","toolCallId":"t","title":"omitted"}"""))));
+        Assert.Equal("old", kept.Fields.ContentText);
+        var cleared = Assert.IsType<ToolCallChanged>(Assert.Single(reader.Read(Update("{\"sessionUpdate\":\"tool_call_update\",\"toolCallId\":\"t\",\"content\":" + clear + "}"))));
+        Assert.True(string.IsNullOrEmpty(cleared.Fields.ContentText));
+        var appended = Assert.IsType<ToolCallChanged>(Assert.Single(reader.Read(Update("""{"sessionUpdate":"tool_call_content_chunk","toolCallId":"t","content":{"type":"content","content":{"type":"text","text":"new"}}}"""))));
+        Assert.Equal("new", appended.Fields.ContentText);
+    }
 }
