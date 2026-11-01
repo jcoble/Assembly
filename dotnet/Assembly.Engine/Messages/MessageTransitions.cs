@@ -60,8 +60,8 @@ public static class MessageTransitions
             WHERE kind='send' AND json_extract(payload_json,'$.messageId')=$id ORDER BY event_seq DESC,rowid DESC LIMIT 1
             """, r => r.Long(0), new SqlArg("$id", current.Id));
         if (outcome.State != "queued" || outcome.Reason == "not_delivered" || recipientVersion != releasedVersion)
-            events.AddRange(MessageRelease.Next(s, c, current.To, effects));
-        return EngineJournal.Commit(s, c, updated.Version, c.Epoch, events, effects);
+            ReleaseNext(s, c, current.To, effects, events);
+        return EngineJournal.Commit(s, c, Find(s, current.Id)!.Version, c.Epoch, events, effects);
     }
 
     private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit)
@@ -93,7 +93,7 @@ public static class MessageTransitions
         List<EffectDraft> effects = [];
         List<EventDraft> events = [Changed(c, message)];
         if (message.State == "queued")
-            events.AddRange(MessageRelease.Next(s, c, message.To, effects).Where(e => e.EntityId != message.Id));
+            ReleaseNext(s, c, message.To, effects, events);
         if (message.State == "held" && !recipient.CancelRequested)
         {
             var version = s.QueryFirst("""
@@ -104,7 +104,7 @@ public static class MessageTransitions
             effects.Add(new($"message-stop/{message.Id}", "stop", message.To, recipient.RunId,
                 JsonSerializer.SerializeToElement(new Sessions.StopSession(), EngineJson.Default.StopSession)));
         }
-        return EngineJournal.Commit(s, c, 1, c.Epoch, events, effects);
+        return EngineJournal.Commit(s, c, Find(s, message.Id)!.Version, c.Epoch, events, effects);
     }
 
     public static IReadOnlyList<EventDraft> ChildEnded(IWriteScope s, CommandContext c, string childId, IList<EffectDraft> effects)
@@ -119,7 +119,7 @@ public static class MessageTransitions
         Insert(s, c, message, "system", ended ? "starter_ended" : null);
         List<EventDraft> events = [Changed(c, message)];
         if (!ended)
-            events.AddRange(MessageRelease.Next(s, c, message.To, effects).Where(e => e.EntityId != message.Id));
+            ReleaseNext(s, c, message.To, effects, events);
         return events;
     }
 
@@ -134,8 +134,19 @@ public static class MessageTransitions
             new("$now", c.NowMs), new("$session", sessionId));
         List<EventDraft> events = messages.Select(message => Changed(c, message)).ToList();
         if (!ended)
-            events.AddRange(MessageRelease.Next(s, c, sessionId, effects));
+            ReleaseNext(s, c, sessionId, effects, events);
         return events;
+    }
+
+    private static void ReleaseNext(IWriteScope s, CommandContext c, string sessionId,
+        IList<EffectDraft> effects, List<EventDraft> events)
+    {
+        foreach (var released in MessageRelease.Next(s, c, sessionId, effects))
+        {
+            // Publish the final revision when this transaction also inserted or requeued the selected message.
+            events.RemoveAll(e => e.EntityKind == "message" && e.EntityId == released.EntityId);
+            events.Add(released);
+        }
     }
 
     private static void Insert(IWriteScope s, CommandContext c, Message message, string senderKind, string? reason)

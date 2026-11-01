@@ -53,7 +53,7 @@ public sealed class SessionTests
         {
             Assert.Equal("invalid_transition", f.Apply(new SetSessionState("idle", null, null), "s", version: 2,
                 actor: new(ActorKind.System, "adapter")).Error);
-            Assert.True(f.Apply(new MessageOutcome("delivered_to_turn", "turn-1", null), "m", version: 2,
+            Assert.True(f.Apply(new MessageOutcome("delivered_to_turn", "turn-1", null), "m", version: 3,
                 actor: new(ActorKind.System, "adapter")).Applied);
         }
     }
