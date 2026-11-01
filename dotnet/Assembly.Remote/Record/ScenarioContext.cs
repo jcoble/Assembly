@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
 using Assembly.Remote.Smoke;
@@ -5,4 +6,5 @@ using Assembly.Remote.Smoke;
 namespace Assembly.Remote.Record;
 
 /// <summary>What a scenario can use: the live connection, its session and folder, and the stream of updates.</summary>
-public sealed record ScenarioContext(AgentConnection Agent, string SessionId, string Cwd, UpdateWatcher Updates, CancellationToken Deadline);
+public sealed record ScenarioContext(AgentConnection Agent, string SessionId, string Cwd, UpdateWatcher Updates, CancellationToken Deadline,
+    JsonElement ConfigOptions, JsonElement AvailableCommands);
