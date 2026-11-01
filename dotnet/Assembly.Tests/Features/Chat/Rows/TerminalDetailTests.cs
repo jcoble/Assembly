@@ -342,6 +342,71 @@ public sealed class TerminalDetailTests(Xunit.Abstractions.ITestOutputHelper pro
         Assert.False(converter.HasOpenTools);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Historical_terminal_order_and_bounded_prefix_survive_replacement_clear_reopen_and_late_bytes(bool bounded)
+    {
+        using var file = new TempDatabase();
+        var z = bounded ? new string('z', 1048575) + "€" : "z";
+        var firstOutput = bounded ? new string('z', 1048575) : "za";
+        string References(params string[] ids) => JsonSerializer.Serialize(new
+        {
+            sessionUpdate = "tool_call_update",
+            toolCallId = "C",
+            status = "in_progress",
+            content = ids.Select(id => new { type = "terminal", terminalId = id }).ToArray(),
+        });
+        string Bytes(string id, string text) => JsonSerializer.Serialize(new
+        {
+            sessionUpdate = "terminal_output_chunk",
+            terminalId = id,
+            data = Convert.ToBase64String(Encoding.UTF8.GetBytes(text)),
+        });
+        void Check(RowStore store, string expected, long bytes, params string[] terminalIds)
+        {
+            var detail = store.ToolCall("S", "C")!;
+            Assert.Equal(expected, detail.Output);
+            Assert.Equal(bytes, detail.OutputBytes);
+            Assert.Equal(bounded, detail.OutputTruncated);
+            Assert.Equal(terminalIds, detail.Terminals!.Select(terminal => terminal.TerminalId));
+        }
+
+        using (var db = TestDatabase.Open(file.Path))
+        {
+            var store = RowStore.Open(db); var reader = new UpdateReader(); var converter = new RowConverter();
+            Apply(store, reader, converter, References("Z", "A"));
+            Apply(store, reader, converter, Bytes("Z", z));
+            Apply(store, reader, converter, Bytes("A", "a"));
+            Check(store, firstOutput, bounded ? 1048579 : 2, "Z", "A");
+
+            Apply(store, reader, converter, References("A")); // A subset must not move A ahead of historical Z.
+            Check(store, firstOutput, bounded ? 1048579 : 2, "Z", "A");
+            Apply(store, reader, converter, References("A", "Z")); // Existing IDs keep their first-observed order.
+            Check(store, firstOutput, bounded ? 1048579 : 2, "Z", "A");
+            Apply(store, reader, converter, References("B", "A")); // A new ID appends after all history.
+            Apply(store, reader, converter, Bytes("B", "b"));
+            Check(store, bounded ? firstOutput : "zab", bounded ? 1048580 : 3, "Z", "A", "B");
+            Apply(store, reader, converter, References());
+            Check(store, bounded ? firstOutput : "zab", bounded ? 1048580 : 3, "Z", "A", "B");
+            Assert.Equal(0, db.QueryFirst("SELECT sum(current) FROM tool_terminal_refs WHERE session_id='S' AND item_id='C' AND acp_session_id='P'", r => r.Long(0), default));
+        }
+
+        using (var db = TestDatabase.Open(file.Path))
+        {
+            var store = RowStore.Open(db);
+            Check(store, bounded ? firstOutput : "zab", bounded ? 1048580 : 3, "Z", "A", "B");
+            var reader = new UpdateReader(); var converter = new RowConverter();
+            Apply(store, reader, converter, Bytes("Z", "!"));
+            Apply(store, reader, converter, Bytes("A", "?"));
+            Apply(store, reader, converter, Bytes("B", "#"));
+            Check(store, bounded ? firstOutput : "z!a?b#", bounded ? 1048583 : 6, "Z", "A", "B");
+        }
+        using var finalDb = TestDatabase.Open(file.Path);
+        Check(RowStore.Open(finalDb), bounded ? firstOutput : "z!a?b#", bounded ? 1048583 : 6, "Z", "A", "B");
+        proof.WriteLine($"Stable historical order Z,A,B; subset/reorder/new reference/clear/reopen/late bytes verified; bounded={bounded}.");
+    }
+
     // The real SQLite query and mapper run unchanged; measure bytes crossing the database boundary.
     private sealed class MeasuredDatabase(IAppDatabase inner) : IAppDatabase
     {

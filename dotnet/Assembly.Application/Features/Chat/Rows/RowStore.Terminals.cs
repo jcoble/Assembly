@@ -70,14 +70,15 @@ public sealed partial class RowStore
         if (detail.AcpSessionId is not { } provider || detail.TerminalIds is not { } ids) return;
         scope.Execute("UPDATE tool_terminal_refs SET current=0 WHERE session_id=$session AND item_id=$item AND acp_session_id=$provider;",
             new SqlArg("$session", sessionId), new SqlArg("$item", detail.ItemId), new SqlArg("$provider", provider));
-        var ordinal = 0;
         foreach (var id in ids.Distinct())
             scope.Execute("""
                 INSERT INTO tool_terminal_refs(session_id,item_id,acp_session_id,terminal_id,ordinal,current)
-                VALUES($session,$item,$provider,$terminal,$ordinal,1)
-                ON CONFLICT(session_id,item_id,acp_session_id,terminal_id) DO UPDATE SET ordinal=$ordinal,current=1;
+                VALUES($session,$item,$provider,$terminal,
+                  (SELECT COALESCE(MAX(ordinal),-1)+1 FROM tool_terminal_refs
+                   WHERE session_id=$session AND item_id=$item AND acp_session_id=$provider),1)
+                ON CONFLICT(session_id,item_id,acp_session_id,terminal_id) DO UPDATE SET current=1;
                 """, new SqlArg("$session", sessionId), new SqlArg("$item", detail.ItemId), new SqlArg("$provider", provider),
-                new SqlArg("$terminal", id), new SqlArg("$ordinal", ordinal++));
+                new SqlArg("$terminal", id));
     }
 
     private StoredToolCall? ReadToolCall(string sessionId, string itemId)
