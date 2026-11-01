@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
@@ -9,6 +9,7 @@ const names = ["claude-agent-acp", "codex-acp"] as const;
 type Versions = Record<(typeof names)[number], string>;
 const targets = ["darwin-arm64", "darwin-x64", "linux-x64"];
 const entrypoint = (name: string) => "node_modules/@agentclientprotocol/" + name + "/dist/index.js";
+const claudeLauncher = "claude-launcher.ts";
 
 export function validateVersions(value: unknown): Versions {
   if (!value || typeof value !== "object") throw new Error("Expected versions of both supported adapters");
@@ -22,7 +23,7 @@ export function validateVersions(value: unknown): Versions {
   return data as Versions;
 }
 
-export function smokeAdapter(entry: string, home: string): Promise<Record<string, any>> {
+export function smokeAdapter(entry: string, home: string, requireSteering = true): Promise<Record<string, any>> {
   return new Promise((resolveSmoke, rejectSmoke) => {
     for (const dir of [home, join(home, "codex"), join(home, "claude")]) mkdirSync(dir, { recursive: true });
     const child = spawn(process.execPath, [entry], {
@@ -49,21 +50,33 @@ export function smokeAdapter(entry: string, home: string): Promise<Record<string
     lines.on("line", line => {
       try {
         const message = JSON.parse(line);
-        if (message.id !== 1) return;
-        if (message.error || message.result?.protocolVersion !== 1) throw new Error("Invalid ACP initialize response: " + line);
-        result = message.result;
-      } catch (error) { failure = error as Error; }
-      stop();
+        if (message.id === 1) {
+          if (message.error || message.result?.protocolVersion !== 2) throw new Error("Invalid ACP initialize response: " + line);
+          if (requireSteering && message.result?._meta?.steering?.supported !== true) throw new Error("Adapter does not advertise ACP v2 steering: " + line);
+          result = message.result;
+          if (requireSteering) {
+            child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "_session/steering", params: {
+              sessionId: "assembly-package-smoke-missing-session", prompt: [{ type: "text", text: "smoke" }],
+              _meta: { steering: { idleBehavior: "promptRequired" } },
+            } }) + "\n");
+          } else stop();
+        } else if (message.id === 2) {
+          if (message.error?.code !== -32002 || message.error.code === -32601) throw new Error("Invalid ACP v2 steering route response: " + line);
+          result.steeringSessionNotFound = true;
+          stop();
+        } else return;
+      } catch (error) { failure = error as Error; stop(); }
     });
     child.on("close", code => {
       clearTimeout(deadline); lines.close();
       if (failure) rejectSmoke(failure);
       else if (!result) rejectSmoke(new Error("ACP exited before initialize (" + code + "): " + stderr));
+      else if (requireSteering && result.steeringSessionNotFound !== true) rejectSmoke(new Error("ACP v2 steering route did not return session-not-found: " + stderr));
       else resolveSmoke(result);
     });
     child.stdin.write(JSON.stringify({
       jsonrpc: "2.0", id: 1, method: "initialize",
-      params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: "assembly-package-check", version: "1" } },
+      params: { protocolVersion: 2, capabilities: {}, info: { name: "assembly-package-check", version: "1" } },
     }) + "\n");
   });
 }
@@ -76,13 +89,14 @@ export function archiveBundle(bundle: string, output: string, target: string, ve
     if (actual !== versions[name]) throw new Error(name + " version mismatch: " + actual);
     readFileSync(join(bundle, entrypoint(name)));
   }
+  readFileSync(join(bundle, claudeLauncher));
   const file = "assembly-adapters-" + target + ".tar.gz";
   const archive = join(output, file);
   if (existsSync(archive)) throw new Error("Refusing to overwrite " + archive);
-  execFileSync("tar", ["-czf", archive, "-C", bundle, "package.json", "package-lock.json", "node_modules"]);
+  execFileSync("tar", ["-czf", archive, "-C", bundle, "package.json", "package-lock.json", claudeLauncher, "node_modules"]);
   const manifest = {
     schemaVersion: 1, target, nodeMajor: Number(process.versions.node.split(".")[0]), versions,
-    entrypoints: Object.fromEntries(names.map(name => [name, entrypoint(name)])),
+    entrypoints: { "claude-agent-acp": claudeLauncher, "codex-acp": entrypoint("codex-acp") },
     archive: { file, sha256: createHash("sha256").update(readFileSync(archive)).digest("hex") },
   };
   writeFileSync(join(output, "assembly-adapters-" + target + ".json"), JSON.stringify(manifest, null, 2) + "\n");
@@ -103,7 +117,7 @@ function publishBundles(assetPath: string, versions: Versions, tag: string, comm
     if (names.some(name => recorded[name] !== versions[name])) throw new Error("Mismatched release versions: " + target);
     const hash = createHash("sha256").update(readFileSync(join(directory, file))).digest("hex");
     if (manifest.archive.sha256 !== hash) throw new Error("Corrupted release archive: " + target);
-    if (names.some(name => manifest.smoke?.[name]?.protocolVersion !== 1 || manifest.smoke?.[name]?.agentInfo?.version !== versions[name])) {
+    if (names.some(name => manifest.smoke?.[name]?.protocolVersion !== 2 || manifest.smoke?.[name]?.info?.version !== versions[name] || manifest.smoke?.[name]?.canSteer !== true)) {
       throw new Error("Mismatched initialization proof: " + target);
     }
   }
@@ -149,10 +163,15 @@ async function main() {
       cwd: bundle, stdio: ["ignore", "inherit", "inherit"],
       env: { PATH: process.env.PATH, HOME: home, npm_config_cache: join(scratch, "cache"), npm_config_engine_strict: "true" },
     });
+    copyFileSync(new URL("./adapters/claude-launcher.ts", import.meta.url), join(bundle, claudeLauncher));
     const manifest = archiveBundle(bundle, output, target, versions);
     execFileSync("tar", ["-xzf", join(output, manifest.archive.file), "-C", unpacked]);
-    const smoke = {};
-    for (const name of names) smoke[name] = await smokeAdapter(join(unpacked, entrypoint(name)), join(scratch, "probe-" + name));
+    const smoke: Record<string, any> = {};
+    for (const name of names) smoke[name] = await smokeAdapter(join(unpacked, manifest.entrypoints[name]), join(scratch, "probe-" + name));
+    for (const name of names) smoke[name] = { ...smoke[name], canSteer: smoke[name].steeringSessionNotFound === true };
+    const stock = await smokeAdapter(join(unpacked, entrypoint("claude-agent-acp")), join(scratch, "probe-stock-claude"), false).catch(() => undefined);
+    if (stock?._meta?.steering?.supported === true) console.log("launcher can be dropped (PR 1499 shipped)");
+    else console.log("plain dist/index.js does not yet advertise steering");
     const verified = { ...manifest, smoke };
     writeFileSync(join(output, "assembly-adapters-" + target + ".json"), JSON.stringify(verified, null, 2) + "\n");
     console.log(JSON.stringify(verified, null, 2));
