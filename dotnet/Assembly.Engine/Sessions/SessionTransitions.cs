@@ -120,8 +120,7 @@ public static class SessionTransitions
             events.AddRange(MessageTransitions.ReleaseHeld(scope, context, context.EntityId, command.State == "ended", effects));
         if (command.State == "ended")
         {
-            var notification = MessageTransitions.ChildEnded(scope, context, context.EntityId, effects);
-            if (notification is not null) events.Add(notification);
+            events.AddRange(MessageTransitions.ChildEnded(scope, context, context.EntityId, effects));
         }
         if (command.State is "idle" or "running")
             events.AddRange(MessageRelease.Next(scope, context, context.EntityId, effects));

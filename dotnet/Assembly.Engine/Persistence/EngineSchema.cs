@@ -14,30 +14,30 @@ public static class EngineSchema
             """);
         var meta = scope.QueryFirst("SELECT schema_version,machine_id FROM engine_meta WHERE singleton=1",
             r => (Version: r.Long(0), Machine: r.Text(1)));
-        if (meta.Version is < 0 or > 3)
+        if (meta.Machine is null)
+        {
+            scope.Execute(Create);
+            scope.Execute(CreateMirrors);
+            var machine = Guid.NewGuid().ToString("N");
+            scope.Execute("""
+                INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
+                VALUES(1,3,$machine,1,0,0);
+                """, new SqlArg("$machine", machine));
+            return machine;
+        }
+        if (meta.Version is not (1 or 2 or 3))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
         if (meta.Version == 3)
             return meta.Machine;
-        if (meta.Version is 1 or 2)
+        if (meta.Version == 1)
         {
-            if (meta.Version == 1)
-            {
-                scope.Execute(UpgradeVersion1);
-                scope.Execute(CreateMirrors);
-            }
-            scope.Execute(UpgradeDelivery);
-            Messages.MessageSchemaUpgrade.Apply(scope, meta.Machine, nowMs);
-            scope.Execute("UPDATE engine_meta SET schema_version=3 WHERE singleton=1");
-            return meta.Machine;
+            scope.Execute(UpgradeVersion1);
+            scope.Execute(CreateMirrors);
         }
-        scope.Execute(Create);
-        scope.Execute(CreateMirrors);
-        var machine = Guid.NewGuid().ToString("N");
-        scope.Execute("""
-            INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-            VALUES(1,3,$machine,1,0,0);
-            """, new SqlArg("$machine", machine));
-        return machine;
+        scope.Execute(UpgradeDelivery);
+        Messages.MessageSchemaUpgrade.Apply(scope, meta.Machine, nowMs);
+        scope.Execute("UPDATE engine_meta SET schema_version=3 WHERE singleton=1");
+        return meta.Machine;
     });
 
     private const string UpgradeDelivery = """
