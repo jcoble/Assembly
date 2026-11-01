@@ -149,5 +149,21 @@ public sealed class DeliveryTests
         limit = 2;
         Assert.True(Send("three").Applied);
     }
+    [Fact]
+    public void Child_ended_release_publishes_the_older_selected_message_once()
+    {
+        using var f = new EngineFixture(); f.SeedSession(); f.SeedSession("child", parentId: "s");
+        Assert.True(f.Apply(new SendMessage(null, "s", "older", "prompt"), "older").Applied);
+        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "older", 1, actor: System).Applied);
+        var before = f.Events().Last().Seq;
+        Assert.True(f.Apply(new SetSessionState("ended", null, null), "child", actor: System).Applied);
+        var committed = f.Events().Where(e => e.Seq > before).ToArray();
+        Assert.Single(committed, e => e.EntityKind == "message" && e.EntityId == "older" && e.Data.State == "queued");
+        Assert.Single(committed, e => e.EntityKind == "message" && e.EntityId == "child-ended/child");
+        Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message WHERE id='older'"));
+        Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message WHERE id='child-ended/child'"));
+        Assert.Equal(committed.Max(e => e.Seq), f.Number("SELECT event_seq FROM engine_outbox WHERE id='send/older/2'"));
+    }
+
     private static void State(EngineFixture f, string state) => Assert.True(f.Apply(new SetSessionState(state, null, null), "s", f.Number("SELECT version FROM engine_session WHERE id='s'"), actor: System).Applied);
 }

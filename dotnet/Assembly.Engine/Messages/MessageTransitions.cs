@@ -107,19 +107,20 @@ public static class MessageTransitions
         return EngineJournal.Commit(s, c, 1, c.Epoch, events, effects);
     }
 
-    public static EventDraft? ChildEnded(IWriteScope s, CommandContext c, string childId, IList<EffectDraft> effects)
+    public static IReadOnlyList<EventDraft> ChildEnded(IWriteScope s, CommandContext c, string childId, IList<EffectDraft> effects)
     {
         var parent = s.QueryFirst("SELECT parent_id FROM engine_session WHERE id=$id",
             r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$id", childId));
         if (parent is null || Find(s, $"child-ended/{childId}") is not null)
-            return null;
+            return [];
         var ended = FindRecipient(s, parent)!.State == "ended";
         var message = new Message($"child-ended/{childId}", 1, childId, parent,
             $"Child session {childId} ended.", "prompt", ended ? "failed" : "queued");
         Insert(s, c, message, "system", ended ? "starter_ended" : null);
+        List<EventDraft> events = [Changed(c, message)];
         if (!ended)
-            MessageRelease.Next(s, c, message.To, effects);
-        return Changed(c, message);
+            events.AddRange(MessageRelease.Next(s, c, message.To, effects).Where(e => e.EntityId != message.Id));
+        return events;
     }
 
     public static IReadOnlyList<EventDraft> ReleaseHeld(IWriteScope s, CommandContext c, string sessionId,

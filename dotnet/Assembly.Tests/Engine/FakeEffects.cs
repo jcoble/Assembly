@@ -55,8 +55,11 @@ internal sealed class FakeEffects : IEngineEffects
 
     public async Task<EffectReceipt> ReconcileAsync(Effect effect, CancellationToken cancellationToken)
     {
-        _reconciledIds.Add(effect.Id);
-        _reconciled.TrySetResult();
+        lock (Attempts)
+        {
+            _reconciledIds.Add(effect.Id);
+            _reconciled.TrySetResult();
+        }
         return await Reconcile!(effect, cancellationToken);
     }
 }

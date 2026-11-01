@@ -87,6 +87,23 @@ public sealed class MessageUpgradeTests
             await Until(events, e => e.EntityKind == "effect" && e.EntityId == id && e.Data.State == state);
     }
     private static FakeEffects Fake(Func<Effect, CancellationToken, Task<EffectReceipt>>? execute = null, Func<Effect, CancellationToken, Task<EffectReceipt>>? reconcile = null) => new() { Execute = execute ?? ((_, _) => Task.FromResult(Unavailable())), Reconcile = reconcile ?? ((_, _) => Task.FromResult(Unavailable())) };
+    private static Effect[] Attempts(FakeEffects fake)
+    {
+        // FakeEffects adds attempts while holding this same stable list lock.
+        var attempts = fake.Attempts;
+        lock (attempts) return attempts.ToArray();
+    }
+
+    private static string[] Executed(FakeEffects fake)
+    {
+        lock (fake.Attempts) return fake.ExecutedIds.ToArray();
+    }
+
+    private static string[] Reconciled(FakeEffects fake)
+    {
+        lock (fake.Attempts) return fake.ReconciledIds.ToArray();
+    }
+
     private static IDisposable Observe(EngineRuntime runtime, out Channel<EngineEvent> events)
     {
         var channel = Channel.CreateUnbounded<EngineEvent>();
@@ -180,8 +197,8 @@ public sealed class MessageUpgradeTests
         await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/inflight", "done");
-        Assert.DoesNotContain("send/inflight", fake.ExecutedIds);
-        Assert.Contains("send/inflight", fake.ReconciledIds);
+        Assert.DoesNotContain("send/inflight", Executed(fake));
+        Assert.Contains("send/inflight", Reconciled(fake));
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message WHERE id='inflight'"));
     }
     [Theory]
@@ -198,10 +215,10 @@ public sealed class MessageUpgradeTests
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message WHERE id='unknown-unavailable'"));
         Assert.Equal(receipt, f.Text("SELECT receipt_json FROM engine_outbox WHERE id='send/unknown-unavailable'"));
         f.Time.Advance(TimeSpan.FromDays(1));
-        Assert.DoesNotContain("send/unknown-unavailable", fake.ReconciledIds);
+        Assert.DoesNotContain("send/unknown-unavailable", Reconciled(fake));
         runtime.EffectsAvailable();
         await State(f, events, "send/unknown-unavailable", "done");
-        Assert.DoesNotContain("send/unknown-unavailable", fake.ExecutedIds);
+        Assert.DoesNotContain("send/unknown-unavailable", Executed(fake));
     }
     [Theory]
     [InlineData(1)]
@@ -217,14 +234,14 @@ public sealed class MessageUpgradeTests
         runtime.EffectsAvailable();
         await State(f, events, "send/unavailable", "dead");
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message WHERE id='unavailable'"));
-        Assert.DoesNotContain(fake.Attempts, e => e.SessionId == "unavailable");
+        Assert.DoesNotContain(Attempts(fake), e => e.SessionId == "unavailable");
         // Task7 owns need resolution release; after resolution the existing state push triggers Task6's guarded release.
         var context = new CommandContext(Guid.NewGuid(), f.Machine, new(ActorKind.Window, "window"), "new-need", 1, 0, 10000);
         Assert.True(f.Db.Writer.Write("test.resolve", s => new EngineCommands(f.Machine, () => 5).Apply(s, context, new ResolveNeed("dismissed", null))).Applied);
         Assert.True(f.Apply(new SetSessionState("running", null, null), "unavailable", f.Number("SELECT version FROM engine_session WHERE id='unavailable'")).Applied);
         Assert.True(f.Apply(new SetSessionState("idle", null, null), "unavailable", f.Number("SELECT version FROM engine_session WHERE id='unavailable'")).Applied);
         await State(f, events, "send/unavailable/2", "done");
-        Assert.Single(fake.Attempts, e => e.SessionId == "unavailable");
+        Assert.Single(Attempts(fake), e => e.SessionId == "unavailable");
     }
     [Theory]
     [InlineData(1)]
@@ -250,13 +267,13 @@ public sealed class MessageUpgradeTests
         await State(f, events, "send/uncertain", "unavailable");
         Assert.Equal(1, reconciliations);
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message WHERE id='uncertain'"));
-        Assert.DoesNotContain("send/uncertain", fake.ExecutedIds);
+        Assert.DoesNotContain("send/uncertain", Executed(fake));
         Assert.Equal(0, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE id='send/uncertain/2'"));
-        Assert.Equal("send/inflight", fake.Attempts.Single(e => e.Id == "send/inflight/2").Payload.Deserialize(EngineJson.Default.DeliverMessage)!.ClientId);
+        Assert.Equal("send/inflight", Attempts(fake).Single(e => e.Id == "send/inflight/2").Payload.Deserialize(EngineJson.Default.DeliverMessage)!.ClientId);
         runtime.EffectsAvailable();
         await State(f, events, "send/uncertain", "done");
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message WHERE id='uncertain'"));
-        Assert.DoesNotContain("send/uncertain", fake.ExecutedIds);
+        Assert.DoesNotContain("send/uncertain", Executed(fake));
     }
     [Theory]
     [InlineData(1, false)]
@@ -273,19 +290,19 @@ public sealed class MessageUpgradeTests
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "message-stop/held", "inflight");
         Assert.Equal("held", f.Text("SELECT state FROM engine_message WHERE id='held'"));
-        Assert.DoesNotContain(fake.Attempts, e => e.Kind == "send" && e.SessionId == "held");
+        Assert.DoesNotContain(Attempts(fake), e => e.Kind == "send" && e.SessionId == "held");
         ack.SetResult(new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new SessionEffectData(ended ? "ended" : "idle", null, null), EngineJson.Default.SessionEffectData), null));
         if (ended)
         {
             await State(f, events, "message-stop/held", "done");
             Assert.Equal("failed", f.Text("SELECT state FROM engine_message WHERE id='held'"));
             Assert.Equal("recipient_ended", f.Text("SELECT reason FROM engine_message WHERE id='held'"));
-            Assert.DoesNotContain(fake.Attempts, e => e.Kind == "send" && e.SessionId == "held");
+            Assert.DoesNotContain(Attempts(fake), e => e.Kind == "send" && e.SessionId == "held");
         }
         else
         {
             await State(f, events, "send/held/1", "done");
-            Assert.Single(fake.Attempts, e => e.Kind == "send" && e.SessionId == "held");
+            Assert.Single(Attempts(fake), e => e.Kind == "send" && e.SessionId == "held");
         }
     }
     [Theory]
@@ -339,7 +356,7 @@ public sealed class MessageUpgradeTests
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/child-ended/child/x/1", "done");
         Assert.Equal("next_turn", f.Text("SELECT state FROM engine_message WHERE id='child-ended/child/x'"));
-        Assert.Equal("send/child-ended/child/x", fake.Attempts.Single(e => e.SessionId == "child-parent").Payload.Deserialize(EngineJson.Default.DeliverMessage)!.ClientId);
+        Assert.Equal("send/child-ended/child/x", Attempts(fake).Single(e => e.SessionId == "child-parent").Payload.Deserialize(EngineJson.Default.DeliverMessage)!.ClientId);
     }
     [Theory]
     [InlineData(1)]
@@ -360,7 +377,7 @@ public sealed class MessageUpgradeTests
         await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, () => 5, fake);
         using var consumer = Observe(runtime, out var events);
         await State(f, events, "send/pending/1", "done");
-        Assert.Single(fake.Attempts, e => e.SessionId == "pending");
+        Assert.Single(Attempts(fake), e => e.SessionId == "pending");
     }
     [Theory]
     [InlineData(1)]
@@ -368,12 +385,15 @@ public sealed class MessageUpgradeTests
     public void Future_version_4_refuses_without_mutation_and_malformed_payload_rolls_back(int version)
     {
         using var f = new OldDb(version);
-        f.Write("UPDATE engine_meta SET schema_version=4");
-        var before = f.Snapshot();
-        Assert.Throws<InvalidOperationException>(f.Upgrade);
-        Assert.Equal(before, f.Snapshot());
+        foreach (var unsupported in new[] { 0, -1, 4 })
+        {
+            f.Write($"UPDATE engine_meta SET schema_version={unsupported}");
+            var unchanged = f.Snapshot();
+            Assert.Throws<InvalidOperationException>(f.Upgrade);
+            Assert.Equal(unchanged, f.Snapshot());
+        }
         f.Write($"UPDATE engine_meta SET schema_version={version};UPDATE engine_outbox SET payload_json='{{}}' WHERE id='send/inflight'");
-        before = f.Snapshot();
+        var before = f.Snapshot();
         Assert.Throws<InvalidOperationException>(f.Upgrade);
         Assert.Equal(before, f.Snapshot());
     }
