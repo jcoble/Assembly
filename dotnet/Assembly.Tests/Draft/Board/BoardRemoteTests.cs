@@ -98,7 +98,7 @@ public sealed class BoardRemoteTests
             var agent = await launcher.NextAsync();
             await agent.StartAsync();
             var prompt = await agent.ReadAsync("session/prompt");
-            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
             await agent.CloseAsync();
             using var copiedDb = TestDatabase.Open(Path.Combine(home, "assembly.db"));
             var copied = RowStore.Open(copiedDb);

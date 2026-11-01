@@ -1,5 +1,5 @@
 using System.Text.Json;
-using Assembly.Application.Common.Acp.V1;
+using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Database;
 
 using Assembly.Application.Features.Chat.Rows;

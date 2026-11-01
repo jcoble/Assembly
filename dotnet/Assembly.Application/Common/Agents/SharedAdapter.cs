@@ -58,10 +58,9 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
                 var link = await launcher.LaunchAsync(agentId, stages, cancellationToken);
                 try
                 {
-                    var air = launcher.Agents.FirstOrDefault(agent => agent.Id == agentId)?.Air;
-                    var init = await link.Client.InitializeAsync(ClientInfo, air, cancellationToken);
+                    var init = await link.Client.InitializeAsync(ClientInfo, cancellationToken);
                     stages.Mark("initialize");
-                    running = _running = new RunningAdapter(link, init, new UpdateRouter(link.Client.Updates));
+                    running = _running = new RunningAdapter(link, init, new UpdateRouter(link.Client));
                 }
                 catch
                 {

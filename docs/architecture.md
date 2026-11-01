@@ -27,7 +27,7 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
   references nothing.
 - `Assembly.Application/`: references Domain only, with no SQLite, ASP.NET Core or process starting.
   - `Common/`: the contracts every feature uses (database, agents, machines) and the ACP protocol code.
-    `Common/Acp/V1/` is the one place that knows ACP's shapes and each provider's quirks.
+    `Common/Acp/V2/` has the session update reader and foreground tracker. ACP v2 acknowledges prompt insertion by message ID; foreground state updates complete the turn. Message upserts distinguish replacement text from appended chunks.
   - `Features/<Feature>/`: everything one feature is: its records, its rules, its tables and its plain SQL. A
     feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase`
     (reads needing one consistent view use `IAppDatabase.OpenSnapshot`) and writes through `IAtomicWriter`.

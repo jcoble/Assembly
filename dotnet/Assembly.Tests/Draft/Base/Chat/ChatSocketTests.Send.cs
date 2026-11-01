@@ -115,18 +115,18 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task StopTask_stops_background_work_on_the_sessions_machine()
+    public async Task V2_has_no_individual_background_stop_call()
     {
         var session = _sessions.Create("claude", "repo");
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
-        Assert.Equal("""{"t":"result","id":1,"result":{"ok":true}}""", await ReadAsync(socket));
-        Assert.Equal(["stop task task-1"], _here.Asked);
+        Assert.Contains("\"code\":\"not_found\"", await ReadAsync(socket));
+        Assert.Empty(_here.Asked);
 
         _here.Refuses = true;
         await CallAsync(socket, 2, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
-        Assert.Contains("\"code\":\"failed\"", await ReadAsync(socket));
+        Assert.Contains("\"code\":\"not_found\"", await ReadAsync(socket));
     }
 
     [Fact]
@@ -144,7 +144,7 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "send", "answer", $$$"""{"session":"{{{session.SessionId}}}","ask":"ask-1","answer":{"optionId":"yes"}}""");
         Assert.Equal("""{"t":"error","id":2,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
         await CallAsync(socket, 3, "send", "stopTask", $$"""{"session":"{{session.SessionId}}","task":"task-1"}""");
-        Assert.Equal("""{"t":"error","id":3,"code":"unreachable","message":"box is down","machine":"box"}""", await ReadAsync(socket));
+        Assert.Contains("\"code\":\"not_found\"", await ReadAsync(socket));
     }
 
     // A cancel that lands once the machine has started the turn can't stop it, so the send answers its run.
@@ -301,7 +301,7 @@ public sealed partial class ChatSocketTests
         await CallAsync(socket, 2, "send", "send", Args(session.SessionId, "also this", "c14"));
         var steer = await agent.ReadAsync("_session/steering");
         // The turn ends, and only then does the agent say it took the message.
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         var close = await agent.ReadAsync("session/close");
         await agent.ReplyAsync(steer, Injected);
         Assert.Equal(Result(2, runId), await ReadAsync(socket));
@@ -396,7 +396,7 @@ public sealed partial class ChatSocketTests
     // Ends the turn, and checks the next thing the agent hears is its session's close.
     private static async Task EndTurnAsync(FakeLink agent, JsonElement prompt)
     {
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 

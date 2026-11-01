@@ -50,24 +50,17 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         CancellationToken cancellationToken)
     {
         var sessionId = session.SessionId;
-        if (session.AcpSessionId is { } previous && running.Init.CanResumeSessions)
+        if (session.AcpSessionId is { } previous)
         {
             cancellationToken.ThrowIfCancellationRequested();
             // The same ACP id on the same warm adapter, so the closed turn's late updates share it. The router opens it
             // again at the answer, in pipe order (UpdateRouter), not when this await resumes on another thread.
-            var resuming = running.Link.Client.ResumeSessionAsync(previous, folder, CancellationToken.None, mcpServers?.Invoke(sessionId));
+            var resuming = running.Link.Client.ResumeSessionAsync(new(previous, folder, mcpServers?.Invoke(sessionId) ?? []), CancellationToken.None);
             ResumeSessionResponse? resumed = null;
             try
             {
                 resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken);
                 stages.Mark("session resume");
-                // A helper title was made after the agent last saw the session, so the agent is told it here.
-                if (running.Init.CanRenameSessions && session is { TitleSource: "helper", Title: { } helperTitle })
-                {
-                    await running.Link.Client.RenameSessionAsync(previous, helperTitle, cancellationToken);
-                    stages.Mark("session rename");
-                }
-
                 var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
                 return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
             }
@@ -87,7 +80,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var opening = running.Link.Client.NewSessionAsync(folder, CancellationToken.None, mcpServers?.Invoke(sessionId));
+        var opening = running.Link.Client.NewSessionAsync(new(folder, mcpServers?.Invoke(sessionId) ?? []), CancellationToken.None);
         var acp = await AnsweredAsync(adapter, running, sessionId, opening, late => late.SessionId, cancellationToken);
 
         try
@@ -97,14 +90,6 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             var title = session.Title is null ? Title(firstText) : null;
             if (title is not null)
                 sessionStore.SetTitle(sessionId, title, "prompt");
-            // A started session's title is its task, not the framed prompt it's sent.
-            if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
-            {
-                // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.
-                await running.Link.Client.RenameSessionAsync(acp.SessionId, agentTitle, cancellationToken);
-                stages.Mark("session rename");
-            }
-
             if (acp.ConfigOptions.ValueKind == JsonValueKind.Array)
                 sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
             var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);

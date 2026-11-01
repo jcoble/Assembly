@@ -22,7 +22,7 @@ public sealed partial class RemoteMachineTests
             runId = RunOf(await CallSendAsync(socket, 1, sessionId, "hi", "c1"));
         var agent = await _desktopLauncher.NextAsync();
         await agent.StartAsync();
-        await agent.ReplyAsync(await agent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(await agent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
 
         await _desktop!.DisposeAsync();
@@ -36,7 +36,7 @@ public sealed partial class RemoteMachineTests
         await restarted.StartAsync();
         var prompt = await restarted.ReadAsync("session/prompt");
         Assert.Equal("two", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        await restarted.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await restarted.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await restarted.CloseAsync();
         Assert.Single(await RowsAsync(_desktop, DesktopToken, sessionId), row => ClientIdOf(row) == "c1");
     }
@@ -54,7 +54,7 @@ public sealed partial class RemoteMachineTests
         Assert.Equal($$$"""{"t":"result","id":2,"result":{"runId":"{{{runId}}}"}}""", await CallSendAsync(socket, 2, sessionId, "hi", "c5"));
 
         // The next thing the remote's agent hears is the turn's close: no second prompt or steer.
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         using var desktop = await OpenLiveAsync(_desktop!, DesktopToken, sessionId, after: 0);
         var user = Assert.Single(await ApiTests.ReadUntilTurnEndsAsync(desktop), row => row.GetProperty("kind").GetString() == "user");
@@ -75,7 +75,7 @@ public sealed partial class RemoteMachineTests
 
         Assert.StartsWith("""{"t":"error","id":2,"code":"failed",""", failed);
         Assert.Contains("clientId already used for another message", failed);
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -104,7 +104,7 @@ public sealed partial class RemoteMachineTests
         Assert.Equal($$$"""{"t":"result","id":2,"result":{"runId":"{{{runId}}}"}}""", await ReadTextAsync(socket));
 
         // The next thing the agent hears is the turn's close: one steering request.
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         Assert.Single(await RowsAsync(_box, BoxToken, sessionId), row => ClientIdOf(row) == "c18");
     }

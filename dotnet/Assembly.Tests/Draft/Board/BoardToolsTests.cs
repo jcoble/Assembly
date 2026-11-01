@@ -73,7 +73,7 @@ public sealed class BoardToolsTests
         var later = args.Skip(1).Select(a => host.Tools.AnswerAsync(a, CancellationToken.None)).ToArray();
         for (var i = 0; i < 3; i++)
         {
-            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
             // Each turn closes before another opens; any steering request fails here.
             await agent.CloseAsync();
             if (i == 2) break;
@@ -304,7 +304,7 @@ public sealed class BoardToolsTests
         var agent = await host.Launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await sending;
         tools.Update(session.SessionId, f.Report(question: f.Ask(generation: 1)));
@@ -376,8 +376,8 @@ public sealed class BoardToolsTests
         Assert.Contains(list.GetProperty("tools").EnumerateArray(), x => x.GetProperty("name").GetString() == "start_session");
         var helperList = await Request("tools/call", """{"name":"list_sessions","arguments":{}}""", helperToken);
         Assert.False(helperList.GetProperty("isError").GetBoolean());
-        await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await helperAgent.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await app.StopAsync();
     }
 }

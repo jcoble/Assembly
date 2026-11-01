@@ -3,7 +3,7 @@ using System.Threading.Channels;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
-using Assembly.Application.Common.Acp.V1;
+using Assembly.Application.Common.Acp.V2;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
@@ -15,6 +15,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 // SessionHost, continued: reading the session's updates, the background work they tell of, and closing the session.
 public sealed partial class SessionHost
 {
+    private readonly UpdateReader _updateReader = new();
     /// <summary>Closes a session that was kept for background work, once that work and any run on it are done.</summary>
     private async Task CloseKeptAsync(KeptSession kept, bool lost)
     {
@@ -99,20 +100,6 @@ public sealed partial class SessionHost
         {
             if (!lost)
             {
-                List<string> stoppable;
-                lock (_gate)
-                    stoppable = _tasks.Values.Where(task => task.CanStop).Select(task => task.TaskId).ToList();
-                foreach (var taskId in stoppable)
-                {
-                    try
-                    {
-                        await session.Adapter.Link.Client.StopTaskAsync(session.AcpSessionId, taskId, CancellationToken.None);
-                    }
-                    catch (JsonRpcException)
-                    {
-                        // Closing ends it anyway.
-                    }
-                }
                 await session.Pool.CloseAsync(session.Adapter, session.AcpSessionId);
                 stages?.Mark("session close");
                 if (sessionCost is { } total)
@@ -204,18 +191,19 @@ public sealed partial class SessionHost
         while (updates.TryRead(out var update))
         {
             _turn?.Stages.Mark("first update");
-            // A subagent's own traffic goes to its session.
-            if (_subagents.Has(update.SessionId))
-            {
-                if (_subagents.Apply(update, Now(), _converter.KnowsTool) is { } linked)
-                    Apply(linked);
-                continue;
-            }
-
-            foreach (var agentEvent in UpdateReader.ReadAll(update, Now()))
+            foreach (var agentEvent in _updateReader.Read(update, Now()))
             {
                 switch (agentEvent)
                 {
+                    case TurnStarted:
+                        if (_turn is null && _kept is not null) StartSelfRun(agentEvent.At);
+                        break;
+                    case TurnEnded or TurnFailed:
+                        if (_turn is { SelfStarted: true }) EndSelfRun(agentEvent);
+                        break;
+                    case SessionMessage:
+                        // The host already recorded this prompt; user_message is its provider acknowledgement.
+                        break;
                     case SubagentChanged subagent:
                         // What the child asks (a permission, a question) AcpClient sends to this session's policy, as its parent's.
                         Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));

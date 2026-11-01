@@ -61,7 +61,7 @@ public sealed partial class RemoteMachineTests
             SessionStore.Open(boxDb, TimeProvider.System, "checkouts").SetTitle(session.SessionId, remoteHelperTitle, "helper");
         }
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(10));
 

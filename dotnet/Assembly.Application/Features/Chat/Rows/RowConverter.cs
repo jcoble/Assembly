@@ -31,6 +31,11 @@ public sealed class RowConverter
     private StreamingText? _message;
     private string? _messageAgentId;
     private StreamingText? _thinking;
+    private string? _thinkingAgentId;
+    private readonly Dictionary<string, (string Item, string? Run)> _messageItems = [];
+    private readonly Dictionary<string, string> _replacedText = [];
+    private readonly Dictionary<string, (string Item, string? Run)> _thoughtItems = [];
+    private readonly Dictionary<string, string> _replacedThought = [];
     private decimal? _sessionCost;
     private int _unnamedItems;
     // The run each background task started in, so its later rows stay with it after that run ends.
@@ -151,6 +156,18 @@ public sealed class RowConverter
     private void AddText(RowBatch batch, TextChunk chunk)
     {
         CloseThinking(batch, chunk.At);
+        if (_turn is not null) _turn.FirstTextAt ??= chunk.At;
+        if (chunk.MessageId is { } native && (chunk.Replace || _replacedText.ContainsKey(native)))
+        {
+            var text = chunk.Replace ? chunk.Text : _replacedText[native] + chunk.Text;
+            _replacedText[native] = text;
+            if (!_messageItems.TryGetValue(native, out var item))
+                _messageItems[native] = item = (SegmentId(native, ""), _turn?.RunId ?? _lastRunId);
+            if (_messageAgentId == native) _message = null;
+            batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Message,
+                JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse(text)), RowJsonContext.Rows.MessagePayload), chunk.At));
+            return;
+        }
         if (_message is not null && chunk.MessageId is not null && chunk.MessageId != _messageAgentId)
             CloseMessage(batch, chunk.At);
         if (_message is null)
@@ -158,6 +175,7 @@ public sealed class RowConverter
         if (_turn is not null)
             _turn.FirstTextAt ??= chunk.At;
 
+        if (chunk.MessageId is { } id) _messageItems[id] = (_message.ItemId, _turn?.RunId ?? _lastRunId);
         _message.Append(chunk.Text);
         if (_message.IsDue(chunk.At))
             SendDelta(batch, chunk.At);
@@ -166,7 +184,22 @@ public sealed class RowConverter
     private void AddThought(RowBatch batch, ThoughtChunk chunk)
     {
         CloseMessage(batch, chunk.At);
-        _thinking ??= new StreamingText(SegmentId(chunk.MessageId, ":thinking"));
+        if (chunk.MessageId is { } native && (chunk.Replace || _replacedThought.ContainsKey(native)))
+        {
+            var text = chunk.Replace ? chunk.Text : _replacedThought[native] + chunk.Text;
+            _replacedThought[native] = text;
+            if (!_thoughtItems.TryGetValue(native, out var item))
+                _thoughtItems[native] = item = (SegmentId(native, ":thinking"), _turn?.RunId ?? _lastRunId);
+            if (_thinking?.ItemId == item.Item) _thinking = null;
+            batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Thinking,
+                JsonSerializer.SerializeToElement(new ThinkingPayload(text, Done: false), RowJsonContext.Rows.ThinkingPayload), chunk.At));
+            return;
+        }
+        if (_thinking is not null && chunk.MessageId is not null && chunk.MessageId != _thinkingAgentId)
+            CloseThinking(batch, chunk.At);
+        if (_thinking is null)
+            (_thinking, _thinkingAgentId) = (new StreamingText(SegmentId(chunk.MessageId, ":thinking")), chunk.MessageId);
+        if (chunk.MessageId is { } id) _thoughtItems[id] = (_thinking.ItemId, _turn?.RunId ?? _lastRunId);
         _thinking.Append(chunk.Text);
         if (_thinking.IsDue(chunk.At))
             SendThinking(batch, chunk.At);
@@ -218,6 +251,13 @@ public sealed class RowConverter
         _tools.Clear();
         _finishedTools.Clear();
         _segments.Clear();
+        foreach (var (id, text) in _replacedThought)
+        {
+            var item = _thoughtItems[id];
+            if (item.Run == _turn?.RunId)
+                batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Thinking,
+                    JsonSerializer.SerializeToElement(new ThinkingPayload(text, Done: true), RowJsonContext.Rows.ThinkingPayload), at));
+        }
 
         if (error is not null)
             Add(batch, null, RowKind.Error, error, RowJsonContext.Rows.ErrorPayload, at);
@@ -264,6 +304,7 @@ public sealed class RowConverter
             return;
         Add(batch, _thinking.ItemId, RowKind.Thinking, new ThinkingPayload(_thinking.Text, Done: true), RowJsonContext.Rows.ThinkingPayload, at);
         _thinking = null;
+        _thinkingAgentId = null;
     }
 
     private void WriteTool(RowBatch batch, OpenTool tool, long at, bool failed)

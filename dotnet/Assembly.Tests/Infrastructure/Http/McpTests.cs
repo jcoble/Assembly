@@ -92,12 +92,12 @@ public sealed class McpTests : IAsyncLifetime
         Assert.True(refused.GetProperty("isError").GetBoolean());
 
         // The parent's turn ends while its helper works: its session stays open, and message_status waits for the answer.
-        await agent.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(parentPrompt, """{"stopReason":"end_turn"}""");
         var status = CallAsync(parentToken, "message_status", new { messageId });
         await Task.Delay(500);
         Assert.False(status.IsCompleted);
         await helperAgent.TextAsync("notes.txt has 3 lines.", "h1", "acp-helper");
-        await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await helperAgent.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         var answered = await status;
         Assert.Equal(("answered", "notes.txt has 3 lines."), (answered.GetProperty("state").GetString(), answered.GetProperty("reply").GetString()));
 
@@ -135,7 +135,7 @@ public sealed class McpTests : IAsyncLifetime
         Assert.Contains((second, "sibling"), listed);
 
         // The second finishes; the first may message it once.
-        await agent.ReplyAsync(secondPrompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(secondPrompt, """{"stopReason":"end_turn"}""");
         Assert.Equal("acp-two", await agent.CloseAsync());
         var sent = await CallAsync(firstToken, "send_message", new { sessionId = second, text = "What did you find?" });
         Assert.True(sent.TryGetProperty("messageId", out _));
@@ -147,8 +147,8 @@ public sealed class McpTests : IAsyncLifetime
         Assert.True((await CallResultAsync(firstToken, "send_message", new { sessionId = second, text = "again" })).GetProperty("isError").GetBoolean());
         // The limit holds between any two sessions: the parent's prompt was its one message to the helper.
         Assert.True((await CallResultAsync(parentToken, "send_message", new { sessionId = second, text = "and you?" })).GetProperty("isError").GetBoolean());
-        await agent.ReplyAsync(delivered, """{"stopReason":"end_turn"}""");
-        await agent.ReplyAsync(firstPrompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(delivered, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(firstPrompt, """{"stopReason":"end_turn"}""");
     }
 
     // The session's token for the Assembly MCP server, from its session/new or session/resume: kept in memory only.

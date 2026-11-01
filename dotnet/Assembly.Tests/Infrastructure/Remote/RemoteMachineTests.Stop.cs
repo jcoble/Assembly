@@ -18,7 +18,7 @@ public sealed partial class RemoteMachineTests
     }
 
     [Fact]
-    public async Task StopTask_on_a_remote_parent_s_own_remote_helper_stops_it_on_the_box()
+    public async Task The_removed_v2_stopTask_route_is_refused_for_a_remote_helper()
     {
         var (parent, _, _, helperId, helperAgent, _) = await StartRemoteHelperOfRemoteParentAsync();
 
@@ -32,7 +32,6 @@ public sealed partial class RemoteMachineTests
         {
         }
 
-        Assert.Equal("""{"t":"result","id":1,"result":{"ok":true}}""", result);
-        Assert.Equal("acp-helper", (await helperAgent.ReadAsync("session/cancel")).GetProperty("params").GetProperty("sessionId").GetString());
+        Assert.Contains("\"code\":\"not_found\"", result);
     }
 }

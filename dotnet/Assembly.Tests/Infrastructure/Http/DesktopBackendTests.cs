@@ -71,7 +71,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
 
         using var socket = await OpenLiveAsync(sessionId, after: 0);
         var rows = await ApiTests.ReadUntilTurnEndsAsync(socket);
@@ -96,7 +96,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.True(_backend.ActivityHeld);
 
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
 
         await Until(() => !_backend.ActivityHeld);
         await agent.CloseAsync();
@@ -254,7 +254,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
 
         Assert.Matches("^[0-9a-f]{40}$", (await GetJsonAsync("/version")).GetProperty("commit").GetString());
         await Until(() => GetJsonAsync($"/sessions/{sessionId}").Result.GetProperty("acpSessionId").ValueKind == JsonValueKind.String);
@@ -278,7 +278,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         await ClosedAsync(first);
 
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         using var second = await OpenLiveAsync(sessionId, after: 2);
         ApiTests.AssertCaughtUpFrom(2, await ApiTests.ReadUntilTurnEndsAsync(second));
     }
@@ -332,7 +332,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         Assert.Equal(before, Rows());
         Assert.Contains(before, row => row.StartsWith($"{sessionId}:", StringComparison.Ordinal) && row.Contains(":turn:", StringComparison.Ordinal));
         await GetJsonAsync("/version");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -407,7 +407,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
         $| = 1;
         while (<STDIN>) {
             my ($id) = /"id":(\d+)/;
-            print qq({"jsonrpc":"2.0","id":$id,"result":{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}}\n) if /"method":"initialize"/;
+            print qq({"jsonrpc":"2.0","id":$id,"result":{"protocolVersion":2,"capabilities":{},"authMethods":[]}}\n) if /"method":"initialize"/;
             print qq({"jsonrpc":"2.0","id":$id,"result":{"sessionId":"acp-1"}}\n) if /"method":"session\/new"/;
             if (/"method":"session\/prompt"/) { open(my $f, ">", $ARGV[0]); close($f); }
         }

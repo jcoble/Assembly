@@ -10,7 +10,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// <summary>
 /// A session's turns over the socket (plan C1), on whichever machine runs its agent: <c>send/send</c> starts a turn or
 /// steers the one running, <c>send/stop</c> stops a run, <c>send/answer</c> answers an ask the agent opened, and
-/// <c>send/stopTask</c> stops background work. One the machine turns down (an ask no longer open, a task that can't
+/// session close stops background work. One the machine turns down (an ask no longer open, a task that can't
 /// be stopped) is <c>failed</c>.
 /// </summary>
 internal sealed class SendFeature : IFeature
@@ -60,16 +60,6 @@ internal sealed class SendFeature : IFeature
                 ? _ => new Done(true)
                 : throw new CallFailed("that ask isn't open, or the answer doesn't fit it");
         }, args => OrderOf(args.Session));
-        calls.Write(Feature, "stopTask", SessionsJson.Default.StopTaskArgs, SessionsJson.Default.Done, async (args, call) =>
-        {
-            var session = Session(args.Session);
-            // A helper on another machine than its parent's stops there; the parent's machine stops its own.
-            var stopped = _store.Get(args.Task) is { Helper: true, Machine: not null } helper && helper.ParentSessionId == session.SessionId
-                && helper.Machine != session.Machine
-                ? _machines.For(helper).ActiveRun(helper) is { } run && await _machines.For(helper).StopAsync(helper, run, call.Cancellation)
-                : await _machines.For(session).StopTaskAsync(session, args.Task, call.Cancellation);
-            return stopped ? _ => new Done(true) : throw new CallFailed("that task isn't running, or can't be stopped");
-        }, args => OrderOf(args.Session));
     }
 
     /// <summary>The order key of the writes that reach a session's machine.</summary>
@@ -93,7 +83,6 @@ internal sealed class SendFeature : IFeature
     internal sealed record AnswerArgs([property: JsonRequired] string Session, [property: JsonRequired] string Ask,
         [property: JsonRequired] JsonElement Answer);
 
-    internal sealed record StopTaskArgs([property: JsonRequired] string Session, [property: JsonRequired] string Task);
 
     internal sealed record Done(bool Ok);
 }

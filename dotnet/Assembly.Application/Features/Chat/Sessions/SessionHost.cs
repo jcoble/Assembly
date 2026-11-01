@@ -4,7 +4,7 @@ using Assembly.Application.Common;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
-using Assembly.Application.Common.Acp.V1;
+using Assembly.Application.Common.Acp.V2;
 using Assembly.Application.Common.Calls;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
@@ -88,7 +88,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         _time = time;
         _log = log;
         _work = work;
-        _subagents = new Subagents(sessionStore, hub);
+        _subagents = new Subagents();
     }
 
     public string? ActiveRunId
@@ -221,25 +221,25 @@ public sealed partial class SessionHost : IPermissionPolicy
         if (turn.Session is not { } session || !session.Adapter.Init.CanSteer)
             return null;
 
-        SteerResponse steered;
+        SteerOutcome steered;
         try
         {
-            steered = await session.Adapter.Link.Client.SteerAsync(session.AcpSessionId, text, cancellationToken);
+            steered = await session.Adapter.Link.Client.SteerAsync(session.AcpSessionId, [TextBlock.Of(text)], cancellationToken);
         }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
         {
             return null;
         }
 
-        switch (steered.Outcome)
+        switch (steered)
         {
-            case "injected":
+            case SteerOutcome.Injected:
                 // Taken, so it's saved on its turn even if that turn has just ended.
                 lock (_gate)
                     Apply(new TurnSteered(Now(), turn.RunId, text, clientId));
                 _sessionStore.Touch(_sessionId);
                 return turn.RunId;
-            case "promptRequired":
+            case SteerOutcome.PromptRequired:
                 // The turn ended as the message went: it starts the next one, once this one's session is closed.
                 await turn.Done.WaitAsync(cancellationToken);
                 return Send(text, clientId);
@@ -251,14 +251,14 @@ public sealed partial class SessionHost : IPermissionPolicy
     public async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken)
     {
         var options = request.Options.Select(option => new AskOption(option.OptionId, option.Name, option.Kind)).ToList();
-        var card = new AskPayload("permission", "open", Titled(request.SessionId, request.ToolTitle), null, ToolCallId(request.ToolCall), options, null, null);
+        var card = new AskPayload("permission", "open", Titled(request.SessionId, request.Title), request.Description, ToolCallId(request.ToolCall), options, null, null);
         var answer = await AskAsync(card, cancellationToken);
         return PermissionOutcome.Selected(answer.GetProperty("optionId").GetString()!);
     }
 
     public async Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken)
     {
-        var card = new AskPayload("question", "open", Titled(request.SessionId, null), request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
+        var card = new AskPayload("question", "open", Titled(request.SessionId ?? "", null), request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
         var answer = await AskAsync(card, cancellationToken);
         return new ElicitationResponse(answer.GetProperty("action").GetString()!,
             answer.TryGetProperty("content", out var content) ? content.Clone() : default);
@@ -358,24 +358,7 @@ public sealed partial class SessionHost : IPermissionPolicy
         if (subagent)
             return await StopSubagentAsync(taskId, cancellationToken);
 
-        OpenSession? session;
-        lock (_gate)
-        {
-            if (!_tasks.TryGetValue(taskId, out var task) || !task.CanStop)
-                return false;
-            session = _turn?.Session ?? _kept?.Session;
-        }
-
-        if (session is null)
-            return false;
-        try
-        {
-            return (await session.Adapter.Link.Client.StopTaskAsync(session.AcpSessionId, taskId, cancellationToken)).Stopped;
-        }
-        catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException)
-        {
-            return false;
-        }
+        return false; // ACP v2 stops background work only through session/close.
     }
 
     /// <summary>Stops a subagent's current work (<c>session/cancel</c> with its child session id); its parent goes on.</summary>
@@ -472,9 +455,11 @@ public sealed partial class SessionHost : IPermissionPolicy
             }
             else
             {
-                var response = await session.Adapter.Link.Client.PromptAsync(session.AcpSessionId, text, CancellationToken.None);
+                var response = await session.Adapter.Link.Client.PromptAsync(session.AcpSessionId, [TextBlock.Of(text)], CancellationToken.None).Ended;
                 turn.Stages.Mark("answer");
-                end = at => UpdateReader.TurnEnd(response, at);
+                end = at => response.Error is { } failure
+                    ? new TurnFailed(at, failure.Message, failure.Code.ToString(System.Globalization.CultureInfo.InvariantCulture))
+                    : UpdateReader.TurnEnd(response, at);
             }
         }
         catch (OperationCanceledException) when (turn.Stopping.IsCancellationRequested)

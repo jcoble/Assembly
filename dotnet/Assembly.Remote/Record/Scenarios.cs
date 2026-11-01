@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Acp.JsonRpc;
+using Assembly.Application.Common.Acp.Messages;
 
 namespace Assembly.Remote.Record;
 
@@ -34,7 +35,7 @@ public static class Scenarios
         {
             try
             {
-                await c.Agent.Client.PromptAsync("no-such-session", "hello", c.Deadline);
+                await c.Agent.Client.PromptAsync("no-such-session", [TextBlock.Of("hello")], c.Deadline).Ended;
                 return "unexpected: the prompt succeeded";
             }
             catch (JsonRpcException ex)
@@ -45,7 +46,7 @@ public static class Scenarios
         new("cancel", NoFiles, async c =>
         {
             var turn = c.Updates.BeginTurn();
-            var prompt = c.Agent.Client.PromptAsync(c.SessionId, "Write the numbers from 1 to 300, one per line, with no other text.", c.Deadline);
+            var prompt = c.Agent.Client.PromptAsync(c.SessionId, [TextBlock.Of("Write the numbers from 1 to 300, one per line, with no other text.")], c.Deadline).Ended;
             await Task.WhenAny(turn.FirstText, Task.Delay(TimeSpan.FromSeconds(30)));
             await c.Agent.Client.CancelAsync(c.SessionId, c.Deadline);
             return $"stop {(await prompt).StopReason}";
@@ -53,7 +54,7 @@ public static class Scenarios
         new("lost", NoFiles, async c =>
         {
             var turn = c.Updates.BeginTurn();
-            var prompt = c.Agent.Client.PromptAsync(c.SessionId, "Write the numbers from 1 to 300, one per line, with no other text.", c.Deadline);
+            var prompt = c.Agent.Client.PromptAsync(c.SessionId, [TextBlock.Of("Write the numbers from 1 to 300, one per line, with no other text.")], c.Deadline).Ended;
             await Task.WhenAny(turn.FirstText, Task.Delay(TimeSpan.FromSeconds(30)));
             c.Agent.Kill();
             await c.Agent.Exited;
@@ -68,17 +69,16 @@ public static class Scenarios
             }
         }),
         new("background", NoFiles, BackgroundAsync),
-        new("background-async", NoFiles, BackgroundAsync, ["asyncTasks"]),
+
         // A message steered in while a foreground command runs: Claude Code moves the command to the background.
         new("steer-background", NoFiles, SteerBackgroundAsync),
         // The agent's slash commands (available_commands_update), then one of them sent as a prompt.
         new("slash-context", NoFiles, c => SlashAsync(c, "/context")),
         // Codex has no /context; /status is its nearest.
         new("slash-status", NoFiles, c => SlashAsync(c, "/status")),
-        // A subagent, announced as a child session (clientCapabilities.subagents).
+        // A provider Task/Agent tool appears beneath its existing session.
         new("subagent", Notes, SubagentAsync),
-        // The same with the AIR opt-ins the window gives Codex (agents-file.sh).
-        new("subagent-air", Notes, SubagentAsync, ["sessionIndex", "asyncTasks"]),
+
     ];
 
     private static Task<string> SubagentAsync(ScenarioContext c) => PromptAsync(c,
@@ -92,8 +92,7 @@ public static class Scenarios
         return await PromptAsync(c, command);
     }
 
-    // A command left running after the turn ends, and whatever the agent does when it finishes: with the AIR
-    // asyncTasks opt-in (background-async) and without it (background).
+    // A command left running after the foreground turn ends.
     private static async Task<string> BackgroundAsync(ScenarioContext c)
     {
         var summary = await PromptAsync(c,
@@ -107,23 +106,23 @@ public static class Scenarios
     private static async Task<string> SteerBackgroundAsync(ScenarioContext c)
     {
         var turn = c.Updates.BeginTurn();
-        var prompt = c.Agent.Client.PromptAsync(c.SessionId,
+        var prompt = c.Agent.Client.PromptAsync(c.SessionId, [TextBlock.Of(
             "Run this in the foreground with your Bash tool (not in the background), with a 120000 ms timeout: " +
-            "for i in $(seq 1 30); do echo step $i; sleep 1; done. Then tell me the last line it printed.", c.Deadline);
+            "for i in $(seq 1 30); do echo step $i; sleep 1; done. Then tell me the last line it printed.")], c.Deadline).Ended;
         // Late enough that the loop is running (the agent starts it some seconds in).
         await Task.Delay(TimeSpan.FromSeconds(14), c.Deadline);
-        var steered = await c.Agent.Client.SteerAsync(c.SessionId, "Also, once the loop is done, say how many files are in this folder.", c.Deadline);
+        var steered = await c.Agent.Client.SteerAsync(c.SessionId, [TextBlock.Of("Also, once the loop is done, say how many files are in this folder.")], c.Deadline);
         var response = await prompt;
         await c.Updates.DrainAsync();
         var after = c.Updates.BeginTurn();
         await Task.Delay(TimeSpan.FromSeconds(60), c.Deadline);
-        return $"steer {steered.Outcome}; stop {response.StopReason}; updates: {turn.KindSummary}; after the turn: {after.KindSummary}";
+        return $"steer {steered}; stop {response.StopReason}; updates: {turn.KindSummary}; after the turn: {after.KindSummary}";
     }
 
     private static async Task<string> PromptAsync(ScenarioContext c, string text)
     {
         var turn = c.Updates.BeginTurn();
-        var response = await c.Agent.Client.PromptAsync(c.SessionId, text, c.Deadline);
+        var response = await c.Agent.Client.PromptAsync(c.SessionId, [TextBlock.Of(text)], c.Deadline).Ended;
         await c.Updates.DrainAsync();
         return $"stop {response.StopReason}; updates: {turn.KindSummary}";
     }

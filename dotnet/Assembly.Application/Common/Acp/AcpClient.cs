@@ -4,29 +4,23 @@ using System.Text.Json.Serialization.Metadata;
 using System.Threading.Channels;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
-using Assembly.Application.Common.Acp;
+using Assembly.Application.Common.Acp.V2;
 
 namespace Assembly.Application.Common.Acp;
 
-/// <summary>
-/// The client side of ACP v1 for one agent process: typed calls out, and the two things an agent
-/// sends us: <c>session/update</c> notifications (queued on <see cref="Updates"/>) and permission requests.
-/// </summary>
+/// <summary>One ACP v2 connection. Adapter differences stay outside this client.</summary>
 public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
 {
-    public const int ProtocolVersion = 1;
-
     private readonly IPermissionPolicy _permissions;
-    // Who answers a session's prompts while it's open, in place of the client-wide policy.
     private readonly ConcurrentDictionary<string, IPermissionPolicy> _sessionPolicies = new();
+    private readonly ConcurrentDictionary<string, Foreground> _foreground = new();
     private readonly Channel<SessionNotification> _updates =
         Channel.CreateUnbounded<SessionNotification>(new UnboundedChannelOptions { SingleWriter = true });
-    private readonly ConcurrentDictionary<string, CancellationTokenSource> _runningTurns = new();
-    // Each native child session the agent announced (subagent_update): the session it asks under and, while it's at
-    // work, what settles its asks. It going idle, its parent's turn being cancelled, or its parent's session closing do.
-    private readonly Dictionary<string, (string Parent, CancellationTokenSource? Working)> _children = [];
-    private readonly Lock _childrenGate = new();
     private readonly JsonRpcConnection _rpc;
+    private sealed class ResumeState { public SessionNotification? Snapshot; }
+    private readonly ConcurrentDictionary<string, ResumeState> _resuming = new();
+    public event Action<string>? SessionResumed;
+    private readonly BackgroundWork _prompts = new(TimeProvider.System, Console.Error);
 
     public AcpClient(Stream fromAgent, Stream toAgent, IPermissionPolicy permissions, TranscriptLog transcript)
     {
@@ -34,199 +28,163 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
         _rpc = new JsonRpcConnection(fromAgent, toAgent, this, transcript);
     }
 
-    /// <summary>
-    /// Sends <paramref name="sessionId"/>'s permission prompts and questions to <paramref name="policy"/>, or back to
-    /// the client-wide policy when it's null.
-    /// </summary>
-    public void SetSessionPolicy(string sessionId, IPermissionPolicy? policy)
-    {
-        if (policy is not null)
-        {
-            _sessionPolicies[sessionId] = policy;
-            return;
-        }
-
-        _sessionPolicies.TryRemove(sessionId, out _);
-        StopChildren(sessionId, forget: true);
-    }
-
-    /// <summary>Every <c>session/update</c>, in arrival order. Completes when the agent's output closes.</summary>
     public ChannelReader<SessionNotification> Updates => _updates.Reader;
 
-    /// <summary>Starts the connection, opting into the AIR extensions named in <paramref name="air"/>, if any.</summary>
-    public Task<InitializeResponse> InitializeAsync(Implementation clientInfo, IReadOnlyList<string>? air, CancellationToken cancellationToken) =>
-        RequestAsync(
-            AcpMethods.Initialize,
-            new InitializeRequest(ProtocolVersion, ClientCapabilities.WithAir(air), clientInfo),
-            AcpJsonContext.Default.InitializeRequest,
-            AcpJsonContext.Default.InitializeResponse,
-            cancellationToken);
-
-    /// <summary>A new session in <paramref name="cwd"/>, joined to <paramref name="mcpServers"/> (ACP <c>McpServer</c>s), if any.</summary>
-    public Task<NewSessionResponse> NewSessionAsync(string cwd, CancellationToken cancellationToken, IReadOnlyList<JsonElement>? mcpServers = null) =>
-        RequestAsync(
-            AcpMethods.SessionNew,
-            new NewSessionRequest(cwd, mcpServers ?? []),
-            AcpJsonContext.Default.NewSessionRequest,
-            AcpJsonContext.Default.NewSessionResponse,
-            cancellationToken);
-
-    /// <summary>Reopens <paramref name="sessionId"/>. Only for an agent whose <see cref="InitializeResponse.CanResumeSessions"/> is true.</summary>
-    /// <remarks>
-    /// The answer queues <see cref="SessionNotification.Resumed"/> on <see cref="Updates"/> in pipe order, so a reader
-    /// can tell the session's updates sent before the answer from those sent after it.
-    /// </remarks>
-    public Task<ResumeSessionResponse> ResumeSessionAsync(string sessionId, string cwd, CancellationToken cancellationToken,
-        IReadOnlyList<JsonElement>? mcpServers = null) =>
-        RequestAsync(
-            AcpMethods.SessionResume,
-            new ResumeSessionRequest(sessionId, cwd, mcpServers ?? []),
-            AcpJsonContext.Default.ResumeSessionRequest,
-            AcpJsonContext.Default.ResumeSessionResponse,
-            cancellationToken,
-            () => _updates.Writer.TryWrite(SessionNotification.Resumed(sessionId)));
-
-    /// <summary>Ends <paramref name="sessionId"/> in the adapter. A later <see cref="ResumeSessionAsync"/> reopens it.</summary>
-    public Task<CloseSessionResponse> CloseSessionAsync(string sessionId, CancellationToken cancellationToken) =>
-        RequestAsync(
-            AcpMethods.SessionClose,
-            new CloseSessionRequest(sessionId),
-            AcpJsonContext.Default.CloseSessionRequest,
-            AcpJsonContext.Default.CloseSessionResponse,
-            cancellationToken);
-
-    /// <summary>Titles <paramref name="sessionId"/>. Only for an agent whose <see cref="InitializeResponse.CanRenameSessions"/> is true.</summary>
-    public Task<RenameSessionResponse> RenameSessionAsync(string sessionId, string title, CancellationToken cancellationToken) =>
-        RequestAsync(
-            AcpMethods.SessionRename,
-            new RenameSessionRequest(sessionId, title),
-            AcpJsonContext.Default.RenameSessionRequest,
-            AcpJsonContext.Default.RenameSessionResponse,
-            cancellationToken);
-
-    public Task<SetConfigOptionResponse> SetConfigOptionAsync(string sessionId, string configId, string value, CancellationToken cancellationToken) =>
-        RequestAsync(
-            AcpMethods.SessionSetConfigOption,
-            new SetConfigOptionRequest(sessionId, configId, value),
-            AcpJsonContext.Default.SetConfigOptionRequest,
-            AcpJsonContext.Default.SetConfigOptionResponse,
-            cancellationToken);
-
-    /// <summary>Runs one turn. Returns when the agent answers the prompt, which is after its last update.</summary>
-    public async Task<PromptResponse> PromptAsync(string sessionId, string text, CancellationToken cancellationToken)
+    public void SetSessionPolicy(string sessionId, IPermissionPolicy? policy)
     {
-        using var turn = new CancellationTokenSource();
-        if (!_runningTurns.TryAdd(sessionId, turn))
-            throw new InvalidOperationException($"Session {sessionId} already has a turn running.");
+        if (policy is not null) _sessionPolicies[sessionId] = policy;
+        else _sessionPolicies.TryRemove(sessionId, out _);
+    }
+
+    public async Task<InitializeResponse> InitializeAsync(Implementation clientInfo, CancellationToken cancellationToken)
+    {
+        var response = await RequestAsync(AcpMethods.Initialize,
+            new InitializeRequest(AcpProtocol.Version, clientInfo, ClientCapabilities.Assembly),
+            AcpJsonContext.Default.InitializeRequest, AcpJsonContext.Default.InitializeResponse, cancellationToken);
+        if (response.ProtocolVersion != AcpProtocol.Version)
+            throw new JsonRpcException(-32022, $"ACP version {response.ProtocolVersion} is unsupported; Assembly requires version 2.");
+        return response;
+    }
+
+    public Task<NewSessionResponse> NewSessionAsync(NewSessionRequest request, CancellationToken cancellationToken) =>
+        RequestAsync(AcpMethods.SessionNew, request, AcpJsonContext.Default.NewSessionRequest,
+            AcpJsonContext.Default.NewSessionResponse, cancellationToken);
+
+    public async Task<ResumeSessionResponse> ResumeSessionAsync(ResumeSessionRequest request, CancellationToken cancellationToken)
+    {
+        if (!_resuming.TryAdd(request.SessionId, new ResumeState()))
+            throw new InvalidOperationException("This session is already resuming.");
         try
         {
-            return await RequestAsync(
-                AcpMethods.SessionPrompt,
-                new PromptRequest(sessionId, [TextBlock.Of(text)]),
-                AcpJsonContext.Default.PromptRequest,
-                AcpJsonContext.Default.PromptResponse,
-                cancellationToken);
+            return await RequestAsync(AcpMethods.SessionResume, request, AcpJsonContext.Default.ResumeSessionRequest,
+                AcpJsonContext.Default.ResumeSessionResponse, cancellationToken, () =>
+                {
+                    _resuming.TryRemove(request.SessionId, out var resumed);
+                    SessionResumed?.Invoke(request.SessionId);
+                    if (resumed?.Snapshot is { } snapshot)
+                    {
+                        For(request.SessionId).Read(snapshot);
+                        _updates.Writer.TryWrite(snapshot);
+                    }
+                });
+        }
+        finally { _resuming.TryRemove(request.SessionId, out _); }
+    }
+
+    public async Task CloseSessionAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await RequestAsync(AcpMethods.SessionClose, new CloseSessionRequest(sessionId),
+                AcpJsonContext.Default.CloseSessionRequest, AcpJsonContext.Default.CloseSessionResponse, cancellationToken);
         }
         finally
         {
-            // Whatever the turn asked and nobody answered is cancelled with it, as when the agent goes.
-            _runningTurns.TryRemove(sessionId, out _);
-            await turn.CancelAsync();
+            if (_foreground.TryRemove(sessionId, out var foreground)) foreground.Dispose();
+            _sessionPolicies.TryRemove(sessionId, out _);
         }
     }
 
-    /// <summary>Gives the running turn another message. An idle session answers <c>promptRequired</c> and runs nothing.</summary>
-    public Task<SteerResponse> SteerAsync(string sessionId, string text, CancellationToken cancellationToken) =>
-        RequestAsync(
-            AcpMethods.SessionSteering,
-            new SteerRequest(sessionId, [TextBlock.Of(text)], new SteerMeta(new SteerOptions("promptRequired"))),
-            AcpJsonContext.Default.SteerRequest,
-            AcpJsonContext.Default.SteerResponse,
-            cancellationToken);
+    public Task<SetConfigOptionResponse> SetConfigOptionAsync(string sessionId, string configId, string value, CancellationToken cancellationToken) =>
+        RequestAsync(AcpMethods.SessionSetConfigOption, new SetConfigOptionRequest(sessionId, configId, value),
+            AcpJsonContext.Default.SetConfigOptionRequest, AcpJsonContext.Default.SetConfigOptionResponse, cancellationToken);
 
-    /// <summary>Stops a background task the agent said it can stop.</summary>
-    public Task<StopTaskResponse> StopTaskAsync(string sessionId, string taskId, CancellationToken cancellationToken) =>
-        RequestAsync(
-            AcpMethods.SessionStopTask,
-            new StopTaskRequest(sessionId, taskId),
-            AcpJsonContext.Default.StopTaskRequest,
-            AcpJsonContext.Default.StopTaskResponse,
-            cancellationToken);
-
-    /// <summary>
-    /// Asks the agent to stop the running turn. The prompt call still returns normally, with
-    /// <c>cancelled</c>. ACP requires us to settle any open permission prompt as cancelled first.
-    /// </summary>
-    public Task CancelAsync(string sessionId, CancellationToken cancellationToken)
+    public PromptRun PromptAsync(string sessionId, IReadOnlyList<TextBlock> prompt, CancellationToken cancellationToken)
     {
-        if (_runningTurns.TryGetValue(sessionId, out var turn))
+        var foreground = For(sessionId);
+        var pending = foreground.Begin();
+        _prompts.Start("ACP prompt " + sessionId, SendPromptAsync);
+        return new PromptRun(pending.Inserted.Task, pending.Ended.Task);
+
+        async Task SendPromptAsync(CancellationToken closing)
         {
+            using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, closing);
             try
             {
-                turn.Cancel();
+                var response = await RequestAsync(AcpMethods.SessionPrompt, new PromptRequest(sessionId, prompt),
+                    AcpJsonContext.Default.PromptRequest, AcpJsonContext.Default.PromptResponse, lifetime.Token);
+                if (string.IsNullOrEmpty(response.MessageId))
+                    throw new JsonRpcException(JsonRpcException.InternalError, "session/prompt returned no messageId.");
+                foreground.Inserted(pending, response.MessageId);
+                await pending.Ended.Task.WaitAsync(lifetime.Token);
             }
-            catch (ObjectDisposedException)
+            catch (Exception error)
             {
-                // The turn ended while we were cancelling it.
+                foreground.Failed(pending, error);
             }
         }
-        StopChildren(sessionId, forget: false);
+    }
 
-        var notification = JsonSerializer.SerializeToElement(
-            new CancelNotification(sessionId), AcpJsonContext.Default.CancelNotification);
-        return _rpc.NotifyAsync(AcpMethods.SessionCancel, notification, cancellationToken);
+    public async Task<SteerOutcome> SteerAsync(string sessionId, IReadOnlyList<TextBlock> prompt, CancellationToken cancellationToken)
+    {
+        var response = await RequestAsync(AcpMethods.SessionSteering,
+            new SteerRequest(sessionId, prompt, new SteerMeta(new SteerOptions("promptRequired"))),
+            AcpJsonContext.Default.SteerRequest, AcpJsonContext.Default.SteerResponse, cancellationToken);
+        return response.Outcome switch
+        {
+            "injected" => SteerOutcome.Injected,
+            "promptRequired" => SteerOutcome.PromptRequired,
+            _ => throw new JsonRpcException(JsonRpcException.InternalError,
+                $"Unexpected steering outcome with idleBehavior promptRequired: {response.Outcome}.")
+        };
+    }
+
+    public async Task CancelAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        var foreground = For(sessionId);
+        var waiting = foreground.Cancelling();
+        try
+        {
+            await _rpc.NotifyAsync(AcpMethods.SessionCancel,
+                JsonSerializer.SerializeToElement(new CancelNotification(sessionId), AcpJsonContext.Default.CancelNotification), cancellationToken);
+            await waiting.Task.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            foreground.RemoveCancel(waiting);
+        }
     }
 
     async Task<JsonElement> IJsonRpcTarget.OnRequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken)
     {
-        // We offered no fs/* or terminal/* capability, so permissions and form questions are all we expect.
         switch (method)
         {
             case AcpMethods.SessionRequestPermission:
                 var request = parameters.Deserialize(AcpJsonContext.Default.RequestPermissionRequest)
                     ?? throw new JsonRpcException(JsonRpcException.InvalidParams, "Missing permission request.");
                 var outcome = await AskAsync(request.SessionId, PermissionOutcome.Cancelled,
-                    (policy, token) => V1.UpdateReader.BoardPermission(request) is { } allowed
-                        ? Task.FromResult(allowed) : policy.DecideAsync(request, token), cancellationToken);
+                    (policy, token) => request.ToolTitle == "mcp__assembly__board_update"
+                        && request.Options.FirstOrDefault(option => option.Kind == "allow_once") is { } allow
+                        ? Task.FromResult(PermissionOutcome.Selected(allow.OptionId)) : policy.DecideAsync(request, token), cancellationToken);
                 return JsonSerializer.SerializeToElement(new RequestPermissionResponse(outcome), AcpJsonContext.Default.RequestPermissionResponse);
             case AcpMethods.ElicitationCreate:
                 var question = parameters.Deserialize(AcpJsonContext.Default.ElicitationRequest)
                     ?? throw new JsonRpcException(JsonRpcException.InvalidParams, "Missing elicitation request.");
-                var answer = question.Mode != "form"
+                var session = !string.IsNullOrEmpty(question.SessionId);
+                var requestId = question.RequestId is { ValueKind: JsonValueKind.String or JsonValueKind.Number };
+                if (session == requestId)
+                    throw new JsonRpcException(JsonRpcException.InvalidParams, "Elicitation requires exactly one of sessionId or requestId.");
+                var answer = question.Mode != "form" || !session
                     ? ElicitationResponse.Cancel
-                    : await AskAsync(question.SessionId, ElicitationResponse.Cancel, (policy, token) => policy.ElicitAsync(question, token), cancellationToken);
+                    : await AskAsync(question.SessionId!, ElicitationResponse.Cancel,
+                        (policy, token) => policy.ElicitAsync(question, token), cancellationToken);
                 return JsonSerializer.SerializeToElement(answer, AcpJsonContext.Default.ElicitationResponse);
             default:
                 throw new JsonRpcException(JsonRpcException.MethodNotFound, $"Method not found: {method}");
         }
     }
 
-    // Only a running turn's session is asked, or a child at work, under its parent's session; a cancel of the turn, the
-    // child's work ending, or the agent going settles the ask as cancelled.
-    private async Task<T> AskAsync<T>(string sessionId, T cancelled, Func<IPermissionPolicy, CancellationToken, Task<T>> ask, CancellationToken connectionClosing)
+    private async Task<T> AskAsync<T>(string sessionId, T cancelled,
+        Func<IPermissionPolicy, CancellationToken, Task<T>> ask, CancellationToken connectionClosing)
     {
         try
         {
-            var asking = sessionId;
-            CancellationToken ends;
-            lock (_childrenGate)
-            {
-                if (_children.TryGetValue(sessionId, out var child))
-                {
-                    if (child.Working is null)
-                        return cancelled;
-                    (asking, ends) = (child.Parent, child.Working.Token);
-                }
-                else if (_runningTurns.TryGetValue(sessionId, out var turn))
-                    ends = turn.Token;
-                else
-                    return cancelled;
-            }
-
-            using var either = CancellationTokenSource.CreateLinkedTokenSource(connectionClosing, ends);
-            return await ask(_sessionPolicies.GetValueOrDefault(asking) ?? _permissions, either.Token);
+            if (!_foreground.TryGetValue(sessionId, out var foreground) || !foreground.Running)
+                return cancelled;
+            using var either = CancellationTokenSource.CreateLinkedTokenSource(connectionClosing, foreground.Work);
+            return await ask(_sessionPolicies.GetValueOrDefault(sessionId) ?? _permissions, either.Token);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or ObjectDisposedException)
+        catch (Exception error) when (error is OperationCanceledException or ObjectDisposedException)
         {
             return cancelled;
         }
@@ -234,77 +192,41 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
 
     void IJsonRpcTarget.OnNotification(string method, JsonElement parameters)
     {
-        if (method != AcpMethods.SessionUpdate)
+        if (method != AcpMethods.SessionUpdate ||
+            parameters.Deserialize(AcpJsonContext.Default.SessionNotification) is not { } update)
             return;
-        if (parameters.Deserialize(AcpJsonContext.Default.SessionNotification) is not { } update)
+        if (_resuming.TryGetValue(update.SessionId, out var resuming))
+        {
+            // Replay text is not live traffic, but v2's required current-state snapshot remains authoritative.
+            if (update.Kind == "state_update") resuming.Snapshot = update;
             return;
-        // Read here, in the agent's order, so a child's ask that follows its announcement always finds its parent.
-        if (update.Kind == "subagent_update")
-            Announced(update);
+        }
+        if (update.Kind == "state_update") For(update.SessionId).Read(update);
+        else if (_foreground.TryGetValue(update.SessionId, out var foreground)) foreground.Read(update);
         _updates.Writer.TryWrite(update);
-    }
-
-    private void Announced(SessionNotification update)
-    {
-        if (!update.Update.TryGetProperty("sessionId", out var id) || id.GetString() is not { Length: > 0 } childId || childId == update.SessionId)
-            return;
-        // An update that names no state (a new title, say) leaves a child as it was; a new child is at work.
-        var state = update.Update.TryGetProperty("state", out var work) && work.ValueKind == JsonValueKind.Object
-                    && work.TryGetProperty("state", out var named) ? named.GetString() : null;
-        CancellationTokenSource? ended = null;
-        lock (_childrenGate)
-        {
-            var parent = _children.TryGetValue(update.SessionId, out var grandparent) ? grandparent.Parent : update.SessionId;
-            if (_children.TryGetValue(childId, out var known) && state is null)
-                return;
-            if (state == "idle")
-                (ended, _children[childId]) = (known.Working, (parent, null));
-            else
-                _children[childId] = (parent, known.Working ?? new CancellationTokenSource());
-        }
-        ended?.Cancel();
-    }
-
-    // Settles the open asks of the children under sessionId, or of the child sessionId itself, or of every child when
-    // it's null; a closed session's children go.
-    private void StopChildren(string? sessionId, bool forget)
-    {
-        List<CancellationTokenSource> ended = [];
-        lock (_childrenGate)
-        {
-            foreach (var (childId, child) in _children.Where(pair => sessionId is null || pair.Value.Parent == sessionId || pair.Key == sessionId).ToList())
-            {
-                if (child.Working is not null)
-                    ended.Add(child.Working);
-                if (forget)
-                    _children.Remove(childId);
-                else
-                    _children[childId] = (child.Parent, null);
-            }
-        }
-        foreach (var working in ended)
-            working.Cancel();
     }
 
     void IJsonRpcTarget.OnClosed(Exception reason)
     {
+        foreach (var foreground in _foreground.Values) foreground.Close(reason);
         _updates.Writer.TryComplete();
-        // No turn ends to settle a child's ask after its parent's turn: the agent going does it here.
-        StopChildren(null, forget: true);
     }
 
-    private async Task<TResponse> RequestAsync<TRequest, TResponse>(
-        string method,
-        TRequest request,
-        JsonTypeInfo<TRequest> requestType,
-        JsonTypeInfo<TResponse> responseType,
-        CancellationToken cancellationToken,
-        Action? onReply = null)
+    private Foreground For(string sessionId) => _foreground.GetOrAdd(sessionId, _ => new Foreground());
+
+    private async Task<TResponse> RequestAsync<TRequest, TResponse>(string method, TRequest request,
+        JsonTypeInfo<TRequest> requestType, JsonTypeInfo<TResponse> responseType, CancellationToken cancellationToken, Action? onReply = null)
     {
         var result = await _rpc.RequestAsync(method, JsonSerializer.SerializeToElement(request, requestType), cancellationToken, onReply);
         return result.Deserialize(responseType)
             ?? throw new JsonRpcException(JsonRpcException.InternalError, $"{method} returned no result.");
     }
 
-    public ValueTask DisposeAsync() => _rpc.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await _rpc.DisposeAsync();
+        await _prompts.DisposeAsync();
+        foreach (var foreground in _foreground.Values) foreground.Dispose();
+        _foreground.Clear();
+    }
 }

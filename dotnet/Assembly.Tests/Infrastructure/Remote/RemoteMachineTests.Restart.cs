@@ -32,7 +32,7 @@ public sealed partial class RemoteMachineTests
         // The desktop stops as if before it copied any of the helper's rows, and the helper finishes on the box meanwhile.
         await _desktop!.DisposeAsync();
         ForgetRows(Path.Combine(_desktopHome, "assembly.db"), helperId);
-        await box.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await box.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         await StartDesktopAsync();
 
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
@@ -71,7 +71,7 @@ public sealed partial class RemoteMachineTests
             is { } turn && turn.GetProperty("payload").GetProperty("state").GetString() == "started");
         Assert.Equal("running", await HelperStateAsync(parent, helperId));
 
-        await box.ReplyAsync(secondPrompt, """{"stopReason":"end_turn"}""");
+        await box.FinishAsync(secondPrompt, """{"stopReason":"end_turn"}""");
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
         Assert.Single(await RowsAsync(_desktop!, DesktopToken, parent), row => row.GetProperty("seq").GetInt64() > before
             && row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
@@ -167,7 +167,7 @@ public sealed partial class RemoteMachineTests
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
         await Until(async () => await HelperStateAsync(parent, helperId) == "running");
-        await box.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await box.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         await Until(async () => await HelperStateAsync(parent, helperId) == "idle");
         return (parent, helperId, box);
     }

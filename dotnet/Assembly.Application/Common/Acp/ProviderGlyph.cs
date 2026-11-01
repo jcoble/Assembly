@@ -1,4 +1,4 @@
-namespace Assembly.Application.Common.Acp.V1;
+namespace Assembly.Application.Common.Acp;
 
 /// <summary>
 /// The glyph the window draws beside a provider's sessions: the path of a Lucide icon the window bundles

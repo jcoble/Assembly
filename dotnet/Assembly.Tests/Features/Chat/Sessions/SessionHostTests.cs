@@ -63,7 +63,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
         await agent.TextAsync("Hello");
         Assert.Equal(["delta"], await Kinds(1));
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn","usage":{"inputTokens":3,"outputTokens":5}}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn","usage":{"inputTokens":3,"outputTokens":5}}""");
 
         var end = await Rows(3);
         Assert.Equal(["message", "stats", "turn"], end.Select(row => row.Kind));
@@ -86,7 +86,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("Hello");
         await Kinds(3);
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await Kinds(3);
         await agent.CloseAsync();
 
@@ -126,7 +126,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         Assert.Equal(["message", "user"], rows.Select(row => row.Kind));
         Assert.All(rows, row => Assert.Equal(runId, row.RunId));
         Assert.Equal("also this", rows[1].Payload.GetProperty("text").GetString());
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -140,7 +140,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
         var steering = _host.SteerAsync("two", null, CancellationToken.None);
         var steer = await agent.ReadAsync("_session/steering");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.ReplyAsync(steer, """{"outcome":"promptRequired","reason":"noRunningTurn"}""");
         await agent.CloseAsync();
 
@@ -157,16 +157,15 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     {
         _host.Send("  Fix the login page so the password field keeps its value after a failed sign-in\nmore detail");
         var agent = await _launcher.NextAsync();
-        await agent.StartAsync(canRename: true);
+        await agent.StartAsync();
 
-        var rename = await agent.ReadAsync("_session/rename");
-        var title = rename.GetProperty("params").GetProperty("title").GetString()!;
+        var prompt = await agent.ReadAsync("session/prompt");
+        var title = _sessionStore.Get(_session.SessionId)!.Title!;
         Assert.Equal("Fix the login page so the password field keeps its value af…", title);
         Assert.Equal(SessionOpener.TitleLength, title.Length);
         await agent.UpdateAsync($$"""{"sessionUpdate":"session_info_update","title":"{{title}}"}""");
-        await agent.ReplyAsync(rename, "{}");
-        var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
 
         await Until(() => _sessionStore.Get(_session.SessionId)?.Title == title);
@@ -179,14 +178,12 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var host = new SessionHost(helper.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         host.Send("You're a helper session, started by another agent's session.\n\nCount the lines");
         var agent = await _launcher.NextAsync();
-        await agent.StartAsync(canRename: true);
+        await agent.StartAsync();
 
-        var rename = await agent.ReadAsync("_session/rename");
-        Assert.Equal("Count the lines", rename.GetProperty("params").GetProperty("title").GetString());
-        await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"You're a helper session, started by"}""");
-        await agent.ReplyAsync(rename, "{}");
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        Assert.Equal("Count the lines", _sessionStore.Get(helper.SessionId)!.Title);
+        await agent.UpdateAsync("""{"sessionUpdate":"session_info_update","title":"You're a helper session, started by"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
 
         Assert.Equal("Count the lines", _sessionStore.Get(helper.SessionId)!.Title);
@@ -201,7 +198,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.Equal("Explain the build script", _sessionStore.Get(_session.SessionId)?.Title);
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -233,7 +230,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.ReplyAsync(effort, $$"""{"configOptions":{{Options("haiku", "high")}}}""");
 
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         var stats = (await Rows(4)).Single(row => row.Kind == "stats");
         Assert.Equal("Haiku 5.5", stats.Payload.GetProperty("model").GetString());
         var saved = JsonDocument.Parse(_sessionStore.Config(_session.SessionId).Options!).RootElement;
@@ -260,7 +257,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         // The agent leaves plan mode itself.
         await agent.UpdateAsync($$"""{"sessionUpdate":"config_option_update","configOptions":{{Options("opus", "low")}}}""");
         await Until(() => _sessionStore.Config(_session.SessionId).Options?.Contains("\"currentValue\":\"default\"") == true);
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -279,7 +276,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => choosing.WaitAsync(Wait));
         Assert.False(_sessionStore.Config(_session.SessionId).Choices.ContainsKey("mode"));
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -299,7 +296,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
         // The agent took it after all and says so; the update is read before the turn's end.
         await agent.UpdateAsync($$"""{"sessionUpdate":"config_option_update","configOptions":{{Options("opus", "low", "plan")}}}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await RowsUntil(row => row.Kind == "turn" && row.Payload.GetProperty("state").GetString() == "finished");
         Assert.Contains("\"currentValue\":\"plan\"", _sessionStore.Config(_session.SessionId).Options);
         await agent.CloseAsync();
@@ -320,7 +317,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var failed = await Assert.ThrowsAsync<CallFailed>(() => choosing.WaitAsync(Wait));
         Assert.Equal("the agent didn't take mode=plan: no plan mode here", failed.Message);
         Assert.False(_sessionStore.Config(_session.SessionId).Choices.ContainsKey("mode"));
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -346,7 +343,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.ReplyAsync(set, $$"""{"configOptions":{{Options("haiku", "low", "plan")}}}""");
         await choosing.WaitAsync(Wait);
         Assert.Equal("plan", _sessionStore.Config(_session.SessionId).Choices["mode"]);
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -367,7 +364,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
 
         await agent.ReplyAsync(model, $$"""{"configOptions":{{Options("haiku", "low")}}}""");
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -387,7 +384,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     }
 
     private const string Permission = """
-        {"sessionId":"acp-1","toolCall":{"toolCallId":"t1","title":"rm -rf build"},"options":[
+        {"sessionId":"acp-1","title":"rm -rf build","subject":{"type":"tool_call","toolCall":{"toolCallId":"t1","title":"rm -rf build"}},"options":[
           {"optionId":"yes","name":"Allow","kind":"allow_once"},{"optionId":"always","name":"Always allow","kind":"allow_always"},
           {"optionId":"no","name":"Reject","kind":"reject_once"}]}
         """;
@@ -421,7 +418,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         Assert.Equal("no", settled.Payload.GetProperty("answer").GetProperty("optionId").GetString());
         Assert.False(_host.Answer(askId, JsonDocument.Parse("""{"optionId":"yes"}""").RootElement));
 
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 
@@ -443,7 +440,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         var result = sent.Single(message => message.TryGetProperty("result", out _)).GetProperty("result");
         Assert.Equal("cancelled", result.GetProperty("outcome").GetProperty("outcome").GetString());
         Assert.Equal("cancelled", (await Rows(1)).Single().Payload.GetProperty("state").GetString());
-        await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"cancelled"}""");
         await agent.CloseAsync();
     }
 
@@ -489,7 +486,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         Assert.Equal("SQLite", result.GetProperty("content").GetProperty("question_0").GetString());
         Assert.Equal("answered", (await Rows(1)).Single().Payload.GetProperty("state").GetString());
 
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
     // Rows up to and including the first that matches.
@@ -515,7 +512,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     {
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.UpdateAsync($$$"""{"sessionUpdate":"usage_update","used":1,"size":10,"cost":{"amount":{{{sessionCost}}},"currency":"USD"}}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
     }
 
     private async Task<JsonElement> Stats()
@@ -539,7 +536,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.Equal([_session.SessionId], _launcher.CheckedOut);
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await Until(() => host.ActiveRunId is null);
     }
 

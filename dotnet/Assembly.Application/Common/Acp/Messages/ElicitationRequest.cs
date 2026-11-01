@@ -7,7 +7,8 @@ namespace Assembly.Application.Common.Acp.Messages;
 /// <c>elicitation/create</c> in form mode: the agent asks the user to fill <c>RequestedSchema</c>, a flat JSON Schema
 /// object (strings, <c>oneOf</c> choices, arrays of <c>anyOf</c> choices). Claude Code's AskUserQuestion comes this way.
 /// </summary>
-public sealed record ElicitationRequest(string SessionId, string Mode, string? Message, JsonElement RequestedSchema, string? ToolCallId);
+public sealed record ElicitationRequest(string? SessionId, string Mode, string? Message, JsonElement RequestedSchema,
+    string? ToolCallId, JsonElement? RequestId = null);
 
 /// <summary><c>{ action: "accept", content }</c>, <c>{ action: "decline" }</c> (skip) or <c>{ action: "cancel" }</c>.</summary>
 public sealed record ElicitationResponse(string Action, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] JsonElement Content = default)
@@ -16,6 +17,7 @@ public sealed record ElicitationResponse(string Action, [property: JsonIgnore(Co
 }
 
 /// <summary>We fill forms; we don't open URLs for the agent.</summary>
-public sealed record ElicitationCapabilities(FormElicitation Form);
+public sealed record ElicitationCapabilities(FormElicitation Form, UrlElicitation Url);
 
 public sealed record FormElicitation;
+public sealed record UrlElicitation;

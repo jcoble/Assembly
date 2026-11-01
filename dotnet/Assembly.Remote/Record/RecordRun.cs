@@ -54,8 +54,8 @@ public sealed class RecordRun(RecordOptions options)
         try
         {
             var updates = new UpdateWatcher(agent.Client.Updates);
-            await agent.Client.InitializeAsync(new Implementation("assembly-backend", "0.1.0"), scenario.Air, deadline.Token);
-            var session = await agent.Client.NewSessionAsync(cwd, deadline.Token);
+            await agent.Client.InitializeAsync(new Implementation("assembly-backend", "0.1.0"), deadline.Token);
+            var session = await agent.Client.NewSessionAsync(new(cwd, []), deadline.Token);
             return await scenario.RunAsync(new ScenarioContext(agent, session.SessionId, cwd, updates, deadline.Token));
         }
         finally

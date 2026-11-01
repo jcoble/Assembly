@@ -36,11 +36,16 @@ expect() {
 }
 
 r=$(repo_with 30-provider-branches.sh)
-mkdir -p "$r/app/src/lib" "$r/dotnet/Assembly.Application/Common/Acp/V1" "$r/dotnet/Assembly.Tests" "$r/shell/src"
+mkdir -p "$r/app/src/lib" "$r/dotnet/Assembly.Application/Common/Acp/V1" "$r/dotnet/Assembly.Application/Common/Acp/V2" "$r/dotnet/Assembly.Tests" "$r/shell/src"
 echo "const agent = pick(); // a comment that says claude is fine" >"$r/app/src/lib/a.ts"
-echo 'if (name == "claude") { }' >"$r/dotnet/Assembly.Application/Common/Acp/V1/Reader.cs"
+echo 'if (name == "claude") { }' >"$r/dotnet/Assembly.Application/Common/Acp/ProviderGlyph.cs"
 echo 'Assert.True(kind == "codex");' >"$r/dotnet/Assembly.Tests/T.cs"
-expect 0 "provider branches: none outside Acp/V1 and the tests passes" "$r" 30-provider-branches.sh
+expect 0 "provider branches: the exact ProviderGlyph.cs and tests pass" "$r" 30-provider-branches.sh
+for neighbor in Reader.cs V1/Reader.cs V2/Reader.cs; do
+  echo 'if (name == "claude") { }' >"$r/dotnet/Assembly.Application/Common/Acp/$neighbor"
+  expect 1 "provider branches: neighboring Acp/$neighbor is not exempt" "$r" 30-provider-branches.sh
+  rm "$r/dotnet/Assembly.Application/Common/Acp/$neighbor"
+done
 for bad in "if (agent === 'claude') go();" "case 'codex': break;" "x = agent == \"antigravity\" ? a : b" \
   "Agent::Claude => run()," "if matches!(a, Agent::Codex) {}" "const label = 'codex' !== agent"; do
   echo "$bad" >"$r/app/src/lib/a.ts"
