@@ -18,11 +18,11 @@ public sealed class MessageTests
         using var f = new EngineFixture(); f.SeedSession("b");
         Assert.True(f.Apply(new SendMessage(null, "b", "hello", "prompt"), "m").Applied);
         Assert.Equal("queued", f.State("engine_message", "m"));
-        var r = f.Apply(new MessageOutcome(outcome, "turn-1", null), "m", version: 1,
+        var r = f.Apply(new MessageOutcome(outcome, "turn-1", null), "m", version: 2,
             actor: new(ActorKind.System, "adapter"));
         Assert.True(r.Applied); Assert.Equal(outcome, f.State("engine_message", "m"));
         Assert.Equal("turn-1", f.Text("SELECT provider_turn_id FROM engine_message"));
-        Assert.Equal("invalid_transition", f.Apply(new MessageOutcome("failed", null, "changed"), "m", version: 2,
+        Assert.Equal("invalid_transition", f.Apply(new MessageOutcome("failed", null, "changed"), "m", version: 3,
             actor: new(ActorKind.System, "adapter")).Error);
         Assert.Equal(outcome, f.State("engine_message", "m"));
     }
@@ -132,7 +132,7 @@ public sealed class MessageTests
         Assert.Equal("forbidden", f.Apply(new MessageOutcome("failed", null, null), "m", version: 1).Error);
         Assert.Equal("version_conflict", f.Apply(new MessageOutcome("failed", null, null), "m",
             actor: new(ActorKind.System, "adapter")).Error);
-        Assert.Equal("bad_args", f.Apply(new MessageOutcome("other", null, null), "m", version: 1,
+        Assert.Equal("bad_args", f.Apply(new MessageOutcome("other", null, null), "m", version: 2,
             actor: new(ActorKind.System, "adapter")).Error);
         Assert.Equal(1, f.Count("engine_message"));
     }

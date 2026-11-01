@@ -47,7 +47,7 @@ public sealed class DeliveryTests
         f.Apply(new SendMessage(null, "s", "one", "prompt"), "m1");
         f.Apply(new SendMessage(null, "s", "two", "prompt"), "m2");
         Assert.Equal(1, f.Count("engine_outbox"));
-        Assert.True(f.Apply(new MessageOutcome("next_turn", "turn", null), "m1", 1, actor: System).Applied);
+        Assert.True(f.Apply(new MessageOutcome("next_turn", "turn", null), "m1", 2, actor: System).Applied);
         Assert.Equal("running", f.State("engine_session", "s"));
         Assert.Equal(1, f.Count("engine_outbox"));
         State(f, "idle");
@@ -59,7 +59,7 @@ public sealed class DeliveryTests
         using var f = new EngineFixture();
         f.SeedSession();
         f.Apply(new SendMessage(null, "s", "hi", "prompt"), "m");
-        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "m", 1, actor: System).Applied);
+        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "m", 2, actor: System).Applied);
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message"));
         Assert.Equal(1, f.Count("engine_outbox"));
         State(f, "running");
@@ -74,7 +74,7 @@ public sealed class DeliveryTests
         f.Apply(new SendMessage(null, "s", "hi", "prompt"), "m");
         State(f, "running");
         State(f, "idle");
-        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "m", 1, actor: System).Applied);
+        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "m", 2, actor: System).Applied);
         Assert.Equal(2, f.Number("SELECT attempt FROM engine_message"));
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message"));
     }
@@ -106,7 +106,7 @@ public sealed class DeliveryTests
         using var f = new EngineFixture();
         f.SeedSession();
         f.Apply(new SendMessage(null, "s", "hi", "prompt"), "m");
-        Assert.True(f.Apply(new MessageOutcome("unsupported", null, "historical contract"), "m", 1, actor: System).Applied);
+        Assert.True(f.Apply(new MessageOutcome("unsupported", null, "historical contract"), "m", 2, actor: System).Applied);
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message"));
     }
     [Fact]
@@ -116,7 +116,7 @@ public sealed class DeliveryTests
         f.SeedSession("a");
         f.SeedSession();
         Assert.True(f.Apply(new SendMessage("a", "s", "first", "prompt"), "m0", actor: new(ActorKind.Session, "a")).Applied);
-        Assert.True(f.Apply(new MessageOutcome("failed", null, "rejected"), "m0", 1, actor: System).Applied);
+        Assert.True(f.Apply(new MessageOutcome("failed", null, "rejected"), "m0", 2, actor: System).Applied);
         for (int i = 1; i < 20; i++)
             Assert.True(f.Apply(new SendMessage("a", "s", "hi", "prompt"), "m" + i, actor: new(ActorKind.Session, "a")).Applied);
         Assert.Equal("message_limit", f.Apply(new SendMessage("a", "s", "hi", "prompt"), "over", actor: new(ActorKind.Session, "a")).Error);
@@ -154,7 +154,7 @@ public sealed class DeliveryTests
     {
         using var f = new EngineFixture(); f.SeedSession(); f.SeedSession("child", parentId: "s");
         Assert.True(f.Apply(new SendMessage(null, "s", "older", "prompt"), "older").Applied);
-        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "older", 1, actor: System).Applied);
+        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "older", 2, actor: System).Applied);
         var before = f.Events().Last().Seq;
         Assert.True(f.Apply(new SetSessionState("ended", null, null), "child", actor: System).Applied);
         var committed = f.Events().Where(e => e.Seq > before).ToArray();
