@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Recording;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Tests.Engine;
 
@@ -158,7 +159,8 @@ public sealed class RecordingTests
         var sum = new UsageQueries(f.Db).Sum("session", "s", default);
         Assert.Equal(20, sum.InputTokens); Assert.Equal(8, sum.OutputTokens); Assert.Equal(6, sum.CachedTokens);
         Assert.Equal(50, sum.CostNanodollars); Assert.Equal(200, sum.TurnDurationMs);
-        Assert.Equal(2, sum.ToolCalls); Assert.Equal(0, sum.ToolDurationMs);
+        Assert.Equal(1, sum.ToolCalls); Assert.Equal(0, sum.ToolDurationMs);
+        Assert.Equal(1, McpCalls(sum));
         var empty = new UsageQueries(f.Db).Sum("session", "absent", default);
         Assert.Null(empty.InputTokens); Assert.Null(empty.CostNanodollars); Assert.Null(empty.TurnDurationMs);
         Assert.Null(empty.ToolDurationMs); Assert.Equal(0, empty.ToolCalls);
@@ -225,4 +227,93 @@ public sealed class RecordingTests
         Assert.Equal("bad_args", f.Apply(end with { Output = Json("secret4") }, "c", actor: Reporter).Error);
         Assert.DoesNotContain("secret", f.Text("SELECT input_preview || output_preview FROM engine_tool_call")!);
     }
+    [Theory]
+    [InlineData("acp", false, 1, 0, null)]
+    [InlineData("acp", true, 1, 0, 0L)]
+    [InlineData("mcp", false, 0, 1, null)]
+    [InlineData("mcp", true, 0, 1, null)]
+    public void Ongoing_and_mcp_only_calls_preserve_nullable_agent_duration(string boundary, bool complete,
+        long toolCalls, long mcpCalls, long? duration)
+    {
+        using var f = new EngineFixture(); f.SeedSession();
+        Assert.True(f.Apply(new ToolStarted(A, boundary, "call", "probe", Json(0), 1), "tool", actor: Reporter).Applied);
+        if (complete) Assert.True(f.Apply(new ToolEnded(A, "ok", Json(0), 1), "tool", actor: Reporter).Applied);
+        var sum = new UsageQueries(f.Db).Sum("session", "s", default);
+        Assert.Equal(toolCalls, sum.ToolCalls); Assert.Equal(mcpCalls, McpCalls(sum)); Assert.Equal(duration, sum.ToolDurationMs);
+        var empty = new UsageQueries(f.Db).Sum("session", "missing", default);
+        Assert.Equal(0, empty.ToolCalls); Assert.Equal(0, McpCalls(empty)); Assert.Null(empty.ToolDurationMs);
+    }
+
+    [Fact]
+    public void Session_run_step_totals_and_both_audits_survive_reopen()
+    {
+        using var f = new EngineFixture(); f.SeedSession(); f.SeedRun(); f.SeedStep(sessionId: "s");
+        var attribution = new Attribution("s", "r", "step", 0, 0);
+        Assert.True(f.Apply(new TurnUsage(attribution, "turn", 10, 4, 3, 25, 100), "usage", actor: Reporter).Applied);
+        foreach (var boundary in new[] { "acp", "mcp" })
+        {
+            Assert.True(f.Apply(new ToolStarted(attribution, boundary, boundary, "probe", Json(new { path = "audit" }), 5), boundary, actor: Reporter).Applied);
+            f.Time.Advance(TimeSpan.FromMilliseconds(boundary == "acp" ? 5 : 50));
+            Assert.True(f.Apply(new ToolEnded(attribution, "ok", Json(new { result = "audit" }), 7), boundary, actor: Reporter).Applied);
+        }
+        f.SeedSession("outside");
+        var outside = A with { SessionId = "outside" };
+        Assert.True(f.Apply(new ToolStarted(outside, "acp", "outside", "probe", Json(0), 1), "outside", actor: Reporter).Applied);
+        foreach (var reopen in new[] { false, true })
+        {
+            if (reopen) f.Reopen();
+            foreach (var (kind, id) in new[] { ("session", "s"), ("run", "r"), ("step", "step") })
+            {
+                var sum = new UsageQueries(f.Db).Sum(kind, id, default);
+                Assert.Equal(1, sum.ToolCalls); Assert.Equal(1, McpCalls(sum)); Assert.Equal(5, sum.ToolDurationMs);
+                Assert.Equal(10, sum.InputTokens); Assert.Equal(4, sum.OutputTokens); Assert.Equal(3, sum.CachedTokens);
+                Assert.Equal(25, sum.CostNanodollars); Assert.Equal(100, sum.TurnDurationMs);
+            }
+            Assert.Equal(3, f.Count("engine_tool_call"));
+            Assert.Equal(2, f.Number("SELECT COUNT(*) FROM engine_tool_call WHERE session_id='s' AND input_preview IS NOT NULL AND output_preview IS NOT NULL"));
+        }
+    }
+
+    [Fact]
+    public void Mcp_duration_is_excluded_before_integer_sum_overflow()
+    {
+        using var f = new EngineFixture(); f.SeedSession();
+        TimedTool(f, "mcp", "mcp", long.MaxValue); TimedTool(f, "acp", "acp", 1);
+        var sum = new UsageQueries(f.Db).Sum("session", "s", default);
+        Assert.Equal(1, sum.ToolDurationMs); Assert.Equal(1, sum.ToolCalls); Assert.Equal(1, McpCalls(sum));
+    }
+
+    [Fact]
+    public void Agent_duration_integer_overflow_still_throws()
+    {
+        using var f = new EngineFixture(); f.SeedSession();
+        TimedTool(f, "first", "acp", long.MaxValue); TimedTool(f, "second", "acp", 1);
+        var error = Assert.Throws<SqliteException>(() => new UsageQueries(f.Db).Sum("session", "s", default));
+        Assert.Contains("integer overflow", error.Message);
+    }
+
+    [Fact]
+    public void Usage_reader_accepts_older_and_additive_payloads_without_relaxing_commands()
+    {
+        const string older = "{\"inputTokens\":10,\"outputTokens\":4,\"cachedTokens\":3,\"costNanodollars\":25,\"toolDurationMs\":5,\"turnDurationMs\":100,\"toolCalls\":1}";
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize("{}", EngineSocketJson.Default.UsageTotals));
+        var old = JsonSerializer.Deserialize(older, EngineSocketJson.Default.UsageTotals)!;
+        Assert.Equal(0, McpCalls(old)); Assert.Equal(1, old.ToolCalls); Assert.Equal(5, old.ToolDurationMs);
+        var current = older[..^1] + ",\"mcpCalls\":2,\"futureUsageField\":123}";
+        var sum = JsonSerializer.Deserialize(current, EngineSocketJson.Default.UsageTotals)!;
+        Assert.Equal(2, McpCalls(sum)); Assert.Equal(1, sum.ToolCalls);
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize("{\"entityKind\":\"session\",\"entityId\":\"s\",\"futureField\":123}", EngineSocketJson.Default.EngineUsageArgs));
+        Assert.Throws<JsonException>(() => JsonSerializer.Deserialize("{\"commandId\":\"00000000-0000-0000-0000-000000000001\",\"entityId\":\"s\",\"expectedVersion\":0,\"epoch\":0,\"command\":{\"kind\":\"stop_session\"},\"futureField\":123}", EngineSocketJson.Default.WindowCommand));
+    }
+
+    private static void TimedTool(EngineFixture f, string id, string boundary, long duration)
+    {
+        var start = new CommandContext(Guid.NewGuid(), f.Machine, Reporter, id, 0, 0, 0);
+        Assert.True(f.Apply(start, new ToolStarted(A, boundary, id, "probe", Json(0), 1)).Applied);
+        Assert.True(f.Apply(start with { CommandId = Guid.NewGuid(), ExpectedVersion = 1, NowMs = duration }, new ToolEnded(A, "ok", Json(0), 1)).Applied);
+    }
+
+    private static long McpCalls(UsageTotals totals) => JsonSerializer.SerializeToElement(totals,
+        EngineSocketJson.Default.UsageTotals).GetProperty("mcpCalls").GetInt64();
+
 }

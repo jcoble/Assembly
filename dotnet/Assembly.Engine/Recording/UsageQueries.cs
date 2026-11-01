@@ -20,9 +20,11 @@ public sealed class UsageQueries(IAppDatabase db)
             """, r => new UsageTotals(Number(r, 0), Number(r, 1), Number(r, 2), Number(r, 3), null, Number(r, 4), 0),
             cancellationToken, new SqlArg("$id", entityId))!;
         var tools = db.QueryFirst($"""
-            SELECT SUM(ended_ms-started_ms),COUNT(*) FROM engine_tool_call WHERE {column}=$id
-            """, r => (Duration: Number(r, 0), Count: r.Long(1)), cancellationToken, new SqlArg("$id", entityId));
-        return usage with { ToolDurationMs = tools.Duration, ToolCalls = tools.Count };
+            SELECT SUM(CASE WHEN boundary <> 'mcp' THEN ended_ms-started_ms END),
+                COUNT(CASE WHEN boundary <> 'mcp' THEN 1 END),COUNT(CASE WHEN boundary = 'mcp' THEN 1 END)
+            FROM engine_tool_call WHERE {column}=$id
+            """, r => (Duration: Number(r, 0), Count: r.Long(1), McpCount: r.Long(2)), cancellationToken, new SqlArg("$id", entityId));
+        return usage with { ToolDurationMs = tools.Duration, ToolCalls = tools.Count, McpCalls = tools.McpCount };
     }
 
     private static long? Number(IRow row, int column) => row.IsNull(column) ? null : row.Long(column);

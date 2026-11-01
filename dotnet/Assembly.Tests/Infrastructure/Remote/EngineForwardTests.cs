@@ -122,6 +122,8 @@ public sealed partial class EngineForwardTests
         Assert.True(h.Remote.Fixture.Apply(new ToolStarted(a, "provider", "call", "read", Json(new { path = "remote.txt" }), 42), "tool", actor: Adapter).Applied);
         Assert.True(h.Remote.Fixture.Apply(new ToolEnded(a, "succeeded", Json(new { text = "remote-output" }), 43), "tool", actor: Adapter).Applied);
         Assert.True(h.Remote.Fixture.Apply(new TurnUsage(a, "turn", 123, 45, 6, 789, 12), "usage", actor: Adapter).Applied);
+        Assert.True(h.Remote.Fixture.Apply(new ToolStarted(a, "mcp", "mcp-call", "probe", Json(new { query = "owner" }), 10), "mcp-tool", actor: Adapter).Applied);
+        Assert.True(h.Remote.Fixture.Apply(new ToolEnded(a, "ok", Json(new { result = "owner" }), 11), "mcp-tool", actor: Adapter).Applied);
         await h.Reached(h.Remote.Through);
         var before = LocalState(h);
         using var bulk = await Open(h.Mac, true);
@@ -138,6 +140,7 @@ public sealed partial class EngineForwardTests
         Assert.Equal(123, totals.GetProperty("inputTokens").GetInt64());
         Assert.Equal(789, totals.GetProperty("costNanodollars").GetInt64());
         Assert.Equal(1, totals.GetProperty("toolCalls").GetInt64());
+        Assert.Equal(1, totals.GetProperty("mcpCalls").GetInt64());
         await Send(bulk, Call(6, "entity", "usage", "usage", h.Remote.Fixture.Machine));
         var usage = (await Read(bulk)).GetProperty("result");
         Assert.Equal(h.Remote.Fixture.Machine, usage.GetProperty("machine").GetString());
