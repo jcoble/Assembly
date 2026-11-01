@@ -45,7 +45,8 @@ public sealed class McpTokens
             json.WriteEndObject();
         }
 
-        return [JsonDocument.Parse(buffer.ToArray()).RootElement.Clone()];
+        using var document = JsonDocument.Parse(buffer.ToArray());
+        return [document.RootElement.Clone()];
     }
 
     /// <summary>Returns the caller bound to <paramref name="token"/>, or null when it is unknown or revoked.</summary>
