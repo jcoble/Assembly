@@ -39,14 +39,38 @@ public sealed class StartSessionToolTests
     }
 
     [Fact]
-    public async Task Other_provider_uses_its_configured_model_and_explicit_model_is_kept()
+    public async Task Other_provider_uses_its_actual_adapter_default_and_explicit_model_is_kept()
     {
         await using var h = new Harness();
         h.Fixture.SeedSession("owner");
         Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Helper","provider":"claude"}""")).IsError);
-        Assert.Equal("claude-default", h.Fixture.Text("SELECT model FROM engine_session WHERE parent_id='owner'"));
+        Assert.Null(h.Fixture.Text("SELECT model FROM engine_session WHERE parent_id='owner'"));
         Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Other","provider":"claude","model":"specific"}""")).IsError);
         Assert.Equal("specific", h.Fixture.Text("SELECT model FROM engine_session WHERE title='Other'"));
+    }
+
+    [Fact]
+    public async Task Configured_custom_provider_and_unknown_caller_model_do_not_require_a_default_catalog()
+    {
+        await using var h = new Harness();
+        h.Fixture.SeedSession("owner", provider: "work-profile");
+        h.Fixture.Db.Writer.Write("test.unknown-model", scope => scope.Execute("UPDATE engine_session SET model=NULL WHERE id='owner'"));
+        Assert.Null(h.Gate.Read(new("owner", 0), (caller, _) => caller.Model, default));
+        var response = await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Helper"}""");
+        Assert.False(response.IsError);
+        Assert.Equal("work-profile", h.Fixture.Text("SELECT provider FROM engine_session WHERE parent_id='owner'"));
+        Assert.Null(h.Fixture.Text("SELECT model FROM engine_session WHERE parent_id='owner'"));
+    }
+
+    [Fact]
+    public async Task Omitted_folder_inherits_actual_managed_policy_but_an_explicit_same_folder_is_direct()
+    {
+        await using var h = new Harness(); h.Fixture.SeedSession("owner");
+        h.Fixture.Db.Writer.Write("test.managed", scope => scope.Execute("UPDATE engine_session SET managed_checkout=1 WHERE id='owner'"));
+        Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Inherited"}""")).IsError);
+        Assert.Equal(1, h.Fixture.Number("SELECT managed_checkout FROM engine_session WHERE title='Inherited'"));
+        Assert.False((await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Explicit","folder":"/test"}""")).IsError);
+        Assert.Equal(0, h.Fixture.Number("SELECT managed_checkout FROM engine_session WHERE title='Explicit'"));
     }
 
     [Fact]
@@ -54,7 +78,7 @@ public sealed class StartSessionToolTests
     {
         await using var h = new Harness();
         h.Fixture.SeedSession("owner");
-        var tool = new StartSessionTool(h.Gate, p => p == "codex" ? "codex-default" : null, _ => true);
+        var tool = new StartSessionTool(h.Gate, () => ["codex"], _ => true);
         var result = await h.Call(tool, "owner", """{"prompt":"Task","title":"Helper","provider":"claude","model":"explicit"}""");
         Assert.True(result.IsError);
         Assert.Equal("start_session: provider must be one of the configured providers: codex.", Text(result));
@@ -227,7 +251,7 @@ public sealed class StartSessionToolTests
             Fixture = new(topics: Topics, limits: limits);
             _runtime = EngineRuntime.Start(Fixture.Db, Topics, Fixture.Time, limits, messageLimit: messageLimit);
             Gate = new(_runtime, limits, Fixture.Time);
-            Start = new(Gate, provider => provider switch { "codex" => "codex-default", "claude" => "claude-default", _ => null }, folder => folder != "/missing");
+            Start = new(Gate, () => ["codex", "claude", "work-profile"], folder => folder != "/missing");
         }
 
         public async Task<CallToolResult> Call(EngineTool tool, string session, string arguments)

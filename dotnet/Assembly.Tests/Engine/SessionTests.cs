@@ -106,8 +106,8 @@ public sealed class SessionTests
         var stale = f.Apply(new StopSession(), "fenced", epoch: 1);
         Assert.Equal("stale_epoch", stale.Error); Assert.Equal(2, stale.Epoch);
         f.Db.Writer.Write("legacy", s => s.Execute("INSERT INTO sessions(session_id,next_seq) VALUES('legacy',7)"));
-        Assert.Equal("legacy_session_not_managed", f.Apply(new StopSession(), "legacy").Error);
-        Assert.Equal("legacy_session_not_managed", f.Apply(Start(), "legacy").Error);
+        Assert.Equal("bad_args", f.Apply(new StopSession(), "legacy").Error);
+        Assert.True(f.Apply(Start(), "legacy").Applied);
         Assert.Equal(7, f.Number("SELECT next_seq FROM sessions WHERE session_id='legacy'"));
     }
 

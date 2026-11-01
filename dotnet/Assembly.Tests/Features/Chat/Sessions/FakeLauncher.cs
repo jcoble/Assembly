@@ -37,6 +37,8 @@ internal sealed class FakeLauncher : IAgentLauncher
         return Task.FromResult(Checkout);
     }
 
+    public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
+
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _launches);

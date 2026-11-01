@@ -33,6 +33,8 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFea
                 if (args.Command is not (StartSession or StopSession or StartRun or CancelRun or
                     ResolveNeed { State: "answered" or "dismissed" } or SendMessage or RequestHandoff))
                     return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
+                if (args.Command is StartSession { RepoUrl: not null } or StartSession { ManagedCheckout: true })
+                    return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
                 if (args.CommandId == Guid.Empty || string.IsNullOrWhiteSpace(args.EntityId) || args.ExpectedVersion < 0 || args.Epoch < 0)
                     return _ => new(false, false, "bad_args", args.ExpectedVersion, 0, args.Epoch);
                 if (IsRemote(args.Machine))

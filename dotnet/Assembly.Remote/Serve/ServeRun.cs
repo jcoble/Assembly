@@ -68,11 +68,12 @@ public static class ServeRun
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var agents = launcher is null ? AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)) : null;
         launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
+        var preferences = new PreferenceStore(db);
         var limits = new HelperLimits();
         // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
         await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work, limits,
-            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"), new PreferenceStore(db), TimeProvider.System, Console.Out)));
+            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"), preferences, TimeProvider.System, Console.Out)));
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
@@ -85,7 +86,9 @@ public static class ServeRun
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
-        var sessionLimits = new SessionLimits(() => 1, () => 5);
+        var sessionLimits = new SessionLimits(
+            () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
+            () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
         await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects);
         await using var machineCalls = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
         await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board, Engine: engine), options.Port, out _,

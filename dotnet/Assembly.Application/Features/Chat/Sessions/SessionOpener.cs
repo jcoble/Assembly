@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Calls;
 using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Features.Chat.Sessions;
@@ -30,7 +31,19 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken)
     {
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
-        var folder = await launcher.CheckoutAsync(sessionStore.Top(session), stages, cancellationToken);
+        var location = sessionStore.Location(session) ?? throw new CallFailed($"This session has no working folder: {sessionId}");
+        string folder;
+        if (location.ManagedCheckout)
+        {
+            if (!string.Equals(location.Folder, sessionStore.ManagedFolder(session), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                throw new CallFailed($"This session's managed checkout does not match its working folder: {location.Folder}");
+            folder = await launcher.CheckoutAsync(sessionStore.Top(session), stages, cancellationToken);
+        }
+        else
+        {
+            folder = location.Folder;
+            launcher.ValidateFolder(folder);
+        }
         var adapter = adapters(session.Agent);
         await adapter.ClosedAsync(session.AcpSessionId, cancellationToken);
         var running = await adapter.GetAsync(stages, cancellationToken);
@@ -152,13 +165,36 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     private async Task<string?> ApplyChoicesAsync(
         RunningAdapter running, string sessionId, string acpSessionId, JsonElement options, StageTimes stages, CancellationToken cancellationToken)
     {
+        var config = sessionStore.Config(sessionId);
+        var pending = config.PendingModel;
         if (options.ValueKind != JsonValueKind.Array)
+        {
+            if (pending is not null) throw ModelUnavailable(pending);
             return null;
-        var choices = sessionStore.Config(sessionId).Choices;
+        }
+        var choices = config.Choices;
+        var modelId = options.EnumerateArray().Where(option => option.ValueKind == JsonValueKind.Object && option.TryGetProperty("category", out var category) && category.ValueKind == JsonValueKind.String && category.GetString() == "model")
+            .Where(option => option.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
+            .Select(option => option.GetProperty("id").GetString()).FirstOrDefault();
+        if (pending is not null && (modelId is null || !ConfigOptions.Selects(options).Any(option => option.Id == modelId)))
+            throw ModelUnavailable(pending);
         foreach (var (id, _, _) in ConfigOptions.Selects(options).ToList())
         {
             // Read again each time: setting one option can change another's values.
             var (_, current, values) = ConfigOptions.Selects(options).FirstOrDefault(option => option.Id == id);
+            if (pending is not null && id == modelId)
+            {
+                var selected = choices.TryGetValue(id, out var chosen) && !string.IsNullOrWhiteSpace(chosen) && (values?.Contains(chosen) ?? false)
+                    ? chosen : pending;
+                if (!(values?.Contains(selected) ?? false)) throw ModelUnavailable(selected);
+                if (selected != current)
+                    options = (await running.Link.Client.SetConfigOptionAsync(acpSessionId, id, selected, cancellationToken)).ConfigOptions;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (ConfigOptions.ModelValue(options) != selected) throw ModelUnavailable(selected);
+                sessionStore.ConfirmModelSelection(sessionId, id, selected, options.GetRawText());
+                pending = null;
+                continue;
+            }
             if (!choices.TryGetValue(id, out var value) || value == current || !(values?.Contains(value) ?? false))
                 continue;
             try
@@ -176,6 +212,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         sessionStore.SetConfigOptions(sessionId, options.GetRawText());
         return ConfigOptions.ModelName(options);
     }
+
+    private static CallFailed ModelUnavailable(string selector) => new($"The selected model '{selector}' is not available for this agent.");
 
     /// <summary>The message's first line, cut to <see cref="TitleLength"/> characters; null when it has no text.</summary>
     public static string? Title(string text)

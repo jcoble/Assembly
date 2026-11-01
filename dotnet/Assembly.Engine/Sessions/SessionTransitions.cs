@@ -13,14 +13,11 @@ public static class SessionTransitions
         string? ParentId, string? RunId, bool CancelRequested = false, long? ReservedEpoch = null);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit)
+        SessionCommand command, int depthLimit, int childLimit, string accountContext = "")
     {
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
         var current = Find(scope, context.EntityId);
-        if (current is null && scope.QueryFirst("SELECT COUNT(*) FROM sessions WHERE session_id=$id",
-                r => r.Long(0), new SqlArg("$id", context.EntityId)) != 0)
-            return Refused(context, "legacy_session_not_managed");
         if (current?.State == "handing_off")
             return Refused(context, "handing_off", current);
         if (current is not null && current.Epoch != context.Epoch)
@@ -28,7 +25,7 @@ public static class SessionTransitions
         if ((current?.Version ?? 0) != context.ExpectedVersion)
             return Refused(context, "version_conflict", current);
         if (command is StartSession start)
-            return current is null ? Start(scope, context, start, depthLimit, childLimit) : Refused(context, "invalid_transition", current);
+            return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext) : Refused(context, "invalid_transition", current);
         if (current is null)
             return Refused(context, "bad_args");
         return command switch
@@ -36,14 +33,18 @@ public static class SessionTransitions
             SetSessionState fact => SetState(scope, context, current, fact),
             StopSession => Stop(scope, context, current),
             LinkTask link => Link(scope, context, current, link),
+            ReportSessionModel model => ReportModel(scope, context, current, model),
+            ReportSessionTitle title => ReportTitle(scope, context, current, title),
             _ => Refused(context, "unsupported_command", current)
         };
     }
 
-    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit)
+    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext)
     {
-        if (string.IsNullOrWhiteSpace(command.Provider) || string.IsNullOrWhiteSpace(command.Model) ||
-            string.IsNullOrWhiteSpace(command.Folder) || string.IsNullOrWhiteSpace(command.Title))
+        var untitledOwnerRoot = command.Title == "" && context.Actor == new EngineActor(ActorKind.Window, "owner") &&
+            command.ParentId is null && command.RunId is null;
+        if (string.IsNullOrWhiteSpace(command.Provider) || command.Model is not null && string.IsNullOrWhiteSpace(command.Model) ||
+            string.IsNullOrWhiteSpace(command.Folder) || string.IsNullOrWhiteSpace(command.Title) && !untitledOwnerRoot)
             return Refused(context, "bad_args");
         if (context.Actor.Kind != ActorKind.Window &&
             (context.Actor.Kind != ActorKind.Session || context.Actor.Id != command.ParentId))
@@ -73,6 +74,11 @@ public static class SessionTransitions
             if (parent.State == "ended")
                 return Refused(context, "invalid_transition");
         }
+        if (command.ManagedCheckout == true && context.Actor.Kind == ActorKind.Session && scope.QueryFirst("""
+                SELECT COUNT(*) FROM engine_session WHERE id=$parent AND machine=$machine AND holder='local'
+                  AND managed_checkout=1 AND folder=$folder
+                """, r => r.Long(0), new("$parent", command.ParentId), new("$machine", context.Machine), new("$folder", command.Folder)) != 1)
+            return Refused(context, "bad_args");
         if (command.RunId is not null)
         {
             var owner = scope.QueryFirst("SELECT owner_session_id FROM engine_run WHERE id=$id",
@@ -90,12 +96,12 @@ public static class SessionTransitions
             return new(false, false, "stale_epoch", 0, 0, 0);
         scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,task_url,
-                provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested)
+                provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,account_context,managed_checkout)
             VALUES($id,1,$machine,$now,$now,$task,$provider,$model,$folder,$title,
-                'starting','idle',$parent,$run,'local',0,0)
+                'starting','idle',$parent,$run,'local',0,0,$account,$managed)
             """, new("$id", context.EntityId), new("$machine", context.Machine), new("$now", context.NowMs),
             new("$task", command.TaskUrl), new("$provider", command.Provider), new("$model", command.Model),
-            new("$folder", command.Folder), new("$title", command.Title), new("$parent", command.ParentId), new("$run", command.RunId));
+            new("$folder", command.Folder), new("$title", command.Title), new("$parent", command.ParentId), new("$run", command.RunId), new("$account", accountContext), new("$managed", command.ManagedCheckout == true ? 1 : 0));
         var created = new Session(1, 0, "starting", "idle", command.ParentId, command.RunId);
         return Commit(scope, context, created, "session.started",
             [new("", "start", context.EntityId, command.RunId, JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession))]);
@@ -139,7 +145,35 @@ public static class SessionTransitions
         }
         if (command.State is "idle" or "running")
             events.AddRange(MessageRelease.Next(scope, context, context.EntityId, effects));
-        return Commit(scope, context, updated, "session.changed", effects, events);
+        return Commit(scope, context, updated, "session.changed", effects, events, command.Reason);
+    }
+
+    private static CommandResult ReportTitle(IWriteScope scope, CommandContext context, Session current, ReportSessionTitle command)
+    {
+        if (context.Actor.Kind != ActorKind.System) return Refused(context, "forbidden", current);
+        if (command.Title is null) return Refused(context, "bad_args", current);
+        var title = scope.QueryFirst("SELECT title FROM engine_session WHERE id=$id", r => r.Text(0), new SqlArg("$id", context.EntityId));
+        if (title == command.Title) return new(true, false, null, current.Version, 0, current.Epoch);
+        scope.Execute("UPDATE engine_session SET title=$title,version=version+1,updated_ms=$now WHERE id=$id",
+            new("$title", command.Title), new("$now", context.NowMs), new("$id", context.EntityId));
+        return EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
+            [new("session.changed", "session", context.EntityId, current.Version + 1, false,
+                new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
+    }
+
+    private static CommandResult ReportModel(IWriteScope scope, CommandContext context, Session current, ReportSessionModel command)
+    {
+        if (context.Actor.Kind != ActorKind.System)
+            return Refused(context, "forbidden", current);
+        if (command.Model is not null && string.IsNullOrWhiteSpace(command.Model))
+            return Refused(context, "bad_args", current);
+        var model = scope.QueryFirst("SELECT model FROM engine_session WHERE id=$id", r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$id", context.EntityId));
+        if (model == command.Model) return new(true, false, null, current.Version, 0, current.Epoch);
+        scope.Execute("UPDATE engine_session SET model=$model,version=version+1,updated_ms=$now WHERE id=$id",
+            new("$model", command.Model), new("$now", context.NowMs), new("$id", context.EntityId));
+        return EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
+            [new("session.changed", "session", context.EntityId, current.Version + 1, false,
+                new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
     }
 
     private static CommandResult Link(IWriteScope scope, CommandContext context, Session current, LinkTask command)
@@ -171,10 +205,10 @@ public static class SessionTransitions
     }
 
     private static CommandResult Commit(IWriteScope scope, CommandContext context, Session session,
-        string kind, IReadOnlyList<EffectDraft> effects, IReadOnlyList<EventDraft>? additionalEvents = null)
+        string kind, IReadOnlyList<EffectDraft> effects, IReadOnlyList<EventDraft>? additionalEvents = null, string? reason = null)
     {
         List<EventDraft> events = [new(kind, "session", context.EntityId, session.Version, false,
-            new(context.EntityId, session.RunId, null, session.ParentId, session.State, session.Epoch))];
+            new(context.EntityId, session.RunId, null, session.ParentId, session.State, session.Epoch, reason))];
         if (additionalEvents is not null) events.AddRange(additionalEvents);
         var runs = scope.Query("""
             SELECT id FROM engine_run WHERE owner_session_id=$session

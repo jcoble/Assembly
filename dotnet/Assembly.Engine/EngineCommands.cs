@@ -18,10 +18,15 @@ public sealed class EngineCommands
     private readonly string _machine;
     private readonly SessionLimits _limits;
     private readonly Func<int> _messageLimit;
+    private readonly Action<IWriteScope, CommandContext, StartSession>? _projectStart;
+    private readonly Func<string, string>? _accountContext;
 
-    public EngineCommands(string machine, SessionLimits limits, Func<int>? messageLimit = null)
+    public EngineCommands(string machine, SessionLimits limits, Func<int>? messageLimit = null,
+        Action<IWriteScope, CommandContext, StartSession>? projectStart = null, Func<string, string>? accountContext = null)
     {
         _machine = machine;
+        _projectStart = projectStart;
+        _accountContext = accountContext;
         ArgumentNullException.ThrowIfNull(limits);
         _limits = limits;
         _messageLimit = messageLimit ?? (() => 20);
@@ -55,6 +60,10 @@ public sealed class EngineCommands
     {
         var depth = _limits.ReadDepth();
         var children = _limits.ReadChildren();
-        return SessionTransitions.Apply(scope, context, command, depth, children);
+        var accountContext = command is StartSession start ? _accountContext?.Invoke(start.Provider) ?? "" : "";
+        var result = SessionTransitions.Apply(scope, context, command, depth, children, accountContext);
+        if (result.Applied && command is StartSession accepted)
+            _projectStart?.Invoke(scope, context, accepted);
+        return result;
     }
 }
