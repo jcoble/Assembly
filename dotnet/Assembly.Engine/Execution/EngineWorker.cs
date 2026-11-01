@@ -5,6 +5,7 @@ using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Effects;
 using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Messages;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 
@@ -19,6 +20,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     private Task<EffectReceipt>? _active;
     private Candidate? _claimed;
     private bool _recovering = true;
+    private string? _releaseAfter = "";
     private long? _retentionDeadline;
     private sealed record Candidate(string Id, long Version, string State, long Epoch);
 
@@ -68,6 +70,24 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             foreach (var row in rows) Apply(s, row, new RecoverEffect());
             _recovering = rows.Count == 100;
             if (_recovering) return (null, null, true);
+        }
+        if (_releaseAfter is not null)
+        {
+            var recipients = s.Query("""
+                SELECT DISTINCT m.to_session_id,se.epoch FROM engine_message m JOIN engine_session se ON se.id=m.to_session_id
+                WHERE m.state='queued' AND m.in_flight=0 AND m.to_session_id>$after
+                ORDER BY m.to_session_id LIMIT 100
+                """, r => (Id: r.Text(0), Epoch: r.Long(1)), new SqlArg("$after", _releaseAfter));
+            foreach (var recipient in recipients)
+            {
+                var context = Context(new(recipient.Id, 0, "", recipient.Epoch));
+                List<EffectDraft> drafts = [];
+                var events = MessageRelease.Next(s, context, recipient.Id, drafts);
+                EngineJournal.Commit(s, context, 0, recipient.Epoch, events, drafts);
+                _releaseAfter = recipient.Id;
+            }
+            if (recipients.Count == 100) return (null, null, true);
+            _releaseAfter = null;
         }
         if (Volatile.Read(ref _enable) != 0)
         {

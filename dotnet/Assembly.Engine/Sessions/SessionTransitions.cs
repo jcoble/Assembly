@@ -123,6 +123,8 @@ public static class SessionTransitions
             var notification = MessageTransitions.ChildEnded(scope, context, context.EntityId, effects);
             if (notification is not null) events.Add(notification);
         }
+        if (command.State is "idle" or "running")
+            events.AddRange(MessageRelease.Next(scope, context, context.EntityId, effects));
         return Commit(scope, context, updated, "session.changed", effects, events);
     }
 

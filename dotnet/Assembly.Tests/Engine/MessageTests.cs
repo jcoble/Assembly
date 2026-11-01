@@ -43,7 +43,7 @@ public sealed class MessageTests
         Assert.Equal("root", f.Text("SELECT to_session_id FROM engine_message"));
         Assert.Equal("system", f.Text("SELECT sender_kind FROM engine_message"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
-        Assert.Equal("send/child-ended/child", f.Text("SELECT id FROM engine_outbox"));
+        Assert.Equal("send/child-ended/child/1", f.Text("SELECT id FROM engine_outbox"));
         Assert.DoesNotContain("text", JsonSerializer.Serialize(f.Events(), new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
     }
 
@@ -79,7 +79,7 @@ public sealed class MessageTests
         Assert.Equal("held", f.State("engine_message", "m2"));
         Assert.Equal("message-stop/m", f.Text("SELECT id FROM engine_outbox WHERE kind='stop'"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='stop'"));
-        Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
+        Assert.Equal(0, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
         Assert.Equal(1, f.Number("SELECT cancel_requested FROM engine_session WHERE id='b'"));
         Assert.Equal("unavailable", f.Apply(new MessageOutcome("delivered_to_turn", "t", null), "m", version: 1,
             actor: new(ActorKind.System, "adapter")).Error);
@@ -126,8 +126,8 @@ public sealed class MessageTests
         Assert.True(f.Apply(new SendMessage(null, "b", "hi", "prompt"), "m").Applied);
         Assert.Equal("window", f.Text("SELECT sender_kind FROM engine_message"));
         var payload = JsonSerializer.Deserialize(f.Text("SELECT payload_json FROM engine_outbox")!,
-            global::Assembly.Engine.EngineJson.Default.SendMessage);
-        Assert.Equal(new SendMessage(null, "b", "hi", "prompt"), payload);
+            global::Assembly.Engine.EngineJson.Default.DeliverMessage);
+        Assert.Equal(new DeliverMessage("m", "b", "hi", "Jesse", "prompt", "m", 0), payload);
         Assert.Null(f.Text("SELECT from_session_id FROM engine_message"));
         Assert.Equal("forbidden", f.Apply(new MessageOutcome("failed", null, null), "m", version: 1).Error);
         Assert.Equal("version_conflict", f.Apply(new MessageOutcome("failed", null, null), "m",

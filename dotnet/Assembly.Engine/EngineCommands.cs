@@ -17,12 +17,14 @@ public sealed class EngineCommands
 {
     private readonly string _machine;
     private readonly Func<int> _childLimit;
+    private readonly Func<int> _messageLimit;
 
-    public EngineCommands(string machine, Func<int> childLimit)
+    public EngineCommands(string machine, Func<int> childLimit, Func<int>? messageLimit = null)
     {
         _machine = machine;
         ArgumentNullException.ThrowIfNull(childLimit);
         _childLimit = childLimit;
+        _messageLimit = messageLimit ?? (() => 20);
     }
 
     public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command)
@@ -39,7 +41,7 @@ public sealed class EngineCommands
                 RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
-                MessageCommand message => MessageTransitions.Apply(scope, context, message),
+                MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit()),
                 NeedCommand need => NeedTransitions.Apply(scope, context, need),
                 RunCommand run => RunTransitions.Apply(scope, context, run),
                 StepCommand step => StepTransitions.Apply(scope, context, step),

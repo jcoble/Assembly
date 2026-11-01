@@ -79,6 +79,7 @@ public static class EffectTransitions
             default: return Reject("invalid_transition");
         }
         var effect = s.QueryFirst("SELECT id,kind,session_id,run_id,payload_json,attempt FROM engine_outbox WHERE id=$id", Map, new SqlArg("$id", c.EntityId))!;
+        if (command is EnableEffect && state == "pending" && effect.Kind == "send") state = "dead";
         // Validate receipts before touching the row; the provider can report data, never an injected command.
         if (state == "done" && !ValidConfirmation(effect, receipt!)) return Reject("bad_receipt");
         // Preserve uncertainty while the reconciliation service is unavailable.
@@ -87,10 +88,12 @@ public static class EffectTransitions
             receipt = receipt! with { Disposition = EffectDisposition.Unknown };
         s.Execute("""
             UPDATE engine_outbox SET state=$state,version=version+1,updated_ms=$now,next_ms=$next,
-                receipt_json=COALESCE($receipt,receipt_json),last_error=$error WHERE id=$id
+                receipt_json=COALESCE($receipt,receipt_json),last_error=CASE WHEN $receipt IS NULL THEN last_error ELSE $error END WHERE id=$id
             """, new("$state", state), new("$now", c.NowMs), new("$next", next), new("$id", c.EntityId),
             new("$receipt", receipt is null ? null : JsonSerializer.Serialize(receipt, EngineJson.Default.EffectReceipt)), new("$error", receipt?.Error));
         if (state == "done") Confirm(s, c, effect, receipt!);
+        if (effect.Kind == "send" && (state == "failed" || state == "dead" && command is EnableEffect))
+            SetMessageOutcome(s, c, effect, new(state == "failed" ? "failed" : "queued", null, state == "failed" ? receipt?.Error ?? "effect_failed" : "not_delivered"));
         return Commit(s, c, row.Version + 1, state);
     }
 
@@ -106,7 +109,7 @@ public static class EffectTransitions
                     effect.Payload.Deserialize(EngineJson.Default.NeedAnswer)?.ProviderRequestId,
                 "start" => receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)?.State is "idle" or "lost" or "ended",
                 "stop" => receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)?.State is "idle" or "ended",
-                "send" => receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)?.State is "delivered_to_turn" or "next_turn" or "unsupported" or "failed",
+                "send" => receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)?.State is "queued" or "delivered_to_turn" or "next_turn" or "unsupported" or "failed",
                 "handoff" => receipt.Data.Deserialize(EngineJson.Default.HandoffEffectData) is { State: "accepted" or "resumed" or "failed" } handoff &&
                     handoff.NextEpoch == effect.Payload.Deserialize(EngineJson.Default.HandoffTransfer)!.NextEpoch,
                 _ => false
@@ -132,9 +135,7 @@ public static class EffectTransitions
         if (effect.Kind == "send")
         {
             var data = receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)!;
-            var id = effect.Id["send/".Length..];
-            var version = s.QueryFirst("SELECT version FROM engine_message WHERE id=$id", r => r.Long(0), new SqlArg("$id", id));
-            result = MessageTransitions.Apply(s, target with { EntityId = id, ExpectedVersion = version }, new MessageOutcome(data.State, data.ProviderTurnId, data.Reason));
+            SetMessageOutcome(s, c, effect, new(data.State, data.ProviderTurnId, data.Reason));
         }
         if (effect.Kind == "handoff")
         {
@@ -152,6 +153,16 @@ public static class EffectTransitions
         if (result is { Applied: false }) throw new InvalidOperationException($"Effect {effect.Id} confirmation rejected: {result.Error}");
         if (effect.RunId is not null)
             EngineJournal.Commit(s, c, c.ExpectedVersion + 1, c.Epoch, RunTransitions.Recompute(s, c, effect.RunId), []);
+    }
+
+    private static void SetMessageOutcome(IWriteScope s, CommandContext c, Effect effect, MessageOutcome outcome)
+    {
+        var intent = effect.Payload.Deserialize(EngineJson.Default.DeliverMessage)
+            ?? throw new InvalidOperationException("Missing delivery intent.");
+        var version = s.QueryFirst("SELECT version FROM engine_message WHERE id=$id", r => r.Long(0), new SqlArg("$id", intent.MessageId));
+        var epoch = s.QueryFirst("SELECT epoch FROM engine_session WHERE id=$id", r => r.Long(0), new SqlArg("$id", intent.ToSessionId));
+        var result = MessageTransitions.Apply(s, c with { EntityId = intent.MessageId, ExpectedVersion = version, Epoch = epoch }, outcome);
+        if (!result.Applied) throw new InvalidOperationException($"Effect {effect.Id} confirmation rejected: {result.Error}");
     }
 
     private static void CancelStoppedSteps(IWriteScope s, CommandContext c)

@@ -171,18 +171,17 @@ public sealed class EffectTests
     public void Claim_checks_commit_order_version_due_and_system_actor()
     {
         using var f = new EngineFixture();
-        f.SeedSession();
-        f.Apply(new SendMessage(null, "s", "one", "prompt"), "z");
-        f.Apply(new SendMessage(null, "s", "two", "prompt"), "a");
+        Answer(f);
+        f.Apply(new SendMessage(null, "s", "later", "prompt"), "z");
         var system = new EngineActor(ActorKind.System, "test");
-        Assert.Equal("forbidden", f.Apply(new ClaimEffect(), "send/z").Error);
-        Assert.Equal("unavailable", f.Apply(new ClaimEffect(), "send/a", actor: system).Error);
-        Assert.Equal("version_conflict", f.Apply(new ClaimEffect(), "send/z", 1, actor: system).Error);
-        Assert.True(f.Apply(new ClaimEffect(), "send/z", actor: system).Applied);
-        Assert.Equal("inflight", f.State("engine_outbox", "send/z"));
-        Assert.True(f.Apply(new CompleteEffect(Receipt(EffectDisposition.TransientFailure)), "send/z", 1, actor: system).Applied);
-        Assert.Equal("not_due", f.Apply(new ClaimEffect(), "send/z", 2, actor: system).Error);
-        Assert.Equal("unavailable", f.Apply(new ClaimEffect(), "send/a", actor: system).Error);
+        Assert.Equal("forbidden", f.Apply(new ClaimEffect(), "answer/n").Error);
+        Assert.Equal("unavailable", f.Apply(new ClaimEffect(), "send/z/1", actor: system).Error);
+        Assert.Equal("version_conflict", f.Apply(new ClaimEffect(), "answer/n", 1, actor: system).Error);
+        Assert.True(f.Apply(new ClaimEffect(), "answer/n", actor: system).Applied);
+        Assert.Equal("inflight", f.State("engine_outbox", "answer/n"));
+        Assert.True(f.Apply(new CompleteEffect(Receipt(EffectDisposition.TransientFailure)), "answer/n", 1, actor: system).Applied);
+        Assert.Equal("not_due", f.Apply(new ClaimEffect(), "answer/n", 2, actor: system).Error);
+        Assert.Equal("unavailable", f.Apply(new ClaimEffect(), "send/z/1", actor: system).Error);
     }
 
     [Fact]
@@ -335,7 +334,7 @@ public sealed class EffectTests
         using var f = new EngineFixture();
         Answer(f);
         Assert.True(f.Apply(new SendMessage(null, "s", "later", "prompt"), "later").Applied);
-        const string later = "send/later";
+        const string later = "send/later/1";
         var system = new EngineActor(ActorKind.System, "test");
         Assert.True(f.Apply(new ClaimEffect(), "answer/n", actor: system).Applied);
         Assert.True(f.Apply(new CompleteEffect(Receipt(EffectDisposition.Unknown)), "answer/n", 1, actor: system).Applied);
