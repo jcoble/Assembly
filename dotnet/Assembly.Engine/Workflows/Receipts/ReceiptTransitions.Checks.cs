@@ -48,6 +48,21 @@ public static partial class ReceiptTransitions
     {
         var required = new List<string>(original.Report.ProofUrls);
         var receipt = original.Report.Receipt!.Value;
+        if (receipt.TryGetProperty("commits", out var commits))
+        {
+            var tests = receipt.GetProperty("tests_added").EnumerateArray().Select(test => test.GetString()!).ToArray();
+            if (commits.GetArrayLength() > 0 || tests.Length > 0)
+            {
+                var verified = checkedBody.BuildVerification;
+                if (verified is null || verified.TestedHead != checkedBody.Check.Head || !verified.Tests.SequenceEqual(tests)) return false;
+                if (verified.Result == "tests_verified")
+                {
+                    if (tests.Length == 0 || verified.Reason is not null) return false;
+                }
+                else if (verified.Result != "owner_review" || string.IsNullOrWhiteSpace(verified.Reason) ||
+                    !receipt.GetProperty("summary").GetString()!.Contains(verified.Reason, StringComparison.Ordinal)) return false;
+            }
+        }
         if (receipt.TryGetProperty("url", out var document)) required.Add(document.GetString()!);
         if (receipt.TryGetProperty("proofUrls", out var urls)) required.AddRange(urls.EnumerateArray().Select(u => u.GetString()!));
         if (receipt.TryGetProperty("findings", out var findings))

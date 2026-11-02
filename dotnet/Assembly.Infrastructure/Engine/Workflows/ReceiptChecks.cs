@@ -68,14 +68,8 @@ internal sealed partial class ReceiptChecks(IGit? git = null)
             if (resolved is null || !ancestors.Contains(resolved) || original.Contains(resolved) || !reported.Add(resolved)) return "commits";
         }
         if (made.Any(commit => !reported.Contains(commit))) return "commits";
-        // A named-test resolver/explicit low-impact owner-review reason needs the actual preparation producer.
-        // Existing file references can be checked without inventing a test framework or a caller assertion.
-        if (reported.Count > 0 && body.TestsAdded.Count == 0) return "tests_added";
-        foreach (var test in body.TestsAdded)
-        {
-            try { _ = ReceiptFiles.Contained(context.Workspace, test, "tests_added"); }
-            catch (WorkflowFieldException) { return "tests_added"; }
-        }
+        // Actual test names and low-impact reasons are resolved by the trusted host evidence producer.
+        // File containment alone cannot establish that a name identifies a real test.
         return null;
     }
 
