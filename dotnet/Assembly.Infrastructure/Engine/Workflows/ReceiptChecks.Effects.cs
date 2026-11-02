@@ -99,9 +99,17 @@ internal sealed partial class ReceiptChecks : IReceiptChecks
                 new(intent.ReceiptId, intent.Attempt, intent.Generation, false, checkedLocal.Head, checkedLocal.Error),
                 checkedLocal.Fingerprint, [], [], cancellationToken, releasedExecution: original.Capture);
         if (_checkEvidence is null) return Unavailable("evidence_unverified");
-        var evidence = await _checkEvidence(new(intent.ReceiptId, effect.RunId!, intent.StepId, intent.Attempt,
-            intent.Generation, kind, checkedLocal.Head!, original.Report.Summary,
-            original.Report.ProofUrls.ToArray(), original.Report.Receipt.Value.Clone()), cancellationToken);
+        using var evidenceStop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        evidenceStop.CancelAfter(TimeSpan.FromSeconds(60));
+        ReceiptEvidenceResult evidence;
+        try
+        {
+            evidence = await _checkEvidence(new(intent.ReceiptId, effect.RunId!, intent.StepId, intent.Attempt,
+                intent.Generation, kind, checkedLocal.Head!, original.Report.Summary,
+                original.Report.ProofUrls.ToArray(), original.Report.Receipt.Value.Clone(), context.Workspace, context.ProofDir), evidenceStop.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { return Unavailable("evidence_check_timeout"); }
         if (evidence.Disposition == ReceiptEvidenceDisposition.Unknown)
             return new(EffectDisposition.Unknown, JsonSerializer.SerializeToElement((string?)null, EngineJson.Default.String), evidence.Error ?? "evidence_unverified");
         if (evidence.Disposition == ReceiptEvidenceDisposition.Unavailable)
@@ -116,7 +124,7 @@ internal sealed partial class ReceiptChecks : IReceiptChecks
         var confirmation = WorkflowPreparation.ReceiptConfirmation(effect,
             new(intent.ReceiptId, intent.Attempt, intent.Generation, error is null, after.Head, error), after.Fingerprint,
             checkedLocal.Files.Select(file => new ReceiptMatchedFile(file.Path, file.RootKind, file.Sha256, file.Bytes)).ToArray(),
-            evidence.Evidence, cancellationToken, original.Capture, evidence.Checks);
+            evidence.Evidence, cancellationToken, original.Capture, evidence.Checks, evidence.BuildVerification);
         using var final = _receiptDb.OpenSnapshot(cancellationToken);
         return ReceiptTransitions.ValidConfirmation(final, effect, confirmation) ? confirmation : Unavailable("evidence_unverified");
     }
