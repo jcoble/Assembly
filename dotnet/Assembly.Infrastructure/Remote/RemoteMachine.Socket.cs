@@ -62,7 +62,8 @@ internal sealed partial class RemoteMachine
         CallAsync(feature, method, JsonSerializer.SerializeToElement(args, args.GetType(), SessionsJson.Default), false, cancellationToken);
 
     internal async Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken, string? expectedEngineId = null, ClientWebSocket? expectedConnection = null,
-        OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null)
+        OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null,
+        Assembly.Infrastructure.Engine.Relays.FrozenMachineStartIntent? startIntent = null)
     {
         if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken, expectedEngineId, expectedConnection);
         if (_socket is not { State: WebSocketState.Open })
@@ -83,16 +84,26 @@ internal sealed partial class RemoteMachine
                 RequireOwnerBinding(expectedOwner); RequireLiveMirror(expectedOwner, expectedMirror);
             }
             sentOn = socket;
-            _calls.Add(id, pending);
             var json = args.GetRawText();
+            startIntent?.SendingNormal(this, socket, feature, method, args, id);
+            _calls.Add(id, pending);
             await SendFrameAsync(socket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{json}}}", cancellationToken);
+            startIntent?.FrameOrdered();
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)
         {
+            startIntent?.SendFailed();
             _calls.Remove(id);
             _socket?.Abort();
             if (error is OperationCanceledException) throw;
             throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error);
+        }
+        catch (Exception) when (startIntent is not null)
+        {
+            var sending = startIntent.Phase == Assembly.Infrastructure.Engine.Relays.StartIssuePhase.Sending;
+            startIntent.SendFailed(); _calls.Remove(id);
+            if (sending) _socket?.Abort();
+            throw;
         }
         finally { _socketSend.Release(); }
         try

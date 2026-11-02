@@ -52,6 +52,14 @@ internal sealed partial class RemoteMachine
         private RelayBulkLease(RemoteMachine owner, OwnerConnectionBinding binding, EngineMirror.LiveMirrorBinding? live, RelayLeaseLifetime lifetime)
             => (_owner, _binding, _live, _lifetime) = (owner, binding, live, lifetime);
         internal string Machine => _binding.Machine;
+        internal (RemoteMachine Owner, OwnerConnectionBinding Binding, EngineMirror.LiveMirrorBinding? Live) StartTransport()
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (_failed) throw new CallFailed("relay_connection_changed");
+            return (_owner, _binding, _live);
+        }
+        internal bool BelongsTo(RemoteMachine owner, OwnerConnectionBinding binding) =>
+            Volatile.Read(ref _disposed) == 0 && ReferenceEquals(owner, _owner) && ReferenceEquals(binding, _binding);
         internal static async Task<RelayBulkLease> AcquireAsync(RemoteMachine owner, OwnerConnectionBinding binding, CancellationToken ct, EngineMirror.LiveMirrorBinding? live)
         {
             var lifetime = owner.EnterRelayLease();

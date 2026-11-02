@@ -50,6 +50,8 @@ internal sealed class TwoHosts : IAsyncDisposable
         public int OwnerReadCalls;
         public Func<string, CallContext, Task>? OwnerReading { get; set; }
         public Func<string, CallContext, Task>? MachineReading { get; set; }
+        public Func<string, CallContext, Task>? MachineWriting { get; set; }
+        public Func<string, CallContext, Task>? MachinePrepared { get; set; }
         internal MachineForward? Forwarder { get; set; }
         private EngineRuntime StartRuntime()
         {
@@ -155,7 +157,15 @@ internal sealed class TwoHosts : IAsyncDisposable
                 }, bulk);
             public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
                 Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
-                Action<TArgs, CallContext>? failed = null, bool bulk = false) => inner.Write(feature, method, args, result, handler, order, failed, bulk);
+                Action<TArgs, CallContext>? failed = null, bool bulk = false) => inner.Write(feature, method, args, result, async (value, call) =>
+                {
+                    if (machineReads && feature == "engine" && method == "machine_command" && host.MachineWriting is { } writing)
+                        await writing(method, call);
+                    var write = await handler(value, call);
+                    if (machineReads && feature == "engine" && method == "machine_command" && host.MachinePrepared is { } prepared)
+                        await prepared(method, call);
+                    return write;
+                }, order, failed, bulk);
             public void Save<T>(string feature, JsonTypeInfo<T> type, Action<string, T, IWriteScope> save) => inner.Save(feature, type, save);
             public void Closed(Action<string> connection) => inner.Closed(connection);
             public void Topic<T>(string topic, JsonTypeInfo<T> type, Func<T, string> key,

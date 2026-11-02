@@ -20,7 +20,7 @@ public sealed partial class MachineCalls
                 {
                     var prepared = runtime.Reader.PrepareMachineStartAck(args, operation.Token);
                     return Task.FromResult(operation.Return<Func<IWriteScope, MachineStartAck>>(scope =>
-                        Bounded(call, runtime.Reader.ReadMachineStartAck(scope, prepared), EngineSocketJson.Default.MachineStartAck)));
+                        runtime.Reader.ReadMachineStartAck(scope, prepared)));
                 }
                 catch (Exception error) when (error is ArgumentException or JsonException)
                 { throw new CallFailed("bad_args"); }
