@@ -68,11 +68,35 @@ public sealed class WorkflowSettlementTests
             {
                 s.Execute("UPDATE engine_run SET definition_hash='workflow'");
                 var c = new CommandContext(Guid.NewGuid(), f.Machine, System, "r", 0, 0, 1000);
-                EngineJournal.Commit(s, c, 0, 0, [], [new("", "workflow_command", null, "r", global::System.Text.Json.JsonSerializer.SerializeToElement(new { }))]);
+                EngineJournal.Commit(s, c, 0, 0, [], [new("", "workflow_workspace", null, "r", global::System.Text.Json.JsonSerializer.SerializeToElement(new { }))]);
                 return s.Execute("UPDATE engine_outbox SET state=$state", new SqlArg("$state", state));
             });
             Recompute(f);
             Assert.Equal(settled ? cancelling ? "cancelled" : "succeeded" : cancelling ? "cancelling" : "running", f.State("engine_run", "r"));
+        }
+    }
+
+    [Theory]
+    [InlineData("done")]
+    [InlineData("failed")]
+    [InlineData("dead")]
+    public void Command_effect_state_without_execution_receipt_cannot_settle_workflow(string state)
+    {
+        foreach (var cancelling in new[] { false, true })
+        {
+            using var f = new EngineFixture(); f.SeedSession("owner");
+            f.SeedRun(ownerSessionId: "owner", state: cancelling ? "cancelling" : "running");
+            f.SeedStep("s", state: "succeeded", attempt: 1);
+            f.Db.Writer.Write("test.command-without-proof", s =>
+            {
+                s.Execute("UPDATE engine_run SET definition_hash='workflow'; UPDATE engine_step SET kind='command'");
+                var c = new CommandContext(Guid.NewGuid(), f.Machine, System, "r", 0, 0, 1000);
+                EngineJournal.Commit(s, c, 0, 0, [], [new("", "workflow_command", null, "r",
+                    global::System.Text.Json.JsonSerializer.SerializeToElement(new { stepId = "s", generation = 0, attempt = 1 }))]);
+                return s.Execute("UPDATE engine_outbox SET state=$state", new SqlArg("$state", state));
+            });
+            Recompute(f);
+            Assert.Equal(cancelling ? "cancelling" : "running", f.State("engine_run", "r"));
         }
     }
 

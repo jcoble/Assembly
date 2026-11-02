@@ -4,6 +4,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Runs;
+using Assembly.Engine.Workflows.Execution;
 
 namespace Assembly.Engine.Runs;
 
@@ -31,7 +32,7 @@ public static class RunTransitions
                           AND json_extract(h.safe_body_json,'$.workspaceId')=a.workspace_id))
         """;
 
-    private sealed record Run(long Version, string Owner, string State, long Epoch);
+    private sealed record Run(long Version, string Owner, string State, long Epoch, bool Workflow);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, RunCommand command)
     {
@@ -135,6 +136,7 @@ public static class RunTransitions
     {
         var run = Find(s, runId);
         if (run is null || IsTerminal(run.State)) return [];
+        var commandsDrained = !run.Workflow || CommandStepTransitions.ExecutionsDrained(s, runId);
         List<EventDraft> events = [];
         var ownerChanged = s.QueryFirst("""
             SELECT r.owner_lost_ms IS NOT CASE WHEN se.state='lost' THEN se.lost_ms ELSE NULL END
@@ -165,7 +167,7 @@ public static class RunTransitions
                 NOT EXISTS(SELECT 1 FROM engine_step st JOIN engine_session se ON se.id=st.session_id
                     WHERE st.run_id=$id AND st.attempt>0 AND st.state IN ('running','waiting') AND se.state!='ended')
                 AND NOT EXISTS(SELECT 1 FROM engine_outbox WHERE run_id=$id AND state NOT IN ('done','failed','dead'))
-                AND (definition_hash IS NULL OR NOT EXISTS({WorkflowUnreleasedWorker}))
+                AND (definition_hash IS NULL OR $commandsDrained=1 AND NOT EXISTS({WorkflowUnreleasedWorker}))
                 THEN 'cancelled' ELSE 'cancelling' END
               WHEN EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND required=1 AND state='failed' AND CASE WHEN definition_hash IS NULL THEN attempt ELSE attempt_in_generation END>=max_attempts) THEN 'failed'
               WHEN NOT EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND required=1 AND state NOT IN ('succeeded','skipped'))
@@ -175,12 +177,13 @@ public static class RunTransitions
                     OR st.required=1 AND st.state='skipped' AND (st.rule_skippable=0 OR st.outcome_reason IS NULL)
                     OR COALESCE(st.dispatch_state,'')='redo_pending'))
                   AND NOT EXISTS(SELECT 1 FROM engine_outbox WHERE run_id=$id AND state NOT IN ('done','failed','dead'))
+                  AND $commandsDrained=1
                   AND NOT EXISTS({WorkflowUnreleasedWorker})
                 )) THEN 'succeeded'
               WHEN EXISTS(SELECT 1 FROM engine_needs_me WHERE run_id=$id AND state='open') THEN 'needs_me'
               WHEN EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND attempt>0) THEN 'running'
               ELSE 'queued' END FROM engine_run WHERE id=$id
-            """, r => r.Text(0), new SqlArg("$id", runId))!;
+            """, r => r.Text(0), new SqlArg("$id", runId), new("$commandsDrained", commandsDrained ? 1 : 0))!;
         if (next == run.State && !ownerChanged) return events;
         s.Execute("UPDATE engine_run SET state=$state,version=version+1,updated_ms=$now WHERE id=$id",
             new("$state", next), new("$now", c.NowMs), new("$id", runId));
@@ -210,8 +213,8 @@ public static class RunTransitions
     internal static bool CanControl(CommandContext c, string owner) => c.Actor.Kind == ActorKind.Window ||
         c.Actor.Kind == ActorKind.Session && c.Actor.Id == owner;
     private static Run? Find(IWriteScope s, string id) => s.QueryFirst("""
-        SELECT r.version,r.owner_session_id,r.state,se.epoch FROM engine_run r JOIN engine_session se ON se.id=r.owner_session_id WHERE r.id=$id
-        """, r => new Run(r.Long(0), r.Text(1), r.Text(2), r.Long(3)), new SqlArg("$id", id));
+        SELECT r.version,r.owner_session_id,r.state,se.epoch,r.definition_hash IS NOT NULL FROM engine_run r JOIN engine_session se ON se.id=r.owner_session_id WHERE r.id=$id
+        """, r => new Run(r.Long(0), r.Text(1), r.Text(2), r.Long(3), r.Long(4) != 0), new SqlArg("$id", id));
     private static EventDraft StepCancelled(string id, long version, string? session, string run, string owner) =>
         new("step.changed", "step", id, version, false, new(session, run, id, owner, "cancelled", null));
     private static EventDraft Changed(string id, long version, string owner, string state) =>
