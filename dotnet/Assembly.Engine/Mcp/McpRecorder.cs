@@ -17,8 +17,9 @@ public sealed class McpRecorder(IEngineRuntime runtime, McpGate gate, TimeProvid
     private static readonly McpJson ArgumentJson = new(new JsonSerializerOptions(McpJson.Default.Options)
     { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 
-    public McpRequestFilter<CallToolRequestParams, CallToolResult> Filter => next => async (context, _) =>
+    public McpRequestFilter<CallToolRequestParams, CallToolResult> Filter => next => async (context, originalRequestCancellation) =>
     {
+        using var captured = McpRequestWait.Capture(context, originalRequestCancellation);
         var session = context.User?.FindFirst("assembly:session")?.Value;
         var epochText = context.User?.FindFirst("assembly:epoch")?.Value;
         var name = context.Params?.Name ?? "";

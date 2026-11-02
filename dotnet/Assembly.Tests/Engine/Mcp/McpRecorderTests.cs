@@ -51,11 +51,16 @@ public sealed class McpRecorderTests
         public async Task<CallToolResult> Call(McpRequestHandler<CallToolRequestParams, CallToolResult> next,
             Dictionary<string, JsonElement>? args = null, CancellationToken token = default, IEngineRuntime? runtime = null, string name = "probe")
         {
-            var request = new RequestContext<CallToolRequestParams>(_server,
-                new() { Method = "tools/call", Id = new RequestId(1) }, new() { Name = name, Arguments = args })
-            { User = new ClaimsPrincipal(new ClaimsIdentity([new("assembly:session", "s"), new("assembly:epoch", "0")], "test")) };
-            return await new McpRecorder(runtime ?? Runtime, Gate, Fixture.Time).Filter(next)(request, token);
+            return await CallRequest(Request(name, args), next, token, runtime);
         }
+
+        public RequestContext<CallToolRequestParams> Request(string name = "probe", Dictionary<string, JsonElement>? args = null) =>
+            new(_server, new() { Method = "tools/call", Id = new RequestId(Guid.NewGuid().ToString()) }, new() { Name = name, Arguments = args })
+            { User = new ClaimsPrincipal(new ClaimsIdentity([new("assembly:session", "s"), new("assembly:epoch", "0")], "test")) };
+
+        public ValueTask<CallToolResult> CallRequest(RequestContext<CallToolRequestParams> request,
+            McpRequestHandler<CallToolRequestParams, CallToolResult> next, CancellationToken token = default, IEngineRuntime? runtime = null) =>
+            new McpRecorder(runtime ?? Runtime, Gate, Fixture.Time).Filter(next)(request, token);
 
         public string? Text(string column) => Fixture.Text($"SELECT {column} FROM engine_tool_call");
         public long Number(string column) => Fixture.Number($"SELECT {column} FROM engine_tool_call");
@@ -235,6 +240,128 @@ public sealed class McpRecorderTests
             Assert.Null(sum.InputTokens); Assert.Null(sum.CostNanodollars); Assert.Null(sum.TurnDurationMs);
         }
         Assert.Equal(rows, f.Count("engine_tool_call")); Assert.Equal(events, f.Count("engine_event"));
+    }
+
+    [Fact]
+    public async Task Original_wait_token_crosses_the_shared_sdk_invocation_while_execution_stays_none()
+    {
+        await using var h = new Harness();
+        using var original = new CancellationTokenSource();
+        var request = h.Request();
+        var previous = new object();
+        const string key = "assembly.internal.original-request-wait/v1";
+        request.Items[key] = previous;
+        var result = await h.CallRequest(request, (context, execution) => McpInvocation.InvokeAsync("probe", context,
+            (caller, _, work) =>
+            {
+                Assert.Equal(new McpCaller("s", 0), caller);
+                Assert.Equal(CancellationToken.None, execution);
+                Assert.Equal(CancellationToken.None, work);
+                var wait = McpInvocation.RequireOriginalWaitToken(context);
+                Assert.Equal(original.Token, wait);
+                Assert.True(wait.CanBeCanceled);
+                original.Cancel();
+                Assert.True(wait.IsCancellationRequested);
+                Assert.False(work.IsCancellationRequested);
+                return ValueTask.FromResult(McpInvocation.Text("{\"exact\":\"界\"}", false));
+            }, execution), original.Token);
+        Assert.Equal("{\"exact\":\"界\"}", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text);
+        Assert.Same(previous, request.Items[key]);
+        Assert.Equal("ok", h.Text("outcome"));
+    }
+
+    [Theory]
+    [InlineData("success")]
+    [InlineData("refused")]
+    [InlineData("cancel")]
+    [InlineData("exception")]
+    [InlineData("start-failure")]
+    [InlineData("end-failure")]
+    [InlineData("identity")]
+    [InlineData("missing-session")]
+    public async Task Every_recorder_exit_restores_the_exact_prior_items_value(string mode)
+    {
+        await using var h = new Harness(state: mode == "refused" ? "ended" : "idle", seed: mode != "missing-session");
+        using var original = new CancellationTokenSource();
+        var request = h.Request();
+        if (mode == "identity") request.User = null;
+        const string key = "assembly.internal.original-request-wait/v1";
+        var prior = new object();
+        request.Items[key] = prior;
+        var nextCalled = false;
+        IEngineRuntime? runtime = mode is "start-failure" or "end-failure"
+            ? new FailingRuntime(h.Runtime, mode == "start-failure" ? 1 : 2) : null;
+        ValueTask<CallToolResult> Next(RequestContext<CallToolRequestParams> context, CancellationToken execution)
+        {
+            nextCalled = true;
+            Assert.Equal(original.Token, McpInvocation.RequireOriginalWaitToken(context));
+            Assert.Equal(CancellationToken.None, execution);
+            if (mode == "cancel")
+            {
+                original.Cancel();
+                McpInvocation.RequireOriginalWaitToken(context).ThrowIfCancellationRequested();
+            }
+            if (mode == "exception") throw new InvalidOperationException("safe probe");
+            return ValueTask.FromResult(Answer());
+        }
+        if (mode == "cancel") await Assert.ThrowsAnyAsync<OperationCanceledException>(() => h.CallRequest(request, Next, original.Token, runtime).AsTask());
+        else if (mode == "exception") await Assert.ThrowsAsync<InvalidOperationException>(() => h.CallRequest(request, Next, original.Token, runtime).AsTask());
+        else if (mode == "end-failure") await Assert.ThrowsAsync<IOException>(() => h.CallRequest(request, Next, original.Token, runtime).AsTask());
+        else
+        {
+            var result = await h.CallRequest(request, Next, original.Token, runtime);
+            Assert.Equal(mode != "success", result.IsError == true);
+        }
+        Assert.Same(prior, request.Items[key]);
+        Assert.Equal(mode is "success" or "cancel" or "exception" or "end-failure", nextCalled);
+        if (mode is "cancel" or "exception")
+        {
+            Assert.Equal("failed", h.Text("outcome"));
+            Assert.Equal("String(6) ", h.Text("output_preview"));
+        }
+    }
+
+    [Fact]
+    public async Task Simultaneous_recorder_requests_keep_distinct_items_and_original_tokens()
+    {
+        await using var h = new Harness();
+        using var first = new CancellationTokenSource();
+        using var second = new CancellationTokenSource();
+        var a = h.Request();
+        var b = h.Request();
+        var aEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async ValueTask<CallToolResult> Next(RequestContext<CallToolRequestParams> context, CancellationToken execution)
+        {
+            var entered = ReferenceEquals(context, a) ? aEntered : bEntered;
+            try
+            {
+                Assert.Equal(ReferenceEquals(context, a) ? first.Token : second.Token, McpInvocation.RequireOriginalWaitToken(context));
+                Assert.Equal(CancellationToken.None, execution);
+                entered.TrySetResult();
+                await release.Task;
+                Assert.Equal(ReferenceEquals(context, a), McpInvocation.RequireOriginalWaitToken(context).IsCancellationRequested);
+                return Answer();
+            }
+            catch (Exception error) { entered.TrySetException(error); throw; }
+        }
+        var calls = new[] { h.CallRequest(a, Next, first.Token).AsTask(), h.CallRequest(b, Next, second.Token).AsTask() };
+        try
+        {
+            await Task.WhenAll(aEntered.Task, bEntered.Task).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.NotSame(a.Items, b.Items);
+            first.Cancel();
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAll(calls).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Assert.False(a.Items.ContainsKey("assembly.internal.original-request-wait/v1"));
+        Assert.False(b.Items.ContainsKey("assembly.internal.original-request-wait/v1"));
+        Assert.Equal(2, h.Fixture.Count("engine_tool_call"));
+        Assert.Equal(2, h.Fixture.Number("SELECT COUNT(*) FROM engine_tool_call WHERE outcome='ok'"));
     }
 
     private static long McpCalls(UsageTotals totals) => JsonSerializer.SerializeToElement(totals,
