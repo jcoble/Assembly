@@ -4,6 +4,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Messages;
+using Assembly.Engine.Recording;
 
 namespace Assembly.Engine.Sessions;
 
@@ -157,6 +158,8 @@ public static class SessionTransitions
 
     private static CommandResult Capabilities(IWriteScope scope, CommandContext context, Session current, ReportCapabilities command)
     {
+        if (command.ProviderSessionId is not null || command.Observation is not null)
+            return AcceptedCapabilities(scope, context, current, command);
         if (context.Actor.Kind != ActorKind.System)
             return Refused(context, "forbidden", current);
         if (current.State is "ended" or "foreign")
@@ -171,6 +174,30 @@ public static class SessionTransitions
             new("$id", context.EntityId), new("$machine", context.Machine));
         return changed == 0 ? new(true, false, null, current.Version, 0, current.Epoch)
             : Commit(scope, context, current with { Version = current.Version + 1 }, "session.changed", []);
+    }
+
+    private static CommandResult AcceptedCapabilities(IWriteScope scope, CommandContext context, Session current, ReportCapabilities command)
+    {
+        if (context.Actor != new EngineActor(ActorKind.System, "adapter")) return Refused(context, "forbidden", current);
+        if (string.IsNullOrWhiteSpace(command.ProviderSessionId) || command.Observation is null) return Refused(context, "bad_args", current);
+        var observed = scope.QueryFirst("""
+            SELECT s.id,COALESCE(st.run_id,s.run_id),st.id,st.attempt,s.epoch
+            FROM engine_session s LEFT JOIN engine_step st ON st.id=(
+                SELECT id FROM engine_step WHERE session_id=s.id AND state IN ('running','waiting')
+                ORDER BY updated_ms DESC,id LIMIT 1)
+            WHERE s.id=$id AND s.machine=$machine AND s.holder='local' AND s.reserved_epoch IS NULL
+              AND s.state NOT IN ('foreign','ended','handing_off')
+            """, r => new Attribution(r.Text(0), r.IsNull(1) ? null : r.Text(1), r.IsNull(2) ? null : r.Text(2),
+                r.IsNull(3) ? null : checked((int)r.Long(3)), r.Long(4)), new SqlArg("$id", context.EntityId), new("$machine", context.Machine));
+        if (observed != command.Observation) return Refused(context, "bad_args", current);
+        var changed = scope.Execute("""
+            UPDATE engine_session SET provider_session_id=$provider,can_steer=$steer,version=version+1,updated_ms=$now
+            WHERE id=$id AND (provider_session_id IS NOT $provider OR can_steer<>$steer)
+            """, new("$provider", command.ProviderSessionId), new("$steer", command.CanSteer ? 1 : 0), new("$now", context.NowMs), new("$id", context.EntityId));
+        return changed == 0 ? new(true, false, null, current.Version, 0, current.Epoch)
+            : EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
+                [new("session.changed", "session", context.EntityId, current.Version + 1, false,
+                    new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
     }
 
     private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command, MessageExpiryPolicy? expiryPolicy)
