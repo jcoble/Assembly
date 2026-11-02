@@ -49,4 +49,5 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(SetStepState), "set_step_state")]
 [JsonDerivedType(typeof(OpenNeed), "open_need")]
 [JsonDerivedType(typeof(ResolveNeed), "resolve_need")]
+[JsonDerivedType(typeof(EscalateNeed), "escalate_need")]
 public abstract record EngineCommand;

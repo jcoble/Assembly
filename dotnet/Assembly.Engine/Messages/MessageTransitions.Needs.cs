@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.NeedsMe;
@@ -8,6 +9,13 @@ namespace Assembly.Engine.Messages;
 
 public static partial class MessageTransitions
 {
+    internal static string NeedResolutionText(string needId, string state, JsonElement? answer) => state switch
+    {
+        "answered" => $"Jesse answered your question {needId}: {(answer!.Value.ValueKind == JsonValueKind.String ? answer.Value.GetString() : JsonSerializer.Serialize(answer.Value, EngineJson.Default.JsonElement))}",
+        "dismissed" => $"Jesse dismissed your question {needId}.",
+        _ => $"Your question {needId} closed without an answer ({state})."
+    };
+
     internal static IReadOnlyList<EventDraft> NeedOpened(IWriteScope scope, CommandContext context, string needId,
         OpenNeed question, string parent, string optionsJson, IList<EffectDraft> effects, MessageExpiryPolicy? policy)
     {

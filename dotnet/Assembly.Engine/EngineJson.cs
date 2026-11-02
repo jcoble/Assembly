@@ -77,6 +77,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(SetStepState))]
 [JsonSerializable(typeof(OpenNeed))]
 [JsonSerializable(typeof(ResolveNeed))]
+[JsonSerializable(typeof(EscalateNeed))]
 [JsonSerializable(typeof(NeedAnswer))]
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
