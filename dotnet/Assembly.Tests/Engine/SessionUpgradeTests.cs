@@ -23,7 +23,7 @@ public sealed class SessionUpgradeTests
     {
         using var file = new TempDatabase(); using var db = TestDatabase.Open(file.Path);
         var machine = EngineSchema.Open(db, 1000);
-        Assert.Equal(10, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(11, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         db.Writer.Write("test.null-model", scope => scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
                 activity_state,holder,epoch,cancel_requested,account_context)
@@ -44,13 +44,16 @@ public sealed class SessionUpgradeTests
     {
         using var f = new OldDb(version);
         var columns = f.Columns();
+        var referenceTables = columns.Keys.ToArray();
         if (version < 3)
             foreach (var converted in new[] { "engine_message", "engine_outbox", "engine_event", "engine_meta" }) columns.Remove(converted);
-        var before = f.History(columns); var indexes = f.Indices(); var keys = f.ForeignKeys();
+        var before = f.History(columns); var indexes = f.Indices(); var keys = f.ForeignKeys(referenceTables);
         var machine = f.Text("SELECT machine_id FROM engine_meta");
         Assert.Equal(machine, EngineSchema.Open(f.Db, 10000));
-        Assert.Equal(10, f.Number("SELECT schema_version FROM engine_meta"));
-        Assert.Equal(before, f.History(columns)); Assert.Equal(indexes, f.Indices()); Assert.Equal(keys, f.ForeignKeys());
+        Assert.Equal(11, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(before, f.History(columns)); Assert.Equal(indexes, f.Indices()); Assert.Equal(keys, f.ForeignKeys(referenceTables));
+        Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_foreign_key_list('engine_workflow_receipt') WHERE [from]='session_id' AND [table]='engine_session' AND [to]='id'"));
+        Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_foreign_key_list('engine_workflow_start') WHERE [from]='owner_id' AND [table]='engine_session' AND [to]='id'"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_foreign_key_list('engine_needs_me') WHERE [from]='addressee_session_id' AND [table]='engine_session' AND [to]='id'"));
         Assert.Equal(0, f.Number("SELECT \"notnull\" FROM pragma_table_info('engine_session') WHERE name='model'"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_session') WHERE name='account_context'"));
@@ -85,7 +88,7 @@ public sealed class SessionUpgradeTests
         Assert.Equal(before, f.Snapshot()); Assert.Equal(4, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(0, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_message') WHERE name='framed'"));
         Assert.Equal(f.Text("SELECT machine_id FROM engine_meta"), EngineSchema.Open(f.Db, 10000));
-        Assert.Equal(10, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(11, f.Number("SELECT schema_version FROM engine_meta"));
     }
 
     [Theory]
@@ -134,7 +137,7 @@ public sealed class SessionUpgradeTests
             cutover.Initialize(scope, new(schema.Machine, new(() => 1, () => 5)), schema.Machine, 11000, schema.PreviousVersion is 1 or 2 or 3);
             return schema;
         });
-        Assert.Equal(10, next.PreviousVersion); Assert.Equal(first.Machine, next.Machine);
+        Assert.Equal(11, next.PreviousVersion); Assert.Equal(first.Machine, next.Machine);
         Assert.Equal(0, f.Number("SELECT managed_checkout FROM engine_session WHERE id='pending'"));
     }
 
@@ -175,6 +178,7 @@ public sealed class SessionUpgradeTests
 
     private sealed class FaultScope(IWriteScope inner, string failAfter) : IWriteScope
     {
+        public void AfterCommit(Action publishState) => inner.AfterCommit(publishState);
         public int Execute(string sql, params SqlArg[] args)
         {
             var changed = inner.Execute(sql, args);
@@ -205,7 +209,7 @@ public sealed class SessionUpgradeTests
                 .Where(c => table != "engine_meta" || c != "schema_version").ToArray());
         public string History(Dictionary<string, string[]> columns) => string.Join("", columns.Select(pair => Rows($"SELECT rowid,{string.Join(',', pair.Value.Select(c => '[' + c + ']'))} FROM [{pair.Key}] ORDER BY rowid")));
         public string Indices() => Rows("SELECT name,sql FROM sqlite_schema WHERE type='index' AND tbl_name='engine_session' ORDER BY name");
-        public string ForeignKeys() => JsonSerializer.Serialize(Columns().Keys.SelectMany(table => Db.Query($"PRAGMA foreign_key_list([{table}])",
+        public string ForeignKeys(IEnumerable<string>? tables = null) => JsonSerializer.Serialize((tables ?? Columns().Keys).SelectMany(table => Db.Query($"PRAGMA foreign_key_list([{table}])",
             r => new { Table = table, Target = r.Text(2), From = r.Text(3), To = r.Text(4) }, default))
             .Where(key => (key.Table == "engine_session" || key.Target == "engine_session") &&
                 !(key.Table == "engine_needs_me" && key.From == "addressee_session_id")));

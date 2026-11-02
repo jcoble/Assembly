@@ -71,6 +71,8 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
                 transaction.Commit();
             }
 
+            foreach (var publishState in scope.Committed)
+                publishState();
             foreach (var (topic, key, json, keyedOnly) in scope.Published)
                 _topics.Publish(topic, key, json, keyedOnly);
             // One decision, so a new background checkpoint never beats the cap's catch-up to the moment the last ends.
@@ -172,6 +174,9 @@ public sealed class AtomicWriter : IAtomicWriter, IDisposable
     private sealed class Scope(SqliteConnection db) : IWriteScope
     {
         public List<(string Topic, string? Key, string Json, bool KeyedOnly)> Published { get; } = [];
+        public List<Action> Committed { get; } = [];
+
+        public void AfterCommit(Action publishState) => Committed.Add(publishState);
 
         public int Execute(string sql, params SqlArg[] args) => Sql.Execute(db, sql, args);
 
