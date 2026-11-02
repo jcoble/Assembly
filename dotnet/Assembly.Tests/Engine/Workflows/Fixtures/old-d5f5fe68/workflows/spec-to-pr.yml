@@ -1,0 +1,71 @@
+name: Spec to PR
+# For a task whose body already holds a reviewed implementation spec.
+# Build, checks, code review, proof, PR, final review, merge (unless the owner picks "I'll merge").
+inputs:
+  task: { description: Notion task whose body is the reviewed spec, required: true }
+  i_merge: { description: "I'll merge", default: false }
+limits: { max_sessions: 2, step_timeout_minutes: 90, max_rounds: 4 }
+steps:
+  build: { result: build, agent: { provider: claude, model: opus }, prompt: prompts/spec-build.md }
+  checks:
+    needs: [build]
+    run:
+      # The build must leave its work committed, or the PR step has nothing to open.
+      - test -z "$(git status --porcelain)" && test -n "$(git log --oneline origin/main..HEAD)" || { echo "The build left work uncommitted or made no commit:"; git status --short; exit 1; }
+      - cd tauri-svelte-preview && pnpm install --frozen-lockfile --prefer-offline
+      - cd tauri-svelte-preview && npx tsc --noEmit -p .
+      - cd tauri-svelte-preview && pnpm run check:svelte
+      - cd tauri-svelte-preview && pnpm test:async-lifecycle
+      - cd core && PATH="$HOME/.cargo/bin:$PATH" CARGO_BUILD_JOBS=3 cargo test
+      # The app crate too. The four skipped tests need macOS and fail on a Linux machine.
+      - >-
+        cd tauri-svelte-preview/src-tauri && PATH="$HOME/.cargo/bin:$PATH" CARGO_BUILD_JOBS=3
+        cargo test --no-default-features --
+        --skip reaper::tests::macos_process_marker_readback_preserves_provider_scope
+        --skip reaper::tests::reaper_kills_marked_group_with_dead_owner
+        --skip lsp::tests::a_read_mode_workspace_starts_no_language_server
+        --skip resources::tests::a_process_is_measured_by_its_physical_footprint
+    repeat: true
+    on_fail: build
+  code-review:
+    needs: [checks]
+    result: review
+    review: { of: build, agent: { provider: claude, model: sonnet }, prompt: prompts/spec-code-review.md }
+  proof:
+    needs: [code-review]
+    result: proof
+    agent: { provider: claude, model: opus }
+    prompt: prompts/proof.md
+  pr:
+    needs: [proof]
+    run:
+      - git push -u origin HEAD
+      - gh pr create --fill --body-file "${{ run.pr_body }}" || gh pr edit --body-file "${{ run.pr_body }}"
+      - evidence publish "${{ task.key }}"
+  # The repository's review bot reviews the PR; its findings are fixed or answered here.
+  pr-feedback:
+    needs: [pr]
+    # It commits the bot's fixes, so it reports as a build.
+    result: build
+    agent: { provider: claude, model: opus }
+    prompt: prompts/pr-feedback.md
+  final-review:
+    needs: [pr-feedback]
+    result: review
+    review: { of: build, agent: { provider: claude, model: sonnet }, prompt: prompts/final-review.md }
+  # The body is rewritten when a command step starts, so this one carries the final review.
+  pr-body:
+    needs: [final-review]
+    run:
+      - gh pr edit --body-file "${{ run.pr_body }}"
+  merge:
+    needs: [pr-body]
+    if: "${{ !inputs.i_merge }}"
+    run:
+      # One command: the engine runs every listed command even after one fails, so separate
+      # gate commands would not stop the merge. Merge only when the review bot has reviewed
+      # this head with nothing open and the checks pass.
+      - >-
+        node --experimental-strip-types tauri-svelte-preview/scripts/prBotReview.ts
+        && gh pr checks --watch
+        && ALLOW_MERGE=1 gh pr merge --merge --match-head-commit "$(git rev-parse HEAD)"

@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "Microsoft.NET.ILLink.Tasks": {
+        "type": "Direct",
+        "requested": "[10.0.11, )",
+        "resolved": "10.0.11",
+        "contentHash": "IBf7lbovvjGWVWXZX5cJ/cO0WXbId0Zq4BuSeT94mGZuOAP66oMeH9PTBZ9Jpp3Jb6jtK0qm/NyUbPRo1gC/wQ=="
+      },
+      "ModelContextProtocol.Core": {
+        "type": "Direct",
+        "requested": "[2.3.0, )",
+        "resolved": "2.3.0",
+        "contentHash": "EDpbQholhVWoNumb0Ab3oGv9LmXOLgaD5ixEIUkrnzpnqD0TJCSHTJ5G71/J1KlrQ98aWDclWTPMffKTnCJoMw==",
+        "dependencies": {
+          "Microsoft.Extensions.AI.Abstractions": "10.11.0",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.13"
+        }
+      },
+      "YamlDotNet": {
+        "type": "Direct",
+        "requested": "[16.3.0, )",
+        "resolved": "16.3.0",
+        "contentHash": "SgMOdxbz8X65z8hraIs6hOEdnkH6hESTAIUa7viEngHOYaH+6q5XJmwr1+yb9vJpNQ19hCQY69xbFsLtXpobQA=="
+      },
+      "Microsoft.Extensions.AI.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.11.0",
+        "contentHash": "h4DX/TdJU4fk1GGaf19n6Kujkj6VXbGeL4UEOsQ8+ZJC5fVApPauokCtvBP684BYbczUYZQNfo1mbmyHG4WVSg=="
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.13",
+        "contentHash": "G2GrGWNAPZBsii2F6AU8n+JT2tC1/I0Ml/e9ZyNCgPjf3hZqronP7o0X91aAynCmVeae8KkSIUNXXeXCNRmdVQ=="
+      },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.13",
+        "contentHash": "aSZEhEig4fvNiw2zs8Z6NyDlniKtq6YjcF3DyHuqTEHcZ2VKA/6itMPZ+dW+yWABWExlDcQwwdbqX1Rcb7W8WQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13"
+        }
+      },
+      "assembly.application": {
+        "type": "Project",
+        "dependencies": {
+          "Assembly.Domain": "[1.0.0, )",
+          "DiffPlex": "[1.9.0, )",
+          "Markdig": "[1.5.0, )"
+        }
+      },
+      "assembly.domain": {
+        "type": "Project"
+      },
+      "DiffPlex": {
+        "type": "CentralTransitive",
+        "requested": "[1.9.0, )",
+        "resolved": "1.9.0",
+        "contentHash": "Z4IDEH6iOb6d+Y2QUjsbq1Fp5I/kwZzNdr/evBTbCGq+ShAjE4baLm7lX1tfjV2p34QI3V9kctCQziFuuKqeCA=="
+      },
+      "Markdig": {
+        "type": "CentralTransitive",
+        "requested": "[1.5.0, )",
+        "resolved": "1.5.0",
+        "contentHash": "oEm6N4PYFPUZiJ5e89993AE6hfC8EWRGD5M8nyoSJbwD4GgW818mjlQCk++SdTV4godaN50Ybcmm4j2Dp76oIQ=="
+      }
+    }
+  }
+}
