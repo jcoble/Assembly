@@ -27,24 +27,24 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public async Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken)
     {
         var host = sessions.For(session.SessionId);
-        var label = Assembly.Application.Features.Chat.Helpers.MessageFrame.SenderOf(text);
-        var sent = await host.SendAsync(text, clientId, label, cancellationToken);
+        var fromSessionId = Assembly.Application.Features.Chat.Helpers.MessageFrame.SenderOf(text);
+        var sent = await host.SendAsync(text, clientId, null, cancellationToken, fromSessionId);
         if (sent is SendResult.Busy)
         {
             var turn = host.CurrentTurn;
             SteerResult outcome;
-            try { outcome = await host.SteerAsync(text, clientId, label, cancellationToken); }
+            try { outcome = await host.SteerAsync(text, clientId, null, cancellationToken, fromSessionId); }
             catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException) { return null; }
             if (outcome == SteerResult.Injected) return turn.RunId;
             if (outcome == SteerResult.PromptRequired && turn.RunId is not null)
                 await turn.Done.WaitAsync(cancellationToken);
             else if (outcome != SteerResult.NotRunning) return null;
-            sent = await host.SendAsync(text, clientId, label, cancellationToken);
+            sent = await host.SendAsync(text, clientId, null, cancellationToken, fromSessionId);
         }
         return sent switch
         {
             SendResult.Inserted inserted => inserted.RunId,
-            SendResult.Unknown => host.LegacyRunOfClient(clientId, text, label),
+            SendResult.Unknown => host.LegacyRunOfClient(clientId, text, null, fromSessionId),
             SendResult.AuthRequired => throw new Assembly.Application.Common.Calls.CallFailed("authentication required"),
             SendResult.Failed failed => throw new Assembly.Application.Common.Calls.CallFailed(failed.Reason),
             _ => null

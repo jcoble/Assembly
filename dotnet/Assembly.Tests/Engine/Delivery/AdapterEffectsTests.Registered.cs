@@ -38,7 +38,7 @@ public sealed partial class AdapterEffectsTests
         using (var snapshot = f.Db.OpenSnapshot(default))
         {
             var row = f.Rows.UserDeliveryOfClient(snapshot, f.Session.SessionId, "registered-message")!;
-            Assert.Equal("Jesse", row.From); Assert.Equal("registered-provider", row.Acknowledgment!.ProviderMessageId);
+            Assert.Null(row.From); Assert.Equal("Jesse", row.SenderLabel); Assert.Equal("registered-provider", row.Acknowledgment!.ProviderMessageId);
         }
         await SocketSend(socket, $$"""{"t":"call","id":2,"feature":"engine","method":"command","args":{{args}}}""");
         Assert.True((await SocketRead(socket)).GetProperty("result").GetProperty("applied").GetBoolean());
@@ -47,21 +47,28 @@ public sealed partial class AdapterEffectsTests
         await app.StopAsync();
     }
 
-    [Fact]
-    public async Task Actual_registered_legacy_http_send_waits_for_insertion_and_keeps_response_shape()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Actual_registered_legacy_http_send_waits_for_insertion_and_keeps_response_shape(bool legacyFrame)
     {
         await using var f = new AdapterDeliveryFixture(); var attachments = new AttachmentStore(Path.GetTempPath());
         var local = new LocalMachine(f.Hub, f.Sessions, f.Hosts, attachments);
         await using var app = ApiServer.Build(new(f.Hub, f.Sessions, new MachineSet(local), attachments, "isolated-token"), 0, out _);
         await app.StartAsync(); using var http = new HttpClient { BaseAddress = new(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single()) };
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "isolated-token");
-        var sending = http.PostAsync($"/sessions/{f.Session.SessionId}/send", new StringContent("""{"text":"HTTP body","clientId":"http-client"}""", Encoding.UTF8, "application/json"));
+        var text = legacyFrame ? Assembly.Application.Features.Chat.Helpers.MessageFrame.Of("old-message", f.Session, "HTTP body") : "HTTP body";
+        var body = JsonSerializer.Serialize(new { text, clientId = "http-client" });
+        var sending = http.PostAsync($"/sessions/{f.Session.SessionId}/send", new StringContent(body, Encoding.UTF8, "application/json"));
         var agent = await f.Launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt"); Assert.False(sending.IsCompleted);
         var pending = Assert.Single(f.Rows.RowsAfter(f.Session.SessionId, 0), row => row.Kind == "user");
+        Assert.Equal(text, prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        Assert.Equal(legacyFrame ? f.Session.SessionId : null, pending.Payload.TryGetProperty("from", out var from) ? from.GetString() : null);
+        Assert.False(pending.Payload.TryGetProperty("senderLabel", out _));
         await agent.InsertAsync(prompt, "http-provider"); using var response = await sending.WaitAsync(DeliveryWait); response.EnsureSuccessStatusCode();
         using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync()); Assert.Equal(pending.RunId, result.RootElement.GetProperty("runId").GetString());
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}"""); await agent.CloseAsync();
-        using var duplicate = await http.PostAsync($"/sessions/{f.Session.SessionId}/send", new StringContent("""{"text":"HTTP body","clientId":"http-client"}""", Encoding.UTF8, "application/json"));
+        using var duplicate = await http.PostAsync($"/sessions/{f.Session.SessionId}/send", new StringContent(body, Encoding.UTF8, "application/json"));
         duplicate.EnsureSuccessStatusCode(); Assert.Single(f.Rows.RowsAfter(f.Session.SessionId, 0), row => row.Kind == "user"); Assert.Equal(1, f.Launcher.Launches);
         await app.StopAsync();
     }

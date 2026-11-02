@@ -50,10 +50,10 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
                     var admission = Admission(scope, effect, delivery);
                     if (delivery.Intent.How == "steer")
                     {
-                        var steered = await host.SteerDeliveryAsync(delivery.Intent.Text, delivery.Intent.ClientId, delivery.Label, admission, ct);
+                        var steered = await host.SteerDeliveryAsync(delivery.Intent.Text, delivery.Intent.ClientId, delivery.Label, admission, ct, delivery.FromSessionId);
                         return steered.Outcome == SteerResult.Injected ? MessageReceipt("delivered_to_turn", null, null, steered.UserRow) : MessageReceipt("queued", null, "prompt_required");
                     }
-                    var sent = await host.SendAsync(delivery.Intent.Text, delivery.Intent.ClientId, delivery.Label, admission, ct);
+                    var sent = await host.SendAsync(delivery.Intent.Text, delivery.Intent.ClientId, delivery.Label, admission, ct, delivery.FromSessionId);
                     return sent switch
                     {
                         SendResult.Inserted inserted => MessageReceipt("next_turn", inserted.ProviderMessageId, null, inserted.UserRow),

@@ -58,7 +58,7 @@ public sealed partial class SessionHost
                 pump = PumpAsync(updates);
             }
             if (kept is not null) BindPolicy(session, turn);
-            if (turn.Delivery is { } delivery && !CurrentAdmission(delivery, text, delivery.ClientId, delivery.SenderLabel))
+            if (turn.Delivery is { } delivery && !CurrentAdmission(delivery, text, delivery.ClientId, delivery.SenderLabel, delivery.FromSessionId))
             {
                 turn.Inserted.TrySetResult(new SendResult.Unknown());
                 throw new CallFailed("The delivery owner changed.");

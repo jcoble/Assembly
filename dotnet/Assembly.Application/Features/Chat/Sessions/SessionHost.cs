@@ -40,8 +40,8 @@ public sealed partial class SessionHost : IPermissionPolicy
     private RunningTurn? _turn;
     // The last turn's work, which goes on past its end rows until its session is closed.
     private Task _lastTurn = Task.CompletedTask;
-    private readonly Dictionary<string, (string Text, string? Label, Task<SendResult> Send)> _sending = [];
-    private readonly Dictionary<string, (string Text, string? Label, Task<SteerDeliveryResult> Send)> _steering = [];
+    private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SendResult> Send)> _sending = [];
+    private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SteerDeliveryResult> Send)> _steering = [];
     // The asks waiting for the user, by id. Guarded by _gate.
     private readonly Dictionary<string, OpenAsk> _asks = [];
 

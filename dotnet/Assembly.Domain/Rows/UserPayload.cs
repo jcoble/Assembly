@@ -7,4 +7,5 @@ namespace Assembly.Domain.Rows;
 /// it, so a resend of the same message finds this row.
 /// </summary>
 public sealed record UserPayload(string Text, string? From = null, string? ClientId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UserAcknowledgment? Acknowledgment = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UserAcknowledgment? Acknowledgment = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SenderLabel = null);

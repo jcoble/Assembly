@@ -35,7 +35,9 @@ public static class TranscriptReplay
                     openPrompt = message.GetProperty("id").GetInt64();
                     promptSession = message.GetProperty("params").GetProperty("sessionId").GetString();
                     var text = message.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString()!;
-                    events.Add(new TurnStarted(at, $"run-{++turns}", text));
+                    // Old MessageFrame transcripts preserve display provenance only. These lines cannot
+                    // recover a captured Engine label or prove owning identity/provider insertion.
+                    events.Add(new TurnStarted(at, $"run-{++turns}", text, FromSessionId: Application.Features.Chat.Helpers.MessageFrame.SenderOf(text)));
                     break;
                 case "in" when MethodOf(message) == AcpMethods.SessionUpdate:
                     var update = message.GetProperty("params").Deserialize(AcpJsonContext.Default.SessionNotification)!;

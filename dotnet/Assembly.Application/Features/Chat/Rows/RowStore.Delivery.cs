@@ -6,7 +6,7 @@ using Assembly.Domain.Rows;
 namespace Assembly.Application.Features.Chat.Rows;
 
 public sealed record UserDeliveryRow(long Seq, string? RunId, string Text, string? From,
-    string ClientId, UserAcknowledgment? Acknowledgment);
+    string ClientId, UserAcknowledgment? Acknowledgment, string? SenderLabel = null);
 
 public sealed partial class RowStore
 {
@@ -27,7 +27,7 @@ public sealed partial class RowStore
             var payload = JsonSerializer.Deserialize(row.Text(2), RowJsonContext.Rows.UserPayload)
                 ?? throw new CallFailed("delivery_ack_conflict");
             return new UserDeliveryRow(row.Long(0), row.IsNull(1) ? null : row.Text(1), payload.Text,
-                payload.From, payload.ClientId!, payload.Acknowledgment);
+                payload.From, payload.ClientId!, payload.Acknowledgment, payload.SenderLabel);
         }, new SqlArg("$session", sessionId), new SqlArg("$client", clientId));
         if (rows.Count > 1) throw new CallFailed("delivery_ack_conflict");
         return rows.Count == 0 ? null : rows[0];

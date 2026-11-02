@@ -28,6 +28,7 @@ fn items() -> Vec<Item> {
                 text: "go".into(),
                 at: 1,
                 from: None,
+                sender_label: None,
             },
         ),
         item(

@@ -83,7 +83,7 @@
   let senders = $state<Record<string, string>>({});
   $effect(() => {
     for (const item of view.items) {
-      if (item.kind !== 'user' || !item.from || item.from in untrack(() => senders)) continue;
+      if (item.kind !== 'user' || !item.from || item.senderLabel != null || item.from in untrack(() => senders)) continue;
       const from = item.from;
       senders[from] = 'Another session';
       Promise.all([getSession(token, from, owner.signal), listAgents(token, owner.signal)]).then(
