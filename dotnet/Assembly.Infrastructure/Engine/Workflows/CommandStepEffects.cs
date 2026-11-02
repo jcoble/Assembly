@@ -33,26 +33,30 @@ public sealed class CommandStepEffects(IAppDatabase db, EngineCommands commands,
     {
         bool ask;
         bool stopping;
+        bool preparationStale;
         CommandProcessIdentity? saved = null;
         var intent = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!;
         using (var scope = db.OpenSnapshot(CancellationToken.None))
         {
             stopping = !CommandStepTransitions.CanLaunch(scope, intent, machine);
-            var execution = scope.QueryFirst("SELECT executor_json FROM engine_outbox WHERE id=$id AND kind='workflow_command'",
-                r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$id", effect.Id));
-            if (execution is not null) saved = JsonSerializer.Deserialize(execution, WorkflowExecutionJson.Default.CommandProcessIdentity);
-            var neverLaunched = saved is null && WorkflowExecutionNeeds.Policy(scope, effect) != "allow" && scope.QueryFirst("""
+            var execution = scope.QueryFirst("SELECT executor_json,receipt_json FROM engine_outbox WHERE id=$id AND kind='workflow_command'",
+                r => (Process: r.IsNull(0) ? null : r.Text(0), Receipt: r.IsNull(1) ? null : r.Text(1)), new SqlArg("$id", effect.Id));
+            if (execution.Process is not null) saved = JsonSerializer.Deserialize(execution.Process, WorkflowExecutionJson.Default.CommandProcessIdentity);
+            var noLaunchReceipt = execution.Receipt is null ? null : JsonSerializer.Deserialize(execution.Receipt, EngineJson.Default.EffectReceipt);
+            var knownNotStarted = noLaunchReceipt is not null && noLaunchReceipt.Data.ValueKind == JsonValueKind.Object &&
+                noLaunchReceipt.Data.TryGetProperty("notStarted", out var known) && known.ValueKind == JsonValueKind.True &&
+                CommandStepTransitions.ValidConfirmation(scope, effect, noLaunchReceipt);
+            var neverLaunched = saved is null && (knownNotStarted || WorkflowExecutionNeeds.Policy(scope, effect) != "allow" && scope.QueryFirst("""
                 SELECT EXISTS(SELECT 1 FROM engine_needs_me WHERE source_kind='workflow'
                   AND json_extract(execution_json,'$.effectId')=$id AND json_extract(execution_json,'$.reason')='policy')
-                """, r => r.Long(0) != 0, new SqlArg("$id", effect.Id));
+                """, r => r.Long(0) != 0, new SqlArg("$id", effect.Id)));
             if (stopping && (!reconcile || neverLaunched) || !reconcile && ct.IsCancellationRequested)
-                return new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new CommandExecutionReceipt(effect.Id,
-                    CommandStepTransitions.Digest(effect.Payload.GetRawText()), null, null, "", "", 0, 0, false, true,
-                    "not_started", "", null, NotStarted: true), WorkflowExecutionJson.Default.CommandExecutionReceipt), null);
-            if (!reconcile && (intent.PrBody is null || intent.PrBody.InputSetSha256 != WorkflowPrBodies.InputSetHash(scope, intent.RunId, intent.StepId, intent.Generation)))
-                return new(EffectDisposition.Unknown, JsonSerializer.SerializeToElement((string?)null, EngineJson.Default.String), "pr_body_stale");
+                return new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(CommandStepTransitions.NotStarted(effect),
+                    WorkflowExecutionJson.Default.CommandExecutionReceipt), null);
+            preparationStale = !reconcile && (intent.PrBody is null || intent.PrBody.InputSetSha256 != WorkflowPrBodies.InputSetHash(scope, intent.RunId, intent.StepId, intent.Generation));
             ask = !reconcile && WorkflowExecutionNeeds.Policy(scope, effect) != "allow";
         }
+        if (preparationStale) return PreparationStale(effect);
         if (ask)
         {
             OpenNeed(effect, "policy");
@@ -62,8 +66,16 @@ public sealed class CommandStepEffects(IAppDatabase db, EngineCommands commands,
         var result = reconcile && stopping && saved is not null
             ? await _process.StopAsync(effect, saved, ct)
             : await _process.ExecuteAsync(effect, reconcile, ct);
+        if (result.Disposition == EffectDisposition.Unknown && result.Error == "pr_body_changed") return PreparationStale(effect);
         if (result.Disposition == EffectDisposition.Unknown) OpenNeed(effect, "command_uncertain");
         return result;
+    }
+
+    private EffectReceipt PreparationStale(Effect effect)
+    {
+        OpenNeed(effect, "preparation_stale");
+        return new(EffectDisposition.Unavailable, JsonSerializer.SerializeToElement(CommandStepTransitions.NotStarted(effect),
+            WorkflowExecutionJson.Default.CommandExecutionReceipt), "preparation_stale");
     }
 
     private void OpenNeed(Effect effect, string reason) => db.Writer.Write("engine.workflow.execution_need", scope =>
