@@ -21,7 +21,7 @@ public static partial class ReviewTransitions
             new("$attempt", intent.Attempt), new("$generation", intent.Generation)) != 1)
             return new(false, false, "stale_attempt", c.ExpectedVersion, 0, c.Epoch);
         return Request(s, c, intent.RunId, intent.Attempt, intent.Generation, c.ExpectedVersion,
-            target, receiptId, [intent.StepId], "command");
+            target, receiptId, [intent.StepId], "command", receiptId);
     }
 
     private static string? CommandTarget(IReadScope s, string step)

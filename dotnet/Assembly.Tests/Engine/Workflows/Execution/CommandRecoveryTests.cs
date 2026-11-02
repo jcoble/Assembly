@@ -74,6 +74,49 @@ public sealed class CommandRecoveryTests
         Assert.Equal(1, held.Starts);
     }
 
+    [Fact]
+    public async Task Cancelled_parked_unknown_waits_for_exact_saved_executor_to_stop()
+    {
+        await using var held = await InterruptedCommand.StartAsync(false);
+        await held.InterruptAsync(); var f = held.Fixture;
+        var c = held.OwnerContext();
+        var answer = EngineCommands.PrepareOwnerNeedCommand(c.CommandId, c.Machine, c.EntityId, 1, 0,
+            new ResolveNeed("answered", JsonSerializer.SerializeToElement("cancel")), null, null, default);
+        Assert.True(f.Core.Db.Writer.Write("test.cancel-parked", scope => f.Commands.ApplyPreparedOwnerNeed(scope, answer, 1000)).Applied);
+        Assert.False(held.Execution.IsCompleted);
+        using (var snapshot = f.Core.Db.OpenSnapshot(default)) Assert.False(CommandStepTransitions.ExecutionsDrained(snapshot, f.Run));
+        var intent = held.Effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!;
+        var stop = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.System, "engine.worker"), held.Effect.Id,
+            f.Core.Number("SELECT version FROM engine_outbox WHERE id='" + held.Effect.Id + "'"), intent.ExecutionEpoch, 1000);
+        Assert.True(f.Core.Db.Writer.Write("test.stop-reconcile", scope => f.Commands.ReconcileWorkflowCommandStop(scope, stop)).Applied);
+        var effect = f.Claim(); var receipt = await f.Host().ReconcileAsync(effect, default);
+        Assert.Equal(EffectDisposition.Confirmed, receipt.Disposition);
+        Assert.True(f.Complete(effect, receipt).Applied);
+        await held.Execution.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("cancelled", f.Core.Text("SELECT state FROM engine_step"));
+        using (var snapshot = f.Core.Db.OpenSnapshot(default)) Assert.True(CommandStepTransitions.ExecutionsDrained(snapshot, f.Run));
+        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='command_stop_requested'"));
+        Assert.Equal(1, held.Starts);
+    }
+
+    [Fact]
+    public async Task Parked_policy_cancellation_reconciles_as_known_not_launched()
+    {
+        using var f = new CommandStepTests.Fixture(["printf must-not-launch"], "ask");
+        Assert.True(f.Start(f.Prepare()).Applied); var effect = f.Claim();
+        Assert.True(f.Complete(effect, await f.Host().ExecuteAsync(effect, default)).Applied);
+        f.Core.Db.Writer.Write("test.run-cancel", scope => scope.Execute("UPDATE engine_run SET state='cancelling'; UPDATE engine_step_attempt SET cancel_requested=1"));
+        var intent = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!;
+        var c = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.System, "engine.worker"), effect.Id,
+            f.Core.Number("SELECT version FROM engine_outbox WHERE id='" + effect.Id + "'"), intent.ExecutionEpoch, 1000);
+        Assert.True(f.Core.Db.Writer.Write("test.stop-policy", scope => f.Commands.ReconcileWorkflowCommandStop(scope, c)).Applied);
+        effect = f.Claim(); var receipt = await f.Host().ReconcileAsync(effect, default);
+        Assert.True(receipt.Data.Deserialize(WorkflowExecutionJson.Default.CommandExecutionReceipt)!.NotStarted);
+        Assert.True(f.Complete(effect, receipt).Applied);
+        Assert.Equal("cancelled", f.Core.Text("SELECT state FROM engine_run"));
+        Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE executor_json IS NOT NULL"));
+    }
+
     private sealed class InterruptedCommand : IAsyncDisposable
     {
         public CommandStepTests.Fixture Fixture { get; }
