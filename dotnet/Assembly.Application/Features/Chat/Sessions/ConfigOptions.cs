@@ -40,6 +40,14 @@ public static class ConfigOptions
         return null;
     }
 
+    /// <summary>The current raw model selector, separate from its display name.</summary>
+    public static string? ModelValue(JsonElement options)
+    {
+        if (options.ValueKind != JsonValueKind.Array) return null;
+        return options.EnumerateArray().Where(option => Text(option, "category") == "model")
+            .Select(option => Text(option, "currentValue")).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+    }
+
     private static string? Text(JsonElement json, string name) =>
         json.ValueKind == JsonValueKind.Object && json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()

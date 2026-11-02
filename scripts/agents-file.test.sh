@@ -112,6 +112,7 @@ checks = {
  "claude_connectors_on": "ENABLE_CLAUDEAI_MCP_SERVERS" not in claude_env,
  "user_mcp_on": "mcp_servers" not in codex and "plugins" not in codex,
  "cli_paths": agents["claude"].get("cli", "").endswith("/claude") and "cli" not in agents["codex"],
+ "vendor_families": agents["claude"].get("vendorFamily") == "claude" and agents["codex"].get("vendorFamily") == "codex",
  "entries": agents["claude"]["args"][0].endswith("/claude-launcher.ts") and agents["codex"]["args"][0].endswith("/node_modules/@agentclientprotocol/codex-acp/dist/index.js") and "air" not in agents["codex"],
 }
 assert checks[condition], (condition, agents)
@@ -121,6 +122,7 @@ PY
 
 # The app release is designated latest, but only the newest complete provider-tagged release is eligible.
 expect_config "selects newest complete provider release, not app latest or incomplete/draft releases" entries
+expect_config "records explicit adapter vendor families" vendor_families
 python3 - "$tmp/gh-calls.jsonl" <<'PY'
 import json, sys
 calls = [json.loads(line) for line in open(sys.argv[1])]

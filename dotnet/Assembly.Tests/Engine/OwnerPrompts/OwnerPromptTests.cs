@@ -4,7 +4,7 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
 
-namespace Assembly.Tests.Engine;
+namespace Assembly.Tests.Engine.OwnerPrompts;
 
 public sealed class OwnerPromptTests
 {

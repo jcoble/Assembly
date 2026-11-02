@@ -7,7 +7,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
 using Assembly.Infrastructure.Engine;
 
-namespace Assembly.Tests.Engine;
+namespace Assembly.Tests.Engine.OwnerPrompts;
 
 public sealed class OwnerPromptPreparationTests(Xunit.Abstractions.ITestOutputHelper output)
 {
