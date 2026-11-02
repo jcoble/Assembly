@@ -165,6 +165,9 @@ public static class RunTransitions
         if (c.Epoch != run.Epoch) return Refused(c, "stale_epoch", run);
         if (c.ExpectedVersion != run.Version) return Refused(c, "version_conflict", run);
         if (IsTerminal(run.State) || run.State == "cancelling") return Refused(c, "invalid_transition", run);
+        var workflow = s.QueryFirst("SELECT definition_hash IS NOT NULL,machine FROM engine_run WHERE id=$run",
+            r => (Defined: r.Long(0) != 0, Machine: r.Text(1)), new SqlArg("$run", runId));
+        if (workflow.Defined && workflow.Machine != c.Machine) return Refused(c, "wrong_machine", run);
         var expired = s.QueryFirst("""
             SELECT COUNT(*) FROM engine_run r JOIN engine_session se ON se.id=r.owner_session_id
             WHERE r.id=$id AND se.state='lost' AND r.owner_lost_ms IS NOT NULL
@@ -172,7 +175,46 @@ public static class RunTransitions
             """, r => r.Long(0), new("$id", runId), new("$now", c.NowMs));
         if (expired == 0) return Refused(c, "owner_not_expired", run);
         s.Execute("UPDATE engine_run SET state='failed',version=version+1,updated_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", runId));
-        return EngineJournal.Commit(s, c, run.Version + 1, run.Epoch, [Changed(runId, run.Version + 1, run.Owner, "failed")], []);
+        List<EventDraft> events = [Changed(runId, run.Version + 1, run.Owner, "failed")];
+        List<EffectDraft> effects = [];
+        if (workflow.Defined)
+        {
+            events[0] = events[0] with { Data = events[0].Data with { Reason = "owner_lost" } };
+            s.Execute("""
+                INSERT INTO engine_workflow_history(id,version,machine,created_ms,updated_ms,run_id,history_seq,generation,kind,at_ms,safe_body_json)
+                SELECT $id,1,$machine,$now,$now,$run,
+                  (SELECT COALESCE(MAX(history_seq),0)+1 FROM engine_workflow_history WHERE run_id=$run),0,'owner_lost',$now,
+                  json_object('reason','owner_lost','ownerSessionId',owner_session_id,'ownerEpoch',$epoch,
+                    'lostMs',owner_lost_ms,'deadlineMs',owner_lost_ms+owner_loss_limit_ms)
+                FROM engine_run WHERE id=$run
+                """, new("$id", c.CommandId.ToString("N") + "/owner-lost"), new("$machine", c.Machine),
+                new("$now", c.NowMs), new("$run", runId), new("$epoch", run.Epoch));
+            // Failure is final immediately; stopping the original executors remains owned, durable cleanup.
+            var stopped = s.Query("""
+                UPDATE engine_session SET cancel_requested=1,version=version+1,updated_ms=$now
+                WHERE machine=$machine AND holder='local' AND reserved_epoch IS NULL
+                  AND parent_id=$owner AND run_id=$run AND state!='ended' AND cancel_requested=0
+                  AND EXISTS(SELECT 1 FROM engine_step st JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
+                    WHERE st.run_id=$run AND st.kind IN ('agent','review') AND st.session_id=engine_session.id
+                      AND st.authority_session_id=engine_session.id AND st.authority_machine=$machine AND st.authority_epoch=engine_session.epoch
+                      AND a.session_id=engine_session.id AND a.authority_machine=$machine AND a.execution_epoch=engine_session.epoch
+                      AND a.generation=st.generation)
+                RETURNING id,version,state,epoch,parent_id
+                """, r => new EventDraft("session.cancel_requested", "session", r.Text(0), r.Long(1), false,
+                    new(r.Text(0), runId, null, r.Text(4), r.Text(2), r.Long(3))),
+                new("$machine", c.Machine), new("$owner", run.Owner), new("$run", runId), new("$now", c.NowMs));
+            events.AddRange(stopped);
+            effects.AddRange(stopped.Select(session => new EffectDraft("", "stop", session.EntityId, runId,
+                JsonSerializer.SerializeToElement(new StopSession(), EngineJson.Default.StopSession))));
+            s.Execute("""
+                UPDATE engine_step_attempt SET cancel_requested=1 WHERE cancel_requested=0 AND authority_machine=$machine
+                  AND EXISTS(SELECT 1 FROM engine_step st WHERE st.id=step_id AND st.run_id=$run AND st.kind='command'
+                    AND st.authority_machine=$machine AND st.attempt=engine_step_attempt.attempt
+                    AND st.generation=engine_step_attempt.generation AND st.authority_epoch=engine_step_attempt.execution_epoch
+                    AND st.state IN ('running','waiting'))
+                """, new("$machine", c.Machine), new("$run", runId));
+        }
+        return EngineJournal.Commit(s, c, run.Version + 1, run.Epoch, events, effects);
     }
 
     internal static bool IsTerminal(string state) => state is "succeeded" or "failed" or "cancelled";
