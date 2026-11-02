@@ -1,6 +1,6 @@
 using Assembly.Application.Common.Calls;
 
-namespace Assembly.Infrastructure.Engine;
+namespace Assembly.Infrastructure.Engine.Relays;
 
 /// <summary>Owns the bounded relay staging lifetime, including work that has not published a handle.</summary>
 internal sealed partial class RelayMessageParts : IAsyncDisposable
@@ -63,7 +63,8 @@ internal sealed partial class RelayMessageParts : IAsyncDisposable
         foreach (var registration in connection.Registrations) registration.Dispose();
         connection.Source?.Dispose();
         connection.Target?.Dispose();
-        connection.Source = null; connection.Target = null; connection.Registrations.Clear();
+        connection.ForeignSource?.Dispose(); connection.ForeignTarget?.Dispose();
+        connection.Source = null; connection.Target = null; connection.ForeignSource = null; connection.ForeignTarget = null; connection.Registrations.Clear();
         connection.Stop.Dispose();
     }
 
@@ -87,6 +88,8 @@ internal sealed partial class RelayMessageParts : IAsyncDisposable
         internal bool Closed;
         internal SourceStage? Source;
         internal TargetStage? Target;
+        internal ForeignSourceStage? ForeignSource;
+        internal ForeignTargetStage? ForeignTarget;
     }
 
     internal sealed partial class Operation : IDisposable

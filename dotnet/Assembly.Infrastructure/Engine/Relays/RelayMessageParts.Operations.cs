@@ -1,7 +1,7 @@
 using Assembly.Application.Common.Calls;
 using Assembly.Engine.Relays;
 
-namespace Assembly.Infrastructure.Engine;
+namespace Assembly.Infrastructure.Engine.Relays;
 
 internal sealed partial class RelayMessageParts
 {

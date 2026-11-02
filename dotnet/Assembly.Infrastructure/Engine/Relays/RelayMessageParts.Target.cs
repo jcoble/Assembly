@@ -1,7 +1,7 @@
 using Assembly.Application.Common.Calls;
 using Assembly.Engine.Relays;
 
-namespace Assembly.Infrastructure.Engine;
+namespace Assembly.Infrastructure.Engine.Relays;
 
 internal sealed partial class RelayMessageParts
 {
@@ -18,7 +18,7 @@ internal sealed partial class RelayMessageParts
                 lock (_owner._gate)
                 {
                     RequireLive();
-                    if (_connection.Target is not null) throw new CallFailed("relay_busy");
+                    if (_connection.Target is not null || _connection.ForeignTarget is not null) throw new CallFailed("relay_busy");
                     _connection.Target = candidate; published = true;
                     return probe with { Transfer = candidate.Handle };
                 }

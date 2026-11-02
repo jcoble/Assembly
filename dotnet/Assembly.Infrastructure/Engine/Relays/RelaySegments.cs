@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using Assembly.Application.Common.Calls;
 using Assembly.Engine.Relays;
 
-namespace Assembly.Infrastructure.Engine;
+namespace Assembly.Infrastructure.Engine.Relays;
 
 /// <summary>Sequential raw UTF8 segments; limits a frame rather than the complete message.</summary>
 internal sealed class RelaySegments(RelayPartManifest manifest) : IDisposable

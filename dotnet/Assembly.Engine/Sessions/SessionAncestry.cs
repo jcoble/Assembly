@@ -5,7 +5,7 @@ namespace Assembly.Engine.Sessions;
 
 internal sealed record AncestryNode(string Id, string Machine, string State, string? ParentId,
     long Version, long Epoch, string Holder, long Managed);
-internal sealed record AncestryChain(bool Known, IReadOnlyList<AncestryNode> Nodes);
+internal sealed record AncestryChain(bool Known, IReadOnlyList<AncestryNode> Nodes, bool InvalidProof = false);
 
 /// <summary>One recursive FK read and one batched private-marker read on the caller's snapshot.</summary>
 internal static class SessionAncestry
@@ -27,14 +27,20 @@ internal static class SessionAncestry
             : scope.Query($"SELECT command_id,fingerprint,result_json FROM engine_command_receipt WHERE command_id IN ({string.Join(',', parameters.Select(p => p.Name))})",
                 r => (Key: r.Text(0), Hash: r.Text(1), Result: r.Text(2)), parameters)
                 .ToDictionary(r => r.Key, r => (r.Hash, r.Result), StringComparer.Ordinal);
-        var known = rows.Count > 0;
+        var known = rows.Count > 0; var invalid = false;
         foreach (var node in foreign)
         {
             var key = RelayReceiptKeys.ForeignParent(target, node.Id);
-            if (node.Machine == target || node.State != "foreign" || node.Version != 0 || node.Epoch != 0 ||
-                node.Holder != node.Machine || node.Managed != 0 || !receipts.TryGetValue(key, out var receipt) ||
-                !EngineJournal.IsForeignParentProof(target, new(node.Id, node.Machine, "", "", node.ParentId), receipt.Hash, receipt.Result))
+            var validRow = node.Machine != target && node.State == "foreign" && node.Version == 0 && node.Epoch == 0 &&
+                node.Holder == node.Machine && node.Managed == 0;
+            if (!receipts.TryGetValue(key, out var receipt))
+            {
                 known = false;
+                if (!validRow || node.ParentId is not null) invalid = true;
+                continue;
+            }
+            if (!validRow || !EngineJournal.IsForeignParentProof(target, new(node.Id, node.Machine, "", "", node.ParentId), receipt.Hash, receipt.Result))
+            { known = false; invalid = true; }
         }
         var byId = rows.ToDictionary(n => n.Id, StringComparer.Ordinal);
         List<AncestryNode> chain = [];
@@ -42,9 +48,10 @@ internal static class SessionAncestry
         string? next = sessionId;
         while (next is not null)
         {
-            if (!visited.Add(next) || !byId.TryGetValue(next, out var node)) { known = false; break; }
+            if (!visited.Add(next)) { known = false; invalid = true; break; }
+            if (!byId.TryGetValue(next, out var node)) { known = false; invalid |= chain.Count > 0; break; }
             chain.Add(node); next = node.ParentId;
         }
-        return new(known, chain);
+        return new(known, chain, invalid);
     }
 }
