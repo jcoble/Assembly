@@ -185,15 +185,17 @@ public sealed class RunStepTests
     }
 
     [Fact]
-    public void Optional_dependencies_and_retry_exhaustion()
+    public void Optional_dependencies_settle_before_retry_exhaustion()
     {
         using var f = new EngineFixture(); Create(f, Def("dep", false), Def("s", max: 2, dependencies: [new("dep", true)]));
+        Assert.Equal("dependency_not_ready", Start(f).Error);
+        Assert.True(Start(f, "dep").Applied); Assert.True(Set(f, "failed", "dep").Applied);
         Assert.True(Start(f).Applied); Assert.True(Set(f, "failed").Applied);
         Assert.Equal("running", f.State("engine_run", "r"));
         Assert.True(Start(f).Applied); Assert.True(Set(f, "failed", attempt: 2).Applied);
         var count = f.Count("engine_event");
         Assert.Equal("invalid_transition", Start(f).Error);
-        Assert.Equal(count, f.Count("engine_event")); Assert.Equal(2, f.Count("engine_step_attempt"));
+        Assert.Equal(count, f.Count("engine_event")); Assert.Equal(2, f.Number("SELECT COUNT(*) FROM engine_step_attempt WHERE step_id='s'"));
     }
 
     [Fact]
