@@ -6,9 +6,9 @@ namespace Assembly.Application.Features.Chat.Sessions;
 public enum SteerResult { Injected, PromptRequired, NotRunning }
 public abstract record SendResult
 {
-    public sealed record Inserted(string RunId, string ProviderMessageId, UserRowReference? UserRow = null) : SendResult;
+    public sealed record Inserted(string RunId, string ProviderMessageId, UserRowReference? UserRow = null, AuthRetryExecution? RetryExecution = null) : SendResult;
     public sealed record Busy : SendResult;
-    public sealed record AuthRequired(UserRowReference? UserRow = null) : SendResult;
+    public sealed record AuthRequired(UserRowReference? UserRow = null, AuthRetryExecution? RetryExecution = null) : SendResult;
     public sealed record Failed(string Reason) : SendResult;
     public sealed record Unknown : SendResult;
 }

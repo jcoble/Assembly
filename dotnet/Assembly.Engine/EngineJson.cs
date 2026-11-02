@@ -73,6 +73,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(MessageOutcome))]
 [JsonSerializable(typeof(BlockSignInNeeded))]
 [JsonSerializable(typeof(ReportSignInNeeded))]
+[JsonSerializable(typeof(RecordAuthRetryStarted))]
 [JsonSerializable(typeof(EstablishForeignParent))]
 [JsonSerializable(typeof(RegisterForeignSession))]
 [JsonSerializable(typeof(StartSession))]

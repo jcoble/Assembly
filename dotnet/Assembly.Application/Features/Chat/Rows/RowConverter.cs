@@ -55,6 +55,14 @@ public sealed class RowConverter
     /// <summary>Whether a tool call is still running.</summary>
     public bool HasOpenTools => _tools.Count > 0;
 
+    internal IReadOnlyList<StoredRow> CommitStarted(TurnStarted started,
+        Func<RowBatch, IReadOnlyList<StoredRow>> commit, Func<bool> committed)
+    {
+        var prior = _turn;
+        try { return commit(Apply(started)); }
+        catch { if (!committed()) _turn = prior; throw; }
+    }
+
     public RowBatch Apply(AgentEvent agentEvent)
     {
         var batch = new RowBatch();

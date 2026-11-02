@@ -41,7 +41,9 @@ public sealed partial class SessionHost : IPermissionPolicy
     private RunningTurn? _turn;
     // The last turn's work, which goes on past its end rows until its session is closed.
     private Task _lastTurn = Task.CompletedTask;
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Text, string? Label, string? FromSessionId, Task<SendResult> Send)> _sending = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Text, string? Label, string? FromSessionId,
+        Task<SendResult> Send, string? EffectId, string RunId, IReadOnlyList<string> AttachmentIds)> _sending = new();
+    private (OwningSendAdmission Delivery, UserRowReference? User, Task Done)? _lastDelivery;
     private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SteerDeliveryResult> Send)> _steering = [];
     // The asks waiting for the user, by id. Guarded by _gate.
     private readonly Dictionary<string, OpenAsk> _asks = [];

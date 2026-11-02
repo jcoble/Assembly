@@ -36,6 +36,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(MessageOutcome), "message_outcome")]
 [JsonDerivedType(typeof(BlockSignInNeeded), "block_sign_in_needed")]
 [JsonDerivedType(typeof(ReportSignInNeeded), "report_sign_in_needed")]
+[JsonDerivedType(typeof(RecordAuthRetryStarted), "record_auth_retry_started")]
 [JsonDerivedType(typeof(EstablishForeignParent), "establish_foreign_parent")]
 [JsonDerivedType(typeof(RegisterForeignSession), "register_foreign_session")]
 [JsonDerivedType(typeof(StartSession), "start_session")]

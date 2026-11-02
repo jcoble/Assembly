@@ -25,6 +25,7 @@ public interface ISessionFeed
     void SignInNeeded(IWriteScope scope, SessionObservation observed, string acpSessionId, long terminalSeq, AuthTerminalProof proof);
     void BlockFailedOpenSignInNeeded(IWriteScope scope, SessionObservation observed, AuthTerminalProof binding);
     void FailedOpenSignInNeeded(IWriteScope scope, SessionObservation observed, long terminalSeq, AuthTerminalProof proof);
+    void RetryStarted(IWriteScope scope, SessionObservation observed, AuthRetryExecution execution);
     void Replied(IWriteScope scope, SessionObservation observed, SessionTurnReply final);
     void Recovered(IWriteScope scope, RecoveredChatTurn recovered);
     bool Complete(IWriteScope scope, SessionObservation observed, string acpSessionId, SessionTurnFinalization final);
