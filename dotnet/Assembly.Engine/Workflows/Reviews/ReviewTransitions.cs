@@ -112,41 +112,13 @@ public static partial class ReviewTransitions
     {
         CommandResult Refuse(string reason) => new(false, false, reason, c.ExpectedVersion, 0, c.Epoch);
         if (c.Actor.Kind != ActorKind.System) return Refuse("forbidden");
-        var target = s.QueryFirst("""
-            SELECT st.run_id,st.version,st.generation,st.round,r.max_rounds FROM engine_step st JOIN engine_run r ON r.id=st.run_id
-            WHERE st.id=$target AND st.dispatch_state='redo_pending' AND r.machine=$machine
-              AND r.state NOT IN ('succeeded','failed','cancelled','cancelling') AND r.paused=0
-            """, r => new { Run = r.Text(0), Version = r.Long(1), Generation = checked((int)r.Long(2)), Round = checked((int)r.Long(3)), Max = checked((int)r.Long(4)) },
-            new SqlArg("$target", c.EntityId), new("$machine", c.Machine));
-        if (target is null) return Refuse("redo_not_pending");
-        if (target.Version != c.ExpectedVersion) return Refuse("version_conflict");
-        var requests = s.Query("""
-            SELECT safe_body_json FROM engine_workflow_history WHERE run_id=$run AND kind='redo_requested'
-              AND generation=$generation AND json_extract(safe_body_json,'$.targetStepId')=$target ORDER BY history_seq
-            """, r => JsonSerializer.Deserialize(r.Text(0), ReviewTransitionJson.Default.RedoRequest)!,
-            new SqlArg("$run", target.Run), new("$generation", target.Generation), new("$target", c.EntityId));
-        if (requests.Count == 0) return Refuse("redo_evidence_missing");
-        var peers = requests[0].PeerStepIds;
-        var peerJson = JsonSerializer.Serialize(peers, EngineJson.Default.IReadOnlyListString);
-        if (s.QueryFirst("""
-            SELECT COUNT(*) FROM engine_step st WHERE st.id IN (SELECT value FROM json_each($peers))
-              AND st.generation=$generation AND st.state NOT IN ('succeeded','skipped','cancelled')
-              AND st.dispatch_state!='review_settled'
-            """, r => r.Long(0), new SqlArg("$peers", peerJson), new("$generation", target.Generation)) != 0) return Refuse("review_peers_pending");
-        var affected = s.Query("""
-            WITH RECURSIVE affected(id) AS (
-                SELECT $target UNION SELECT d.step_id FROM engine_step_dependency d JOIN affected a ON d.dependency_id=a.id
-            ) SELECT st.id,st.generation,st.attempt,COALESCE(a.execution_epoch,st.authority_epoch,0),st.kind
-              FROM engine_step st LEFT JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
-              WHERE st.run_id=$run AND st.id IN affected ORDER BY st.id
-            """, r => (Fence: new WorkflowExecutionFence(r.Text(0), checked((int)r.Long(1)), checked((int)r.Long(2)), r.Long(3)), Kind: r.Text(4)),
-            new SqlArg("$target", c.EntityId), new("$run", target.Run));
-        if (affected.Any(row => row.Fence.Attempt > 0 && !released(s, row.Fence))) return Refuse("executor_quiescence_required");
-        if (s.QueryFirst("""
-            SELECT COUNT(*) FROM engine_outbox o JOIN engine_step st ON st.id=json_extract(o.payload_json,'$.stepId') OR st.session_id=o.session_id
-            WHERE st.run_id=$run AND (st.dispatch_state='redo_pending' OR st.id IN (SELECT value FROM json_each($peers)))
-              AND o.state NOT IN ('done','failed','dead')
-            """, r => r.Long(0), new SqlArg("$run", target.Run), new("$peers", peerJson)) != 0) return Refuse("executor_effects_pending");
+        var prepared = PrepareAdvance(s, c, released, out var error);
+        return prepared is null ? Refuse(error!) : ApplyAdvance(s, c, prepared);
+    }
+
+    internal static CommandResult ApplyAdvance(IWriteScope s, CommandContext c, RedoAdvancePreparation prepared)
+    {
+        var target = prepared.Target; var requests = prepared.Requests; var affected = prepared.Affected;
         var receipts = ReceiptIds(s, requests);
         var current = Findings(s, receipts);
         var outputReceipt = requests.LastOrDefault(request => request.OutputReceiptId is not null)?.OutputReceiptId;
@@ -170,7 +142,7 @@ public static partial class ReviewTransitions
                   dispatch_state=CASE WHEN state='skipped' THEN 'settled' ELSE 'pending' END,
                   session_id=CASE WHEN kind='review' THEN NULL ELSE session_id END,receipt_id=NULL,outcome_reason=NULL,
                   ended_ms=NULL,version=version+1,updated_ms=$now WHERE id=$step;
-                """, new("$now", c.NowMs), new("$step", row.Fence.StepId));
+                """, new("$now", c.NowMs), new("$step", row.StepId));
         }
         History(s, c, target.Run, c.EntityId, null, target.Generation, "redo_applied",
             JsonSerializer.Serialize(new RedoApplied(c.EntityId, target.Generation, receipts, outputReceipt), ReviewTransitionJson.Default.RedoApplied));
@@ -216,4 +188,5 @@ public static partial class ReviewTransitions
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(RedoRequest))]
 [JsonSerializable(typeof(RedoApplied))]
+[JsonSerializable(typeof(IReadOnlyList<WorkflowExecutionFence>))]
 internal sealed partial class ReviewTransitionJson : JsonSerializerContext;
