@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 
 using Assembly.Application.Common.Agents;
-namespace Assembly.Infrastructure.Agents;
+namespace Assembly.Infrastructure.Common.Processes;
 
 /// <summary>
 /// Starts the adapter as the leader of its own process group, so killing the group also ends Claude Code, even

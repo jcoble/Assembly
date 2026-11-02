@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Assembly.Application.Common.Acp.Messages;
 
 /// <summary>
@@ -5,8 +7,12 @@ namespace Assembly.Application.Common.Acp.Messages;
 /// </summary>
 public sealed record ClientCapabilities(ElicitationCapabilities Elicitation, AuthCapabilities Auth)
 {
-    public static ClientCapabilities Assembly { get; } = new(new(new(), new()), new(new()));
+    public static ClientCapabilities Assembly { get; } = new(new(new(), new()), new(null));
+
+    public static ClientCapabilities WithTerminalAuthentication(bool enabled) =>
+        new(Assembly.Elicitation, new(enabled ? new TerminalAuth() : null));
 }
 
-public sealed record AuthCapabilities(TerminalAuth Terminal);
+public sealed record AuthCapabilities(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerminalAuth? Terminal);
 public sealed record TerminalAuth;

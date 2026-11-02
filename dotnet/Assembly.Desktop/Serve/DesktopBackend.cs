@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Chat;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Engine.Effects;
@@ -169,7 +170,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             work = new BackgroundWork(TimeProvider.System, log);
             var limits = new HelperLimits();
             sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work, limits, titler: utilityClis is { } clis
-                ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, preferences, TimeProvider.System, log))
+                ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, () => preferences.Read("utilityModel"), TimeProvider.System, log))
                 : null);
             var attachments = new AttachmentStore(Path.Combine(home, "attachments"));
             var profiles = new MachineStore(db);
@@ -218,7 +219,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 if (item is not null && item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
             });
             boardMirror?.Reconnect();
-            terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
+            terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, SessionTerminalFolders.ExistingFolder(checkouts, sessionStore));
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
                 [new EngineCalls(engine, TimeProvider.System, new MachineForward(machine => connections.ByEngineMachine(db, machine))), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,

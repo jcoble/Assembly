@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Chat;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
@@ -201,7 +202,7 @@ public sealed class TerminalHostTests : IAsyncDisposable
         var helper = sessions.Helper(remote, "agent", "Remote helper");
         var owner = kind == "helper" ? helper.SessionId : kind;
         await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(),
-            Assembly.Infrastructure.Agents.AdapterLauncher.ExistingFolder(_folder, sessions));
+            Assembly.Infrastructure.Chat.SessionTerminalFolders.ExistingFolder(_folder, sessions));
         await Assert.ThrowsAsync<CallFailed>(() => host.StartAsync(new StartArgs(explicitFolder ? _folder : null, Owner: owner)));
         Assert.Empty(_pty.Started);
     }
@@ -216,7 +217,7 @@ public sealed class TerminalHostTests : IAsyncDisposable
         var nested = sessions.Helper(sessions.Helper(top, "agent", "Helper"), "agent", "Nested helper");
         var topFolder = Directory.CreateDirectory(Path.Combine(_folder, top.SessionId)).FullName;
         await using var host = new TerminalHost(_pty, _topics, new FakeTimeProvider(),
-            Assembly.Infrastructure.Agents.AdapterLauncher.ExistingFolder(_folder, sessions));
+            Assembly.Infrastructure.Chat.SessionTerminalFolders.ExistingFolder(_folder, sessions));
 
         await host.StartAsync(new StartArgs(null, Owner: nested.SessionId));
 

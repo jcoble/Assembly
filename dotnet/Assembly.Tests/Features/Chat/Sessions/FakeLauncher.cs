@@ -18,7 +18,7 @@ internal sealed class FakeLauncher : IAgentLauncher
 
     public Func<CancellationToken, Task<IAgentLink>>? Launch { get; set; }
 
-    public IReadOnlyList<AgentDescriptor> Agents { get; } =
+    public IReadOnlyList<AgentDescriptor> Agents { get; set; } =
     [
         new("claude", "Claude Code", "claude-agent-acp", [], null),
         new("codex", "Codex", "codex-acp", [], null),
@@ -37,7 +37,14 @@ internal sealed class FakeLauncher : IAgentLauncher
         return Task.FromResult(Checkout);
     }
 
-    public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
+    public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder);
+
+    public bool CanRunTerminalAuthentication => false;
+    public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+        StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);
+    public Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+        Assembly.Application.Common.Acp.IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken) =>
+        LaunchAsync(descriptor.Id, stages, cancellationToken);
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {

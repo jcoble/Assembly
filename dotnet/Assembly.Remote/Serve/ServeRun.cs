@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Chat;
 using Assembly.Application.Features.Workflows;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Engine.Effects;
@@ -67,13 +68,14 @@ public static class ServeRun
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var agents = launcher is null ? AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)) : null;
-        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
+        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions(), session => SessionStore.Folder(options.Checkouts, session));
         var preferences = new PreferenceStore(db);
         var limits = new HelperLimits();
         // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
         await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work, limits,
-            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"), preferences, TimeProvider.System, Console.Out)));
+            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"),
+                () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out)));
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
@@ -85,7 +87,7 @@ public static class ServeRun
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
-            AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
+            SessionTerminalFolders.ExistingFolder(options.Checkouts, sessionStore));
         var sessionLimits = new SessionLimits(
             () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
             () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));

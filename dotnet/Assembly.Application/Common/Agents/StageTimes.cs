@@ -1,6 +1,6 @@
 using Assembly.Application.Common.Agents;
 
-namespace Assembly.Application.Features.Chat.Sessions;
+namespace Assembly.Application.Common.Agents;
 
 /// <summary>
 /// How long a turn took to reach each stage of its start, in ms since the send: the clone, the adapter start,

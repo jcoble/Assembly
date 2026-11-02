@@ -34,7 +34,7 @@ public sealed class CliUtilityModelTests : IDisposable
     public async Task Claude_s_json_result_is_the_answer_and_its_api_key_is_not_passed_on()
     {
         Script(Claude, """printf '{"type":"result","result":"Fix rail titles"}'""");
-        var model = new CliUtilityModel(Claude, Missing, _preferences, TimeProvider.System, _log);
+        var model = new CliUtilityModel(Claude, Missing, () => _preferences.Read("utilityModel"), TimeProvider.System, _log);
 
         string? answer;
         Environment.SetEnvironmentVariable("ANTHROPIC_API_KEY", "a-key");
@@ -59,7 +59,7 @@ public sealed class CliUtilityModelTests : IDisposable
     {
         Script(Codex, """printf '  Fix rail titles  \n'""");
         _preferences.Save(JsonDocument.Parse("""{"utilityModel":"codex"}""").RootElement);
-        var model = new CliUtilityModel(Claude, Codex, _preferences, TimeProvider.System, _log);
+        var model = new CliUtilityModel(Claude, Codex, () => _preferences.Read("utilityModel"), TimeProvider.System, _log);
 
         string? answer;
         Environment.SetEnvironmentVariable("OPENAI_API_KEY", "a-key");
@@ -84,7 +84,7 @@ public sealed class CliUtilityModelTests : IDisposable
     public async Task With_no_setting_the_first_cli_that_runs_is_used()
     {
         Script(Codex, "printf 'From codex'");
-        var model = new CliUtilityModel(Missing, Codex, _preferences, TimeProvider.System, _log);
+        var model = new CliUtilityModel(Missing, Codex, () => _preferences.Read("utilityModel"), TimeProvider.System, _log);
 
         Assert.Equal("From codex", await model.CompleteAsync("Name it", CancellationToken.None));
     }
@@ -94,7 +94,7 @@ public sealed class CliUtilityModelTests : IDisposable
     {
         Script(Claude, "printf 'From claude'");
         _preferences.Save(JsonDocument.Parse("""{"utilityModel":"off"}""").RootElement);
-        var model = new CliUtilityModel(Claude, Missing, _preferences, TimeProvider.System, _log);
+        var model = new CliUtilityModel(Claude, Missing, () => _preferences.Read("utilityModel"), TimeProvider.System, _log);
 
         Assert.Null(await model.CompleteAsync("Name it", CancellationToken.None));
         Assert.False(File.Exists(Path.Combine(_dir, "args")));
@@ -105,7 +105,7 @@ public sealed class CliUtilityModelTests : IDisposable
     public async Task A_failed_run_answers_nothing_and_logs_its_error()
     {
         Script(Claude, "echo 'not signed in' >&2; exit 1");
-        var model = new CliUtilityModel(Claude, Missing, _preferences, TimeProvider.System, _log);
+        var model = new CliUtilityModel(Claude, Missing, () => _preferences.Read("utilityModel"), TimeProvider.System, _log);
 
         Assert.Null(await model.CompleteAsync("Name it", CancellationToken.None));
         Assert.Contains("not signed in", _log.ToString());
@@ -117,7 +117,7 @@ public sealed class CliUtilityModelTests : IDisposable
         var pidFifo = await FifoAsync("pid");
         var blockFifo = await FifoAsync("block");
         Script(Claude, $"echo $$ > '{pidFifo}'; read line < '{blockFifo}'");
-        var model = new CliUtilityModel(Claude, Missing, _preferences, TimeProvider.System, _log);
+        var model = new CliUtilityModel(Claude, Missing, () => _preferences.Read("utilityModel"), TimeProvider.System, _log);
         var work = new BackgroundWork(TimeProvider.System, _log);
 
         work.Start("title", async stop => await model.CompleteAsync("Name it", stop));
@@ -135,7 +135,7 @@ public sealed class CliUtilityModelTests : IDisposable
         File.WriteAllText(Claude, $"#!/bin/sh\necho $$ > '{pidFifo}'; read line < '{blockFifo}'\n");
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(Claude, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        var model = new CliUtilityModel(Claude, Missing, _preferences, TimeProvider.System, _log);
+        var model = new CliUtilityModel(Claude, Missing, () => _preferences.Read("utilityModel"), TimeProvider.System, _log);
         var work = new BackgroundWork(TimeProvider.System, _log);
 
         work.Start("title", async stop =>

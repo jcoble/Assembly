@@ -10,7 +10,9 @@ namespace Assembly.Application.Common.Agents;
 /// </summary>
 public sealed record AgentDescriptor(
     string Id, string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env,
-    string? Cli = null, string? VendorFamily = null)
+    string? Cli = null, string? VendorFamily = null,
+    // Legacy configuration identity input only. Never emitted in ACP V2 initialization.
+    IReadOnlyList<string>? Air = null)
 {
     /// <summary>The machine's agents, from its agents file's text: <c>[{ "id", "name", "command", "args": [], "env": {}, "cli" }]</c>.</summary>
     public static IReadOnlyList<AgentDescriptor> Parse(string json) =>
@@ -20,6 +22,10 @@ public sealed record AgentDescriptor(
     /// <summary>The CLI to run for agent <paramref name="id"/>: its full path from the agents file, else its plain name.</summary>
     public static string CliOf(IReadOnlyList<AgentDescriptor> agents, string id) =>
         agents.FirstOrDefault(agent => agent.Id == id)?.Cli ?? id;
+
+    /// <summary>A fixed descriptor validation result; no provider or credential material is returned.</summary>
+    public string? Invalid() => string.IsNullOrWhiteSpace(Id) || string.IsNullOrWhiteSpace(Name)
+        || string.IsNullOrWhiteSpace(Command) ? "invalid_descriptor" : null;
 
     public AgentCommand ToCommand(string workingDirectory) => new(Command, Args, workingDirectory, Env);
 }

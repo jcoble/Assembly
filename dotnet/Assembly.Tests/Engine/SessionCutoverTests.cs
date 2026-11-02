@@ -208,7 +208,14 @@ public sealed class SessionCutoverTests
         public int Calls;
         public IReadOnlyList<AgentDescriptor> Agents { get; } = [new("work-profile", "Friendly custom", "unused", [], null, VendorFamily: "codex")];
         public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) { Calls++; throw new InvalidOperationException("No checkout during projection"); }
-        public void ValidateFolder(string folder) { Calls++; new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder); }
+        public void ValidateFolder(string folder) { Calls++; new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder); }
+        public bool CanRunTerminalAuthentication => false;
+        public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);
+        public Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            Assembly.Application.Common.Acp.IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken) =>
+            LaunchAsync(descriptor.Id, stages, cancellationToken);
+
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) { Calls++; throw new InvalidOperationException("No provider during projection"); }
     }
 }
