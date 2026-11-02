@@ -51,6 +51,18 @@ public sealed class AuthAcceptedTerminalTests
         Assert.Null(f.Core.Rows.UserDeliveryOfClient(f.Core.Session.SessionId, f.Proof.ClientId!)!.Acknowledgment);
     }
 
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("wrong")]
+    public async Task The_supplied_database_machine_authority_is_mandatory_for_an_accepted_receipt(string authority)
+    {
+        await using var f = await AuthBlockerTests.Fixture.Create(false); var seq = Commit(f); Assert.True(Read(f, seq));
+        await f.Core.Runtime.DisposeAsync();
+        f.Core.Db.Writer.Write("test.accepted-db-authority", scope => scope.Execute(authority == "missing"
+            ? "DELETE FROM engine_meta WHERE singleton=1" : "UPDATE engine_meta SET machine_id='another-db-machine' WHERE singleton=1"));
+        Assert.False(Read(f, seq));
+    }
+
     private static long Commit(AuthBlockerTests.Fixture f)
     {
         var before = f.Core.Rows.LastSeq(f.Core.Session.SessionId);
@@ -60,5 +72,5 @@ public sealed class AuthAcceptedTerminalTests
         return seq;
     }
     private static bool Read(AuthBlockerTests.Fixture f, long seq, AuthTerminalProof? proof = null)
-    { using var scope = f.Core.Db.OpenSnapshot(default); return f.Commands.IsAcceptedAuthTerminal(scope, f.Core.Session.SessionId, seq, proof ?? f.Proof); }
+    { using var scope = f.Core.Db.OpenSnapshot(default); return global::Assembly.Engine.EngineCommands.IsAcceptedAuthTerminal(scope, f.Core.Session.SessionId, seq, proof ?? f.Proof); }
 }

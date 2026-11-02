@@ -10,12 +10,58 @@ namespace Assembly.Engine.Messages;
 
 /// <summary>The checked original execution at the auth producer boundary; no later reservation supplies its authority.</summary>
 internal sealed record AuthExecution(string SessionId, ConfiguredProviderTarget Target, UserPayload User,
-    Effect Effect, MessageDelivery Delivery)
+    Effect Effect, MessageDelivery Delivery, string? ConfirmedProviderId = null)
 {
     internal static bool ClosedProof(AuthTerminalProof p) => p.ObservationId != Guid.Empty && p.BlockCommandId != Guid.Empty &&
         p.ObservationId != p.BlockCommandId && !string.IsNullOrWhiteSpace(p.ChatRunId) && p.Epoch >= 0 &&
         (p.Version == 1 && !string.IsNullOrWhiteSpace(p.AcpSessionId) && p.OpenFailure is null ||
          p.Version == 2 && p.AcpSessionId is null && p.ProviderMessageId is null && p.OpenFailure is { } stage && Enum.IsDefined(stage));
+
+    internal static AuthExecution? CompletedPositive(IReadScope scope, CommandContext context, string sessionId, AuthTerminalProof proof,
+        Func<string, string, bool>? configured)
+    {
+        if (proof.Version != 1 || !ClosedProof(proof) || proof.Delivery is not { } original ||
+            proof.ClientId != original.ClientId || original.UserRowSeq <= 0 || original.ClaimAttempt <= 0 ||
+            original.UserRunId != proof.ChatRunId || context.Epoch != proof.Epoch) return null;
+        var owner = scope.QueryFirst("""
+            SELECT provider,account_context FROM engine_session WHERE id=$id AND machine=$machine AND holder='local'
+              AND reserved_epoch IS NULL AND epoch=$epoch AND provider_session_id=$acp AND state NOT IN ('foreign','handing_off','ended')
+            """, r => new ConfiguredProviderTarget(r.Text(0), r.Text(1)), new SqlArg("$id", sessionId), new("$machine", context.Machine),
+            new("$epoch", proof.Epoch), new("$acp", proof.AcpSessionId));
+        if (owner is null || configured?.Invoke(owner.Provider, owner.AccountContext) != true) return null;
+        var provider = ProviderState.Read(scope, owner.Id);
+        if (provider is not null && (provider.Machine != context.Machine || provider.Target != owner)) return null;
+        var done = scope.QueryFirst("""
+            SELECT id,kind,session_id,run_id,payload_json,attempt,order_key,receipt_json FROM engine_outbox
+            WHERE id=$id AND machine=$machine AND kind='send' AND session_id=$session AND state='done' AND attempt=$claim
+            """, r => new
+        {
+            Effect = new Effect(r.Text(0), r.Text(1), r.Text(2), r.IsNull(3) ? null : r.Text(3),
+                JsonSerializer.Deserialize(r.Text(4), EngineJson.Default.JsonElement), checked((int)r.Long(5)), r.Text(6)),
+            Receipt = r.IsNull(7) ? null : JsonSerializer.Deserialize(r.Text(7), EngineJson.Default.EffectReceipt)
+        },
+            new SqlArg("$id", original.EffectId), new("$machine", context.Machine), new("$session", sessionId), new("$claim", original.ClaimAttempt));
+        if (done?.Receipt?.Disposition != EffectDisposition.Confirmed || done.Effect.OrderKey != sessionId) return null;
+        var data = done.Receipt.Data.Deserialize(EngineJson.Default.MessageEffectData);
+        if (data is not { State: "next_turn", ProviderTurnId: { } inserted, UserRow: { } reference } ||
+            string.IsNullOrWhiteSpace(inserted) || data.Reason is not null || data.RetryExecution is not null || data.AuthRefusal is not null ||
+            reference.Seq != original.UserRowSeq || reference.RunId != original.UserRunId || reference.Epoch != proof.Epoch ||
+            proof.ProviderMessageId is not null && proof.ProviderMessageId != inserted) return null;
+        var delivery = MessageDelivery.Read(scope, done.Effect, allowDone: true);
+        if (delivery is null || delivery.Epoch != proof.Epoch || delivery.Intent.MessageId != original.MessageId ||
+            delivery.Intent.ClientId != original.ClientId || delivery.Intent.How != "prompt") return null;
+        var user = scope.QueryFirst("""
+            SELECT payload FROM rows WHERE session_id=$session AND seq=$seq AND run_id=$run AND kind='user' AND item_id IS NULL
+            """, r => JsonSerializer.Deserialize(r.Text(0), EngineJson.Default.UserPayload), new SqlArg("$session", sessionId),
+            new("$seq", original.UserRowSeq), new("$run", original.UserRunId));
+        if (user is null || user.ClientId != original.ClientId || user.Text != delivery.Intent.Text || user.From != delivery.FromSessionId ||
+            user.SenderLabel != delivery.Label || user.Acknowledgment is not { Kind: "prompt_inserted", ProviderMessageId: { } acknowledged } ||
+            acknowledged != inserted || user.RetryExecution is not null) return null;
+        return scope.QueryFirst("""
+            SELECT COUNT(*) FROM rows WHERE session_id=$session AND run_id=$run AND kind='turn' AND seq>$user AND json_extract(payload,'$.state')='started'
+            """, r => r.Long(0), new SqlArg("$session", sessionId), new("$run", proof.ChatRunId), new("$user", original.UserRowSeq)) == 1
+            ? new(sessionId, owner, user, done.Effect, delivery, inserted) : null;
+    }
 
     internal static AuthExecution? Current(IReadScope scope, CommandContext context, string sessionId, AuthTerminalProof proof,
         Func<string, string, bool>? configured)

@@ -95,6 +95,7 @@ public static class EffectTransitions
         }
         var projected = command is CompleteEffect && state == "done"
             ? projectCompletion?.Invoke(s, c, effect, receipt!, delivery) : null;
+        AuthTransitions.ValidateCompletionProjection(s, c, effect, receipt!, delivery, projected);
         // Preserve uncertainty while the reconciliation service is unavailable.
         if (state == "unavailable" && s.QueryFirst("SELECT json_extract(receipt_json,'$.disposition') FROM engine_outbox WHERE id=$id",
                 r => !r.IsNull(0) && r.Long(0) == (long)EffectDisposition.Unknown, new SqlArg("$id", c.EntityId)))

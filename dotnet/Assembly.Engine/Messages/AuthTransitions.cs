@@ -9,7 +9,7 @@ using Assembly.Engine.Providers;
 
 namespace Assembly.Engine.Messages;
 
-internal static class AuthTransitions
+internal static partial class AuthTransitions
 {
     internal static CommandContext ReportContext(string machine, long now, AuthTerminalProof proof) =>
         new(proof.ObservationId, machine, new(ActorKind.System, "adapter"), "auth-terminal/" + proof.ObservationId.ToString("N"), 0, proof.Epoch, now);
@@ -19,15 +19,24 @@ internal static class AuthTransitions
     {
         var proof = command.Proof;
         if (context != ReportContext(context.Machine, context.NowMs, proof) ||
-            !AuthTerminalRow.Matches(scope, command.SessionId, command.TerminalSeq, proof) ||
-            AuthExecution.Current(scope, context, command.SessionId, proof, configured) is null) return Rejected(context);
+            !AuthTerminalRow.Matches(scope, command.SessionId, command.TerminalSeq, proof)) return Rejected(context);
+        var execution = AuthExecution.Current(scope, context, command.SessionId, proof, configured) ??
+            AuthExecution.CompletedPositive(scope, context, command.SessionId, proof, configured);
+        if (execution is null) return Rejected(context);
         var binding = proof with { ProviderMessageId = null };
         var blockContext = new CommandContext(binding.BlockCommandId, context.Machine, new(ActorKind.System, "adapter"),
             "auth-blocker/" + binding.BlockCommandId.ToString("N"), 0, binding.Epoch, context.NowMs);
         var block = new BlockSignInNeeded(command.SessionId, binding);
         var result = EngineJournal.Execute(scope, blockContext, JsonSerializer.Serialize<EngineCommand>(block, EngineJson.Default.EngineCommand),
             () => Block(scope, blockContext, block, configured, expiryPolicy));
-        return result.Applied ? EngineJournal.Commit(scope, context, result.Version, context.Epoch, [], []) : result;
+        if (!result.Applied) return result;
+        List<EventDraft> events = [];
+        if (execution.ConfirmedProviderId is not null)
+        {
+            events.AddRange(Notice(scope, context, command.SessionId, proof));
+            events.Add(MessageTransitions.ApplyInsertedAuthTerminal(scope, context, execution));
+        }
+        return EngineJournal.Commit(scope, context, result.Version, context.Epoch, events, []);
     }
 
     internal static CommandResult Block(IWriteScope scope, CommandContext context, BlockSignInNeeded command,
@@ -37,7 +46,8 @@ internal static class AuthTransitions
         if (context.Actor is not { Kind: ActorKind.System, Id: "adapter" } ||
             context.CommandId != proof.BlockCommandId || context.EntityId != "auth-blocker/" + proof.BlockCommandId.ToString("N") ||
             context.ExpectedVersion != 0 || proof.ProviderMessageId is not null) return Rejected(context);
-        var execution = AuthExecution.Current(scope, context, command.SessionId, proof, configured);
+        var execution = AuthExecution.Current(scope, context, command.SessionId, proof, configured) ??
+            AuthExecution.CompletedPositive(scope, context, command.SessionId, proof, configured);
         if (execution is null) return Rejected(context);
         if (execution.User.AuthBlocker is { } retained)
         {
@@ -48,15 +58,15 @@ internal static class AuthTransitions
                 return Rejected(context);
             return new(true, false, null, existing.Version, 0, context.Epoch);
         }
-        var text = execution.Target.Provider + " needs you to sign in on " + context.Machine + ".";
+        var text = AuthNeed.Copy(execution.Target.Provider, context.Machine);
         var current = scope.Query("""
             SELECT id FROM engine_needs_me WHERE machine=$machine AND session_id=$session AND state='open'
-              AND kind='confirmation' AND provider_request_id IS NULL AND chat_row_id IS NULL AND CAST(text AS BLOB)=$text
+              AND kind='confirmation' AND provider_request_id IS NULL AND chat_row_id IS NULL AND (CAST(text AS BLOB)=$text OR CAST(text AS BLOB)=$inserted)
               AND json_type(options_json)='array' AND json_array_length(options_json)=2
               AND json_extract(options_json,'$[0]')='sign_in' AND json_extract(options_json,'$[1]')='dismiss'
             ORDER BY created_ms,id LIMIT 2
             """, r => r.Text(0), new SqlArg("$machine", context.Machine), new("$session", command.SessionId),
-            new("$text", System.Text.Encoding.UTF8.GetBytes(text)));
+            new("$text", System.Text.Encoding.UTF8.GetBytes(text)), new("$inserted", System.Text.Encoding.UTF8.GetBytes(AuthNeed.InsertionCopy(execution.Target.Provider, context.Machine))));
         if (current.Count > 1) return Rejected(context);
         AuthNeed? need = current.Count == 1 ? AuthNeed.Open(scope, context.Machine, current[0]) : null;
         if (current.Count == 1 && need is null) return Rejected(context);

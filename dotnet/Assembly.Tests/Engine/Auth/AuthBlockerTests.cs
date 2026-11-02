@@ -104,7 +104,7 @@ public sealed class AuthBlockerTests
         internal EngineCommands Commands { get; }
         internal RowConverter Converter { get; } = new();
         internal Effect Effect { get; private set; } = null!;
-        internal AuthTerminalProof Proof { get; private set; } = null!;
+        internal AuthTerminalProof Proof { get; set; } = null!;
         private long _originalEvents;
         private Fixture() => Commands = new(Core.Runtime.Machine, new(() => 5, () => 10), isConfiguredProvider: (provider, account) => Configured && provider == "claude" && account == "");
         internal static Task<Fixture> Create(bool failedOpen)
