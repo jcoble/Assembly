@@ -33,6 +33,9 @@ public static partial class CommandStepTransitions
             [new("effect.process_observed", "effect", observed.EffectId, row.Version, false, new(null, i.RunId, i.StepId, null, "inflight", i.ExecutionEpoch))], []);
     }
 
+    internal static CommandExecutionReceipt NotStarted(Effect effect) => new(effect.Id, Digest(effect.Payload.GetRawText()),
+        null, null, "", "", 0, 0, false, true, "not_started", "", null, NotStarted: true);
+
     public static bool ValidConfirmation(IReadScope s, Effect effect, EffectReceipt receipt)
     {
         try
