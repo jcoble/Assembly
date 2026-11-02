@@ -8,7 +8,7 @@ using Assembly.Engine.Persistence;
 namespace Assembly.Engine.Providers;
 
 /// <summary>The closed local auth confirmation shape, shared by target admission and its control branch.</summary>
-internal sealed record AuthNeed(string Id, long Version, string SessionId, ConfiguredProviderTarget Target,
+internal sealed partial record AuthNeed(string Id, long Version, string SessionId, ConfiguredProviderTarget Target,
     long Epoch, string? ParentId, string? Addressee)
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
@@ -44,8 +44,13 @@ internal sealed record AuthNeed(string Id, long Version, string SessionId, Confi
             Text = Utf8.GetString(r.Blob(8))
         }, new SqlArg("$id", id), new("$machine", machine));
         if (row is null || row.Text != Copy(row.Need.Target.Provider, machine) && row.Text != InsertionCopy(row.Need.Target.Provider, machine)) return null;
-        var prefix = "sign-in/" + row.Need.SessionId + "/";
-        return row.Need.Id.StartsWith(prefix, StringComparison.Ordinal) &&
-            long.TryParse(row.Need.Id.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out _) ? row.Need : null;
+        return ValidId(row.Need.Id, row.Need.SessionId) ? row.Need : null;
+    }
+
+    private static bool ValidId(string id, string sessionId)
+    {
+        var prefix = "sign-in/" + sessionId + "/";
+        return id.StartsWith(prefix, StringComparison.Ordinal) &&
+            long.TryParse(id.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out _);
     }
 }
