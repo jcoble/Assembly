@@ -19,6 +19,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(OwnerPromptReadArgs))]
 [JsonSerializable(typeof(OwnerPromptPage))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
 [JsonSerializable(typeof(SessionItem))]
 [JsonSerializable(typeof(SessionsFeature.PageArgs))]
 [JsonSerializable(typeof(SessionsFeature.Page))]

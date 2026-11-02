@@ -23,7 +23,7 @@ public sealed partial class SessionStore
 
     private static SessionConfig ReadConfig(IReadScope scope, string sessionId, bool hasPendingModel) =>
         scope.QueryFirst($"""
-            SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands), {(hasPendingModel ? "c.pending_model" : "NULL")}
+            SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands), {(hasPendingModel ? "c.pending_model" : "NULL")}, c.config_target
             FROM (SELECT $id AS session_id) t
             LEFT JOIN session_config c ON c.session_id = t.session_id
             LEFT JOIN session_commands tc ON tc.session_id = t.session_id
@@ -32,7 +32,7 @@ public sealed partial class SessionStore
             """, row => new SessionConfig(
                 row.IsNull(0) ? null : row.Text(0),
                 row.IsNull(1) ? new Dictionary<string, string>() : ReadChoices(row.Text(1)),
-                row.IsNull(2) ? null : row.Text(2), row.IsNull(3) ? null : row.Text(3)), new SqlArg("$id", sessionId))!;
+                row.IsNull(2) ? null : row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4)), new SqlArg("$id", sessionId))!;
 
     public void SetConfigOptions(string sessionId, string options) =>
         _writer.Write("sessions.config", scope =>
@@ -99,11 +99,20 @@ public sealed partial class SessionStore
             return 0;
         });
 
-    private static void SaveChoice(IWriteScope scope, string sessionId, string configId, string value) =>
+    private static void SaveChoice(IWriteScope scope, string sessionId, string configId, string value)
+    {
+        var raw = scope.QueryFirst("SELECT choices FROM session_config WHERE session_id=$id", row => row.Text(0), new SqlArg("$id", sessionId));
+        var choices = raw is null ? new Dictionary<string, string>() : ReadChoices(raw).ToDictionary(pair => pair.Key, pair => pair.Value);
+        choices[configId] = value;
+        SaveChoices(scope, sessionId, choices);
+    }
+
+    private static void SaveChoices(IWriteScope scope, string sessionId, IReadOnlyDictionary<string, string> choices) =>
         scope.Execute("""
-            INSERT INTO session_config(session_id, choices) VALUES ($id, json_object($config, $value))
-            ON CONFLICT(session_id) DO UPDATE SET choices = json_set(choices, '$."' || $config || '"', $value);
-            """, new SqlArg("$id", sessionId), new SqlArg("$config", configId.Replace("\"", "")), new SqlArg("$value", value));
+            INSERT INTO session_config(session_id, choices) VALUES ($id, $choices)
+            ON CONFLICT(session_id) DO UPDATE SET choices = $choices;
+            """, new SqlArg("$id", sessionId),
+            new SqlArg("$choices", JsonSerializer.Serialize(choices, SessionsJson.Default.IReadOnlyDictionaryStringString)));
 
     public string? AgentConfig(string agent)
     {
