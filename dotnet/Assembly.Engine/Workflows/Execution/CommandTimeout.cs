@@ -79,19 +79,22 @@ public static partial class CommandStepTransitions
     }
 
     /// <summary>Only observed exits, closed no-launch facts, or trusted absence authorize cancellation completion.</summary>
-    public static bool ExecutionsDrained(IReadScope s, string runId, string? stepId = null, int? attempt = null) => s.QueryFirst("""
+    public static bool ExecutionsDrained(IReadScope s, string runId, string? stepId = null, int? attempt = null) => s.QueryFirst($"""
         SELECT NOT EXISTS(SELECT 1 FROM engine_outbox o WHERE o.run_id=$run AND o.kind='workflow_command'
           AND ($step IS NULL OR json_extract(o.payload_json,'$.stepId')=$step AND json_extract(o.payload_json,'$.attempt')=$attempt)
-          AND NOT COALESCE((
+          AND {ExecutorNotDrained})
+        """, r => r.Long(0) != 0, new SqlArg("$run", runId), new("$step", stepId), new("$attempt", attempt));
+    internal const string ExecutorNotDrained = """
+        NOT COALESCE((
             json_extract(o.receipt_json,'$.disposition')=0 AND json_extract(o.receipt_json,'$.data.effectId')=o.id
             AND (json_extract(o.receipt_json,'$.data.exitCode') IS NOT NULL
               OR json_extract(o.receipt_json,'$.data.notStarted')=1 OR json_extract(o.receipt_json,'$.data.executorAbsent')=1)
-            OR EXISTS(SELECT 1 FROM engine_workflow_history h WHERE h.run_id=$run AND h.kind IN ('command_retry_authorized')
+            OR EXISTS(SELECT 1 FROM engine_workflow_history h WHERE h.run_id=o.run_id AND h.kind IN ('command_retry_authorized')
               AND h.step_id=json_extract(o.payload_json,'$.stepId') AND h.generation=json_extract(o.payload_json,'$.generation')
               AND h.attempt=json_extract(o.payload_json,'$.attempt'))
-            OR o.executor_json IS NULL AND EXISTS(SELECT 1 FROM engine_workflow_policy p WHERE p.run_id=$run
+            OR o.executor_json IS NULL AND EXISTS(SELECT 1 FROM engine_workflow_policy p WHERE p.run_id=o.run_id
               AND p.step_id=json_extract(o.payload_json,'$.stepId') AND p.decision='deny'
               AND o.last_error='policy_denied' AND EXISTS(SELECT 1 FROM engine_needs_me n WHERE n.id=p.need_id
-                AND json_extract(n.execution_json,'$.effectId')=o.id))),0))
-        """, r => r.Long(0) != 0, new SqlArg("$run", runId), new("$step", stepId), new("$attempt", attempt));
+                AND json_extract(n.execution_json,'$.effectId')=o.id))),0)
+        """;
 }
