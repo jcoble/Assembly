@@ -191,7 +191,7 @@ public static partial class SessionTransitions
             : Commit(scope, context, current with { Version = current.Version + 1 }, "session.changed", []);
     }
 
-    private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command, MessageExpiryPolicy? expiryPolicy)
+    private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command, MessageExpiryPolicy? expiryPolicy, bool checkedWorkflowRelease = false)
     {
         if (context.Actor.Kind != ActorKind.System)
             return Refused(context, "forbidden", current);
@@ -201,7 +201,8 @@ public static partial class SessionTransitions
         var stopAcknowledged = current.CancelRequested && command.State is "idle" or "ended";
         var allowed = (from, command.State) is ("starting", "idle") or ("idle", "running") or ("running", "idle")
             or ("starting" or "idle" or "running", "lost" or "ended") or ("lost", "idle")
-            || from == "idle" && command.State == "idle" && stopAcknowledged;
+            || from == "idle" && command.State == "idle" && stopAcknowledged
+            || checkedWorkflowRelease && from == "lost" && command.State == "ended";
         if (!allowed)
             return Refused(context, "invalid_transition", current);
         var activity = command.State is "idle" or "running" ? command.State : current.Activity;

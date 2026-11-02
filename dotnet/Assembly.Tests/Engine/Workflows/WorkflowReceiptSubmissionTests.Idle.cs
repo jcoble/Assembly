@@ -204,6 +204,7 @@ public sealed partial class WorkflowReceiptSubmissionTests
             "project", "/tmp/receipt-fixture", snapshot, new(request.Inputs, "inputs"), ImmutableSortedDictionary<string, string>.Empty.Add("step", "step"), "request");
         f.Core.Db.Writer.Write("test.release-definition", s => s.Execute("""
             UPDATE engine_step SET definition_key='step' WHERE id='step';
+            UPDATE engine_run SET definition_hash=$hash WHERE id='r';
             INSERT INTO engine_workflow_snapshot(id,version,machine,created_ms,updated_ms,run_id,schema_version,definition_hash,input_hash,snapshot_json)
             VALUES('snapshot',1,$machine,1000,1000,'r',1,$hash,'inputs',$body);
             """, new("$machine", f.Core.Machine), new("$hash", snapshot.Hash), new("$body", JsonSerializer.Serialize(source, WorkflowPreparationJson.Default.WorkflowStartBody))));
