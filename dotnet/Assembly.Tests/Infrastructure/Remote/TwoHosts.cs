@@ -217,14 +217,15 @@ internal sealed class TwoHosts : IAsyncDisposable
     public Host Remote { get; private set; }
     public Host Mac { get; }
     private readonly bool _forwardCommands;
+    private readonly TextWriter? _remoteLog;
     private RemoteConnections? _connections;
     private MachinesFeature? _machinesFeature;
     private MachineStore? _profiles;
     private readonly Dictionary<string, Host> _additionalHosts = new(StringComparer.Ordinal);
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
-        IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null)
+        IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null, TextWriter? remoteLog = null)
     {
-        _forwardCommands = forwardCommands;
+        _forwardCommands = forwardCommands; _remoteLog = remoteLog;
         Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits);
         Mac = new(windowCalls, effects: macEffects, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits);
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
@@ -240,7 +241,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         _hub = new LiveHub(store, topics: Mac.Topics);
         var sessions = Mac.Sessions;
         if (!_forwardCommands)
-            _machine = new("workbox-test", Remote.Address, "isolated-token", _hub, sessions, TextWriter.Null, new MachineStatus(Mac.Topics, []), topics: Mac.Topics);
+            _machine = new("workbox-test", Remote.Address, "isolated-token", _hub, sessions, _remoteLog ?? TextWriter.Null, new MachineStatus(Mac.Topics, []), topics: Mac.Topics);
         var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sub = Mac.Topics.Subscribe("__engine_mirrored", Remote.Fixture.Machine, _ => { }, (_, _) =>
         {

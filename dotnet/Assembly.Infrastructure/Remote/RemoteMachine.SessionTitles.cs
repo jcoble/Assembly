@@ -13,56 +13,12 @@ internal sealed partial class RemoteMachine
     {
         await ready;
         var entered = false;
-        byte[]? bytes = null;
-        string? title = null;
         try
         {
-            var ct = resolution.Stop.Token;
+            var ct = resolution.Token;
             await _sessionTitleSerial.WaitAsync(ct); entered = true;
-            var identity = await owner.Identity.Task.WaitAsync(ct);
-            OwnerConnectionBinding binding;
-            await _socketSend.WaitAsync(ct);
-            try
-            {
-                RequirePublication(owner, item, resolution);
-                if (identity != resolution.Reference.PublisherEngineMachine) throw new CallFailed("title_changed");
-                var socket = RequireEngine(identity);
-                if (!ReferenceEquals(socket, owner.Socket)) throw new CallFailed("title_changed");
-                binding = CurrentOwnerBinding(identity, socket); RequireOwnerBinding(binding);
-            }
-            finally { _socketSend.Release(); }
-            var original = (Identity: identity, Socket: owner.Socket);
-            await MarkTitleRead(owner, item, resolution, ct);
-            var stat = (await ReadOwnerOnAsync("legacy_session_title", JsonSerializer.SerializeToElement(new LegacySessionTitleStatArgs(resolution.Reference),
-                SessionsJson.Default.LegacySessionTitleStatArgs), false, original, ct, binding)).Deserialize(SessionsJson.Default.LegacySessionTitleStat)
-                ?? throw new IOException("invalid legacy title stat");
-            if (!SameTitleKey(stat.Reference, resolution.Reference)) throw new CallFailed("title_changed");
-            bytes = new byte[checked((int)resolution.Reference.Utf8Bytes)];
-            long offset = 0;
-            while (offset < bytes.LongLength)
-            {
-                await MarkTitleRead(owner, item, resolution, ct);
-                var args = new LegacySessionTitleChunkArgs(resolution.Reference, offset, 1024 * 1024);
-                var part = (await ReadOwnerOnAsync("legacy_session_title_chunk", JsonSerializer.SerializeToElement(args,
-                    SessionsJson.Default.LegacySessionTitleChunkArgs), true, original, ct, binding)).Deserialize(SessionsJson.Default.LegacySessionTitleChunk)
-                    ?? throw new IOException("invalid legacy title chunk");
-                var expected = Math.Min(1024 * 1024, bytes.LongLength - offset);
-                var end = checked(offset + expected);
-                if (part.Offset != offset || part.TotalBytes != bytes.LongLength || part.Data.LongLength != expected ||
-                    part.NextOffset != (end < bytes.LongLength ? end : null)) throw new IOException("invalid legacy title offsets");
-                part.Data.CopyTo(bytes, checked((int)offset)); offset = end;
-            }
-            if (SessionTitleHash.Compute(bytes) != resolution.Reference.Sha256) throw new IOException("legacy title hash differs");
-            title = new UTF8Encoding(false, true).GetString(bytes);
-            await _socketSend.WaitAsync(ct);
-            try
-            {
-                RequirePublication(owner, item, resolution); RequireOwnerBinding(binding);
-                // SAME-key pushes replace metadata and ordinal, never the verified content or its prefix.
-                ApplySession(ResolvedSessionItem(item.Notice!.Value, title));
-                item.Resolution = null; item.Notice = null; item.Reference = null;
-            }
-            finally { _socketSend.Release(); }
+            var verified = await ReadVerifiedSessionTitleAsync(item.Id, ct, ct);
+            await CommitVerifiedSessionTitleAsync(verified, ct);
         }
         catch (OperationCanceledException) when (resolution.Stop.IsCancellationRequested || resolution.Revoked || owner.Revoked) { }
         catch (Exception error)
@@ -94,9 +50,98 @@ internal sealed partial class RemoteMachine
             try { await cancellation; await owner.Cancellation; }
             finally
             {
-                resolution.Stop.Dispose(); bytes = null; title = null;
+                resolution.Stop.Dispose();
                 if (entered) _sessionTitleSerial.Release();
             }
+        }
+    }
+
+    // These are the same fixed production phases used by the owned resolver above.
+    internal Task<VerifiedSessionTitle> ReadVerifiedSessionTitleAsync(string sessionId, CancellationToken ct) =>
+        ReadVerifiedSessionTitleAsync(sessionId, ct, null);
+    private Task<VerifiedSessionTitle> ReadVerifiedSessionTitleAsync(string sessionId, CancellationToken ct, CancellationToken? expectedResolution) =>
+        VerifiedSessionTitle.ReadAsync(this, sessionId, ct, expectedResolution);
+    internal Task CommitVerifiedSessionTitleAsync(VerifiedSessionTitle verified, CancellationToken ct) => verified.CommitAsync(this, ct);
+
+    internal sealed class VerifiedSessionTitle
+    {
+        private readonly RemoteMachine _machine;
+        private readonly SessionPublicationOwner _owner;
+        private readonly SessionPublication _item;
+        private readonly SessionTitleResolution _resolution;
+        private readonly OwnerConnectionBinding _binding;
+        private readonly string _title;
+        private VerifiedSessionTitle(RemoteMachine machine, SessionPublicationOwner owner, SessionPublication item,
+            SessionTitleResolution resolution, OwnerConnectionBinding binding, string title)
+        {
+            _machine = machine; _owner = owner; _item = item; _resolution = resolution; _binding = binding; _title = title;
+        }
+        internal static async Task<VerifiedSessionTitle> ReadAsync(RemoteMachine machine, string sessionId, CancellationToken ct,
+            CancellationToken? expectedResolution)
+        {
+            SessionPublicationOwner owner;
+            SessionPublication item;
+            SessionTitleResolution resolution;
+            await machine._socketSend.WaitAsync(ct);
+            try
+            {
+                owner = machine._sessionPublication ?? throw new OperationCanceledException(ct);
+                if (!owner.Items.TryGetValue(sessionId, out item!) || item.Resolution is not { } current ||
+                    (expectedResolution is { } expected && expected != current.Token)) throw new OperationCanceledException(ct);
+                resolution = current;
+                machine.RequirePublication(owner, item, resolution);
+            }
+            finally { machine._socketSend.Release(); }
+            var identity = await owner.Identity.Task.WaitAsync(ct);
+            OwnerConnectionBinding binding;
+            await machine._socketSend.WaitAsync(ct);
+            try
+            {
+                machine.RequirePublication(owner, item, resolution);
+                if (identity != resolution.Reference.PublisherEngineMachine) throw new CallFailed("title_changed");
+                var socket = machine.RequireEngine(identity);
+                if (!ReferenceEquals(socket, owner.Socket)) throw new CallFailed("title_changed");
+                binding = machine.CurrentOwnerBinding(identity, socket); machine.RequireOwnerBinding(binding);
+            }
+            finally { machine._socketSend.Release(); }
+            var original = (Identity: identity, Socket: owner.Socket);
+            await machine.MarkTitleRead(owner, item, resolution, ct);
+            var stat = (await machine.ReadOwnerOnAsync("legacy_session_title", JsonSerializer.SerializeToElement(new LegacySessionTitleStatArgs(resolution.Reference),
+                SessionsJson.Default.LegacySessionTitleStatArgs), false, original, ct, binding)).Deserialize(SessionsJson.Default.LegacySessionTitleStat)
+                ?? throw new IOException("invalid legacy title stat");
+            if (!SameTitleKey(stat.Reference, resolution.Reference)) throw new CallFailed("title_changed");
+            var bytes = new byte[checked((int)resolution.Reference.Utf8Bytes)];
+            long offset = 0;
+            while (offset < bytes.LongLength)
+            {
+                await machine.MarkTitleRead(owner, item, resolution, ct);
+                var args = new LegacySessionTitleChunkArgs(resolution.Reference, offset, 1024 * 1024);
+                var part = (await machine.ReadOwnerOnAsync("legacy_session_title_chunk", JsonSerializer.SerializeToElement(args,
+                    SessionsJson.Default.LegacySessionTitleChunkArgs), true, original, ct, binding)).Deserialize(SessionsJson.Default.LegacySessionTitleChunk)
+                    ?? throw new IOException("invalid legacy title chunk");
+                var expected = Math.Min(1024 * 1024, bytes.LongLength - offset);
+                var end = checked(offset + expected);
+                if (part.Offset != offset || part.TotalBytes != bytes.LongLength || part.Data.LongLength != expected ||
+                    part.NextOffset != (end < bytes.LongLength ? end : null)) throw new IOException("invalid legacy title offsets");
+                part.Data.CopyTo(bytes, checked((int)offset)); offset = end;
+            }
+            if (SessionTitleHash.Compute(bytes) != resolution.Reference.Sha256) throw new IOException("legacy title hash differs");
+            return new(machine, owner, item, resolution, binding, new UTF8Encoding(false, true).GetString(bytes));
+        }
+        internal async Task CommitAsync(RemoteMachine machine, CancellationToken ct)
+        {
+            if (!ReferenceEquals(machine, _machine) || machine._ownerStopping || _owner.Revoked || _resolution.Revoked || _resolution.Token.IsCancellationRequested)
+                throw new OperationCanceledException(ct);
+            await machine._socketSend.WaitAsync(ct);
+            try
+            {
+                ct.ThrowIfCancellationRequested();
+                machine.RequirePublication(_owner, _item, _resolution); machine.RequireOwnerBinding(_binding);
+                // SAME-key pushes replace metadata and ordinal, never the verified content or its prefix.
+                machine.ApplySession(ResolvedSessionItem(_item.Notice!.Value, _title));
+                _item.Resolution = null; _item.Notice = null; _item.Reference = null;
+            }
+            finally { machine._socketSend.Release(); }
         }
     }
 
@@ -106,7 +151,7 @@ internal sealed partial class RemoteMachine
             !ReferenceEquals(_socket, owner.Socket) || owner.Socket.State != WebSocketState.Open || owner.Lifecycle != _ownerLifecycle ||
             !owner.Items.TryGetValue(item.Id, out var current) || !ReferenceEquals(current, item) ||
             !ReferenceEquals(item.Resolution, resolution) || item.Reference is null || !SameTitleKey(item.Reference, resolution.Reference))
-            throw new OperationCanceledException(resolution.Stop.Token);
+            throw new OperationCanceledException(resolution.Token);
     }
     private async Task MarkTitleRead(SessionPublicationOwner owner, SessionPublication item, SessionTitleResolution resolution, CancellationToken ct)
     {

@@ -30,11 +30,17 @@ internal sealed partial class RemoteMachine
         internal LegacySessionTitleRef? Reference;
         internal SessionTitleResolution? Resolution;
     }
-    private sealed class SessionTitleResolution(SessionPublicationOwner owner, LegacySessionTitleRef reference, long ordinal)
+    private sealed class SessionTitleResolution
     {
-        internal readonly LegacySessionTitleRef Reference = reference;
-        internal readonly CancellationTokenSource Stop = CancellationTokenSource.CreateLinkedTokenSource(owner.Stop.Token);
-        internal long IssuedOrdinal = ordinal;
+        internal readonly LegacySessionTitleRef Reference;
+        internal readonly CancellationTokenSource Stop;
+        internal readonly CancellationToken Token;
+        internal long IssuedOrdinal;
+        internal SessionTitleResolution(SessionPublicationOwner owner, LegacySessionTitleRef reference, long ordinal)
+        {
+            Reference = reference; IssuedOrdinal = ordinal;
+            Stop = CancellationTokenSource.CreateLinkedTokenSource(owner.Stop.Token); Token = Stop.Token;
+        }
         internal Task Cancellation = Task.CompletedTask;
         internal bool Revoked;
     }
