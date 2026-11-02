@@ -24,6 +24,7 @@ pub enum ItemKind {
         text: String,
         at: i64,
         from: Option<String>,
+        sender_label: Option<String>,
     },
     /// `at`: when the reply was last written.
     Message {

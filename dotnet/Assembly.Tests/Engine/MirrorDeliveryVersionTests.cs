@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Effects;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Mirror;
 using Assembly.Engine.NeedsMe;
@@ -67,11 +68,15 @@ public sealed class MirrorDeliveryVersionTests(Xunit.Abstractions.ITestOutputHel
         Assert.Empty(reader.Since("mirror", null, cursor.Through, default).Events);
 
         owner.Time.Advance(TimeSpan.FromSeconds(1));
-        var outcomeContext = Context(owner, "m", 2, Adapter);
-        var outcome = new MessageOutcome("queued", null, "not_delivered");
+        Assert.True(owner.Apply(new ClaimEffect(), "send/m/1", actor: Adapter).Applied);
+        var outcomeContext = Context(owner, "send/m/1", 1, Adapter);
+        var outcome = new CompleteEffect(new(EffectDisposition.Confirmed,
+            JsonSerializer.SerializeToElement(new MessageEffectData("queued", null, "not_delivered"),
+                Assembly.Engine.EngineJson.Default.MessageEffectData), null));
         var rereleased = owner.Apply(outcomeContext, outcome);
         Assert.True(rereleased.Applied);
-        Assert.Equal(4, rereleased.Version); // outcome v3 and the same message's release v4 commit one final draft.
+        Assert.Equal(2, rereleased.Version); // Effect completion has its own durable receipt version.
+        Assert.Equal(4, reader.Entity("message", "m", default)!.Value.GetProperty("version").GetInt64()); // outcome v3 + release v4.
         Assert.Equal(2, owner.Count("engine_outbox"));
         Assert.Equal(2, owner.Number("SELECT attempt FROM engine_message WHERE id='m'"));
         cursor = ApplyPage(owner, mirror, reader, mirroredReader, cursor, 4, 3000);

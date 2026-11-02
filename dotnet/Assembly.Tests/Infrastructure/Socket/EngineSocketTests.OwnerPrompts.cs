@@ -33,7 +33,7 @@ public sealed partial class EngineSocketTests
             var prompt = OwnerPromptFingerprint.Prepare(_f.Machine, command, default);
             var result = _f.Db.Writer.Write("test.owner", scope => _runtime.Commands.ApplyOwnerPrompt(scope,
                 new(OwnerPromptIdentity.CommandId(_f.Machine, session, command.ClientId), _f.Machine,
-                    new(ActorKind.Window, "owner"), OwnerPromptIdentity.MessageId(session, command.ClientId), 0, 0, long.MaxValue), prompt));
+                    new(ActorKind.Window, "owner"), OwnerPromptIdentity.MessageId(session, command.ClientId), 0, 0, long.MaxValue - 1_800_000), prompt));
             Assert.True(result.Applied, result.Error);
         }
         using var socket = await Open();

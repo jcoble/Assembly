@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Effects;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Reading;
 using Assembly.Engine.Sessions;
@@ -25,8 +26,9 @@ public sealed class DeliveryVersionTests
         Assert.Equal(2000, released.GetProperty("updatedMs").GetInt64());
         AssertFinalEvent(f, "m");
 
-        var outcome = f.Apply(new MessageOutcome("queued", null, "busy"), "m", released.GetProperty("version").GetInt64(), actor: System);
-        Assert.True(outcome.Applied); Assert.Equal(Row(f).GetProperty("version").GetInt64(), outcome.Version);
+        Assert.True(f.Apply(new ClaimEffect(), "send/m/1", actor: System).Applied);
+        var outcome = f.Apply(Queued("busy"), "send/m/1", 1, actor: System);
+        Assert.True(outcome.Applied); Assert.Equal(f.Number("SELECT version FROM engine_outbox WHERE id='send/m/1'"), outcome.Version);
         var returned = Row(f);
         f.Time.Advance(TimeSpan.FromSeconds(1));
         State(f, "running"); State(f, "idle");
@@ -48,13 +50,15 @@ public sealed class DeliveryVersionTests
         Assert.Single(f.Events(), e => e.EntityKind == "message");
         Assert.Equal(inserted, f.Apply(send, "m", commandId: id));
         var before = f.Events().Last().Seq;
-        id = Guid.NewGuid(); var command = new MessageOutcome("queued", null, "not_delivered");
-        var result = f.Apply(command, "m", inserted.Version, actor: System, commandId: id);
-        Assert.True(result.Applied); Assert.Equal(4, result.Version);
+        Assert.True(f.Apply(new ClaimEffect(), "send/m/1", actor: System).Applied);
+        id = Guid.NewGuid(); var command = Queued("not_delivered");
+        var result = f.Apply(command, "send/m/1", 1, actor: System, commandId: id);
+        Assert.True(result.Applied); Assert.Equal(2, result.Version);
+        Assert.Equal(4, Row(f).GetProperty("version").GetInt64());
         var item = Assert.Single(f.Events(), e => e.Seq > before && e.EntityKind == "message");
-        Assert.Equal(result.Version, item.Version); AssertFinalEvent(f, "m");
+        Assert.Equal(4, item.Version); AssertFinalEvent(f, "m");
         var count = f.Count("engine_event"); var effects = f.Count("engine_outbox");
-        f.Reopen(); Assert.Equal(result, f.Apply(command, "m", inserted.Version, actor: System, commandId: id));
+        f.Reopen(); Assert.Equal(result, f.Apply(command, "send/m/1", 1, actor: System, commandId: id));
         Assert.Equal(count, f.Count("engine_event")); Assert.Equal(effects, f.Count("engine_outbox"));
     }
 
@@ -80,6 +84,10 @@ public sealed class DeliveryVersionTests
         Assert.Equal(message, item.EntityId); AssertFinalEvent(f, message);
         Assert.Equal(childNote ? 2 : 3, item.Version);
     }
+
+    private static CompleteEffect Queued(string reason) => new(new(EffectDisposition.Confirmed,
+        JsonSerializer.SerializeToElement(new MessageEffectData("queued", null, reason),
+            Assembly.Engine.EngineJson.Default.MessageEffectData), null));
 
     private static EngineEvent AssertFinalEvent(EngineFixture f, string id)
     {

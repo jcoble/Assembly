@@ -33,6 +33,6 @@ public sealed partial class EngineCommands
                 if (caller.Title is null || caller.Epoch != prepared.CallerEpoch || !caller.Title.AsSpan().SequenceEqual(prepared.CallerTitleUtf8))
                     return new(false, false, "stale_caller", context.ExpectedVersion, 0, context.Epoch);
             }
-            return MessageTransitions.ApplyPreparedHelper(scope, context, prepared.Command, prepared.BodyUtf8, _messageLimit());
+            return MessageTransitions.ApplyPreparedHelper(scope, context, prepared.Command, prepared.BodyUtf8, _messageLimit(), _expiryPolicy);
         });
 }

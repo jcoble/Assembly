@@ -29,6 +29,12 @@
       "sha256": "23e0beb4735fd1cb599f5da65eeee5ec8945d34ef76dab974589396e8c845f83",
       "capture": "Old EngineRuntime + FakeEffects.SucceededExternally once; DisposeAsync before completion",
       "providerInsertions": 1
+    },
+    {
+      "file": "old-v5.sql",
+      "producer": "00108dd9ad780fba2c7f1cd69d6e0353c650caa0",
+      "sha256": "adee9d7b4ad8b040cd73855e0063aea7a2ed0e341fc45c01c021b85e6432b54c",
+      "capture": "FreezeAcceptedV5Tests actual EngineFixture/EngineCommands APIs, real SQLite backup before expiry source edits; exact UTF8 engine DDL/rows extracted without BEGIN/COMMIT"
     }
   ]
 }

@@ -1,4 +1,5 @@
 using Assembly.Engine.Execution;
+using Assembly.Engine.Messages;
 using Assembly.Engine.Hosting;
 using Assembly.Engine.Sessions;
 using System.Threading.Channels;
@@ -20,6 +21,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private readonly IAppDatabase _db;
+    private readonly IEngineEffects? _effects;
     private readonly TimeProvider _time;
     private readonly EngineTopics _topics;
     private readonly EngineTopics.Subscription _subscription;
@@ -40,8 +42,9 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, SessionLimits limits,
-        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover)
+        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover, Func<EngineRuntime, IEngineEffects>? effectsFactory, Func<IReadScope, int>? readExpiryMinutes)
     {
+        if (effects is not null && effectsFactory is not null) throw new ArgumentException("Supply effects or effectsFactory, not both.");
         _db = db;
         _time = time;
         _topics = topics;
@@ -49,10 +52,11 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         Action<IWriteScope, CommandContext, StartSession>? projectStart = cutover is null ? null : cutover.ProjectStart;
         Func<string, string>? accountContext = cutover is null ? null : cutover.AccountContext;
         var now = time.GetUtcNow().ToUnixTimeMilliseconds();
+        var expiryPolicy = new MessageExpiryPolicy(readExpiryMinutes);
         var initialized = db.Writer.Write("engine.initialize", scope =>
         {
-            var schema = EngineSchema.Initialize(scope, now, projectionSchema);
-            var commands = new EngineCommands(schema.Machine, limits, messageLimit, projectStart, accountContext);
+            var schema = EngineSchema.Initialize(scope, now, projectionSchema, readExpiryMinutes?.Invoke(scope) ?? 30);
+            var commands = new EngineCommands(schema.Machine, limits, messageLimit, projectStart, accountContext, ProjectCompletion, expiryPolicy);
             cutover?.Initialize(scope, commands, schema.Machine, now, schema.PreviousVersion is 1 or 2 or 3);
             return (Machine: schema.Machine, Commands: commands);
         });
@@ -62,7 +66,8 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         Reader = new(db, Machine);
         Usage = new(db);
         Publisher = new(db);
-        _worker = new(db, Commands, Machine, time, effects, retention ?? new EngineRetention(
+        _effects = effectsFactory is null ? effects : effectsFactory(this);
+        _worker = new(db, Commands, Machine, time, _effects, retention ?? new EngineRetention(
             () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
         _subscription = topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => _wake.Writer.TryWrite(true));
         _mirrorSubscription = topics.Subscribe("__engine_mirrored", null, _ => { }, (machine, _) => MirrorChanged(machine!));
@@ -72,8 +77,14 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     }
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
-        SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null, SessionCutover? cutover = null) =>
-        new(db, topics, time, limits, effects, retention, messageLimit, cutover);
+        SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null, SessionCutover? cutover = null,
+        Func<EngineRuntime, IEngineEffects>? effectsFactory = null, Func<IReadScope, int>? readExpiryMinutes = null) =>
+        new(db, topics, time, limits, effects, retention, messageLimit, cutover, effectsFactory, readExpiryMinutes);
+
+    private void ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt)
+    {
+        if (_effects is AdapterEffects adapter) adapter.ProjectCompletion(scope, context, effect, receipt);
+    }
 
     T IEngineRuntime.Write<T>(Func<IWriteScope, T> body)
     {

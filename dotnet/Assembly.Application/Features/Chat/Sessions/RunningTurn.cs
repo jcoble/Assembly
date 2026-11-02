@@ -8,6 +8,9 @@ namespace Assembly.Application.Features.Chat.Sessions;
 internal sealed class RunningTurn(string runId, StageTimes stages)
 {
     public string RunId { get; } = runId;
+    public TaskCompletionSource<SendResult> Inserted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Assembly.Application.Common.Engine.UserRowReference? UserRow { get; set; }
+    public OwningSendAdmission? Delivery { get; set; }
     public SessionObservation? Observation { get; set; }
     public long StartedAt { get; set; }
     public TurnCost Cost { get; set; } = new(null);

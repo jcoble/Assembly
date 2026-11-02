@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Handoffs;
@@ -33,7 +34,8 @@ public static class EffectTransitions
         return document.RootElement.Clone();
     }
 
-    public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command)
+    public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command,
+        Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
     {
         var row = s.QueryFirst("SELECT version,state,attempt,next_ms FROM engine_outbox WHERE id=$id",
             r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3) }, new SqlArg("$id", c.EntityId));
@@ -82,6 +84,14 @@ public static class EffectTransitions
         if (command is EnableEffect && state == "pending" && effect.Kind == "send") state = "dead";
         // Validate receipts before touching the row; the provider can report data, never an injected command.
         if (state == "done" && !ValidConfirmation(effect, receipt!)) return Reject("bad_receipt");
+        if (effect.Kind == "send" && (state is "done" or "failed" || state == "dead" && command is EnableEffect))
+        {
+            MessageDelivery? delivery;
+            try { delivery = MessageDelivery.Read(s, effect); }
+            catch (Exception error) when (error is JsonException or DecoderFallbackException) { delivery = null; }
+            if (delivery is null || delivery.Epoch != c.Epoch) return Reject("stale_delivery");
+        }
+        if (command is CompleteEffect && state == "done") projectCompletion?.Invoke(s, c, effect, receipt!);
         // Preserve uncertainty while the reconciliation service is unavailable.
         if (state == "unavailable" && s.QueryFirst("SELECT json_extract(receipt_json,'$.disposition') FROM engine_outbox WHERE id=$id",
                 r => !r.IsNull(0) && r.Long(0) == (long)EffectDisposition.Unknown, new SqlArg("$id", c.EntityId)))
@@ -91,7 +101,7 @@ public static class EffectTransitions
                 receipt_json=COALESCE($receipt,receipt_json),last_error=CASE WHEN $receipt IS NULL THEN last_error ELSE $error END WHERE id=$id
             """, new("$state", state), new("$now", c.NowMs), new("$next", next), new("$id", c.EntityId),
             new("$receipt", receipt is null ? null : JsonSerializer.Serialize(receipt, EngineJson.Default.EffectReceipt)), new("$error", receipt?.Error));
-        if (state == "done") Confirm(s, c, effect, receipt!);
+        if (state == "done") Confirm(s, c, effect, receipt!, expiryPolicy);
         if (effect.Kind == "send" && (state == "failed" || state == "dead" && command is EnableEffect))
             SetMessageOutcome(s, c, effect, new(state == "failed" ? "failed" : "queued", null, state == "failed" ? receipt?.Error ?? "effect_failed" : "not_delivered"));
         return Commit(s, c, row.Version + 1, state);
@@ -118,7 +128,7 @@ public static class EffectTransitions
         catch (JsonException) { return false; }
     }
 
-    private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt)
+    private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy)
     {
         var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested FROM engine_session WHERE id=$id",
             r => (Version: r.Long(0), Epoch: r.Long(1), State: r.Text(2), CancelRequested: r.Long(3) != 0), new SqlArg("$id", effect.SessionId));
@@ -129,7 +139,7 @@ public static class EffectTransitions
             var data = receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)!;
             // Two independently queued stop intents can observe the same already-acknowledged stop.
             if (effect.Kind != "stop" || session.State != data.State || session.CancelRequested)
-                result = SessionTransitions.Apply(s, target, new SetSessionState(data.State, data.ProviderSessionId, data.Reason), 0, 0);
+                result = SessionTransitions.Apply(s, target, new SetSessionState(data.State, data.ProviderSessionId, data.Reason), 0, 0, expiryPolicy: expiryPolicy);
             if (effect.Kind == "stop" && result is not { Applied: false }) CancelStoppedSteps(s, target);
         }
         if (effect.Kind == "send")
@@ -159,9 +169,13 @@ public static class EffectTransitions
     {
         var intent = effect.Payload.Deserialize(EngineJson.Default.DeliverMessage)
             ?? throw new InvalidOperationException("Missing delivery intent.");
-        var version = s.QueryFirst("SELECT version FROM engine_message WHERE id=$id", r => r.Long(0), new SqlArg("$id", intent.MessageId));
+        var message = s.QueryFirst("SELECT version,expires_ms FROM engine_message WHERE id=$id", r => (Version: r.Long(0), Expires: r.IsNull(1) ? (long?)null : r.Long(1)), new SqlArg("$id", intent.MessageId));
+        var notInserted = outcome.ProviderTurnId is null &&
+            (outcome is { State: "queued", Reason: "auth_required" or "busy" or "prompt_required" or "not_delivered" } ||
+             outcome is { State: "failed", Reason: "model_unavailable" });
+        if (notInserted && message.Expires <= c.NowMs) outcome = new("failed", null, "expired");
         var epoch = s.QueryFirst("SELECT epoch FROM engine_session WHERE id=$id", r => r.Long(0), new SqlArg("$id", intent.ToSessionId));
-        var result = MessageTransitions.Apply(s, c with { EntityId = intent.MessageId, ExpectedVersion = version, Epoch = epoch }, outcome);
+        var result = MessageTransitions.Apply(s, c with { EntityId = intent.MessageId, ExpectedVersion = message.Version, Epoch = epoch }, outcome);
         if (!result.Applied) throw new InvalidOperationException($"Effect {effect.Id} confirmation rejected: {result.Error}");
     }
 

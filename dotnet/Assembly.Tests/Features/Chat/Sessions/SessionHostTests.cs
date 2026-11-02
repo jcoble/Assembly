@@ -115,13 +115,13 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         await agent.TextAsync("Looking");
         await Kinds(1);
 
-        var steering = _host.SteerAsync("also this", null, CancellationToken.None);
+        var steering = _host.SteerAsync("also this", null, null, CancellationToken.None);
         var steer = await agent.ReadAsync("_session/steering");
         Assert.Equal("also this", steer.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
         Assert.Equal("promptRequired", steer.GetProperty("params").GetProperty("_meta").GetProperty("steering").GetProperty("idleBehavior").GetString());
         await agent.ReplyAsync(steer, """{"outcome":"injected"}""");
 
-        Assert.Equal(runId, await steering.WaitAsync(Wait));
+        Assert.Equal(SteerResult.Injected, await steering.WaitAsync(Wait));
         var rows = await Rows(2);
         Assert.Equal(["message", "user"], rows.Select(row => row.Kind));
         Assert.All(rows, row => Assert.Equal(runId, row.RunId));
@@ -131,25 +131,22 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_message_that_reaches_a_turn_as_it_ends_starts_the_next_turn()
+    public async Task A_message_that_requires_a_prompt_returns_its_outcome_without_starting_another_turn()
     {
         var runId = _host.Send("one");
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
 
-        var steering = _host.SteerAsync("two", null, CancellationToken.None);
+        var steering = _host.SteerAsync("two", null, null, CancellationToken.None);
         var steer = await agent.ReadAsync("_session/steering");
         await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.ReplyAsync(steer, """{"outcome":"promptRequired","reason":"noRunningTurn"}""");
         await agent.CloseAsync();
 
-        var next = await steering.WaitAsync(Wait);
-        Assert.NotNull(next);
-        Assert.NotEqual(runId, next);
-        await agent.OpenAsync();
-        var second = await agent.ReadAsync("session/prompt");
-        Assert.Equal("two", second.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        Assert.Equal(SteerResult.PromptRequired, await steering.WaitAsync(Wait));
+        Assert.Null(_host.ActiveRunId);
+        Assert.Single(_store.RowsAfter(_session.SessionId, 0), row => row.Kind == "user");
     }
 
     [Fact]

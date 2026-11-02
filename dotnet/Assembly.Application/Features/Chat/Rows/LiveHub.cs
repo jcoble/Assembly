@@ -141,6 +141,11 @@ public sealed class LiveHub : IDisposable
             return _store.UserRowOfClient(sessionId, clientId);
     }
 
+    internal UserDeliveryRow? UserDeliveryOfClient(string sessionId, string clientId)
+    {
+        lock (_gate) return _store.UserDeliveryOfClient(sessionId, clientId);
+    }
+
     public bool RunEnded(string sessionId, string runId)
     {
         lock (_gate)

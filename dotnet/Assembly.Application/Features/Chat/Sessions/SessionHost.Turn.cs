@@ -58,6 +58,11 @@ public sealed partial class SessionHost
                 pump = PumpAsync(updates);
             }
             if (kept is not null) BindPolicy(session, turn);
+            if (turn.Delivery is { } delivery && !CurrentAdmission(delivery, text, delivery.ClientId, delivery.SenderLabel, delivery.FromSessionId))
+            {
+                turn.Inserted.TrySetResult(new SendResult.Unknown());
+                throw new CallFailed("The delivery owner changed.");
+            }
             // A stop that lands between here and the prompt reaching the agent is lost; the turn then runs to its end.
             if (turn.Stopping.IsCancellationRequested)
             {
@@ -70,6 +75,7 @@ public sealed partial class SessionHost
                 try
                 {
                     turn.ProviderMessageId = await turn.Prompt.Inserted;
+                    turn.Inserted.TrySetResult(new SendResult.Inserted(turn.RunId, turn.ProviderMessageId, turn.UserRow));
                     response = await turn.Prompt.Ended;
                 }
                 catch
@@ -97,6 +103,7 @@ public sealed partial class SessionHost
         }
         catch (JsonRpcException error)
         {
+            turn.Inserted.TrySetResult(error.Code == -32000 ? new SendResult.AuthRequired(turn.UserRow) : new SendResult.Failed(error.Message));
             end = at => UpdateReader.TurnFailure(error, at);
         }
         catch (IOException) when (session is not null)
@@ -104,13 +111,17 @@ public sealed partial class SessionHost
             // The pipe closed under the prompt: the adapter is gone, whether or not its exit has been seen yet.
             // Its process group is killed as it exits, and the next send starts a new adapter.
             lost = true;
+            turn.Inserted.TrySetResult(new SendResult.Unknown());
             end = at => new AgentLost(at);
         }
         catch (Exception error)
         {
+            turn.Inserted.TrySetResult(error is CallFailed { Reason: { } reason } ? new SendResult.Failed(reason) :
+                turn.Prompt is null ? new SendResult.Failed(error.Message) : new SendResult.Unknown());
             end = at => new TurnFailed(at, error.Message, null);
         }
 
+        turn.Inserted.TrySetResult(new SendResult.Unknown());
         decimal? sessionCost;
         var keep = false;
         var toolsOpen = false;

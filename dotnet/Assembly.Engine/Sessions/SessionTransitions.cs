@@ -13,15 +13,15 @@ public static class SessionTransitions
         string? ParentId, string? RunId, string Machine, bool CancelRequested = false, long? ReservedEpoch = null);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext = "") =>
-        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, null);
+        SessionCommand command, int depthLimit, int childLimit, string accountContext = "", MessageExpiryPolicy? expiryPolicy = null) =>
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, null, expiryPolicy);
 
     internal static CommandResult ApplyPreparedTitle(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8) =>
-        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, titleUtf8);
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy = null) =>
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, titleUtf8, expiryPolicy);
 
     private static CommandResult ApplyCore(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8)
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy)
     {
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
@@ -45,7 +45,7 @@ public static class SessionTransitions
             return Refused(context, "bad_args");
         return command switch
         {
-            SetSessionState fact => SetState(scope, context, current, fact),
+            SetSessionState fact => SetState(scope, context, current, fact, expiryPolicy),
             ReportCapabilities capabilities => Capabilities(scope, context, current, capabilities),
             StopSession => Stop(scope, context, current),
             LinkTask link => Link(scope, context, current, link),
@@ -171,7 +171,7 @@ public static class SessionTransitions
             : Commit(scope, context, current with { Version = current.Version + 1 }, "session.changed", []);
     }
 
-    private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command)
+    private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command, MessageExpiryPolicy? expiryPolicy)
     {
         if (context.Actor.Kind != ActorKind.System)
             return Refused(context, "forbidden", current);
@@ -205,7 +205,7 @@ public static class SessionTransitions
             events.AddRange(MessageTransitions.ReleaseHeld(scope, context, context.EntityId, command.State == "ended", effects));
         if (command.State == "ended")
         {
-            events.AddRange(MessageTransitions.ChildEnded(scope, context, context.EntityId, effects));
+            events.AddRange(MessageTransitions.ChildEnded(scope, context, context.EntityId, effects, expiryPolicy));
         }
         if (command.State is "idle" or "running" or "ended")
             events.AddRange(MessageRelease.Next(scope, context, context.EntityId, effects));

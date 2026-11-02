@@ -83,7 +83,7 @@ type Payloads = {
   // `reason` says why a run the agent started itself started.
   turn: { state: TurnState; reason?: string };
   // `from`: the session that sent it, when it's a message from another session.
-  user: { text: string; from?: string };
+  user: { text: string; from?: string; senderLabel?: string };
   // `text` is only this delta's new raw text; the UI draws `blocks`.
   delta: { from: number; text: string; blocks: SafeMarkdownBlock[] };
   message: { blocks: SafeMarkdownBlock[] };
@@ -122,7 +122,7 @@ export type Row = {
 type Base = { key: string; runId: string | null };
 export type Item =
   // `at`: when the message was sent, or its reply last written.
-  | (Base & { kind: 'user'; text: string; at: number; from?: string })
+  | (Base & { kind: 'user'; text: string; at: number; from?: string; senderLabel?: string })
   | (Base & { kind: 'message'; blocks: SafeMarkdownBlock[]; done: boolean; at: number })
   | (Base & { kind: 'thinking'; text: string; done: boolean })
   | (Base & { kind: 'tool'; itemId: string; tool: ToolPayload })
@@ -220,7 +220,7 @@ export function applyRow(view: View, row: Row): void {
       if (!item) view.items.push({ key, runId, kind: 'stats', stats: row.payload });
       return;
     case 'user':
-      if (!item) view.items.push({ key, runId, kind: 'user', text: row.payload.text, at: row.createdAt, from: row.payload.from });
+      if (!item) view.items.push({ key, runId, kind: 'user', text: row.payload.text, at: row.createdAt, from: row.payload.from, senderLabel: row.payload.senderLabel });
       return;
     case 'error':
       if (!item) view.items.push({ key, runId, kind: 'error', error: row.payload });
