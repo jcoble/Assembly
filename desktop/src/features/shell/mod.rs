@@ -12,6 +12,7 @@ mod side_tabs;
 pub mod top_bar;
 mod top_tabs;
 pub mod utility_strip;
+pub mod workspace_preview;
 
 #[cfg(test)]
 mod drawer_buttons_tests;

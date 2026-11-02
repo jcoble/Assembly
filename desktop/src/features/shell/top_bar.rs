@@ -64,9 +64,19 @@ impl Render for TopBar {
                                 }
                             }),
                     )
+                    .item(PopupMenuItem::new("Projects").on_click(|_, window, cx| {
+                        super::workspace_preview::open(false, window, cx)
+                    }))
                     .separator()
                     .item(
                         PopupMenuItem::new("Settings")
+                            .icon(IconName::Settings)
+                            .on_click(|_, window, cx| {
+                                super::workspace_preview::open(true, window, cx)
+                            }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Connection settings")
                             .icon(IconName::Settings)
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(OpenSettings), cx);

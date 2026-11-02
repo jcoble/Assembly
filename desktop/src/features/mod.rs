@@ -5,6 +5,7 @@ pub mod changes;
 pub mod files;
 pub mod meter;
 pub mod palette;
+pub mod projects;
 pub mod session;
 pub mod sessions;
 pub mod settings;
@@ -12,3 +13,5 @@ pub mod shell;
 pub mod source_control;
 pub mod terminal;
 pub mod worktrees;
+
+pub mod preview_screen;

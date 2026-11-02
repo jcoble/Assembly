@@ -6,6 +6,7 @@ mod connections;
 mod fonts;
 mod machine_edits;
 mod page_content;
+pub mod preview;
 mod row;
 mod search;
 mod section;

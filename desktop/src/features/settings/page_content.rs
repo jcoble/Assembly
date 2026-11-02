@@ -2,6 +2,7 @@
 //! each row a title and one-line description with its control on the right, or its slider underneath.
 
 use gpui_kit::component::button::Button;
+use gpui_kit::component::label::Label;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
@@ -102,22 +103,16 @@ impl SettingsPage {
         column
     }
 
-    fn row(&self, row: &'static Row, cx: &mut Context<Self>) -> Div {
+    pub(super) fn row(&self, row: &'static Row, cx: &mut Context<Self>) -> Div {
         let theme = cx.theme();
         let label = v_flex()
             .gap_0p5()
             .min_w_0()
+            .child(Label::new(row.title).text_sm().text_color(theme.foreground))
             .child(
-                div()
-                    .text_sm()
-                    .text_color(theme.foreground)
-                    .child(row.title),
-            )
-            .child(
-                div()
+                Label::new(row.description)
                     .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(row.description),
+                    .text_color(theme.muted_foreground),
             );
         let number = number_row(row.id).map(|number| number.key);
         let slider = self
@@ -182,11 +177,10 @@ impl SettingsPage {
                 menu(row.id, shown, choices, key)
             }
         };
-        h_flex()
+        v_flex()
             .px_4()
             .py_3()
-            .gap_4()
-            .justify_between()
+            .gap_2()
             .child(label)
             .child(div().w(CONTROL_WIDTH).flex_none().child(control))
     }
