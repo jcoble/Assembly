@@ -22,16 +22,18 @@ internal static partial class AuthTransitions
             !AuthTerminalRow.Matches(scope, command.SessionId, command.TerminalSeq, proof)) return Rejected(context);
         var execution = AuthExecution.Current(scope, context, command.SessionId, proof, configured) ??
             AuthExecution.CompletedPositive(scope, context, command.SessionId, proof, configured);
-        if (execution is null) return Rejected(context);
+        var expired = execution is null && AuthExecution.ExpiredUnbound(scope, context, command.SessionId, proof, configured);
+        if (execution is null && !expired) return Rejected(context);
         var binding = proof with { ProviderMessageId = null };
         var blockContext = new CommandContext(binding.BlockCommandId, context.Machine, new(ActorKind.System, "adapter"),
             "auth-blocker/" + binding.BlockCommandId.ToString("N"), 0, binding.Epoch, context.NowMs);
         var block = new BlockSignInNeeded(command.SessionId, binding);
         var result = EngineJournal.Execute(scope, blockContext, JsonSerializer.Serialize<EngineCommand>(block, EngineJson.Default.EngineCommand),
             () => Block(scope, blockContext, block, configured, expiryPolicy));
+        if (expired) return result == Expired(context) ? result : Rejected(context);
         if (!result.Applied) return result;
         List<EventDraft> events = [];
-        if (execution.ConfirmedProviderId is not null)
+        if (execution!.ConfirmedProviderId is not null)
         {
             events.AddRange(Notice(scope, context, command.SessionId, proof));
             events.Add(MessageTransitions.ApplyInsertedAuthTerminal(scope, context, execution));
@@ -48,7 +50,8 @@ internal static partial class AuthTransitions
             context.ExpectedVersion != 0 || proof.ProviderMessageId is not null) return Rejected(context);
         var execution = AuthExecution.Current(scope, context, command.SessionId, proof, configured) ??
             AuthExecution.CompletedPositive(scope, context, command.SessionId, proof, configured);
-        if (execution is null) return Rejected(context);
+        if (execution is null) return AuthExecution.ExpiredUnbound(scope, context, command.SessionId, proof, configured)
+            ? Expired(context) : Rejected(context);
         if (execution.User.AuthBlocker is { } retained)
         {
             if (retained.EffectId != execution.Effect.Id || retained.OriginalClaimAttempt != execution.Effect.Attempt ||
@@ -107,6 +110,8 @@ internal static partial class AuthTransitions
             new(execution.Effect.Id, execution.Effect.Attempt, observationId, need.Id, need.Version, blockCommandId));
         return EngineJournal.Commit(scope, context, need.Version, context.Epoch, events, []);
     }
+
+    private static CommandResult Expired(CommandContext context) => new(false, false, "expired_unbound_terminal", 0, 0, context.Epoch);
 
     private static CommandResult Rejected(CommandContext context) => new(false, false, "bad_args", 0, 0, context.Epoch);
 }

@@ -9,7 +9,7 @@ using Assembly.Engine.Providers;
 namespace Assembly.Engine.Messages;
 
 /// <summary>The checked original execution at the auth producer boundary; no later reservation supplies its authority.</summary>
-internal sealed record AuthExecution(string SessionId, ConfiguredProviderTarget Target, UserPayload User,
+internal sealed partial record AuthExecution(string SessionId, ConfiguredProviderTarget Target, UserPayload User,
     Effect Effect, MessageDelivery Delivery, string? ConfirmedProviderId = null)
 {
     internal static bool ClosedProof(AuthTerminalProof p) => p.ObservationId != Guid.Empty && p.BlockCommandId != Guid.Empty &&
