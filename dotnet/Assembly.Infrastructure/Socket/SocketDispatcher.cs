@@ -285,6 +285,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         {
             return Error(id, "not_found", error.Message);
         }
+        catch (CallBadArguments error)
+        {
+            return Error(id, "bad_args", error.Message);
+        }
         catch (CallFailed error)
         {
             return Error(id, "failed", error.Message);

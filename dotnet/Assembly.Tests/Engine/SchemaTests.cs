@@ -78,12 +78,12 @@ public sealed class SchemaTests
     }
 
     [Fact]
-    public void Version_10_refuses()
+    public void Version_12_refuses()
     {
         using var f = new EngineFixture();
-        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=10"));
+        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=12"));
         Assert.Throws<InvalidOperationException>(() => EngineSchema.Open(f.Db, 1000));
-        Assert.Equal(10, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(12, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
     }
 
     [Fact]
@@ -161,20 +161,24 @@ public sealed class SchemaTests
         using var file = new TempDatabase();
         using var db = TestDatabase.Open(file.Path);
         SeedVersion1(db);
-        var before = StoredRows(db);
+        var originalColumns = OriginalColumns(db);
+        var before = StoredRows(db, originalColumns);
         var indexes = db.Query("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name", r => r.Text(0), default);
 
         Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
 
-        Assert.Equal(9, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
-        Assert.Equal(before, StoredRows(db));
+        Assert.Equal(11, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(before, StoredRows(db, originalColumns));
         Assert.Equal("s", db.QueryFirst("SELECT order_key FROM engine_outbox WHERE id='effect'", r => r.Text(0), default));
+        Assert.Null(db.QueryFirst("SELECT executor_json FROM engine_outbox WHERE id='effect'", r => r.IsNull(0) ? null : r.Text(0), default));
+        Assert.Equal(0, db.QueryFirst("SELECT COUNT(*) FROM engine_needs_me WHERE source_kind!='provider' OR execution_json IS NOT NULL", r => r.Long(0), default));
+        Assert.Equal(0, db.QueryFirst("SELECT COUNT(*) FROM engine_run WHERE setup_state!='ready' OR paused!=0", r => r.Long(0), default));
         Assert.Equal(new long[] { 1, 2, 3 }, db.Query("SELECT seq FROM engine_event ORDER BY seq", r => r.Long(0), default));
         Assert.Equal(new long[] { 4, 1, 2 }, db.QueryFirst("SELECT next_seq,retained_after,snapshot_seq FROM engine_meta", r => new[] { r.Long(0), r.Long(1), r.Long(2) }, default));
         Assert.All(indexes, name => Assert.Equal(1, db.QueryFirst("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=$name", r => r.Long(0), default, new SqlArg("$name", name))));
         Assert.Empty(db.Query("PRAGMA foreign_key_check", r => r.Text(0), default));
         Assert.Equal("original-machine", EngineSchema.Open(db, 3000));
-        Assert.Equal(before, StoredRows(db));
+        Assert.Equal(before, StoredRows(db, originalColumns));
         Assert.Throws<SqliteException>(() => db.Writer.Write("invalid.event", s => s.Execute("UPDATE engine_event SET data_json='invalid' WHERE seq=1")));
         Assert.Throws<SqliteException>(() => db.Writer.Write("duplicate.event", s => s.Execute("UPDATE engine_event SET seq=1 WHERE seq=2")));
         Assert.Throws<SqliteException>(() => db.Writer.Write("invalid.link", s => s.Execute("UPDATE engine_step SET run_id='missing'")));
@@ -188,11 +192,12 @@ public sealed class SchemaTests
         SeedVersion1(db);
         // A late DDL failure must undo the event table replacement as well as the version change.
         db.Writer.Write("test.block-upgrade", s => s.Execute("CREATE TABLE engine_mirror_row(blocker TEXT)"));
-        var before = StoredRows(db);
+        var originalColumns = OriginalColumns(db);
+        var before = StoredRows(db, originalColumns);
         var schema = db.Query("SELECT sql FROM sqlite_master ORDER BY name", r => r.IsNull(0) ? null : r.Text(0), default);
         Assert.Throws<SqliteException>(() => EngineSchema.Open(db, 2000));
         Assert.Equal(1, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
-        Assert.Equal(before, StoredRows(db));
+        Assert.Equal(before, StoredRows(db, originalColumns));
         Assert.Equal(schema, db.Query("SELECT sql FROM sqlite_master ORDER BY name", r => r.IsNull(0) ? null : r.Text(0), default));
         db.Writer.Write("test.unblock-upgrade", s => s.Execute("DROP TABLE engine_mirror_row"));
         Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
@@ -216,23 +221,14 @@ public sealed class SchemaTests
         Assert.Equal(2, f.Count("engine_mirror_row"));
     }
 
-    private static string[] StoredRows(IAppDatabase db)
-    {
-        var tables = db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'engine_%' AND name NOT IN ('engine_meta','engine_mirror','engine_mirror_row') ORDER BY name", r => r.Text(0), default);
-        return tables.SelectMany(table =>
-        {
-            var columns = db.Query($"PRAGMA table_info({table})", r => r.Text(1), default)
-                .Where(column => table switch
-                {
-                    "engine_message" => column is not ("delivery" or "attempt" or "in_flight" or "sender_label" or "client_id" or "framed" or "attachment_ids_json" or "held_epoch" or "target_epoch" or "owner_content_sha256" or "expires_ms"),
-                    "engine_session" => column is not ("can_steer" or "account_context" or "managed_checkout"),
-                    "engine_needs_me" => column != "addressee_session_id",
-                    "engine_outbox" => column != "order_key",
-                    _ => true
-                }).OrderBy(column => column, StringComparer.Ordinal);
-            return db.Query($"SELECT json_array({string.Join(',', columns)}) FROM {table} ORDER BY 1", r => table + ":" + r.Text(0), default);
-        }).ToArray();
-    }
+    private static IReadOnlyDictionary<string, string[]> OriginalColumns(IAppDatabase db) => db.Query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'engine_%' AND name NOT IN ('engine_meta','engine_mirror','engine_mirror_row') ORDER BY name",
+        r => r.Text(0), default).ToDictionary(table => table, table => db.Query($"PRAGMA table_info({table})", r => r.Text(1), default)
+            .OrderBy(column => column, StringComparer.Ordinal).ToArray());
+
+    private static string[] StoredRows(IAppDatabase db, IReadOnlyDictionary<string, string[]> originalColumns) =>
+        originalColumns.SelectMany(pair => db.Query($"SELECT json_array({string.Join(',', pair.Value)}) FROM {pair.Key} ORDER BY 1",
+            r => pair.Key + ":" + r.Text(0), default)).ToArray();
 
     private static void SeedVersion1(IAppDatabase db) => db.Writer.Write("test.actual-v1", s =>
     {

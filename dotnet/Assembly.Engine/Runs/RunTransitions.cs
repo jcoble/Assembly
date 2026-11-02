@@ -3,6 +3,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Sessions;
+using Assembly.Engine.Workflows.Runs;
 
 namespace Assembly.Engine.Runs;
 
@@ -46,13 +47,20 @@ public static class RunTransitions
         return EngineJournal.Commit(s, c, updated.Version, updated.Epoch, events, effects);
     }
 
-    private static CommandResult Start(IWriteScope s, CommandContext c, StartRun command)
+    internal static CommandResult StartWorkflow(IWriteScope s, CommandContext c, StartRun command, WorkflowSetupIntent setup)
+    {
+        if (Find(s, c.EntityId) is not null) return Refused(c, "version_conflict");
+        var payload = JsonSerializer.SerializeToElement(setup, EngineJson.Default.WorkflowSetupIntent);
+        return Start(s, c, command, [new("", "workflow_setup", null, c.EntityId, payload)]);
+    }
+
+    private static CommandResult Start(IWriteScope s, CommandContext c, StartRun command, IReadOnlyList<EffectDraft>? effects = null)
     {
         var owner = s.QueryFirst("SELECT parent_id,state,epoch,lost_ms FROM engine_session WHERE id=$id",
             r => new { Parent = r.IsNull(0) ? null : r.Text(0), State = r.Text(1), Epoch = r.Long(2), Lost = r.IsNull(3) ? (long?)null : r.Long(3) },
             new SqlArg("$id", command.OwnerSessionId));
         if (owner is null || owner.Parent is not null || owner.State == "ended" || command.OwnerLossLimitMs < 1 ||
-            !Uri.TryCreate(command.TaskUrl, UriKind.Absolute, out var task) || task.Scheme != "https" ||
+            command.TaskUrl is not null && (!Uri.TryCreate(command.TaskUrl, UriKind.Absolute, out var task) || task.Scheme != "https") ||
             !ValidDefinitions(s, command.Steps)) return Refused(c, "bad_args");
         if (!CanControl(c, command.OwnerSessionId)) return Refused(c, "forbidden");
         if (c.Epoch != owner.Epoch) return new(false, false, "stale_epoch", 0, 0, owner.Epoch);
@@ -74,7 +82,7 @@ public static class RunTransitions
                 s.Execute("INSERT INTO engine_step_dependency(step_id,dependency_id,optional) VALUES($step,$dep,$optional)",
                     new("$step", step.Id), new("$dep", dependency.StepId), new("$optional", dependency.Optional ? 1 : 0));
         return EngineJournal.Commit(s, c, 1, owner.Epoch,
-            [Changed(c.EntityId, 1, command.OwnerSessionId, "queued")], []);
+            [Changed(c.EntityId, 1, command.OwnerSessionId, "queued")], effects ?? []);
     }
 
     private static bool ValidDefinitions(IWriteScope s, IReadOnlyList<StepDefinition>? steps)

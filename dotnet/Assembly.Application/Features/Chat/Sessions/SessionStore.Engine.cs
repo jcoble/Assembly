@@ -5,7 +5,7 @@ using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
-public sealed partial class SessionStore
+public sealed partial class SessionStore : ISessionProjectProjection
 {
     private IEngineSessions? _engine;
 
@@ -18,9 +18,43 @@ public sealed partial class SessionStore
 
     public static void EnsureEngineProjectionSchema(IWriteScope scope)
     {
+        EnsureProjectProjectionSchema(scope);
         if (scope.QueryFirst("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='pending_model'", r => r.Long(0)) == 0)
             scope.Execute("ALTER TABLE session_config ADD COLUMN pending_model TEXT NULL");
     }
+
+    private static void EnsureProjectProjectionSchema(IWriteScope scope)
+    {
+        foreach (var column in new[] { "project_id", "checkout_root", "branch", "client_id" })
+            if (scope.QueryFirst("SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name=$name", r => r.Long(0), new SqlArg("$name", column)) == 0)
+                scope.Execute($"ALTER TABLE session_info ADD COLUMN {column} TEXT NULL");
+        scope.Execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS session_client_id_unique ON session_info(client_id) WHERE client_id IS NOT NULL;
+            CREATE TRIGGER IF NOT EXISTS session_project_once
+            BEFORE UPDATE OF project_id ON session_info
+            WHEN OLD.project_id IS NOT NULL AND NEW.project_id IS NOT OLD.project_id
+            BEGIN SELECT RAISE(ABORT, 'a session''s project never changes'); END;
+            """);
+    }
+
+    public void Assigned(IWriteScope scope, string sessionId, string? projectId)
+    {
+        if (scope.Execute("UPDATE session_info SET project_id=$project WHERE session_id=$id AND (project_id IS NULL OR project_id=$project)",
+            new SqlArg("$id", sessionId), new SqlArg("$project", projectId)) != 1)
+            throw new InvalidOperationException("The session project projection was refused.");
+        Publish(scope, sessionId);
+    }
+
+    public void SetCheckout(IWriteScope scope, string sessionId, string checkoutRoot, string? branch)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(checkoutRoot);
+        if (scope.Execute("UPDATE session_info SET checkout_root=$root,branch=$branch WHERE session_id=$id",
+            new SqlArg("$id", sessionId), new SqlArg("$root", checkoutRoot), new SqlArg("$branch", branch)) != 1)
+            throw new InvalidOperationException("The session checkout projection was refused.");
+        Publish(scope, sessionId);
+    }
+
+    public void CheckoutChanged(IWriteScope scope, string sessionId, string folder, string? branch) => SetCheckout(scope, sessionId, folder, branch);
 
     public SessionInfo? Get(IReadScope scope, string sessionId) =>
         scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id=$id", ReadSession, new SqlArg("$id", sessionId));

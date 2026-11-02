@@ -1,0 +1,7 @@
+{
+  "producer": "75e5c7cf4bed90bdf5e9eb3e4bf5674b7a15a704",
+  "tree": "0756823bb872ff52c3a7291e3d45e3f23ec4e50f",
+  "capture": "CaptureWorkflowPredecessorTests.cs.txt; unchanged EngineFixture and actual EngineCommands, isolated SQLite backup",
+  "schemaVersion": 10,
+  "sha256": "5f4508767e9821a2b0bc677601d5e08b253fa96b9070487768e2061b5a004f5f"
+}

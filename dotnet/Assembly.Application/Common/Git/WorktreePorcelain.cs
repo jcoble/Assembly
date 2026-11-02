@@ -1,4 +1,4 @@
-namespace Assembly.Application.Features.Chat.Worktrees;
+namespace Assembly.Application.Common.Git;
 
 /// <summary>Reads git's NUL-separated worktree records without interpreting paths as quoted strings.</summary>
 public static class WorktreePorcelain

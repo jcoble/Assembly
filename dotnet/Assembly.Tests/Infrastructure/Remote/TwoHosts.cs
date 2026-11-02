@@ -44,6 +44,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         public int MachineCalls;
         public event Action? RetentionCommitted;
         private readonly IEngineEffects? _effects;
+        public Action<ICallRegistry>? AdditionalFeatures { get; set; }
         public Action? CommandCommitted { get; set; }
         public Action<string>? WriteCommitted { get; set; }
         public Func<Task>? Identifying { get; set; }
@@ -95,6 +96,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                 _machineCalls.Register(new IdentityGate(calls, this, machineReads: true));
             }
             new SessionsFeature(Sessions, new MachineSet(new FakeMachine(null, Sessions))).Register(calls);
+            AdditionalFeatures?.Invoke(calls);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));
             App = builder.Build(); App.UseWebSockets();

@@ -7,7 +7,7 @@ namespace Assembly.Engine.Runs;
 
 public static class StepTransitions
 {
-    private sealed record Step(long Version, string RunId, string State, int Attempt, int MaxAttempts,
+    private sealed record Step(long Version, string RunId, string State, int Attempt, long MaxAttempts,
         bool RuleSkippable, string? SessionId, string OwnerId, string RunState, long OwnerEpoch, string? Proof, string? Reason);
     private sealed record Worker(string? ParentId, string? RunId, string State, long Epoch);
 
@@ -122,7 +122,7 @@ public static class StepTransitions
         SELECT st.version,st.run_id,st.state,st.attempt,st.max_attempts,st.rule_skippable,st.session_id,
             r.owner_session_id,r.state,se.epoch,st.proof_json,st.outcome_reason FROM engine_step st JOIN engine_run r ON r.id=st.run_id
             JOIN engine_session se ON se.id=r.owner_session_id WHERE st.id=$id
-        """, r => new Step(r.Long(0), r.Text(1), r.Text(2), (int)r.Long(3), (int)r.Long(4), r.Long(5) != 0,
+        """, r => new Step(r.Long(0), r.Text(1), r.Text(2), (int)r.Long(3), r.Long(4), r.Long(5) != 0,
             r.IsNull(6) ? null : r.Text(6), r.Text(7), r.Text(8), r.Long(9), r.IsNull(10) ? null : r.Text(10), r.IsNull(11) ? null : r.Text(11)), new SqlArg("$id", id));
     private static Worker? FindWorker(IWriteScope s, string id) => s.QueryFirst("""
         SELECT parent_id,run_id,state,epoch FROM engine_session WHERE id=$id
