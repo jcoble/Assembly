@@ -58,6 +58,15 @@ internal static partial class AuthTransitions
                 return Rejected(context);
             return new(true, false, null, existing.Version, 0, context.Epoch);
         }
+        var original = proof.Delivery!;
+        return BindRefusalNeed(scope, context, execution, new(original.UserRowSeq, original.UserRunId, proof.Epoch),
+            proof.ObservationId, proof.BlockCommandId, expiryPolicy);
+    }
+
+    private static CommandResult BindRefusalNeed(IWriteScope scope, CommandContext context, AuthExecution execution,
+        Assembly.Application.Common.Engine.UserRowReference original, Guid observationId, Guid? blockCommandId, MessageExpiryPolicy expiryPolicy)
+    {
+        var sessionId = execution.SessionId;
         var text = AuthNeed.Copy(execution.Target.Provider, context.Machine);
         var current = scope.Query("""
             SELECT id FROM engine_needs_me WHERE machine=$machine AND session_id=$session AND state='open'
@@ -65,21 +74,21 @@ internal static partial class AuthTransitions
               AND json_type(options_json)='array' AND json_array_length(options_json)=2
               AND json_extract(options_json,'$[0]')='sign_in' AND json_extract(options_json,'$[1]')='dismiss'
             ORDER BY created_ms,id LIMIT 2
-            """, r => r.Text(0), new SqlArg("$machine", context.Machine), new("$session", command.SessionId),
+            """, r => r.Text(0), new SqlArg("$machine", context.Machine), new("$session", sessionId),
             new("$text", System.Text.Encoding.UTF8.GetBytes(text)), new("$inserted", System.Text.Encoding.UTF8.GetBytes(AuthNeed.InsertionCopy(execution.Target.Provider, context.Machine))));
         if (current.Count > 1) return Rejected(context);
         AuthNeed? need = current.Count == 1 ? AuthNeed.Open(scope, context.Machine, current[0]) : null;
         if (current.Count == 1 && need is null) return Rejected(context);
         if (need is null)
         {
-            var prefix = "sign-in/" + command.SessionId + "/";
+            var prefix = "sign-in/" + sessionId + "/";
             var number = scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_needs_me WHERE session_id=$session AND substr(id,1,length($prefix))=$prefix
                   AND length(id)>length($prefix) AND substr(id,length($prefix)+1) NOT GLOB '*[^0-9]*'
-                """, r => r.Long(0), new SqlArg("$session", command.SessionId), new("$prefix", prefix)) + 1;
+                """, r => r.Long(0), new SqlArg("$session", sessionId), new("$prefix", prefix)) + 1;
             var id = prefix + number.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var opened = NeedTransitions.Apply(scope, context with { EntityId = id, ExpectedVersion = 0 },
-                new OpenNeed(command.SessionId, execution.Effect.RunId, null, "confirmation", text, ["sign_in", "dismiss"], null, null, null), expiryPolicy);
+                new OpenNeed(sessionId, execution.Effect.RunId, null, "confirmation", text, ["sign_in", "dismiss"], null, null, null), expiryPolicy);
             if (!opened.Applied) return opened;
             need = AuthNeed.Open(scope, context.Machine, id) ?? throw new InvalidOperationException("The new auth need did not retain its exact target.");
         }
@@ -94,9 +103,8 @@ internal static partial class AuthTransitions
                 """, new("$now", context.NowMs), new("$id", provider.Id));
             events.Add(ProviderState.Changed(provider.Id, provider.Version + 1, "needs_sign_in"));
         }
-        var original = proof.Delivery!;
-        RowStore.BindAuthBlocker(scope, command.SessionId, original.ClientId, original.UserRowSeq, original.UserRunId,
-            new(execution.Effect.Id, execution.Effect.Attempt, proof.ObservationId, need.Id, need.Version, proof.BlockCommandId));
+        RowStore.BindAuthBlocker(scope, sessionId, execution.Delivery.Intent.ClientId, original.Seq, original.RunId,
+            new(execution.Effect.Id, execution.Effect.Attempt, observationId, need.Id, need.Version, blockCommandId));
         return EngineJournal.Commit(scope, context, need.Version, context.Epoch, events, []);
     }
 

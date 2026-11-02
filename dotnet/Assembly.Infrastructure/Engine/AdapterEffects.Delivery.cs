@@ -76,7 +76,7 @@ public sealed partial class AdapterEffects
                 throw new CallFailed("delivery_ack_conflict");
         }
         else if (!RowStore.Positive(row.Acknowledgment)) throw new CallFailed("delivery_ack_conflict");
-        if (data.State == "queued" && data.Reason == "auth_required") return null;
+        if (data.State == "queued" && data.Reason == "auth_required") return global::Assembly.Engine.Messages.AuthTransitions.RefusalOutcome(scope, context, effect, receipt, delivery);
         var acknowledgment = data.State switch
         {
             "next_turn" when !string.IsNullOrWhiteSpace(data.ProviderTurnId) => new UserAcknowledgment("prompt_inserted", data.ProviderTurnId),

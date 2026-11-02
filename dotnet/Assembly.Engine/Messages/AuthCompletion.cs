@@ -19,6 +19,11 @@ internal static partial class AuthTransitions
         if (effect.Kind != "send" || receipt.Disposition != EffectDisposition.Confirmed || delivery is null)
             throw new CallFailed("bad_receipt");
         var data = receipt.Data.Deserialize(EngineJson.Default.MessageEffectData);
+        if (data is { State: "queued", Reason: "auth_required", ProviderTurnId: null, UserRow: not null })
+        {
+            if (outcome != RefusalOutcome(scope, context, effect, receipt, delivery)) throw new CallFailed("bad_receipt");
+            return;
+        }
         if (data is not { State: "next_turn", ProviderTurnId: { } provider, UserRow: { } original } ||
             string.IsNullOrWhiteSpace(provider) || data.Reason is not null ||
             outcome != new MessageOutcome("failed", provider, "inserted_before_sign_in")) throw new CallFailed("bad_receipt");

@@ -93,6 +93,8 @@ public static class EffectTransitions
             catch (Exception error) when (error is JsonException or DecoderFallbackException) { delivery = null; }
             if (delivery is null || delivery.Epoch != c.Epoch) return Reject("stale_delivery");
         }
+        var refusalAttempt = command is CompleteEffect && state == "done"
+            ? AuthTransitions.PrepareRefusalCompletion(s, c, effect, receipt!, delivery, expiryPolicy) : null;
         var projected = command is CompleteEffect && state == "done"
             ? projectCompletion?.Invoke(s, c, effect, receipt!, delivery) : null;
         AuthTransitions.ValidateCompletionProjection(s, c, effect, receipt!, delivery, projected);
@@ -106,6 +108,11 @@ public static class EffectTransitions
             """, new("$state", state), new("$now", c.NowMs), new("$next", next), new("$id", c.EntityId),
             new("$receipt", receipt is null ? null : JsonSerializer.Serialize(receipt, EngineJson.Default.EffectReceipt)), new("$error", receipt?.Error));
         if (state == "done") Confirm(s, c, effect, receipt!, expiryPolicy, projected);
+        if (refusalAttempt is { } originalAttempt)
+        {
+            receipt = AuthTransitions.RetainRefusalReceipt(s, c, effect, delivery!, receipt!, originalAttempt);
+            s.Execute("UPDATE engine_outbox SET receipt_json=$receipt WHERE id=$id", new("$receipt", JsonSerializer.Serialize(receipt, EngineJson.Default.EffectReceipt)), new("$id", effect.Id));
+        }
         if (effect.Kind == "send" && (state == "failed" || state == "dead" && command is EnableEffect))
             SetMessageOutcome(s, c, effect, new(state == "failed" ? "failed" : "queued", null, state == "failed" ? receipt?.Error ?? "effect_failed" : "not_delivered"));
         return Commit(s, c, row.Version + 1, state);
