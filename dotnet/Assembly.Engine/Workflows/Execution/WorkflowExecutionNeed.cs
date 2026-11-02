@@ -46,7 +46,7 @@ public static class WorkflowExecutionNeeds
             UPDATE engine_step SET state='waiting',version=version+1,updated_ms=$now,outcome_reason=$reason WHERE id=$step;
             """, new("$id", id), new("$machine", c.Machine), new("$now", c.NowMs), new("$owner", owner.Id), new("$run", i.RunId), new("$step", i.StepId),
             new("$kind", reason == "policy" ? "permission" : "command_uncertain"), new("$text", reason == "policy" ? "Allow this workflow command?" : "Command execution is uncertain; confirm its executor stopped before retrying."),
-            new("$options", reason == "policy" ? "[\"allow_once\",\"deny\"]" : "[\"retry\",\"cancel\"]"),
+            new("$options", reason == "policy" ? "[\"allow_once\",\"deny\"]" : i.Repeat ? "[\"retry\",\"cancel\"]" : "[\"cancel\"]"),
             new("$execution", JsonSerializer.Serialize(execution, WorkflowNeedJson.Default.WorkflowExecutionNeed)), new("$hash", CommandStepTransitions.Digest(effect.Payload.GetRawText())), new("$reason", reason));
         List<EventDraft> events = [new("needs_me.changed", "need", id, 1, false, new(owner.Id, i.RunId, i.StepId, owner.Id, "open", owner.Epoch))];
         events.AddRange(RunTransitions.Recompute(s, c, i.RunId));

@@ -39,6 +39,8 @@ public sealed class CommandStepEffects(IAppDatabase db, EngineCommands commands,
                 return new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new CommandExecutionReceipt(effect.Id,
                     CommandStepTransitions.Digest(effect.Payload.GetRawText()), null, null, "", "", 0, 0, false, true,
                     "not_started", "", null, NotStarted: true), WorkflowExecutionJson.Default.CommandExecutionReceipt), null);
+            if (!reconcile && (intent.PrBody is null || intent.PrBody.InputSetSha256 != WorkflowPrBodies.InputSetHash(scope, intent.RunId, intent.StepId, intent.Generation)))
+                return new(EffectDisposition.Unknown, JsonSerializer.SerializeToElement((string?)null, EngineJson.Default.String), "pr_body_stale");
             ask = !reconcile && WorkflowExecutionNeeds.Policy(scope, effect) != "allow";
         }
         if (ask)
