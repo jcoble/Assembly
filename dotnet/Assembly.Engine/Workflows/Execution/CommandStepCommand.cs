@@ -21,7 +21,7 @@ public sealed record CommandProcessObserved(string EffectId, int Generation, int
     long ExecutionEpoch, CommandProcessIdentity Process) : CommandStepCommand;
 public sealed record CommandExecutionReceipt(string EffectId, string IntentSha256, CommandProcessIdentity? Process,
     int? ExitCode, string OutputReceiptPath, string OutputSha256, long OutputBytes, long ObservedBytes,
-    bool Truncated, bool Stopped, string? Error, string Summary, string? EndFingerprint, int? ExitedPid = null, bool NotStarted = false);
+    bool Truncated, bool Stopped, string? Error, string Summary, string? EndFingerprint, int? ExitedPid = null, bool NotStarted = false, bool ExecutorAbsent = false);
 
 public interface IWorkflowProcess
 {

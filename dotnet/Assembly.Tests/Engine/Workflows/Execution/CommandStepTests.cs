@@ -164,6 +164,45 @@ public sealed class CommandStepTests
         Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_step WHERE generation=1"));
         Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step_attempt WHERE step_id='" + build + "' AND attempt=1"));
         Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='redo_applied'"));
+        using var snapshot = f.Core.Db.OpenSnapshot(default);
+        var redo = Assembly.Engine.Workflows.Reviews.ReviewTransitions.RedoValues(snapshot, f.Run, f.Step, 1)!;
+        Assert.Equal(build, redo.TargetStepId);
+        Assert.Equal("exit 7", redo.Values.GetProperty("findings")[0].GetString());
+        Assert.Contains("collected", redo.Values.GetProperty("output").GetString());
+        Assert.NotNull(redo.OutputReceiptId);
+        Assert.Equal(64, redo.SourceDigest.Length);
+        Assert.Null(Assembly.Engine.Workflows.Reviews.ReviewTransitions.RedoValues(snapshot, f.Run, f.Step, 2));
+    }
+
+    [Fact]
+    public async Task Shared_list_deadline_stops_remaining_commands_and_requires_explicit_new_attempt()
+    {
+        using var f = new Fixture("printf first", "printf second", "printf must-not-run");
+        Assert.True(f.Start(f.Prepare()).Applied);
+        var deadline = f.Core.Number("SELECT deadline_ms FROM engine_step");
+        var first = f.Claim(); Assert.True(f.Complete(first, await f.Host().ExecuteAsync(first, default)).Applied);
+        Assert.True(f.Start(f.Prepare(1500)).Applied);
+        Assert.Equal(deadline, f.Core.Number("SELECT deadline_ms FROM engine_step"));
+        var second = f.Claim(); Assert.True(f.Complete(second, await f.Host().ExecuteAsync(second, default)).Applied);
+        var c = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.System, "engine.worker"), f.Step,
+            f.Core.Number("SELECT version FROM engine_step"), 1, deadline);
+        Assert.Equal("not_due", f.Core.Db.Writer.Write("test.early-timeout", scope => f.Commands.ExpireWorkflowCommand(scope, c with { CommandId = Guid.NewGuid(), NowMs = deadline - 1 })).Error);
+        Assert.True(f.Core.Db.Writer.Write("test.timeout", scope => f.Commands.ExpireWorkflowCommand(scope, c)).Applied);
+        Assert.Equal("timed_out", f.Core.Text("SELECT outcome_reason FROM engine_step"));
+        Assert.Equal("waiting", f.Core.Text("SELECT state FROM engine_step"));
+        Assert.Equal("settled", f.Core.Text("SELECT gate_state FROM engine_step_attempt"));
+        Assert.Equal("command_timeout", f.Core.Text("SELECT kind FROM engine_needs_me WHERE state='open'"));
+        Assert.Equal("needs_me", f.Core.Text("SELECT state FROM engine_run"));
+        Assert.Throws<InvalidOperationException>(() => f.Prepare(deadline + 1));
+        Assert.Equal(2, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='workflow_command'"));
+        var need = f.Core.Text("SELECT id FROM engine_needs_me WHERE state='open'")!;
+        var retry = c with { CommandId = Guid.NewGuid(), ExpectedVersion = f.Core.Number("SELECT version FROM engine_step"), Epoch = 0, Actor = new(ActorKind.Window, "owner") };
+        Assert.True(f.Core.Db.Writer.Write("test.owner-timeout-retry", scope => CommandStepTransitions.AuthorizeTimeoutRetry(scope, retry, need)).Applied);
+        Assert.Equal("running", f.Core.Text("SELECT state FROM engine_run"));
+        Assert.True(f.Start(f.Prepare(deadline + 2)).Applied);
+        Assert.Equal(2, f.Core.Number("SELECT attempt FROM engine_step"));
+        Assert.Equal(0, f.Core.Number("SELECT command_index FROM engine_step_attempt WHERE attempt=2"));
+        Assert.Equal("timed_out", f.Core.Text("SELECT reason FROM engine_step_attempt WHERE attempt=1"));
     }
 
     [Fact]
@@ -181,7 +220,7 @@ public sealed class CommandStepTests
     internal sealed class Fixture : IDisposable
     {
         private readonly string _temp = Directory.CreateTempSubdirectory("assembly-command-engine-").FullName;
-        public EngineFixture Core { get; } = new();
+        public EngineFixture Core { get; }
         public EngineCommands Commands => new(Core.Machine, Core.Limits);
         public string Run { get; } = Guid.NewGuid().ToString("N");
         public string Step => Core.Text("SELECT id FROM engine_step WHERE definition_key='checks'")!;
@@ -189,8 +228,9 @@ public sealed class CommandStepTests
         private string Proof => Path.Combine(_temp, "proof");
         public string ProofRoot => Proof;
         public Fixture(params string[] scripts) : this(scripts, "allow") { }
-        public Fixture(string[] scripts, string policy, bool onFail = false, bool repeat = false)
+        public Fixture(string[] scripts, string policy, bool onFail = false, bool repeat = false, Assembly.Application.Common.Topics.ITopics? topics = null)
         {
+            Core = new(topics: topics);
             Core.SeedSession("owner"); var root = Path.Combine(_temp, "repo"); Directory.CreateDirectory(root);
             var store = new ProjectStore(Core.Db, Core.Time);
             var project = Core.Db.Writer.Write("test.project", s => store.AddOrRestore(s, Core.Machine, root, "Fixture", null).Project);
@@ -257,7 +297,7 @@ public sealed class CommandStepTests
         }
         public Effect Claim()
         {
-            var id = Core.Text("SELECT id FROM engine_outbox WHERE kind='workflow_command' AND state='pending' ORDER BY rowid LIMIT 1")!;
+            var id = Core.Text("SELECT id FROM engine_outbox WHERE kind='workflow_command' AND state IN ('pending','uncertain') ORDER BY rowid LIMIT 1")!;
             Assert.True(Core.Apply(new ClaimEffect(), id, Core.Number("SELECT version FROM engine_outbox WHERE id='" + id + "'"), actor: new(ActorKind.System, "engine.worker")).Applied);
             return EffectTransitions.Read(Core.Db, id, default)!;
         }

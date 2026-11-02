@@ -39,6 +39,17 @@ public static partial class CommandStepTransitions
         {
             var i = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent);
             var result = receipt.Data.Deserialize(WorkflowExecutionJson.Default.CommandExecutionReceipt);
+            if (i is not null && result is { ExecutorAbsent: true })
+            {
+                var executor = s.QueryFirst("SELECT executor_json FROM engine_outbox WHERE id=$id AND kind='workflow_command'",
+                    r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$id", effect.Id));
+                return effect.SessionId is null && effect.RunId == i.RunId && effect.OrderKey == i.OrderKey &&
+                    result.EffectId == effect.Id && result.IntentSha256 == Digest(effect.Payload.GetRawText()) &&
+                    result.Stopped && result.Process is not null && executor is not null &&
+                    JsonSerializer.Deserialize(executor, WorkflowExecutionJson.Default.CommandProcessIdentity) == result.Process &&
+                    result.ExitCode is null && result.ExitedPid is null && !result.NotStarted &&
+                    result.OutputReceiptPath == "" && result.OutputSha256 == "" && result.OutputBytes == 0 && result.ObservedBytes == 0;
+            }
             if (i is not null && result is { NotStarted: true })
                 return effect.SessionId is null && effect.RunId == i.RunId && effect.OrderKey == i.OrderKey &&
                     result.EffectId == effect.Id && result.IntentSha256 == Digest(effect.Payload.GetRawText()) &&
@@ -68,6 +79,11 @@ public static partial class CommandStepTransitions
         if (!current) return; // Old attempt outcome is immutable; the late observation is a separate fact.
         var stopped = result.Stopped || s.QueryFirst("SELECT cancel_requested FROM engine_step_attempt WHERE step_id=$step AND attempt=$attempt",
             r => r.Long(0) != 0, new SqlArg("$step", i.StepId), new("$attempt", i.Attempt));
+        var timedOut = stopped && s.QueryFirst("""
+            SELECT a.reason='timed_out' AND r.state NOT IN ('cancelling','cancelled') FROM engine_step_attempt a
+            JOIN engine_step st ON st.id=a.step_id JOIN engine_run r ON r.id=st.run_id
+            WHERE a.step_id=$step AND a.attempt=$attempt
+            """, r => r.Long(0) != 0, new SqlArg("$step", i.StepId), new("$attempt", i.Attempt));
         var last = i.CommandIndex + 1 >= i.CommandCount;
         var changed = result.EndFingerprint is { } end && end != i.Fingerprint || s.QueryFirst("""
             SELECT COUNT(*) FROM engine_workflow_history WHERE step_id=$step AND attempt=$attempt AND generation=$generation
@@ -80,18 +96,20 @@ public static partial class CommandStepTransitions
               AND kind='command_ended' AND (json_extract(safe_body_json,'$.exitCode')!=0 OR json_extract(safe_body_json,'$.error') IS NOT NULL)
             """, r => r.Long(0), new SqlArg("$step", i.StepId), new("$attempt", i.Attempt), new("$generation", i.Generation)) > 0;
         var redo = last && !stopped && !changed && failed && Reviews.ReviewTransitions.HasCommandTarget(s, i.StepId);
-        var state = stopped ? "cancelled" : !last ? "running" : redo ? "waiting" : failed ? "failed" : "succeeded";
-        var reason = stopped ? "cancelled" : changed ? "changed_code" : failed && last ? "command_failed" : null;
+        var state = timedOut ? "waiting" : stopped ? "cancelled" : !last ? "running" : redo ? "waiting" : failed ? "failed" : "succeeded";
+        var reason = timedOut ? "timed_out" : stopped ? "cancelled" : changed ? "changed_code" : failed && last ? "command_failed" : null;
         var terminal = stopped || last;
         s.Execute("""
             UPDATE engine_step_attempt SET command_index=$next,gate_state=$gate,state=$state,ended_ms=$ended,reason=$reason
             WHERE step_id=$step AND attempt=$attempt;
             UPDATE engine_step SET state=$state,version=version+1,updated_ms=$now,ended_ms=$ended,outcome_reason=$reason
-            WHERE id=$step;
+             ,deadline_ms=CASE WHEN $ended IS NOT NULL THEN NULL ELSE deadline_ms END,
+              dispatch_state=CASE WHEN $ended IS NOT NULL THEN 'settled' ELSE dispatch_state END WHERE id=$step;
             """, new("$next", i.CommandIndex + 1), new("$gate", terminal ? "settled" : "ready"), new("$state", state),
             new("$ended", terminal ? c.NowMs : null), new("$reason", reason), new("$step", i.StepId), new("$attempt", i.Attempt), new("$now", c.NowMs));
         var version = s.QueryFirst("SELECT version FROM engine_step WHERE id=$step", r => r.Long(0), new SqlArg("$step", i.StepId));
         List<EventDraft> events = [new("step.changed", "step", i.StepId, version, false, new(null, i.RunId, i.StepId, null, state, i.ExecutionEpoch))];
+        if (timedOut) WorkflowExecutionNeeds.OpenTimeout(s, c, effect, i);
         if (redo)
         {
             var requested = Reviews.ReviewTransitions.CommandFailed(s, c with { EntityId = i.StepId, ExpectedVersion = version }, i,

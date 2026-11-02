@@ -10,6 +10,7 @@ using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Providers;
 using Assembly.Engine.Workflows.Scheduling;
+using Assembly.Engine.Workflows.Execution;
 
 namespace Assembly.Engine.Execution;
 
@@ -89,7 +90,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     private async Task CancelWorkflowExecutorsAsync(CancellationToken ct)
     {
         if (_active.Count == 0) return;
-        var ids = JsonSerializer.Serialize((IReadOnlyList<string>)_active.Values.Select(value => value.Claim.Id).ToArray(),
+        var ids = JsonSerializer.Serialize((IReadOnlyList<string>)_active.Values.Where(value => value.Claim.State != "uncertain").Select(value => value.Claim.Id).ToArray(),
             EngineJson.Default.IReadOnlyListString);
         List<string> cancelled;
         using (var scope = db.OpenSnapshot(ct))
@@ -176,6 +177,26 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             var context = Context(run);
             EngineJournal.Execute(s, context, "expire_lost_owner", () => RunTransitions.ExpireLostOwner(s, context, run.Id));
         }
+        var commandTimeouts = s.Query("""
+            SELECT st.id,st.version,a.execution_epoch FROM engine_step st JOIN engine_run r ON r.id=st.run_id
+            JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
+            WHERE r.machine=$machine AND st.kind='command' AND st.state IN ('running','waiting') AND st.deadline_ms<=$now
+              AND a.cancel_requested=0 AND a.generation=st.generation AND a.state IN ('running','waiting')
+              AND st.dispatch_state IS NOT 'redo_pending' AND r.state NOT IN ('succeeded','failed','cancelled','cancelling')
+            ORDER BY st.deadline_ms,st.id LIMIT 100
+            """, r => new Candidate(r.Text(0), r.Long(1), "", r.Long(2)), new SqlArg("$machine", machine), new("$now", now));
+        foreach (var timeout in commandTimeouts) commands.ExpireWorkflowCommand(s, Context(timeout));
+        var commandStops = s.Query("""
+            SELECT o.id,o.version,json_extract(o.payload_json,'$.executionEpoch') FROM engine_outbox o JOIN engine_run r ON r.id=o.run_id
+            JOIN engine_step st ON st.id=json_extract(o.payload_json,'$.stepId')
+            JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=json_extract(o.payload_json,'$.attempt')
+            WHERE r.machine=$machine AND o.kind='workflow_command' AND o.state='unavailable'
+              AND (a.cancel_requested=1 OR r.state IN ('cancelling','cancelled','failed') OR st.generation!=a.generation OR st.attempt!=a.attempt)
+              AND NOT EXISTS(SELECT 1 FROM engine_workflow_history h WHERE h.run_id=r.id AND h.kind='command_stop_requested'
+                AND json_extract(h.safe_body_json,'$.effectId')=o.id)
+            ORDER BY o.event_seq,o.id LIMIT 100
+            """, r => new Candidate(r.Text(0), r.Long(1), "", r.Long(2)), new SqlArg("$machine", machine));
+        foreach (var commandStop in commandStops) commands.ReconcileWorkflowCommandStop(s, Context(commandStop));
         Candidate? claim = null;
         if (effects is not null)
         {
@@ -187,6 +208,10 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             SELECT MIN(deadline) FROM (
                 SELECT MIN(deadline_ms) deadline FROM engine_needs_me WHERE state='open'
                 UNION ALL SELECT MIN(deadline_ms) FROM engine_sign_in WHERE machine=$machine AND state IN ('starting','waiting_for_person','finishing')
+                UNION ALL SELECT MIN(st.deadline_ms) FROM engine_step st JOIN engine_run r ON r.id=st.run_id
+                  JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
+                  WHERE r.machine=$machine AND st.kind='command' AND st.state IN ('running','waiting') AND a.cancel_requested=0
+                    AND st.dispatch_state IS NOT 'redo_pending' AND r.state NOT IN ('succeeded','failed','cancelled','cancelling')
                 UNION ALL SELECT MIN(owner_lost_ms+owner_loss_limit_ms) FROM engine_run
                   WHERE state NOT IN ('succeeded','failed','cancelled','cancelling') AND owner_lost_ms IS NOT NULL)
             """, r => r.IsNull(0) ? (long?)null : r.Long(0), new SqlArg("$machine", machine));
@@ -198,7 +223,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         }
         retention.Apply(s, now);
         _retentionDeadline = retention.NextDeadlineMs(s, now);
-        return (claim, Earlier(Earlier(deadline, MessageExpiry.NextDeadline(s, machine)), _retentionDeadline), expiry.More || needs.Count == 100 || runs.Count == 100 || signIns.Count == 100);
+        return (claim, Earlier(Earlier(deadline, MessageExpiry.NextDeadline(s, machine)), _retentionDeadline), expiry.More || needs.Count == 100 || runs.Count == 100 || signIns.Count == 100 || commandTimeouts.Count == 100 || commandStops.Count == 100);
     }
 
     private void Complete(Candidate claimed, EffectReceipt receipt)

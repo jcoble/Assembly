@@ -11,7 +11,7 @@ using Assembly.Infrastructure.Common.Processes;
 namespace Assembly.Infrastructure.Engine.Workflows;
 
 /// <summary>The engine worker owns this execution's cancellation and lifetime.</summary>
-public sealed class WorkflowProcess(string proofRoot,
+public sealed partial class WorkflowProcess(string proofRoot,
     Func<Effect, CommandExecutionIntent, CommandProcessIdentity, CancellationToken, Task<bool>> observe,
     Func<string, CancellationToken, Task<string>> fingerprint) : IWorkflowProcess
 {
@@ -25,6 +25,7 @@ public sealed class WorkflowProcess(string proofRoot,
         var exitPath = intent.OutputPath + ".exit.json";
         var launchPath = intent.OutputPath + ".launch.json";
         if (File.Exists(exitPath)) return await ReadExitAsync(effect, intent, digest, exitPath, ct);
+        if (File.Exists(intent.OutputPath + ".stopped.json")) return await ReadStoppedAsync(effect, intent, digest, ct);
         // No exit receipt proves no safe replay, even if the saved PID no longer exists.
         if (reconcile || File.Exists(launchPath) || File.Exists(intent.OutputPath) || File.Exists(intent.OutputPath + ".partial"))
             return Unknown("command_execution_uncertain");
@@ -42,7 +43,7 @@ public sealed class WorkflowProcess(string proofRoot,
         process.Start();
         CommandProcessIdentity? identity;
         try { identity = new(process.Id, process.StartTime.ToUniversalTime().Ticks, process.Id, nonce); }
-        catch (InvalidOperationException) when (process.HasExited)
+        catch (Exception observationError) when ((observationError is InvalidOperationException or System.ComponentModel.Win32Exception) && process.HasExited)
         {
             // A real exit can beat the OS metadata read. Record that exit, never invent a start stamp.
             identity = null;
