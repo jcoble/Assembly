@@ -3,6 +3,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Persistence;
+using Assembly.Engine.Contracts;
 using Assembly.Engine.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Socket;
@@ -75,4 +76,26 @@ public sealed partial class MachineDoorTests
         Assert.Equal(0, _f.Count("engine_outbox"));
         Assert.Equal(0, publications);
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Generic_machine_forbidden_receipt_at_marker_guid_cannot_consume_private_slot(bool genericFirst)
+    {
+        using var socket = await Open();
+        var root = Guid.NewGuid().ToString();
+        var parent = Guid.NewGuid().ToString();
+        var args = new ForeignAncestryArgs("source", parent,
+            [new(root, "source", "custom", "Root", null), new(parent, "source", "custom", "Parent", root)]);
+        var markerContext = EngineJournal.ForeignParentContext(_runtime.Machine, args.RootToParent[0]);
+        if (!genericFirst) Assert.True(Result(await Ancestry(socket, args)).Applied);
+        var forbidden = Result(await Machine(socket, new EstablishForeignParent(null), root, commandId: markerContext.CommandId));
+        Assert.Equal("forbidden", forbidden.Error);
+        Assert.True(Result(await Ancestry(socket, args)).Applied);
+        Assert.Equal(forbidden, Result(await Machine(socket, new EstablishForeignParent(null), root, commandId: markerContext.CommandId)));
+        Assert.Equal(3, _f.Count("engine_command_receipt"));
+        Assert.Equal(1, _f.Number("SELECT COUNT(*) FROM engine_command_receipt WHERE command_id=$id", new SqlArg("$id", markerContext.CommandId.ToString("N"))));
+        Assert.Equal(1, _f.Number("SELECT COUNT(*) FROM engine_command_receipt WHERE command_id=$id", new SqlArg("$id", RelayReceiptKeys.ForeignParent(_runtime.Machine, root))));
+        Assert.Equal(0, _f.Number("SELECT SUM(version) FROM engine_session"));
+    }
+
 }

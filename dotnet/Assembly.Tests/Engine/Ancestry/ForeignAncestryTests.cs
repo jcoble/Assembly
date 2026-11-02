@@ -195,6 +195,59 @@ public sealed class ForeignAncestryTests
         });
     }
 
+    [Fact]
+    public void Actual_local_root_and_multiple_foreign_owners_share_one_complete_chain()
+    {
+        using var f = new EngineFixture();
+        f.SeedSession("local-root");
+        var args = new ForeignAncestryArgs("source", Parent,
+            [new("local-root", f.Machine, "codex", "Owning title stays", null),
+             new(Root, "third-machine", "codex", "Third", "local-root"),
+             new(Parent, "source", "codex", "Parent", Root)]);
+        Assert.True(Batch(f, args).Applied);
+        Assert.Equal(2, f.Count("engine_command_receipt"));
+        Assert.Equal("Test", f.Text("SELECT title FROM engine_session WHERE id='local-root'"));
+        var chain = f.Db.Writer.Write("test.chain", scope => SessionAncestry.Read(scope, f.Machine, Parent));
+        Assert.True(chain.Known);
+        Assert.Equal(new[] { Parent, Root, "local-root" }, chain.Nodes.Select(n => n.Id));
+        Assert.Equal("third-machine", f.Text("SELECT machine FROM engine_session WHERE id='root'"));
+    }
+
+    [Theory]
+    [InlineData("failed")]
+    [InlineData("missing")]
+    [InlineData("missing-row")]
+    public void Failed_missing_or_orphaned_private_marker_never_certifies_or_rebuilds_history(string damage)
+    {
+        using var f = new EngineFixture();
+        Assert.True(Batch(f).Applied);
+        var key = RelayReceiptKeys.ForeignParent(f.Machine, Parent);
+        f.Db.Writer.Write("test.damage", scope => scope.Execute(damage switch
+        {
+            "failed" => "UPDATE engine_command_receipt SET result_json='{\"applied\":false,\"late\":false,\"error\":\"forbidden\",\"version\":0,\"seq\":0,\"epoch\":0}' WHERE command_id=$key",
+            "missing" => "DELETE FROM engine_command_receipt WHERE command_id=$key",
+            _ => "DELETE FROM engine_session WHERE id='parent' AND $key IS NOT NULL"
+        }, new SqlArg("$key", key)));
+        Assert.False(f.Db.Writer.Write("test.chain", scope => SessionAncestry.Read(scope, f.Machine, Parent).Known));
+        var sessions = f.Count("engine_session");
+        var receipts = f.Count("engine_command_receipt");
+        Assert.Throws<ForeignAncestryRefused>(() => Batch(f));
+        Assert.Equal(sessions, f.Count("engine_session"));
+        Assert.Equal(receipts, f.Count("engine_command_receipt"));
+    }
+
+    [Fact]
+    public void Changed_actual_owner_uses_same_slot_and_cannot_recertify_new_owner()
+    {
+        using var f = new EngineFixture();
+        Assert.True(Batch(f).Applied);
+        f.Db.Writer.Write("test.owner-damage", scope => scope.Execute("UPDATE engine_session SET machine='other',holder='other'"));
+        var error = Assert.Throws<ForeignAncestryRefused>(() => Batch(f, Chain("other")));
+        Assert.Equal("command_id_conflict", error.Result.Error);
+        Assert.Equal(2, f.Count("engine_command_receipt"));
+        Assert.False(f.Db.Writer.Write("test.chain", scope => SessionAncestry.Read(scope, f.Machine, Parent).Known));
+    }
+
     private sealed class CountingScope(IReadScope source) : IReadScope
     {
         internal int Reads { get; private set; }
