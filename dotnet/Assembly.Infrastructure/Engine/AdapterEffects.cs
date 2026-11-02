@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Engine;
+using Assembly.Infrastructure.Engine.Auth;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Rows;
@@ -77,7 +78,7 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
             if (!Owns(scope, effect, allowDone: true)) return Task.FromResult(Receipt(EffectDisposition.Unknown, "delivery_owner_changed"));
             var result = effect.Kind switch
             {
-                "send" => MessageDelivery.Read(scope, effect, allowDone: true) is { } delivery ? Positive(scope, delivery) ?? Receipt(EffectDisposition.Unknown, "delivery_unknown") : Receipt(EffectDisposition.Unknown, "delivery_owner_changed"),
+                "send" => MessageDelivery.Read(scope, effect, allowDone: true) is { } delivery ? ReconcileAuthDelivery(scope, effect, delivery) : Receipt(EffectDisposition.Unknown, "delivery_owner_changed"),
                 "start" => sessions.Get(scope, effect.SessionId!) is null ? Receipt(EffectDisposition.Failed, "session_projection_missing") : SessionReceipt(),
                 "stop" => rows.OpenRun(effect.SessionId!) is null ? SessionReceipt() : Receipt(EffectDisposition.Unknown),
                 "answer" => ReconcileAnswer(scope, effect),

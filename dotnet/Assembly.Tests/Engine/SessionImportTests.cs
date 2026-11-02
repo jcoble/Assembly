@@ -14,14 +14,15 @@ public sealed class SessionImportTests
     public void Trusted_import_preserves_seven_fields_parent_order_and_no_start_effect()
     {
         using var f = new EngineFixture();
+        var account = "acct-v1:" + new string('a', 64);
         ImportedSession[] source = [new("child", "root", "retired-custom", null, "/managed/root", "Child", ""),
-            new("root", null, "configured-work", "model-wire", "/managed/root", "", "/account-home")];
+            new("root", null, "configured-work", "model-wire", "/managed/root", "", account)];
         Assert.Equal(2, f.Db.Writer.Write("test.import", scope => SessionImport.Import(scope, f.Machine, 1000, source)));
         Assert.Equal("root", f.Text("SELECT parent_id FROM engine_session WHERE id='child'"));
         Assert.Null(f.Text("SELECT model FROM engine_session WHERE id='child'"));
         Assert.Equal("retired-custom", f.Text("SELECT provider FROM engine_session WHERE id='child'"));
         Assert.Equal("model-wire", f.Text("SELECT model FROM engine_session WHERE id='root'"));
-        Assert.Equal("/account-home", f.Text("SELECT account_context FROM engine_session WHERE id='root'"));
+        Assert.Equal(account, f.Text("SELECT account_context FROM engine_session WHERE id='root'"));
         Assert.Equal("", f.Text("SELECT title FROM engine_session WHERE id='root'"));
         Assert.Equal("idle", f.State("engine_session", "child"));
         Assert.Equal(2, f.Number("SELECT COUNT(*) FROM engine_session WHERE managed_checkout=1"));
@@ -64,8 +65,11 @@ public sealed class SessionImportTests
     public void Explicit_vendor_home_obeys_launch_environment_precedence(string family, string variable)
     {
         var agent = new AgentDescriptor("work-profile", "Custom name", "unrelated-command", [], null, VendorFamily: family);
-        Assert.Equal("/inherited", AccountContext.Of(agent, key => key == variable ? "/inherited" : null));
-        Assert.Equal("/explicit", AccountContext.Of(agent with { Env = new Dictionary<string, string> { [variable] = "/explicit" } }, _ => "/inherited"));
+        var inherited = AccountContext.Of(agent with { Env = new Dictionary<string, string> { [variable] = "/inherited" } }, _ => null);
+        var explicitAccount = AccountContext.Of(agent with { Env = new Dictionary<string, string> { [variable] = "/explicit" } }, _ => null);
+        Assert.True(AccountContext.IsValid(inherited)); Assert.True(AccountContext.IsValid(explicitAccount)); Assert.NotEqual(inherited, explicitAccount);
+        Assert.Equal(inherited, AccountContext.Of(agent, key => key == variable ? "/inherited" : null));
+        Assert.Equal(explicitAccount, AccountContext.Of(agent with { Env = new Dictionary<string, string> { [variable] = "/explicit" } }, _ => "/inherited"));
         Assert.Equal("", AccountContext.Of(agent with { Env = new Dictionary<string, string> { [variable] = "" } }, _ => "/inherited"));
         Assert.Equal("", AccountContext.Of(agent, _ => null));
         Assert.Equal("", AccountContext.Of(agent with { Id = "codex", Name = "Claude", VendorFamily = null }, _ => "/must-not-infer"));

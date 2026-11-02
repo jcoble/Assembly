@@ -47,6 +47,23 @@ public sealed partial class RowStore
             new("$session", sessionId), new("$seq", row.Seq));
     }
 
+    public static void BindAuthBlocker(IWriteScope scope, string sessionId, string clientId,
+        long userRowSeq, string userRunId, AuthSendBlocker binding)
+    {
+        var row = scope.QueryFirst("""
+            SELECT run_id,payload FROM rows WHERE session_id=$session AND seq=$seq AND kind='user' AND item_id IS NULL
+            """, r => new { Run = r.IsNull(0) ? null : r.Text(0), Payload = JsonSerializer.Deserialize(r.Text(1), RowJsonContext.Rows.UserPayload) },
+            new SqlArg("$session", sessionId), new("$seq", userRowSeq));
+        if (row is null || row.Run != userRunId || row.Payload is null || row.Payload.ClientId != clientId ||
+            row.Payload.Acknowledgment is not null && !Positive(row.Payload.Acknowledgment) ||
+            row.Payload.AuthBlocker is { } old && old != binding) throw new CallFailed("auth_binding_conflict");
+        if (row.Payload.AuthBlocker == binding) return;
+        scope.Execute("""
+            UPDATE rows SET payload=json_set(payload,'$.authBlocker',json($binding)) WHERE session_id=$session AND seq=$seq
+            """, new("$binding", JsonSerializer.Serialize(binding, RowJsonContext.Rows.AuthSendBlocker)),
+            new("$session", sessionId), new("$seq", userRowSeq));
+    }
+
     public static bool Positive(UserAcknowledgment? acknowledgment) => acknowledgment switch
     {
         { Kind: "prompt_inserted", ProviderMessageId: { } id } => !string.IsNullOrWhiteSpace(id),
