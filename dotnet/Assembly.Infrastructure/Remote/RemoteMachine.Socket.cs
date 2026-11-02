@@ -61,7 +61,8 @@ internal sealed partial class RemoteMachine
     private Task<JsonElement> CallAsync(string feature, string method, object args, CancellationToken cancellationToken) =>
         CallAsync(feature, method, JsonSerializer.SerializeToElement(args, args.GetType(), SessionsJson.Default), false, cancellationToken);
 
-    internal async Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken, string? expectedEngineId = null, ClientWebSocket? expectedConnection = null)
+    internal async Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken, string? expectedEngineId = null, ClientWebSocket? expectedConnection = null,
+        OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null)
     {
         if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken, expectedEngineId, expectedConnection);
         if (_socket is not { State: WebSocketState.Open })
@@ -77,6 +78,10 @@ internal sealed partial class RemoteMachine
             if (expectedEngineId is not null) RequireEngine(expectedEngineId);
             if (expectedConnection is not null && !ReferenceEquals(socket, expectedConnection))
                 throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed before send");
+            if (expectedOwner is not null)
+            {
+                RequireOwnerBinding(expectedOwner); RequireLiveMirror(expectedOwner, expectedMirror);
+            }
             sentOn = socket;
             _calls.Add(id, pending);
             var json = args.GetRawText();
@@ -120,6 +125,10 @@ internal sealed partial class RemoteMachine
                         if (!ReferenceEquals(_socket, sentOn) || sentOn.State != WebSocketState.Open)
                             throw Unreachable("machine socket changed", $"{_name}: machine socket changed during engine read");
                         RequireEngine(expectedEngineId);
+                        if (expectedOwner is not null)
+                        {
+                            RequireOwnerBinding(expectedOwner); RequireLiveMirror(expectedOwner, expectedMirror);
+                        }
                     }
                     finally { _socketSend.Release(); }
                 }

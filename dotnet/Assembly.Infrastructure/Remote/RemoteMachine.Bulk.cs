@@ -16,7 +16,7 @@ internal sealed partial class RemoteMachine
 
     // The existing bulk exchange, shared by ordinary calls and the fixed relay lease.
     private async Task<JsonElement> BulkCallHeldAsync(string feature, string method, JsonElement args, CancellationToken ct,
-        string? expectedEngineId, ClientWebSocket? expectedConnection, OwnerConnectionBinding? relayBinding = null)
+        string? expectedEngineId, ClientWebSocket? expectedConnection, OwnerConnectionBinding? relayBinding = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? relayMirror = null)
     {
         ClientWebSocket? live = null;
         try
@@ -27,6 +27,7 @@ internal sealed partial class RemoteMachine
                 try
                 {
                     live = relayBinding is null ? RequireEngine(expectedEngineId) : RequireOwnerBinding(relayBinding);
+                    if (relayBinding is not null) RequireLiveMirror(relayBinding, relayMirror);
                     if (expectedConnection is not null && !ReferenceEquals(live, expectedConnection))
                         throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed before bulk send");
                 }
@@ -44,7 +45,7 @@ internal sealed partial class RemoteMachine
             {
                 if (expectedEngineId is not null && (!ReferenceEquals(live, RequireEngine(expectedEngineId)) || _bulkEngineIdentity != expectedEngineId))
                     throw Unreachable("unverified engine peer", $"{_name}: bulk socket engine identity differs or is unverified");
-                if (relayBinding is not null) RequireOwnerBinding(relayBinding);
+                if (relayBinding is not null) { RequireOwnerBinding(relayBinding); RequireLiveMirror(relayBinding, relayMirror); }
                 await SendFrameAsync(_bulkSocket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{args.GetRawText()}}}", ct);
             }
             finally { _socketSend.Release(); }
@@ -59,7 +60,7 @@ internal sealed partial class RemoteMachine
                     if (!ReferenceEquals(_socket, live) || live is not { State: WebSocketState.Open })
                         throw Unreachable("machine socket changed", $"{_name}: machine socket changed during bulk read");
                     RequireEngine(expectedEngineId);
-                    if (relayBinding is not null) RequireOwnerBinding(relayBinding);
+                    if (relayBinding is not null) { RequireOwnerBinding(relayBinding); RequireLiveMirror(relayBinding, relayMirror); }
                     if (_bulkEngineIdentity != expectedEngineId)
                         throw Unreachable("unverified engine peer", $"{_name}: bulk socket engine identity changed");
                 }

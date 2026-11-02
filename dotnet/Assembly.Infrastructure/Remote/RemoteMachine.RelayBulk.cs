@@ -2,26 +2,28 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Infrastructure.Remote;
 
 internal sealed partial class RemoteMachine
 {
-    internal Task<RelayBulkLease> AcquireRelayBulkAsync(OwnerConnectionBinding binding, CancellationToken ct) =>
-        RelayBulkLease.AcquireAsync(this, binding, ct);
+    internal Task<RelayBulkLease> AcquireRelayBulkAsync(OwnerConnectionBinding binding, CancellationToken ct, EngineMirror.LiveMirrorBinding? live = null) =>
+        RelayBulkLease.AcquireAsync(this, binding, ct, live);
 
     /// <summary>Owns the existing bulk semaphore for one complete transfer, with no reconnect in that transfer.</summary>
     internal sealed class RelayBulkLease : IAsyncDisposable
     {
         private readonly RemoteMachine _owner;
         private readonly OwnerConnectionBinding _binding;
+        private readonly EngineMirror.LiveMirrorBinding? _live;
         private readonly SemaphoreSlim _exchange = new(1);
         private ClientWebSocket? _bulk;
         private bool _failed;
         private int _disposed;
-        private RelayBulkLease(RemoteMachine owner, OwnerConnectionBinding binding) => (_owner, _binding) = (owner, binding);
+        private RelayBulkLease(RemoteMachine owner, OwnerConnectionBinding binding, EngineMirror.LiveMirrorBinding? live) => (_owner, _binding, _live) = (owner, binding, live);
         internal string Machine => _binding.Machine;
-        internal static async Task<RelayBulkLease> AcquireAsync(RemoteMachine owner, OwnerConnectionBinding binding, CancellationToken ct)
+        internal static async Task<RelayBulkLease> AcquireAsync(RemoteMachine owner, OwnerConnectionBinding binding, CancellationToken ct, EngineMirror.LiveMirrorBinding? live)
         {
             if (binding.IsInvalidated) throw new CallFailed("relay_connection_changed");
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, binding.Invalidated, owner._socketStop.Token);
@@ -30,7 +32,7 @@ internal sealed partial class RemoteMachine
             try
             {
                 await owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
-                try { owner.RequireOwnerBinding(binding); return new(owner, binding); }
+                try { owner.RequireOwnerBinding(binding); RequireLiveMirror(binding, live); return new(owner, binding, live); }
                 finally { owner._socketSend.Release(); }
             }
             catch { owner._bulkCall.Release(); throw; }
@@ -51,6 +53,7 @@ internal sealed partial class RemoteMachine
                 try
                 {
                     socket = _owner.RequireOwnerBinding(_binding);
+                    RequireLiveMirror(_binding, _live);
                     if (_bulk is not null && (!ReferenceEquals(_bulk, _owner._bulkSocket) || _bulk.State != WebSocketState.Open))
                         throw new CallFailed("relay_connection_changed");
                 }
@@ -58,11 +61,12 @@ internal sealed partial class RemoteMachine
                 // Fixed method names are chosen only by the coordinator; measure the complete existing call frame.
                 var estimate = "{\"t\":\"call\",\"id\":-9223372036854775808,\"feature\":\"engine\",\"method\":\"" + method + "\",\"args\":" + args.GetRawText() + "}";
                 if (Encoding.UTF8.GetByteCount(estimate) > 4 * 1024 * 1024) throw new CallFailed("frame_too_large");
-                var result = await _owner.BulkCallHeldAsync("engine", method, args, ct, _binding.Machine, socket, _binding).ConfigureAwait(false);
+                var result = await _owner.BulkCallHeldAsync("engine", method, args, ct, _binding.Machine, socket, _binding, _live).ConfigureAwait(false);
                 await _owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
                 try
                 {
                     _owner.RequireOwnerBinding(_binding);
+                    RequireLiveMirror(_binding, _live);
                     _bulk ??= _owner._bulkSocket;
                     if (_bulk is null || !ReferenceEquals(_bulk, _owner._bulkSocket) || _bulk.State != WebSocketState.Open)
                         throw new CallFailed("relay_connection_changed");
