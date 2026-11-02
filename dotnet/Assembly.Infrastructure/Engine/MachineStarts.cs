@@ -7,6 +7,7 @@ using Assembly.Engine.Mcp;
 using Assembly.Engine.Mcp.Tools;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Engine.Relays;
 using Assembly.Infrastructure.Remote;
 
 namespace Assembly.Infrastructure.Engine;
@@ -56,7 +57,7 @@ internal sealed partial class MachineStarts
                 context.Actor != new EngineActor(ActorKind.Session, caller.SessionId)) || command.ParentId != source.Parent.Id)
             throw Refused("forbidden");
         if (managedCheckout && string.IsNullOrWhiteSpace(source.Parent.Repository)) throw Refused("bad_args");
-        var titles = await StartTitleSources.CaptureAsync(this, source, targetMachine, caller, ct);
+        StartTitleSources? titles = await StartTitleSources.CaptureAsync(this, source, targetMachine, caller, ct);
         try
         {
             source = titles.Source;
@@ -69,27 +70,99 @@ internal sealed partial class MachineStarts
                     ManagedCheckout = true
                 }
                 : command with { RepoUrl = null, ManagedCheckout = false };
-            var lease = titles.TargetLease;
-            await titles.RequireCurrentAsync(ct);
-            var registered = await _forward.RegisterForeignTitleAsync(lease,
-                new(Guid.NewGuid(), _runtime.Machine, source.Parent.Id, 0, 0,
-                    new RegisterForeignSession(_runtime.Machine, source.Parent.Provider, source.Parent.Title)), ct);
-            RequireTitleReply(registered);
-            await titles.RequireCurrentAsync(ct);
-            var args = new ForeignAncestryArgs(_runtime.Machine, source.Parent.Id, source.RootToParent);
-            var ancestry = await _forward.ForeignAncestryTitlesAsync(lease, args, ct);
-            RequireTitleReply(ancestry, ForeignTitleDigests.Structure(targetMachine, args.FromMachine, args.ParentSessionId, args.RootToParent));
-            var owners = await CapturedLiveBatch.CaptureAsync(_connections, _runtime.Machine, ct);
-            if (!ReferenceEquals(owners.Target(targetMachine).Live, target.Live)) throw Refused("mirror_unavailable");
-            FinalSourceCheck(source, caller, owners);
-            await titles.RequireCurrentAsync(ct);
-            await owners.RequireCurrentAsync(ct);
-            // No writer or mirror gate spans this actual owner RPC.
-            var result = await _forward.MachineCommandAsync(target.Remote, target.Live.OwnerBinding,
-                new(context.CommandId, _runtime.Machine, context.EntityId, context.ExpectedVersion, context.Epoch, prepared), ct, target.Live);
-            return new(result, titles);
+            var intent = FrozenMachineStartIntent.Create(target.Remote, target.Live.OwnerBinding,
+                new(context.CommandId, _runtime.Machine, context.EntityId, context.ExpectedVersion, context.Epoch, prepared), target.Live);
+            while (true)
+            {
+                titles ??= await StartTitleSources.CaptureAsync(this, source, targetMachine, caller, ct);
+                source = titles.Source; target = titles.Target;
+                var lease = titles.TargetLease;
+                await titles.RequireCurrentAsync(ct);
+                var registered = await _forward.RegisterForeignTitleAsync(lease,
+                    new(Guid.NewGuid(), _runtime.Machine, source.Parent.Id, 0, 0,
+                        new RegisterForeignSession(_runtime.Machine, source.Parent.Provider, source.Parent.Title)), ct);
+                RequireTitleReply(registered);
+                await titles.RequireCurrentAsync(ct);
+                var args = new ForeignAncestryArgs(_runtime.Machine, source.Parent.Id, source.RootToParent);
+                var ancestry = await _forward.ForeignAncestryTitlesAsync(lease, args, ct);
+                RequireTitleReply(ancestry, ForeignTitleDigests.Structure(targetMachine, args.FromMachine, args.ParentSessionId, args.RootToParent));
+                var owners = await CapturedLiveBatch.CaptureAsync(_connections, _runtime.Machine, ct);
+                if (!ReferenceEquals(owners.Target(targetMachine).Live, target.Live)) throw Refused("mirror_unavailable");
+                FinalSourceCheck(source, caller, owners);
+                await titles.RequireCurrentAsync(ct);
+                await owners.RequireCurrentAsync(ct);
+                MachineStartResolution resolution;
+                var acknowledged = target;
+                try { resolution = await _forward.SendStartAsync(intent, lease, ct); }
+                catch (Exception) when (!ct.IsCancellationRequested && intent.Phase != StartIssuePhase.NotIssued)
+                {
+                    // Send has terminated. Its actual phase, rather than the exception, governs the probe.
+                    if (await target.Mirror.IsCurrentLiveBindingAsync(target.Live, ct))
+                        resolution = await _forward.ProbeStartAsync(intent, target.Remote, target.Live.OwnerBinding, lease, ct, target.Live);
+                    else
+                    {
+                        var old = titles; titles = null;
+                        await old.DisposeAsync();
+                        var current = await WaitForTargetAsync(target, ct);
+                        await using var probeLease = await current.Remote.AcquireRelayBulkAsync(current.Live.OwnerBinding, ct, current.Live);
+                        resolution = await _forward.ProbeStartAsync(intent, current.Remote, current.Live.OwnerBinding, probeLease, ct, current.Live);
+                        acknowledged = current;
+                    }
+                }
+                if (resolution.Evidence.State == MachineStartAckState.Missing &&
+                    resolution.MissingProof is StartMissingProof.NotIssued or StartMissingProof.SameOriginalOrderedBarrier)
+                {
+                    // Only proved absence permits another admission, with the same frozen Start and new current census.
+                    if (titles is { } old) { titles = null; await old.DisposeAsync(); }
+                    continue;
+                }
+                var result = RequireStartAcknowledgement(intent, resolution);
+                // A matching accepted receipt is resolved before mutable source admission checks; its own child is not new capacity.
+                if (result.Applied)
+                {
+                    titles ??= await StartTitleSources.CaptureAsync(this, source, targetMachine, caller, ct);
+                    if (!ReferenceEquals(titles.Target.Live, acknowledged.Live) || !ReferenceEquals(titles.Target.Remote, acknowledged.Remote))
+                        throw new CallFailed("Acknowledged target owner changed", "unknown");
+                }
+                return new(result, titles, intent);
+            }
         }
-        catch { await titles.DisposeAsync(); throw; }
+        catch { if (titles is not null) await titles.DisposeAsync(); throw; }
+    }
+
+    private static async Task<CapturedMirror> WaitForTargetAsync(CapturedMirror target, CancellationToken ct)
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, target.Mirror.Stopping);
+        while (true)
+        {
+            var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void CaughtUp() => changed.TrySetResult();
+            target.Mirror.CaughtUp += CaughtUp;
+            try
+            {
+                if (await target.Mirror.CaptureLiveBindingAsync(stop.Token) is { } live)
+                {
+                    if (live.Machine != target.Live.Machine) throw new CallFailed("Target engine identity changed", "unknown");
+                    return new(target.Remote, target.Mirror, live);
+                }
+                await changed.Task.WaitAsync(stop.Token);
+            }
+            finally { target.Mirror.CaughtUp -= CaughtUp; }
+        }
+    }
+
+    private static CommandResult RequireStartAcknowledgement(FrozenMachineStartIntent intent, MachineStartResolution resolution)
+    {
+        var evidence = resolution.Evidence;
+        if (evidence.State == MachineStartAckState.Refused && evidence.Recorded is { Applied: false } refused) return refused;
+        if (evidence.State == MachineStartAckState.Conflict) throw new CallFailed("Start identity conflicts with its original receipt", "unknown");
+        if (evidence.State != MachineStartAckState.Accepted || evidence.Recorded is not { Applied: true } result ||
+            evidence.Child is not { } child || intent.Command.Command is not StartSession original ||
+            child.Id != intent.Command.EntityId || child.Machine != intent.Binding.Machine || child.Holder != "local" ||
+            child.Version < 1 || child.Epoch != intent.Command.Epoch || child.ReservedEpoch is not null || child.CancelRequested ||
+            child.State is "foreign" or "ended" or "lost" or "handing_off" || child.ParentId != original.ParentId || child.RunId != original.RunId)
+            throw new CallFailed("Start acknowledgement or current child ownership is unknown", "unknown");
+        return result;
     }
 
     private static void RequireTitleReply(ForeignTitleReply reply, string? structure = null)
@@ -103,9 +176,9 @@ internal sealed partial class MachineStarts
         throw new CallFailed("Foreign title outcome is unknown", "unknown");
     }
 
-    private sealed record StartedChild(CommandResult Result, StartTitleSources Titles) : IAsyncDisposable
+    private sealed record StartedChild(CommandResult Result, StartTitleSources? Titles, FrozenMachineStartIntent Intent) : IAsyncDisposable
     {
-        public ValueTask DisposeAsync() => Titles.DisposeAsync();
+        public ValueTask DisposeAsync() => Titles?.DisposeAsync() ?? ValueTask.CompletedTask;
     }
 
     internal async Task<StartSessionAnswer> StartMcpAsync(McpCaller caller, StartSessionArguments arguments, CancellationToken ct)
@@ -124,7 +197,8 @@ internal sealed partial class MachineStarts
             await using var child = await StartChildAsync(context, new(provider, model, arguments.Folder ?? "", arguments.Title,
                 caller.SessionId, null, arguments.TaskUrl), arguments.Machine, source, caller, arguments.Folder is null, stop.Token);
             if (!child.Result.Applied) throw Refused(child.Result.Error!);
-            source = child.Titles.Source;
+            var childTitles = child.Titles ?? throw new InvalidOperationException("Accepted Start lost its owned title sources.");
+            source = childTitles.Source;
             // The display-derived preface is produced only after actual child acceptance.
             var currentCaller = _gate.Read(caller, (row, _) => row, stop.Token);
             var prompt = $"Session \"{currentCaller.Title}\" ({caller.SessionId}) started you. Do the task below. Your last reply each turn goes back to it as a message; you can also message it with the Assembly MCP server's send_message tool.\n\n{arguments.Prompt}";
@@ -133,7 +207,11 @@ internal sealed partial class MachineStarts
                 new(promptCommandId, _runtime.Machine, new(ActorKind.Session, caller.SessionId), messageId, 0, 0, Now), preparedPrompt);
             var chain = source.RootToParent.Append(new ForeignAncestor(childId, arguments.Machine, provider, arguments.Title, caller.SessionId)).ToArray();
             var childAncestry = _runtime.Commands.PrepareForeignAncestry(new(arguments.Machine, childId, chain));
-            await child.Titles.RequireCurrentAsync(stop.Token);
+            await childTitles.RequireCurrentAsync(stop.Token);
+            var target = childTitles.Target;
+            var currentStart = RequireStartAcknowledgement(child.Intent, await _forward.ProbeStartAsync(child.Intent,
+                target.Remote, target.Live.OwnerBinding, childTitles.TargetLease, stop.Token, target.Live));
+            if (!currentStart.Applied) throw Refused(currentStart.Error!);
             stop.Token.ThrowIfCancellationRequested();
             CommandResult committed;
             try

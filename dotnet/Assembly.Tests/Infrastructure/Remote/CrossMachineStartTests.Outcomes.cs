@@ -242,6 +242,175 @@ public sealed partial class CrossMachineStartTests
         Assert.Equal(before, Stored(f)); AssertOneChildAndMessage(f);
     }
 
+    [Theory]
+    [InlineData("state='ended'")]
+    [InlineData("state='handing_off'")]
+    [InlineData("holder='remote'")]
+    [InlineData("epoch=1")]
+    [InlineData("reserved_epoch=1")]
+    [InlineData("cancel_requested=1")]
+    public async Task Accepted_Start_current_owning_child_guard_prevents_new_M(string change)
+    {
+        await using var f = await StartHosts.Open(); var h = f.H;
+        h.Remote.WriteCommitted = what =>
+        {
+            if (what == "engine/machine_command") h.Remote.Fixture.Db.Writer.Write("test.child_changed", scope => scope.Execute(
+                $"UPDATE engine_session SET {change} WHERE parent_id=$id AND state<>'foreign'", new SqlArg("$id", f.Parent)));
+        };
+        var error = await Assert.ThrowsAsync<CallFailed>(() => StartMcp(f));
+        Assert.Equal("unknown", error.Reason);
+        Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
+        Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
+        Assert.Equal(0, f.Launcher.ProviderCalls);
+    }
+
+    [Fact]
+    public async Task Accepted_Start_title_and_model_progress_preserve_original_intent_and_allow_M()
+    {
+        await using var f = await StartHosts.Open(); var h = f.H;
+        h.Remote.WriteCommitted = what =>
+        {
+            if (what == "engine/machine_command") h.Remote.Fixture.Db.Writer.Write("test.child_renamed", scope => scope.Execute(
+                "UPDATE engine_session SET title='renamed',model='progressed',version=version+1 WHERE parent_id=$id AND state<>'foreign'", new SqlArg("$id", f.Parent)));
+        };
+        var answer = await StartMcp(f);
+        Assert.Equal("renamed", h.Remote.Fixture.Text("SELECT title FROM engine_session WHERE id=$id", new SqlArg("$id", answer.SessionId)));
+        Assert.Equal("progressed", h.Remote.Fixture.Text("SELECT model FROM engine_session WHERE id=$id", new SqlArg("$id", answer.SessionId)));
+        Assert.Equal(answer.MessageId, Stored(f).Id); AssertOneChildAndMessage(f);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Lost_Start_answer_resolves_same_invocation_at_its_own_child_cap_before_initial_M(bool disconnect)
+    {
+        await using var f = await StartHosts.Open(children: 1); var h = f.H;
+        var starts = 0;
+        h.Remote.WriteCommitted = what =>
+        {
+            if (what != "engine/machine_command") return;
+            Interlocked.Increment(ref starts);
+            h.Mac.Fixture.Db.Writer.Write("test.rename_after_start", scope => scope.Execute(
+                "UPDATE engine_session SET title='Actual caller after ACK' WHERE id=$id", new SqlArg("$id", f.Parent)));
+            if (disconnect) h.Remote.Endpoint.DropAll();
+            else throw new IOException("injected lost Start answer after actual commit");
+        };
+        var answer = await StartMcp(f).WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(1, starts); Assert.Equal(answer.SessionId, Stored(f).Child);
+        Assert.Equal($"Actual caller after ACK ({f.Parent})", Stored(f).Label);
+        Assert.StartsWith($"Session \"Actual caller after ACK\" ({f.Parent}) started you.", Stored(f).Body);
+        Assert.EndsWith("Task", Stored(f).Body); AssertOneChildAndMessage(f);
+        Assert.Equal("Child", h.Remote.Fixture.Text("SELECT title FROM engine_session WHERE id=$id", new SqlArg("$id", answer.SessionId)));
+    }
+
+    [Theory]
+    [InlineData("epoch", "stale_epoch")]
+    [InlineData("repo", "stale_caller")]
+    [InlineData("cap", "child_limit")]
+    public async Task Safe_same_socket_missing_reruns_current_source_policy_before_any_new_Start(string change, string expected)
+    {
+        await using var f = await StartHosts.Open(children: 1); var h = f.H;
+        var prepares = 0;
+        h.Remote.MachinePrepared = (_, _) =>
+        {
+            Interlocked.Increment(ref prepares);
+            if (change == "cap")
+            {
+                var other = EngineCommands.PrepareSessionTitle(new Assembly.Engine.Sessions.StartSession("codex", null,
+                    Path.Combine(f.Root, "mac"), "Other child", f.Parent, null, null));
+                Assert.True(((IEngineRuntime)h.Mac.Runtime).Write(scope => h.Mac.Runtime.Commands.ApplyPreparedSessionTitle(scope,
+                    new(Guid.NewGuid(), h.Mac.Runtime.Machine, new(ActorKind.Window, "owner"), Guid.NewGuid().ToString(), 0, 0, 2000), other)).Applied);
+            }
+            else h.Mac.Fixture.Db.Writer.Write("test.policy_changed_before_missing", scope => scope.Execute(change == "epoch"
+                ? "UPDATE engine_session SET epoch=1 WHERE id=$id"
+                : "UPDATE session_info SET repo_url='changed repository' WHERE session_id=$id", new SqlArg("$id", f.Parent)));
+            throw new IOException("injected prepared turn failed before Start writer admission");
+        };
+        var error = await Assert.ThrowsAsync<McpRefused>(() => StartMcp(f));
+        Assert.Equal(expected, error.Refusal.Code); Assert.Equal(1, prepares);
+        Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
+        Assert.Equal(0, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
+    }
+
+    [Fact]
+    public async Task Safe_same_socket_missing_retries_the_same_Start_after_fresh_policy_check()
+    {
+        await using var f = await StartHosts.Open(children: 1); var h = f.H;
+        var prepares = 0;
+        h.Remote.MachinePrepared = (_, _) => Interlocked.Increment(ref prepares) == 1
+            ? Task.FromException(new IOException("injected first prepared turn failure")) : Task.CompletedTask;
+        var answer = await StartMcp(f);
+        Assert.Equal(2, prepares); Assert.Equal(answer.SessionId, Stored(f).Child); AssertOneChildAndMessage(f);
+        Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='start' AND session_id=$id", new SqlArg("$id", answer.SessionId)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Lost_refused_Start_answer_preserves_actual_refusal_before_changed_source_gates(bool disconnect)
+    {
+        await using var f = await StartHosts.Open(); var h = f.H;
+        var starts = 0;
+        h.Remote.WriteCommitted = what =>
+        {
+            if (what != "engine/machine_command") return;
+            Interlocked.Increment(ref starts);
+            h.Mac.Fixture.Db.Writer.Write("test.caller_changed_after_refusal", scope => scope.Execute(
+                "UPDATE engine_session SET epoch=1 WHERE id=$id", new SqlArg("$id", f.Parent)));
+            if (disconnect) h.Remote.Endpoint.DropAll(); else throw new IOException("injected refused Start answer loss");
+        };
+        var error = await Assert.ThrowsAsync<McpRefused>(() => new McpMachineStarts(f.Starts).StartAsync(new(f.Parent, 0),
+            new(Prompt: "Task", Title: "", Machine: h.Remote.Runtime.Machine), default));
+        Assert.Equal("bad_args", error.Refusal.Code); Assert.Equal(1, starts);
+        Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
+        Assert.Equal(0, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
+    }
+
+    [Fact]
+    public async Task Replacement_missing_while_original_Start_turn_is_paused_stays_unknown_without_resend_or_M()
+    {
+        await using var f = await StartHosts.Open(children: 1); var h = f.H;
+        var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var prepares = 0;
+        h.Remote.MachinePrepared = (_, _) => { Interlocked.Increment(ref prepares); prepared.TrySetResult(); return release.Task; };
+        h.Remote.WriteCommitted = what => { if (what == "engine/machine_command") committed.TrySetResult(); };
+        var starting = StartMcp(f);
+        try
+        {
+            await prepared.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            h.Remote.Endpoint.DropAll();
+            var error = await Assert.ThrowsAsync<CallFailed>(() => starting.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("unknown", error.Reason); Assert.Equal(1, prepares);
+            Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
+            Assert.Equal(0, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
+        }
+        finally { release.TrySetResult(); }
+        await committed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await h.Reached(h.Remote.Through);
+        Assert.Equal(1, prepares); Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
+        Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
+        Assert.Equal(0, f.Launcher.ProviderCalls);
+    }
+
+    [Fact]
+    public async Task Target_state_change_after_first_ACK_is_rechecked_before_new_initial_M()
+    {
+        await using var f = await StartHosts.Open(); var h = f.H;
+        var acknowledgements = 0;
+        h.Remote.WriteCommitted = what =>
+        {
+            if (what == "engine/start_ack" && Interlocked.Increment(ref acknowledgements) == 1)
+                h.Remote.Fixture.Db.Writer.Write("test.child_ended_after_ack", scope => scope.Execute(
+                    "UPDATE engine_session SET state='ended' WHERE parent_id=$id AND state<>'foreign'", new SqlArg("$id", f.Parent)));
+        };
+        var error = await Assert.ThrowsAsync<CallFailed>(() => StartMcp(f));
+        Assert.Equal("unknown", error.Reason); Assert.Equal(2, acknowledgements);
+        Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
+        Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
+    }
+
     private sealed record StoredStart(string Id, string Child, string Body, string Label,
         string Receipt, string Fingerprint, string Result);
 
