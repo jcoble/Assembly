@@ -198,6 +198,7 @@ public sealed class WorkflowScheduleTests
     public async Task Same_host_callback_prepares_command_once_without_provider_session()
     {
         var root = Directory.CreateTempSubdirectory("workflow-command-callback-").FullName;
+        var proofRoot = Directory.CreateTempSubdirectory("workflow-command-proof-").FullName;
         try
         {
             var git = new GitCli();
@@ -216,13 +217,17 @@ public sealed class WorkflowScheduleTests
                   build:
                     run: ["printf checked"]
                 """);
+            var proof = Path.Combine(proofRoot, f.Run);
+            Directory.CreateDirectory(proof);
+            await File.WriteAllTextAsync(Path.Combine(proof, ".assembly-workflow-allocation"), f.Run);
             f.Core.Db.Writer.Write("test.callback-workspace", s => s.Execute("""
                 UPDATE engine_workflow_workspace SET path=$folder,head=$head,base_head=$head;
                 UPDATE engine_run SET proof_dir=$proof,pr_body=$body,work_head=$head WHERE id=$run;
-                """, new("$folder", root), new("$head", checkout.Head), new("$proof", Path.Combine(root, "proof")),
-                new("$body", Path.Combine(root, "proof", "pr-body.md")), new("$run", f.Run)));
-            var callback = new WorkflowDispatchPreparation(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time, Path.Combine(root, "managed"), Path.Combine(root, "proof"));
+                """, new("$folder", root), new("$head", checkout.Head), new("$proof", proof),
+                new("$body", Path.Combine(proof, "pr-body.md")), new("$run", f.Run)));
+            var callback = new WorkflowDispatchPreparation(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time, Path.Combine(root, "managed"), proofRoot);
             Assert.Empty(await callback.PrepareAsync(default));
+            Assert.True(File.Exists(Path.Combine(proof, "pr-body.md")));
             Assert.Equal("running", f.Core.State("engine_step", f.Step));
             Assert.Equal(1, f.Core.Count("engine_step_attempt")); Assert.Equal(1, f.Core.Count("engine_session"));
             Assert.Equal(checkout.Fingerprint, f.Core.Text("SELECT fingerprint FROM engine_step_attempt"));
@@ -230,7 +235,7 @@ public sealed class WorkflowScheduleTests
             Assert.Empty(await callback.PrepareAsync(default));
             Assert.Equal(1, f.Core.Count("engine_step_attempt")); Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='workflow_command'"));
         }
-        finally { Directory.Delete(root, true); }
+        finally { Directory.Delete(root, true); Directory.Delete(proofRoot, true); }
     }
 
     private sealed class RecordingTopics : ITopics

@@ -99,6 +99,7 @@ public sealed class WorkflowDispatchPreparation(IAppDatabase db, EngineCommands 
                     candidate.Version, candidate.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
                 prepared = CommandStepPreparation.Prepare(snapshot, context, checkout.Fingerprint);
             }
+            await WorkflowPrBodyFile.WriteAsync(prepared.PrBody, proofRoot, prepared.RunId, ct);
             db.Writer.Write("engine.workflow.command.dispatch", scope => commands.ApplyPreparedCommandStep(scope, prepared.Context, prepared));
         }
     }
