@@ -176,6 +176,23 @@ public sealed class WorkflowScheduleTests
         Assert.Equal(1, f.Core.Count("engine_step_attempt"));
     }
 
+    [Fact]
+    public void Refused_stage_discards_after_commit_state_and_success_publishes_it_once()
+    {
+        using var refused = new Fixture(messageLimit: 0);
+        var failure = refused.Apply(refused.Prepare());
+        Assert.Equal("message_limit", failure.Result.Error);
+        Assert.Equal(0, refused.CommittedShells);
+        Assert.Equal(0, refused.Core.Count("engine_step_attempt"));
+        using var success = new Fixture();
+        var prepared = success.Prepare();
+        Assert.True(success.Apply(prepared).Result.Applied);
+        Assert.Equal(1, success.CommittedShells);
+        Assert.Equal(1, success.Core.Count("engine_message"));
+        Assert.True(success.Apply(prepared).Result.Applied);
+        Assert.Equal(1, success.CommittedShells);
+    }
+
     private sealed class RecordingTopics : ITopics
     {
         public int Count { get; private set; }
@@ -191,6 +208,7 @@ public sealed class WorkflowScheduleTests
         public string Run { get; } = Guid.NewGuid().ToString("N");
         public string Step { get; }
         public string Prompt { get; }
+        public int CommittedShells { get; private set; }
         public Fixture(string prompt = "full snapshotted prompt", int messageLimit = 20, bool failProjection = false, string? yaml = null)
         {
             Prompt = prompt; Core = new(topics: Topics); Core.SeedSession("owner");
@@ -199,6 +217,7 @@ public sealed class WorkflowScheduleTests
             Commands = new(Core.Machine, Core.Limits, () => messageLimit, projectStart: (s, c, command) =>
             {
                 s.Publish("test.chat-shell", null, command.Title, EngineJson.Default.String);
+                s.AfterCommit(() => CommittedShells++);
                 if (failProjection) throw new InvalidOperationException("projection failure");
             }, isConfiguredProvider: (provider, account) => provider == "codex" && account == "");
             var request = new WorkflowStartRequest(Guid.NewGuid(), Run, 0, 0, "owner", "request", ".assembly/workflows/flow.yml", project.Id, "task", null, Json("{}"));
