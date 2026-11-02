@@ -8,6 +8,9 @@ namespace Assembly.Engine.Mcp;
 /// <summary>The shared SDK caller, generated arguments and refusal boundary for Assembly tools.</summary>
 public static class McpInvocation
 {
+    internal static CancellationToken RequireOriginalWaitToken(RequestContext<CallToolRequestParams> request) =>
+        McpRequestWait.Require(request);
+
     public static async ValueTask<CallToolResult> InvokeAsync(string name, RequestContext<CallToolRequestParams> request,
         Func<McpCaller, JsonElement, CancellationToken, ValueTask<CallToolResult>> call, CancellationToken ct)
     {
