@@ -195,19 +195,20 @@ public sealed partial class WorkflowReceiptSubmissionTests
         using var scope = f.Core.Db.OpenSnapshot(default);
         return EngineCommands.PrepareWorkflowRelease(scope, new("worker", "r", "step", attempt, 7), RowStore.TerminalReply(scope, "worker", chatRunId)!)!;
     }
-    private static void EnsureReleaseDefinition(Fixture f)
+    private static void EnsureReleaseDefinition(Fixture f, bool review = false)
     {
         if (f.Core.Count("engine_workflow_snapshot") != 0) return;
-        var snapshot = WorkflowParser.Parse(new("name: Receipts\nsteps:\n  step:\n    agent: {provider: codex}\n    prompt: prompt.md\n    result: recon", ImmutableSortedDictionary<string, string>.Empty.Add("prompt.md", "Recon")));
+        var yaml = review ? "name: Receipts\nsteps:\n  build: {agent: {provider: codex}, prompt: prompt.md, result: build}\n  step: {needs: [build], result: review, review: {of: build, agent: {provider: codex}, prompt: prompt.md}}" : "name: Receipts\nsteps:\n  step:\n    agent: {provider: codex}\n    prompt: prompt.md\n    result: recon";
+        var snapshot = WorkflowParser.Parse(new(yaml, ImmutableSortedDictionary<string, string>.Empty.Add("prompt.md", "Recon")));
         var request = new WorkflowStartRequest(Guid.NewGuid(), "r", 0, 0, "owner", "release", "workflow.yml", "project", "Recon", null, JsonSerializer.SerializeToElement(new { }));
         var source = new WorkflowStartBody(new(Guid.NewGuid(), f.Core.Machine, new(ActorKind.System, "fixture"), "r", 0, 0, 1000), request,
             "project", "/tmp/receipt-fixture", snapshot, new(request.Inputs, "inputs"), ImmutableSortedDictionary<string, string>.Empty.Add("step", "step"), "request");
         f.Core.Db.Writer.Write("test.release-definition", s => s.Execute("""
-            UPDATE engine_step SET definition_key='step' WHERE id='step';
+            UPDATE engine_step SET definition_key='step',kind=$kind,result=$result WHERE id='step';
             UPDATE engine_run SET definition_hash=$hash WHERE id='r';
             INSERT INTO engine_workflow_snapshot(id,version,machine,created_ms,updated_ms,run_id,schema_version,definition_hash,input_hash,snapshot_json)
             VALUES('snapshot',1,$machine,1000,1000,'r',1,$hash,'inputs',$body);
-            """, new("$machine", f.Core.Machine), new("$hash", snapshot.Hash), new("$body", JsonSerializer.Serialize(source, WorkflowPreparationJson.Default.WorkflowStartBody))));
+            """, new("$machine", f.Core.Machine), new("$kind", review ? "review" : "agent"), new("$result", review ? "review" : "recon"), new("$hash", snapshot.Hash), new("$body", JsonSerializer.Serialize(source, WorkflowPreparationJson.Default.WorkflowStartBody))));
     }
     private static CommandResult ApplyRelease(Fixture f, PreparedWorkflowRelease prepared, long nowMs = 1002) => f.Core.Db.Writer.Write("test.workflow-release", scope =>
         new EngineCommands(f.Core.Machine, f.Core.Limits).ApplyWorkflowRelease(scope, prepared, nowMs));

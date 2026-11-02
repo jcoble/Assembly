@@ -222,6 +222,7 @@ public static partial class SessionTransitions
             new("$ack", stopAcknowledged ? 1 : 0));
         List<EffectDraft> effects = [];
         List<EventDraft> events = [];
+        if (command.State == "lost") events.AddRange(WaitForLostWorkflowWorker(scope, context));
         if (stopAcknowledged)
             events.AddRange(MessageTransitions.ReleaseHeld(scope, context, context.EntityId, command.State == "ended", effects));
         if (command.State == "ended")
