@@ -54,27 +54,26 @@ internal sealed class PreparedParentNeedPhase
             descriptor.Target.ChildOwnerMachine == original.Source.SourceMachine || descriptor.Target.ChildHolder != "local" ||
             descriptor.Target.ChildReservedEpoch is not null) throw new RelayRefused("bad_args");
         ParentNeedCodec.Identity(descriptor);
-        if (original.Source.Action == ParentNeedAction.Escalate)
-        {
-            if (bytes is not null || descriptor.Answer is not null || descriptor.ProviderBinding is not null)
-                throw new RelayRefused("bad_args");
-        }
-        else
-        {
-            if (bytes is null || descriptor.Answer is not { } manifest || manifest.Utf8Length != bytes.LongLength ||
-                manifest.Sha256 != RelayHash.Sha(bytes)) throw new RelayRefused("bad_args");
-            RelayHash.Utf8.GetString(bytes);
-            using var parsed = JsonDocument.Parse(bytes);
-            var expected = original.Input.Answer;
-            if (descriptor.Target.ProviderBacked && descriptor.Target.Kind == "permission" && expected is { ValueKind: JsonValueKind.String })
-                expected = JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement> { ["optionId"] = expected.Value.Clone() },
-                    EngineJson.Default.DictionaryStringJsonElement);
-            if (expected is null || !JsonElement.DeepEquals(parsed.RootElement, expected.Value) ||
-                descriptor.Target.ProviderBacked != (descriptor.ProviderBinding is not null)) throw new RelayRefused("bad_args");
-        }
+        if (!PreparedAnswerMatchesInput(original, descriptor, bytes)) throw new RelayRefused("bad_args");
         var frozen = new ParentNeedPrepared(descriptor, bytes);
         var next = original with { Phase = ParentNeedPhase.Prepared, Prepared = frozen, Outcome = null };
         return new(capture, original, next, ParentNeedPhaseWrite.Prepare, "/prepare", ct);
+    }
+
+    internal static bool PreparedAnswerMatchesInput(ParentNeedIntentPayload original,
+        NeedAnswerRequestDescriptor descriptor, byte[]? bytes)
+    {
+        if (original.Source.Action == ParentNeedAction.Escalate)
+            return bytes is null && descriptor.Answer is null && descriptor.ProviderBinding is null;
+        if (bytes is null || descriptor.Answer is not { } manifest || manifest.Utf8Length != bytes.LongLength ||
+            manifest.Sha256 != RelayHash.Sha(bytes)) return false;
+        var expected = original.Input.Answer;
+        if (descriptor.Target.ProviderBacked && descriptor.Target.Kind == "permission" && expected is { ValueKind: JsonValueKind.String })
+            expected = JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement> { ["optionId"] = expected.Value.Clone() },
+                EngineJson.Default.DictionaryStringJsonElement);
+        return expected is not null && bytes.AsSpan().SequenceEqual(
+                   JsonSerializer.SerializeToUtf8Bytes(expected.Value, EngineJson.Default.JsonElement)) &&
+            descriptor.Target.ProviderBacked == (descriptor.ProviderBinding is not null);
     }
 
     internal static PreparedParentNeedPhase Dispatch(ParentNeedSourceCapture capture, string expectedH, CancellationToken ct)
@@ -89,10 +88,22 @@ internal sealed class PreparedParentNeedPhase
     internal static PreparedParentNeedPhase Complete(ParentNeedSourceCapture capture, ParentNeedOutcome outcome, CancellationToken ct)
     {
         var original = capture.ReadPayload();
-        var rawRefusal = original.Prepared is null && original.Phase == ParentNeedPhase.Raw &&
+        if (!ValidOutcome(original, outcome)) throw new RelayRefused("bad_args");
+        var phase = outcome.Status == "unknown" ? ParentNeedPhase.Executing : ParentNeedPhase.Outcome;
+        return new(capture, original, original with { Phase = phase, Outcome = outcome }, ParentNeedPhaseWrite.Outcome,
+            outcome.Status == "unknown" ? "/outcome/unknown" : "/outcome/final", ct);
+    }
+    internal static bool ValidOutcome(ParentNeedIntentPayload original, ParentNeedOutcome outcome) =>
+        ValidOutcome(original.Source, original.Phase, original.InputSha256, original.Prepared?.Descriptor, outcome);
+
+    internal static bool ValidOutcome(ParentNeedSource source, ParentNeedPhase phase, string inputSha256,
+        NeedAnswerRequestDescriptor? descriptor, ParentNeedOutcome outcome)
+    {
+        var rawRefusal = descriptor is null && phase is ParentNeedPhase.Raw or ParentNeedPhase.Outcome &&
             outcome.Origin == "source" && outcome.Status == "refused";
-        var identity = original.Prepared is { } prepared ? ParentNeedCodec.Identity(prepared.Descriptor) : original.InputSha256;
-        if (original.Prepared is null && !rawRefusal || outcome.IdentitySha256 != identity ||
+        var identity = descriptor is not null ? ParentNeedCodec.Identity(descriptor) : inputSha256;
+        return !(descriptor is null && !rawRefusal || descriptor is not null && descriptor.Source != source ||
+            outcome.IdentitySha256 != identity ||
             outcome.Status is not ("recorded" or "refused" or "unknown") ||
             outcome.Origin is not ("target" or "source") || outcome.Origin == "source" &&
                 (outcome.Status != "refused" || outcome.Result is not null || outcome.EffectId is not null ||
@@ -100,10 +111,12 @@ internal sealed class PreparedParentNeedPhase
             outcome.Status == "recorded" && outcome.Result is not { Applied: true, Error: null } ||
             outcome.Status == "refused" && outcome.Origin == "target" && outcome.Result is not { Applied: false, Error: not null } ||
             outcome.Status == "unknown" && (outcome.Result is not null || outcome.EffectId is not null || outcome.EffectState is not null) ||
-            outcome.EffectId is not null && outcome.EffectId != "answer/" + original.Source.NeedId)
-            throw new RelayRefused("bad_args");
-        var phase = outcome.Status == "unknown" ? ParentNeedPhase.Executing : ParentNeedPhase.Outcome;
-        return new(capture, original, original with { Phase = phase, Outcome = outcome }, ParentNeedPhaseWrite.Outcome,
-            outcome.Status == "unknown" ? "/outcome/unknown" : "/outcome/final", ct);
+            outcome.EffectId is not null && outcome.EffectId != "answer/" + source.NeedId);
     }
+
+    internal static bool ValidOutcomeState(ParentNeedPhase phase, string state, ParentNeedOutcome outcome) =>
+        phase == ParentNeedPhase.Executing
+            ? state == "uncertain" && outcome.Origin == "target" && outcome.Status == "unknown"
+            : phase == ParentNeedPhase.Outcome && outcome.Status is "recorded" or "refused" &&
+                state == (outcome.Status == "recorded" ? "done" : "failed");
 }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Relays;
 
 namespace Assembly.Tests.Engine.Needs;
 
@@ -23,6 +24,8 @@ public sealed class ForwardedParentNeedTests
         var local = EngineCommands.PrepareParentNeed(operation, new("need", ParentNeedAction.Answer, JsonSerializer.SerializeToElement("answer")), target, null, default);
         var prepared = EngineCommands.PrepareForwardedParentNeed(source, target, local);
         var commands = new EngineCommands(f.Machine, f.Limits);
+        var probe = f.Db.Writer.Write("test.probe-missing", scope => commands.ReadForwardedParentNeed(scope, prepared.Descriptor));
+        Assert.Equal("missing", probe.Status); Assert.Null(probe.Result);
         var result = f.Db.Writer.Write("test.forwarded-answer", scope => commands.ApplyForwardedParentNeed(scope, prepared, 1001));
         Assert.True(result.Applied, result.Error); Assert.Equal(7, result.Epoch);
         Assert.Equal("answered", f.State("engine_needs_me", "need"));
@@ -32,6 +35,12 @@ public sealed class ForwardedParentNeedTests
         f.Reopen(); commands = new(f.Machine, f.Limits);
         var replay = f.Db.Writer.Write("test.forwarded-replay", scope => commands.ApplyForwardedParentNeed(scope, prepared, 2000));
         Assert.Equal(result, replay);
+        var recorded = f.Db.Writer.Write("test.probe-recorded", scope => commands.ReadForwardedParentNeed(scope, prepared.Descriptor));
+        Assert.Equal("recorded", recorded.Status); Assert.Equal(result, recorded.Result);
+        Assert.Equal(ParentNeedCodec.Identity(prepared.Descriptor), recorded.IdentitySha256);
+        Assert.Null(recorded.EffectId); Assert.Null(recorded.EffectState);
+        Assert.Throws<RelayRefused>(() => f.Db.Writer.Write("test.probe-conflict", scope =>
+            commands.ReadForwardedParentNeed(scope, prepared.Descriptor with { Target = target with { ChildEpoch = 8 } })));
         var altered = EngineCommands.PrepareParentNeed(operation, new("need", ParentNeedAction.Answer, JsonSerializer.SerializeToElement("changed")), target, null, default);
         var conflict = EngineCommands.PrepareForwardedParentNeed(source, target, altered);
         Assert.Equal("command_id_conflict", f.Db.Writer.Write("test.forwarded-conflict", scope => commands.ApplyForwardedParentNeed(scope, conflict, 3000)).Error);

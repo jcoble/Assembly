@@ -59,6 +59,9 @@ public sealed partial class EngineCommands
     public static PreparedForwardedParentNeed PrepareForwardedParentNeed(ParentNeedSource source,
         NeedAnswerTarget target, PreparedParentNeed prepared) => PreparedForwardedParentNeed.Prepare(source, target, prepared);
 
+    public NeedAnswerAck ReadForwardedParentNeed(IReadScope scope, NeedAnswerRequestDescriptor descriptor) =>
+        EngineJournal.ReadForwardedParentNeed(scope, _machine, descriptor);
+
     public CommandResult ApplyForwardedParentNeed(IWriteScope scope, PreparedForwardedParentNeed prepared, long nowMs) =>
         EngineJournal.ApplyForwardedParentNeed(scope, _machine, prepared, nowMs, _expiryPolicy);
 

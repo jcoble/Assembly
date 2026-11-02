@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Assembly.Engine.Relays;
 using Assembly.Engine.Messages;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
@@ -17,6 +19,28 @@ public static partial class EngineJournal
             descriptor.Target.NeedVersion, descriptor.Target.ChildEpoch, nowMs);
         return ExecuteCore(scope, context, key, prepared.Canonical, () => machine != descriptor.Target.ChildOwnerMachine
             ? Rejected(context, "wrong_machine") : NeedTransitions.ApplyForwardedParent(scope, context, prepared, expiryPolicy));
+    }
+
+    internal static NeedAnswerAck ReadForwardedParentNeed(IReadScope scope, string machine,
+        NeedAnswerRequestDescriptor descriptor)
+    {
+        var identity = ParentNeedCodec.Identity(descriptor);
+        if (machine != descriptor.Target.ChildOwnerMachine) throw new RelayRefused("wrong_machine");
+        var key = ParentNeedCodec.Key(descriptor.Source, descriptor.Target);
+        var context = new CommandContext(RelayReceiptKeys.ContextGuid(key), machine,
+            new(ActorKind.Session, descriptor.Source.ParentSessionId), descriptor.Target.NeedId,
+            descriptor.Target.NeedVersion, descriptor.Target.ChildEpoch, 0);
+        var canonical = "{\"kind\":\"parent_need\",\"parentNeedJournalVersion\":1,\"identitySha256\":\"" + identity + "\"}";
+        var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$key",
+            row => new { Fingerprint = row.Text(0), Result = row.Text(1) }, new SqlArg("$key", key));
+        if (receipt is null) return new("missing", identity, null, null, null);
+        if (receipt.Fingerprint != Fingerprint(context, canonical)) throw new RelayRefused("source_changed");
+        var result = JsonSerializer.Deserialize(receipt.Result, EngineJson.Default.CommandResult)!;
+        var effectId = "answer/" + descriptor.Target.NeedId;
+        var effect = result.Applied && descriptor.Target.ProviderBacked && descriptor.Source.Action == ParentNeedAction.Answer
+            ? scope.QueryFirst("SELECT state FROM engine_outbox WHERE id=$id AND kind='answer' AND session_id=$session",
+                row => row.Text(0), new SqlArg("$id", effectId), new("$session", descriptor.Target.ChildSessionId)) : null;
+        return new(result.Applied ? "recorded" : "refused", identity, result, effect is null ? null : effectId, effect);
     }
 
     internal static ParentNeedIntentAccepted BeginParentNeedIntent(IWriteScope scope, string machine,

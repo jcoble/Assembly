@@ -44,15 +44,18 @@ public sealed partial class EngineReader
         if (row.Format != 1 || row.Input != expectedInputSha256 || expectedSource.SourceMachine != machine ||
             JsonSerializer.Deserialize(row.Source, EngineJson.Default.ParentNeedSource) != expectedSource)
             throw new RelayRefused("source_changed");
-        if (row.State is "pending" or "uncertain") return null;
-        if (row.State is not ("done" or "failed") || row.Phase != ParentNeedPhase.Outcome || row.Outcome is null)
+        if (row.Outcome is null)
+        {
+            if (row.State is "pending" or "uncertain") return null;
             throw new RelayRefused("source_changed");
+        }
         var outcome = JsonSerializer.Deserialize(row.Outcome, EngineJson.Default.ParentNeedOutcome)!;
-        var identity = row.Descriptor is null ? expectedInputSha256 : ParentNeedCodec.Identity(
-            JsonSerializer.Deserialize(row.Descriptor, EngineJson.Default.NeedAnswerRequestDescriptor)!);
-        if (outcome.IdentitySha256 != identity || row.Descriptor is null &&
-            (outcome.Origin != "source" || outcome.Status != "refused" || outcome.Result is not null || outcome.EffectId is not null || outcome.EffectState is not null))
+        var descriptor = row.Descriptor is null ? null : JsonSerializer.Deserialize(row.Descriptor,
+            EngineJson.Default.NeedAnswerRequestDescriptor);
+        if (!PreparedParentNeedPhase.ValidOutcome(expectedSource, row.Phase, expectedInputSha256, descriptor, outcome) ||
+            !PreparedParentNeedPhase.ValidOutcomeState(row.Phase, row.State, outcome))
             throw new RelayRefused("source_changed");
+        if (row.State == "uncertain") return null;
         return outcome;
     }
 

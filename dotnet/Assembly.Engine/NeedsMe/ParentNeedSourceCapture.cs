@@ -41,19 +41,15 @@ internal sealed class ParentNeedSourceCapture
         if (payload.Prepared is { } prepared)
         {
             if (prepared.Descriptor.Source != payload.Source ||
-                (prepared.AnswerUtf8 is null) != (prepared.Descriptor.Answer is null)) throw new RelayRefused("source_changed");
-            if (prepared.AnswerUtf8 is { } bytes && (prepared.Descriptor.Answer!.Utf8Length != bytes.LongLength ||
-                prepared.Descriptor.Answer.Sha256 != RelayHash.Sha(bytes))) throw new RelayRefused("source_changed");
+                !PreparedParentNeedPhase.PreparedAnswerMatchesInput(payload, prepared.Descriptor, prepared.AnswerUtf8))
+                throw new RelayRefused("source_changed");
             ParentNeedCodec.Identity(prepared.Descriptor);
         }
         if (payload.Outcome is { } outcome)
         {
-            var identity = payload.Prepared is { } captured ? ParentNeedCodec.Identity(captured.Descriptor) : payload.InputSha256;
-            if (outcome.IdentitySha256 != identity || outcome.Origin is not ("source" or "target") ||
-                payload.Phase == ParentNeedPhase.Executing && (outcome.Origin != "target" || outcome.Status != "unknown" || outcome.Result is not null) ||
-                payload.Phase == ParentNeedPhase.Outcome && outcome.Status is not ("recorded" or "refused") || payload.Prepared is null &&
-                (outcome.Origin != "source" || outcome.Status != "refused" || outcome.Result is not null ||
-                    outcome.EffectId is not null || outcome.EffectState is not null)) throw new RelayRefused("source_changed");
+            if (!PreparedParentNeedPhase.ValidOutcome(payload, outcome) ||
+                !PreparedParentNeedPhase.ValidOutcomeState(payload.Phase, state, outcome))
+                throw new RelayRefused("source_changed");
         }
         ct.ThrowIfCancellationRequested();
         return new(intentId, version, state, createdMs, text);
