@@ -8,6 +8,14 @@ namespace Assembly.Engine.Mcp;
 /// <summary>The shared SDK caller, generated arguments and refusal boundary for Assembly tools.</summary>
 public static class McpInvocation
 {
+    private const string WaitCancellationKey = "assembly:parent-need:wait-cancellation";
+
+    internal static void CaptureWait(MessageContext request, CancellationToken original) =>
+        request.Items[WaitCancellationKey] = original;
+
+    internal static CancellationToken WaitCancellation(MessageContext request, CancellationToken fallback) =>
+        request.Items.TryGetValue(WaitCancellationKey, out var value) && value is CancellationToken original ? original : fallback;
+
     public static async ValueTask<CallToolResult> InvokeAsync(string name, RequestContext<CallToolRequestParams> request,
         Func<McpCaller, JsonElement, CancellationToken, ValueTask<CallToolResult>> call, CancellationToken ct)
     {

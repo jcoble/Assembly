@@ -149,18 +149,31 @@ public sealed partial class SessionHost : IPermissionPolicy
                 && ask.Answer.TrySetResult(answer.Clone());
     }
 
+    /// <summary>Captures the original live provider request without accepting or changing its answer.</summary>
+    public ProviderAnswerBinding? CaptureProviderAnswerBinding(string askId)
+    {
+        lock (_gate) return CaptureProviderAnswerBindingLocked(askId, out _);
+    }
+
+    private ProviderAnswerBinding? CaptureProviderAnswerBindingLocked(string askId, out OpenAsk? ask)
+    {
+        if (!_asks.TryGetValue(askId, out ask) || ask.Answer.Task.IsCompleted ||
+            ask.Observation is not { } observed || ask.Request is not { } request) return null;
+        return new(_sessionId, askId, request.ProviderRequestId, observed, ask.AcpSessionId);
+    }
+
     /// <summary>Captures one actual open request without completing it or entering a writer.</summary>
     public PreparedProviderAnswer? PrepareProviderAnswer(string askId, JsonElement answer)
     {
         lock (_gate)
         {
-            if (!_asks.TryGetValue(askId, out var ask) || ask.Answer.Task.IsCompleted ||
-                ask.Observation is not { } observed || ask.Request is not { } request) return null;
-            if (ask.Card.Kind == "permission" && answer.ValueKind == JsonValueKind.String)
+            var binding = CaptureProviderAnswerBindingLocked(askId, out var ask);
+            if (binding is null) return null;
+            if (ask!.Card.Kind == "permission" && answer.ValueKind == JsonValueKind.String)
                 answer = JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement> { ["optionId"] = answer.Clone() },
                     SessionsJson.Default.DictionaryStringJsonElement);
             if (!FitsAnswer(ask.Card, answer)) return null;
-            return new(new(_sessionId, askId, request.ProviderRequestId, observed, ask.AcpSessionId), answer.Clone());
+            return new(binding, answer.Clone());
         }
     }
 

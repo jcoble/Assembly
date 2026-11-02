@@ -114,7 +114,8 @@ internal static class RelayDigests
     {
         if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(target) || source == target || string.IsNullOrWhiteSpace(messageId) ||
             string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to) || mode is not ("prompt" or "interrupt") || kind is not ("session" or "system") ||
-            kind == "system" && (messageId != "child-ended/" + from || mode != "prompt")) throw new RelayRefused("bad_args");
+            kind == "system" && (messageId != "child-ended/" + from &&
+                !(messageId.StartsWith("need/", StringComparison.Ordinal) && messageId.Length > 5) || mode != "prompt")) throw new RelayRefused("bad_args");
     }
 
     internal static bool CanSend(RelaySourceDescriptor source) => source.Fence is

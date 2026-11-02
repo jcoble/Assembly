@@ -22,6 +22,18 @@ public sealed class ParentNeedCodecTests
         Assert.Equal("ae472e9ffbf6ce74bef5b8301617f0f340e9e70a27b25d00148e03b9cfc4eb78", ParentNeedCodec.Identity(Descriptor with { ProviderBinding = null }));
     }
 
+    [Fact]
+    public void Source_key_uses_only_original_machine_parent_and_operation_and_matches_independent_vector()
+    {
+        var key = ParentNeedCodec.SourceKey(Source);
+        Assert.Equal("parent-need-source/v1/21b7ad809e38691493bb1428d623e1f398006e11dc5dfc4ad699e66c68031d56", key);
+        Assert.Equal(key, ParentNeedCodec.SourceKey(Source with { NeedId = "different", Action = ParentNeedAction.Escalate, ParentEpoch = 99 }));
+        Assert.NotEqual(key, ParentNeedCodec.SourceKey(Source with { SourceMachine = "other" }));
+        Assert.NotEqual(key, ParentNeedCodec.SourceKey(Source with { ParentSessionId = "other" }));
+        Assert.NotEqual(key, ParentNeedCodec.SourceKey(Source with { OperationId = Guid.NewGuid() }));
+        Assert.Throws<RelayRefused>(() => ParentNeedCodec.SourceKey(Source with { OperationId = Guid.Empty }));
+    }
+
     [Theory]
     [InlineData("session")]
     [InlineData("chat")]
