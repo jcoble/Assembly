@@ -22,6 +22,7 @@ public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider tim
         RegisterForeignAncestry(calls);
         RegisterRelay(calls);
         RegisterForeignTitles(calls);
+        RegisterMachineStartAck(calls);
         calls.Read("engine", "start_location", EngineSocketJson.Default.StartLocationArgs, EngineSocketJson.Default.StartLocation,
             (args, call) =>
             {

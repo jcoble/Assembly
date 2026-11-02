@@ -49,6 +49,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         public string? BulkIdentity { get; set; }
         public int OwnerReadCalls;
         public Func<string, CallContext, Task>? OwnerReading { get; set; }
+        public Func<string, CallContext, Task>? MachineReading { get; set; }
         internal MachineForward? Forwarder { get; set; }
         private EngineRuntime StartRuntime()
         {
@@ -79,7 +80,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             if (_machineLauncher is not null)
             {
                 _machineCalls = new(Runtime, Fixture.Time, _machineLauncher, _checkouts!);
-                _machineCalls.Register(calls);
+                _machineCalls.Register(new IdentityGate(calls, this, machineReads: true));
             }
             calls.Topic("sessions", SessionsJson.Default.SessionItem, s => s.SessionId, (_, _) => []);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
@@ -132,7 +133,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             Runtime = StartRuntime();
             await Start(port);
         }
-        private sealed class IdentityGate(ICallRegistry inner, Host host) : ICallRegistry
+        private sealed class IdentityGate(ICallRegistry inner, Host host, bool machineReads = false) : ICallRegistry
         {
             public void Read<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
                 Func<TArgs, CallContext, Task<TResult>> handler, bool bulk = false) =>
@@ -148,6 +149,8 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.OwnerReadCalls);
                         if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);
                     }
+                    if (machineReads && feature == "engine" && method == "foreign_title_source_close" && host.MachineReading is { } machineRead)
+                        await machineRead(method, call).WaitAsync(call.Cancellation);
                     return await handler(value, call);
                 }, bulk);
             public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
