@@ -7,7 +7,7 @@ public sealed record ReceiptObservedCheck(string Name, string Result, string Rec
 public sealed record ReceiptEvidenceObservation(string Url, string Result, long CheckedMs, string? Sha256, long? Bytes, string TestedHead);
 internal sealed record ReceiptConfirmationBody(string ReceiptId, string EffectId, int EffectAttempt, string? RunId,
     ReceiptVerificationIntent Intent, ReceiptChecked Check, string? EndFingerprint, ReceiptReportCapture? ReleasedExecution, IReadOnlyList<ReceiptMatchedFile> Files,
-    IReadOnlyList<ReceiptEvidenceObservation> Evidence, IReadOnlyList<ReceiptObservedCheck> Checks);
+    IReadOnlyList<ReceiptEvidenceObservation> Evidence, IReadOnlyList<ReceiptObservedCheck> Checks, ReceiptBuildVerification? BuildVerification);
 internal sealed record ReceiptConfirmationDescriptor(ReceiptChecked Check, string MetadataSha256, long BodyBytes);
 
 internal sealed class PreparedReceiptConfirmation(ReceiptConfirmationBody body, string json, string sha256,
