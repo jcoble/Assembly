@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Engine;
 using Assembly.Engine.Hosting;
+using Assembly.Engine.Contracts;
 using Assembly.Engine.Providers;
 using Assembly.Tests.Features.Chat.Sessions;
 
@@ -21,7 +22,7 @@ public sealed partial class EngineHostTests
             await using var running = await Host.Start(host, home, null, launcher: launcher);
             AssertEmptyOrdinaryCensus(running);
             using var socket = await running.Open();
-            await Command(socket, "claude/", new CheckProvider());
+            await AuthCommand(socket, running, "claude/", new CheckProvider());
             var probe = await launcher.NextAsync();
             var initialized = await probe.ReadAsync("initialize");
             await probe.ReplyAsync(initialized, InitializeWithAgentMethod);
@@ -30,7 +31,7 @@ public sealed partial class EngineHostTests
             Assert.Equal("host-auth-probe", await probe.CloseAsync());
             await WaitProviderAuth(running, "claude/", "unverified");
 
-            await Command(socket, "successful-auth", new StartSignIn("claude", "", "actual", null));
+            await AuthCommand(socket, running, "successful-auth", new StartSignIn("claude", "", "actual", null));
             var loginLink = await launcher.NextAsync();
             await loginLink.ReplyAsync(await loginLink.ReadAsync("initialize"), InitializeWithAgentMethod);
             var login = await loginLink.ReadAsync("auth/login");
@@ -64,13 +65,13 @@ public sealed partial class EngineHostTests
             await refreshed.OpenAsync("post-signin-probe");
             Assert.Equal("post-signin-probe", await refreshed.CloseAsync());
 
-            await Command(socket, "cancelled-auth", new StartSignIn("claude", "", "actual", null));
+            await AuthCommand(socket, running, "cancelled-auth", new StartSignIn("claude", "", "actual", null));
             var cancelled = await launcher.NextAsync();
             await cancelled.ReplyAsync(await cancelled.ReadAsync("initialize"), InitializeWithAgentMethod);
             await cancelled.ReadAsync("auth/login");
             using var bulk = await running.Open(bulk: true);
             var operation = await Entity(bulk, "sign_in", "cancelled-auth");
-            var cancel = new WindowCommand(Guid.NewGuid(), "cancelled-auth", operation.GetProperty("version").GetInt64(), 0, new CancelSignIn());
+            var cancel = new WindowCommand(Guid.NewGuid(), "cancelled-auth", operation.GetProperty("version").GetInt64(), 0, new CancelSignIn(), running.Runtime.Machine);
             var reply = await Call(socket, "command", JsonSerializer.SerializeToElement(cancel, EngineSocketJson.Default.WindowCommand));
             Assert.True(reply.GetProperty("applied").GetBoolean(), reply.ToString());
             await running.WaitState("providers", "cancelled-auth", "cancelled");
@@ -87,6 +88,13 @@ public sealed partial class EngineHostTests
             Assert.True(probe.Disposed); // Successful sign-in retired the exact idle shared probe instance.
         }
         finally { Directory.Delete(home, true); }
+    }
+
+    private static async Task AuthCommand(System.Net.WebSockets.ClientWebSocket socket, Host running, string id, EngineCommand command)
+    {
+        var args = new WindowCommand(Guid.NewGuid(), id, 0, 0, command, running.Runtime.Machine);
+        var result = await Call(socket, "command", JsonSerializer.SerializeToElement(args, EngineSocketJson.Default.WindowCommand));
+        Assert.True(result.GetProperty("applied").GetBoolean(), result.ToString());
     }
 
     private static async Task<JsonElement> ProviderCall(System.Net.WebSockets.ClientWebSocket socket, string method, object args)

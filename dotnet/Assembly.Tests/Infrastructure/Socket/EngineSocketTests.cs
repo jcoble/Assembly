@@ -45,7 +45,7 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         _database = new(_f.Db);
         _runtime = EngineRuntime.Start(_database, _topics, _f.Time, new(() => 1, () => 5), isConfiguredProvider: (p, a) => p == "codex" && a == "");
         var calls = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
-        new EngineCalls(_runtime, _f.Time).Register(calls);
+        new EngineCalls(_runtime, _f.Time, new MachineForward(_ => { Interlocked.Increment(ref _forwardAttempts); return null; })).Register(calls);
         calls.Topic("sessions", TestJson.Default.Note, n => n.Text, (_, _) => [new Note("legacy")]);
         calls.Read("test", "barrier", TestJson.Default.Note, TestJson.Default.Note, (n, _) =>
         {
@@ -433,7 +433,8 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
 
     private async Task<CommandResult> Command(WebSocket socket, EngineCommand command, string id, long version = 0, long epoch = 0)
     {
-        var args = JsonSerializer.Serialize(new WindowCommand(Guid.NewGuid(), id, version, epoch, command), EngineSocketJson.Default.WindowCommand);
+        var args = JsonSerializer.Serialize(new WindowCommand(Guid.NewGuid(), id, version, epoch, command,
+            command is Assembly.Engine.Providers.CheckProvider or Assembly.Engine.Providers.StartSignIn or Assembly.Engine.Providers.CancelSignIn ? _runtime.Machine : null), EngineSocketJson.Default.WindowCommand);
         await Send(socket, $$"""{"t":"call","id":10,"feature":"engine","method":"command","args":{{args}}}""");
         var frame = await Read(socket);
         Assert.Equal("result", frame.GetProperty("t").GetString());
