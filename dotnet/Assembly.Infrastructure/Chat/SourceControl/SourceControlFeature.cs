@@ -37,4 +37,8 @@ internal sealed class SourceControlFeature(SessionStore sessions) : IFeature
 [JsonSerializable(typeof(SourceControlFeature.DiffArgs))]
 [JsonSerializable(typeof(GitFileDiff))]
 [JsonSerializable(typeof(GitBranchDiff))]
+[JsonSerializable(typeof(GitOperationStatus))]
+[JsonSerializable(typeof(GitOperationStart))]
+[JsonSerializable(typeof(GitOperationHostArgs))]
+[JsonSerializable(typeof(GitOperationArgs))]
 internal sealed partial class SourceControlJson : JsonSerializerContext;
