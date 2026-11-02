@@ -6,19 +6,21 @@ namespace Assembly.Tests.Engine.Auth;
 
 public sealed class SignInRecordTests
 {
+    private static string AccountA => "acct-v1:" + new string('a', 64);
+    private static string AccountB => "acct-v1:" + new string('b', 64);
     [Fact]
     public void Start_retains_exact_target_method_deadline_and_one_sessionless_begin()
     {
-        using var f = new AuthRecordFixture((p, a) => p == "codex" && a == "/account/one");
-        var result = f.Apply(new StartSignIn("codex", "/account/one", "advertised-method", null), "operation");
+        using var f = new AuthRecordFixture((p, a) => p == "codex" && a == AccountA);
+        var result = f.Apply(new StartSignIn("codex", AccountA, "advertised-method", null), "operation");
         Assert.True(result.Applied, result.Error);
         Assert.Equal("starting", f.Text("engine_sign_in", "operation", "state"));
-        Assert.Equal("/account/one", f.Text("engine_sign_in", "operation", "account_context"));
+        Assert.Equal(AccountA, f.Text("engine_sign_in", "operation", "account_context"));
         Assert.Equal("advertised-method", f.Text("engine_sign_in", "operation", "method_id"));
         Assert.Equal(301000, f.Core.Number("SELECT deadline_ms FROM engine_sign_in WHERE id='operation'"));
         var effect = f.Effect("begin_sign_in/operation");
         Assert.NotNull(effect); Assert.Null(effect.SessionId); Assert.Null(effect.RunId);
-        Assert.Equal("provider/codex//account/one", effect.OrderKey);
+        Assert.Equal("provider/codex/" + AccountA, effect.OrderKey);
         Assert.Equal(0, f.Core.Count("engine_session"));
     }
 
@@ -26,11 +28,11 @@ public sealed class SignInRecordTests
     public void Second_start_same_target_refuses_but_other_account_is_independent()
     {
         using var f = new AuthRecordFixture((p, _) => p == "codex");
-        var start = new StartSignIn("codex", "A", null, null);
+        var start = new StartSignIn("codex", AccountA, null, null);
         Assert.True(f.Apply(start, "first").Applied);
         var duplicate = f.Apply(start, "second");
         Assert.False(duplicate.Applied); Assert.Equal("already_running", duplicate.Error);
-        Assert.True(f.Apply(start with { AccountContext = "B" }, "third").Applied);
+        Assert.True(f.Apply(start with { AccountContext = AccountB }, "third").Applied);
         Assert.Equal(2, f.Core.Count("engine_sign_in")); Assert.Equal(2, f.Core.Count("engine_outbox"));
     }
 
@@ -59,13 +61,14 @@ public sealed class SignInRecordTests
     }
 
     [Fact]
-    public void Explicit_start_cannot_borrow_existing_id_bound_to_different_literal_pair()
+    public void Start_refuses_corrupt_retained_provider_row_without_borrowing_or_overwriting_its_id()
     {
-        using var f = new AuthRecordFixture((p, a) => (p, a) is ("provider", "team/account") or ("provider/team", "account"));
-        f.SeedProvider("provider", "team/account");
-        var result = f.Apply(new StartSignIn("provider/team", "account", null, null), "operation");
+        using var f = new AuthRecordFixture((p, a) => p == "provider/team" && a == AccountA);
+        // Deliberate malformed retained row, not two valid opaque identities.
+        f.SeedProvider("provider", "team/" + AccountA);
+        var result = f.Apply(new StartSignIn("provider/team", AccountA, null, null), "operation");
         Assert.False(result.Applied); Assert.Equal("unavailable", result.Error);
-        Assert.Equal("provider", f.Text("engine_provider", "provider/team/account", "provider"));
+        Assert.Equal("provider", f.Text("engine_provider", "provider/team/" + AccountA, "provider"));
         Assert.Equal(0, f.Core.Count("engine_sign_in")); Assert.Equal(0, f.Core.Count("engine_outbox"));
     }
 

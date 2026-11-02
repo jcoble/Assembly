@@ -60,6 +60,26 @@ public sealed partial class SessionRegistry : IAsyncDisposable
             account, captured.Descriptor.Id + "/" + account);
     }).ToList();
 
+    /// <summary>Creates through the existing writer, retaining one captured configuration through final validation.</summary>
+    public SessionInfo CreateSession(string agent, string repoUrl, CancellationToken ct,
+        InitialSessionConfig? initialConfig = null, string? workingFolder = null)
+    {
+        Action? validateTarget = null;
+        if (initialConfig is not null)
+        {
+            var captured = ConfigTargetIdentity.Capture(_launcher, agent, initialConfig.TargetId);
+            validateTarget = () => ConfigTargetIdentity.Validate(_launcher, captured.Descriptor, captured.Environment);
+        }
+        void Validate()
+        {
+            ct.ThrowIfCancellationRequested();
+            if (workingFolder is not null) _launcher.ValidateFolder(workingFolder);
+            validateTarget?.Invoke();
+        }
+        Validate();
+        return _sessionStore.Create(agent, repoUrl, initialConfig, workingFolder, Validate);
+    }
+
     /// <summary>The Assembly MCP server's side: helper sessions, and the messages between sessions.</summary>
     public HelperSessions Helpers { get; }
 
@@ -109,6 +129,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable
     /// <summary>Stops every running turn and the adapter. A turn cut short here ends as rows like any other.</summary>
     public async ValueTask DisposeAsync()
     {
+        await Task.WhenAll(_hosts.Values.Select(host => host.StopWarmForShutdownAsync()));
         // Sessions kept for background work stop it and close cleanly while their adapter is still there.
         try
         {

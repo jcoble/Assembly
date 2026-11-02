@@ -29,9 +29,15 @@ public sealed partial class SessionStore
         scope.Query($"SELECT {Columns} FROM session_info WHERE COALESCE(machine,'')='' AND (parent_session_id IS NULL OR helper=1) ORDER BY created_at,session_id", ReadSession);
 
     private void CreateOwned(SessionInfo session, string? initiatingSessionId, string sql, params (string Name, object? Value)[] parameters) =>
+        CreateOwned(session, initiatingSessionId, null, null, sql, parameters);
+
+    private void CreateOwned(SessionInfo session, string? initiatingSessionId, Action<IWriteScope>? initialize, Action? validate, string sql,
+        params (string Name, object? Value)[] parameters) =>
         _writer.Write("sessions", scope =>
         {
+            validate?.Invoke();
             var changed = scope.Execute(sql, Args(parameters));
+            initialize?.Invoke(scope);
             if (string.IsNullOrEmpty(session.Machine)) _engine?.Started(scope, session, initiatingSessionId);
             Publish(scope, session.SessionId);
             return changed;

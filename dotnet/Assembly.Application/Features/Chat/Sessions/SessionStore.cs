@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Acp;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Engine;
 
@@ -27,7 +28,7 @@ public sealed partial class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, CAST(title AS BLOB), acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source";
+    private const string Columns = "session_id, agent, repo_url, CAST(title AS BLOB), acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source, working_folder";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -109,6 +110,10 @@ public sealed partial class SessionStore
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
             if (Missing(HasMessageAnswer))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN state TEXT; ALTER TABLE helper_messages ADD COLUMN reply TEXT;");
+            if (Missing("SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name='working_folder'"))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN working_folder TEXT NULL;");
+            if (Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='config_target'"))
+                scope.Execute("ALTER TABLE session_config ADD COLUMN config_target TEXT NULL;");
             return !Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='pending_model'");
         });
         return new SessionStore(db, db.Writer, time, summaries, checkouts, hasPendingModel);
@@ -123,24 +128,35 @@ public sealed partial class SessionStore
             .ToDictionary(choice => choice.Name, choice => choice.Value.GetString()!);
     }
 
-    public SessionInfo Create(string agent, string repoUrl)
+    public SessionInfo Create(string agent, string repoUrl, InitialSessionConfig? initialConfig = null, string? workingFolder = null, Action? validate = null)
     {
-        var session = new SessionInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now());
-        CreateOwned(session, null,
-            "INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at) VALUES ($id, $agent, $repo, $now, $now);",
-            ("$id", session.SessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt));
+        // The bound cutover currently starts managed checkouts only. Refuse before any row/config publication.
+        if (workingFolder is not null && _engine is not null)
+            throw new CallFailed("This backend cannot create a session in the selected folder.", "incompatible_backend");
+        if (initialConfig is not null && (string.IsNullOrEmpty(initialConfig.TargetId) || initialConfig.Choices is null ||
+            initialConfig.Choices.Count == 0 || initialConfig.Choices.Any(choice => string.IsNullOrEmpty(choice.Key) || choice.Value is null)))
+            throw new CallFailed("Select the agent settings again.");
+        var choices = initialConfig is null ? null : JsonSerializer.Serialize(initialConfig.Choices, SessionsJson.Default.IReadOnlyDictionaryStringString);
+        var session = new SessionInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now(), WorkingFolder: workingFolder);
+        CreateOwned(session, null, scope =>
+        {
+            if (initialConfig is not null)
+                scope.Execute("INSERT INTO session_config(session_id,choices,config_target) VALUES($id,$choices,$target)",
+                    new SqlArg("$id", session.SessionId), new SqlArg("$choices", choices), new SqlArg("$target", initialConfig.TargetId));
+        }, validate, "INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at, working_folder) VALUES ($id, $agent, $repo, $now, $now, $folder);",
+            ("$id", session.SessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt), ("$folder", workingFolder));
         return session;
     }
 
     /// <summary>Records a session another machine created and runs, under that machine's id for it.</summary>
-    public SessionInfo Add(string sessionId, string agent, string repoUrl, string machine, string? parentSessionId = null, bool helper = false)
+    public SessionInfo Add(string sessionId, string agent, string repoUrl, string machine, string? parentSessionId = null, bool helper = false, string? workingFolder = null)
     {
-        var session = new SessionInfo(sessionId, agent, repoUrl, null, null, Now(), machine, ParentSessionId: parentSessionId, Helper: helper);
+        var session = new SessionInfo(sessionId, agent, repoUrl, null, null, Now(), machine, ParentSessionId: parentSessionId, Helper: helper, WorkingFolder: workingFolder);
         Change(sessionId, """
-            INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at, machine, parent_session_id, helper)
-            VALUES ($id, $agent, $repo, $now, $now, $machine, $parent, $helper);
+            INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at, machine, parent_session_id, helper, working_folder)
+            VALUES ($id, $agent, $repo, $now, $now, $machine, $parent, $helper, $folder);
             """, ("$id", sessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt), ("$machine", machine),
-            ("$parent", parentSessionId), ("$helper", helper ? 1 : 0));
+            ("$parent", parentSessionId), ("$helper", helper ? 1 : 0), ("$folder", workingFolder));
         return session;
     }
 
@@ -405,7 +421,9 @@ public sealed partial class SessionStore
             if (current.ParentSessionId is not { } parent || Get(scope, parent) is not { } ancestor) break;
             current = ancestor;
         }
-        return Folder(_checkouts, Top(scope, session)) is { } folder ? new(folder, true) : null;
+        var top = Top(scope, session);
+        if (top.WorkingFolder is { } direct) return new(direct, false);
+        return Folder(_checkouts, top) is { } folder ? new(folder, true) : null;
     }
 
     public string? ManagedFolder(SessionInfo session) => Folder(_checkouts, Top(session));
@@ -504,7 +522,7 @@ public sealed partial class SessionStore
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
             row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10),
-            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12), row.IsNull(13) ? null : row.Text(13));
+            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12), row.IsNull(13) ? null : row.Text(13), row.IsNull(14) ? null : row.Text(14));
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

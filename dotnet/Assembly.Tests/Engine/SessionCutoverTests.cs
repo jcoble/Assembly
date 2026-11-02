@@ -37,7 +37,7 @@ public sealed class SessionCutoverTests
             cutover: new(f.Db, store, launcher, "/checkouts", f.Time, _ => "/account-home"));
         Assert.Equal(2, f.Count("engine_session"));
         Assert.Equal("chosen", f.Text("SELECT model FROM engine_session WHERE id=$id", new SqlArg("$id", root.SessionId)));
-        Assert.Equal("/account-home", f.Text("SELECT account_context FROM engine_session WHERE id=$id", new SqlArg("$id", root.SessionId)));
+        Assert.Equal(AccountContext.Of(launcher.Agents.Single(agent => agent.Id == "work-profile"), _ => "/account-home"), f.Text("SELECT account_context FROM engine_session WHERE id=$id", new SqlArg("$id", root.SessionId)));
         Assert.Equal("retired-launcher", f.Text("SELECT provider FROM engine_session WHERE id=$id", new SqlArg("$id", helper.SessionId)));
         Assert.Null(f.Text("SELECT model FROM engine_session WHERE id=$id", new SqlArg("$id", helper.SessionId)));
         Assert.Equal("", f.Text("SELECT account_context FROM engine_session WHERE id=$id", new SqlArg("$id", helper.SessionId)));

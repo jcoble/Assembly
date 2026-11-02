@@ -28,7 +28,8 @@ public sealed class ProviderTargetIdentityTests
             new Dictionary<string, string> { ["CODEX_HOME"] = "/isolated-profile" }, VendorFamily: "codex");
         var environment = ConfigTargetIdentity.EnvironmentOf(descriptor);
         Assert.Equal("/isolated-profile", environment["CODEX_HOME"]);
-        Assert.Equal("/isolated-profile", AccountContext.Of(descriptor, key => environment.GetValueOrDefault(key)));
+        Assert.Equal("acct-v1:bba8f0244af078a391d9faaebbd7df99750b21889fda2190393b2863a58c6e5b",
+            AccountContext.Of(descriptor, key => environment.GetValueOrDefault(key)));
         var reversed = environment.Reverse().ToDictionary(pair => pair.Key, pair => pair.Value);
         Assert.Equal(ConfigTargetIdentity.Of(descriptor, environment), ConfigTargetIdentity.Of(descriptor, reversed));
         reversed["CODEX_HOME"] = "/replaced-profile";

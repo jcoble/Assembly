@@ -1,4 +1,6 @@
+using Assembly.Application.Features.Chat.Sessions.Configuration;
 using System.Threading.Channels;
+using System.Text.Json;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.Messages;
 
@@ -49,6 +51,36 @@ internal sealed class UpdateRouter
     {
         lock (_gate)
             return Queue(acpSessionId).Reader;
+    }
+
+    // Metadata consumers run before the normal update pump for this scope. Keep all replay/text/tool updates in order.
+    internal ConfigObservation Metadata(string nativeId, JsonElement responseOptions, string? responseCommands)
+    {
+        lock (_gate)
+        {
+            Flush();
+            var retained = new List<SessionNotification>();
+            var options = responseOptions;
+            var commands = responseCommands;
+            var queue = Queue(nativeId);
+            while (queue.Reader.TryRead(out var update))
+            {
+                if (update.Kind == "available_commands_update" && update.Update.TryGetProperty("availableCommands", out var available))
+                {
+                    if (responseCommands is null) commands = available.GetRawText();
+                }
+                else if (update.Kind == "config_option_update" && update.Update.TryGetProperty("configOptions", out var changed))
+                {
+                    // A complete ACP2 response follows the preceding notifications and is authoritative.
+                    if (responseOptions.ValueKind != JsonValueKind.Array) options = changed.Clone();
+                }
+                else retained.Add(update);
+            }
+            if (_closed) _acpSessions[nativeId] = queue = Channel.CreateUnbounded<SessionNotification>();
+            foreach (var update in retained) queue.Writer.TryWrite(update);
+            if (_closed) queue.Writer.TryComplete();
+            return new ConfigObservation(options, commands);
+        }
     }
 
     public void Flush()

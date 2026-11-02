@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Engine;
+using Assembly.Infrastructure.Engine.Auth;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
@@ -20,6 +21,16 @@ public sealed partial class AdapterEffects
         return row.Acknowledgment!.Kind == "prompt_inserted"
             ? MessageReceipt("next_turn", row.Acknowledgment.ProviderMessageId, null)
             : MessageReceipt("delivered_to_turn", null, null);
+    }
+
+    private EffectReceipt ReconcileAuthDelivery(IReadScope scope, Effect effect, MessageDelivery delivery)
+    {
+        if (Positive(scope, delivery) is { } positive) return positive;
+        var row = rows.UserDeliveryOfClient(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId);
+        if (row is not null && AuthDeliveryProof.Read(scope, effect, delivery, row) is { Version: 1, ProviderMessageId: { } provider } proof &&
+            !string.IsNullOrWhiteSpace(provider))
+            return MessageReceipt("next_turn", provider, null, new(row.Seq, proof.Delivery!.UserRunId, proof.Epoch));
+        return Receipt(EffectDisposition.Unknown, "delivery_unknown");
     }
 
     private static OwningSendAdmission Admission(IReadScope scope, Effect effect, MessageDelivery delivery)
@@ -73,6 +84,9 @@ public sealed partial class AdapterEffects
             _ => throw new CallFailed("delivery_ack_conflict")
         };
         rows.AcknowledgeUser(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId, acknowledgment);
-        return null;
+        if (data.State != "next_turn" || AuthDeliveryProof.Read(scope, effect, delivery, row) is not { } proof) return null;
+        if (proof.Version != 1 || proof.ProviderMessageId is not null && proof.ProviderMessageId != data.ProviderTurnId)
+            throw new CallFailed("bad_receipt");
+        return new("failed", data.ProviderTurnId, "inserted_before_sign_in");
     }
 }

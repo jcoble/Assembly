@@ -87,7 +87,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
             var account = Field("accountContext"); var providerTarget = Field("providerTargetId");
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name) || target is null || target.Length != 64
                 || target.Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
-                || account is null || providerTarget != id + "/" + account)
+                || !AccountContext.IsValid(account) || providerTarget != id + "/" + account)
                 throw new CallFailed("incompatible backend");
             agents.Add(new(id, name, target, account, providerTarget));
         }
