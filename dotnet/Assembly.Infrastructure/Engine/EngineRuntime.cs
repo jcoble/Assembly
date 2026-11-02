@@ -44,7 +44,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, SessionLimits limits,
-        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover, Func<EngineRuntime, IEngineEffects>? effectsFactory, Func<IReadScope, int>? readExpiryMinutes, Task? effectsReady, Func<string, string, bool>? isConfiguredProvider = null)
+        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover, Func<EngineRuntime, IEngineEffects>? effectsFactory, Func<IReadScope, int>? readExpiryMinutes, Task? effectsReady, Func<string, string, bool>? isConfiguredProvider = null, Action<IWriteScope, string>? effectCompleted = null)
     {
         if (effects is not null && effectsFactory is not null) throw new ArgumentException("Supply effects or effectsFactory, not both.");
         _db = db;
@@ -72,7 +72,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         _effects = effectsFactory is null ? effects : effectsFactory(this);
         if (_effects is EffectRouter router) router.Seal();
         _worker = new(db, Commands, Machine, time, _effects, retention ?? new EngineRetention(
-            () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
+            () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore), effectCompleted);
         _subscription = topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => _wake.Writer.TryWrite(true));
         _mirrorSubscription = topics.Subscribe("__engine_mirrored", null, _ => { }, (machine, _) => MirrorChanged(machine!));
         _publisherTask = Task.Run(PublishAsync);
@@ -82,8 +82,8 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
         SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null, SessionCutover? cutover = null,
-        Func<EngineRuntime, IEngineEffects>? effectsFactory = null, Func<IReadScope, int>? readExpiryMinutes = null, Task? effectsReady = null, Func<string, string, bool>? isConfiguredProvider = null) =>
-        new(db, topics, time, limits, effects, retention, messageLimit, cutover, effectsFactory, readExpiryMinutes, effectsReady, isConfiguredProvider);
+        Func<EngineRuntime, IEngineEffects>? effectsFactory = null, Func<IReadScope, int>? readExpiryMinutes = null, Task? effectsReady = null, Func<string, string, bool>? isConfiguredProvider = null, Action<IWriteScope, string>? effectCompleted = null) =>
+        new(db, topics, time, limits, effects, retention, messageLimit, cutover, effectsFactory, readExpiryMinutes, effectsReady, isConfiguredProvider, effectCompleted);
 
     private async Task RunWorkerAsync(Task? ready)
     {

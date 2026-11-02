@@ -14,7 +14,7 @@ namespace Assembly.Engine.Execution;
 
 /// <summary>Owns effect I/O and the engine's sole earliest-deadline wait; all mutations are journaled commands.</summary>
 public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, string machine,
-    TimeProvider time, IEngineEffects? effects, IEngineRetention retention)
+    TimeProvider time, IEngineEffects? effects, IEngineRetention retention, Action<IWriteScope, string>? effectCompleted = null)
 {
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private int _enable;
@@ -180,7 +180,12 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     private static long? Earlier(long? a, long? b) => a is null ? b : b is null ? a : Math.Min(a.Value, b.Value);
     private CommandContext Context(Candidate row) => new(Guid.NewGuid(), machine, new(ActorKind.System, "engine.worker"),
         row.Id, row.Version, row.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
-    private CommandResult Apply(IWriteScope s, Candidate row, EngineCommand command) => commands.Apply(s, Context(row), command);
+    private CommandResult Apply(IWriteScope s, Candidate row, EngineCommand command)
+    {
+        var result = commands.Apply(s, Context(row), command);
+        if (command is CompleteEffect && result.Applied) effectCompleted?.Invoke(s, row.Id);
+        return result;
+    }
     private static List<Candidate> Candidates(IWriteScope s, string predicate, int limit = 100, params SqlArg[] args) => s.Query($"""
         SELECT id,version,state,COALESCE((SELECT epoch FROM engine_session WHERE id=engine_outbox.session_id),0),order_key
         FROM engine_outbox WHERE kind<>'parent_need' AND {predicate} ORDER BY event_seq,rowid LIMIT {limit}

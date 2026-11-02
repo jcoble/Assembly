@@ -31,6 +31,8 @@ public sealed partial class SessionRegistry : IAsyncDisposable
     private readonly ConcurrentDictionary<string, string> _startedBy = new();
     // The last run a helper's prompt or message went into, before its rows reach here from another machine.
     private readonly ConcurrentDictionary<string, string> _helperRun = new();
+    private sealed record HelperProjection(Func<string, bool> Working, Action<string> TurnEnded);
+    private HelperProjection? _helperProjection;
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
         BackgroundWork work, HelperLimits? limits = null, SessionTitler? titler = null, ISessionFeed? feed = null, SessionMcp? mcp = null)
@@ -94,13 +96,29 @@ public sealed partial class SessionRegistry : IAsyncDisposable
         {
             if (_sessionStore.Get(id) is { Helper: true, ParentSessionId: { } parent })
                 _startedBy[id] = parent;
-            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => StartedWorking(id), Helpers.Row.TurnEnded, _mcp.Revoke,
+            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => StartedWorking(id), HelperTurnEnded, _mcp.Revoke,
                 _titler, _feed);
         });
 
     /// <summary>Whether a session the session's agent started has a turn running.</summary>
     public bool StartedWorking(string sessionId) =>
-        _startedBy.Any(pair => pair.Value == sessionId && Working(pair.Key));
+        Volatile.Read(ref _helperProjection) is { } projection ? projection.Working(sessionId) :
+            _startedBy.Any(pair => pair.Value == sessionId && Working(pair.Key));
+
+    /// <summary>Use the committed Engine child projection when this registry runs under Engine ownership.</summary>
+    public void BindHelperWorking(Func<string, bool> working, Action<string> turnEnded)
+    {
+        ArgumentNullException.ThrowIfNull(working);
+        ArgumentNullException.ThrowIfNull(turnEnded);
+        if (Interlocked.CompareExchange(ref _helperProjection, new(working, turnEnded), null) is not null)
+            throw new InvalidOperationException("Helper working projection is already bound.");
+    }
+
+    private void HelperTurnEnded(string sessionId)
+    {
+        if (Volatile.Read(ref _helperProjection) is { } projection) projection.TurnEnded(sessionId);
+        else Helpers.Row.TurnEnded(sessionId);
+    }
 
     /// <summary>
     /// A helper the session's agent started, here or on another machine, and the run its prompt or a message went
