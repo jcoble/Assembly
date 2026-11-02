@@ -46,7 +46,7 @@ public sealed class SchemaTests
         f.Db.Writer.Write("test.cursor", s => s.Execute("UPDATE engine_meta SET next_seq=12,retained_after=3,snapshot_seq=8"));
         f.Reopen();
         Assert.Equal(machineBefore, f.Machine);
-        Assert.Equal(4L, f.Db.QueryFirst("PRAGMA user_version", r => r.Long(0), default));
+        Assert.Equal(5L, f.Db.QueryFirst("PRAGMA user_version", r => r.Long(0), default));
         Assert.Equal(0, f.Count("engine_event"));
         Assert.Equal("message", Assert.Single(RowStore.Open(f.Db).RowsAfter("chat", 0)).ItemId);
         Assert.Equal(12, f.Number("SELECT next_seq FROM engine_meta"));

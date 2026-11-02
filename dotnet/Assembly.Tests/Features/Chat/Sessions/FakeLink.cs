@@ -85,10 +85,16 @@ internal sealed class FakeLink : IAgentLink
     {
         var session = request.GetProperty("params").GetProperty("sessionId").GetString()!;
         var id = "prompt-" + request.GetProperty("id").GetRawText();
-        await UpdateAsync(JsonSerializer.Serialize(new { sessionUpdate = "user_message", messageId = id, content = Array.Empty<object>() }), session);
-        await UpdateAsync("""{"sessionUpdate":"state_update","state":"running"}""", session);
-        await _agent.ReplyAsync(request, JsonSerializer.Serialize(new { messageId = id }));
+        await InsertAsync(request, id);
         await UpdateAsync("{\"sessionUpdate\":\"state_update\",\"state\":\"idle\"," + idleFields.TrimStart('{'), session);
+    }
+
+    public async Task InsertAsync(JsonElement request, string providerMessageId)
+    {
+        var session = request.GetProperty("params").GetProperty("sessionId").GetString()!;
+        await UpdateAsync(JsonSerializer.Serialize(new { sessionUpdate = "user_message", messageId = providerMessageId, content = Array.Empty<object>() }), session);
+        await UpdateAsync("""{"sessionUpdate":"state_update","state":"running"}""", session);
+        await _agent.ReplyAsync(request, JsonSerializer.Serialize(new { messageId = providerMessageId }));
     }
 
     /// <summary>The agent asks the client (<c>session/request_permission</c>, <c>elicitation/create</c>) as request <paramref name="id"/>.</summary>

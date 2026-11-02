@@ -20,13 +20,16 @@ public sealed class EngineCommands
     private readonly Func<int> _messageLimit;
     private readonly Action<IWriteScope, CommandContext, StartSession>? _projectStart;
     private readonly Func<string, string>? _accountContext;
+    private readonly Action<IWriteScope, CommandContext, Effect, EffectReceipt>? _projectCompletion;
 
     public EngineCommands(string machine, SessionLimits limits, Func<int>? messageLimit = null,
-        Action<IWriteScope, CommandContext, StartSession>? projectStart = null, Func<string, string>? accountContext = null)
+        Action<IWriteScope, CommandContext, StartSession>? projectStart = null, Func<string, string>? accountContext = null,
+        Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null)
     {
         _machine = machine;
         _projectStart = projectStart;
         _accountContext = accountContext;
+        _projectCompletion = projectCompletion;
         ArgumentNullException.ThrowIfNull(limits);
         _limits = limits;
         _messageLimit = messageLimit ?? (() => 20);
@@ -44,7 +47,7 @@ public sealed class EngineCommands
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
-                EffectCommand effect => EffectTransitions.Apply(scope, context, effect),
+                EffectCommand effect => EffectTransitions.Apply(scope, context, effect, _projectCompletion),
                 RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),

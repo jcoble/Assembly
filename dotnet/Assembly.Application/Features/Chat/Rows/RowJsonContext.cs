@@ -9,6 +9,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// <summary>Compile-time JSON for the row payloads, camelCase like the UI's types. Optional fields are left out when null.</summary>
 [JsonSerializable(typeof(TurnPayload))]
 [JsonSerializable(typeof(UserPayload))]
+[JsonSerializable(typeof(UserAcknowledgment))]
 [JsonSerializable(typeof(DeltaPayload))]
 [JsonSerializable(typeof(MessagePayload))]
 [JsonSerializable(typeof(ThinkingPayload))]

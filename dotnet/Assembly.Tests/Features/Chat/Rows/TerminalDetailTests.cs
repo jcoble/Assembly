@@ -192,7 +192,7 @@ public sealed class TerminalDetailTests(Xunit.Abstractions.ITestOutputHelper pro
             var result = store.ToolCall("S", "C")!;
             Assert.Equal(("{\"x\":1}", "legacy €", "diff", "file"), (result.Input, result.Output, result.Diff, result.Path));
             Assert.Null(result.OutputBytes); Assert.Null(result.Terminals);
-            Assert.Equal(version, store.StoredFormatVersion);
+            Assert.Equal(Math.Max(version, 5), store.StoredFormatVersion);
             Assert.Equal(2, db.QueryFirst("SELECT count(*) FROM pragma_table_info('tool_details') WHERE name IN ('output_source','acp_session_id')", r => r.Long(0), default));
             Assert.Equal(1, db.QueryFirst("SELECT acp_session_id IS NULL AND output_source IS NULL FROM tool_details", r => r.Long(0), default));
         }

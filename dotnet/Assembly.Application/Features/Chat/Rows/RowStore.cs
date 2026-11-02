@@ -14,8 +14,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// </summary>
 public sealed partial class RowStore
 {
-    /// <summary>The row format. Two machines copy rows between them only when theirs match. 4: the session names.</summary>
-    public const int FormatVersion = 4;
+    /// <summary>The row format. Two machines copy rows between them only when theirs match. 5: positive user delivery acknowledgments.</summary>
+    public const int FormatVersion = 5;
 
     private const string Columns = "session_id, seq, run_id, item_id, kind, payload, created_at";
 
@@ -35,6 +35,10 @@ public sealed partial class RowStore
             Schema.RenameOldNames(scope);
             scope.Execute(Schema.Create);
             MigrateTerminalDetails(scope);
+            scope.Execute("""
+                CREATE INDEX IF NOT EXISTS rows_user_client ON rows(session_id,json_extract(payload,'$.clientId'),seq DESC)
+                WHERE kind='user' AND item_id IS NULL;
+                """);
             // Version 1 kept every delta: delete the finished messages' deltas it left, once. A newer version's
             // database is left as it is, version included.
             if (scope.QueryFirst("PRAGMA user_version;", row => row.Long(0)) < FormatVersion)

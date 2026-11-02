@@ -1,3 +1,5 @@
+using Assembly.Application.Common.Engine;
+using System.Text.Json.Serialization;
 using System.Text.Json;
 using Assembly.Engine.Contracts;
 
@@ -14,7 +16,8 @@ public interface IEngineEffects
 }
 public sealed record SessionEffectData(string State, string? ProviderSessionId, string? Reason);
 public sealed record AnswerEffectData(string ProviderRequestId);
-public sealed record MessageEffectData(string State, string? ProviderTurnId, string? Reason);
+public sealed record MessageEffectData(string State, string? ProviderTurnId, string? Reason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UserRowReference? UserRow = null);
 public sealed record HandoffEffectData(string State, long NextEpoch, string? Reason);
 public abstract record EffectCommand : EngineCommand;
 public sealed record ClaimEffect() : EffectCommand;

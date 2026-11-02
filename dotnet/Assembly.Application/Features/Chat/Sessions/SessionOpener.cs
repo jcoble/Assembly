@@ -213,7 +213,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         return ConfigOptions.ModelName(options);
     }
 
-    private static CallFailed ModelUnavailable(string selector) => new($"The selected model '{selector}' is not available for this agent.");
+    private static CallFailed ModelUnavailable(string selector) => new($"The selected model '{selector}' is not available for this agent.", "model_unavailable");
 
     /// <summary>The message's first line, cut to <see cref="TitleLength"/> characters; null when it has no text.</summary>
     public static string? Title(string text)

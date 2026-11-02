@@ -11,22 +11,17 @@ public sealed partial class SessionHost
     {
         while (true)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            RunningTurn? turn;
-            lock (_gate)
+            var turn = CurrentTurn;
+            var sent = await SendAsync(text, clientId, null, cancellationToken);
+            switch (sent)
             {
-                if (clientId is not null && _hub.UserRowOfClient(_sessionId, clientId) is { } row)
-                {
-                    SameText(clientId, row.Text, text);
-                    return row.RunId;
-                }
-                turn = _turn;
-                // Send records the client id under this lock before any other waiter can send it.
-                if (turn is null && Send(text, clientId) is { } runId)
-                    return runId;
+                case SendResult.Inserted inserted: return inserted.RunId;
+                case SendResult.Unknown: return LegacyRunOfClient(clientId, text, null);
+                case SendResult.Busy:
+                    await turn.Done.WaitAsync(cancellationToken); continue;
+                case SendResult.AuthRequired: throw new CallFailed("authentication required");
+                case SendResult.Failed failed: throw new CallFailed(failed.Reason);
             }
-            if (turn is not null)
-                await turn.Done.WaitAsync(cancellationToken);
         }
     }
 

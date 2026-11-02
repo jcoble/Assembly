@@ -62,7 +62,7 @@ public sealed partial class SessionHostTests
         await agent.StartAsync(canSteer: false);
         await agent.ReadAsync("session/prompt");
 
-        Assert.Null(await _host.SteerAsync("two", null, CancellationToken.None));
+        Assert.Equal(SteerResult.PromptRequired, await _host.SteerAsync("two", null, null, CancellationToken.None));
     }
 
     [Fact]

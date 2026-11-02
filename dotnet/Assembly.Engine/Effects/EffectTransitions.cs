@@ -33,7 +33,8 @@ public static class EffectTransitions
         return document.RootElement.Clone();
     }
 
-    public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command)
+    public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command,
+        Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null)
     {
         var row = s.QueryFirst("SELECT version,state,attempt,next_ms FROM engine_outbox WHERE id=$id",
             r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3) }, new SqlArg("$id", c.EntityId));
@@ -82,6 +83,7 @@ public static class EffectTransitions
         if (command is EnableEffect && state == "pending" && effect.Kind == "send") state = "dead";
         // Validate receipts before touching the row; the provider can report data, never an injected command.
         if (state == "done" && !ValidConfirmation(effect, receipt!)) return Reject("bad_receipt");
+        if (command is CompleteEffect && state == "done") projectCompletion?.Invoke(s, c, effect, receipt!);
         // Preserve uncertainty while the reconciliation service is unavailable.
         if (state == "unavailable" && s.QueryFirst("SELECT json_extract(receipt_json,'$.disposition') FROM engine_outbox WHERE id=$id",
                 r => !r.IsNull(0) && r.Long(0) == (long)EffectDisposition.Unknown, new SqlArg("$id", c.EntityId)))
