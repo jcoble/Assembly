@@ -88,11 +88,15 @@ public sealed class EffectRouterTests
     public async Task Both_paths_dispatch_same_registered_owner_and_dispose_each_distinct_owner_once()
     {
         await using var f = new AdapterDeliveryFixture(); var owner = new Handler(); await using var router = new EffectRouter(f.Effects);
-        router.Add("probe_provider", owner).Add("begin_sign_in", owner); router.Seal();
-        var effect = Effect("probe_provider");
-        Assert.Equal(EffectDisposition.Confirmed, (await router.ExecuteAsync(effect, default)).Disposition);
-        Assert.Equal(EffectDisposition.Confirmed, (await router.ReconcileAsync(effect, default)).Disposition);
-        Assert.Same(effect, owner.Executed); Assert.Same(effect, owner.Reconciled);
+        router.Add("probe_provider", owner).Add("begin_sign_in", owner)
+            .Add("workflow_setup", owner).Add("workflow_workspace", owner); router.Seal();
+        foreach (var kind in new[] { "probe_provider", "workflow_setup", "workflow_workspace" })
+        {
+            var effect = Effect(kind);
+            Assert.Equal(EffectDisposition.Confirmed, (await router.ExecuteAsync(effect, default)).Disposition);
+            Assert.Equal(EffectDisposition.Confirmed, (await router.ReconcileAsync(effect, default)).Disposition);
+            Assert.Same(effect, owner.Executed); Assert.Same(effect, owner.Reconciled);
+        }
         await router.DisposeAsync(); await router.DisposeAsync(); Assert.Equal(1, owner.Disposals);
     }
 

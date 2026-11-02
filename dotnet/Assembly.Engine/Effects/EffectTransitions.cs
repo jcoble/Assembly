@@ -9,6 +9,7 @@ using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
+using Assembly.Engine.Workflows.Workspaces;
 
 namespace Assembly.Engine.Effects;
 
@@ -117,6 +118,7 @@ public static class EffectTransitions
     {
         try
         {
+            if (effect.Kind is "workflow_setup" or "workflow_workspace") return WorkspaceTransitions.ValidConfirmation(scope, effect, receipt);
             if (AuthEffectBinding.IsAuth(effect.Kind)) return AuthEffectBinding.ValidConfirmation(scope, context, effect, receipt);
             return effect.Kind switch
             {
@@ -135,6 +137,7 @@ public static class EffectTransitions
 
     private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy, MessageOutcome? projected)
     {
+        if (effect.Kind is "workflow_setup" or "workflow_workspace") { WorkspaceTransitions.Confirm(s, c, effect, receipt); return; }
         if (AuthEffectBinding.IsAuth(effect.Kind)) return;
         var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested FROM engine_session WHERE id=$id",
             r => (Version: r.Long(0), Epoch: r.Long(1), State: r.Text(2), CancelRequested: r.Long(3) != 0), new SqlArg("$id", effect.SessionId));

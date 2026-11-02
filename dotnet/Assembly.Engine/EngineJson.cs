@@ -1,5 +1,6 @@
 using Assembly.Engine.Reading;
 using Assembly.Engine.Workflows;
+using Assembly.Engine.Workflows.Workspaces;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Domain.Rows;
 using Assembly.Engine.Providers;
@@ -62,6 +63,10 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(WorkflowStartRequest))]
 [JsonSerializable(typeof(WorkflowStartAck))]
 [JsonSerializable(typeof(WorkflowSetupIntent))]
+[JsonSerializable(typeof(PrepareWorkspace))]
+[JsonSerializable(typeof(WorkspacePrepared))]
+[JsonSerializable(typeof(WorkspaceIntent))]
+[JsonSerializable(typeof(WorkspaceSetupData))]
 [JsonSerializable(typeof(CommandContext))]
 [JsonSerializable(typeof(CommandResult))]
 [JsonSerializable(typeof(EngineCommand))]

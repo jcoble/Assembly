@@ -47,7 +47,7 @@ public static class WorkflowStarts
         var resolved = Resolved(request, project.RootPath);
         var inputs = WorkflowParser.ResolveInputs(validated.Definition, frozen.Inputs, resolved);
         var ids = validated.Definition.Steps.Keys.ToImmutableSortedDictionary(key => key, _ => Guid.NewGuid().ToString("N"), StringComparer.Ordinal);
-        return WorkflowPreparation.Freeze(new(context with { NowMs = 0 }, frozen, project.Id, project.RootPath,
+        return WorkflowPreparation.Freeze(new WorkflowStartBody(context with { NowMs = 0 }, frozen, project.Id, project.RootPath,
             validated, inputs, ids, WorkflowPreparation.RequestFingerprint(frozen, project.Id, project.RootPath)), ct);
     }
 
