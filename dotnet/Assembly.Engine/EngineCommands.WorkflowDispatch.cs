@@ -9,6 +9,7 @@ using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Engine.Workflows.Definitions;
 using Assembly.Engine.Workflows.Scheduling;
+using Assembly.Engine.Workflows.Reviews;
 
 namespace Assembly.Engine;
 
@@ -40,7 +41,7 @@ public sealed partial class EngineCommands
         var snapshot = JsonSerializer.Deserialize(source, WorkflowPreparationJson.Default.WorkflowStartBody)!;
         var key = snapshot.StepIds.Single(p => p.Value == stepId).Key;
         var spec = snapshot.Snapshot.Definition.Steps[key];
-        var values = TemplateValues(scope, snapshot, w.RunId);
+        var values = TemplateValues(scope, snapshot, w.RunId, w.StepId, w.Generation);
         if (spec.Condition is not null && !WorkflowTemplates.Condition(spec.Condition, values)) return null;
         var prompt = WorkflowTemplates.Render(snapshot.Snapshot.Prompts[spec.Prompt!], values);
         if (string.IsNullOrWhiteSpace(prompt)) throw new InvalidOperationException("workflow_prompt_empty");
@@ -120,8 +121,9 @@ public sealed partial class EngineCommands
         return sent;
     }
 
-    internal static JsonElement TemplateValues(IReadScope scope, WorkflowStartBody source, string runId)
+    internal static JsonElement TemplateValues(IReadScope scope, WorkflowStartBody source, string runId, string stepId, int generation)
     {
+        var redo = ReviewTransitions.RedoValues(scope, runId, stepId, generation);
         var run = scope.QueryFirst("SELECT proof_dir,pr_body FROM engine_run WHERE id=$run", r => (Proof: r.IsNull(0) ? null : r.Text(0), Body: r.IsNull(1) ? null : r.Text(1)), new SqlArg("$run", runId));
         var receipts = scope.Query("""
             SELECT st.definition_key,json_extract(receipt.body_json,'$.report.receipt'),
@@ -135,6 +137,7 @@ public sealed partial class EngineCommands
         using (var writer = new Utf8JsonWriter(stream))
         {
             writer.WriteStartObject(); writer.WritePropertyName("inputs"); source.Inputs.Values.WriteTo(writer);
+            if (redo is not null) { writer.WritePropertyName("redo"); redo.Values.WriteTo(writer); }
             writer.WritePropertyName("task"); if (source.Request.Task is { } task) task.WriteTo(writer); else writer.WriteNullValue();
             writer.WriteStartObject("run"); writer.WriteString("proof_dir", run.Proof); writer.WriteString("pr_body", run.Body); writer.WriteEndObject();
             writer.WriteStartObject("steps"); foreach (var receipt in receipts) { writer.WriteStartObject(receipt.Key); using var document = JsonDocument.Parse(receipt.Body); foreach (var field in document.RootElement.EnumerateObject()) field.WriteTo(writer); writer.WriteStartArray("files"); using var files = JsonDocument.Parse(receipt.Files); foreach (var file in files.RootElement.EnumerateArray()) writer.WriteStringValue(file.GetProperty("path").GetString()); writer.WriteEndArray(); writer.WriteEndObject(); }
