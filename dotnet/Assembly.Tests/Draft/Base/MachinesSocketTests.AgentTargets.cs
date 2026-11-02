@@ -21,7 +21,14 @@ public sealed partial class MachinesSocketTests
         await _box.ProbeAsync(default); await _box.ReadMirrorOwnerAsync(default);
         await CallAsync(socket, 2, "machines", "agents", "{\"machine\":\"box\"}");
         using var remote = JsonDocument.Parse(await ReadAsync(socket));
-        Assert.Equal(item.GetRawText(), remote.RootElement.GetProperty("result").GetProperty("agents")[0].GetRawText());
+        var forwarded = remote.RootElement.GetProperty("result").GetProperty("agents")[0];
+        foreach (var field in new[] { "id", "name", "accountContext", "providerTargetId" })
+            Assert.Equal(item.GetProperty(field).GetString(), forwarded.GetProperty(field).GetString());
+        var wrapped = forwarded.GetProperty("targetId").GetString()!;
+        var raw = item.GetProperty("targetId").GetString()!;
+        Assert.NotEqual(raw, wrapped);
+        Assert.EndsWith(":" + raw, wrapped);
+        Assert.Equal(129, wrapped.Length);
     }
 
     [Theory]

@@ -1,5 +1,6 @@
 using Assembly.Application.Common.Agents;
 using System.Net;
+using System.Security.Cryptography;
 using System.Net.WebSockets;
 using System.Net.Http.Headers;
 using System.Text;
@@ -33,11 +34,14 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     private readonly Action<string> _turnEnded;
     private readonly MachineStatus _status;
     private bool _formatChecked;
+    private readonly string _connectionIdentity;
+    private readonly string _instanceIdentity = Guid.NewGuid().ToString("N");
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
     public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
-        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null)
+        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null, string? connectionIdentity = null)
     {
+        _connectionIdentity = connectionIdentity ?? "";
         Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics());
         _address = address;
         _token = token;
@@ -89,7 +93,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
                 || target.Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
                 || !AccountContext.IsValid(account) || providerTarget != id + "/" + account)
                 throw new CallFailed("incompatible backend");
-            agents.Add(new(id, name, target, account, providerTarget));
+            agents.Add(new(id, name, TargetPrefix + target, account, providerTarget));
         }
         await _socketSend.WaitAsync(cancellationToken);
         try
@@ -101,10 +105,15 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         finally { _socketSend.Release(); }
     }
 
-    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken)
+    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
+        InitialSessionConfig? initialConfig = null, string? workingFolder = null)
     {
-        var created = await CallAsync("sessions", "create", new SessionsFeature.CreateArgs(agent, repoUrl), cancellationToken);
-        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name);
+        var initial = initialConfig is null ? null : initialConfig with { TargetId = UnwrapTarget(initialConfig.TargetId) };
+        var args = new SessionsFeature.CreateArgs(agent, repoUrl, InitialConfig: initial, WorkingFolder: workingFolder);
+        var created = initial is null
+            ? await CallAsync("sessions", "create", args, cancellationToken)
+            : await ConfiguredCallAsync("sessions", "create", JsonSerializer.SerializeToElement(args, SessionsJson.Default.CreateArgs), cancellationToken);
+        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name, workingFolder: workingFolder);
     }
 
     public async Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken)
@@ -180,8 +189,44 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     public async Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
         ReadConfig(await CallAsync("config", "get", new ConfigFeature.GetArgs(session.SessionId), cancellationToken));
 
-    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken) =>
-        ReadConfig(await CallAsync("config", "set", new ConfigFeature.SetArgs(session.SessionId, configId, value), cancellationToken));
+    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null)
+    {
+        var args = new ConfigFeature.SetArgs(session.SessionId, configId, value, targetId is null ? null : UnwrapTarget(targetId));
+        return ReadConfig(targetId is null
+            ? await CallAsync("config", "set", args, cancellationToken)
+            : await ConfiguredCallAsync("config", "set", JsonSerializer.SerializeToElement(args, SessionsJson.Default.SetArgs), cancellationToken));
+    }
+
+    public async Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct)
+    {
+        var args = new ConfigFeature.DiscoverArgs(agent, UnwrapTarget(targetId), cwd);
+        var result = await ConfiguredCallAsync("config", "discover", JsonSerializer.SerializeToElement(args, SessionsJson.Default.DiscoverArgs), ct);
+        if (!result.TryGetProperty("modelOptions", out var models) || models.ValueKind != JsonValueKind.Object
+            || models.EnumerateObject().Any(model => model.Value.ValueKind != JsonValueKind.Array))
+            throw new CallFailed("incompatible backend");
+        return new(ReadConfig(result), models.EnumerateObject().ToDictionary(model => model.Name, model => model.Value.GetRawText()));
+    }
+
+    public async Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken ct)
+    {
+        var args = new ConfigFeature.WarmArgs(session.SessionId, UnwrapTarget(targetId));
+        return ReadConfig(await ConfiguredCallAsync("config", "warm", JsonSerializer.SerializeToElement(args, SessionsJson.Default.WarmArgs), ct));
+    }
+
+    private async Task<JsonElement> ConfiguredCallAsync(string feature, string method, JsonElement args, CancellationToken ct)
+    {
+        var owner = await CaptureOwnerReadAsync(null, ct);
+        return await CallAsync(feature, method, args, false, ct, owner.Identity, owner.Socket);
+    }
+
+    private string TargetPrefix => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(_address.AbsoluteUri + "\0" + _token + "\0" + _connectionIdentity + "\0" + _instanceIdentity))) + ":";
+
+    private string UnwrapTarget(string target)
+    {
+        if (string.IsNullOrEmpty(target) || !target.StartsWith(TargetPrefix, StringComparison.Ordinal) || target.Length == TargetPrefix.Length)
+            throw new CallFailed("The selected remote configuration changed. Select it again.");
+        return target[TargetPrefix.Length..];
+    }
 
     public async Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
     {

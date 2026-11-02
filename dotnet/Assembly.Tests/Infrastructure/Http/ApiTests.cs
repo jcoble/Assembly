@@ -356,6 +356,59 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await _http.GetAsync($"/sessions/{sessionId}/attachments/{Guid.NewGuid()}.png")).StatusCode);
     }
 
+    [Fact]
+    public async Task Composer_phone_HTTP_discovery_returns_actual_metadata_without_a_session()
+    {
+        var target = _sessions.ConfigTargets[0].TargetId;
+        var pending = PostJsonAsync("/config/discover", JsonSerializer.Serialize(new { agent = "claude", targetId = target, cwd = _work }));
+        var agent = await _launcher.NextAsync();
+        var opened = await agent.StartAsync(configOptions: "[]");
+        Assert.Equal(_work, opened.GetProperty("params").GetProperty("cwd").GetString());
+        using var response = await pending.WaitAsync(Wait);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Array, result.RootElement.GetProperty("options").ValueKind);
+        Assert.Equal(JsonValueKind.Object, result.RootElement.GetProperty("modelOptions").ValueKind);
+        Assert.True(agent.Disposed);
+        Assert.Empty(_sessionStore.List(null, 50, default).Sessions);
+    }
+
+    [Fact]
+    public async Task Composer_phone_HTTP_warm_resumes_the_saved_native_identity_without_a_prompt()
+    {
+        var session = _sessionStore.Create("claude", "repo", workingFolder: _work);
+        _sessionStore.SetAcpSession(session.SessionId, "phone-restored");
+        var target = _sessions.ConfigTargets[0].TargetId;
+        var pending = PostJsonAsync($"/sessions/{session.SessionId}/config/warm", JsonSerializer.Serialize(new { targetId = target }));
+        var agent = await _launcher.NextAsync();
+        var opened = await agent.StartAsync("phone-restored", configOptions: SessionWarmConfigTests.Options);
+        Assert.Equal("session/resume", opened.GetProperty("method").GetString());
+        Assert.Equal("phone-restored", opened.GetProperty("params").GetProperty("sessionId").GetString());
+        Assert.Equal(_work, opened.GetProperty("params").GetProperty("cwd").GetString());
+        using var response = await pending.WaitAsync(Wait);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("b", result.RootElement.GetProperty("options")[0].GetProperty("currentValue").GetString());
+        Assert.Equal("phone-restored", _sessionStore.Get(session.SessionId)!.AcpSessionId);
+        Assert.True(agent.Disposed);
+    }
+
+    [Fact]
+    public async Task Composer_phone_HTTP_abort_ends_its_exact_private_discovery_link()
+    {
+        var target = _sessions.ConfigTargets[0].TargetId;
+        using var stop = new CancellationTokenSource();
+        using var body = new StringContent(JsonSerializer.Serialize(new { agent = "claude", targetId = target, cwd = _work }), Encoding.UTF8, "application/json");
+        var pending = _http.PostAsync("/config/discover", body, stop.Token);
+        var agent = await _launcher.NextAsync();
+        await agent.ReadAsync("initialize");
+        await stop.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        await agent.Exited.WaitAsync(Wait);
+        Assert.True(agent.Disposed);
+        Assert.Empty(_sessionStore.List(null, 50, default).Sessions);
+    }
+
     private async Task<string> CreateSessionAsync()
     {
         var created = await PostJsonAsync("/sessions", """{"agent":"claude","repoUrl":"https://github.com/o/r"}""");

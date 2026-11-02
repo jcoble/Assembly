@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Helpers;
+using Assembly.Application.Features.Chat.Sessions.Configuration;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
 
@@ -59,6 +60,10 @@ public sealed partial class SessionRegistry : IAsyncDisposable
         return new ConfigTarget(captured.Descriptor.Id, captured.Descriptor.Name, captured.TargetId,
             account, captured.Descriptor.Id + "/" + account);
     }).ToList();
+
+    /// <summary>One bounded private metadata observation through the configured launcher.</summary>
+    public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct) =>
+        new ComposerConfigDiscovery(_launcher, _time).DiscoverAsync(agent, targetId, cwd, ct);
 
     /// <summary>Creates through the existing writer, retaining one captured configuration through final validation.</summary>
     public SessionInfo CreateSession(string agent, string repoUrl, CancellationToken ct,

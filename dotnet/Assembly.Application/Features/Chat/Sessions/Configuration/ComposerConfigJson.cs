@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Domain.Sessions;
+using Assembly.Application.Common.Calls;
 
 namespace Assembly.Application.Features.Chat.Sessions.Configuration;
 
@@ -31,6 +32,16 @@ public static class ComposerConfigJson
             json.WriteEndObject();
         }
         json.WriteEndObject();
+    }
+
+    public static InitialSessionConfig? Initial(JsonElement body)
+    {
+        if (!body.TryGetProperty("initialConfig", out var initial) || initial.ValueKind == JsonValueKind.Null) return null;
+        if (initial.ValueKind != JsonValueKind.Object || !initial.TryGetProperty("targetId", out var target) || target.ValueKind != JsonValueKind.String
+            || !initial.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Object
+            || choices.EnumerateObject().Any(x => x.Value.ValueKind != JsonValueKind.String))
+            throw new CallFailed("Expected initialConfig {targetId, choices}.");
+        return new InitialSessionConfig(target.GetString()!, choices.EnumerateObject().ToDictionary(x => x.Name, x => x.Value.GetString()!));
     }
 
 }
