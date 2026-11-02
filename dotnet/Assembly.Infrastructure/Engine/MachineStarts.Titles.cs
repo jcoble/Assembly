@@ -6,6 +6,22 @@ namespace Assembly.Infrastructure.Engine;
 
 internal sealed partial class MachineStarts
 {
+    internal static async ValueTask CleanupAsync(IEnumerable<IAsyncDisposable> resources)
+    {
+        List<Exception> errors = [];
+        foreach (var resource in resources)
+        {
+            try { await resource.DisposeAsync(); }
+            catch (Exception error) { errors.Add(error); }
+        }
+        if (errors.Count != 0)
+        {
+            try { Console.Error.WriteLine($"machine start cleanup failed: {errors.Count} owned resources; {errors[0].GetType().Name}"); }
+            catch (IOException) { }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
     /// <summary>Invocation-owned actual title snapshots and one lease for each creating remote owner.</summary>
     private sealed class StartTitleSources : IAsyncDisposable
     {
@@ -14,7 +30,7 @@ internal sealed partial class MachineStarts
         private readonly CapturedLiveBatch _batch;
         private readonly ForeignTitleSourceCapture _local;
         private readonly Dictionary<string, RemoteMachine.RelayBulkLease> _leases = new(StringComparer.Ordinal);
-        private readonly List<(ForeignTitleSnapshot Snapshot, RemoteMachine.RelayBulkLease Lease)> _remote = [];
+        private readonly List<OwnedTitleSource> _remote = [];
         internal SourceSnapshot Source { get; private set; }
         internal CapturedMirror Target { get; }
         internal RemoteMachine.RelayBulkLease TargetLease => _leases[Target.Live.Machine];
@@ -50,7 +66,7 @@ internal sealed partial class MachineStarts
                     var lease = capture._leases[machine];
                     var snapshot = await owner._forward.ReadForeignTitlesAsync(lease,
                         new(ForeignTitleSourceMode.OwnedAncestry, expected[^1].Id, targetMachine), ct);
-                    capture._remote.Add((snapshot, lease));
+                    capture._remote.Add(new(owner._forward, snapshot, lease));
                     AddOwned(expected, snapshot.Nodes, nodes);
                 }
                 var chain = source.Structure.Select(node => nodes[node.Id]).ToArray();
@@ -79,25 +95,18 @@ internal sealed partial class MachineStarts
         {
             _owner._engine.Read(scope => { _owner.RevalidateSource(scope, Source, _caller); return 0; }, ct);
             _owner._runtime.Reader.CheckForeignTitleSource(_local, ct);
-            foreach (var (snapshot, lease) in _remote)
-                await _owner._forward.CheckForeignTitlesAsync(lease, snapshot.Opened, ct);
+            foreach (var source in _remote)
+                await _owner._forward.CheckForeignTitlesAsync(source.Lease, source.Snapshot.Opened, ct);
             await _batch.RequireCurrentAsync(ct);
         }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync() => CleanupAsync(
+            _remote.AsEnumerable().Reverse().Cast<IAsyncDisposable>().Concat(_leases.Values.Reverse()));
+
+        private sealed record OwnedTitleSource(MachineForward Forward, ForeignTitleSnapshot Snapshot,
+            RemoteMachine.RelayBulkLease Lease) : IAsyncDisposable
         {
-            List<Exception> errors = [];
-            foreach (var (snapshot, lease) in _remote.AsEnumerable().Reverse())
-            {
-                try { await _owner._forward.CloseForeignTitlesAsync(lease, snapshot.Opened.Handle, CancellationToken.None); }
-                catch (Exception error) { errors.Add(error); }
-            }
-            foreach (var lease in _leases.Values.Reverse())
-            {
-                try { await lease.DisposeAsync(); }
-                catch (Exception error) { errors.Add(error); }
-            }
-            if (errors.Count != 0) throw new AggregateException(errors);
+            public ValueTask DisposeAsync() => new(Forward.CloseForeignTitlesAsync(Lease, Snapshot.Opened.Handle, CancellationToken.None));
         }
     }
 }
