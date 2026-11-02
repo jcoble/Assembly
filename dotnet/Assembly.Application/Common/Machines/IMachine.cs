@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Application.Features.Chat;
 using Assembly.Application.Features.Chat.Rows;
@@ -15,8 +16,8 @@ public interface IMachine
     /// <summary>The name a session records for this machine; null for the machine the routes run on.</summary>
     string? Name { get; }
 
-    /// <summary>The agents a new session on this machine can run, as (id, name).</summary>
-    Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken);
+    /// <summary>The safe configured targets a new session on this machine can run.</summary>
+    Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken);
 
     /// <summary>Asks whether the machine answers, recording what it finds; this machine always does.</summary>
     Task ProbeAsync(CancellationToken cancellationToken) => Task.CompletedTask;

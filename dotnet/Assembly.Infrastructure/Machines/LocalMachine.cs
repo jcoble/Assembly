@@ -15,8 +15,8 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
 {
     public string? Name => null;
 
-    public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<(string Id, string Name)>>(sessions.Agents.Select(agent => (agent.Id, agent.Name)).ToList());
+    public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(sessions.ConfigTargets);
 
     public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
         Task.FromResult(sessionStore.Create(agent, repoUrl));

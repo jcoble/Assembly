@@ -336,6 +336,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
 
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         var error = await ReadAsync(socket);
         Assert.Contains("\"code\":\"failed\"", error);
@@ -353,6 +354,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
         using var socket = await OpenAsync();
 
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         var error = await ReadAsync(socket);
         Assert.Contains("\"code\":\"unreachable\"", error);
@@ -366,6 +368,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
     {
         using var socket = await OpenAsync();
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 1, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
         Assert.Equal(List(2, Box(true, null)), await ListAsync(socket, 2));
@@ -377,6 +380,7 @@ public sealed partial class MachinesSocketTests : IAsyncLifetime
 
         _stub.Drop = false;
         await _box.ProbeAsync(CancellationToken.None);
+        await _box.ReadMirrorOwnerAsync(CancellationToken.None);
         await CallAsync(socket, 5, "machines", "agents", """{"machine":"box"}""");
         Assert.Contains("\"result\":", await ReadAsync(socket));
         Assert.Equal(List(6, Box(true, null)), await ListAsync(socket, 6));

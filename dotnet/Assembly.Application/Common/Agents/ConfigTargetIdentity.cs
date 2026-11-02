@@ -5,7 +5,8 @@ using Assembly.Application.Common.Calls;
 
 namespace Assembly.Application.Common.Agents;
 
-public sealed record ConfigTarget(string Id, string Name, string? TargetId);
+public sealed record ConfigTarget(string Id, string Name, string? TargetId = null,
+    string? AccountContext = null, string? ProviderTargetId = null);
 
 /// <summary>Opaque identity of the exact descriptor and effective launch environment.</summary>
 public static class ConfigTargetIdentity
