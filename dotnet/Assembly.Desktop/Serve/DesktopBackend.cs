@@ -3,6 +3,7 @@ using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Titles;
 using Assembly.Application.Features.Workflows;
 using Assembly.Infrastructure.Workflows;
 using Microsoft.AspNetCore.Builder;
@@ -219,8 +220,9 @@ public sealed class DesktopBackend : IAsyncDisposable
             });
             boardMirror?.Reconnect();
             terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, AdapterLauncher.ExistingFolder(checkouts, sessionStore));
+            var machineForward = new MachineForward(machine => connections.ByEngineMachine(db, machine));
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, new MachineForward(machine => connections.ByEngineMachine(db, machine))), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                [new EngineCalls(engine, TimeProvider.System, machineForward), new SessionTitleCalls(engine, sessionStore, machineForward), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore),
