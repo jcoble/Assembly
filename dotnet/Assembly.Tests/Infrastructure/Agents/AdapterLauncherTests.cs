@@ -17,7 +17,7 @@ public sealed class AdapterLauncherTests : IDisposable
         Directory.CreateDirectory(repo);
         Git(repo, "init", "--quiet");
         Git(repo, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "--quiet", "--allow-empty", "-m", "start");
-        var launcher = new AdapterLauncher([], Path.Combine(_work, "checkouts"), new UnclaimedPermissions());
+        var launcher = new AdapterLauncher([], Path.Combine(_work, "checkouts"), new UnclaimedPermissions(), session => SessionStore.Folder(Path.Combine(_work, "checkouts"), session));
         var parent = new SessionInfo("parent", "claude", repo, null, null, 0);
         var helper = parent with { SessionId = "helper", Agent = "codex", ParentSessionId = "parent", Helper = true };
 

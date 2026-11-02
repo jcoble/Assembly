@@ -281,7 +281,7 @@ public sealed class MachineDoorTests : IAsyncLifetime
     {
         public bool Available = true; public int ProviderCalls;
         public IReadOnlyList<AgentDescriptor> Agents => Available ? [new("custom", "Target", "unused", [], null)] : [];
-        public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
+        public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder);
         public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) { ProviderCalls++; throw new InvalidOperationException("No clone at start"); }
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) { ProviderCalls++; throw new InvalidOperationException("No provider at start"); }
     }

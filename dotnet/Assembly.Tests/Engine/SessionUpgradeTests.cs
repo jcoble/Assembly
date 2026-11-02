@@ -158,7 +158,7 @@ public sealed class SessionUpgradeTests
     {
         public IReadOnlyList<AgentDescriptor> Agents => [];
         public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) => throw new InvalidOperationException("No checkout during migration");
-        public void ValidateFolder(string folder) => new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder);
+        public void ValidateFolder(string folder) => new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder);
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) => throw new InvalidOperationException("No adapter during migration");
     }
 

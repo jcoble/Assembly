@@ -78,7 +78,7 @@ public sealed class SessionLocationTests
         var foreign = h.Store.Add("peer", "claude", "repo", "foreign-machine");
         Assert.Null(h.Store.Root(foreign));
         Assert.Throws<CallFailed>(() => SessionPaths.RootOf(h.Store, foreign.SessionId));
-        Assert.Throws<CallFailed>(() => AdapterLauncher.ExistingFolder(h.Checkouts, h.Store)(foreign.SessionId));
+        Assert.Throws<CallFailed>(() => SessionTerminalFolders.ExistingFolder(h.Checkouts, h.Store)(foreign.SessionId));
     }
 
     private static void AssertLocation(Host h, string id, string folder, bool managed)
@@ -86,7 +86,7 @@ public sealed class SessionLocationTests
         var session = h.Store.Get(id)!;
         Assert.Equal(folder, h.Store.Location(session)!.Folder); Assert.Equal(managed, h.Store.Location(session)!.ManagedCheckout);
         Assert.Equal(folder, h.Store.Root(session)); Assert.Equal(folder, h.Store.Item(session).Root);
-        Assert.Equal(folder, SessionPaths.RootOf(h.Store, id)); Assert.Equal(folder, AdapterLauncher.ExistingFolder(h.Checkouts, h.Store)(id));
+        Assert.Equal(folder, SessionPaths.RootOf(h.Store, id)); Assert.Equal(folder, SessionTerminalFolders.ExistingFolder(h.Checkouts, h.Store)(id));
     }
 
     private sealed class Host : IAsyncDisposable
@@ -133,9 +133,9 @@ public sealed class SessionLocationTests
         public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
         {
             Checkouts++;
-            return new AdapterLauncher([], checkouts, new UnclaimedPermissions()).CheckoutAsync(session, stages, cancellationToken);
+            return new AdapterLauncher([], checkouts, new UnclaimedPermissions(), item => SessionStore.Folder(checkouts, item)).CheckoutAsync(session, stages, cancellationToken);
         }
-        public void ValidateFolder(string folder) => new AdapterLauncher([], checkouts, new UnclaimedPermissions()).ValidateFolder(folder);
+        public void ValidateFolder(string folder) => new AdapterLauncher([], checkouts, new UnclaimedPermissions(), item => SessionStore.Folder(checkouts, item)).ValidateFolder(folder);
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) => Fake.LaunchAsync(agentId, stages, cancellationToken);
     }
     private static void Git(string folder, params string[] arguments)

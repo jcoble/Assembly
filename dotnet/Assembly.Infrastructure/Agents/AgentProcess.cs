@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Common.Processes;
 using System.Diagnostics;
 using Assembly.Application.Common.Acp;
 using Assembly.Infrastructure.Transcript;

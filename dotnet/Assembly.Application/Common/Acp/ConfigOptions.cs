@@ -1,7 +1,7 @@
 using System.Text.Json;
 
 using Assembly.Application.Common.Agents;
-namespace Assembly.Application.Features.Chat.Sessions;
+namespace Assembly.Application.Common.Acp;
 
 /// <summary>
 /// Reads an agent's session config options (ACP <c>configOptions</c>: <c>[{ id, name, category, type, currentValue,
