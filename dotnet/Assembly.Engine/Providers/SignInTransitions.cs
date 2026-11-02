@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text;
+using System.Globalization;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
@@ -79,15 +81,24 @@ internal static class SignInTransitions
             [new("begin_sign_in/" + context.EntityId, "begin_sign_in", null, null, payload, "provider/" + target.Id)]);
     }
 
-    private static bool MatchingNeed(IReadScope scope, CommandContext context, ConfiguredProviderTarget target, string need) => scope.QueryFirst("""
-        SELECT COUNT(*) FROM engine_needs_me n JOIN engine_session se ON se.id=n.session_id
-        WHERE n.id=$need AND n.machine=$machine AND se.machine=$machine AND se.holder='local' AND se.reserved_epoch IS NULL
-          AND se.state NOT IN ('foreign','handing_off','ended') AND se.provider=$provider AND se.account_context=$account
-          AND n.state='open' AND n.kind='confirmation' AND n.provider_request_id IS NULL AND n.chat_row_id IS NULL
-          AND substr(n.id,1,length('sign-in/'||n.session_id||'/'))='sign-in/'||n.session_id||'/'
-          AND json_type(n.options_json)='array' AND json_array_length(n.options_json)=2
-          AND json_extract(n.options_json,'$[0]')='sign_in' AND json_extract(n.options_json,'$[1]')='dismiss'
-        """, r => r.Long(0), new SqlArg("$need", need), new("$machine", context.Machine), new("$provider", target.Provider), new("$account", target.AccountContext)) == 1;
+    private static bool MatchingNeed(IReadScope scope, CommandContext context, ConfiguredProviderTarget target, string need)
+    {
+        var matched = scope.QueryFirst("""
+            SELECT n.id,n.session_id FROM engine_needs_me n JOIN engine_session se ON se.id=n.session_id
+            WHERE n.id=$need AND n.machine=$machine AND se.machine=$machine AND se.holder='local' AND se.reserved_epoch IS NULL
+              AND se.state NOT IN ('foreign','handing_off','ended') AND se.provider=$provider AND se.account_context=$account
+              AND n.state='open' AND n.kind='confirmation' AND n.provider_request_id IS NULL AND n.chat_row_id IS NULL
+              AND CAST(n.text AS BLOB)=$text
+              AND json_type(n.options_json)='array' AND json_array_length(n.options_json)=2
+              AND json_extract(n.options_json,'$[0]')='sign_in' AND json_extract(n.options_json,'$[1]')='dismiss'
+            """, r => new { Id = r.Text(0), Session = r.Text(1) }, new SqlArg("$need", need), new("$machine", context.Machine),
+            new("$provider", target.Provider), new("$account", target.AccountContext),
+            new("$text", new UTF8Encoding(false, true).GetBytes(target.Provider + " needs you to sign in on " + context.Machine + ".")));
+        if (matched is null) return false;
+        var prefix = "sign-in/" + matched.Session + "/";
+        return matched.Id.StartsWith(prefix, StringComparison.Ordinal) &&
+            long.TryParse(matched.Id.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out _);
+    }
 
     private static CommandResult Progress(IWriteScope scope, CommandContext context, Operation row,
         SignInProgress progress, Func<string, string, bool>? configured)

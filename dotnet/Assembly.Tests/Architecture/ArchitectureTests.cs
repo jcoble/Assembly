@@ -75,9 +75,9 @@ public sealed partial class ArchitectureTests
     }
 
     [Fact]
-    public void Engine_references_only_application_contracts()
+    public void Engine_references_application_contracts_and_domain_proofs()
     {
-        Assert.Equal(["Assembly.Application"], OurReferences("Assembly.Engine"));
+        Assert.Equal(["Assembly.Application", "Assembly.Domain"], OurReferences("Assembly.Engine"));
     }
 
     [Fact]
