@@ -1,3 +1,5 @@
+using Assembly.Application.Common.Engine;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Acp;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
@@ -48,8 +50,8 @@ public sealed partial class SessionStore
             ON CONFLICT(session_id) DO UPDATE SET options = $options;
             """, new SqlArg("$id", sessionId), new SqlArg("$options", options));
 
-    public void ConfirmModelSelection(string sessionId, string optionId, string selectedValue, string optionsJson) =>
-        _writer.Write("sessions.config", scope => { ConfirmModelSelection(scope, sessionId, optionId, selectedValue, optionsJson); return 0; });
+    public void ConfirmModelSelection(string sessionId, string optionId, string selectedValue, string optionsJson, Action? validate = null) =>
+        _writer.Write("sessions.config", scope => { validate?.Invoke(); ConfirmModelSelection(scope, sessionId, optionId, selectedValue, optionsJson); return 0; });
 
     /// <summary>Persists one confirmed adapter result and consumes intent in the same transaction.</summary>
     public void ConfirmModelSelection(IWriteScope scope, string sessionId, string optionId, string selectedValue, string optionsJson)
@@ -114,6 +116,39 @@ public sealed partial class SessionStore
             """, new SqlArg("$id", sessionId),
             new SqlArg("$choices", JsonSerializer.Serialize(choices, SessionsJson.Default.IReadOnlyDictionaryStringString)));
 
+    internal void ObserveConfig(SessionInfo expected, SessionConfig expectedConfig, SessionLocation expectedLocation, string nativeId,
+        string? options, string? commands, IReadOnlyDictionary<string, string> choices, KeyValuePair<string, string>? confirmedModel,
+        Action validate, CancellationToken ct, string? agentOptions = null)
+    {
+        _writer.Write("sessions.config.observation", scope =>
+        {
+            ct.ThrowIfCancellationRequested();
+            validate();
+            var current = Get(scope, expected.SessionId);
+            var config = Config(scope, expected.SessionId);
+            if (current is null || current.Agent != expected.Agent || current.Machine != expected.Machine ||
+                current.AcpSessionId != expected.AcpSessionId || current.WorkingFolder != expected.WorkingFolder ||
+                current.ParentSessionId != expected.ParentSessionId || current.RepoUrl != expected.RepoUrl ||
+                Location(scope, current) != expectedLocation || config.ConfigTarget != expectedConfig.ConfigTarget ||
+                config.PendingModel != expectedConfig.PendingModel || !config.Choices.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                    .SequenceEqual(expectedConfig.Choices.OrderBy(pair => pair.Key, StringComparer.Ordinal)))
+                throw new CallFailed("The session changed while its settings were being read.");
+            scope.Execute("UPDATE session_info SET acp_session_id=$native WHERE session_id=$id", new SqlArg("$native", nativeId), new SqlArg("$id", expected.SessionId));
+            SaveOptions(scope, expected.SessionId, options ?? "null");
+            SaveChoices(scope, expected.SessionId, choices);
+            SaveCommands(scope, expected.SessionId, commands);
+            if (agentOptions is not null) SaveAgentOptions(scope, expected.Agent, agentOptions);
+            if (confirmedModel is { } selected && HasPendingModel)
+            {
+                using var document = JsonDocument.Parse(options ?? "null");
+                if (ConfigOptions.ModelValue(document.RootElement) == selected.Value)
+                    scope.Execute("UPDATE session_config SET pending_model=NULL WHERE session_id=$id", new SqlArg("$id", expected.SessionId));
+            }
+            ObserveModel(scope, expected.SessionId, options ?? "null");
+            return 0;
+        });
+    }
+
     public string? AgentConfig(string agent)
     {
         using var scope = _db.OpenSnapshot(CancellationToken.None);
@@ -125,17 +160,28 @@ public sealed partial class SessionStore
 
     /// <summary>Saves the slash commands the session's agent sent, as the session's and as that agent's latest.</summary>
     public void SetCommands(string sessionId, string commands) =>
-        Execute("""
+        _writer.Write("sessions.config", scope => { SaveCommands(scope, sessionId, commands); return 0; });
+
+    private static void SaveCommands(IWriteScope scope, string sessionId, string? commands)
+    {
+        scope.Execute("""
             INSERT INTO session_commands(session_id, commands) VALUES ($id, $commands)
             ON CONFLICT(session_id) DO UPDATE SET commands = $commands;
-            INSERT INTO agent_commands(agent, commands) SELECT agent, $commands FROM session_info WHERE session_id = $id
-            ON CONFLICT(agent) DO UPDATE SET commands = $commands;
-            """, ("$id", sessionId), ("$commands", commands));
+            """, new SqlArg("$id", sessionId), new SqlArg("$commands", commands ?? "null"));
+        if (commands is not null)
+            scope.Execute("""
+                INSERT INTO agent_commands(agent, commands) SELECT agent, $commands FROM session_info WHERE session_id=$id
+                ON CONFLICT(agent) DO UPDATE SET commands=$commands;
+                """, new SqlArg("$id", sessionId), new SqlArg("$commands", commands));
+    }
 
     public void SetAgentConfig(string agent, string options) =>
-        Execute("""
+        _writer.Write("sessions.config", scope => { SaveAgentOptions(scope, agent, options); return 0; });
+
+    private static void SaveAgentOptions(IWriteScope scope, string agent, string options) =>
+        scope.Execute("""
             INSERT INTO agent_config(agent, options) VALUES ($agent, $options)
             ON CONFLICT(agent) DO UPDATE SET options = $options;
-            """, ("$agent", agent), ("$options", options));
+            """, new SqlArg("$agent", agent), new SqlArg("$options", options));
 
 }

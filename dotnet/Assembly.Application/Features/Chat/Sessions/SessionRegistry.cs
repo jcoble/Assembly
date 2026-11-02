@@ -129,6 +129,7 @@ public sealed partial class SessionRegistry : IAsyncDisposable
     /// <summary>Stops every running turn and the adapter. A turn cut short here ends as rows like any other.</summary>
     public async ValueTask DisposeAsync()
     {
+        await Task.WhenAll(_hosts.Values.Select(host => host.StopWarmForShutdownAsync()));
         // Sessions kept for background work stop it and close cleanly while their adapter is still there.
         try
         {
