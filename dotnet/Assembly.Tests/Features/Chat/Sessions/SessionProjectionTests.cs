@@ -153,7 +153,7 @@ public sealed class SessionProjectionTests : IDisposable
             if (FailStart) throw new IOException("start refused");
             Starts.Add((session.SessionId, initiatingSessionId));
         }
-        public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle) { }
+        public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle, ReadOnlyMemory<byte> exactTitleUtf8) { }
         public void Configured(IWriteScope scope, string sessionId, string? model)
         {
             Assert.Equal(model, ConfigOptions.ModelValue(System.Text.Json.JsonDocument.Parse(scope.QueryFirst("SELECT options FROM session_config WHERE session_id=$id", r => r.Text(0), new SqlArg("$id", sessionId))!).RootElement));

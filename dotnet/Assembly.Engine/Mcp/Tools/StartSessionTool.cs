@@ -52,7 +52,7 @@ public sealed class StartSessionTool(McpGate gate, Func<IReadOnlyList<string>> c
             write.Apply(childId, 0, 0, new StartSession(provider, model, folder, args.Title, write.Caller.SessionId, null, args.TaskUrl,
                 ManagedCheckout: args.Folder is null && write.Caller.ManagedCheckout));
             var prompt = $"Session \"{write.Caller.Title}\" ({write.Caller.SessionId}) started you. Do the task below. Your last reply each turn goes back to it as a message; you can also message it with the Assembly MCP server's send_message tool.\n\n{args.Prompt}";
-            write.Apply(messageId, 0, 0, new SendMessage(write.Caller.SessionId, childId, prompt, "prompt"));
+            write.ApplyHelperPrompt(childId, messageId, prompt);
             return new StartSessionAnswer(childId, messageId);
         });
         return ValueTask.FromResult(JsonSerializer.SerializeToElement(answer, McpJson.Default.StartSessionAnswer));

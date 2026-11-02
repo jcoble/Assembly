@@ -13,7 +13,7 @@ using Assembly.Engine.Prs;
 
 namespace Assembly.Engine;
 
-public sealed class EngineCommands
+public sealed partial class EngineCommands
 {
     private readonly string _machine;
     private readonly SessionLimits _limits;
@@ -37,7 +37,7 @@ public sealed class EngineCommands
         _messageLimit = messageLimit ?? (() => 20);
     }
 
-    public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command)
+    public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command, string? preparedError = null)
     {
         if (command is SendOwnerPrompt)
             return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
@@ -47,6 +47,8 @@ public sealed class EngineCommands
         {
             if (context.Machine != _machine)
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
+            if (preparedError is not null)
+                return new(false, false, preparedError, context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
                 EffectCommand effect => EffectTransitions.Apply(scope, context, effect, _projectCompletion, _expiryPolicy),
@@ -80,12 +82,12 @@ public sealed class EngineCommands
         return result.Error == "command_id_conflict" ? result with { Error = "client_id_conflict" } : result;
     }
 
-    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command)
+    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command, byte[]? titleUtf8 = null)
     {
         var depth = _limits.ReadDepth();
         var children = _limits.ReadChildren();
         var accountContext = command is StartSession start ? _accountContext?.Invoke(start.Provider) ?? "" : "";
-        var result = SessionTransitions.Apply(scope, context, command, depth, children, accountContext, _expiryPolicy);
+        var result = SessionTransitions.ApplyPreparedTitle(scope, context, command, depth, children, accountContext, titleUtf8, _expiryPolicy);
         if (result.Applied && command is StartSession accepted)
             _projectStart?.Invoke(scope, context, accepted);
         return result;

@@ -7,7 +7,7 @@ namespace Assembly.Application.Common.Engine;
 public interface IEngineSessions
 {
     void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId);
-    void Titled(IWriteScope scope, string sessionId, string actualStoredTitle);
+    void Titled(IWriteScope scope, string sessionId, string actualStoredTitle, ReadOnlyMemory<byte> exactTitleUtf8);
     void Configured(IWriteScope scope, string sessionId, string? model);
     SessionLocation? Location(string sessionId);
     SessionLocation? Location(IReadScope scope, string sessionId);

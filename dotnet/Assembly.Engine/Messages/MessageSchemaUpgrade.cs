@@ -24,14 +24,14 @@ internal static class MessageSchemaUpgrade
         while (true)
         {
             var messages = s.Query("""
-                SELECT m.rowid,m.id,m.from_session_id,m.sender_kind,se.title FROM engine_message m
+                SELECT m.rowid,m.id,m.from_session_id,m.sender_kind,CAST(se.title AS BLOB) FROM engine_message m
                 LEFT JOIN engine_session se ON se.id=m.from_session_id
                 WHERE m.rowid>$cursor AND m.state IN ('held','queued') ORDER BY m.rowid LIMIT 100
-                """, r => new { Row = r.Long(0), Id = r.Text(1), From = r.IsNull(2) ? null : r.Text(2), Kind = r.Text(3), Title = r.IsNull(4) ? null : r.Text(4) }, new SqlArg("$cursor", cursor));
+                """, r => new { Row = r.Long(0), Id = r.Text(1), From = r.IsNull(2) ? null : r.Text(2), Kind = r.Text(3), Title = r.IsNull(4) ? null : new System.Text.UTF8Encoding(false, true).GetString(r.Blob(4)) }, new SqlArg("$cursor", cursor));
             foreach (var m in messages)
             {
-                s.Execute("UPDATE engine_message SET sender_label=$label,client_id=CASE WHEN state='held' THEN id ELSE 'send/'||id END WHERE id=$id",
-                 new("$label", MessageText.Label(m.Title, m.From, m.Kind)), new("$id", m.Id));
+                s.Execute("UPDATE engine_message SET sender_label=CAST($label AS TEXT),client_id=CASE WHEN state='held' THEN id ELSE 'send/'||id END WHERE id=$id",
+                 new("$label", new System.Text.UTF8Encoding(false, true).GetBytes(MessageText.Label(m.Title, m.From, m.Kind))), new("$id", m.Id));
                 cursor = m.Row;
             }
             if (messages.Count < 100)
@@ -42,7 +42,7 @@ internal static class MessageSchemaUpgrade
         {
             var rows = s.Query("""
                 SELECT e.rowid,e.event_seq,e.id,e.version,e.state,e.payload_json,e.last_error,
-                 m.id,m.version,m.state,m.from_session_id,m.to_session_id,m.text,m.mode,m.sender_label,se.version,se.epoch
+                 m.id,m.version,m.state,m.from_session_id,m.to_session_id,CAST(m.text AS BLOB),m.mode,CAST(m.sender_label AS BLOB),se.version,se.epoch
                 FROM engine_outbox e JOIN engine_message m ON e.id='send/'||m.id
                  JOIN engine_session se ON se.id=m.to_session_id
                 WHERE e.kind='send' AND (e.event_seq>$seq OR (e.event_seq=$seq AND e.rowid>$row))
@@ -61,9 +61,9 @@ internal static class MessageSchemaUpgrade
                 MessageState = r.Text(9),
                 From = r.IsNull(10) ? null : r.Text(10),
                 To = r.Text(11),
-                Text = r.Text(12),
+                Text = new System.Text.UTF8Encoding(false, true).GetString(r.Blob(12)),
                 Mode = r.Text(13),
-                Label = r.Text(14),
+                Label = new System.Text.UTF8Encoding(false, true).GetString(r.Blob(14)),
                 RecipientVersion = r.Long(15),
                 Epoch = r.Long(16)
             }, new("$seq", seq), new("$row", rowid));

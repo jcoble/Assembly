@@ -47,6 +47,16 @@ public sealed class McpWrite
         throw new McpRefused(new(result.Error!, values));
     }
 
+    public CommandResult ApplyHelperPrompt(string childId, string messageId, string validatedPrompt)
+    {
+        var context = new CommandContext(Guid.NewGuid(), _runtime.Machine, new(ActorKind.Session, Caller.SessionId),
+            messageId, 0, EpochOf(childId), _time.GetUtcNow().ToUnixTimeMilliseconds());
+        var prepared = Messages.PreparedHelperPrompt.Prepare(new Messages.SendMessage(Caller.SessionId, childId, validatedPrompt, "prompt"), Caller.Title, Caller.Epoch);
+        var result = _runtime.Commands.ApplyPreparedHelperPrompt(Scope, context, prepared);
+        if (!result.Applied) throw new McpRefused(new(result.Error!));
+        return result;
+    }
+
     public long VersionOf(string entityKind, string id)
     {
         var table = entityKind switch

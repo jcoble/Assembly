@@ -44,6 +44,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(OwnerPromptJournalEnvelope))]
 [JsonSerializable(typeof(DeliverMessage))]
 [JsonSerializable(typeof(MessageOutcome))]
+[JsonSerializable(typeof(RegisterForeignSession))]
 [JsonSerializable(typeof(StartSession))]
 [JsonSerializable(typeof(SetSessionState))]
 [JsonSerializable(typeof(ReportCapabilities))]

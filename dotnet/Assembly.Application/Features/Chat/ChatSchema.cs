@@ -208,7 +208,7 @@ internal static class Schema
           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
         FROM (SELECT DISTINCT agent FROM session_info WHERE parent_session_id IS NULL OR helper = 1)
         UNION ALL
-        SELECT 2, p.n, p.session_id, p.kind, p.section, p.agent, p.repo_url, p.group_label, p.count, p.machines, p.title,
+        SELECT 2, p.n, p.session_id, p.kind, p.section, p.agent, p.repo_url, p.group_label, p.count, p.machines, CAST(p.title AS BLOB),
           p.machine, p.updated_at, p.completed_at, (p.turn IS 'started' OR p.busy), p.ask_seq IS NOT NULL, p.turn IS 'failed',
           COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE p.kind = 'session' AND e.session_id = p.session_id
                     AND {SummaryKinds} AND e.kind = 'turn' AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled')

@@ -35,11 +35,11 @@ public static class MessageRelease
         if (session is null || session.State == "running" && !session.CanSteer)
             return changed;
         var message = s.QueryFirst($"""
-            SELECT m.id,m.version,m.text,m.sender_label,COALESCE(m.client_id,m.id),m.attempt,m.from_session_id,m.framed,m.attachment_ids_json,m.held_epoch,CAST(m.text AS BLOB)
+            SELECT m.id,m.version,m.text,m.sender_label,COALESCE(m.client_id,m.id),m.attempt,m.from_session_id,m.framed,m.attachment_ids_json,m.held_epoch,CAST(m.text AS BLOB),CAST(m.sender_label AS BLOB)
             FROM engine_message m JOIN engine_session se ON se.id=m.to_session_id
             WHERE m.to_session_id=$session AND m.state='queued' AND {MessageExpiry.Eligible} AND m.expires_ms>$now
              AND (m.framed=1 OR m.held_epoch=$epoch) AND ($idle=1 OR m.delivery='steer') ORDER BY m.created_ms,m.rowid LIMIT 1
-            """, r => new { Id = r.Text(0), Version = r.Long(1), Text = r.Long(7) != 0 ? r.Text(2) : new System.Text.UTF8Encoding(false, true).GetString(r.Blob(10)), Label = r.Text(3), ClientId = r.Text(4), Attempt = r.Long(5), From = r.IsNull(6) ? null : r.Text(6), Framed = r.Long(7) != 0, Attachments = r.Text(8), HeldEpoch = r.IsNull(9) ? (long?)null : r.Long(9) }, new("$session", sessionId), new("$idle", session.State == "idle" ? 1 : 0), new("$epoch", session.Epoch), new("$machine", c.Machine), new("$now", c.NowMs));
+            """, r => new { Id = r.Text(0), Version = r.Long(1), Text = new System.Text.UTF8Encoding(false, true).GetString(r.Blob(10)), Label = new System.Text.UTF8Encoding(false, true).GetString(r.Blob(11)), ClientId = r.Text(4), Attempt = r.Long(5), From = r.IsNull(6) ? null : r.Text(6), Framed = r.Long(7) != 0, Attachments = r.Text(8), HeldEpoch = r.IsNull(9) ? (long?)null : r.Long(9) }, new("$session", sessionId), new("$idle", session.State == "idle" ? 1 : 0), new("$epoch", session.Epoch), new("$machine", c.Machine), new("$now", c.NowMs));
         if (message is null)
             return changed;
         var reserved = s.Execute($"""

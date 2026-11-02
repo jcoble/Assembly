@@ -17,6 +17,7 @@
 
   <ItemGroup>
     <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Engine/Workflows/Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Engine/Fixtures/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

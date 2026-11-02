@@ -22,6 +22,10 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(SessionTitleReadArgs))]
+[JsonSerializable(typeof(SessionTitleStat))]
+[JsonSerializable(typeof(SessionTitleChunkArgs))]
+[JsonSerializable(typeof(SessionTitleChunk))]
 [JsonSerializable(typeof(OwnerPromptManifest))]
 [JsonSerializable(typeof(OwnerPromptReadArgs))]
 [JsonSerializable(typeof(OwnerPromptPage))]
@@ -29,6 +33,9 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 [JsonSerializable(typeof(OwnerPromptChunk))]
 [JsonSerializable(typeof(MachineInfo))]
 [JsonSerializable(typeof(WindowCommand))]
+[JsonSerializable(typeof(MachineCommand))]
+[JsonSerializable(typeof(StartLocationArgs))]
+[JsonSerializable(typeof(StartLocation))]
 [JsonSerializable(typeof(EngineUsageArgs))]
 [JsonSerializable(typeof(EngineEntityArgs))]
 [JsonSerializable(typeof(UsageTotals))]

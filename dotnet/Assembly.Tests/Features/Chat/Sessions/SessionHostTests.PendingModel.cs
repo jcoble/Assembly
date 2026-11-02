@@ -113,7 +113,7 @@ public sealed partial class SessionHostTests
     {
         public bool Fail;
         public void Started(IWriteScope scope, SessionInfo session, string? initiatingSessionId) { }
-        public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle) { }
+        public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle, ReadOnlyMemory<byte> exactTitleUtf8) { }
         public void Configured(IWriteScope scope, string sessionId, string? model) { if (Fail) throw new IOException("local observation failed"); }
         public SessionLocation? Location(string sessionId) => null;
         public SessionLocation? Location(IReadScope scope, string sessionId) => null;

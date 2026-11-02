@@ -29,7 +29,7 @@ public sealed class EngineSnapshot : IDisposable
         _key = key;
         _machine = machine;
         _sql = $"""
-            SELECT kind,id,item FROM ({sql})
+            SELECT kind,id,item,prefix,total,label_prefix,label_total FROM ({sql})
             WHERE kind>$kind OR (kind=$kind AND id>$id) ORDER BY kind,id LIMIT 201
             """;
     }
@@ -37,36 +37,44 @@ public sealed class EngineSnapshot : IDisposable
     private static string LocalQuery(string topic, string[] kinds)
     {
         var selects = kinds.Select(kind => $"""
-            SELECT '{kind}' AS kind,t.id AS id,{(topic == "mirror" ? DisplayQueries.MirrorJson(kind) : DisplayQueries.Json(kind))} AS item
+            SELECT '{kind}' AS kind,t.id AS id,{(topic == "mirror" ? DisplayQueries.MirrorJson(kind) : DisplayQueries.Json(kind))} AS item,{DisplayQueries.PrefixColumns(kind)}
             FROM engine_{kind} t WHERE t.machine=$machine AND ($key IS NULL OR {DisplayQueries.KeyPredicate(topic, kind)})
             """);
         return string.Join(" UNION ALL ", selects);
     }
 
-    public SnapshotPage ReadNext()
+    public SnapshotPage ReadNext(Func<SnapshotPage, int>? measureCandidate = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         try
         {
-            var rows = _read.Query(_sql, r => (Kind: r.Text(0), Id: r.Text(1), Json: r.Text(2)),
+            var rows = _read.Query(_sql, r => (Kind: r.Text(0), Id: r.Text(1), Item: DisplayQueries.Project(r, 2)),
                 new("$machine", _machine), new("$key", _key), new("$kind", _lastKind), new("$id", _lastId));
-            List<JsonElement> items = [];
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(new SnapshotPage(Through, [], false, At),
-                EngineJson.Default.SnapshotPage).Length;
-            foreach (var row in rows)
+            int Measure(SnapshotPage page) => measureCandidate?.Invoke(page) ?? JsonSerializer.SerializeToUtf8Bytes(page, EngineJson.Default.SnapshotPage).Length;
+            SnapshotPage Candidate(int count) => new(Through, rows.Take(count).Select(row => row.Item).ToArray(), count < rows.Count, At);
+            SnapshotPage? selected = null;
+            if (rows.Count == 0)
             {
-                if (items.Count == 200) break;
-                var item = DisplayQueries.Parse(row.Json);
-                var size = JsonSerializer.SerializeToUtf8Bytes(item, EngineJson.Default.JsonElement).Length;
-                if (items.Count > 0 && bytes + size + 1 > _budget) break;
-                bytes += size + 1;
-                items.Add(item);
-                _lastKind = row.Kind;
-                _lastId = row.Id;
+                selected = Candidate(0);
+                if (Measure(selected) > _budget) throw new InvalidOperationException("Snapshot frame exceeds budget.");
             }
-            var more = items.Count < rows.Count;
-            if (!more) Dispose();
-            return new(Through, items, more, At);
+            else
+            {
+                var low = 0; var high = Math.Min(200, rows.Count);
+                while (low < high)
+                {
+                    var count = low + (high - low + 1) / 2;
+                    var candidate = Candidate(count);
+                    if (Measure(candidate) <= _budget) { low = count; selected = candidate; }
+                    else high = count - 1;
+                }
+                if (selected is null) throw new InvalidOperationException("Display item exceeds snapshot frame budget.");
+                var last = rows[selected.Items.Count - 1];
+                _lastKind = last.Kind;
+                _lastId = last.Id;
+            }
+            if (!selected.HasMore) Dispose();
+            return selected;
         }
         catch { Dispose(); throw; }
     }
