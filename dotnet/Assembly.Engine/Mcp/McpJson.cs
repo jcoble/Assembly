@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Engine.Mcp.Tools;
+using Assembly.Application.Common.Engine;
 
 namespace Assembly.Engine.Mcp;
 
@@ -14,6 +15,9 @@ namespace Assembly.Engine.Mcp;
 [JsonSerializable(typeof(LinkTaskAnswer))]
 [JsonSerializable(typeof(StartSessionArguments))]
 [JsonSerializable(typeof(StartSessionAnswer))]
+[JsonSerializable(typeof(GetSessionTitleArguments))]
+[JsonSerializable(typeof(SessionTitleStat))]
+[JsonSerializable(typeof(SessionTitleChunk))]
 [JsonSerializable(typeof(ListSessionsArguments))]
 [JsonSerializable(typeof(ListSessionsAnswer))]
 [JsonSerializable(typeof(McpCaller))]

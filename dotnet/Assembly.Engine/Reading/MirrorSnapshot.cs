@@ -15,7 +15,7 @@ internal static class MirrorSnapshot
             _ => "r.entity_id"
         };
         return $"""
-            SELECT r.entity_kind AS kind,r.entity_id AS id,r.row_json AS item
+            SELECT r.entity_kind AS kind,r.entity_id AS id,r.row_json AS item,NULL AS prefix,NULL AS total,NULL AS label_prefix,NULL AS label_total
             FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation
             WHERE r.machine=$machine AND m.state<>'retired' AND r.entity_kind IN ({list}) AND ($key IS NULL OR {key}=$key)
             """;

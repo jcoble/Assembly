@@ -1,4 +1,7 @@
 using System.Text.Json;
+using System.Text;
+using System.Text.Json.Nodes;
+using Assembly.Application.Common.Database;
 
 namespace Assembly.Engine.Reading;
 
@@ -24,13 +27,14 @@ internal static class DisplayQueries
     {
         var fields = Columns(kind).Split(',').Select(column =>
             $"'{CamelCase(column)}',t.{column}");
+        if (kind == "session") fields = fields.Select(field => field == "'title',t.title" ? "'title',NULL" : field);
         if (kind == "message")
         {
             fields = fields.Select(field => field == "'text',t.text"
-                ? "'text',CASE WHEN t.framed=0 THEN substr(t.text,1,256) ELSE t.text END" : field);
+                ? "'text',CASE WHEN t.framed=0 THEN substr(t.text,1,256) ELSE '' END" : field);
             return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
                 "'framed',t.framed,'clientId',t.client_id,'providerTurnId',t.provider_turn_id," +
-                "'textComplete',CASE WHEN t.framed=1 OR length(CAST(substr(t.text,1,256) AS BLOB))=length(CAST(t.text AS BLOB)) THEN 1 ELSE 0 END," +
+                "'textComplete',CASE WHEN t.framed=0 AND length(CAST(substr(t.text,1,256) AS BLOB))=length(CAST(t.text AS BLOB)) THEN 1 ELSE 0 END," +
                 "'textUtf8Bytes',length(CAST(t.text AS BLOB)),'attachmentJsonUtf8Bytes',length(CAST(t.attachment_ids_json AS BLOB))," +
                 "'attachmentCount',json_array_length(t.attachment_ids_json),'ownerContentSha256',t.owner_content_sha256," +
                 "'targetEpoch',t.target_epoch,'heldEpoch',t.held_epoch)";
@@ -41,6 +45,67 @@ internal static class DisplayQueries
     internal static string MirrorJson(string kind) => kind == "handoff"
         ? Json(kind)[..^1] + ",'runId',(SELECT run_id FROM engine_session WHERE id=t.session_id))"
         : Json(kind);
+
+    // Fixed projections: fetch only bounded bytes alongside metadata in the same SQL row.
+    internal static string PrefixColumns(string kind) => kind switch
+    {
+        "session" => "substr(CAST(t.title AS BLOB),1,1027) AS prefix,length(CAST(t.title AS BLOB)) AS total,NULL AS label_prefix,NULL AS label_total",
+        "message" => "CASE WHEN t.framed=1 THEN substr(CAST(t.text AS BLOB),1,32771) END AS prefix,CASE WHEN t.framed=1 THEN length(CAST(t.text AS BLOB)) END AS total,CASE WHEN t.framed=1 THEN substr(CAST(t.sender_label AS BLOB),1,1027) END AS label_prefix,CASE WHEN t.framed=1 THEN length(CAST(t.sender_label AS BLOB)) END AS label_total",
+        _ => "NULL AS prefix,NULL AS total,NULL AS label_prefix,NULL AS label_total"
+    };
+
+    internal static JsonElement Project(IRow row, int jsonColumn)
+    {
+        var json = row.Text(jsonColumn);
+        if (row.IsNull(jsonColumn + 1)) return Parse(json);
+        var item = JsonNode.Parse(json)!.AsObject();
+        var prefix = row.Blob(jsonColumn + 1);
+        var total = row.Long(jsonColumn + 2);
+        var text = Utf8Prefix(prefix, total);
+        var session = item["entityKind"]!.GetValue<string>() == "session";
+        if (session)
+        {
+            var preview = Scalars(text, 256);
+            var complete = prefix.LongLength == total && preview == text;
+            item["title"] = preview;
+            if (!complete) { item["titleComplete"] = false; item["titleUtf8Bytes"] = total; }
+        }
+        else
+        {
+            var labelBytes = row.IsNull(jsonColumn + 3) ? [] : row.Blob(jsonColumn + 3);
+            var labelTotal = row.IsNull(jsonColumn + 4) ? 0 : row.Long(jsonColumn + 4);
+            var label = Utf8Prefix(labelBytes, labelTotal);
+            var labelPreview = Scalars(label, 256);
+            item["senderLabel"] = labelPreview;
+            if (labelBytes.LongLength != labelTotal || labelPreview != label)
+            { item["senderLabelComplete"] = false; item["senderLabelUtf8Bytes"] = labelTotal; }
+            item["text"] = text;
+            item["textComplete"] = prefix.LongLength == total ? 1 : 0;
+            if (prefix.LongLength != total || Encoding.UTF8.GetByteCount(item.ToJsonString(EngineJson.Default.Options)) > 32 * 1024)
+            { item["text"] = Scalars(text, 256); item["textComplete"] = 0; }
+        }
+        return Parse(item.ToJsonString(EngineJson.Default.Options));
+    }
+
+    internal static string Utf8Prefix(byte[] prefix, long total)
+    {
+        var length = prefix.Length;
+        if (length < total)
+        {
+            // Drop only an incomplete final scalar. Invalid complete input is refused by strict decoding.
+            var start = length - 1;
+            while (start >= 0 && (prefix[start] & 0xc0) == 0x80) start--;
+            if (start >= 0)
+            {
+                var lead = prefix[start];
+                var needed = lead < 0x80 ? 1 : lead is >= 0xc2 and <= 0xdf ? 2 : lead is >= 0xe0 and <= 0xef ? 3 : lead is >= 0xf0 and <= 0xf4 ? 4 : 1;
+                if (length - start < needed) length = start;
+            }
+        }
+        return new UTF8Encoding(false, true).GetString(prefix.AsSpan(0, length));
+    }
+
+    internal static string Scalars(string value, int limit) => string.Concat(value.EnumerateRunes().Take(limit).Select(r => r.ToString()));
 
     private static string CamelCase(string column)
     {

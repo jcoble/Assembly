@@ -111,6 +111,51 @@ public sealed class MessageUpgradeTests
         return runtime.Publisher.Register(e => channel.Writer.TryWrite(e), out _);
     }
 
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    [InlineData(2, false)]
+    public void Actual_old_fixture_upgrade_preserves_full_body_and_sender_title_label_at_nul(int version, bool bodyNul)
+    {
+        using var f = new OldDb(version);
+        var title = bodyNul ? "Accepted title" : new string('t', 1024) + "\0LABEL_SUFFIX😀";
+        var body = bodyNul ? new string('b', 1024) + "\0BODY_SUFFIX😀" : "Full ordinary body";
+        f.Db.Writer.Write("test.old-full-bytes", scope =>
+        {
+            scope.Execute("UPDATE engine_session SET title=CAST($title AS TEXT) WHERE id='child/x'", new SqlArg("$title", System.Text.Encoding.UTF8.GetBytes(title)));
+            scope.Execute("UPDATE engine_message SET from_session_id='child/x',sender_kind='session',text=CAST($body AS TEXT) WHERE id='inflight'", new SqlArg("$body", System.Text.Encoding.UTF8.GetBytes(body)));
+            return scope.Execute("UPDATE engine_outbox SET payload_json=json_set(payload_json,'$.fromSessionId','child/x','$.text',CAST($body AS TEXT)) WHERE id='send/inflight'", new SqlArg("$body", System.Text.Encoding.UTF8.GetBytes(body)));
+        });
+        var original = JsonSerializer.Deserialize(f.Text("SELECT payload_json FROM engine_outbox WHERE id='send/inflight'")!, EngineJson.Default.SendMessage)!;
+        Assert.Equal(body, original.Text); Assert.Equal("child/x", original.FromSessionId);
+        var receipts = f.Rows("SELECT command_id,fingerprint,result_json FROM engine_command_receipt ORDER BY command_id");
+        var attempts = f.Rows("SELECT attempt,receipt_json,last_error FROM engine_outbox WHERE id='send/inflight'");
+        f.Upgrade();
+        var actual = JsonSerializer.Deserialize(f.Text("SELECT payload_json FROM engine_outbox WHERE id='send/inflight'")!, EngineJson.Default.DeliverMessage)!;
+        Assert.Equal(body, actual.Text); Assert.Equal($"{title} (child/x)", actual.SenderLabel);
+        Assert.Equal("send/inflight", actual.ClientId);
+        Assert.Equal(receipts, f.Rows("SELECT command_id,fingerprint,result_json FROM engine_command_receipt ORDER BY command_id"));
+        Assert.Equal(attempts, f.Rows("SELECT attempt,receipt_json,last_error FROM engine_outbox WHERE id='send/inflight'"));
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    [InlineData(2, false)]
+    public void Actual_old_fixture_upgrade_strict_bad_body_or_title_rolls_back_all_schema_and_history(int version, bool badTitle)
+    {
+        using var f = new OldDb(version);
+        f.Db.Writer.Write("test.bad-old-utf8", scope => badTitle
+            ? scope.Execute("UPDATE engine_session SET title=CAST($bad AS TEXT) WHERE id='child/x'", new SqlArg("$bad", new byte[] { 0xff }))
+            : scope.Execute("UPDATE engine_message SET text=CAST($bad AS TEXT) WHERE id='inflight'", new SqlArg("$bad", new byte[] { 0xff })));
+        var before = f.Snapshot();
+        Assert.Throws<System.Text.DecoderFallbackException>(() => f.Upgrade());
+        Assert.Equal(version, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(before, f.Snapshot());
+    }
+
     [Fact]
     public void Fresh_is_combined_v3_and_reopen_is_inert()
     {

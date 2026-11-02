@@ -145,7 +145,10 @@ public sealed class StreamTests
         Assert.Null(reader.Entity("session", "missing", default));
         Assert.Throws<ArgumentException>(() => reader.Entity("outbox", "x", default));
         f.Db.Writer.Write("huge", s => s.Execute("UPDATE engine_session SET title=$title WHERE id='s0'", new SqlArg("$title", new string('x', 33000))));
-        Assert.Throws<InvalidOperationException>(() => reader.Entity("session", "s0", default));
+        var preview = reader.Entity("session", "s0", default)!.Value;
+        Assert.Equal(new string('x', 256), preview.GetProperty("title").GetString());
+        Assert.False(preview.GetProperty("titleComplete").GetBoolean());
+        Assert.Equal(33000, preview.GetProperty("titleUtf8Bytes").GetInt64());
     }
     [Fact]
     public void Replay_byte_budget_advances_only_past_returned_or_filtered_events()

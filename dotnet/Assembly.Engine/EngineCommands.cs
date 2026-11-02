@@ -13,7 +13,7 @@ using Assembly.Engine.Prs;
 
 namespace Assembly.Engine;
 
-public sealed class EngineCommands
+public sealed partial class EngineCommands
 {
     private readonly string _machine;
     private readonly SessionLimits _limits;
@@ -77,12 +77,12 @@ public sealed class EngineCommands
         return result.Error == "command_id_conflict" ? result with { Error = "client_id_conflict" } : result;
     }
 
-    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command)
+    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command, byte[]? titleUtf8 = null)
     {
         var depth = _limits.ReadDepth();
         var children = _limits.ReadChildren();
         var accountContext = command is StartSession start ? _accountContext?.Invoke(start.Provider) ?? "" : "";
-        var result = SessionTransitions.Apply(scope, context, command, depth, children, accountContext);
+        var result = SessionTransitions.ApplyPreparedTitle(scope, context, command, depth, children, accountContext, titleUtf8);
         if (result.Applied && command is StartSession accepted)
             _projectStart?.Invoke(scope, context, accepted);
         return result;

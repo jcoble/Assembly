@@ -33,10 +33,10 @@ public static class MessageRelease
         if (session is null || session.State == "running" && !session.CanSteer)
             return changed;
         var message = s.QueryFirst("""
-            SELECT id,version,text,sender_label,COALESCE(client_id,id),attempt,from_session_id,framed,attachment_ids_json,held_epoch,CAST(text AS BLOB)
+            SELECT id,version,text,sender_label,COALESCE(client_id,id),attempt,from_session_id,framed,attachment_ids_json,held_epoch,CAST(text AS BLOB),CAST(sender_label AS BLOB)
             FROM engine_message WHERE to_session_id=$session AND state='queued' AND in_flight=0
              AND (framed=1 OR held_epoch=$epoch) AND ($idle=1 OR delivery='steer') ORDER BY created_ms,rowid LIMIT 1
-            """, r => new { Id = r.Text(0), Version = r.Long(1), Text = r.Long(7) != 0 ? r.Text(2) : new System.Text.UTF8Encoding(false, true).GetString(r.Blob(10)), Label = r.Text(3), ClientId = r.Text(4), Attempt = r.Long(5), From = r.IsNull(6) ? null : r.Text(6), Framed = r.Long(7) != 0, Attachments = r.Text(8), HeldEpoch = r.IsNull(9) ? (long?)null : r.Long(9) }, new("$session", sessionId), new("$idle", session.State == "idle" ? 1 : 0), new("$epoch", session.Epoch));
+            """, r => new { Id = r.Text(0), Version = r.Long(1), Text = new System.Text.UTF8Encoding(false, true).GetString(r.Blob(10)), Label = new System.Text.UTF8Encoding(false, true).GetString(r.Blob(11)), ClientId = r.Text(4), Attempt = r.Long(5), From = r.IsNull(6) ? null : r.Text(6), Framed = r.Long(7) != 0, Attachments = r.Text(8), HeldEpoch = r.IsNull(9) ? (long?)null : r.Long(9) }, new("$session", sessionId), new("$idle", session.State == "idle" ? 1 : 0), new("$epoch", session.Epoch));
         if (message is null)
             return changed;
         s.Execute("UPDATE engine_message SET version=version+1,in_flight=1,attempt=attempt+1,updated_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", message.Id));

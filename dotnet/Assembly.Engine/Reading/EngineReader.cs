@@ -87,9 +87,9 @@ public sealed partial class EngineReader(IAppDatabase db, string machine)
         {
             var ids = JsonSerializer.Serialize(group.Select(e => e.EntityId).Distinct().ToArray(), EngineJson.Default.IReadOnlyListString);
             var items = selected == machine ? read.Query($"""
-                SELECT t.id,{DisplayQueries.MirrorJson(group.Key)} FROM engine_{group.Key} t
+                SELECT t.id,{DisplayQueries.MirrorJson(group.Key)},{DisplayQueries.PrefixColumns(group.Key)} FROM engine_{group.Key} t
                 WHERE t.machine=$machine AND t.id IN (SELECT value FROM json_each($ids))
-                """, r => (Id: r.Text(0), Row: DisplayQueries.Parse(r.Text(1))), new("$machine", machine), new("$ids", ids)) : read.Query("""
+                """, r => (Id: r.Text(0), Row: DisplayQueries.Project(r, 1)), new("$machine", machine), new("$ids", ids)) : read.Query("""
                 SELECT r.entity_id,r.row_json FROM engine_mirror_row r JOIN engine_mirror m
                     ON m.machine=r.machine AND m.generation=r.generation
                 WHERE r.machine=$machine AND m.state<>'retired' AND r.entity_kind=$kind
@@ -132,9 +132,9 @@ public sealed partial class EngineReader(IAppDatabase db, string machine)
                 """, r => r.Text(0), new("$machine", source), new("$kind", entityKind), new("$id", entityId));
             return mirrored is null ? null : DisplayQueries.Parse(mirrored);
         }
-        var json = read.QueryFirst($"SELECT {projection} FROM engine_{entityKind} t WHERE t.id=$id AND t.machine=$machine",
-            r => r.Text(0), new("$id", entityId), new("$machine", machine));
-        return json is null ? null : DisplayQueries.Parse(json);
+        var json = read.QueryFirst($"SELECT {projection},{DisplayQueries.PrefixColumns(entityKind)} FROM engine_{entityKind} t WHERE t.id=$id AND t.machine=$machine",
+            r => (JsonElement?)DisplayQueries.Project(r, 0), new("$id", entityId), new("$machine", machine));
+        return json;
     }
 
     public EngineSnapshot Snapshot(string topic, string? key, CancellationToken cancellationToken, string? source = null)

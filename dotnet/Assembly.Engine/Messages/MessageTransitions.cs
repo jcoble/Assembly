@@ -71,6 +71,12 @@ public static class MessageTransitions
         return EngineJournal.Commit(s, c, Find(s, current.Id)!.Version, c.Epoch, events, effects);
     }
 
+    internal static CommandResult ApplyPreparedHelper(IWriteScope s, CommandContext c, SendMessage command, byte[] bodyUtf8, int messageLimit)
+    {
+        if (string.IsNullOrWhiteSpace(c.EntityId)) return Refused(c, "bad_args");
+        return Send(s, c, command, Find(s, c.EntityId), messageLimit, bodyUtf8);
+    }
+
     internal static CommandResult ApplyOwnerPrompt(IWriteScope s, CommandContext c, PreparedOwnerPrompt prepared)
     {
         if (string.IsNullOrWhiteSpace(prepared.ToSessionId) || prepared.TargetEpoch < 0 ||
@@ -87,11 +93,11 @@ public static class MessageTransitions
         if (Find(s, c.EntityId) is not null) return Refused(c, "invalid_transition", epoch: recipient.Epoch);
         var captured = c with { Epoch = recipient.Epoch };
         var message = new Message(c.EntityId, 1, null, prepared.ToSessionId, prepared.Text, "prompt", "queued");
-        Insert(s, captured, message, "window", null);
+        Insert(s, captured, message, "window", null, prepared.StorageTextUtf8);
         s.Execute("""
-            UPDATE engine_message SET text=CAST($rawText AS TEXT),framed=0,client_id=$client,attachment_ids_json=$attachments,
+            UPDATE engine_message SET framed=0,client_id=$client,attachment_ids_json=$attachments,
                 held_epoch=$held,target_epoch=$target,owner_content_sha256=$digest WHERE id=$id
-            """, new("$rawText", prepared.StorageTextUtf8), new("$client", prepared.ClientId), new("$attachments", prepared.AttachmentIdsJson),
+            """, new("$client", prepared.ClientId), new("$attachments", prepared.AttachmentIdsJson),
             new("$held", recipient.Epoch), new("$target", prepared.TargetEpoch),
             new("$digest", prepared.ContentSha256), new("$id", c.EntityId));
         List<EventDraft> events = [Changed(captured, message)];
@@ -113,7 +119,7 @@ public static class MessageTransitions
         return EngineJournal.Commit(s, c, updated.Version, c.Epoch, [Changed(c, updated)], []);
     }
 
-    private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit)
+    private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit, byte[]? bodyUtf8 = null)
     {
         var peer = c.Actor.Kind == ActorKind.System && c.Actor.Id.StartsWith("machine:", StringComparison.Ordinal);
         if (!peer && (c.Actor.Kind == ActorKind.Window ? command.FromSessionId is not null :
@@ -147,7 +153,7 @@ public static class MessageTransitions
             return Refused(c, "message_limit");
         var message = new Message(c.EntityId, 1, command.FromSessionId, command.ToSessionId, command.Text,
             command.Mode, command.Mode == "interrupt" && !foreignRecipient ? "held" : "queued");
-        Insert(s, c, message, c.Actor.Kind == ActorKind.Window ? "window" : "session", null);
+        Insert(s, c, message, c.Actor.Kind == ActorKind.Window ? "window" : "session", null, bodyUtf8);
         List<EffectDraft> effects = [];
         List<EventDraft> events = [Changed(c, message)];
         if (message.State == "queued" && !foreignRecipient)
@@ -224,18 +230,18 @@ public static class MessageTransitions
         }
     }
 
-    private static void Insert(IWriteScope s, CommandContext c, Message message, string senderKind, string? reason)
+    private static void Insert(IWriteScope s, CommandContext c, Message message, string senderKind, string? reason, byte[]? bodyUtf8 = null)
     {
         s.Execute("""
             INSERT INTO engine_message(id,version,machine,created_ms,updated_ms,from_session_id,sender_kind,to_session_id,text,mode,state,reason)
-            VALUES($id,1,$machine,$now,$now,$from,$sender,$to,$text,$mode,$state,$reason)
+            VALUES($id,1,$machine,$now,$now,$from,$sender,$to,CAST($text AS TEXT),$mode,$state,$reason)
             """, new("$id", message.Id), new("$machine", c.Machine), new("$now", c.NowMs), new("$from", message.From),
-            new("$sender", senderKind), new("$to", message.To), new("$text", message.Text), new("$mode", message.Mode),
+            new("$sender", senderKind), new("$to", message.To), new("$text", bodyUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(message.Text)), new("$mode", message.Mode),
             new("$state", message.State), new("$reason", reason));
-        var title = message.From is null ? null : s.QueryFirst("SELECT title FROM engine_session WHERE id=$id", r => r.Text(0), new SqlArg("$id", message.From));
-        s.Execute("UPDATE engine_message SET delivery=$delivery,sender_label=$label WHERE id=$id",
+        var title = message.From is null ? null : s.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id=$id", r => new System.Text.UTF8Encoding(false, true).GetString(r.Blob(0)), new SqlArg("$id", message.From));
+        s.Execute("UPDATE engine_message SET delivery=$delivery,sender_label=CAST($label AS TEXT) WHERE id=$id",
             new("$delivery", DeliveryRule.For(s, message.From, senderKind, message.To)),
-            new("$label", MessageText.Label(title, message.From, senderKind)), new("$id", message.Id));
+            new("$label", new System.Text.UTF8Encoding(false, true).GetBytes(MessageText.Label(title, message.From, senderKind))), new("$id", message.Id));
     }
 
     private static EventDraft Changed(CommandContext c, Message message) => new("message.changed", "message", message.Id,

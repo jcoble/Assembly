@@ -32,12 +32,15 @@ public sealed class MachineCalls(EngineRuntime runtime, TimeProvider time, IAgen
                 if (string.IsNullOrWhiteSpace(args.FromMachine) || args.FromMachine == runtime.Machine)
                     throw new CallFailed("forbidden");
                 var error = Prepare(args);
+                var title = args.Command is StartSession or RegisterForeignSession
+                    ? EngineCommands.PrepareSessionTitle((SessionCommand)args.Command) : null;
                 return Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, CommandResult>>(scope =>
                 {
                     var context = new CommandContext(args.CommandId, runtime.Machine, new(ActorKind.System, "machine:" + args.FromMachine),
                         args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
                     // Replay precedes prepared refusals and the transition's authoritative same-scope ownership checks.
-                    return runtime.Commands.Apply(scope, context, args.Command, error);
+                    return title is null ? runtime.Commands.Apply(scope, context, args.Command, error)
+                        : runtime.Commands.ApplyPreparedSessionTitle(scope, context, title, error);
                 });
             }, order: args => args.FromMachine);
     }

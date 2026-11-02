@@ -89,12 +89,12 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
     {
         if (sessions.Get(scope, id) is not null) return;
         var row = scope.QueryFirst("""
-            SELECT provider,folder,title,parent_id,provider_session_id,updated_ms,model FROM engine_session WHERE id=$id
+            SELECT provider,folder,CAST(title AS BLOB),parent_id,provider_session_id,updated_ms,model FROM engine_session WHERE id=$id
             """, r => new
         {
             Provider = r.Text(0),
             Folder = r.Text(1),
-            Title = r.Text(2),
+            Title = new System.Text.UTF8Encoding(false, true).GetString(r.Blob(2)),
             Parent = r.IsNull(3) ? null : r.Text(3),
             Acp = r.IsNull(4) ? null : r.Text(4),
             Updated = r.Long(5),
@@ -130,17 +130,17 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         Apply(scope, sessionId, row.Version, row.Epoch, new(ActorKind.System, "session.configured"), new ReportSessionModel(model));
     }
 
-    public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle)
+    public void Titled(IWriteScope scope, string sessionId, string actualStoredTitle, ReadOnlyMemory<byte> exactTitleUtf8)
     {
         var row = Owning(scope, sessionId);
         if (row is null || row.Title == actualStoredTitle) return;
-        Apply(scope, sessionId, row.Version, row.Epoch, new(ActorKind.System, "session.titled"), new ReportSessionTitle(actualStoredTitle));
+        Apply(scope, sessionId, row.Version, row.Epoch, new(ActorKind.System, "session.titled"), new ReportSessionTitle(actualStoredTitle), exactTitleUtf8);
     }
 
     private sealed record OwningSession(long Version, long Epoch, string? Model, string Title);
     private OwningSession? Owning(IReadScope scope, string id) => scope.QueryFirst("""
-        SELECT version,epoch,model,title FROM engine_session WHERE id=$id AND machine=$machine AND holder='local'
-        """, r => new OwningSession(r.Long(0), r.Long(1), r.IsNull(2) ? null : r.Text(2), r.Text(3)),
+        SELECT version,epoch,model,CAST(title AS BLOB) FROM engine_session WHERE id=$id AND machine=$machine AND holder='local'
+        """, r => new OwningSession(r.Long(0), r.Long(1), r.IsNull(2) ? null : r.Text(2), new System.Text.UTF8Encoding(false, true).GetString(r.Blob(3))),
         new("$id", id), new("$machine", _machine));
 
     public SessionLocation? Location(string sessionId)
@@ -156,9 +156,12 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
     public string? Folder(string sessionId) => Location(sessionId)?.Folder;
     public string? Folder(IReadScope scope, string sessionId) => Location(scope, sessionId)?.Folder;
 
-    private void Apply(IWriteScope scope, string id, long version, long epoch, EngineActor actor, EngineCommand command)
+    private void Apply(IWriteScope scope, string id, long version, long epoch, EngineActor actor, EngineCommand command, ReadOnlyMemory<byte>? exactTitleUtf8 = null)
     {
-        var result = _commands!.Apply(scope, new(Guid.NewGuid(), _machine!, actor, id, version, epoch, time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+        var context = new CommandContext(Guid.NewGuid(), _machine!, actor, id, version, epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+        var result = command is StartSession or ReportSessionTitle
+            ? _commands!.ApplyPreparedSessionTitle(scope, context, PreparedSessionTitleCommand.Prepare((SessionCommand)command, exactTitleUtf8))
+            : _commands!.Apply(scope, context, command);
         if (!result.Applied) throw new CallFailed($"The session operation was refused: {result.Error}.");
     }
 

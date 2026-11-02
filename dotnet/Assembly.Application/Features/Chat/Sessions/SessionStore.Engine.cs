@@ -47,9 +47,9 @@ public sealed partial class SessionStore
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         var inserted = scope.Execute("""
             INSERT INTO session_info(session_id,agent,repo_url,title,acp_session_id,created_at,updated_at,machine,parent_session_id,helper)
-            VALUES($id,$agent,$repo,$title,$acp,$now,$now,$machine,$parent,$helper)
+            VALUES($id,$agent,$repo,CAST($title AS TEXT),$acp,$now,$now,$machine,$parent,$helper)
             ON CONFLICT(session_id) DO NOTHING;
-            """, new("$id", session.SessionId), new("$agent", session.Agent), new("$repo", session.RepoUrl), new("$title", session.Title),
+            """, new("$id", session.SessionId), new("$agent", session.Agent), new("$repo", session.RepoUrl), new("$title", session.Title is null ? null : TitleUtf8.GetBytes(session.Title)),
             new("$acp", session.AcpSessionId), new("$now", session.UpdatedAt), new("$machine", session.Machine),
             new("$parent", session.ParentSessionId), new("$helper", session.Helper ? 1 : 0));
         if (inserted == 0) return;

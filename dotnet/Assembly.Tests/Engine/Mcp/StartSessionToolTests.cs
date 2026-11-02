@@ -11,7 +11,7 @@ using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Engine.Mcp;
 
-public sealed class StartSessionToolTests
+public sealed partial class StartSessionToolTests
 {
     [Fact]
     public async Task Start_creates_child_and_queued_prefaced_prompt_together()

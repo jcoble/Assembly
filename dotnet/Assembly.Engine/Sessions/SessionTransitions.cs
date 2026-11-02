@@ -13,13 +13,21 @@ public static class SessionTransitions
         string? ParentId, string? RunId, string Machine, bool CancelRequested = false, long? ReservedEpoch = null);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext = "")
+        SessionCommand command, int depthLimit, int childLimit, string accountContext = "") =>
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, null);
+
+    internal static CommandResult ApplyPreparedTitle(IWriteScope scope, CommandContext context,
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8) =>
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, titleUtf8);
+
+    private static CommandResult ApplyCore(IWriteScope scope, CommandContext context,
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8)
     {
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
         var current = Find(scope, context.EntityId);
         if (command is RegisterForeignSession foreign)
-            return RegisterForeign(scope, context, foreign, current);
+            return RegisterForeign(scope, context, foreign, current, titleUtf8);
         if (current?.State == "foreign")
             return Refused(context, "invalid_transition", current);
         if (current is not null && current.Machine != context.Machine)
@@ -31,7 +39,7 @@ public static class SessionTransitions
         if ((current?.Version ?? 0) != context.ExpectedVersion)
             return Refused(context, "version_conflict", current);
         if (command is StartSession start)
-            return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext) : Refused(context, "invalid_transition", current);
+            return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext, titleUtf8) : Refused(context, "invalid_transition", current);
         if (current is null)
             return Refused(context, "bad_args");
         return command switch
@@ -41,12 +49,12 @@ public static class SessionTransitions
             StopSession => Stop(scope, context, current),
             LinkTask link => Link(scope, context, current, link),
             ReportSessionModel model => ReportModel(scope, context, current, model),
-            ReportSessionTitle title => ReportTitle(scope, context, current, title),
+            ReportSessionTitle title => ReportTitle(scope, context, current, title, titleUtf8),
             _ => Refused(context, "unsupported_command", current)
         };
     }
 
-    private static CommandResult RegisterForeign(IWriteScope scope, CommandContext context, RegisterForeignSession command, Session? current)
+    private static CommandResult RegisterForeign(IWriteScope scope, CommandContext context, RegisterForeignSession command, Session? current, byte[]? titleUtf8)
     {
         if (string.IsNullOrWhiteSpace(command.Machine) || command.Machine == context.Machine ||
             context.Actor != new EngineActor(ActorKind.System, "machine:" + command.Machine))
@@ -59,13 +67,13 @@ public static class SessionTransitions
         scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
                 activity_state,holder,epoch,cancel_requested,account_context,managed_checkout)
-            VALUES($id,0,$machine,$now,$now,$provider,NULL,'',$title,'foreign','idle',$machine,0,0,'',0)
+            VALUES($id,0,$machine,$now,$now,$provider,NULL,'',CAST($title AS TEXT),'foreign','idle',$machine,0,0,'',0)
             """, new("$id", context.EntityId), new("$machine", command.Machine), new("$now", context.NowMs),
-            new("$provider", command.Provider), new("$title", command.Title));
+            new("$provider", command.Provider), new("$title", titleUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(command.Title)));
         return new(true, false, null, 0, 0, 0);
     }
 
-    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext)
+    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8)
     {
         var untitledOwnerRoot = command.Title == "" && context.Actor == new EngineActor(ActorKind.Window, "owner") &&
             command.ParentId is null && command.RunId is null;
@@ -134,11 +142,11 @@ public static class SessionTransitions
         scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,task_url,
                 provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,account_context,managed_checkout)
-            VALUES($id,1,$machine,$now,$now,$task,$provider,$model,$folder,$title,
+            VALUES($id,1,$machine,$now,$now,$task,$provider,$model,$folder,CAST($title AS TEXT),
                 'starting','idle',$parent,$run,'local',0,0,$account,$managed)
             """, new("$id", context.EntityId), new("$machine", context.Machine), new("$now", context.NowMs),
             new("$task", command.TaskUrl), new("$provider", command.Provider), new("$model", command.Model),
-            new("$folder", command.Folder), new("$title", command.Title), new("$parent", command.ParentId), new("$run", command.RunId), new("$account", accountContext), new("$managed", command.ManagedCheckout == true ? 1 : 0));
+            new("$folder", command.Folder), new("$title", titleUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(command.Title)), new("$parent", command.ParentId), new("$run", command.RunId), new("$account", accountContext), new("$managed", command.ManagedCheckout == true ? 1 : 0));
         var created = new Session(1, 0, "starting", "idle", command.ParentId, command.RunId, context.Machine);
         return Commit(scope, context, created, "session.started",
             [new("", "start", context.EntityId, command.RunId, JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession))]);
@@ -203,14 +211,14 @@ public static class SessionTransitions
         return Commit(scope, context, updated, "session.changed", effects, events, command.Reason);
     }
 
-    private static CommandResult ReportTitle(IWriteScope scope, CommandContext context, Session current, ReportSessionTitle command)
+    private static CommandResult ReportTitle(IWriteScope scope, CommandContext context, Session current, ReportSessionTitle command, byte[]? titleUtf8)
     {
         if (context.Actor.Kind != ActorKind.System) return Refused(context, "forbidden", current);
         if (command.Title is null) return Refused(context, "bad_args", current);
-        var title = scope.QueryFirst("SELECT title FROM engine_session WHERE id=$id", r => r.Text(0), new SqlArg("$id", context.EntityId));
+        var title = scope.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id=$id", r => new System.Text.UTF8Encoding(false, true).GetString(r.Blob(0)), new SqlArg("$id", context.EntityId));
         if (title == command.Title) return new(true, false, null, current.Version, 0, current.Epoch);
-        scope.Execute("UPDATE engine_session SET title=$title,version=version+1,updated_ms=$now WHERE id=$id",
-            new("$title", command.Title), new("$now", context.NowMs), new("$id", context.EntityId));
+        scope.Execute("UPDATE engine_session SET title=CAST($title AS TEXT),version=version+1,updated_ms=$now WHERE id=$id",
+            new("$title", titleUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(command.Title)), new("$now", context.NowMs), new("$id", context.EntityId));
         return EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
             [new("session.changed", "session", context.EntityId, current.Version + 1, false,
                 new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);

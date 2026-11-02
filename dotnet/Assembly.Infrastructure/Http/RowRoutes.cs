@@ -22,10 +22,21 @@ internal sealed class RowRoutes(LiveHub hub, SessionStore sessionStore, MachineS
         routes.MapGet("/sessions/{id}/tools/{item}", ToolAsync);
         if (ownerDoor is not null)
         {
+            routes.MapGet("/sessions/{id}/title", SessionTitleAsync);
+            routes.MapGet("/sessions/{id}/title/content", SessionTitleContentAsync);
             routes.MapGet("/sessions/{id}/owner-prompts", OwnerPromptsAsync);
             routes.MapGet("/sessions/{id}/owner-prompts/{client}/content", OwnerPromptContentAsync);
         }
     }
+
+    private Task SessionTitleAsync(HttpContext context) => OwnerReply(context, () => ownerDoor!.ReadSessionTitleAsync(
+        new(RequestValues.Route(context, "id"), context.Request.Query["machine"].FirstOrDefault()), context.RequestAborted), SessionsJson.Default.SessionTitleStat, "unknown session");
+
+    private Task SessionTitleContentAsync(HttpContext context) => OwnerReply(context, () => ownerDoor!.ReadSessionTitleChunkAsync(
+        new(RequestValues.Route(context, "id"), OwnerNumber(context, "version", null) ?? throw new ArgumentException("bad_args"),
+            OwnerNumber(context, "epoch", null) ?? throw new ArgumentException("bad_args"),
+            OwnerNumber(context, "totalBytes", null) ?? throw new ArgumentException("bad_args"), OwnerNumber(context, "offset", 0)!.Value,
+            checked((int)OwnerNumber(context, "count", 1024 * 1024)!.Value), context.Request.Query["machine"].FirstOrDefault()), context.RequestAborted), SessionsJson.Default.SessionTitleChunk, "unknown session");
 
     private Task OwnerPromptsAsync(HttpContext context) => OwnerReply(context, () => ownerDoor!.ReadOwnerPromptsAsync(
         new(RequestValues.Route(context, "id"), context.Request.Query["machine"].FirstOrDefault(),
@@ -44,7 +55,7 @@ internal sealed class RowRoutes(LiveHub hub, SessionStore sessionStore, MachineS
         return RequestValues.QueryLong(context, key) ?? throw new ArgumentException("bad_args");
     }
 
-    private static async Task OwnerReply<T>(HttpContext context, Func<Task<T>> read, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
+    private static async Task OwnerReply<T>(HttpContext context, Func<Task<T>> read, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type, string notFound = "unknown owner prompt")
     {
         try
         {
@@ -52,10 +63,12 @@ internal sealed class RowRoutes(LiveHub hub, SessionStore sessionStore, MachineS
             context.RequestAborted.ThrowIfCancellationRequested();
             await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json => JsonSerializer.Serialize(json, result, type));
         }
-        catch (KeyNotFoundException) { await JsonReply.ErrorAsync(context, 404, "unknown owner prompt"); }
+        catch (KeyNotFoundException) { await JsonReply.ErrorAsync(context, 404, notFound); }
         catch (InvalidOperationException error) { await JsonReply.ErrorAsync(context, 409, error.Message); }
         catch (Exception error) when (error is ArgumentException or OverflowException)
         { await JsonReply.ErrorAsync(context, 400, "bad_args"); }
+        catch (Assembly.Application.Common.Calls.CallFailed error) when (error.Message == "title_changed")
+        { await JsonReply.ErrorAsync(context, 409, error.Message); }
         catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         { await JsonReply.ErrorAsync(context, 502, error.Message); }
     }
