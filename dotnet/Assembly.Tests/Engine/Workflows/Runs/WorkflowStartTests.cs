@@ -156,6 +156,21 @@ public sealed class WorkflowStartTests
         Assert.DoesNotContain("xxxxx", f.Core.Text("SELECT data_json FROM engine_event")!);
     }
 
+    [Fact]
+    public void Explicit_optional_snapshot_step_can_rule_skip_but_required_step_cannot()
+    {
+        using var f = new Fixture();
+        var definition = Definition.Replace("checks:", "checks:\n    required: false");
+        var prepared = f.Prepare(f.Request(), WorkflowParser.Parse(new(definition, Prompts("prompt"))));
+        Assert.True(f.Apply(prepared).Result.Applied);
+        var required = prepared.Start.StepIds["build"]; var optional = prepared.Start.StepIds["checks"];
+        var actor = new EngineActor(ActorKind.System, "workflow");
+        Assert.Equal("forbidden", f.Core.Apply(new global::Assembly.Engine.Runs.SetStepState("skipped", 0, [], "optional", true), required, 1, actor: actor).Error);
+        Assert.True(f.Core.Apply(new global::Assembly.Engine.Runs.SetStepState("skipped", 0, [], "optional", true), optional, 1, actor: actor).Applied);
+        Assert.Equal("pending", f.Core.State("engine_step", required));
+        Assert.Equal("skipped", f.Core.State("engine_step", optional));
+    }
+
     private static JsonElement Json(string text) { using var value = JsonDocument.Parse(text); return value.RootElement.Clone(); }
     private static ImmutableSortedDictionary<string, string> Prompts(string text) => ImmutableSortedDictionary.Create<string, string>(StringComparer.Ordinal).Add("prompt.md", text);
     private const string Definition = """

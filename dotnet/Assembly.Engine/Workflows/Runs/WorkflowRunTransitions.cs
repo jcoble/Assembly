@@ -36,7 +36,7 @@ internal static class WorkflowRunTransitions
             return Refuse(context, "project_not_found");
         if (!TryTaskUrl(request.Task, out var taskUrl)) return Refuse(context, "bad_args");
         var steps = prepared.StartSteps.Select(step => new StepDefinition(body.StepIds[step.Id], step.Id,
-            step.Required, step.MaxAttempts, step.Condition is not null,
+            step.Required, step.MaxAttempts, !step.Required || step.Condition is not null,
             step.Needs.Select(key => new Dependency(body.StepIds[key], false)).ToArray())).ToArray();
         var created = RunTransitions.StartWorkflow(scope, context, new StartRun(request.OwnerSessionId, taskUrl, null, null, 30000, steps),
             new(context.EntityId, body.Snapshot.Hash));

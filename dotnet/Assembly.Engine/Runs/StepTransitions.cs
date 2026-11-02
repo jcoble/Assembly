@@ -21,6 +21,11 @@ public static class StepTransitions
         if (command is not SetStepState fact) return Refused(c, "unsupported_command", step);
         if (checkedReceiptId is null && fact.State == "succeeded" && s.QueryFirst("SELECT result IS NOT NULL FROM engine_step WHERE id=$id", r => r.Long(0), new SqlArg("$id", c.EntityId)) != 0)
             return Refused(c, "receipt_required", step);
+        if (fact.State is "succeeded" or "failed" && s.QueryFirst("""
+            SELECT COUNT(*) FROM engine_step st JOIN engine_run run ON run.id=st.run_id
+            WHERE st.id=$id AND st.kind='gate' AND run.definition_hash IS NOT NULL
+            """, r => r.Long(0), new SqlArg("$id", c.EntityId)) != 0)
+            return Refused(c, "gate_decision_required", step);
         var worker = step.SessionId is null ? null : FindWorker(s, step.SessionId);
         var epoch = worker?.Epoch ?? step.OwnerEpoch;
         if (c.Epoch != epoch) return new(false, false, "stale_epoch", step.Version, 0, epoch);
@@ -85,6 +90,8 @@ public static class StepTransitions
     private static CommandResult Start(IWriteScope s, CommandContext c, Step step, StartStep command)
     {
         if (step.RunState == "cancelling") return Refused(c, "run_cancelling", step);
+        if (s.QueryFirst("SELECT COUNT(*) FROM engine_run WHERE id=$run AND definition_hash IS NOT NULL AND paused=1",
+            r => r.Long(0), new SqlArg("$run", step.RunId)) != 0) return Refused(c, "run_paused", step);
         var worker = FindWorker(s, command.SessionId);
         if (worker is null) return Refused(c, "bad_args", step);
         if (!RunTransitions.CanControl(c, step.OwnerId) || worker.ParentId != step.OwnerId || worker.RunId != step.RunId)

@@ -4,6 +4,7 @@ using Assembly.Engine.Workflows.Scheduling;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Workflows.Workspaces;
 using Assembly.Engine.Workflows.Execution;
+using Assembly.Engine.Workflows.Runs;
 
 namespace Assembly.Infrastructure.Engine.Workflows;
 
@@ -16,6 +17,7 @@ public sealed class WorkflowDispatchPreparation(IAppDatabase db, EngineCommands 
     public async Task<IReadOnlyList<PreparedWorkflowDispatch>> PrepareAsync(CancellationToken ct)
     {
         _advancement.AdvancePending(ct);
+        PrepareGates(ct);
         PrepareMissingWorkspaces(ct);
         await PrepareCommandsAsync(ct);
         IReadOnlyList<string> ready;
@@ -37,6 +39,33 @@ public sealed class WorkflowDispatchPreparation(IAppDatabase db, EngineCommands 
             if (candidate is not null) prepared.Add(candidate);
         }
         return prepared;
+    }
+
+    private void PrepareGates(CancellationToken ct)
+    {
+        var candidates = db.Query($"""
+            SELECT st.id,st.version,st.generation,st.attempt,owner.epoch
+            FROM engine_step st JOIN engine_run run ON run.id=st.run_id JOIN engine_session owner ON owner.id=run.owner_session_id
+            WHERE st.kind='gate' AND st.state='pending' AND st.session_id IS NULL AND st.workspace_id IS NULL
+              AND COALESCE(st.dispatch_state,'')<>'redo_pending' AND run.machine=$machine AND run.definition_hash IS NOT NULL
+              AND run.paused=0 AND run.setup_state='ready' AND run.state IN ('queued','running','needs_me')
+              AND owner.machine=$machine AND owner.parent_id IS NULL AND owner.holder='local' AND owner.reserved_epoch IS NULL
+              AND owner.state IN ('idle','running','needs_me') AND owner.cancel_requested=0
+              AND NOT EXISTS ({WorkflowSchedule.UnsettledDependency})
+            ORDER BY run.created_ms,run.id,st.rowid LIMIT 100
+            """, r => new { Step = r.Text(0), Version = r.Long(1), Generation = r.Long(2), Attempt = r.Long(3), Epoch = r.Long(4) }, ct,
+            new SqlArg("$machine", machine));
+        foreach (var candidate in candidates)
+        {
+            ct.ThrowIfCancellationRequested();
+            var identity = DispatchIdentity.Id("workflow-gate-open/v1", machine, candidate.Step,
+                candidate.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                (candidate.Attempt + 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                candidate.Version.ToString(System.Globalization.CultureInfo.InvariantCulture), candidate.Epoch.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var c = new CommandContext(identity, machine, new(ActorKind.System, "engine.worker"), candidate.Step,
+                candidate.Version, candidate.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+            db.Writer.Write("engine.workflow.gate", scope => commands.OpenWorkflowGate(scope, c));
+        }
     }
 
     private void PrepareMissingWorkspaces(CancellationToken ct)

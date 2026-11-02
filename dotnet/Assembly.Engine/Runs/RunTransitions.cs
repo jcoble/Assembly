@@ -56,6 +56,7 @@ public static class RunTransitions
         s.Execute("UPDATE engine_run SET state='cancelling',version=version+1,updated_ms=$now WHERE id=$id",
             new("$now", c.NowMs), new("$id", c.EntityId));
         List<EventDraft> events = [Changed(c.EntityId, run.Version + 1, run.Owner, "cancelling")];
+        if (run.Workflow) events.AddRange(WorkflowGateTransitions.CancelForRun(s, c, c.EntityId));
         events.AddRange(s.Query("""
             UPDATE engine_step SET state='cancelled',version=version+1,updated_ms=$now,ended_ms=$now
             WHERE run_id=$id AND attempt=0 AND state='pending'
