@@ -66,6 +66,11 @@ public sealed partial class SessionHost
                 turn.Inserted.TrySetResult(new SendResult.Unknown());
                 throw new CallFailed("The delivery owner changed.");
             }
+            if (turn.Delivery?.ExpiresMs <= Now())
+            {
+                turn.Inserted.TrySetResult(new SendResult.Failed("expired"));
+                throw new CallFailed("expired", "expired");
+            }
             // A stop that lands between here and the prompt reaching the agent is lost; the turn then runs to its end.
             if (turn.Stopping.IsCancellationRequested)
             {

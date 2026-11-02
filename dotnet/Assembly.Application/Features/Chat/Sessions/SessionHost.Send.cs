@@ -47,6 +47,7 @@ public sealed partial class SessionHost
                     if (admission is null || !MayReuse(admission, row)) return new SendResult.Unknown();
                     if (row.RetryExecution?.EffectId == admission.EffectId) return new SendResult.Unknown();
                 }
+                if (admission?.ExpiresMs <= Now()) return new SendResult.Failed("expired");
                 if (_turn is not null) return new SendResult.Busy();
                 var turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time)) { Delivery = admission };
                 PrepareObservation(turn, Now());
@@ -74,6 +75,8 @@ public sealed partial class SessionHost
                     }, () => committed);
                 }
                 catch (Exception error) when (committed) { publicationError = error; }
+                catch (CallFailed error) when (error.Reason == "expired" && turn.RetryExecution is not null)
+                { turn.Stopping.Dispose(); return new SendResult.Failed("expired"); }
                 catch { turn.Stopping.Dispose(); throw; }
                 _kept = null;
                 turn.Session = kept?.Session;

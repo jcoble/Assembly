@@ -43,6 +43,9 @@ internal static class AuthRetryStart
         var delivery = current is null ? null : MessageDelivery.Read(scope, current);
         if (delivery is null || current!.OrderKey != command.SessionId || delivery.Epoch != e.Epoch ||
             delivery.Intent.MessageId != e.MessageId || delivery.Intent.ClientId != e.ClientId || delivery.Intent.How != "prompt") return Refused();
+        if (scope.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.IsNull(0) ? (long?)null : r.Long(0),
+                new SqlArg("$id", e.MessageId)) <= context.NowMs)
+            return new(false, false, "expired", 0, 0, context.Epoch);
         var user = scope.QueryFirst("SELECT payload FROM rows WHERE session_id=$session AND seq=$seq AND run_id=$run AND kind='user' AND item_id IS NULL",
             r => JsonSerializer.Deserialize(r.Text(0), EngineJson.Default.UserPayload), new SqlArg("$session", command.SessionId), new("$seq", e.UserRowSeq), new("$run", e.UserRunId));
         if (user is null || user.ClientId != e.ClientId || user.Text != delivery.Intent.Text || user.From != delivery.FromSessionId ||

@@ -62,6 +62,7 @@ public sealed class AuthRetryStartTests
     [InlineData("user")]
     [InlineData("run")]
     [InlineData("epoch")]
+    [InlineData("expired")]
     public async Task A_changed_retry_binding_cannot_allocate_an_execution(string change)
     {
         await using var f = new AdapterDeliveryFixture(configured: (p, a) => p == "claude" && a == "");
@@ -73,8 +74,10 @@ public sealed class AuthRetryStartTests
             "claim" => execution with { ClaimAttempt = execution.ClaimAttempt + 1 },
             "user" => execution with { UserRowSeq = original.Seq + 1 },
             "run" => execution with { ChatRunId = original.RunId! },
-            _ => execution with { Epoch = execution.Epoch + 1 }
+            "epoch" => execution with { Epoch = execution.Epoch + 1 },
+            _ => execution
         };
+        if (change == "expired") f.Db.Writer.Write("test.expired-retry-start", scope => scope.Execute("UPDATE engine_message SET expires_ms=1000 WHERE id=$id", new SqlArg("$id", execution.MessageId)));
         var before = UserBytes(f); Assert.False(Start(f, execution).Applied); Assert.Equal(before, UserBytes(f));
     }
 

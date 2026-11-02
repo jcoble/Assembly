@@ -31,11 +31,15 @@ public sealed class AuthRetryOrderingTests
         finally { agent.Crash(); }
     }
 
-    [Fact]
-    public async Task Retry_waits_for_exact_prior_close_instead_of_joining_its_completed_auth_result()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Retry_waits_for_exact_prior_close_and_preserves_original_expiry(bool expiresWhileWaiting)
     {
         await using var f = new AdapterDeliveryFixture(configured: (p, a) => p == "claude" && a == "");
-        var message = f.Queue(); var first = f.Claim(message);
+        var message = f.Queue();
+        f.Db.Writer.Write("test.original-deadline", scope => scope.Execute("UPDATE engine_message SET expires_ms=1001 WHERE id=$id", new SqlArg("$id", message)));
+        var first = f.Claim(message);
         var firstExecution = f.Effects.ExecuteAsync(first, default); var agent = await f.Launcher.NextAsync();
         try
         {
@@ -48,7 +52,16 @@ public sealed class AuthRetryOrderingTests
             var retry = f.Claim(message); var retryExecution = f.Effects.ExecuteAsync(retry, default);
             Assert.False(retryExecution.IsCompleted); Assert.Equal(1, f.Launcher.Launches);
             Assert.Equal(1, f.Db.QueryFirst("SELECT COUNT(*) FROM rows WHERE kind='turn' AND json_extract(payload,'$.state')='started'", r => r.Long(0), default));
+            if (expiresWhileWaiting) f.Time.Advance(TimeSpan.FromMilliseconds(1));
             await agent.ReplyAsync(close, "{}"); await priorDone.WaitAsync(TimeSpan.FromSeconds(8));
+            if (expiresWhileWaiting)
+            {
+                var receipt = await retryExecution.WaitAsync(TimeSpan.FromSeconds(8));
+                Assert.Equal("expired", receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)!.Reason);
+                Assert.True(f.Complete(retry, receipt).Applied);
+                Assert.Equal(1, f.Db.QueryFirst("SELECT COUNT(*) FROM rows WHERE kind='turn' AND json_extract(payload,'$.state')='started'", r => r.Long(0), default));
+                return;
+            }
             {
                 await agent.OpenAsync(); var retryPrompt = await agent.ReadAsync("session/prompt");
                 var (secondRun, done) = f.Hosts.For(f.Session.SessionId).CurrentTurn;
@@ -60,6 +73,33 @@ public sealed class AuthRetryOrderingTests
                 await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
                 await agent.CloseAsync(); await done.WaitAsync(TimeSpan.FromSeconds(8));
             }
+        }
+        finally { agent.Crash(); }
+    }
+
+    [Fact]
+    public async Task Original_expiry_during_retry_open_closes_without_prompt_insertion()
+    {
+        await using var f = new AdapterDeliveryFixture(configured: (p, a) => p == "claude" && a == "");
+        var (_, effect) = await AuthRetryStartTests.RefusedAndSignedIn(f);
+        f.Db.Writer.Write("test.original-retry-deadline", scope => scope.Execute("UPDATE engine_message SET expires_ms=1001 WHERE id=$id",
+            new SqlArg("$id", effect.Payload.GetProperty("messageId").GetString())));
+        var executing = f.Effects.ExecuteAsync(effect, default); var agent = await f.Launcher.NextAsync();
+        try
+        {
+            var initialize = await agent.ReadAsync("initialize"); var done = f.Hosts.For(f.Session.SessionId).CurrentTurn.Done;
+            f.Time.Advance(TimeSpan.FromMilliseconds(1));
+            await agent.ReplyAsync(initialize, """{"protocolVersion":2,"capabilities":{"session":{}},"authMethods":[]}""");
+            await agent.OpenAsync();
+            await agent.CloseAsync();
+            var receipt = await executing.WaitAsync(TimeSpan.FromSeconds(8));
+            var data = receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)!;
+            Assert.Equal("failed", data.State); Assert.Equal("expired", data.Reason);
+            Assert.True(f.Complete(effect, receipt).Applied); await done.WaitAsync(TimeSpan.FromSeconds(8));
+            using var scope = f.Db.OpenSnapshot(default);
+            Assert.Null(f.Rows.UserDeliveryOfClient(scope, f.Session.SessionId, "C")!.Acknowledgment);
+            Assert.Equal(1001, f.Db.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.Long(0), default,
+                new SqlArg("$id", effect.Payload.GetProperty("messageId").GetString())));
         }
         finally { agent.Crash(); }
     }
