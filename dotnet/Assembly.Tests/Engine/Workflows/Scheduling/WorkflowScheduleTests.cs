@@ -395,6 +395,45 @@ public sealed class WorkflowScheduleTests
         });
     }
 
+    [Fact]
+    public void Checked_redo_findings_fence_and_render_the_actual_resumed_prompt()
+    {
+        using var f = new Fixture(prompt: "Work ${{redo.findings}} output:${{redo.output}}", yaml: """
+            name: Redo
+            steps:
+              build:
+                agent: {provider: codex, model: selected-model}
+                prompt: prompt.md
+                result: build
+              review:
+                needs: [build]
+                review: {of: build, agent: {provider: codex, model: selected-model}, prompt: prompt.md}
+                result: review
+            """);
+        var first = f.Apply(f.Prepare()); Assert.True(first.Result.Applied);
+        PrepareReleasedRedo(f, first.SessionId!); var beforeFinding = f.Prepare(2000);
+        var review = new Assembly.Engine.Workflows.Receipts.ReviewReceipt("fail",
+            [new("high", false, "source.cs:1", "fix race condition", "guard original epoch")], new string('a', 40));
+        f.Core.Db.Writer.Write("test.checked-redo", s => s.Execute("""
+            INSERT INTO engine_workflow_receipt(id,version,machine,created_ms,updated_ms,run_id,step_id,attempt,generation,epoch,hash,kind,body_json,state)
+              SELECT 'finding',1,machine,1000,1000,run_id,id,1,0,0,$hash,'review',json_object('report',json_object('receipt',json($review))),'accepted'
+              FROM engine_step WHERE run_id=$run AND definition_key='review';
+            UPDATE engine_step SET generation=1 WHERE run_id=$run AND definition_key='review';
+            INSERT INTO engine_workflow_history(id,version,machine,created_ms,updated_ms,run_id,history_seq,step_id,generation,kind,at_ms,safe_body_json)
+              SELECT 'redo',1,$machine,1000,1000,$run,MAX(history_seq)+1,$step,0,'redo_applied',1000,
+                json_object('targetStepId',$step,'generation',0,'findingReceiptIds',json_array('finding'))
+              FROM engine_workflow_history WHERE run_id=$run;
+            """, new("$hash", new string('c', 64)), new("$review", JsonSerializer.Serialize(review, Assembly.Engine.Workflows.Receipts.ReceiptJson.Default.ReviewReceipt)),
+            new("$machine", f.Core.Machine), new("$run", f.Run), new("$step", f.Step)));
+        var stale = f.Apply(beforeFinding); Assert.False(stale.Result.Applied); Assert.Equal("version_conflict", stale.Result.Error);
+        var prepared = f.Prepare(2009);
+        Assert.NotEqual(beforeFinding.Body.Prepared.Witness.SourceDigest, prepared.Body.Prepared.Witness.SourceDigest);
+        Assert.Equal("Work [\"fix race condition\"] output:", prepared.Body.Prompt);
+        var applied = f.Apply(prepared); Assert.True(applied.Result.Applied, applied.Result.Error);
+        Assert.Equal(prepared.Body.Prompt, f.Core.Text("SELECT text FROM engine_message WHERE id=$id", new SqlArg("$id", applied.MessageId)));
+        Assert.Equal(2, f.Core.Number("SELECT attempt FROM engine_step WHERE id=$step", new SqlArg("$step", f.Step)));
+    }
+
     private sealed class RecordingTopics : ITopics
     {
         public int Count { get; private set; }

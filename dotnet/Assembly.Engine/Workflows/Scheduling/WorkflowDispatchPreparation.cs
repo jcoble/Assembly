@@ -9,6 +9,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Definitions;
 using Assembly.Engine.Workflows.Runs;
+using Assembly.Engine.Workflows.Reviews;
 
 namespace Assembly.Engine.Workflows.Scheduling;
 
@@ -155,10 +156,15 @@ public static partial class WorkflowDispatch
             SELECT MIN(max_sessions) FROM engine_run WHERE machine=$machine AND definition_hash IS NOT NULL
             AND state IN ('queued','running','needs_me','cancelling')
             """, r => r.IsNull(0) ? 0 : r.Long(0), new SqlArg("$machine", row.Machine));
+        var redo = ReviewTransitions.RedoValues(scope, row.Run, stepId, row.Generation);
+        var sourceDigest = redo is null && resume is null
+            ? DispatchIdentity.Hash("workflow-dispatch-source/v1", row.Snapshot)
+            : DispatchIdentity.Hash("workflow-dispatch-source/v1", row.Snapshot, redo?.SourceDigest,
+                selectedProvider, selectedModel, row.Folder, resume?.NativeId, resume?.AccountContext);
         var witness = new DispatchEligibility(row.Machine, row.Run, row.RunMachine, row.RunVersion, row.RunState, stepId, row.StepVersion,
             row.StepState, row.Generation, row.Attempt, checked(row.Attempt + 1), checked(row.InGeneration + 1), row.Hash, row.Owner, row.OwnerEpoch,
             row.OwnerState, row.Activity, row.Cancelled, row.AuthorityMachine, row.AuthoritySession, row.AuthorityEpoch, row.Workspace,
-            row.WorkspaceVersion, row.WorkspaceState, row.Folder, row.Base, row.Head, DispatchIdentity.Hash("workflow-dispatch-source/v1", row.Snapshot),
+            row.WorkspaceVersion, row.WorkspaceState, row.Folder, row.Base, row.Head, sourceDigest,
             selectedProvider, selectedModel, spec.Permission, account, provider, depthLimit, childLimit, row.RunLimit, shared, ancestors, children, dependencies, reservations, resume);
         var reason = row.RunMachine != row.Machine ? "wrong_machine" : row.Paused ? "run_paused" : row.Setup != "ready" ? "setup_not_ready" :
             row.RunState is not ("queued" or "running" or "needs_me") ? "run_not_ready" : row.Reserved || row.Holder != "local" || row.Cancelled ||

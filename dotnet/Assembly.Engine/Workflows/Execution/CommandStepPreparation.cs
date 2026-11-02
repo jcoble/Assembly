@@ -76,7 +76,7 @@ public static class CommandStepPreparation
         if (!first && (row.State != "running" || row.Gate != "ready")) throw new InvalidOperationException("command_not_ready");
         var start = JsonSerializer.Deserialize(row.Snapshot, WorkflowPreparationJson.Default.WorkflowStartBody)!;
         var spec = start.Snapshot.Definition.Steps[row.Key];
-        var bindings = EngineCommands.TemplateValues(s, start, row.Run);
+        var bindings = EngineCommands.TemplateValues(s, start, row.Run, c.EntityId, row.Generation);
         var index = first ? 0 : row.Index;
         if (index >= spec.Commands.Length) throw new InvalidOperationException("command_already_settled");
         var command = WorkflowTemplates.Commands([spec.Commands[index]], bindings)[0];
