@@ -48,8 +48,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             launcher.ValidateFolder(folder);
         }
         var adapter = adapters(session.Agent);
-        await adapter.ClosedAsync(session.AcpSessionId, cancellationToken);
-        var running = await adapter.GetAsync(stages, cancellationToken);
+        var running = await adapter.GetForSessionAsync(session.AcpSessionId, stages, cancellationToken);
         try
         {
             return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken, observation);

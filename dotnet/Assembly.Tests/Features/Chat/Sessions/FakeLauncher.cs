@@ -18,7 +18,7 @@ internal sealed class FakeLauncher : IAgentLauncher
 
     public Func<CancellationToken, Task<IAgentLink>>? Launch { get; set; }
 
-    public IReadOnlyList<AgentDescriptor> Agents { get; } =
+    public IReadOnlyList<AgentDescriptor> Agents { get; set; } =
     [
         new("claude", "Claude Code", "claude-agent-acp", [], null),
         new("codex", "Codex", "codex-acp", [], null),

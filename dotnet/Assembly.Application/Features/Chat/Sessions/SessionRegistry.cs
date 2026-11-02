@@ -11,7 +11,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// The session host of each session that has been sent to, and each agent's one shared adapter. A host holds no
 /// agent between turns: each turn opens its session on its agent's shared adapter and closes it at the end.
 /// </summary>
-public sealed class SessionRegistry : IAsyncDisposable
+public sealed partial class SessionRegistry : IAsyncDisposable
 {
     private readonly ConcurrentDictionary<string, SessionHost> _hosts = new();
     private readonly LiveHub _hub;
@@ -40,7 +40,7 @@ public sealed class SessionRegistry : IAsyncDisposable
         Helpers = new HelperSessions(sessionStore, this, hub, limits ?? new HelperLimits());
         _mcp = mcp ?? new SessionMcp(_ => Task.CompletedTask, (id, _) => Helpers.Tokens.ServersFor(id),
             Helpers.Tokens.Revoke, (_, _) => { });
-        _opener = new SessionOpener(sessionStore, launcher, agent => _adapters.GetOrAdd(agent, id => new SharedAdapter(launcher, id, time, log)),
+        _opener = new SessionOpener(sessionStore, launcher, Adapter,
             _mcp);
         _time = time;
         _log = log;
