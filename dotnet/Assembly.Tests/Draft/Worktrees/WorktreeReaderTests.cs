@@ -1,5 +1,5 @@
 using Assembly.Application.Common.Calls;
-using Assembly.Application.Features.Chat.Worktrees;
+using Assembly.Application.Common.Git;
 using Assembly.Infrastructure.Git;
 
 namespace Assembly.Tests.Draft.Worktrees;
