@@ -285,6 +285,7 @@ impl SessionPane {
         self.composer.update(cx, |composer, cx| {
             composer.set_session(Some(session), window, cx)
         });
+        self.tell_offline(cx);
         self.refresh(Change::Nothing, cx);
     }
 

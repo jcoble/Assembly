@@ -25,7 +25,15 @@ impl ClientThread {
                 message,
                 machine,
             } => {
-                if let Some(topic) = self.topics.remove(&id) {
+                if let Some(engine) = self.engines.remove(&id) {
+                    let _ =
+                        engine
+                            .updates
+                            .unbounded_send(crate::core::socket::engine_subscription::EngineUpdate {
+                            generation: id,
+                            page: crate::core::socket::engine_subscription::EnginePage::Unavailable,
+                        });
+                } else if let Some(topic) = self.topics.remove(&id) {
                     eprintln!("socket: {} failed: {message}", topic.topic);
                 } else if self.rows.remove(&id).is_some() {
                     eprintln!("socket: rows failed: {message}");
@@ -53,6 +61,47 @@ impl ClientThread {
                 if let Some(topic) = self.topics.get(&sub) {
                     let _ = topic.updates.unbounded_send(Update::Change { key, item });
                 }
+            }
+            InFrame::EngineSnapshot {
+                id,
+                machine,
+                through,
+                items,
+                more,
+                at,
+            } => {
+                self.engine_page(
+                    id,
+                    machine,
+                    crate::core::socket::engine_subscription::EnginePage::Snapshot {
+                        through,
+                        items,
+                        more,
+                        at,
+                        reset: false,
+                    },
+                );
+            }
+            InFrame::EngineEvents {
+                id,
+                machine,
+                after,
+                through,
+                events,
+                more,
+                at,
+            } => {
+                self.engine_page(
+                    id,
+                    machine,
+                    crate::core::socket::engine_subscription::EnginePage::Events {
+                        after,
+                        through,
+                        events,
+                        more,
+                        at,
+                    },
+                );
             }
             InFrame::Rows { sub, row } => {
                 let Some(rows) = self.rows.get_mut(&sub) else {

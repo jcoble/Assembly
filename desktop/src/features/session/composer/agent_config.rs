@@ -37,3 +37,56 @@ pub struct ConfigChoice {
     pub name: String,
     pub description: Option<String>,
 }
+
+impl AgentConfig {
+    pub fn menus(&self) -> Vec<(&ConfigOption, &str)> {
+        self.options
+            .iter()
+            .flatten()
+            .filter(|option| option.kind == "select" && !option.options.is_empty())
+            .map(|option| {
+                (
+                    option,
+                    option
+                        .current_value
+                        .as_deref()
+                        .filter(|value| option.offered(value))
+                        .or_else(|| {
+                            self.choices
+                                .get(&option.id)
+                                .map(String::as_str)
+                                .filter(|value| option.offered(value))
+                        })
+                        .unwrap_or(""),
+                )
+            })
+            .collect()
+    }
+}
+impl ConfigOption {
+    pub fn model(&self) -> bool {
+        self.category.as_deref() == Some("model") || self.id == "model"
+    }
+    pub fn effort(&self) -> bool {
+        matches!(self.category.as_deref(), Some("thought_level" | "effort"))
+            || matches!(self.id.as_str(), "effort" | "reasoning_effort")
+    }
+    pub fn offered(&self, value: &str) -> bool {
+        self.options.iter().any(|choice| choice.value == value)
+    }
+}
+
+/// Safe configured-target metadata advertised by the actual owning machine.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentTarget {
+    pub id: String,
+    pub name: String,
+    pub target_id: Option<String>,
+    pub account_context: Option<String>,
+    pub provider_target_id: Option<String>,
+}
+#[derive(Deserialize)]
+pub struct AgentList {
+    pub agents: Vec<AgentTarget>,
+}

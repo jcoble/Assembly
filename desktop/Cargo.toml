@@ -5,6 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
+async-process = "=2.5.0"
+open = "=5.4.5"
 futures-channel = "=0.3.34"
 gpui-kit = "=0.8.1"
 gpui-fps = "=0.8.1"

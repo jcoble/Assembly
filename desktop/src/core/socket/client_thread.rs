@@ -35,6 +35,7 @@ use super::row_update::RowUpdate;
 use super::rows_feed::RowsFeed;
 use super::update::Update;
 
+mod engine;
 mod frames;
 
 const ROWS: &str = "rows";
@@ -67,6 +68,17 @@ pub(super) struct ClientThread {
     /// Keyed topics and rows, by the id on the wire. `handle` is the id the window holds, for `Unsubscribe`.
     topics: HashMap<u64, Topic>,
     rows: HashMap<u64, Rows>,
+    engines: HashMap<u64, Engine>,
+}
+
+struct Engine {
+    handle: u64,
+    topic: String,
+    machine: String,
+    through: Option<i64>,
+    snapshot: bool,
+    ack: Option<i64>,
+    updates: UnboundedSender<super::engine_subscription::EngineUpdate>,
 }
 
 struct Topic {
@@ -107,6 +119,7 @@ impl ClientThread {
             keys: HashMap::new(),
             topics: HashMap::new(),
             rows: HashMap::new(),
+            engines: HashMap::new(),
         };
         thread::Builder::new()
             .name("socket".into())
@@ -220,7 +233,48 @@ impl ClientThread {
                 );
                 self.send_rows(id);
             }
+            Event::SubscribeEngine {
+                id,
+                topic,
+                machine,
+                updates,
+            } => {
+                self.engines.insert(
+                    id,
+                    Engine {
+                        handle: id,
+                        topic,
+                        machine,
+                        updates,
+                        through: None,
+                        snapshot: false,
+                        ack: None,
+                    },
+                );
+                self.send_engine(id);
+            }
+            Event::AcknowledgeEngine { id, wire, through } => self.ack_engine(id, wire, through),
+            Event::ResnapshotEngine { id } => {
+                if let Some(wire) = self
+                    .engines
+                    .iter()
+                    .find(|(_, e)| e.handle == id)
+                    .map(|(wire, _)| *wire)
+                {
+                    self.resubscribe_engine(wire);
+                }
+            }
             Event::Unsubscribe { id } => {
+                if let Some(wire) = self
+                    .engines
+                    .iter()
+                    .find(|(_, e)| e.handle == id)
+                    .map(|(wire, _)| *wire)
+                {
+                    self.engines.remove(&wire);
+                    self.send(&OutFrame::Unsub { id: wire });
+                    return;
+                }
                 let wire = self
                     .rows
                     .iter()
@@ -308,6 +362,10 @@ impl ClientThread {
                 topics.into_iter().for_each(|id| self.send_topic(id));
                 let rows: Vec<u64> = self.rows.keys().copied().collect();
                 rows.into_iter().for_each(|id| self.send_rows(id));
+                let engines: Vec<u64> = self.engines.keys().copied().collect();
+                engines
+                    .into_iter()
+                    .for_each(|id| self.resubscribe_engine(id));
                 self.set_state(ConnectionState::Connected { machine });
             }
             Err(OpenFailure::Refused(code)) => {

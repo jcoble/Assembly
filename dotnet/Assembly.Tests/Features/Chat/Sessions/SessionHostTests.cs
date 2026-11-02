@@ -25,6 +25,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     private readonly SessionStore _sessionStore;
     private readonly FakeLauncher _launcher = new();
     private readonly SharedAdapter _adapter;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, SharedAdapter> _otherAdapters = new();
     private readonly SessionOpener _opener;
     private readonly SessionInfo _session;
     private readonly SessionHost _host;
@@ -40,7 +41,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
         _sessionStore = SessionStore.Open(_database, _time, "checkouts");
         _session = _sessionStore.Create("claude", "https://github.com/o/r");
         _adapter = new SharedAdapter(_launcher, "claude", _time, _log);
-        _opener = new SessionOpener(_sessionStore, _launcher, _ => _adapter);
+        _opener = new SessionOpener(_sessionStore, _launcher, agent => agent == "claude" ? _adapter : _otherAdapters.GetOrAdd(agent, id => new SharedAdapter(_launcher, id, _time, _log)));
         _work = new BackgroundWork(_time, _log);
         _host = new SessionHost(_session.SessionId, _hub, _sessionStore, _opener, _time, _log, _work);
         _live = _hub.Subscribe(_session.SessionId, after: 0);
@@ -576,6 +577,7 @@ public sealed partial class SessionHostTests : IAsyncDisposable
     {
         var turn = _host.StopForShutdownAsync();
         await _adapter.DisposeAsync();
+        foreach (var adapter in _otherAdapters.Values) await adapter.DisposeAsync();
         await turn;
         _live.Dispose();
         _hub.Dispose();

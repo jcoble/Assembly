@@ -30,6 +30,7 @@ pub struct SocketClient {
     /// Call and subscription ids, shared by every caller so a handle knows its own id to cancel or unsub.
     next_id: Arc<AtomicU64>,
     state: ConnectionState,
+    connection_generation: u64,
     /// Brings the client thread's state changes to the entity.
     _states: Task<()>,
     /// Joined on drop, after `Event::Stop`.
@@ -108,6 +109,9 @@ impl SocketClient {
             let states = cx.spawn(async move |this, cx| {
                 while let Ok(state) = changes.recv().await {
                     let changed = this.update(cx, |client: &mut Self, cx| {
+                        if matches!(state, ConnectionState::Connected { .. }) {
+                            client.connection_generation += 1;
+                        }
                         client.state = state.clone();
                         cx.emit(state);
                         cx.notify();
@@ -121,6 +125,7 @@ impl SocketClient {
                 events,
                 next_id,
                 state: ConnectionState::Connecting,
+                connection_generation: 0,
                 _states: states,
                 thread: Some(thread),
             }
@@ -146,6 +151,10 @@ impl SocketClient {
     pub fn try_terminal(cx: &App) -> Option<Entity<Self>> {
         cx.try_global::<GlobalTerminal>()
             .map(|terminal| terminal.0.clone())
+    }
+
+    pub fn connection_generation(&self) -> u64 {
+        self.connection_generation
     }
 
     pub fn state(&self) -> &ConnectionState {
@@ -187,6 +196,23 @@ impl SocketClient {
             updates,
         });
         TopicSubscription::new(id, self.events.clone(), receiver)
+    }
+
+    /// Bounded Engine projection on this existing socket, with explicit applied-page acknowledgments.
+    pub fn subscribe_engine(
+        &self,
+        topic: &str,
+        machine: &str,
+    ) -> super::engine_subscription::EngineSubscription {
+        let id = self.id();
+        let (updates, receiver) = unbounded();
+        let _ = self.events.send(Event::SubscribeEngine {
+            id,
+            topic: topic.into(),
+            machine: machine.into(),
+            updates,
+        });
+        super::engine_subscription::EngineSubscription::new(id, self.events.clone(), receiver)
     }
 
     /// A session's rows after `after`, in order, none missed and none twice: a gap in `prevSeq` subscribes again from

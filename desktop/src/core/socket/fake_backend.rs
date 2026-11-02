@@ -20,6 +20,8 @@ use tungstenite::{Bytes, Message, WebSocket};
 pub enum Reply {
     Frame(Value),
     Ping,
+    /// Test-controlled delayed replies on this exact connection.
+    Wait(Receiver<Vec<Reply>>),
     Close(u16),
     /// Ends the connection with no close frame, as a dropped connection does.
     Drop,
@@ -136,6 +138,9 @@ fn serve(
 fn send(socket: &mut WebSocket<TcpStream>, raw: &TcpStream, reply: Reply) -> bool {
     match reply {
         Reply::Frame(frame) => socket.send(Message::text(frame.to_string())).is_ok(),
+        Reply::Wait(replies) => replies
+            .recv_timeout(super::test_client::DEADLINE)
+            .is_ok_and(|replies| replies.into_iter().all(|reply| send(socket, raw, reply))),
         Reply::Ping => socket
             .send(Message::Ping(Bytes::from_static(b"are you there")))
             .is_ok(),

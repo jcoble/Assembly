@@ -38,6 +38,10 @@ impl Header {
         (self.item.as_ref()?.machine.as_deref()).filter(|machine| !machine.is_empty())
     }
 
+    pub fn agent(&self) -> Option<&str> {
+        self.item.as_ref().map(|item| item.agent.as_str())
+    }
+
     /// Follows `session`, or shows nothing.
     pub fn show(&mut self, session: Option<String>, cx: &mut Context<Self>) {
         (self.item, self._feed) = (None, None);

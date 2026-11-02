@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat;
 using Assembly.Application.Features.Chat.Attachments;
@@ -57,11 +58,11 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         return Probe(cancellationToken);
     }
 
-    public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
-        Remote<IReadOnlyList<(string, string)>>("agents", () => [("claude", "Claude")], cancellationToken);
+    public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
+        Remote<IReadOnlyList<ConfigTarget>>("agents", () => [new("claude", "Claude", "target")], cancellationToken);
 
-    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
-        Remote("create", () => name is null ? store.Create(agent, repoUrl) : store.Add(Guid.NewGuid().ToString(), agent, repoUrl, name),
+    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken, InitialSessionConfig? initialConfig = null, string? workingFolder = null) =>
+        Remote("create", () => name is null ? store.Create(agent, repoUrl, initialConfig, workingFolder) : store.Add(Guid.NewGuid().ToString(), agent, repoUrl, name),
             cancellationToken);
 
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
@@ -94,11 +95,15 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
         Remote("config", () => Config, cancellationToken);
 
-    public Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken) =>
+    public Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null) =>
         Remote($"set config {configId} {value}", () => Config, cancellationToken);
 
     public Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken) =>
         Remote($"answer {askId} {answer.GetRawText()}", () => !Refuses, cancellationToken);
+
+    public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct) =>
+        Remote("discover", () => new ComposerCatalogue(Config, new Dictionary<string, string>()), ct);
+    public Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken ct) => Remote("warm", () => Config, ct);
 
     public void Watch(SessionInfo session) => Asked.Add($"watch {session.SessionId}");
 

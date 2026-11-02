@@ -16,7 +16,9 @@ use std::rc::Rc;
 
 use super::{Composer, placeholder};
 use crate::features::session::composer::attachment_chip::AttachmentChip;
-use crate::features::session::composer::config_menu::{ConfigMenu, OnSelect};
+use crate::features::session::composer::config_menu::{
+    ConfigMenu, ConfigSettings, OnSelect, inline,
+};
 use crate::features::session::composer::context_ring::ContextRing;
 use crate::features::session::composer::slash_list::SlashList;
 use crate::features::session::view::item_row::CHAT_COLUMN;
@@ -61,16 +63,34 @@ impl Render for Composer {
         let waiting = !self.all_saved();
         let running = self.running.is_some();
         let offline = self.offline.is_some();
+        let settings_disabled =
+            offline || !self.backend_connected || self.advertised_target.is_none();
         let composer = cx.weak_entity();
+        let session = self.session.clone();
+        let generation = self.target_generation;
         let on_select: OnSelect = Rc::new(move |id, value, _, cx| {
             _ = composer.update(cx, |composer, cx| {
-                composer.choose(id.into(), value.into(), cx)
+                if composer.target_generation == generation && composer.session == session {
+                    composer.choose(id.into(), value.into(), cx)
+                }
             });
         });
-        let menus = self
+        let (inline_options, other_options): (Vec<_>, Vec<_>) = self
             .menus()
             .into_iter()
+            .partition(|(option, _)| inline(option));
+        let settings = (!other_options.is_empty()).then(|| ConfigSettings {
+            options: other_options
+                .into_iter()
+                .map(|(option, current)| (option.clone(), current.to_string()))
+                .collect(),
+            on_select: on_select.clone(),
+            disabled: settings_disabled,
+        });
+        let menus = inline_options
+            .into_iter()
             .map(|(option, current)| ConfigMenu {
+                session: self.session.clone().unwrap_or_default(),
                 config_id: option.id.clone(),
                 label: option.name.clone().into(),
                 choices: (option.options.iter())
@@ -78,6 +98,7 @@ impl Render for Composer {
                     .collect(),
                 current: current.to_string(),
                 on_select: on_select.clone(),
+                disabled: settings_disabled,
             });
         // Attach and the pickers wrap onto more lines when they don't fit; the ring and Send stay on the first, right.
         let left = h_flex()
@@ -99,6 +120,7 @@ impl Render for Composer {
                     ),
             )
             .children(menus)
+            .children(settings)
             .children(branch);
         let right = h_flex()
             .flex_none()

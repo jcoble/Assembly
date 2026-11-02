@@ -10,6 +10,7 @@ pub mod motion_skin;
 pub mod placeholder_pane;
 mod side_tabs;
 pub mod top_bar;
+mod top_tabs;
 pub mod utility_strip;
 
 #[cfg(test)]

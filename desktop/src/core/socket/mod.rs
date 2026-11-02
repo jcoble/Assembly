@@ -18,6 +18,9 @@ mod client_thread_tests;
 mod connection;
 pub mod connection_state;
 pub mod endpoint;
+pub mod engine_subscription;
+#[cfg(test)]
+mod engine_tests;
 pub mod error_code;
 mod event;
 #[cfg(test)]

@@ -14,11 +14,32 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
 {
     public string? Name => null;
 
-    public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<(string Id, string Name)>>(sessions.Agents.Select(agent => (agent.Id, agent.Name)).ToList());
+    public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(sessions.ConfigTargets);
 
-    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
-        Task.FromResult(sessionStore.Create(agent, repoUrl));
+    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
+        InitialSessionConfig? initialConfig = null, string? workingFolder = null)
+    {
+        void Validate()
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (workingFolder is not null) sessions.ValidateFolder(workingFolder);
+            if (initialConfig is not null)
+            {
+                if (string.IsNullOrEmpty(initialConfig.TargetId) || initialConfig.Choices is null || initialConfig.Choices.Count == 0
+                    || initialConfig.Choices.Any(x => string.IsNullOrEmpty(x.Key) || x.Value is null))
+                    throw new Assembly.Application.Common.Calls.CallFailed("Expected initial settings from the selected agent catalogue.");
+                sessions.ValidateTarget(agent, initialConfig.TargetId);
+            }
+        }
+        Validate();
+        return Task.FromResult(sessionStore.Create(agent, repoUrl, initialConfig, workingFolder, Validate));
+    }
+
+    public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct) =>
+        sessions.DiscoverConfigAsync(agent, targetId, cwd, ct);
+    public Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken ct) =>
+        sessions.For(session.SessionId).WarmConfigAsync(targetId, ct);
 
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Task.FromResult(sessionStore.Helper(parent, agent, title));
@@ -49,9 +70,9 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
         return Task.FromResult(config.Options is null ? config with { Options = sessionStore.AgentConfig(session.Agent) } : config);
     }
 
-    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken)
+    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null)
     {
-        await sessions.For(session.SessionId).SetConfigAsync(configId, value, cancellationToken);
+        await sessions.For(session.SessionId).SetConfigAsync(configId, value, cancellationToken, targetId);
         return await ConfigAsync(session, cancellationToken);
     }
 

@@ -20,6 +20,8 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
     {
         routes.MapGet("/sessions/{id}/config", GetAsync);
         routes.MapPost("/sessions/{id}/config", SetAsync);
+        routes.MapPost("/config/discover", DiscoverAsync);
+        routes.MapPost("/sessions/{id}/config/warm", WarmAsync);
     }
 
     private Task GetAsync(HttpContext context) =>
@@ -34,7 +36,13 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
             return;
         }
 
-        await AnswerAsync(context, session => machines.For(session).SetConfigAsync(session, configId, value, context.RequestAborted));
+        await AnswerAsync(context, async session =>
+        {
+            var machine = machines.For(session);
+            var result = await machine.SetConfigAsync(session, configId, value, context.RequestAborted, JsonReply.String(body, "targetId"));
+            if (!ReferenceEquals(machines.For(session), machine)) throw new Assembly.Application.Common.Calls.CallFailed("The selected machine changed.");
+            return result;
+        });
     }
 
     private async Task AnswerAsync(HttpContext context, Func<SessionInfo, Task<SessionConfig>> config)
@@ -56,24 +64,34 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
             return;
         }
 
-        await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json =>
+        await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json => ComposerConfigJson.Write(json, answer));
+    }
+
+    private async Task WarmAsync(HttpContext context)
+    {
+        if (await JsonReply.ReadObjectAsync(context) is not { } body || JsonReply.String(body, "targetId") is not { Length: > 0 } target)
+        { await JsonReply.ErrorAsync(context, 400, "expected {targetId}"); return; }
+        await AnswerAsync(context, async session =>
         {
-            json.WriteStartObject();
-            json.WritePropertyName("options");
-            if (answer.Options is { } options)
-                json.WriteRawValue(options);
-            else
-                json.WriteNullValue();
-            json.WriteStartObject("choices");
-            foreach (var (id, value) in answer.Choices)
-                json.WriteString(id, value);
-            json.WriteEndObject();
-            json.WritePropertyName("commands");
-            if (answer.Commands is { } commands)
-                json.WriteRawValue(commands);
-            else
-                json.WriteNullValue();
-            json.WriteEndObject();
+            var machine = machines.For(session);
+            var result = await machine.WarmConfigAsync(session, target, context.RequestAborted);
+            if (!ReferenceEquals(machines.For(session), machine)) throw new Assembly.Application.Common.Calls.CallFailed("The selected machine changed.");
+            return result;
         });
+    }
+
+    private async Task DiscoverAsync(HttpContext context)
+    {
+        if (await JsonReply.ReadObjectAsync(context) is not { } body || JsonReply.String(body, "agent") is not { Length: > 0 } agent
+            || JsonReply.String(body, "targetId") is not { Length: > 0 } target || JsonReply.String(body, "cwd") is not { } cwd)
+        { await JsonReply.ErrorAsync(context, 400, "expected {agent,targetId,cwd}"); return; }
+        try
+        {
+            var machine = machines.Named(null)!;
+            var result = await machine.DiscoverConfigAsync(agent, target, cwd, context.RequestAborted);
+            await JsonReply.WriteAsync(context, 200, json => ComposerConfigJson.Write(json, result.Config, result.ModelOptions));
+        }
+        catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
+        { await JsonReply.ErrorAsync(context, 502, error.Message); }
     }
 }

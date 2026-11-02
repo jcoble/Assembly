@@ -11,6 +11,8 @@ namespace Assembly.Infrastructure.Agents;
 public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions) : IAgentLauncher
 {
     public IReadOnlyList<AgentDescriptor> Agents => agents;
+    public IReadOnlyList<ConfigTarget> ConfigTargets => agents.Select(agent => new ConfigTarget(agent.Id, agent.Name,
+        ConfigTargetIdentity.Of(agent, ConfigTargetIdentity.EnvironmentOf(agent)))).ToList();
 
     /// <summary>
     /// Checkouts were in <c>home/threads</c> until sessions were renamed: moves that folder to <paramref name="checkouts"/>
@@ -34,7 +36,8 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
     public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
     {
         var folder = SessionStore.Folder(checkouts, session) ?? throw new InvalidOperationException($"{session.SessionId} has no folder");
-        await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
+        if (session.WorkingFolder is not null) ValidateFolder(folder);
+        else await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
         stages.Mark("clone");
         return folder;
     }
@@ -52,13 +55,31 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
             _ => null,
         };
 
+    public void ValidateFolder(string folder)
+    {
+        try
+        {
+            if (!Path.IsPathFullyQualified(folder) || !Directory.Exists(folder)) throw new IOException();
+            using var entries = Directory.EnumerateFileSystemEntries(folder).GetEnumerator();
+            _ = entries.MoveNext();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { throw new CallFailed("Choose an existing readable absolute working folder on the selected machine."); }
+    }
+
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {
-        var descriptor = agents.FirstOrDefault(agent => agent.Id == agentId)
-            ?? throw new InvalidOperationException($"This machine has no agent {agentId}.");
-        // Each ACP session gets its session's folder as its cwd; the process itself just needs somewhere to start.
+        var captured = ConfigTargetIdentity.Capture(this, agentId);
+        return LaunchConfiguredAsync(captured.Descriptor, captured.Environment, stages, cancellationToken);
+    }
+
+    public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+        StageTimes stages, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ConfigTargetIdentity.Capture(this, descriptor.Id, ConfigTargetIdentity.Of(descriptor, effectiveEnvironment));
         Directory.CreateDirectory(checkouts);
-        var agent = AgentConnection.Start(descriptor.ToCommand(checkouts), permissions, TranscriptLog.Discard());
+        var agent = AgentConnection.Start(new AgentCommand(descriptor.Command, descriptor.Args, checkouts, effectiveEnvironment, ReplaceEnvironment: true), permissions, TranscriptLog.Discard());
         stages.Mark("adapter");
         return Task.FromResult<IAgentLink>(agent);
     }

@@ -42,7 +42,9 @@ gpui_kit::assets::icon_assets!(
         Lightbulb,
         Terminal,
         Rocket,
-        ListFilter
+        ListFilter,
+        MessageCircle,
+        LayoutDashboard
     ]
 );
 

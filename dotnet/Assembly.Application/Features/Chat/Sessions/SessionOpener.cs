@@ -27,165 +27,170 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     /// <summary>The longest title a first message gives a new session.</summary>
     public const int TitleLength = 60;
 
-    internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken)
+    internal void ValidateTarget(string agent, string targetId)
+    {
+        if (string.IsNullOrEmpty(targetId)) throw new Assembly.Application.Common.Calls.CallFailed("Select the agent configuration again.");
+        ConfigTargetIdentity.Capture(launcher, agent, targetId);
+    }
+
+    internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken,
+        bool configWarm = false, string? targetId = null, KeyValuePair<string, string>? pick = null, Action? validate = null)
     {
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
-        var folder = await launcher.CheckoutAsync(sessionStore.Top(session), stages, cancellationToken);
+        var config = sessionStore.Config(sessionId);
+        var expectedTarget = targetId ?? config.ConfigTarget;
+        var pendingInitial = session.AcpSessionId is null && config.ConfigTarget is not null;
+        var captured = ConfigTargetIdentity.Capture(launcher, session.Agent, expectedTarget);
+        var folder = configWarm ? sessionStore.Root(session) : await launcher.CheckoutAsync(sessionStore.Top(session), stages, cancellationToken);
+        if (configWarm) launcher.ValidateFolder(folder ?? "");
         var adapter = adapters(session.Agent);
-        await adapter.ClosedAsync(session.AcpSessionId, cancellationToken);
-        var running = await adapter.GetAsync(stages, cancellationToken);
+        var running = await adapter.GetForSessionAsync(session.AcpSessionId, stages, cancellationToken, captured.TargetId);
+        string? nativeId = null;
+        var resumed = false;
         try
         {
-            return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken);
-        }
-        catch
-        {
-            await adapter.ReleaseAsync(running);
-            throw;
-        }
-    }
-
-    private async Task<OpenSession> OpenOnAsync(
-        SharedAdapter adapter, RunningAdapter running, SessionInfo session, string folder, string firstText, StageTimes stages,
-        CancellationToken cancellationToken)
-    {
-        var sessionId = session.SessionId;
-        if (session.AcpSessionId is { } previous && running.Init.CanResumeSessions)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            // The same ACP id on the same warm adapter, so the closed turn's late updates share it. The router opens it
-            // again at the answer, in pipe order (UpdateRouter), not when this await resumes on another thread.
-            var resuming = running.Link.Client.ResumeSessionAsync(previous, folder, CancellationToken.None, mcpServers?.Invoke(sessionId));
-            ResumeSessionResponse? resumed = null;
-            try
+            JsonElement options = default;
+            if (session.AcpSessionId is { } previous)
             {
-                resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken);
-                stages.Mark("session resume");
-                // A helper title was made after the agent last saw the session, so the agent is told it here.
-                if (running.Init.CanRenameSessions && session is { TitleSource: "helper", Title: { } helperTitle })
+                if (configWarm && !running.Init.CanResumeSessions) throw new Assembly.Application.Common.Calls.CallFailed("Settings unavailable: this adapter cannot resume the saved session.");
+                if (running.Init.CanResumeSessions)
                 {
-                    await running.Link.Client.RenameSessionAsync(previous, helperTitle, cancellationToken);
-                    stages.Mark("session rename");
+                    try
+                    {
+                        var resuming = running.Link.Client.ResumeSessionAsync(previous, folder!, CancellationToken.None, configWarm ? null : mcpServers?.Invoke(sessionId));
+                        var response = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken, configWarm, previous);
+                        nativeId = previous;
+                        resumed = true;
+                        options = response.ConfigOptions;
+                        stages.Mark("session resume");
+                    }
+                    catch (JsonRpcException error)
+                    {
+                        if (configWarm) throw new Assembly.Application.Common.Calls.CallFailed($"Settings unavailable: {error.Message}");
+                        // Existing normal-turn fallback only.
+                    }
                 }
+            }
+            if (nativeId is null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var opening = running.Link.Client.NewSessionAsync(folder!, CancellationToken.None, configWarm ? null : mcpServers?.Invoke(sessionId));
+                var response = await AnsweredAsync(adapter, running, sessionId, opening, x => x.SessionId, cancellationToken, configWarm, null);
+                nativeId = response.SessionId;
+                options = response.ConfigOptions;
+                stages.Mark("session new");
+            }
 
-                var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
-                return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
-            }
-            catch (JsonRpcException error) when (resumed is null)
+            // Stage every explicit initial choice and native ID until the entire map is accepted.
+            var strict = pendingInitial;
+            var choices = config.Choices.ToDictionary(x => x.Key, x => x.Value);
+            var observed = ConfigObservation.Read(running.Updates, nativeId, options);
+            var initialOptions = observed.RawOptions;
+            if (strict && (ConfigOptions.Model(observed.Options) is not { } initialModel || !choices.ContainsKey(initialModel.Id)))
+                throw new Assembly.Application.Common.Calls.CallFailed("The agent no longer offers the initial model selection.");
+            observed = await ApplyChoicesAsync(running, nativeId, observed, choices, strict, stages, cancellationToken);
+            if (pick is { } choosing)
             {
-                // The agent lost its transcript. A new ACP session keeps the session usable; the agent won't remember it.
-                Console.Error.WriteLine($"session {sessionId}: could not resume {previous} ({error.Message}); starting a new session");
+                observed = await ApplyChoicesAsync(running, nativeId, observed,
+                    new Dictionary<string, string> { [choosing.Key] = choosing.Value }, true, stages, cancellationToken);
+                choices[choosing.Key] = choosing.Value;
             }
-            catch (Exception) when (resumed is not null)
+            sessionStore.ObserveConfig(session, nativeId, observed.RawOptions, observed.Commands, pick is null ? null : choices, () =>
             {
-                // Stopped or failed after the resume answered: the agent has the session open, so it's closed there
-                // too, and anything it sends for it from now on is dropped.
-                running.Updates.Forget(previous);
-                await CloseQuietlyAsync(adapter, running, previous);
-                throw;
+                ConfigTargetIdentity.Capture(launcher, session.Agent, captured.TargetId);
+                validate?.Invoke();
+            }, cancellationToken, agentOptions: !resumed && !configWarm ? initialOptions : null);
+
+            var title = !configWarm && !resumed && session.Title is null ? Title(firstText) : null;
+            if (title is not null) sessionStore.SetTitle(sessionId, title, "prompt");
+            if (!configWarm && running.Init.CanRenameSessions)
+            {
+                var agentTitle = resumed ? session.TitleSource == "helper" ? session.Title : null : session.Helper ? session.Title : Title(firstText);
+                if (agentTitle is not null) await running.Link.Client.RenameSessionAsync(nativeId, agentTitle, cancellationToken);
             }
+            return new OpenSession(adapter, running, nativeId, resumed, resumed ? session.SessionCost : null,
+                ConfigOptions.ModelName(observed.Options), title is not null);
         }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        var opening = running.Link.Client.NewSessionAsync(folder, CancellationToken.None, mcpServers?.Invoke(sessionId));
-        var acp = await AnsweredAsync(adapter, running, sessionId, opening, late => late.SessionId, cancellationToken);
-
-        try
+        catch (Exception error)
         {
-            sessionStore.SetAcpSession(sessionId, acp.SessionId);
-            stages.Mark("session new");
-            var title = session.Title is null ? Title(firstText) : null;
-            if (title is not null)
-                sessionStore.SetTitle(sessionId, title, "prompt");
-            // A started session's title is its task, not the framed prompt it's sent.
-            if (running.Init.CanRenameSessions && (session.Helper ? session.Title : Title(firstText)) is { } agentTitle)
+            if (nativeId is not null)
             {
-                // Naming the session on the agent too stops codex-acp starting a thread of its own to make a title.
-                await running.Link.Client.RenameSessionAsync(acp.SessionId, agentTitle, cancellationToken);
-                stages.Mark("session rename");
+                running.Updates.Forget(nativeId);
+                if (configWarm) running.Link.Client.SetSessionPolicy(nativeId, null);
+                if (!configWarm) await CloseQuietlyAsync(adapter, running, nativeId);
             }
-
-            if (acp.ConfigOptions.ValueKind == JsonValueKind.Array)
-                sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
-            var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);
-            return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen, Titled: title is not null);
-        }
-        catch (Exception)
-        {
-            // Stopped or failed once the agent had opened it: it's closed there too, as after a resume.
-            running.Updates.Forget(acp.SessionId);
-            await CloseQuietlyAsync(adapter, running, acp.SessionId);
+            if (configWarm || pendingInitial) await adapter.ReleaseWarmAsync(running, nativeId ?? session.AcpSessionId);
+            else await adapter.ReleaseAsync(running);
+            if (configWarm && error is JsonRpcException rpc) throw new Assembly.Application.Common.Calls.CallFailed($"Settings unavailable: {rpc.Message}");
+            if (configWarm && error is IOException or ObjectDisposedException) throw new Assembly.Application.Common.Calls.CallFailed("The agent ended before its settings were available.");
             throw;
         }
     }
 
-    // Neither adapter honours a request's cancel, so a session/new or session/resume goes out on a token the cancel
-    // doesn't cut: a cancel after it went out waits for the answer and closes the session the agent opened. That delays
-    // the cancel by up to twice the close limit: the wait for the answer, then the close.
-    private static async Task<T> AnsweredAsync<T>(
-        SharedAdapter adapter, RunningAdapter running, string sessionId, Task<T> opening, Func<T, string> acpSessionId,
-        CancellationToken cancellationToken)
+    private static async Task<T> AnsweredAsync<T>(SharedAdapter adapter, RunningAdapter running, string sessionId,
+        Task<T> opening, Func<T, string> id, CancellationToken ct, bool warm, string? previous)
     {
-        try
-        {
-            return await opening.WaitAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        try { return await opening.WaitAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             try
             {
-                var late = acpSessionId(await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, CancellationToken.None));
+                var late = id(await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, CancellationToken.None));
                 running.Updates.Forget(late);
-                await CloseQuietlyAsync(adapter, running, late);
-                Console.Error.WriteLine($"session {sessionId}: closed {late}, which answered after the open was cancelled");
+                if (!warm) await CloseQuietlyAsync(adapter, running, late);
             }
-            catch (Exception error) when (error is TimeoutException or JsonRpcException or IOException or ObjectDisposedException)
+            catch (TimeoutException)
             {
-                // No answer in time, or none at all: a session it opened lives until the adapter exits. An error opened none.
+                // The unanswered open may own the transcript. Fence the exact process until it exits.
+                await adapter.RetireAsync(running, previous);
             }
+            catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException) { }
             throw;
         }
     }
 
-    private static async Task CloseQuietlyAsync(SharedAdapter adapter, RunningAdapter running, string acpSessionId)
+    private static async Task CloseQuietlyAsync(SharedAdapter adapter, RunningAdapter running, string nativeId)
     {
-        try
-        {
-            await adapter.CloseAsync(running, acpSessionId);
-        }
+        try { await adapter.CloseAsync(running, nativeId); }
         catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException or TimeoutException)
-        {
-            Console.Error.WriteLine($"session {acpSessionId} didn't close after a failed open: {error.Message}");
-        }
+        { Console.Error.WriteLine($"session {nativeId} didn't close after a failed open: {error.Message}"); }
     }
 
-    /// <summary>Sets each chosen value the session doesn't have yet, saves the options as they end up, and returns their model's name.</summary>
-    private async Task<string?> ApplyChoicesAsync(
-        RunningAdapter running, string sessionId, string acpSessionId, JsonElement options, StageTimes stages, CancellationToken cancellationToken)
+    private static async Task<ConfigObservation> ApplyChoicesAsync(RunningAdapter running, string nativeId, ConfigObservation observed,
+        IReadOnlyDictionary<string, string> choices, bool strict, StageTimes stages, CancellationToken ct)
     {
-        if (options.ValueKind != JsonValueKind.Array)
-            return null;
-        var choices = sessionStore.Config(sessionId).Choices;
-        foreach (var (id, _, _) in ConfigOptions.Selects(options).ToList())
+        // Model first; subsequent option values/defaults come from its actual returned snapshot.
+        var applied = new HashSet<string>(StringComparer.Ordinal);
+        while (true)
         {
-            // Read again each time: setting one option can change another's values.
-            var (_, current, values) = ConfigOptions.Selects(options).FirstOrDefault(option => option.Id == id);
-            if (!choices.TryGetValue(id, out var value) || value == current || !(values?.Contains(value) ?? false))
+            var modelId = ConfigOptions.Model(observed.Options)?.Id;
+            var id = ConfigOptions.Selects(observed.Options).OrderBy(x => x.Id == modelId ? 0 : 1)
+                .Select(x => x.Id).FirstOrDefault(id => choices.ContainsKey(id) && !applied.Contains(id));
+            if (id is null) break;
+            applied.Add(id);
+            var value = choices[id];
+            var option = ConfigOptions.Selects(observed.Options).FirstOrDefault(x => x.Id == id);
+            if (option.Values is null || !option.Values.Contains(value))
+            {
+                if (strict) throw new Assembly.Application.Common.Calls.CallFailed($"The agent no longer offers {id}={value}.");
                 continue;
+            }
+            if (value == option.Current) continue;
             try
             {
-                options = (await running.Link.Client.SetConfigOptionAsync(acpSessionId, id, value, cancellationToken)).ConfigOptions;
+                var set = await running.Link.Client.SetConfigOptionAsync(nativeId, id, value, ct);
+                observed = ConfigObservation.Read(running.Updates, nativeId, set.ConfigOptions, observed.Commands);
             }
             catch (JsonRpcException error)
             {
-                Console.Error.WriteLine($"session {sessionId}: the agent didn't take {id}={value} ({error.Message})");
+                if (strict) throw new Assembly.Application.Common.Calls.CallFailed($"The agent didn't take {id}={value}: {error.Message}");
+                Console.Error.WriteLine($"session {nativeId}: the agent didn't take {id}={value} ({error.Message})");
             }
         }
-
-        if (choices.Count > 0)
-            stages.Mark("session config");
-        sessionStore.SetConfigOptions(sessionId, options.GetRawText());
-        return ConfigOptions.ModelName(options);
+        if (strict && choices.Any(choice => ConfigOptions.Selects(observed.Options).FirstOrDefault(x => x.Id == choice.Key).Current != choice.Value))
+            throw new Assembly.Application.Common.Calls.CallFailed("The agent did not confirm all selected settings.");
+        if (choices.Count > 0) stages.Mark("session config");
+        return observed;
     }
 
     /// <summary>The message's first line, cut to <see cref="TitleLength"/> characters; null when it has no text.</summary>

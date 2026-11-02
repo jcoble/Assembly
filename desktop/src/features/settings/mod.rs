@@ -10,6 +10,7 @@ mod row;
 mod search;
 mod section;
 mod settings_page;
+pub mod sign_in_panel;
 
 use gpui_kit::*;
 

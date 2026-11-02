@@ -97,10 +97,14 @@ internal sealed class SessionsFeature : IFeature
             var machine = _machines.Named(args.Machine) ?? throw new CallFailed("unknown machine");
             if (!(await machine.AgentsAsync(call.Cancellation)).Any(known => known.Id == args.Agent))
                 throw new CallFailed($"this machine has no agent {args.Agent}");
+            if (!ReferenceEquals(_machines.Named(machine.Name), machine)) throw new CallFailed("The selected machine changed.");
+            if (args.ParentSessionId is not null && (args.InitialConfig is not null || args.WorkingFolder is not null))
+                throw new CallFailed("Helper creation does not accept owner initial settings.");
             var session = args.ParentSessionId is { } parentId
                 ? await machine.CreateHelperAsync(new SessionInfo(parentId, args.Agent, args.RepoUrl, null, null, 0), args.Agent,
                     args.Title ?? "Session", call.Cancellation)
-                : await machine.CreateSessionAsync(args.Agent, args.RepoUrl, call.Cancellation);
+                : await machine.CreateSessionAsync(args.Agent, args.RepoUrl, call.Cancellation, args.InitialConfig, args.WorkingFolder);
+            if (!ReferenceEquals(_machines.Named(machine.Name), machine)) throw new CallFailed("The selected machine changed.");
             return _ => new Created(session.SessionId);
         }, args => $"machine {args.Machine}");
     }
@@ -114,7 +118,7 @@ internal sealed class SessionsFeature : IFeature
     internal sealed record Page(IReadOnlyList<SessionItem> Sessions, long? NextBefore, string? NextBeforeId);
 
     internal sealed record CreateArgs([property: JsonRequired] string Agent, [property: JsonRequired] string RepoUrl, string? Machine = null,
-        string? ParentSessionId = null, string? Title = null);
+        string? ParentSessionId = null, string? Title = null, InitialSessionConfig? InitialConfig = null, string? WorkingFolder = null);
 
     internal sealed record Created(string SessionId);
 

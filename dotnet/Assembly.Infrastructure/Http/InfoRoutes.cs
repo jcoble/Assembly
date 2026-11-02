@@ -1,4 +1,5 @@
 using System.Reflection;
+using Assembly.Application.Common.Agents;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -33,7 +34,7 @@ internal sealed class InfoRoutes(MachineSet machines)
             return;
         }
 
-        IReadOnlyList<(string Id, string Name)> agents;
+        IReadOnlyList<ConfigTarget> agents;
         try
         {
             agents = await machine.AgentsAsync(context.RequestAborted);
@@ -48,11 +49,12 @@ internal sealed class InfoRoutes(MachineSet machines)
         {
             json.WriteStartObject();
             json.WriteStartArray("agents");
-            foreach (var (id, agentName) in agents)
+            foreach (var (id, agentName, targetId) in agents)
             {
                 json.WriteStartObject();
                 json.WriteString("id", id);
                 json.WriteString("name", agentName);
+                json.WriteString("targetId", targetId);
                 json.WriteEndObject();
             }
             json.WriteEndArray();

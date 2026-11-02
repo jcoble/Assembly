@@ -403,7 +403,7 @@ public sealed class DesktopBackendTests : IAsyncLifetime
     }
 
     // Answers initialize and session/new, then marks the prompt and never answers it. Ends when its stdin does.
-    private const string FakeAdapter = """
+    internal const string FakeAdapter = """
         $| = 1;
         while (<STDIN>) {
             my ($id) = /"id":(\d+)/;

@@ -40,6 +40,18 @@ public static class ConfigOptions
         return null;
     }
 
+    internal static (string Id, string? Current, IReadOnlyList<string> Values)? Model(JsonElement options)
+    {
+        if (options.ValueKind != JsonValueKind.Array) return null;
+        foreach (var item in options.EnumerateArray())
+            if (Text(item, "category") == "model")
+            {
+                using var single = JsonDocument.Parse("[" + item.GetRawText() + "]");
+                return Selects(single.RootElement).FirstOrDefault();
+            }
+        return null;
+    }
+
     private static string? Text(JsonElement json, string name) =>
         json.ValueKind == JsonValueKind.Object && json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()

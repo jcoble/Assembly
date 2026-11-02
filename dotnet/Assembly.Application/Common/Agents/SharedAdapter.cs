@@ -5,7 +5,7 @@ using Assembly.Application.Features.Chat.Sessions;
 namespace Assembly.Application.Common.Agents;
 
 /// <summary>An adapter process and what every session on it needs: its initialize answer, and its updates by session.</summary>
-internal sealed record RunningAdapter(IAgentLink Link, InitializeResponse Init, UpdateRouter Updates);
+internal sealed record RunningAdapter(IAgentLink Link, InitializeResponse Init, UpdateRouter Updates, string TargetId);
 
 /// <summary>
 /// The one adapter process an agent's sessions share on this machine (and so one Codex app-server for every Codex
@@ -32,6 +32,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private RunningAdapter? _running;
+    private bool _disposed;
     private int _sessions;
     private CancellationTokenSource? _idle;
     // The wait for the idle grace to end, awaited by the dispose.
@@ -44,39 +45,103 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
     private readonly List<Task> _stopping = [];
 
     /// <summary>The running adapter, started if need be, for one more session; <see cref="ReleaseAsync"/> gives it back.</summary>
-    internal async Task<RunningAdapter> GetAsync(StageTimes stages, CancellationToken cancellationToken)
+    internal Task<RunningAdapter> GetAsync(StageTimes stages, CancellationToken cancellationToken) =>
+        GetForSessionAsync(null, stages, cancellationToken);
+
+    // Native-id admission and borrowing happen under the SAME gate. A detached/retired writer must exit first.
+    internal async Task<RunningAdapter> GetForSessionAsync(string? nativeId, StageTimes stages, CancellationToken cancellationToken, string? targetId = null)
     {
-        await _gate.WaitAsync(cancellationToken);
-        try
+        while (true)
         {
-            _idle?.Cancel();
-            _idle?.Dispose();
-            _idle = null;
-            if (_running is not { } running || running.Link.Exited.IsCompleted)
+            Task? wait = null;
+            await _gate.WaitAsync(cancellationToken);
+            try
             {
-                await StopAsync();
-                var link = await launcher.LaunchAsync(agentId, stages, cancellationToken);
-                try
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                var captured = ConfigTargetIdentity.Capture(launcher, agentId, targetId);
+                _idle?.Cancel();
+                _idle?.Dispose();
+                _idle = null;
+                foreach (var key in _closing.Where(x => x.Value.IsCompleted).Select(x => x.Key).ToList()) _closing.Remove(key);
+                foreach (var key in _detached.Where(x => x.Value.Link.Exited.IsCompleted).Select(x => x.Key).ToList()) _detached.Remove(key);
+                if (_running is { } old && (old.Link.Exited.IsCompleted || old.TargetId != captured.TargetId))
+                    RetireLocked(old);
+                if (nativeId is not null && _closing.TryGetValue(nativeId, out var closing)) wait = closing;
+                else if (nativeId is not null && _detached.TryGetValue(nativeId, out var detached) && detached != _running) wait = detached.Link.Exited;
+                if (wait is null)
                 {
-                    var air = launcher.Agents.FirstOrDefault(agent => agent.Id == agentId)?.Air;
-                    var init = await link.Client.InitializeAsync(ClientInfo, air, cancellationToken);
-                    stages.Mark("initialize");
-                    running = _running = new RunningAdapter(link, init, new UpdateRouter(link.Client.Updates));
-                }
-                catch
-                {
-                    await link.DisposeAsync();
-                    throw;
+                    if (_running is not { } running)
+                    {
+                        // Never re-look up by id after checking a descriptor: launch exactly the captured target.
+                        var link = await launcher.LaunchConfiguredAsync(captured.Descriptor, captured.Environment, stages, cancellationToken);
+                        try
+                        {
+                            var init = await link.Client.InitializeAsync(ClientInfo, captured.Descriptor.Air, cancellationToken);
+                            ConfigTargetIdentity.Capture(launcher, agentId, captured.TargetId);
+                            stages.Mark("initialize");
+                            running = _running = new RunningAdapter(link, init, new UpdateRouter(link.Client.Updates), captured.TargetId);
+                        }
+                        catch { await link.DisposeAsync(); throw; }
+                    }
+                    _sessions++;
+                    return running;
                 }
             }
+            finally { _gate.Release(); }
+            await wait.WaitAsync(cancellationToken);
+        }
+    }
 
-            _sessions++;
-            return running;
-        }
-        finally
+    private readonly Dictionary<string, RunningAdapter> _detached = [];
+
+    private void RetireLocked(RunningAdapter running)
+    {
+        if (_running != running) return;
+        _running = null;
+        if (_sessions > 0) _retired[running] = _sessions;
+        else TrackStopLocked(running);
+        _sessions = 0;
+    }
+
+    private Task TrackStopLocked(RunningAdapter running)
+    {
+        _stopping.RemoveAll(task => task.IsCompleted);
+        var stopping = EndAsync(running);
+        _stopping.Add(stopping);
+        return stopping;
+    }
+
+    internal async Task RetireAsync(RunningAdapter expected, string? nativeId)
+    {
+        await _gate.WaitAsync();
+        try
         {
-            _gate.Release();
+            RetireLocked(expected);
+            if (nativeId is not null) _closing[nativeId] = expected.Link.Exited;
         }
+        finally { _gate.Release(); }
+    }
+
+    internal async Task ReleaseWarmAsync(RunningAdapter expected, string? nativeId)
+    {
+        Task? stopping = null;
+        await _gate.WaitAsync();
+        try
+        {
+            if (nativeId is not null) _detached[nativeId] = expected;
+            if (_retired.TryGetValue(expected, out var count))
+            {
+                if (count > 1) _retired[expected] = count - 1;
+                else { _retired.Remove(expected); stopping = TrackStopLocked(expected); }
+            }
+            else if (_running == expected && --_sessions == 0)
+            {
+                _running = null;
+                stopping = TrackStopLocked(expected);
+            }
+        }
+        finally { _gate.Release(); }
+        if (stopping is not null) await stopping;
     }
 
     /// <summary>
@@ -101,6 +166,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
                 }
                 return;
             }
+            if (_running != running) return;
             if (--_sessions > 0)
                 return;
             _idle = new CancellationTokenSource();
@@ -130,12 +196,7 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
             await _gate.WaitAsync();
             try
             {
-                if (_running == running)
-                {
-                    _running = null;
-                    _retired[running] = _sessions;
-                    _sessions = 0;
-                }
+                RetireLocked(running);
                 _closing[acpSessionId] = running.Link.Exited;
             }
             finally
@@ -215,13 +276,19 @@ public sealed class SharedAdapter(IAgentLauncher launcher, string agentId, TimeP
         await _gate.WaitAsync();
         try
         {
+            if (_disposed) return;
+            _disposed = true;
             _idle?.Cancel();
             await _idleTask;
+            _idle?.Dispose();
+            _idle = null;
             await StopAsync();
             foreach (var retired in _retired.Keys)
                 await EndAsync(retired);
             _retired.Clear();
             await Task.WhenAll(_stopping);
+            _closing.Clear();
+            _detached.Clear();
         }
         finally
         {

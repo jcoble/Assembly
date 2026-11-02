@@ -21,6 +21,14 @@ use crate::features::session::client::session_client::{CallError, SessionClient}
 pub struct Composer {
     client: Rc<dyn SessionClient>,
     session: Option<String>,
+    /// Identifies this visit, including leaving and returning to the same session.
+    target_generation: u64,
+    owner: Option<(String, Option<String>, String)>,
+    advertised_target: Option<String>,
+    backend_connected: bool,
+    _target: Option<Task<()>>,
+    _warm: Option<Task<()>>,
+    _connection: Option<Subscription>,
     draft: Entity<TextareaState>,
     /// The other sessions' unsent drafts, by session id.
     drafts: HashMap<String, String>,
@@ -103,9 +111,33 @@ impl Composer {
                 _ => {}
             },
         );
+        let backend_connected = crate::core::socket::client::SocketClient::try_global(cx)
+            .map(|socket| {
+                matches!(
+                    socket.read(cx).state(),
+                    crate::core::socket::connection_state::ConnectionState::Connected { .. }
+                )
+            })
+            .unwrap_or(true);
+        let connection = crate::core::socket::client::SocketClient::try_global(cx).map(|socket| {
+            cx.observe(&socket, |composer: &mut Self, socket, cx| {
+                let connected = matches!(
+                    socket.read(cx).state(),
+                    crate::core::socket::connection_state::ConnectionState::Connected { .. }
+                );
+                composer.connection_changed(connected, cx);
+            })
+        });
         Composer {
             client,
             session: None,
+            target_generation: 0,
+            owner: None,
+            advertised_target: None,
+            backend_connected,
+            _target: None,
+            _warm: None,
+            _connection: connection,
             draft,
             drafts: HashMap::new(),
             attachments: Vec::new(),
@@ -142,6 +174,11 @@ impl Composer {
         if self.session == session {
             return;
         }
+        self.target_generation += 1;
+        self.owner = None;
+        self.advertised_target = None;
+        self._target = None;
+        self._warm = None;
         if let Some(left) = self.session.take() {
             let text = self.draft.read(cx).value().to_string();
             if !text.is_empty() {
@@ -216,6 +253,7 @@ impl Composer {
         if self.offline != machine {
             self.offline = machine;
             (self.connecting, self.still_offline) = (None, false);
+            self.refresh_config_target(cx);
             cx.notify();
         }
     }
@@ -351,6 +389,8 @@ mod attach;
 mod config;
 #[path = "composer_render.rs"]
 mod render;
+#[path = "composer_target.rs"]
+mod target;
 
 #[cfg(test)]
 #[path = "composer_view_tests.rs"]

@@ -57,6 +57,16 @@ public sealed class AdapterLauncherTests : IDisposable
         Assert.Contains("both", log.ToString());
     }
 
+    [Fact]
+    public async Task Explicit_existing_folder_bypasses_clone_and_invalid_folder_is_rejected()
+    {
+        var launcher = new AdapterLauncher([], Path.Combine(_work, "managed"), new UnclaimedPermissions());
+        var direct = new SessionInfo("direct", "claude", "not-a-repository", null, null, 0, WorkingFolder: _work);
+        Assert.Equal(_work, await launcher.CheckoutAsync(direct, new StageTimes(TimeProvider.System), CancellationToken.None));
+        Assert.False(Directory.Exists(Path.Combine(_work, "managed")));
+        await Assert.ThrowsAnyAsync<Exception>(() => launcher.CheckoutAsync(direct with { WorkingFolder = "relative" }, new StageTimes(TimeProvider.System), CancellationToken.None));
+    }
+
     private static void Git(string folder, params string[] arguments)
     {
         var start = new ProcessStartInfo("git") { WorkingDirectory = folder, UseShellExecute = false };

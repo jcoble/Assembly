@@ -28,6 +28,19 @@ pub(super) enum OutFrame<'a> {
         #[serde(skip_serializing_if = "Option::is_none")]
         after: Option<i64>,
     },
+    #[serde(rename = "sub")]
+    EngineSub {
+        id: u64,
+        stream: &'a str,
+        topic: &'a str,
+        machine: &'a str,
+    },
+    #[serde(rename = "ack")]
+    EngineAck {
+        id: u64,
+        stream: &'a str,
+        after: i64,
+    },
     Unsub {
         id: u64,
     },

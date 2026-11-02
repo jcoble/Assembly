@@ -115,16 +115,20 @@ public sealed partial class SessionHost : IPermissionPolicy
     {
         RunningTurn turn;
         KeptSession? kept;
+        CancellationTokenSource? warmStop;
         lock (_gate)
         {
             if (_turn is not null)
                 return null;
+            Interlocked.Increment(ref _warmGeneration);
+            warmStop = _warm?.Stop;
             // A session kept open for background work takes the prompt as it is.
             (kept, _kept) = (_kept, null);
             turn = _turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time)) { Session = kept?.Session };
             Apply(new TurnStarted(Now(), turn.RunId, text, clientId));
         }
 
+        try { warmStop?.Cancel(); } catch (ObjectDisposedException) { }
         _sessionStore.Touch(_sessionId);
         _lastTurn = turn.Done = Task.Run(() => RunAsync(turn, text, kept));
         return turn.RunId;
@@ -425,14 +429,17 @@ public sealed partial class SessionHost : IPermissionPolicy
     }
 
     /// <summary>Stops the running turn, if any, for shutdown, and returns when the last turn's work is done.</summary>
-    public Task StopForShutdownAsync()
+    public async Task StopForShutdownAsync()
     {
+        await StopWarmForShutdownAsync();
+        Task last;
         lock (_gate)
         {
             _shuttingDown = true;
             _turn?.Stopping.Cancel();
-            return _lastTurn;
+            last = _lastTurn;
         }
+        await last;
     }
 
     private async Task RunAsync(RunningTurn turn, string text, KeptSession? kept)
