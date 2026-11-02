@@ -106,7 +106,8 @@ public sealed partial class SessionHost
         }
         catch (JsonRpcException error)
         {
-            turn.Inserted.TrySetResult(error.Code == -32000 ? new SendResult.AuthRequired(turn.UserRow) : new SendResult.Failed(error.Message));
+            turn.AuthRequired = error.Code == -32000;
+            if (!turn.AuthRequired) turn.Inserted.TrySetResult(new SendResult.Failed(error.Message));
             end = at => UpdateReader.TurnFailure(error, at);
         }
         catch (IOException) when (session is not null)
@@ -124,7 +125,7 @@ public sealed partial class SessionHost
             end = at => new TurnFailed(at, error.Message, null);
         }
 
-        turn.Inserted.TrySetResult(new SendResult.Unknown());
+        if (!turn.AuthRequired) turn.Inserted.TrySetResult(new SendResult.Unknown());
         decimal? sessionCost;
         var keep = false;
         var toolsOpen = false;
@@ -160,6 +161,9 @@ public sealed partial class SessionHost
                     }, authProof: proof);
                 if (terminalSeq != 0) turn.AuthTerminalSeq = terminalSeq;
                 if (completed) turn.FeedCompleted = true;
+                // A refusal is safe to complete only after its real terminal/report/reply writer succeeds.
+                // Otherwise the worker could finalize E1 before Report has its owning inflight authority.
+                if (turn.AuthRequired) turn.Inserted.TrySetResult(new SendResult.AuthRequired(turn.UserRow));
                 title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };
                 if (title)
                     _titlePending = false;
@@ -170,6 +174,7 @@ public sealed partial class SessionHost
             }
             finally
             {
+                turn.Inserted.TrySetResult(new SendResult.Unknown());
                 // Even if saving the end failed, the session takes sends again.
                 sessionCost = _converter.SessionCost;
                 _turn = null;
