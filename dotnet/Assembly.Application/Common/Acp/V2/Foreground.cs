@@ -28,6 +28,7 @@ internal sealed class Foreground : IDisposable
     private Exception? _closed;
     private bool _active;
     private bool _cancelRequested;
+    private bool _disposed;
 
     public CancellationToken Work
     {
@@ -80,10 +81,11 @@ internal sealed class Foreground : IDisposable
         EndWorkIfIdle();
     }
 
-    public void Read(SessionNotification notification)
+    public void Read(SessionNotification notification, Action? publishAccepted = null)
     {
         lock (_gate)
         {
+            if (_closed is not null) return;
             var update = notification.Update;
             if (notification.Kind is "user_message" or "user_message_chunk"
                 && update.TryGetProperty("messageId", out var id) && id.GetString() is { Length: > 0 } messageId
@@ -93,7 +95,11 @@ internal sealed class Foreground : IDisposable
                     _messages[messageId] = boundary = new Boundary();
                 boundary.Acknowledged = true;
             }
-            if (notification.Kind != "state_update") return;
+            if (notification.Kind != "state_update")
+            {
+                publishAccepted?.Invoke();
+                return;
+            }
             var state = update.Deserialize(AcpJsonContext.Default.StateUpdate);
             if (state is null) return;
             _active = state.State is "running" or "requires_action";
@@ -108,6 +114,7 @@ internal sealed class Foreground : IDisposable
                 if (state.State is "running" or "requires_action") boundary.Active = true;
                 else if (state.State == "idle" && (boundary.Active || state.StopReason is not null)) boundary.End = state;
             }
+            publishAccepted?.Invoke();
             if (state is { State: "idle", StopReason: "cancelled" })
             {
                 foreach (var cancel in _cancels) cancel.TrySetResult();
@@ -126,9 +133,12 @@ internal sealed class Foreground : IDisposable
         {
             _cancelRequested = true;
             if (_closed is not null) waiting.TrySetException(_closed);
-            else _cancels.Add(waiting);
+            else
+            {
+                _cancels.Add(waiting);
+                _work.Cancel();
+            }
         }
-        _work.Cancel();
         return waiting;
     }
 
@@ -141,6 +151,7 @@ internal sealed class Foreground : IDisposable
     {
         lock (_gate)
         {
+            if (_closed is not null) return;
             _closed = error;
             foreach (var pending in _pending)
             {
@@ -149,8 +160,8 @@ internal sealed class Foreground : IDisposable
             }
             foreach (var cancel in _cancels) cancel.TrySetException(error);
             _pending.Clear(); _messages.Clear(); _cancels.Clear();
+            _work.Cancel();
         }
-        _work.Cancel();
     }
 
     private void Complete()
@@ -176,13 +187,18 @@ internal sealed class Foreground : IDisposable
     {
         lock (_gate)
         {
-            if (!_active && _pending.Count == 0) _work.Cancel();
+            if (_closed is null && !_active && _pending.Count == 0) _work.Cancel();
         }
     }
 
     public void Dispose()
     {
-        Close(new ObjectDisposedException(nameof(Foreground)));
-        _work.Dispose();
+        lock (_gate)
+        {
+            if (_disposed) return;
+            Close(new ObjectDisposedException(nameof(Foreground)));
+            _work.Dispose();
+            _disposed = true;
+        }
     }
 }

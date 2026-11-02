@@ -8,6 +8,9 @@ public interface IJsonRpcTarget
     /// <summary>Answer a request. Throw <see cref="JsonRpcException"/> to send an error back.</summary>
     Task<JsonElement> OnRequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken);
 
+    Task<JsonElement> OnRequestAsync(string method, JsonElement parameters, JsonRpcRequestContext request,
+        CancellationToken cancellationToken) => OnRequestAsync(method, parameters, cancellationToken);
+
     /// <summary>Called on the read loop, in arrival order. Must not block.</summary>
     void OnNotification(string method, JsonElement parameters);
 

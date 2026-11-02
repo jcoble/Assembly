@@ -27,6 +27,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     private readonly BackgroundWork _answers = new(TimeProvider.System, Console.Error);
     private volatile Exception? _closedReason;
     private long _lastId;
+    private readonly string _connectionId = Guid.NewGuid().ToString("N");
 
     public JsonRpcConnection(Stream input, Stream output, IJsonRpcTarget target, TranscriptLog transcript)
     {
@@ -163,7 +164,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     {
         try
         {
-            var result = await _target.OnRequestAsync(method, parameters, _stopping.Token);
+            var result = await _target.OnRequestAsync(method, parameters, new JsonRpcRequestContext(_connectionId, id), _stopping.Token);
             await WriteAsync(json =>
             {
                 json.WritePropertyName("id");

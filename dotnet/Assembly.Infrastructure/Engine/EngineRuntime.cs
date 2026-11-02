@@ -116,36 +116,35 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     internal CommandResult Submit(CommandContext context, EngineCommand command) =>
         ((IEngineRuntime)this).Write(scope => Commands.Apply(scope, context, command));
 
-    /// <summary>Reads the owning entity's version and epoch in the same writer as its fact.</summary>
-    internal CommandResult SubmitCurrent(string kind, string entityId, EngineCommand command) =>
-        ((IEngineRuntime)this).Write(scope =>
+    /// <summary>Refreshes the entity version while preserving the callback's original epoch.</summary>
+    internal CommandResult SubmitCurrent(string kind, string entityId, EngineCommand command, long observedEpoch) =>
+        ((IEngineRuntime)this).Write(scope => SubmitCurrent(scope, kind, entityId, command, observedEpoch));
+
+    internal CommandResult SubmitCurrent(IWriteScope scope, string kind, string entityId, EngineCommand command, long observedEpoch)
+    {
+        var sql = kind switch
         {
-            var sql = kind switch
-            {
-                "session" => "SELECT version,epoch FROM engine_session WHERE id=$id AND machine=$machine",
-                "needs_me" => "SELECT n.version,s.epoch FROM engine_needs_me n JOIN engine_session s ON s.id=n.session_id WHERE n.id=$id AND s.machine=$machine",
-                "tool_call" => "SELECT version,epoch FROM engine_tool_call WHERE id=$id AND machine=$machine",
-                "usage" => "SELECT version,epoch FROM engine_usage WHERE id=$id AND machine=$machine",
-                _ => throw new ArgumentOutOfRangeException(nameof(kind))
-            };
-            var current = scope.QueryFirst(sql, r => ((long Version, long Epoch)?)(r.Long(0), r.Long(1)),
-                new SqlArg("$id", entityId), new SqlArg("$machine", Machine));
-            var sessionId = command switch
-            {
-                global::Assembly.Engine.NeedsMe.OpenNeed open => open.SessionId,
-                ToolStarted start => start.Attribution.SessionId,
-                TurnUsage usage => usage.Attribution.SessionId,
-                _ => null
-            };
-            var creationEpoch = sessionId is null ? null : scope.QueryFirst(
-                "SELECT epoch FROM engine_session WHERE id=$id AND machine=$machine",
-                r => (long?)r.Long(0), new SqlArg("$id", sessionId), new SqlArg("$machine", Machine));
-            if (current is null && creationEpoch is null)
-                return new CommandResult(false, false, "bad_args", 0, 0, 0);
-            var epoch = current?.Epoch ?? creationEpoch!.Value;
-            return Commands.Apply(scope, new(Guid.NewGuid(), Machine, new(ActorKind.System, "adapter"),
-                entityId, current?.Version ?? 0, epoch, _time.GetUtcNow().ToUnixTimeMilliseconds()), command);
-        });
+            "session" => "SELECT version FROM engine_session WHERE id=$id AND machine=$machine AND state<>'foreign'",
+            "needs_me" => "SELECT n.version FROM engine_needs_me n JOIN engine_session s ON s.id=n.session_id WHERE n.id=$id AND s.machine=$machine AND s.state<>'foreign'",
+            "tool_call" => "SELECT version FROM engine_tool_call WHERE id=$id AND machine=$machine",
+            "usage" => "SELECT version FROM engine_usage WHERE id=$id AND machine=$machine",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        var version = scope.QueryFirst(sql, r => (long?)r.Long(0), new SqlArg("$id", entityId), new SqlArg("$machine", Machine));
+        var parent = command switch
+        {
+            global::Assembly.Engine.NeedsMe.OpenNeed open when kind == "needs_me" => open.SessionId,
+            ToolStarted start when kind == "tool_call" => start.Attribution.SessionId,
+            TurnUsage usage when kind == "usage" => usage.Attribution.SessionId,
+            _ => null
+        };
+        if (version is null && (parent is null || scope.QueryFirst(
+                "SELECT COUNT(*) FROM engine_session WHERE id=$id AND machine=$machine AND state<>'foreign'",
+                r => r.Long(0), new SqlArg("$id", parent), new SqlArg("$machine", Machine)) != 1))
+            return new(false, false, "bad_args", 0, 0, observedEpoch);
+        return Commands.Apply(scope, new(Guid.NewGuid(), Machine, new(ActorKind.System, "adapter"),
+            entityId, version ?? 0, observedEpoch, _time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+    }
 
     public void EffectsAvailable() => _worker.EffectsAvailable();
 

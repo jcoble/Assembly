@@ -55,13 +55,18 @@ public sealed partial class RowStore
     public int StoredFormatVersion => (int)_db.QueryFirst("PRAGMA user_version;", row => row.Long(0), CancellationToken.None);
 
     /// <summary>Saves the batch for the session and returns its rows as saved, in seq order.</summary>
-    public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch)
+    public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch, Action<IWriteScope>? observe = null)
     {
-        if (batch.IsEmpty)
+        if (batch.IsEmpty && observe is null)
             return [];
 
         return _writer.Write("rows.commit", scope =>
         {
+            if (batch.IsEmpty)
+            {
+                observe?.Invoke(scope);
+                return (IReadOnlyList<StoredRow>)[];
+            }
             scope.Execute("INSERT INTO sessions(session_id, next_seq) VALUES ($session, 1) ON CONFLICT DO NOTHING;", new SqlArg("$session", sessionId));
             var seq = NextSeq(scope, sessionId);
 
@@ -82,6 +87,7 @@ public sealed partial class RowStore
             }
 
             scope.Execute("UPDATE sessions SET next_seq = $seq WHERE session_id = $session;", new SqlArg("$session", sessionId), new SqlArg("$seq", seq));
+            observe?.Invoke(scope);
             return (IReadOnlyList<StoredRow>)saved;
         });
     }

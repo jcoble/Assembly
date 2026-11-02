@@ -15,10 +15,10 @@ public sealed class EngineFeedTests
         using var f = new EngineFixture(topics: topics);
         f.SeedSession();
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        Assert.True(runtime.SubmitCurrent("session", "s", new SetSessionState("running", null, null)).Applied);
+        Assert.True(runtime.SubmitCurrent("session", "s", new SetSessionState("running", null, null), 0).Applied);
         Assert.True(f.Apply(new ReportCapabilities(true), "s", 1,
             actor: new EngineActor(ActorKind.System, "initialize")).Applied);
-        Assert.True(runtime.SubmitCurrent("session", "s", new SetSessionState("idle", null, null)).Applied);
+        Assert.True(runtime.SubmitCurrent("session", "s", new SetSessionState("idle", null, null), 0).Applied);
         Assert.Equal("idle", f.State("engine_session", "s"));
         Assert.Equal(3, f.Number("SELECT version FROM engine_session WHERE id='s'"));
     }
@@ -30,8 +30,8 @@ public sealed class EngineFeedTests
         using var f = new EngineFixture(topics: topics); f.SeedSession();
         f.Db.Writer.Write("test.foreign", s => s.Execute("UPDATE engine_session SET machine='other' WHERE id='s'"));
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        Assert.False(runtime.SubmitCurrent("session", "s", new SetSessionState("running", null, null)).Applied);
-        Assert.False(runtime.SubmitCurrent("session", "missing", new ReportCapabilities(true)).Applied);
+        Assert.False(runtime.SubmitCurrent("session", "s", new SetSessionState("running", null, null), 0).Applied);
+        Assert.False(runtime.SubmitCurrent("session", "missing", new ReportCapabilities(true), 0).Applied);
         Assert.Equal("idle", f.State("engine_session", "s"));
         Assert.Equal(0, f.Count("engine_event"));
         Assert.Equal(0, f.Count("engine_command_receipt"));
