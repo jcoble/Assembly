@@ -13,7 +13,7 @@ public static class SessionTitleContent
     public static SessionTitleStat Stat(IReadScope scope, string machine, SessionTitleReadArgs args)
     {
         Validate(machine, args.Session, args.Machine);
-        var row = scope.QueryFirst($"SELECT version,epoch,CAST(title AS BLOB),(SELECT machine_id FROM engine_meta WHERE singleton=1) FROM engine_session WHERE id=$id AND {Authority}",
+        var row = scope.QueryFirst($"SELECT version,epoch,COALESCE(CAST(title AS BLOB),X''),(SELECT machine_id FROM engine_meta WHERE singleton=1) FROM engine_session WHERE id=$id AND {Authority}",
             r => (Version: r.Long(0), Epoch: r.Long(1), Bytes: r.Blob(2), Machine: r.Text(3)), new("$id", args.Session), new("$machine", machine));
         if (row.Bytes is null) throw new KeyNotFoundException("unknown session");
         if (row.Machine != machine) throw new InvalidOperationException("title_changed");
@@ -32,7 +32,7 @@ public static class SessionTitleContent
             throw new ArgumentException("bad_args");
         var take = Math.Min(args.Count, args.TotalBytes - args.Offset);
         var row = scope.QueryFirst($"""
-            SELECT length(CAST(title AS BLOB)),substr(CAST(title AS BLOB),$offset,$take)
+            SELECT COALESCE(length(CAST(title AS BLOB)),0),COALESCE(substr(CAST(title AS BLOB),$offset,$take),X'')
             FROM engine_session WHERE id=$id AND version=$version AND epoch=$epoch AND $machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND {Authority}
             """, r => (Total: r.Long(0), Bytes: r.Blob(1)), new("$id", args.Session), new("$version", args.Version),
             new("$epoch", args.Epoch), new("$machine", machine), new("$offset", checked(args.Offset + 1)), new("$take", take));

@@ -49,8 +49,8 @@ internal static class DisplayQueries
     // Fixed projections: fetch only bounded bytes alongside metadata in the same SQL row.
     internal static string PrefixColumns(string kind) => kind switch
     {
-        "session" => "substr(CAST(t.title AS BLOB),1,1027) AS prefix,length(CAST(t.title AS BLOB)) AS total,NULL AS label_prefix,NULL AS label_total",
-        "message" => "CASE WHEN t.framed=1 THEN substr(CAST(t.text AS BLOB),1,32771) END AS prefix,CASE WHEN t.framed=1 THEN length(CAST(t.text AS BLOB)) END AS total,CASE WHEN t.framed=1 THEN substr(CAST(t.sender_label AS BLOB),1,1027) END AS label_prefix,CASE WHEN t.framed=1 THEN length(CAST(t.sender_label AS BLOB)) END AS label_total",
+        "session" => "COALESCE(substr(CAST(t.title AS BLOB),1,1027),X'') AS prefix,COALESCE(length(CAST(t.title AS BLOB)),0) AS total,NULL AS label_prefix,NULL AS label_total",
+        "message" => "CASE WHEN t.framed=1 THEN COALESCE(substr(CAST(t.text AS BLOB),1,32771),X'') END AS prefix,CASE WHEN t.framed=1 THEN length(CAST(t.text AS BLOB)) END AS total,CASE WHEN t.framed=1 THEN COALESCE(substr(CAST(t.sender_label AS BLOB),1,1027),X'') END AS label_prefix,CASE WHEN t.framed=1 THEN length(CAST(t.sender_label AS BLOB)) END AS label_total",
         _ => "NULL AS prefix,NULL AS total,NULL AS label_prefix,NULL AS label_total"
     };
 

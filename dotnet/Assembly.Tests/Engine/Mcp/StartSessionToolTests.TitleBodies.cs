@@ -61,4 +61,16 @@ public sealed partial class StartSessionToolTests
         Assert.True((await h.Call(tool, "caller", """{"session":"child","offset":0}""")).IsError);
     }
 
+    [Fact]
+    public async Task Actual_list_sessions_tool_returns_a_complete_empty_title()
+    {
+        await using var h = new Harness(); h.Fixture.SeedSession("caller"); h.Fixture.SeedSession("empty");
+        Assert.True(h.Fixture.Apply(new ReportSessionTitle(""), "empty", actor: new(ActorKind.System, "test")).Applied);
+        var result = await h.Call(new Assembly.Engine.Mcp.Tools.ListSessionsTool(h.Gate), "caller", "{}");
+        Assert.False(result.IsError, Text(result));
+        using var json = JsonDocument.Parse(Text(result));
+        var row = Assert.Single(json.RootElement.GetProperty("sessions").EnumerateArray(), item => item.GetProperty("sessionId").GetString() == "empty");
+        Assert.Equal("", row.GetProperty("title").GetString()); Assert.False(row.TryGetProperty("titleComplete", out _));
+    }
+
 }

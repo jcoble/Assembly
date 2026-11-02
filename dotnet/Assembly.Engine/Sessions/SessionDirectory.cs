@@ -31,7 +31,7 @@ public static class SessionDirectory
 
     internal static IReadOnlyList<(DirectoryEntry Entry, bool Complete, long Bytes)> ReachableDisplay(IReadScope scope, string callerId) =>
         scope.Query(Candidates + """
-            SELECT id,substr(title,1,1027),provider,model,state,relation,machine,length(title) FROM candidates
+            SELECT id,COALESCE(substr(title,1,1027),X''),provider,model,state,relation,machine,COALESCE(length(title),0) FROM candidates
             WHERE relation IS NOT NULL ORDER BY relation,updated_ms DESC LIMIT 200
             """, r =>
         {
