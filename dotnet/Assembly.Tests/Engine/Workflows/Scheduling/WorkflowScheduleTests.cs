@@ -9,6 +9,7 @@ using Assembly.Engine.Workflows.Definitions;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Engine.Workflows.Scheduling;
 using Assembly.Infrastructure.Engine.Workflows;
+using Assembly.Infrastructure.Git;
 
 namespace Assembly.Tests.Engine.Workflows.Scheduling;
 
@@ -191,6 +192,45 @@ public sealed class WorkflowScheduleTests
         Assert.Equal(1, success.Core.Count("engine_message"));
         Assert.True(success.Apply(prepared).Result.Applied);
         Assert.Equal(1, success.CommittedShells);
+    }
+
+    [Fact]
+    public async Task Same_host_callback_prepares_command_once_without_provider_session()
+    {
+        var root = Directory.CreateTempSubdirectory("workflow-command-callback-").FullName;
+        try
+        {
+            var git = new GitCli();
+            async Task RunGit(params string[] args)
+            { await foreach (var value in git.ReadAsync(root, args, null, default)) { _ = value; } }
+            await RunGit("init");
+            await RunGit("config", "user.name", "Workflow Callback Fixture");
+            await RunGit("config", "user.email", "workflow.invalid");
+            await File.WriteAllTextAsync(Path.Combine(root, "source.txt"), "checked source");
+            await RunGit("add", "."); await RunGit("commit", "-m", "fixture");
+            var checkout = await new ReceiptCheckout().Capture(root, default);
+            using var f = new Fixture(yaml: """
+                name: Commands
+                policy: {commands: {allow: ["*"]}, default: deny}
+                steps:
+                  build:
+                    run: ["printf checked"]
+                """);
+            f.Core.Db.Writer.Write("test.callback-workspace", s => s.Execute("""
+                UPDATE engine_workflow_workspace SET path=$folder,head=$head,base_head=$head;
+                UPDATE engine_run SET proof_dir=$proof,pr_body=$body,work_head=$head WHERE id=$run;
+                """, new("$folder", root), new("$head", checkout.Head), new("$proof", Path.Combine(root, "proof")),
+                new("$body", Path.Combine(root, "proof", "pr-body.md")), new("$run", f.Run)));
+            var callback = new WorkflowDispatchPreparation(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time, Path.Combine(root, "managed"), Path.Combine(root, "proof"));
+            Assert.Empty(await callback.PrepareAsync(default));
+            Assert.Equal("running", f.Core.State("engine_step", f.Step));
+            Assert.Equal(1, f.Core.Count("engine_step_attempt")); Assert.Equal(1, f.Core.Count("engine_session"));
+            Assert.Equal(checkout.Fingerprint, f.Core.Text("SELECT fingerprint FROM engine_step_attempt"));
+            Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='workflow_command'"));
+            Assert.Empty(await callback.PrepareAsync(default));
+            Assert.Equal(1, f.Core.Count("engine_step_attempt")); Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='workflow_command'"));
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     private sealed class RecordingTopics : ITopics
