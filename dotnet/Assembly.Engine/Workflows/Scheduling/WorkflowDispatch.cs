@@ -68,6 +68,7 @@ public static partial class WorkflowDispatch
     private sealed class StageScope(IWriteScope outer) : IWriteScope
     {
         private readonly List<Action> _publish = [];
+        public void AfterCommit(Action publishState) => _publish.Add(() => outer.AfterCommit(publishState));
         public int Execute(string sql, params SqlArg[] args) => outer.Execute(sql, args);
         public List<T> Query<T>(string sql, Func<IRow, T> map, params SqlArg[] args) => outer.Query(sql, map, args);
         public T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args) => outer.QueryFirst(sql, map, args);
