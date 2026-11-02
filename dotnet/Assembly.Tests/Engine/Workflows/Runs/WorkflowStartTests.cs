@@ -32,6 +32,22 @@ public sealed class WorkflowStartTests
         Assert.Equal(10, f.Core.Count("engine_workflow_snapshot")); Assert.Equal(10, f.Core.Count("engine_workflow_history"));
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("https://example.com/task", true)]
+    [InlineData("http://example.com/task", false)]
+    public void Task_url_is_optional_but_supplied_url_must_be_https(string? url, bool accepted)
+    {
+        using var f = new Fixture();
+        var task = url is null ? "{\"key\":\"TSK-1\",\"title\":\"Task\",\"body\":\"body\"}" :
+            "{\"key\":\"TSK-1\",\"title\":\"Task\",\"body\":\"body\",\"url\":" + JsonSerializer.Serialize(url) + "}";
+        var request = f.Request() with { Task = Json(task) };
+        var ack = f.Apply(f.Prepare(request));
+        Assert.Equal(accepted, ack.Result.Applied);
+        if (accepted) Assert.Equal(url, f.Core.Text("SELECT task_url FROM engine_run"));
+        else { Assert.Equal("bad_args", ack.Result.Error); Assert.Equal(0, f.Core.Count("engine_run")); }
+    }
+
     [Fact]
     public void Freeform_run_has_null_task_request_title_and_pending_setup_intent()
     {

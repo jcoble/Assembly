@@ -34,8 +34,7 @@ internal static class WorkflowRunTransitions
         if (scope.QueryFirst("SELECT COUNT(*) FROM projects WHERE id=$id AND machine=$machine AND root_path=$root AND removed_at IS NULL",
             r => r.Long(0), new SqlArg("$id", body.ProjectId), new("$machine", context.Machine), new("$root", body.ProjectRoot)) != 1)
             return Refuse(context, "project_not_found");
-        var taskUrl = TaskUrl(request.Task);
-        if (request.Task is not null && taskUrl is null) return Refuse(context, "bad_args");
+        if (!TryTaskUrl(request.Task, out var taskUrl)) return Refuse(context, "bad_args");
         var steps = body.Snapshot.Definition.Steps.Values.Select(step => new StepDefinition(body.StepIds[step.Id], step.Id,
             step.Required, step.MaxAttempts, step.Condition is not null,
             step.Needs.Select(key => new Dependency(body.StepIds[key], false)).ToArray())).ToArray();
@@ -69,10 +68,16 @@ internal static class WorkflowRunTransitions
 
     private static bool ValidPath(string path) =>
         Path.GetDirectoryName(path)?.Replace('\\', '/') == ".assembly/workflows" && Path.GetExtension(path) == ".yml";
-    private static string? TaskUrl(JsonElement? task)
+    private static bool TryTaskUrl(JsonElement? task, out string? url)
     {
-        if (task is not { ValueKind: JsonValueKind.Object } value || !value.TryGetProperty("url", out var url) || url.ValueKind != JsonValueKind.String) return null;
-        return Uri.TryCreate(url.GetString(), UriKind.Absolute, out var uri) && uri.Scheme == "https" ? url.GetString() : null;
+        url = null;
+        if (task is null) return true;
+        if (task is not { ValueKind: JsonValueKind.Object } value) return false;
+        if (!value.TryGetProperty("url", out var supplied) || supplied.ValueKind == JsonValueKind.Null) return true;
+        if (supplied.ValueKind != JsonValueKind.String ||
+            !Uri.TryCreate(supplied.GetString(), UriKind.Absolute, out var uri) || uri.Scheme != "https") return false;
+        url = supplied.GetString();
+        return true;
     }
     private static CommandResult Refuse(CommandContext c, string error) => new(false, false, error, c.ExpectedVersion, 0, c.Epoch);
 }
