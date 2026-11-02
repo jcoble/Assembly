@@ -35,6 +35,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                await CancelWorkflowExecutorsAsync(cancellationToken);
                 foreach (var (owner, active) in _active.Where(pair => pair.Value.Task.IsCompleted).ToArray())
                 {
                     var receipt = await active.Task;
@@ -66,6 +67,30 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             }
             _active.Clear();
         }
+    }
+
+    private async Task CancelWorkflowExecutorsAsync(CancellationToken ct)
+    {
+        if (_active.Count == 0) return;
+        var ids = JsonSerializer.Serialize((IReadOnlyList<string>)_active.Values.Select(value => value.Claim.Id).ToArray(),
+            EngineJson.Default.IReadOnlyListString);
+        List<string> cancelled;
+        using (var scope = db.OpenSnapshot(ct))
+            cancelled = scope.Query("""
+                SELECT o.order_key FROM engine_outbox o
+                JOIN engine_run r ON r.id=o.run_id
+                LEFT JOIN engine_step st ON st.id=json_extract(o.payload_json,'$.stepId')
+                LEFT JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=json_extract(o.payload_json,'$.attempt')
+                WHERE o.id IN (SELECT value FROM json_each($ids)) AND o.kind='workflow_command'
+                  AND (r.state IN ('cancelling','cancelled','failed') OR a.cancel_requested=1
+                    OR st.id IS NULL OR a.step_id IS NULL
+                    OR st.generation!=json_extract(o.payload_json,'$.generation')
+                    OR st.attempt!=json_extract(o.payload_json,'$.attempt')
+                    OR a.execution_epoch!=json_extract(o.payload_json,'$.executionEpoch'))
+                """, r => r.Text(0), new SqlArg("$ids", ids));
+        foreach (var key in cancelled)
+            if (_active.TryGetValue(key, out var active) && !active.Stop.IsCancellationRequested)
+                await active.Stop.CancelAsync();
     }
 
     private (Candidate? Claim, long? Deadline, bool More) Pass(IWriteScope s)
@@ -199,7 +224,10 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         {
             return reconcile ? await effects!.ReconcileAsync(effect, cancellationToken) : await effects!.ExecuteAsync(effect, cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new(EffectDisposition.Unknown, JsonSerializer.SerializeToElement((string?)null, EngineJson.Default.String), "execution_cancelled_without_receipt");
+        }
         catch (Exception error)
         {
             // An exception does not prove whether external I/O reached its destination.
