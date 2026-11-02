@@ -105,7 +105,7 @@ public static class StepTransitions
         var attempt = step.Attempt + 1;
         s.Execute("""
             UPDATE engine_step SET state='running',version=version+1,updated_ms=$now,session_id=$session,
-                attempt=$attempt,attempt_in_generation=attempt_in_generation+1,started_ms=$now,ended_ms=NULL,proof_json=NULL,outcome_reason=NULL WHERE id=$id
+                attempt=$attempt,attempt_in_generation=attempt_in_generation+1,reminder_sent=0,report_requested=0,started_ms=$now,ended_ms=NULL,proof_json=NULL,outcome_reason=NULL WHERE id=$id
             """, new("$now", c.NowMs), new("$session", command.SessionId), new("$attempt", attempt), new("$id", c.EntityId));
         s.Execute("INSERT INTO engine_step_attempt(step_id,attempt,state,started_ms,late,generation,attempt_in_generation) SELECT id,$attempt,'running',$now,0,generation,attempt_in_generation FROM engine_step WHERE id=$id",
             new("$id", c.EntityId), new("$attempt", attempt), new("$now", c.NowMs));

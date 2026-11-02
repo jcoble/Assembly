@@ -8,7 +8,7 @@ using Assembly.Engine.Messages;
 
 namespace Assembly.Engine.Sessions;
 
-public static class SessionTransitions
+public static partial class SessionTransitions
 {
     private sealed record Session(long Version, long Epoch, string State, string Activity,
         string? ParentId, string? RunId, string Machine, bool CancelRequested = false, long? ReservedEpoch = null, string? ProjectId = null);

@@ -47,7 +47,7 @@ public sealed partial class EngineCommands
         var tuple = new[] { w.Machine, w.RunId, w.StepId, w.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), w.NextAttempt.ToString(System.Globalization.CultureInfo.InvariantCulture) };
         var predecessor = latest?.CommandId;
         var commandId = DispatchIdentity.Id("workflow-dispatch-intent/v1", [.. tuple, predecessor?.ToString("N"), admission.Hash]);
-        var session = DispatchIdentity.Id("workflow-dispatch-session/v1", tuple).ToString("N");
+        var session = w.Resume?.SessionId ?? DispatchIdentity.Id("workflow-dispatch-session/v1", tuple).ToString("N");
         var message = DispatchIdentity.Id("workflow-dispatch-message/v1", tuple).ToString("N");
         var context = new CommandContext(commandId, _machine, new(ActorKind.System, "engine.worker"), stepId, w.StepVersion, w.OwnerEpoch, nowMs);
         var bytes = Encoding.UTF8.GetBytes(prompt);
@@ -73,36 +73,51 @@ public sealed partial class EngineCommands
         if (w.Permission is not null) return Refuse("workflow_permission_unavailable");
         var actor = new EngineActor(ActorKind.Session, w.OwnerId);
         var start = new StartSession(w.Provider, w.Model, w.Folder, b.Title, w.OwnerId, w.RunId, b.TaskUrl, ManagedCheckout: false);
-        var started = ApplySession(scope, context with
-        {
-            CommandId = DispatchIdentity.Id("workflow-dispatch-start-stage/v1", context.CommandId.ToString("N")),
-            Actor = actor,
-            EntityId = b.SessionId,
-            ExpectedVersion = 0,
-            Epoch = 0
-        }, start, startEffectPayload: PreparedStartEffectPayload.Prepare(start));
+        var workerEpoch = w.Resume is null ? 0 : checked(w.Resume.Epoch + 1);
+        CommandResult started;
+        if (w.Resume is { } resume)
+            started = SessionTransitions.ResumeWorkflowWorker(scope, context with
+            {
+                CommandId = DispatchIdentity.Id("workflow-dispatch-start-stage/v1", context.CommandId.ToString("N")),
+                EntityId = resume.SessionId,
+                ExpectedVersion = scope.QueryFirst("SELECT version FROM engine_session WHERE id=$id", r => r.Long(0), new SqlArg("$id", resume.SessionId)),
+                Epoch = resume.Epoch,
+                Actor = new(ActorKind.System, "engine.worker")
+            }, resume, start with { ManagedCheckout = resume.ManagedCheckout });
+        else
+            started = ApplySession(scope, context with
+            {
+                CommandId = DispatchIdentity.Id("workflow-dispatch-start-stage/v1", context.CommandId.ToString("N")),
+                Actor = actor,
+                EntityId = b.SessionId,
+                ExpectedVersion = 0,
+                Epoch = 0
+            }, start, startEffectPayload: PreparedStartEffectPayload.Prepare(start));
         if (!started.Applied) return started;
-        var stepped = StepTransitions.Apply(scope, context with { CommandId = DispatchIdentity.Id("workflow-dispatch-step-stage/v1", context.CommandId.ToString("N")), Actor = actor, Epoch = 0 }, new StartStep(b.SessionId));
+        var stepped = StepTransitions.Apply(scope, context with { CommandId = DispatchIdentity.Id("workflow-dispatch-step-stage/v1", context.CommandId.ToString("N")), Actor = actor, Epoch = workerEpoch }, new StartStep(b.SessionId));
         if (!stepped.Applied) return stepped;
         scope.Execute("""
             UPDATE engine_step_attempt SET generation=$generation,attempt_in_generation=$inGeneration,
               dispatch_command_id=$command,prompt_message_id=$message,rendered_prompt_sha256=$sha,rendered_prompt_bytes=$bytes,
-              session_id=$session,authority_machine=$machine,execution_epoch=0,workspace_id=$workspace,fingerprint=$fingerprint
+              session_id=$session,authority_machine=$machine,execution_epoch=$executionEpoch,workspace_id=$workspace,fingerprint=$fingerprint
             WHERE step_id=$step AND attempt=$attempt;
             UPDATE engine_step SET attempt_in_generation=$inGeneration,authority_session_id=$session,authority_machine=$machine,
-              authority_epoch=0,dispatch_state='starting',deadline_ms=$deadline WHERE id=$step;
+              authority_epoch=$executionEpoch,dispatch_state='starting',deadline_ms=$deadline WHERE id=$step;
             """, new("$generation", w.Generation), new("$inGeneration", w.AttemptInGeneration), new("$command", context.CommandId.ToString("N")),
             new("$message", b.MessageId), new("$sha", b.PromptSha256), new("$bytes", b.PromptBytes), new("$session", b.SessionId), new("$machine", _machine),
-            new("$workspace", w.WorkspaceId), new("$fingerprint", b.CheckoutFingerprint), new("$step", w.StepId), new("$attempt", w.NextAttempt),
+            new("$workspace", w.WorkspaceId), new("$executionEpoch", workerEpoch), new("$fingerprint", b.CheckoutFingerprint), new("$step", w.StepId), new("$attempt", w.NextAttempt),
             new("$deadline", checked(context.NowMs + scope.QueryFirst("SELECT step_timeout_ms FROM engine_run WHERE id=$run", r => r.Long(0), new SqlArg("$run", w.RunId)))));
-        return MessageTransitions.ApplyPreparedHelper(scope, context with
+        var sent = MessageTransitions.ApplyPreparedHelper(scope, context with
         {
             CommandId = DispatchIdentity.Id("workflow-dispatch-message-stage/v1", context.CommandId.ToString("N")),
             Actor = actor,
             EntityId = b.MessageId,
             ExpectedVersion = 0,
-            Epoch = 0
+            Epoch = workerEpoch
         }, new(w.OwnerId, b.SessionId, b.Prompt, "prompt"), Encoding.UTF8.GetBytes(b.Prompt), _messageLimit(), _expiryPolicy);
+        if (sent.Applied) scope.Execute("UPDATE engine_message SET held_epoch=$epoch,target_epoch=$epoch WHERE id=$id",
+            new("$epoch", workerEpoch), new("$id", b.MessageId));
+        return sent;
     }
 
     internal static JsonElement TemplateValues(IReadScope scope, WorkflowStartBody source, string runId)
