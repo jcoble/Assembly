@@ -28,6 +28,16 @@ public sealed partial class EngineCommands
             ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
             : CommandRetryTransitions.Apply(scope, context, prepared));
 
+    public CommandResult ExpireWorkflowCommand(IWriteScope scope, CommandContext context) =>
+        EngineJournal.Execute(scope, context, "\"workflow_command_timeout/v1\"", () => context.Machine != _machine
+            ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
+            : CommandStepTransitions.Timeout(scope, context));
+
+    public CommandResult ReconcileWorkflowCommandStop(IWriteScope scope, CommandContext context) =>
+        EngineJournal.Execute(scope, context, "\"workflow_command_stop/v1\"", () => context.Machine != _machine
+            ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
+            : CommandStepTransitions.ReconcileStop(scope, context));
+
     public CommandResult ObserveWorkflowProcess(IWriteScope scope, CommandContext context, CommandProcessObserved observed) =>
         EngineJournal.Execute(scope, context, JsonSerializer.Serialize(observed, WorkflowExecutionJson.Default.CommandProcessObserved), () =>
             context.Machine != _machine ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)

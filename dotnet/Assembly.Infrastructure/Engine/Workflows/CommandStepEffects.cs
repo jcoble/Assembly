@@ -11,7 +11,7 @@ namespace Assembly.Infrastructure.Engine.Workflows;
 public sealed class CommandStepEffects(IAppDatabase db, EngineCommands commands, string machine, string proofRoot,
     TimeProvider time, Func<string, CancellationToken, Task<string>> fingerprint) : IEngineEffects
 {
-    private readonly IWorkflowProcess _process = new WorkflowProcess(proofRoot, async (effect, intent, process, ct) =>
+    private readonly WorkflowProcess _process = new WorkflowProcess(proofRoot, async (effect, intent, process, ct) =>
     {
         ct.ThrowIfCancellationRequested();
         var accepted = db.Writer.Write("engine.workflow.process_observed", scope =>
@@ -32,10 +32,20 @@ public sealed class CommandStepEffects(IAppDatabase db, EngineCommands commands,
     private async Task<EffectReceipt> ApplyAsync(Effect effect, bool reconcile, CancellationToken ct)
     {
         bool ask;
+        bool stopping;
+        CommandProcessIdentity? saved = null;
         var intent = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent)!;
         using (var scope = db.OpenSnapshot(CancellationToken.None))
         {
-            if (!reconcile && (ct.IsCancellationRequested || !CommandStepTransitions.CanLaunch(scope, intent, machine)))
+            stopping = !CommandStepTransitions.CanLaunch(scope, intent, machine);
+            var execution = scope.QueryFirst("SELECT executor_json FROM engine_outbox WHERE id=$id AND kind='workflow_command'",
+                r => r.IsNull(0) ? null : r.Text(0), new SqlArg("$id", effect.Id));
+            if (execution is not null) saved = JsonSerializer.Deserialize(execution, WorkflowExecutionJson.Default.CommandProcessIdentity);
+            var neverLaunched = saved is null && WorkflowExecutionNeeds.Policy(scope, effect) != "allow" && scope.QueryFirst("""
+                SELECT EXISTS(SELECT 1 FROM engine_needs_me WHERE source_kind='workflow'
+                  AND json_extract(execution_json,'$.effectId')=$id AND json_extract(execution_json,'$.reason')='policy')
+                """, r => r.Long(0) != 0, new SqlArg("$id", effect.Id));
+            if (stopping && (!reconcile || neverLaunched) || !reconcile && ct.IsCancellationRequested)
                 return new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new CommandExecutionReceipt(effect.Id,
                     CommandStepTransitions.Digest(effect.Payload.GetRawText()), null, null, "", "", 0, 0, false, true,
                     "not_started", "", null, NotStarted: true), WorkflowExecutionJson.Default.CommandExecutionReceipt), null);
@@ -49,7 +59,9 @@ public sealed class CommandStepEffects(IAppDatabase db, EngineCommands commands,
             return new(EffectDisposition.Unavailable, System.Text.Json.JsonSerializer.SerializeToElement((string?)null,
                 EngineJson.Default.String), "workflow_policy_pending");
         }
-        var result = await _process.ExecuteAsync(effect, reconcile, ct);
+        var result = reconcile && stopping && saved is not null
+            ? await _process.StopAsync(effect, saved, ct)
+            : await _process.ExecuteAsync(effect, reconcile, ct);
         if (result.Disposition == EffectDisposition.Unknown) OpenNeed(effect, "command_uncertain");
         return result;
     }

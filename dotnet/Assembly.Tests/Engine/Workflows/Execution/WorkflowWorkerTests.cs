@@ -47,6 +47,29 @@ public sealed class WorkflowWorkerTests
         Assert.False(hold.Task.IsCompleted);
     }
 
+    [Fact]
+    public async Task Persisted_command_deadline_wakes_the_existing_worker_without_a_pushed_wake()
+    {
+        var topics = new Topics(); using var f = new CommandStepTests.Fixture(["printf must-not-launch"], "allow", topics: topics);
+        Assert.True(f.Start(f.Prepare()).Applied);
+        var deadline = f.Core.Number("SELECT deadline_ms FROM engine_step");
+        using var stop = new CancellationTokenSource(); using var passes = new Passes(topics);
+        var worker = new EngineWorker(f.Core.Db, f.Commands, f.Core.Machine, f.Core.Time, null, passes);
+        var running = worker.RunAsync(stop.Token);
+        try
+        {
+            await passes.Next();
+            Assert.Equal("running", f.Core.Text("SELECT state FROM engine_step"));
+            f.Core.Time.Advance(TimeSpan.FromMilliseconds(deadline - f.Core.Time.GetUtcNow().ToUnixTimeMilliseconds()));
+            await passes.Next();
+            Assert.Equal("timeout_pending", f.Core.Text("SELECT dispatch_state FROM engine_step"));
+            Assert.Equal("timed_out", f.Core.Text("SELECT outcome_reason FROM engine_step"));
+            Assert.Equal(1, f.Core.Number("SELECT cancel_requested FROM engine_step_attempt"));
+            Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE executor_json IS NOT NULL"));
+        }
+        finally { await stop.CancelAsync(); await running.WaitAsync(TimeSpan.FromSeconds(10)); }
+    }
+
     private sealed class Passes : IEngineRetention, IDisposable
     {
         private readonly Channel<bool> _passes = Channel.CreateUnbounded<bool>();
