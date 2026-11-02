@@ -14,6 +14,7 @@ using Assembly.Engine.Prs;
 namespace Assembly.Engine;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(IReadOnlyList<MachineStartMirrorGeneration>))]
 [JsonSerializable(typeof(MirrorNotice))]
 [JsonSerializable(typeof(CursorAt))]
 [JsonSerializable(typeof(StreamPage))]

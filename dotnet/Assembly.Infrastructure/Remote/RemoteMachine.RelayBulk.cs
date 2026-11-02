@@ -1,0 +1,103 @@
+using System.Net.WebSockets;
+using System.Text;
+using System.Text.Json;
+using Assembly.Application.Common.Calls;
+
+namespace Assembly.Infrastructure.Remote;
+
+internal sealed partial class RemoteMachine
+{
+    internal Task<RelayBulkLease> AcquireRelayBulkAsync(OwnerConnectionBinding binding, CancellationToken ct) =>
+        RelayBulkLease.AcquireAsync(this, binding, ct);
+
+    /// <summary>Owns the existing bulk semaphore for one complete transfer, with no reconnect in that transfer.</summary>
+    internal sealed class RelayBulkLease : IAsyncDisposable
+    {
+        private readonly RemoteMachine _owner;
+        private readonly OwnerConnectionBinding _binding;
+        private readonly SemaphoreSlim _exchange = new(1);
+        private ClientWebSocket? _bulk;
+        private bool _failed;
+        private int _disposed;
+        private RelayBulkLease(RemoteMachine owner, OwnerConnectionBinding binding) => (_owner, _binding) = (owner, binding);
+        internal string Machine => _binding.Machine;
+        internal static async Task<RelayBulkLease> AcquireAsync(RemoteMachine owner, OwnerConnectionBinding binding, CancellationToken ct)
+        {
+            if (binding.IsInvalidated) throw new CallFailed("relay_connection_changed");
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, binding.Invalidated, owner._socketStop.Token);
+            ct = linked.Token;
+            await owner._bulkCall.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
+                try { owner.RequireOwnerBinding(binding); return new(owner, binding); }
+                finally { owner._socketSend.Release(); }
+            }
+            catch { owner._bulkCall.Release(); throw; }
+        }
+        internal async Task<JsonElement> CallAsync(string method, JsonElement args, CancellationToken ct)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            if (_binding.IsInvalidated) throw new CallFailed("relay_connection_changed");
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _binding.Invalidated, _owner._socketStop.Token);
+            ct = linked.Token;
+            await _exchange.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                if (_failed) throw new CallFailed("relay_connection_changed");
+                ClientWebSocket socket;
+                await _owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    socket = _owner.RequireOwnerBinding(_binding);
+                    if (_bulk is not null && (!ReferenceEquals(_bulk, _owner._bulkSocket) || _bulk.State != WebSocketState.Open))
+                        throw new CallFailed("relay_connection_changed");
+                }
+                finally { _owner._socketSend.Release(); }
+                // Fixed method names are chosen only by the coordinator; measure the complete existing call frame.
+                var estimate = "{\"t\":\"call\",\"id\":-9223372036854775808,\"feature\":\"engine\",\"method\":\"" + method + "\",\"args\":" + args.GetRawText() + "}";
+                if (Encoding.UTF8.GetByteCount(estimate) > 4 * 1024 * 1024) throw new CallFailed("frame_too_large");
+                var result = await _owner.BulkCallHeldAsync("engine", method, args, ct, _binding.Machine, socket, _binding).ConfigureAwait(false);
+                await _owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    _owner.RequireOwnerBinding(_binding);
+                    _bulk ??= _owner._bulkSocket;
+                    if (_bulk is null || !ReferenceEquals(_bulk, _owner._bulkSocket) || _bulk.State != WebSocketState.Open)
+                        throw new CallFailed("relay_connection_changed");
+                }
+                finally { _owner._socketSend.Release(); }
+                return result;
+            }
+            catch { _failed = true; throw; }
+            finally { _exchange.Release(); }
+        }
+        // Used only when this transfer's explicit drop/close cannot reach its exact connection.
+        internal async Task AbortAsync()
+        {
+            await _exchange.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                _failed = true;
+                await _owner._socketSend.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (_bulk is not null && ReferenceEquals(_bulk, _owner._bulkSocket))
+                    {
+                        _bulk.Abort(); _bulk.Dispose(); _owner._bulkSocket = null; _owner._bulkEngineIdentity = null;
+                    }
+                }
+                finally { _owner._socketSend.Release(); }
+            }
+            finally { _exchange.Release(); }
+        }
+        public async ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            await _exchange.WaitAsync().ConfigureAwait(false);
+            try { _owner._bulkCall.Release(); }
+            finally { _exchange.Release(); }
+        }
+    }
+}
