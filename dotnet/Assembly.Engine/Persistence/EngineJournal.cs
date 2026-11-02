@@ -19,9 +19,11 @@ public static partial class EngineJournal
         => ExecuteCore(scope, context, context.CommandId.ToString("N"), canonicalCommandJson, transition);
 
     private static CommandResult ExecuteCore(IWriteScope scope, CommandContext context, string receiptKey,
-        string canonicalCommandJson, Func<CommandResult> transition)
+        string canonicalCommandJson, Func<CommandResult> transition, RelaySendAdmission? relayAdmission = null)
     {
+        relayAdmission?.ValidateBindings(scope, context, receiptKey, canonicalCommandJson);
         var fingerprint = Fingerprint(context, canonicalCommandJson);
+        if (relayAdmission is not null) fingerprint = RelayFingerprint.Encode(context.Epoch, fingerprint);
         var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$id",
             r => new { Fingerprint = r.Text(0), Result = r.Text(1) }, new SqlArg("$id", receiptKey));
         if (receipt is not null)
