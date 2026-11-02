@@ -1,4 +1,5 @@
 using Assembly.Engine.Effects;
+using Assembly.Engine.Providers;
 using Assembly.Engine.Recording;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
@@ -16,18 +17,21 @@ namespace Assembly.Engine;
 public sealed partial class EngineCommands
 {
     private readonly string _machine;
+    private readonly Func<string, string, bool>? _isConfiguredProvider;
     private readonly SessionLimits _limits;
     private readonly Func<int> _messageLimit;
     private readonly MessageExpiryPolicy _expiryPolicy;
     private readonly Action<IWriteScope, CommandContext, StartSession>? _projectStart;
     private readonly Func<string, string>? _accountContext;
-    private readonly Action<IWriteScope, CommandContext, Effect, EffectReceipt>? _projectCompletion;
+    private readonly Func<IWriteScope, CommandContext, Effect, EffectReceipt, MessageDelivery?, MessageOutcome?>? _projectCompletion;
 
     public EngineCommands(string machine, SessionLimits limits, Func<int>? messageLimit = null,
         Action<IWriteScope, CommandContext, StartSession>? projectStart = null, Func<string, string>? accountContext = null,
-        Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
+        Func<IWriteScope, CommandContext, Effect, EffectReceipt, MessageDelivery?, MessageOutcome?>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null,
+        Func<string, string, bool>? isConfiguredProvider = null)
     {
         _machine = machine;
+        _isConfiguredProvider = isConfiguredProvider;
         _projectStart = projectStart;
         _accountContext = accountContext;
         _projectCompletion = projectCompletion;
@@ -39,7 +43,7 @@ public sealed partial class EngineCommands
 
     public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command, string? preparedError = null)
     {
-        if (command is SendOwnerPrompt)
+        if (command is SendOwnerPrompt or RecordProviderCheck)
             return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
         // Raw boundary arguments are transient: even the journal fingerprint and size check use structural previews.
         var canonical = RecordingTransitions.JournalJson(command);
@@ -52,11 +56,15 @@ public sealed partial class EngineCommands
             return command switch
             {
                 EffectCommand effect => EffectTransitions.Apply(scope, context, effect, _projectCompletion, _expiryPolicy),
+                SignInCommand signIn => SignInTransitions.Apply(scope, context, signIn, _isConfiguredProvider),
+                ProviderCommand provider => ProviderTransitions.Apply(scope, context, provider, _isConfiguredProvider),
                 RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
+                ReportSignInNeeded report => AuthTransitions.Report(scope, context, report, _isConfiguredProvider, _expiryPolicy),
+                BlockSignInNeeded block => AuthTransitions.Block(scope, context, block, _isConfiguredProvider, _expiryPolicy),
                 MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit(), _expiryPolicy),
-                NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy),
+                NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy, _isConfiguredProvider),
                 RunCommand run => RunTransitions.Apply(scope, context, run),
                 StepCommand step => StepTransitions.Apply(scope, context, step),
                 SessionCommand session => ApplySession(scope, context, session),

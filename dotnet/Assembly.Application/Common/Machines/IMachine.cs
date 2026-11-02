@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Agents;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Application.Features.Chat;
 using Assembly.Application.Features.Chat.Rows;
@@ -15,13 +16,14 @@ public interface IMachine
     /// <summary>The name a session records for this machine; null for the machine the routes run on.</summary>
     string? Name { get; }
 
-    /// <summary>The agents a new session on this machine can run, as (id, name).</summary>
-    Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken);
+    /// <summary>The safe configured targets a new session on this machine can run.</summary>
+    Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken);
 
     /// <summary>Asks whether the machine answers, recording what it finds; this machine always does.</summary>
     Task ProbeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken);
+    Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
+        InitialSessionConfig? initialConfig = null, string? workingFolder = null);
 
     /// <summary>A helper session under <paramref name="parent"/>, which may be on another machine, in its repo.</summary>
     Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken);
@@ -53,7 +55,13 @@ public interface IMachine
     Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken);
 
     /// <summary>Chooses a value for one of the session's config options, and returns its config after.</summary>
-    Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken);
+    Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null);
+
+    /// <summary>Reads the configured agent's actual metadata without creating an Assembly session.</summary>
+    Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken cancellationToken);
+
+    /// <summary>Observes this session's native metadata without sending a prompt.</summary>
+    Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken cancellationToken);
 
     /// <summary>Answers one of the session's open asks (its card row). False if it isn't open or the answer doesn't fit.</summary>
     Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken);

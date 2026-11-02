@@ -24,9 +24,20 @@ public sealed class EffectTests
     private static void Answer(EngineFixture f)
     {
         f.SeedSession();
-        Assert.True(f.Apply(new OpenNeed("s", null, null, "question", "Continue?", [], "request-7", null, null), "n",
-            actor: new(ActorKind.System, "test")).Applied);
-        Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "n", 1).Applied);
+        // A persisted legacy answer/outbox fixture exercises worker lifecycle, not fresh provider admission.
+        f.Db.Writer.Write("test.legacy-answer-effect", scope =>
+        {
+            scope.Execute("""
+                INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,kind,text,options_json,
+                    provider_request_id,state,answer_json,answered_by,answered_ms)
+                VALUES('n',2,$machine,1000,1000,'s','question','Continue?','[]','request-7','answered','"yes"','window',1000)
+                """, new SqlArg("$machine", f.Machine));
+            var context = new CommandContext(Guid.NewGuid(), f.Machine, new(ActorKind.System, "test"), "n", 1, 0, 1000);
+            return EngineJournal.Commit(scope, context, 2, 0,
+                [new("needs_me.answered", "needs_me", "n", 2, false, new("s", null, null, null, "answered", 0))],
+                [new("answer/n", "answer", "s", null, JsonSerializer.SerializeToElement(
+                    new NeedAnswer("n", "request-7", JsonSerializer.SerializeToElement("yes")), EngineJson.Default.NeedAnswer))]);
+        });
     }
 
     private static async Task Until(Channel<EngineEvent> events, Func<EngineEvent, bool> predicate)

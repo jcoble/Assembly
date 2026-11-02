@@ -36,6 +36,7 @@ public sealed partial class MachinesSocketTests
         public Uri Address { get; private set; } = null!;
         public int Format { get; set; } = RowStore.FormatVersion;
         public int AgentsStatus { get; set; } = 200;
+        public string EngineMachine { get; set; } = "stub-engine";
         public int StopStatus { get; set; } = 202;
         public bool Drop { get; set; }
         public bool DropVersion { get; set; }
@@ -141,6 +142,11 @@ public sealed partial class MachinesSocketTests
                                 var id = json.GetProperty("id");
                                 var method = json.GetProperty("method").GetString();
                                 var feature = json.GetProperty("feature").GetString();
+                                if (feature == "engine" && method == "machine")
+                                {
+                                    await Send(JsonSerializer.Serialize(new { t = "result", id = id.GetInt64(), result = new { machine = EngineMachine, through = 0 } }));
+                                    break;
+                                }
                                 if (feature == "engine")
                                 {
                                     await Send($$"""{"t":"error","id":{{id}},"code":"not_found","message":"Unknown engine call"}""");
@@ -166,7 +172,7 @@ public sealed partial class MachinesSocketTests
                                         await Send($$"""{"t":"error","id":{{id}},"code":"{{code}}","message":"{{message}}"}""");
                                         break;
                                     }
-                                    result = """{"agents":[{"id":"claude","name":"Claude"},{"id":"codex","name":"Codex"}]}""";
+                                    result = "{\"agents\":[{\"id\":\"claude\",\"name\":\"Claude\",\"targetId\":\"" + new string('a', 64) + "\",\"accountContext\":\"\",\"providerTargetId\":\"claude/\"},{\"id\":\"codex\",\"name\":\"Codex\",\"targetId\":\"" + new string('b', 64) + "\",\"accountContext\":\"\",\"providerTargetId\":\"codex/\"}]}";
                                 }
                                 else if (feature == "config")
                                 {

@@ -66,7 +66,7 @@ public sealed partial class ChatSocketTests
         Assert.Contains("\"code\":\"not_found\"", gone);
         Assert.Contains("there's no call machines/list", gone);
         await CallAsync(socket, 2, "machines", "agents", """{"machine":"box"}""");
-        Assert.Equal("""{"t":"result","id":2,"result":{"agents":[{"id":"claude","name":"Claude"}]}}""", await ReadAsync(socket));
+        Assert.Equal($$$$$"""{"t":"result","id":2,"result":{"agents":[{"id":"claude","name":"Claude","targetId":"{{{{{new string('a', 64)}}}}}","accountContext":"","providerTargetId":"claude/"}]}}""", await ReadAsync(socket));
         Assert.Equal(["agents"], _box.Asked);
         await CallAsync(socket, 3, "machines", "agents", "{}");
         Assert.Contains("\"agents\":[", await ReadAsync(socket));

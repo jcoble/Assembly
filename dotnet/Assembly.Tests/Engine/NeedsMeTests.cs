@@ -1,5 +1,10 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Engine;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Domain.Events;
+using Assembly.Domain.Rows;
 using Assembly.Engine.Contracts;
 using Assembly.Engine;
 using Assembly.Engine.NeedsMe;
@@ -17,9 +22,9 @@ public sealed class NeedsMeTests
     public void Two_screens_answer_once()
     {
         using var f = new EngineFixture(); f.SeedSession("s");
-        Assert.True(f.Apply(new OpenNeed("s", null, null, "permission", "Allow?", [],
-            "request-7", "chat-row-2", 2000), "n", actor: Adapter).Applied);
-        var first = f.Apply(new ResolveNeed("answered", Allow), "n", version: 1);
+        Assert.True(OpenProvider(f, new OpenNeed("s", null, null, "permission", "Allow?", ["allow"],
+            "request-7", "chat-row-2", 2000), "n").Applied);
+        var first = AnswerOwner(f, "n", Allow);
         var second = f.Apply(new ResolveNeed("answered", Allow), "n", version: 2);
         Assert.True(first.Applied); Assert.Equal("already_resolved", second.Error);
         Assert.Equal("answered", f.State("engine_needs_me", "n"));
@@ -33,11 +38,11 @@ public sealed class NeedsMeTests
     }
 
     [Fact]
-    public void Timeout_permission_denies_question_waits()
+    public void Timeout_permission_cancels_question_waits()
     {
         using var f = RunningStep();
         Assert.True(f.Apply(new OpenNeed("s", "r", "step", "question", "Secret question", [], null, null, 2000), "q", actor: Adapter).Applied);
-        Assert.True(f.Apply(new OpenNeed("s", "r", null, "permission", "Allow?", [], "request-7", null, 2000), "n", actor: Adapter).Applied);
+        SeedLegacy(f, new OpenNeed("s", "r", null, "permission", "Allow?", [], "request-7", null, 2000), "n");
         Assert.Equal(2000, NeedTransitions.NextDeadline(f.Db));
         f.Time.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(1999));
         Assert.False(Expire(f, "n").Applied); Assert.False(Expire(f, "q").Applied);
@@ -45,13 +50,14 @@ public sealed class NeedsMeTests
         f.Time.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(2000));
         Assert.True(Expire(f, "n").Applied); Assert.True(Expire(f, "q").Applied);
         Assert.Equal("expired", f.State("engine_needs_me", "n")); Assert.Equal("expired", f.State("engine_needs_me", "q"));
-        Assert.Equal("\"deny\"", Field(f, "answer_json")); Assert.Null(Field(f, "answer_json", "q"));
+        Assert.Null(Field(f, "answer_json")); Assert.Null(Field(f, "answer_json", "q"));
         Assert.Equal("waiting", f.State("engine_step", "step"));
         Assert.Equal("waiting", f.Text("SELECT state FROM engine_step_attempt"));
         Assert.Equal(1, f.Count("engine_outbox")); Assert.Null(NeedTransitions.NextDeadline(f.Db));
         using var payload = JsonDocument.Parse(f.Text("SELECT payload_json FROM engine_outbox")!);
         Assert.Equal("request-7", payload.RootElement.GetProperty("providerRequestId").GetString());
-        Assert.Equal("deny", payload.RootElement.GetProperty("answer").GetString());
+        Assert.Equal(JsonValueKind.Null, payload.RootElement.GetProperty("answer").ValueKind);
+        Assert.False(payload.RootElement.TryGetProperty("binding", out _)); Assert.False(payload.RootElement.TryGetProperty("cancellation", out _));
         Assert.DoesNotContain("Secret question", f.Text("SELECT group_concat(data_json) FROM engine_event")!);
     }
 
@@ -74,8 +80,8 @@ public sealed class NeedsMeTests
     public void Same_request_preserves_chat_link()
     {
         using var f = new EngineFixture(); f.SeedSession();
-        var open = new OpenNeed("s", null, null, "permission", "Allow?", [], "request-7", "chat-row-2", null);
-        Assert.True(f.Apply(open, "n", actor: Adapter).Applied);
+        var open = ProviderCard(new OpenNeed("s", null, null, "permission", "Allow?", ["allow"], "request-7", "chat-row-2", null));
+        Assert.True(OpenProvider(f, open, "n").Applied);
         var events = f.Count("engine_event");
         Assert.True(f.Apply(open, "duplicate", actor: Adapter).Applied);
         Assert.Equal(1, f.Count("engine_needs_me")); Assert.Equal(events, f.Count("engine_event"));
@@ -97,15 +103,17 @@ public sealed class NeedsMeTests
     public void Resolution_edges_record_one_actor_and_time(string state, ActorKind actor, bool allowed)
     {
         using var f = new EngineFixture(); f.SeedSession();
-        f.Apply(new OpenNeed("s", null, null, "permission", "Allow?", [], "request", null, 2000), "n", actor: Adapter);
+        Assert.True(OpenProvider(f, new OpenNeed("s", null, null, "permission", "Allow?", ["allow"], "request", "chat", 2000), "n").Applied);
         f.Time.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(2000));
-        var result = f.Apply(new ResolveNeed(state, state == "answered" ? Allow : null, actor == ActorKind.System ? "policy_or_cancel" : null), "n", version: 1, actor: new(actor, "resolver"));
+        var result = state == "answered" && actor == ActorKind.Window ? AnswerOwner(f, "n", Allow)
+            : f.Apply(new ResolveNeed(state, state == "answered" ? Allow : null, actor == ActorKind.System ? "policy_or_cancel" : null), "n", version: 1, actor: new(actor, "resolver"));
+        var resolver = state == "answered" && actor == ActorKind.Window ? "owner" : "resolver";
         Assert.Equal(allowed, result.Applied);
         if (!allowed) { Assert.Equal("forbidden", result.Error); Assert.Null(Field(f, "answered_by")); return; }
-        Assert.Equal("resolver", Field(f, "answered_by")); Assert.Equal(2000, f.Number("SELECT answered_ms FROM engine_needs_me"));
-        Assert.Equal(state == "answered" ? "\"allow\"" : "\"deny\"", Field(f, "answer_json"));
+        Assert.Equal(resolver, Field(f, "answered_by")); Assert.Equal(2000, f.Number("SELECT answered_ms FROM engine_needs_me"));
+        Assert.Equal(state != "answered" ? null : actor == ActorKind.Window ? "{\"optionId\":\"allow\"}" : "\"allow\"", Field(f, "answer_json"));
         Assert.Equal("already_resolved", f.Apply(new ResolveNeed("answered", Allow), "n", version: 2).Error);
-        Assert.Equal("resolver", Field(f, "answered_by")); Assert.Equal(state == "answered" && actor == ActorKind.System ? 0 : 1, f.Count("engine_outbox"));
+        Assert.Equal(resolver, Field(f, "answered_by")); Assert.Equal(state == "answered" && actor == ActorKind.System ? 0 : 1, f.Count("engine_outbox"));
     }
 
     private static EngineFixture RunningStep()
@@ -134,7 +142,7 @@ public sealed class NeedsMeTests
     public void Validation_and_fencing_leave_no_domain_changes()
     {
         using var f = RunningStep();
-        var open = new OpenNeed("s", "r", "step", "question", "Question", [], "request", null, null);
+        var open = new OpenNeed("s", "r", "step", "question", "Question", [], null, null, null);
         var before = f.Count("engine_event");
         foreach (var bad in new[] { open with { Kind = "unknown" }, open with { Text = " " },
             open with { Options = [" "] }, open with { Options = ["same", "same"] },
@@ -159,9 +167,10 @@ public sealed class NeedsMeTests
     public void Nonpermission_expiry_never_answers(string kind)
     {
         using var f = new EngineFixture(); f.SeedSession();
-        Assert.True(f.Apply(new OpenNeed("s", null, null, kind, "Private text", ["Private A", "Private B"], "request", null, 1000), "n", actor: Adapter).Applied);
+        Assert.True(f.Apply(new OpenNeed("s", null, null, kind, "Private text", ["Private A", "Private B"], null, null, 1000), "n", actor: Adapter).Applied);
         Assert.True(Expire(f, "n").Applied);
-        Assert.Null(Field(f, "answer_json")); Assert.Equal(0, f.Count("engine_outbox"));
+        Assert.Null(Field(f, "answer_json")); Assert.Equal(0, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='answer'"));
+        Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_message WHERE id='need-answer/n'"));
         Assert.DoesNotContain("Private", f.Text("SELECT group_concat(data_json) FROM engine_event")!);
         Assert.Equal("idle", f.State("engine_session", "s"));
     }
@@ -181,11 +190,11 @@ public sealed class NeedsMeTests
     public void Answer_effect_failure_rolls_back_answer_derived_states_and_events()
     {
         using var f = RunningStep();
-        Assert.True(f.Apply(new OpenNeed("s", "r", "step", "permission", "Private question", ["Private option"], "request", null, null), "n", actor: Adapter).Applied);
+        Assert.True(OpenProvider(f, new OpenNeed("s", "r", "step", "permission", "Private question", ["allow", "Private option"], "request", "chat", null), "n").Applied);
         var events = f.Count("engine_event"); var receipts = f.Count("engine_command_receipt");
         var next = f.Number("SELECT next_seq FROM engine_meta");
         f.Db.Writer.Write("test.fail-answer", s => s.Execute("CREATE TRIGGER fail_answer AFTER INSERT ON engine_outbox BEGIN SELECT RAISE(ABORT,'injected'); END"));
-        Assert.Throws<SqliteException>(() => f.Apply(new ResolveNeed("answered", Allow), "n", version: 1));
+        Assert.Throws<SqliteException>(() => AnswerOwner(f, "n", Allow));
         Assert.Equal("open", f.State("engine_needs_me", "n")); Assert.Null(Field(f, "answer_json"));
         Assert.Null(Field(f, "answered_by")); Assert.Null(Field(f, "answered_ms"));
         Assert.Equal("needs_me", f.State("engine_session", "s")); Assert.Equal("needs_me", f.State("engine_run", "r"));
@@ -197,16 +206,73 @@ public sealed class NeedsMeTests
     public void Answer_and_option_texts_stay_out_of_events_and_replay_is_durable()
     {
         using var f = new EngineFixture(); f.SeedSession();
-        Assert.True(f.Apply(new OpenNeed("s", null, null, "choice", "Private question", ["Private A", "Private B"], "request", "chat", null), "n", actor: Adapter).Applied);
+        Assert.True(OpenProvider(f, new OpenNeed("s", null, null, "permission", "Private question", ["Private A", "Private B"], "request", "chat", null), "n").Applied);
         var answer = JsonSerializer.SerializeToElement("Private A");
         var id = Guid.NewGuid();
-        var result = f.Apply(new ResolveNeed("answered", answer), "n", version: 1, commandId: id);
+        var result = AnswerOwner(f, "n", answer, id);
         Assert.True(result.Applied);
         f.Reopen();
-        Assert.Equal(result, f.Apply(new ResolveNeed("answered", answer), "n", version: 1, commandId: id));
+        Assert.Equal(result, AnswerOwner(f, "n", answer, id));
         Assert.Equal(1, f.Count("engine_outbox"));
         Assert.DoesNotContain("Private", f.Text("SELECT group_concat(data_json) FROM engine_event")!);
-        Assert.Equal("\"Private A\"", Field(f, "answer_json"));
+        Assert.Equal("{\"optionId\":\"Private A\"}", Field(f, "answer_json"));
+    }
+
+    private static OpenNeed ProviderCard(OpenNeed open)
+    {
+        var card = new AskPayload(open.Kind, "open", null, open.Text, null,
+            open.Options.Select(id => new AskOption(id, id, "allow_once")).ToArray(), null, null);
+        return open with { ProviderQuestion = JsonSerializer.SerializeToElement(card, RowJsonContext.Rows.AskPayload) };
+    }
+
+    private static CommandResult OpenProvider(EngineFixture f, OpenNeed open, string id)
+    {
+        open = ProviderCard(open);
+        var card = JsonSerializer.Deserialize(open.ProviderQuestion!.Value, RowJsonContext.Rows.AskPayload)!;
+        var prepared = EngineCommands.PrepareNeedCommand(open);
+        CommandResult result = null!;
+        RowStore.Open(f.Db).Commit(open.SessionId, new RowConverter().Apply(new AskChanged(1000, open.ChatRowId!, card)), scope =>
+        {
+            result = new EngineCommands(f.Machine, f.Limits).ApplyPreparedNeed(scope,
+                new(Guid.NewGuid(), f.Machine, Adapter, id, 0, 0, 1000), prepared);
+        });
+        return result;
+    }
+
+    private static void SeedLegacy(EngineFixture f, OpenNeed open, string id)
+    {
+        // Explicit persisted legacy identity; the ordinary question establishes its existing derived state.
+        f.Db.Writer.Write("test.persisted-legacy-provider-need", scope =>
+        {
+            Assert.True(new EngineCommands(f.Machine, f.Limits).Apply(scope,
+                new(Guid.NewGuid(), f.Machine, Adapter, id, 0, 0, 1000),
+                open with { ProviderRequestId = null, ChatRowId = null }).Applied);
+            return scope.Execute("UPDATE engine_needs_me SET provider_request_id=$request,chat_row_id=$chat WHERE id=$id",
+                new SqlArg("$request", open.ProviderRequestId), new("$chat", open.ChatRowId), new("$id", id));
+        });
+    }
+
+    private static CommandResult AnswerOwner(EngineFixture f, string needId, JsonElement original, Guid? commandId = null)
+    {
+        var identity = f.Db.QueryFirst("""
+            SELECT session_id,chat_row_id,provider_request_id,run_id,step_id FROM engine_needs_me WHERE id=$id
+            """, r => new
+        {
+            Session = r.Text(0),
+            Chat = r.Text(1),
+            Request = r.Text(2),
+            Run = r.IsNull(3) ? null : r.Text(3),
+            Step = r.IsNull(4) ? null : r.Text(4)
+        }, default, new SqlArg("$id", needId))!;
+        var attempt = identity.Step is null ? null : f.Db.QueryFirst("SELECT attempt FROM engine_step WHERE id=$id",
+            r => (int?)checked((int)r.Long(0)), default, new SqlArg("$id", identity.Step));
+        var normalized = JsonSerializer.SerializeToElement(new { optionId = original.GetString() });
+        var captured = new PreparedProviderAnswer(new(identity.Session, identity.Chat, identity.Request,
+            new(identity.Session, identity.Run, identity.Step, attempt, 0), "acp"), normalized);
+        var prepared = EngineCommands.PrepareOwnerNeedCommand(commandId ?? Guid.NewGuid(), f.Machine, needId, 1, 0,
+            new ResolveNeed("answered", original), captured, null, default);
+        return f.Db.Writer.Write("test.owner-answer", scope => new EngineCommands(f.Machine, f.Limits)
+            .ApplyPreparedOwnerNeed(scope, prepared, f.Time.GetUtcNow().ToUnixTimeMilliseconds()));
     }
 
     private static string? Field(EngineFixture f, string column, string id = "n") =>

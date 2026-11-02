@@ -12,6 +12,7 @@ using Assembly.Domain.Rows;
 using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Engine;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>
@@ -40,7 +41,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     private RunningTurn? _turn;
     // The last turn's work, which goes on past its end rows until its session is closed.
     private Task _lastTurn = Task.CompletedTask;
-    private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SendResult> Send)> _sending = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Text, string? Label, string? FromSessionId, Task<SendResult> Send)> _sending = new();
     private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SteerDeliveryResult> Send)> _steering = [];
     // The asks waiting for the user, by id. Guarded by _gate.
     private readonly Dictionary<string, OpenAsk> _asks = [];
@@ -143,18 +144,56 @@ public sealed partial class SessionHost : IPermissionPolicy
     /// </summary>
     public bool Answer(string askId, JsonElement answer)
     {
-        OpenAsk? ask;
         lock (_gate)
-            _asks.TryGetValue(askId, out ask);
-        var fits = ask?.Card.Kind switch
+            return _asks.TryGetValue(askId, out var ask) && FitsAnswer(ask.Card, answer)
+                && ask.Answer.TrySetResult(answer.Clone());
+    }
+
+    /// <summary>Captures one actual open request without completing it or entering a writer.</summary>
+    public PreparedProviderAnswer? PrepareProviderAnswer(string askId, JsonElement answer)
+    {
+        lock (_gate)
+        {
+            if (!_asks.TryGetValue(askId, out var ask) || ask.Answer.Task.IsCompleted ||
+                ask.Observation is not { } observed || ask.Request is not { } request) return null;
+            if (ask.Card.Kind == "permission" && answer.ValueKind == JsonValueKind.String)
+                answer = JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement> { ["optionId"] = answer.Clone() },
+                    SessionsJson.Default.DictionaryStringJsonElement);
+            if (!FitsAnswer(ask.Card, answer)) return null;
+            return new(new(_sessionId, askId, request.ProviderRequestId, observed, ask.AcpSessionId), answer.Clone());
+        }
+    }
+
+    internal bool AnswerProviderRequest(ProviderAnswerBinding binding, JsonElement answer)
+    {
+        lock (_gate)
+            return binding.SessionId == _sessionId && _asks.TryGetValue(binding.ChatRowId, out var ask) &&
+                ask.Request?.ProviderRequestId == binding.ProviderRequestId && ask.Observation == binding.Observation &&
+                binding.Observation.SessionId == _sessionId && ask.AcpSessionId == binding.AcpSessionId &&
+                FitsAnswer(ask.Card, answer) && ask.Answer.TrySetResult(answer.Clone());
+    }
+
+    internal bool CancelProviderRequest(string providerRequestId, ProviderTerminalBinding binding)
+    {
+        lock (_gate)
+            return binding.SessionId == _sessionId && _asks.TryGetValue(binding.ChatRowId, out var ask) &&
+                ask.Request?.ProviderRequestId == providerRequestId && ask.Observation is { } observed &&
+                observed.SessionId == _sessionId && observed.Epoch == binding.Epoch && observed.RunId == binding.RunId &&
+                observed.StepId == binding.StepId && observed.Attempt == binding.Attempt && ask.Answer.TrySetCanceled();
+    }
+
+    private static bool FitsAnswer(AskPayload card, JsonElement answer)
+    {
+        if (answer.ValueKind != JsonValueKind.Object) return false;
+        return card.Kind switch
         {
             "permission" => answer.TryGetProperty("optionId", out var option) && option.ValueKind == JsonValueKind.String
-                            && ask.Card.Options!.Any(o => o.OptionId == option.GetString()),
-            "question" => answer.TryGetProperty("action", out var action) && action.GetString() is "accept" or "decline" or "cancel"
+                            && card.Options!.Any(o => o.OptionId == option.GetString()),
+            "question" => answer.TryGetProperty("action", out var action) && action.ValueKind == JsonValueKind.String
+                          && action.GetString() is "accept" or "decline" or "cancel"
                           && (!answer.TryGetProperty("content", out var content) || content.ValueKind == JsonValueKind.Object),
             _ => false,
         };
-        return fits && ask!.Answer.TrySetResult(answer.Clone());
     }
 
     // Shows the card and waits for its answer; a cancel settles the card as cancelled and goes on up.
@@ -169,8 +208,8 @@ public sealed partial class SessionHost : IPermissionPolicy
             if (_feed is not null && request is null) _log.WriteLine("engine feed: provider_request_context_missing");
             try
             {
-                Apply(new AskChanged(Now(), askId, card), observe: observed is null || request is null ? null :
-                    scope => _feed?.Asked(scope, observed, askId, card, request));
+                var prepared = observed is null || request is null ? null : _feed?.PrepareAsked(observed, askId, card, request);
+                Apply(new AskChanged(Now(), askId, card), observe: prepared);
             }
             catch
             {
@@ -191,10 +230,11 @@ public sealed partial class SessionHost : IPermissionPolicy
             lock (_gate)
             {
                 _asks.Remove(askId);
+                var prepared = observed is null || request is null ? null : _feed?.PrepareSettled(observed, askId,
+                    answer is null ? "cancelled" : "answered", answer,
+                    answer is not null ? "manual_answered" : providerGone?.Invoke() == true ? "provider_gone" : "turn_cancelled");
                 Apply(new AskChanged(Now(), askId, card with { State = answer is null ? "cancelled" : "answered", Answer = answer }),
-                    observe: observed is null || request is null ? null : scope => _feed?.Settled(scope, observed, askId,
-                        answer is null ? "cancelled" : "answered", answer,
-                        answer is not null ? "manual_answered" : providerGone?.Invoke() == true ? "provider_gone" : "turn_cancelled"));
+                    observe: prepared);
             }
         }
     }
@@ -320,9 +360,10 @@ public sealed partial class SessionHost : IPermissionPolicy
             Apply(started);
     }
 
-    private void Apply(AgentEvent agentEvent, RowBatch? collector = null, Action<Assembly.Application.Common.Database.IWriteScope>? observe = null)
+    private void Apply(AgentEvent agentEvent, RowBatch? collector = null, Action<Assembly.Application.Common.Database.IWriteScope>? observe = null, AuthTerminalProof? authProof = null)
     {
         var batch = _converter.Apply(agentEvent);
+        if (authProof is not null) DecorateAuthTerminal(batch, authProof);
         if (collector is null) _hub.Publish(_sessionId, batch, observe);
         else
         {

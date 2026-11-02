@@ -37,7 +37,7 @@ public sealed class SessionCutoverTests
             cutover: new(f.Db, store, launcher, "/checkouts", f.Time, _ => "/account-home"));
         Assert.Equal(2, f.Count("engine_session"));
         Assert.Equal("chosen", f.Text("SELECT model FROM engine_session WHERE id=$id", new SqlArg("$id", root.SessionId)));
-        Assert.Equal("/account-home", f.Text("SELECT account_context FROM engine_session WHERE id=$id", new SqlArg("$id", root.SessionId)));
+        Assert.Equal(AccountContext.Of(launcher.Agents.Single(agent => agent.Id == "work-profile"), _ => "/account-home"), f.Text("SELECT account_context FROM engine_session WHERE id=$id", new SqlArg("$id", root.SessionId)));
         Assert.Equal("retired-launcher", f.Text("SELECT provider FROM engine_session WHERE id=$id", new SqlArg("$id", helper.SessionId)));
         Assert.Null(f.Text("SELECT model FROM engine_session WHERE id=$id", new SqlArg("$id", helper.SessionId)));
         Assert.Equal("", f.Text("SELECT account_context FROM engine_session WHERE id=$id", new SqlArg("$id", helper.SessionId)));
@@ -208,7 +208,14 @@ public sealed class SessionCutoverTests
         public int Calls;
         public IReadOnlyList<AgentDescriptor> Agents { get; } = [new("work-profile", "Friendly custom", "unused", [], null, VendorFamily: "codex")];
         public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) { Calls++; throw new InvalidOperationException("No checkout during projection"); }
-        public void ValidateFolder(string folder) { Calls++; new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions()).ValidateFolder(folder); }
+        public void ValidateFolder(string folder) { Calls++; new Assembly.Infrastructure.Agents.AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder); }
+        public bool CanRunTerminalAuthentication => false;
+        public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);
+        public Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            Assembly.Application.Common.Acp.IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken) =>
+            LaunchAsync(descriptor.Id, stages, cancellationToken);
+
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) { Calls++; throw new InvalidOperationException("No provider during projection"); }
     }
 }

@@ -6,6 +6,8 @@ using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Sessions.Configuration;
 
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
@@ -73,11 +75,17 @@ internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machin
                 await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, $"this machine has no agent {agent}");
                 return;
             }
+            if (!ReferenceEquals(machines.Named(JsonReply.String(body, "machine")), machine)) throw new CallFailed("The selected machine changed.");
+            var initial = ComposerConfigJson.Initial(body);
+            var folder = JsonReply.String(body, "workingFolder");
+            if (JsonReply.String(body, "parentSessionId") is not null && (initial is not null || folder is not null))
+                throw new CallFailed("Helper sessions do not accept initialConfig or workingFolder.");
             // A helper session, started by a session on the machine that reaches this one.
             session = JsonReply.String(body, "parentSessionId") is { } parentId
                 ? await machine.CreateHelperAsync(new SessionInfo(parentId, agent, repoUrl, null, null, 0), agent,
                     JsonReply.String(body, "title") ?? "Helper", context.RequestAborted)
-                : await machine.CreateSessionAsync(agent, repoUrl, context.RequestAborted);
+                : await machine.CreateSessionAsync(agent, repoUrl, context.RequestAborted, initial, folder);
+            if (!ReferenceEquals(machines.Named(JsonReply.String(body, "machine")), machine)) throw new CallFailed("The selected machine changed.");
         }
         catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
@@ -104,6 +112,7 @@ internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machin
         json.WriteString("machine", session.Machine);
         json.WriteString("parentSessionId", session.ParentSessionId);
         json.WriteString("acpSessionId", session.AcpSessionId);
+        json.WriteString("workingFolder", session.WorkingFolder);
         json.WriteNumber("updatedAt", session.UpdatedAt);
         json.WriteEndObject();
     }

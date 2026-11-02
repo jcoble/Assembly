@@ -15,11 +15,12 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
 {
     public string? Name => null;
 
-    public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<(string Id, string Name)>>(sessions.Agents.Select(agent => (agent.Id, agent.Name)).ToList());
+    public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(sessions.ConfigTargets);
 
-    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
-        Task.FromResult(sessionStore.Create(agent, repoUrl));
+    public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
+        InitialSessionConfig? initialConfig = null, string? workingFolder = null) =>
+        Task.FromResult(sessions.CreateSession(agent, repoUrl, cancellationToken, initialConfig, workingFolder));
 
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Task.FromResult(sessionStore.Helper(parent, agent, title));
@@ -71,11 +72,17 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
         return Task.FromResult(config.Options is null ? config with { Options = sessionStore.AgentConfig(session.Agent) } : config);
     }
 
-    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken)
+    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null)
     {
-        await sessions.For(session.SessionId).SetConfigAsync(configId, value, cancellationToken);
+        await sessions.For(session.SessionId).SetConfigAsync(configId, value, cancellationToken, targetId);
         return await ConfigAsync(session, cancellationToken);
     }
+
+    public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken cancellationToken) =>
+        sessions.DiscoverConfigAsync(agent, targetId, cwd, cancellationToken);
+
+    public Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken cancellationToken) =>
+        sessions.For(session.SessionId).WarmConfigAsync(targetId, cancellationToken);
 
     public Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.For(session.SessionId).Answer(askId, answer));

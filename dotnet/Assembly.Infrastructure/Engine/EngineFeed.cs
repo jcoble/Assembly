@@ -2,10 +2,14 @@ using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Engine;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Messages;
 using Assembly.Engine.Hosting;
 using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Recording;
@@ -20,18 +24,21 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
 
     public SessionObservation? Capture(string sessionId)
     {
-        var observed = ((IEngineRuntime)runtime).Read(scope => scope.QueryFirst("""
-            SELECT s.id,COALESCE(st.run_id,s.run_id),st.id,st.attempt,s.epoch
-            FROM engine_session s LEFT JOIN engine_step st ON st.id=(
-                SELECT id FROM engine_step WHERE session_id=s.id AND state IN ('running','waiting')
-                ORDER BY updated_ms DESC,id LIMIT 1)
-            WHERE s.id=$id AND s.machine=$machine AND s.state NOT IN ('foreign','ended')
-            """, r => new SessionObservation(r.Text(0), Text(r, 1), Text(r, 2),
-                r.IsNull(3) ? null : checked((int)r.Long(3)), r.Long(4)),
-            new SqlArg("$id", sessionId), new SqlArg("$machine", runtime.Machine)), CancellationToken.None);
+        var observed = ((IEngineRuntime)runtime).Read(scope => CaptureObservation(scope, sessionId), CancellationToken.None);
         if (observed is null) Diagnostic("owning_session_missing");
         return observed;
     }
+
+    private SessionObservation? CaptureObservation(IReadScope scope, string sessionId) => scope.QueryFirst("""
+        SELECT s.id,COALESCE(st.run_id,s.run_id),st.id,st.attempt,s.epoch
+        FROM engine_session s LEFT JOIN engine_step st ON st.id=(
+            SELECT id FROM engine_step WHERE session_id=s.id AND state IN ('running','waiting')
+            ORDER BY updated_ms DESC,id LIMIT 1)
+        WHERE s.id=$id AND s.machine=$machine AND s.holder='local' AND s.reserved_epoch IS NULL
+          AND s.state NOT IN ('foreign','ended','handing_off')
+        """, r => new SessionObservation(r.Text(0), Text(r, 1), Text(r, 2),
+            r.IsNull(3) ? null : checked((int)r.Long(3)), r.Long(4)),
+        new SqlArg("$id", sessionId), new SqlArg("$machine", runtime.Machine));
 
     public void ObserveBatch(IWriteScope scope, SessionObservation observed, string acpSessionId, IReadOnlyList<AgentEvent> events)
     {
@@ -48,7 +55,9 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
 
     public void Connected(IWriteScope scope, SessionObservation observed, string acpSessionId, bool canSteer)
     {
-        Apply(scope, observed, "session", observed.SessionId, new ReportCapabilities(canSteer));
+        var result = Apply(scope, observed, "session", observed.SessionId,
+            new ReportCapabilities(canSteer, acpSessionId, AttributionOf(observed)));
+        if (!result.Applied) throw new CallFailed("provider_fact_refused", "provider_fact_refused");
         if (CurrentState(scope, observed.SessionId) == "lost") State(scope, observed, "idle", acpSessionId, null);
     }
 
@@ -62,26 +71,60 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
         Apply(scope, observed, "session", observed.SessionId, new SetSessionState(state, acpSessionId, reason));
     }
 
-    public void Asked(IWriteScope scope, SessionObservation observed, string askId, AskPayload card, JsonRpcRequestContext request) =>
-        Apply(scope, observed, "needs_me", askId, new OpenNeed(observed.SessionId, observed.RunId, observed.StepId,
-            card.Kind, string.IsNullOrWhiteSpace(card.Message) ? card.Title ?? "" : card.Message,
-            card.Options?.Select(o => o.OptionId).ToArray() ?? [], request.ProviderRequestId, askId, null));
-
-    public void Settled(IWriteScope scope, SessionObservation observed, string askId, string how, JsonElement? answer, string reason)
+    public Action<IWriteScope> PrepareAsked(SessionObservation observed, string askId, AskPayload card, JsonRpcRequestContext request)
     {
-        var state = scope.QueryFirst("SELECT state FROM engine_needs_me WHERE id=$id AND session_id=$session AND machine=$machine",
-            r => r.Text(0), new SqlArg("$id", askId), new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine));
-        if (state is null || state != "open") return;
-        Apply(scope, observed, "needs_me", askId, new ResolveNeed(how, answer, reason));
+        var command = EngineCommands.PrepareNeedCommand(new OpenNeed(observed.SessionId, observed.RunId, observed.StepId,
+            card.Kind, card.Message ?? card.Title ?? "", card.Options?.Select(o => o.OptionId).ToArray() ?? [],
+            request.ProviderRequestId, askId, null, JsonSerializer.SerializeToElement(card, RowJsonContext.Rows.AskPayload)));
+        var factId = Guid.NewGuid();
+        return scope => ApplyNeedFact(scope, observed, askId, command, factId, opening: true);
     }
 
-    public void PolicyAnswered(IWriteScope scope, SessionObservation observed, JsonRpcRequestContext request, string method, JsonElement outcome)
+    public Action<IWriteScope> PrepareSettled(SessionObservation observed, string askId, string how, JsonElement? answer, string reason)
     {
-        var id = scope.QueryFirst("""
-            SELECT id FROM engine_needs_me WHERE session_id=$session AND machine=$machine AND provider_request_id=$request
-            """, r => r.Text(0), new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine),
-            new SqlArg("$request", request.ProviderRequestId));
-        if (id is not null) Settled(scope, observed, id, "answered", outcome, "policy_answered");
+        var command = EngineCommands.PrepareNeedCommand(new ResolveNeed(how, answer, reason));
+        var factId = Guid.NewGuid();
+        return scope => ApplyNeedFact(scope, observed, askId, command, factId, opening: false);
+    }
+
+    public Action<IWriteScope> PreparePolicyAnswered(SessionObservation observed, JsonRpcRequestContext request, string method, JsonElement outcome)
+    {
+        var requestId = request.ProviderRequestId;
+        var command = EngineCommands.PrepareNeedCommand(new ResolveNeed("answered", outcome, "policy_answered"));
+        var factId = Guid.NewGuid();
+        return scope =>
+        {
+            var id = scope.QueryFirst("""
+                SELECT id FROM engine_needs_me WHERE session_id=$session AND machine=$machine AND provider_request_id=$request
+                """, r => r.Text(0), new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine),
+                new SqlArg("$request", requestId));
+            if (id is not null) ApplyNeedFact(scope, observed, id, command, factId, opening: false);
+        };
+    }
+
+    private void ApplyNeedFact(IWriteScope scope, SessionObservation observed, string askId,
+        PreparedNeedCommand command, Guid factId, bool opening)
+    {
+        var need = scope.QueryFirst("""
+            SELECT version,state FROM engine_needs_me WHERE id=$id AND session_id=$session AND machine=$machine
+            """, r => new { Version = r.Long(0), State = r.Text(1) }, new SqlArg("$id", askId),
+            new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine));
+        if (!opening && (need is null || need.State != "open")) return;
+        var current = scope.QueryFirst("""
+            SELECT s.id,COALESCE(st.run_id,s.run_id),st.id,st.attempt,s.epoch
+            FROM engine_session s LEFT JOIN engine_step st ON st.id=(
+                SELECT id FROM engine_step WHERE session_id=s.id AND state IN ('running','waiting')
+                ORDER BY updated_ms DESC,id LIMIT 1)
+            WHERE s.id=$id AND s.machine=$machine AND s.holder='local' AND s.reserved_epoch IS NULL
+                AND s.state NOT IN ('foreign','ended','handing_off')
+            """, r => new SessionObservation(r.Text(0), Text(r, 1), Text(r, 2),
+                r.IsNull(3) ? null : checked((int)r.Long(3)), r.Long(4)),
+            new SqlArg("$id", observed.SessionId), new SqlArg("$machine", runtime.Machine));
+        if (current != observed) throw new CallFailed("provider_request_changed");
+        var result = runtime.Commands.ApplyPreparedNeed(scope,
+            new(factId, runtime.Machine, new(ActorKind.System, "adapter"), askId, opening ? 0 : need!.Version,
+                observed.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+        if (!result.Applied) throw new CallFailed(result.Error ?? "provider_fact_refused", result.Error);
     }
 
     private void Tool(IWriteScope scope, SessionObservation observed, string acpSessionId, ToolCallChanged change)
@@ -152,4 +195,64 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
     private static string? Text(IRow r, int column) => r.IsNull(column) ? null : r.Text(column);
     private static long Bytes(JsonElement value) => Encoding.UTF8.GetByteCount(value.GetRawText());
     private void Diagnostic(string code) => log.WriteLine($"engine feed: {code}");
+    public void BlockSignInNeeded(IWriteScope scope, SessionObservation observed, string acpSessionId, AuthTerminalProof binding)
+    {
+        BlockAuth(scope, observed, binding, acpSessionId);
+    }
+
+    public void SignInNeeded(IWriteScope scope, SessionObservation observed, string acpSessionId, long terminalSeq, AuthTerminalProof proof)
+    {
+        ReportAuth(scope, observed, terminalSeq, proof, acpSessionId);
+    }
+
+    public void BlockFailedOpenSignInNeeded(IWriteScope scope, SessionObservation observed, AuthTerminalProof binding)
+    {
+        BlockAuth(scope, observed, binding, null);
+    }
+
+    public void FailedOpenSignInNeeded(IWriteScope scope, SessionObservation observed, long terminalSeq, AuthTerminalProof proof)
+    {
+        ReportAuth(scope, observed, terminalSeq, proof, null);
+    }
+
+    private void BlockAuth(IWriteScope scope, SessionObservation observed, AuthTerminalProof binding, string? acp)
+    {
+        var context = new CommandContext(binding.BlockCommandId, runtime.Machine, new(ActorKind.System, "adapter"),
+            "auth-blocker/" + binding.BlockCommandId.ToString("N"), 0, binding.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+        var result = runtime.Commands.Apply(scope, context, new BlockSignInNeeded(observed.SessionId, binding), AuthObservationError(scope, observed, binding, acp));
+        RequireAuthResult(result, observed);
+    }
+
+    private void ReportAuth(IWriteScope scope, SessionObservation observed, long terminalSeq, AuthTerminalProof proof, string? acp)
+    {
+        var context = new CommandContext(proof.ObservationId, runtime.Machine, new(ActorKind.System, "adapter"),
+            "auth-terminal/" + proof.ObservationId.ToString("N"), 0, proof.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+        var result = runtime.Commands.Apply(scope, context, new ReportSignInNeeded(observed.SessionId, terminalSeq, proof), AuthObservationError(scope, observed, proof, acp));
+        RequireAuthResult(result, observed);
+    }
+
+    private string? AuthObservationError(IReadScope scope, SessionObservation observed, AuthTerminalProof proof, string? acp)
+    {
+        if (proof.Epoch != observed.Epoch || proof.Delivery is null ||
+            (acp is not null
+                ? string.IsNullOrWhiteSpace(acp) || proof.Version != 1 || proof.AcpSessionId != acp || proof.OpenFailure is not null
+                : proof.Version != 2 || proof.AcpSessionId is not null || proof.ProviderMessageId is not null ||
+                    proof.OpenFailure is not { } stage || !Enum.IsDefined(stage)))
+            return "provider_auth_fact_refused";
+        var original = proof.Delivery!;
+        var state = scope.QueryFirst("""
+            SELECT state FROM engine_outbox WHERE id=$id AND machine=$machine AND session_id=$session AND kind='send' AND attempt=$claim
+            """, row => row.Text(0), new SqlArg("$id", original.EffectId), new("$machine", runtime.Machine),
+            new("$session", observed.SessionId), new("$claim", original.ClaimAttempt));
+        if (state == "done")
+            // Original historical workflow authority is a held source gate; the latest tuple cannot replace it.
+            return observed.RunId is not null || observed.StepId is not null || observed.Attempt is not null ? "provider_auth_fact_refused" : null;
+        return state == "inflight" && CaptureObservation(scope, observed.SessionId) == observed ? null : "provider_auth_fact_refused";
+    }
+
+    private static void RequireAuthResult(CommandResult result, SessionObservation observed)
+    {
+        if (!result.Applied && !(result is { Late: false, Error: "expired_unbound_terminal", Version: 0, Seq: 0 } && result.Epoch == observed.Epoch))
+            throw new CallFailed(result.Error ?? "provider_auth_fact_refused", result.Error);
+    }
 }

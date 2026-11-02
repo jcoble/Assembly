@@ -78,12 +78,12 @@ public sealed class SchemaTests
     }
 
     [Fact]
-    public void Version_7_refuses()
+    public void Version_10_refuses()
     {
         using var f = new EngineFixture();
-        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=7"));
+        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=10"));
         Assert.Throws<InvalidOperationException>(() => EngineSchema.Open(f.Db, 1000));
-        Assert.Equal(7, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(10, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
     }
 
     [Fact]
@@ -166,8 +166,9 @@ public sealed class SchemaTests
 
         Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
 
-        Assert.Equal(6, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(9, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         Assert.Equal(before, StoredRows(db));
+        Assert.Equal("s", db.QueryFirst("SELECT order_key FROM engine_outbox WHERE id='effect'", r => r.Text(0), default));
         Assert.Equal(new long[] { 1, 2, 3 }, db.Query("SELECT seq FROM engine_event ORDER BY seq", r => r.Long(0), default));
         Assert.Equal(new long[] { 4, 1, 2 }, db.QueryFirst("SELECT next_seq,retained_after,snapshot_seq FROM engine_meta", r => new[] { r.Long(0), r.Long(1), r.Long(2) }, default));
         Assert.All(indexes, name => Assert.Equal(1, db.QueryFirst("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name=$name", r => r.Long(0), default, new SqlArg("$name", name))));
@@ -225,6 +226,8 @@ public sealed class SchemaTests
                 {
                     "engine_message" => column is not ("delivery" or "attempt" or "in_flight" or "sender_label" or "client_id" or "framed" or "attachment_ids_json" or "held_epoch" or "target_epoch" or "owner_content_sha256" or "expires_ms"),
                     "engine_session" => column is not ("can_steer" or "account_context" or "managed_checkout"),
+                    "engine_needs_me" => column != "addressee_session_id",
+                    "engine_outbox" => column != "order_key",
                     _ => true
                 }).OrderBy(column => column, StringComparer.Ordinal);
             return db.Query($"SELECT json_array({string.Join(',', columns)}) FROM {table} ORDER BY 1", r => table + ":" + r.Text(0), default);

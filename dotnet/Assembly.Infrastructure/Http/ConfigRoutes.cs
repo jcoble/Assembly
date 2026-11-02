@@ -5,6 +5,8 @@ using Assembly.Application.Common.Machines;
 using Assembly.Infrastructure.Machines;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Sessions.Configuration;
 
 using Assembly.Infrastructure.Mcp;
 namespace Assembly.Infrastructure.Http;
@@ -20,10 +22,50 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
     {
         routes.MapGet("/sessions/{id}/config", GetAsync);
         routes.MapPost("/sessions/{id}/config", SetAsync);
+        routes.MapPost("/config/discover", DiscoverAsync);
+        routes.MapPost("/sessions/{id}/config/warm", WarmAsync);
     }
 
     private Task GetAsync(HttpContext context) =>
-        AnswerAsync(context, session => machines.For(session).ConfigAsync(session, context.RequestAborted));
+        AnswerAsync(context, (machine, session) => machine.ConfigAsync(session, context.RequestAborted));
+
+    private async Task DiscoverAsync(HttpContext context)
+    {
+        if (await JsonReply.ReadObjectAsync(context) is not { } body
+            || JsonReply.String(body, "agent") is not { Length: > 0 } agent
+            || JsonReply.String(body, "targetId") is not { Length: > 0 } target
+            || JsonReply.String(body, "cwd") is not { Length: > 0 } cwd)
+        {
+            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "expected { agent, targetId, cwd }");
+            return;
+        }
+        var machine = machines.Named(JsonReply.String(body, "machine"));
+        if (machine is null)
+        {
+            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "unknown machine");
+            return;
+        }
+        try
+        {
+            var answer = await machine.DiscoverConfigAsync(agent, target, cwd, context.RequestAborted);
+            Current(machine);
+            await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json => ComposerConfigJson.Write(json, answer.Config, answer.ModelOptions));
+        }
+        catch (Exception error) when (error is MachineUnreachable or CallFailed)
+        {
+            await JsonReply.ErrorAsync(context, StatusCodes.Status502BadGateway, error.Message);
+        }
+    }
+
+    private async Task WarmAsync(HttpContext context)
+    {
+        if (await JsonReply.ReadObjectAsync(context) is not { } body || JsonReply.String(body, "targetId") is not { Length: > 0 } target)
+        {
+            await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, "expected { targetId }");
+            return;
+        }
+        await AnswerAsync(context, (machine, session) => machine.WarmConfigAsync(session, target, context.RequestAborted));
+    }
 
     private async Task SetAsync(HttpContext context)
     {
@@ -34,10 +76,10 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
             return;
         }
 
-        await AnswerAsync(context, session => machines.For(session).SetConfigAsync(session, configId, value, context.RequestAborted));
+        await AnswerAsync(context, (machine, session) => machine.SetConfigAsync(session, configId, value, context.RequestAborted, JsonReply.String(body, "targetId")));
     }
 
-    private async Task AnswerAsync(HttpContext context, Func<SessionInfo, Task<SessionConfig>> config)
+    private async Task AnswerAsync(HttpContext context, Func<IMachine, SessionInfo, Task<SessionConfig>> config)
     {
         if (sessionStore.Get(RequestValues.Route(context, "id")) is not { } session)
         {
@@ -48,7 +90,9 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
         SessionConfig answer;
         try
         {
-            answer = await config(session);
+            var machine = machines.For(session);
+            answer = await config(machine, session);
+            Current(machine);
         }
         catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
@@ -56,24 +100,11 @@ internal sealed class ConfigRoutes(SessionStore sessionStore, MachineSet machine
             return;
         }
 
-        await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json =>
-        {
-            json.WriteStartObject();
-            json.WritePropertyName("options");
-            if (answer.Options is { } options)
-                json.WriteRawValue(options);
-            else
-                json.WriteNullValue();
-            json.WriteStartObject("choices");
-            foreach (var (id, value) in answer.Choices)
-                json.WriteString(id, value);
-            json.WriteEndObject();
-            json.WritePropertyName("commands");
-            if (answer.Commands is { } commands)
-                json.WriteRawValue(commands);
-            else
-                json.WriteNullValue();
-            json.WriteEndObject();
-        });
+        await JsonReply.WriteAsync(context, StatusCodes.Status200OK, json => ComposerConfigJson.Write(json, answer));
+    }
+
+    private void Current(IMachine machine)
+    {
+        if (!ReferenceEquals(machines.Named(machine.Name), machine)) throw new CallFailed("The selected machine changed.");
     }
 }

@@ -32,10 +32,10 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
     feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase`
     (reads needing one consistent view use `IAppDatabase.OpenSnapshot`) and writes through `IAtomicWriter`.
     Each write is one transaction with its audit row, and the changes it publishes (`IWriteScope.Publish`) go to `ITopics` only after it commits.
-- `Assembly.Engine/`: references Application for existing database contracts. Owns operational commands, transitions,
+- `Assembly.Engine/`: references Application database contracts and Domain retained auth proof records. Owns operational commands, transitions,
   reads, prefixed `engine_` tables, committed-event publishing and durable outbox execution. Writes go through
   `IAtomicWriter`; the engine has no SQLite, process, filesystem or transport implementation.
-  [Engine design §17.3](https://app.notion.com/p/40a394b0689d81299136fb94fcf3ccf1) governs this boundary.
+  [Engine design §17.3](https://app.notion.com/p/40a394b0689d81299136fb94fcf3ccf1) and the [auth proof plan](https://app.notion.com/p/40c394b0689d81b0a658ed87ebf4bba3) govern this boundary.
 - `Assembly.Infrastructure/`: references Application and Engine. SQLite and the one writer, starting agent processes and git,
   the local and remote machines, and the files and native calls behind a feature (`Infrastructure/<Feature>/`).
   `Infrastructure/Engine/` composes the engine runtime with the host topics and owns its window calls and socket transport.

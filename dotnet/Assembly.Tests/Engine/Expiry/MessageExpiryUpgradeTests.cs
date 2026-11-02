@@ -21,7 +21,7 @@ public sealed class MessageExpiryUpgradeTests
         var result = f.Db.Writer.Write("test.upgrade", s => EngineSchema.Initialize(s, 99999999, expiryMinutes: minutes));
         Assert.Equal(5, result.PreviousVersion); Assert.Equal(machine, result.Machine);
         Assert.Equal(original, f.Rows(columns));
-        Assert.Equal(6, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(9, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(3, f.Number("SELECT COUNT(*) FROM engine_message WHERE state IN ('queued','held') AND expires_ms=created_ms+$duration AND typeof(expires_ms)='integer'", new SqlArg("$duration", (long)minutes * 60000)));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_message WHERE id='terminal-message' AND expires_ms IS NULL"));
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message WHERE id='reserved-message'"));
@@ -38,14 +38,14 @@ public sealed class MessageExpiryUpgradeTests
     [InlineData(2)]
     [InlineData(3)]
     [InlineData(4)]
-    public void Actual_ordered_predecessors_upgrade_to_six_preserving_legacy_reservations_and_raw_payload(int version)
+    public void Actual_ordered_predecessors_upgrade_to_seven_preserving_legacy_reservations_and_raw_payload(int version)
     {
         using var f = new Old(version);
         var old = f.Text("SELECT receipt_json FROM engine_outbox WHERE id='send/inflight'");
         var claims = f.Number("SELECT attempt FROM engine_outbox WHERE id='send/inflight'");
         var created = f.Number("SELECT created_ms FROM engine_message WHERE id='inflight'");
         var init = f.Db.Writer.Write("test.upgrade", s => EngineSchema.Initialize(s, 900000000, expiryMinutes: 45));
-        Assert.Equal(version, init.PreviousVersion); Assert.Equal(6, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(version, init.PreviousVersion); Assert.Equal(9, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(created + 2700000, f.Number("SELECT expires_ms FROM engine_message WHERE id='inflight'"));
         Assert.Equal(old, f.Text("SELECT receipt_json FROM engine_outbox WHERE id='send/inflight'"));
         Assert.Equal(claims, f.Number("SELECT attempt FROM engine_outbox WHERE id='send/inflight'"));

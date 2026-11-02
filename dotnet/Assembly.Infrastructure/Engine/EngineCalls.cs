@@ -10,6 +10,7 @@ using Assembly.Engine.Messages;
 using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
+using Assembly.Engine.Providers;
 
 namespace Assembly.Infrastructure.Engine;
 
@@ -19,7 +20,7 @@ public sealed record WindowCommand(Guid CommandId, string EntityId, long Expecte
 public sealed record EngineUsageArgs(string EntityKind, string EntityId, string? Machine = null);
 public sealed record EngineEntityArgs(string EntityKind, string EntityId, string? Machine = null);
 
-/// <summary>The authenticated window's seven commands; identity and time are host-owned.</summary>
+/// <summary>The authenticated window's checked owner commands; identity and time are host-owned.</summary>
 public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFeature
 {
     private readonly MachineForward? _forward;
@@ -38,8 +39,10 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFea
             async (args, call) =>
             {
                 if (args.Command is not (StartSession or StopSession or StartRun or CancelRun or
-                    ResolveNeed { State: "answered" or "dismissed" } or SendMessage or RequestHandoff))
+                    ResolveNeed { State: "answered" or "dismissed" } or SendMessage or RequestHandoff or CheckProvider or StartSignIn or CancelSignIn))
                     return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
+                if (args.Command is CheckProvider or StartSignIn or CancelSignIn && args.Machine != runtime.Machine)
+                    return _ => new(false, false, "wrong_machine", args.ExpectedVersion, 0, args.Epoch);
                 if (args.Command is StartSession { RepoUrl: not null } or StartSession { ManagedCheckout: true })
                     return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
                 if (args.CommandId == Guid.Empty || string.IsNullOrWhiteSpace(args.EntityId) || args.ExpectedVersion < 0 || args.Epoch < 0)

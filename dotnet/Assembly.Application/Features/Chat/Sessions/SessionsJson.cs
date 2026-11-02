@@ -6,6 +6,7 @@ using Assembly.Application.Common.Machines;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 [JsonSerializable(typeof(OwnerPromptRequest))]
 [JsonSerializable(typeof(OwnerPromptAccepted))]
 [JsonSerializable(typeof(LegacySessionTitleRef))]
@@ -23,6 +24,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(OwnerPromptReadArgs))]
 [JsonSerializable(typeof(OwnerPromptPage))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
 [JsonSerializable(typeof(SessionItem))]
 [JsonSerializable(typeof(SessionsFeature.PageArgs))]
 [JsonSerializable(typeof(SessionsFeature.Page))]
@@ -39,6 +41,8 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(SendFeature.AnswerArgs))]
 [JsonSerializable(typeof(SendFeature.StopTaskArgs))]
 [JsonSerializable(typeof(SendFeature.Done))]
+[JsonSerializable(typeof(ConfigFeature.DiscoverArgs))]
+[JsonSerializable(typeof(ConfigFeature.WarmArgs))]
 [JsonSerializable(typeof(ConfigFeature.GetArgs))]
 [JsonSerializable(typeof(ConfigFeature.SetArgs))]
 [JsonSerializable(typeof(JsonElement))]

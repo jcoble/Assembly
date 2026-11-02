@@ -1,7 +1,7 @@
 using System.Text.Json;
 
 using Assembly.Application.Common.Agents;
-namespace Assembly.Application.Features.Chat.Sessions;
+namespace Assembly.Application.Common.Acp;
 
 /// <summary>
 /// Reads an agent's session config options (ACP <c>configOptions</c>: <c>[{ id, name, category, type, currentValue,
@@ -46,6 +46,31 @@ public static class ConfigOptions
         if (options.ValueKind != JsonValueKind.Array) return null;
         return options.EnumerateArray().Where(option => Text(option, "category") == "model")
             .Select(option => Text(option, "currentValue")).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+    }
+
+    /// <summary>The values and labels of the existing model selector, in the provider's order.</summary>
+    public static IReadOnlyList<(string Id, string Name)> Models(JsonElement options)
+    {
+        if (options.ValueKind != JsonValueKind.Array) return [];
+        foreach (var option in options.EnumerateArray())
+        {
+            if (Text(option, "category") != "model" || Text(option, "type") != "select"
+                || !option.TryGetProperty("options", out var list) || list.ValueKind != JsonValueKind.Array)
+                continue;
+            return list.EnumerateArray().Where(value => Text(value, "value") is not null)
+                .Select(value => (Text(value, "value")!, Text(value, "name") ?? Text(value, "value")!)).ToList();
+        }
+        return [];
+    }
+
+    /// <summary>The actual model-category select, using the same option parser as ordinary choices.</summary>
+    internal static (string Id, string? Current, IReadOnlyList<string> Values)? Model(JsonElement options)
+    {
+        if (options.ValueKind != JsonValueKind.Array) return null;
+        foreach (var option in options.EnumerateArray())
+            if (Text(option, "category") == "model" && Text(option, "type") == "select" && Text(option, "id") is { } id)
+                return Selects(options).First(select => select.Id == id);
+        return null;
     }
 
     private static string? Text(JsonElement json, string name) =>

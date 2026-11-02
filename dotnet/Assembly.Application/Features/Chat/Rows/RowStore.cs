@@ -38,6 +38,8 @@ public sealed partial class RowStore
             scope.Execute("""
                 CREATE INDEX IF NOT EXISTS rows_user_client ON rows(session_id,json_extract(payload,'$.clientId'),seq DESC)
                 WHERE kind='user' AND item_id IS NULL;
+                CREATE INDEX IF NOT EXISTS rows_auth_terminal ON rows(session_id,run_id,json_extract(payload,'$.authFailure.delivery.effectId'),seq)
+                WHERE kind='turn' AND json_type(payload,'$.authFailure')='object';
                 """);
             // Version 1 kept every delta: delete the finished messages' deltas it left, once. A newer version's
             // database is left as it is, version included.

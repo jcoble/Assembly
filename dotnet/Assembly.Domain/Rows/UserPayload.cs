@@ -8,4 +8,6 @@ namespace Assembly.Domain.Rows;
 /// </summary>
 public sealed record UserPayload(string Text, string? From = null, string? ClientId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UserAcknowledgment? Acknowledgment = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SenderLabel = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SenderLabel = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] AuthSendBlocker? AuthBlocker = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] AuthRetryExecution? RetryExecution = null);

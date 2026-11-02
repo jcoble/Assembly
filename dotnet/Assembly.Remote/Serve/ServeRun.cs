@@ -1,3 +1,7 @@
+using CallFailed = Assembly.Application.Common.Calls.CallFailed;
+using Assembly.Application.Features.Agents;
+using Assembly.Infrastructure.Engine.Auth;
+using Assembly.Infrastructure.Chat;
 using Assembly.Application.Features.Workflows;
 using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Engine.Effects;
@@ -68,13 +72,14 @@ public static class ServeRun
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
         var agents = launcher is null ? AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)) : null;
-        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
+        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions(), session => SessionStore.Folder(options.Checkouts, session));
         var preferences = new PreferenceStore(db);
         var limits = new HelperLimits();
         // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
         await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work, limits,
-            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"), preferences, TimeProvider.System, Console.Out)));
+            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"),
+                () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out)));
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
@@ -86,13 +91,38 @@ public static class ServeRun
         // Sessions here join this machine's MCP server, on the API's port.
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
-            AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
+            SessionTerminalFolders.ExistingFolder(options.Checkouts, sessionStore));
         var sessionLimits = new SessionLimits(
             () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
             () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
-        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects, readExpiryMinutes: MessageExpiryPreferences.ReadMinutes);
+        var probeFolder = Path.Combine(options.Home, "probe");
+        Directory.CreateDirectory(probeFolder);
+        var challenges = new ChallengeBoard();
+        var catalogue = new AgentCatalogue(sessions, probeFolder, TimeProvider.System);
+        var runner = new SignInRunner(challenges, terminals, launcher, probeFolder, TimeProvider.System, Console.Out);
+        bool IsConfiguredProvider(string provider, string account)
+        {
+            try
+            {
+                var capture = ConfigTargetIdentity.Capture(launcher, provider);
+                var current = ConfigTargetIdentity.RequireSameConfiguration(launcher, capture.Descriptor, capture.Environment);
+                return AccountContext.Of(current, key => capture.Environment.GetValueOrDefault(key)) == account;
+            }
+            catch (CallFailed) { return false; }
+        }
+        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects,
+            effectsFactory: engineEffects is null ? runtime =>
+            {
+                var signIn = new SignInEffects(db, runner, launcher, sessions, challenges, runtime, TimeProvider.System);
+                return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
+                    .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
+                    .Add("begin_sign_in", signIn)
+                    .Add("cancel_sign_in", signIn);
+            }
+        : null,
+            readExpiryMinutes: MessageExpiryPreferences.ReadMinutes, isConfiguredProvider: IsConfiguredProvider);
         await using var machineCalls = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new SessionTitleCalls(engine, sessionStore), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board, Engine: engine), options.Port, out _,
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new SessionTitleCalls(engine, sessionStore), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board, Engine: engine), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");

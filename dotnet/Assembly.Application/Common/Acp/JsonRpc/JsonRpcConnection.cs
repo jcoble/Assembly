@@ -185,7 +185,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     {
         try
         {
-            var result = await _target.OnRequestAsync(method, parameters, new JsonRpcRequestContext(_connectionId, id), _stopping.Token);
+            var result = await _target.OnRequestAsync(method, parameters, new JsonRpcRequestContext(_connectionId, id, Guid.NewGuid()), _stopping.Token);
             await WriteAsync(json =>
             {
                 json.WritePropertyName("id");

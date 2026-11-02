@@ -1,4 +1,5 @@
 using Assembly.Tests.Engine;
+using Assembly.Tests.Engine.Auth;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common;
@@ -13,6 +14,7 @@ using Assembly.Engine.Messages;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Auth;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Tests.Features.Chat.Sessions;
 using Microsoft.Extensions.Time.Testing;
@@ -25,6 +27,11 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
     private readonly TempDatabase _file = new();
     private readonly bool _worker;
     private readonly bool _legacy;
+    private readonly bool _router;
+    private readonly Func<string, string, bool>? _configured;
+    private readonly bool _gateWrites;
+    public AuthRuntimeFixture.WriterGate? DatabaseGate { get; private set; }
+    public EffectRouter? Router { get; private set; }
     private IDisposable _subscription = null!;
     public Topics Topics { get; private set; } = null!;
     public AppDatabase Db { get; private set; } = null!;
@@ -40,30 +47,40 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
     public AdapterEffects Effects { get; private set; } = null!;
     public EngineCommands Commands { get; private set; } = null!;
     public Channel<EngineEvent> Events { get; } = Channel.CreateUnbounded<EngineEvent>();
-    public AdapterDeliveryFixture(bool worker = false, bool legacy = false) { _worker = worker; _legacy = legacy; Open(); }
+    public AdapterDeliveryFixture(bool worker = false, bool legacy = false, bool router = false,
+        Func<string, string, bool>? configured = null, bool gateWrites = false)
+    {
+        _worker = worker; _legacy = legacy; _router = router; _configured = configured; _gateWrites = gateWrites; Open();
+    }
     private void Open()
     {
         var topics = Topics = new Topics(); Db = AppDatabase.Open(_file.Path, Time, topics);
-        Rows = RowStore.Open(Db);
+        IAppDatabase database = _gateWrites ? DatabaseGate = new AuthRuntimeFixture.WriterGate(Db) : Db;
+        Rows = RowStore.Open(database);
         if (_legacy && Session is null) Db.Writer.Write("test.frozen-legacy", s => s.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Engine", "Fixtures", "old-v2.sql"))));
-        Hub = new LiveHub(Rows); Sessions = SessionStore.Open(Db, Time, "checkouts");
+        Hub = new LiveHub(Rows); Sessions = SessionStore.Open(database, Time, "checkouts");
         Session = Session is null ? Sessions.Create("claude", "https://github.com/o/r") : Sessions.Get(Session.SessionId)!;
         Work = new BackgroundWork(Time, TextWriter.Null);
-        var cutover = new SessionCutover(Db, Sessions, Launcher, "checkouts", Time);
+        var cutover = new SessionCutover(database, Sessions, Launcher, "checkouts", Time);
         AdapterEffects Create(EngineRuntime runtime)
         {
             Assert.NotNull(Sessions.Get(Session.SessionId));
-            Assert.Equal(6, Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+            Assert.Equal(9, Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
             Hosts = new SessionRegistry(Hub, Sessions, Launcher, Time, TextWriter.Null, Work, feed: new EngineFeed(runtime, TextWriter.Null, Time));
-            return Effects = new AdapterEffects(Db, Hosts, Sessions, Rows);
+            return Effects = new AdapterEffects(database, Hosts, Sessions, Rows);
+        }
+        IEngineEffects CreateOwner(EngineRuntime runtime)
+        {
+            var adapter = Create(runtime);
+            return _router ? Router = new EffectRouter(adapter) : adapter;
         }
         using var ready = new ManualResetEventSlim();
         using var readiness = topics.Subscribe("test.worker.ready", null, _ => { }, (_, _) => ready.Set());
-        Runtime = EngineRuntime.Start(Db, topics, Time, new(() => 5, () => 10), cutover: cutover,
-            effectsFactory: _worker ? Create : null, retention: new ReadyRetention());
+        Runtime = EngineRuntime.Start(database, topics, Time, new(() => 5, () => 10), cutover: cutover,
+            effectsFactory: _worker ? CreateOwner : null, retention: new ReadyRetention(), isConfiguredProvider: _configured);
         Assert.True(ready.Wait(TimeSpan.FromSeconds(8)));
         if (!_worker) Create(Runtime);
-        Commands = _worker ? Runtime.Commands : new EngineCommands(Runtime.Machine, new(() => 5, () => 10), projectCompletion: Effects.ProjectCompletion);
+        Commands = _worker ? Runtime.Commands : new EngineCommands(Runtime.Machine, new(() => 5, () => 10), projectCompletion: (s, c, e, r, d) => d is null ? null : Effects.ProjectCompletion(s, c, e, r, d), isConfiguredProvider: _configured);
         _subscription = Runtime.Publisher.Register(e => Events.Writer.TryWrite(e), out _);
     }
     public string Queue(string text = "exact body", string client = "C", bool raw = true, IReadOnlyList<string>? refs = null, string? sessionId = null)
@@ -112,7 +129,9 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
     }
     private async Task CloseAsync()
     {
+        DatabaseGate?.Release();
         await Hosts.DisposeAsync(); await Runtime.DisposeAsync(); _subscription.Dispose(); await Work.DisposeAsync(); Hub.Dispose(); Db.Dispose();
+        DatabaseGate?.Dispose(); DatabaseGate = null;
     }
     private sealed class ReadyRetention : IEngineRetention
     {

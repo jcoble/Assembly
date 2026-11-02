@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Agents.Auth;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Features.Chat.Rows;
 
@@ -17,6 +18,9 @@ internal sealed class RunningTurn(string runId, StageTimes stages)
     public PromptRun? Prompt { get; set; }
     public string? ProviderMessageId { get; set; }
     public bool FeedCompleted { get; set; }
+    internal Assembly.Domain.Rows.AuthTerminalProof? AuthBinding { get; set; }
+    internal Assembly.Domain.Rows.AuthTerminalProof? AuthFinalProof { get; set; }
+    internal long AuthTerminalSeq { get; set; }
     public bool TerminalObserved { get; set; }
     public decimal? TerminalCost { get; set; }
 
@@ -28,6 +32,7 @@ internal sealed class RunningTurn(string runId, StageTimes stages)
 
     /// <summary>Set under the host's lock once the session is open.</summary>
     public OpenSession? Session { get; set; }
+    internal AuthOpenAttempt? OpenAttempt { get; set; }
 
     /// <summary>Set once the turn's open has finished, whether the session opened or the turn ended without one.</summary>
     public TaskCompletionSource Opened { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -6,7 +6,8 @@ using Assembly.Domain.Rows;
 namespace Assembly.Application.Features.Chat.Rows;
 
 public sealed record UserDeliveryRow(long Seq, string? RunId, string Text, string? From,
-    string ClientId, UserAcknowledgment? Acknowledgment, string? SenderLabel = null);
+    string ClientId, UserAcknowledgment? Acknowledgment, string? SenderLabel = null,
+    AuthSendBlocker? AuthBlocker = null, AuthRetryExecution? RetryExecution = null);
 
 public sealed partial class RowStore
 {
@@ -27,7 +28,7 @@ public sealed partial class RowStore
             var payload = JsonSerializer.Deserialize(row.Text(2), RowJsonContext.Rows.UserPayload)
                 ?? throw new CallFailed("delivery_ack_conflict");
             return new UserDeliveryRow(row.Long(0), row.IsNull(1) ? null : row.Text(1), payload.Text,
-                payload.From, payload.ClientId!, payload.Acknowledgment, payload.SenderLabel);
+                payload.From, payload.ClientId!, payload.Acknowledgment, payload.SenderLabel, payload.AuthBlocker, payload.RetryExecution);
         }, new SqlArg("$session", sessionId), new SqlArg("$client", clientId));
         if (rows.Count > 1) throw new CallFailed("delivery_ack_conflict");
         return rows.Count == 0 ? null : rows[0];
@@ -44,6 +45,23 @@ public sealed partial class RowStore
             WHERE session_id=$session AND seq=$seq;
             """, new("$ack", JsonSerializer.Serialize(acknowledgment, RowJsonContext.Rows.UserAcknowledgment)),
             new("$session", sessionId), new("$seq", row.Seq));
+    }
+
+    public static void BindAuthBlocker(IWriteScope scope, string sessionId, string clientId,
+        long userRowSeq, string userRunId, AuthSendBlocker binding)
+    {
+        var row = scope.QueryFirst("""
+            SELECT run_id,payload FROM rows WHERE session_id=$session AND seq=$seq AND kind='user' AND item_id IS NULL
+            """, r => new { Run = r.IsNull(0) ? null : r.Text(0), Payload = JsonSerializer.Deserialize(r.Text(1), RowJsonContext.Rows.UserPayload) },
+            new SqlArg("$session", sessionId), new("$seq", userRowSeq));
+        if (row is null || row.Run != userRunId || row.Payload is null || row.Payload.ClientId != clientId ||
+            row.Payload.Acknowledgment is not null && !Positive(row.Payload.Acknowledgment) ||
+            row.Payload.AuthBlocker is { } old && old != binding) throw new CallFailed("auth_binding_conflict");
+        if (row.Payload.AuthBlocker == binding) return;
+        scope.Execute("""
+            UPDATE rows SET payload=json_set(payload,'$.authBlocker',json($binding)) WHERE session_id=$session AND seq=$seq
+            """, new("$binding", JsonSerializer.Serialize(binding, RowJsonContext.Rows.AuthSendBlocker)),
+            new("$session", sessionId), new("$seq", userRowSeq));
     }
 
     public static bool Positive(UserAcknowledgment? acknowledgment) => acknowledgment switch

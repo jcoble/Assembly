@@ -11,6 +11,8 @@ public static class SessionImport
 {
     public static int Import(IWriteScope scope, string machine, long nowMs, IReadOnlyList<ImportedSession> sessions)
     {
+        if (sessions.Any(session => !Assembly.Application.Common.Agents.AccountContext.IsValid(session.AccountContext)))
+            throw new InvalidOperationException("invalid_account_context");
         var byId = sessions.ToDictionary(session => session.Id, StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var visiting = new HashSet<string>(StringComparer.Ordinal);

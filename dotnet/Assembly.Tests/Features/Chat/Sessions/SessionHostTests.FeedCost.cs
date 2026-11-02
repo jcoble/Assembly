@@ -18,11 +18,15 @@ public sealed partial class SessionHostTests
         public readonly Channel<SessionTurnFinalization> Finals = Channel.CreateUnbounded<SessionTurnFinalization>();
         public SessionObservation? Capture(string id) => inner.Capture(id);
         public void ObserveBatch(IWriteScope s, SessionObservation o, string acp, IReadOnlyList<AgentEvent> events) => inner.ObserveBatch(s, o, acp, events);
-        public void Asked(IWriteScope s, SessionObservation o, string id, AskPayload card, JsonRpcRequestContext request) => inner.Asked(s, o, id, card, request);
-        public void Settled(IWriteScope s, SessionObservation o, string id, string how, JsonElement? answer, string reason) => inner.Settled(s, o, id, how, answer, reason);
-        public void PolicyAnswered(IWriteScope s, SessionObservation o, JsonRpcRequestContext request, string method, JsonElement outcome) => inner.PolicyAnswered(s, o, request, method, outcome);
+        public Action<IWriteScope> PrepareAsked(SessionObservation o, string id, AskPayload card, JsonRpcRequestContext request) => inner.PrepareAsked(o, id, card, request);
+        public Action<IWriteScope> PrepareSettled(SessionObservation o, string id, string how, JsonElement? answer, string reason) => inner.PrepareSettled(o, id, how, answer, reason);
+        public Action<IWriteScope> PreparePolicyAnswered(SessionObservation o, JsonRpcRequestContext request, string method, JsonElement outcome) => inner.PreparePolicyAnswered(o, request, method, outcome);
         public void Connected(IWriteScope s, SessionObservation o, string acp, bool canSteer) => inner.Connected(s, o, acp, canSteer);
         public void Lost(IWriteScope s, SessionObservation o, string reason) => inner.Lost(s, o, reason);
+        public void BlockSignInNeeded(IWriteScope s, SessionObservation o, string acp, AuthTerminalProof p) => inner.BlockSignInNeeded(s, o, acp, p);
+        public void SignInNeeded(IWriteScope s, SessionObservation o, string acp, long seq, AuthTerminalProof p) => inner.SignInNeeded(s, o, acp, seq, p);
+        public void BlockFailedOpenSignInNeeded(IWriteScope s, SessionObservation o, AuthTerminalProof p) => inner.BlockFailedOpenSignInNeeded(s, o, p);
+        public void FailedOpenSignInNeeded(IWriteScope s, SessionObservation o, long seq, AuthTerminalProof p) => inner.FailedOpenSignInNeeded(s, o, seq, p);
         public void Replied(IWriteScope s, SessionObservation o, SessionTurnReply final) => inner.Replied(s, o, final);
         public void Recovered(IWriteScope s, RecoveredChatTurn recovered) => inner.Recovered(s, recovered);
         public bool Complete(IWriteScope s, SessionObservation o, string acp, SessionTurnFinalization final)

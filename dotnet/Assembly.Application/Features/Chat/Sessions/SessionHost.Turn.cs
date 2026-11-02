@@ -12,6 +12,7 @@ using Assembly.Domain.Rows;
 using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Agents.Auth;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 // The existing owning turn/open/close lifecycle.
@@ -34,7 +35,9 @@ public sealed partial class SessionHost
             {
                 await _session.WaitAsync(turn.Stopping.Token);
                 held = true;
-                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token, observation: turn.Observation);
+                turn.OpenAttempt = new AuthOpenAttempt();
+                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token,
+                    observation: turn.Observation, authAttempt: turn.OpenAttempt);
                 updates = session.Adapter.Updates.For(session.AcpSessionId);
                 BindPolicy(session, turn);
                 lock (_gate)
@@ -145,12 +148,17 @@ public sealed partial class SessionHost
                     foreach (var task in _updateReader.RetainOutstanding(ended.At))
                         Track(task);
                 var completed = false;
-                Apply(ended, observe: turn.Observation is not { } observed ? null : scope =>
-                {
-                    if (session is not null) _feed?.ObserveBatch(scope, observed, session.AcpSessionId, [ended]);
-                    completed = CompleteFeed(scope, turn, session, ended);
-                    ReplyFeed(scope, turn, session, ended);
-                });
+                var proof = FinalAuthTerminal(turn, session, ended);
+                long terminalSeq = 0;
+                if (turn.AuthTerminalSeq == 0)
+                    Apply(ended, observe: turn.Observation is not { } observed ? null : scope =>
+                    {
+                        if (proof is not null) terminalSeq = ReportAuthTerminal(scope, turn, proof);
+                        if (session is not null) _feed?.ObserveBatch(scope, observed, session.AcpSessionId, [ended]);
+                        completed = CompleteFeed(scope, turn, session, ended);
+                        ReplyFeed(scope, turn, session, ended);
+                    }, authProof: proof);
+                if (terminalSeq != 0) turn.AuthTerminalSeq = terminalSeq;
                 if (completed) turn.FeedCompleted = true;
                 title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };
                 if (title)

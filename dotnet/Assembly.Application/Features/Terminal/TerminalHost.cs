@@ -1,5 +1,6 @@
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Topics;
+using Assembly.Application.Common.Terminals;
 
 namespace Assembly.Application.Features.Terminal;
 
@@ -7,7 +8,7 @@ namespace Assembly.Application.Features.Terminal;
 /// This machine's terminals, by id. Terminals outlive the sockets that use them (terminal#5); disposing the host, when
 /// the backend stops, closes every one (terminal#8).
 /// </summary>
-internal sealed class TerminalHost : ITerminals, IAsyncDisposable
+internal sealed class TerminalHost : ITerminals, IProgramTerminals, IAsyncDisposable
 {
     public const int DefaultCols = 96;
     public const int DefaultRows = 28;
@@ -87,6 +88,46 @@ internal sealed class TerminalHost : ITerminals, IAsyncDisposable
         await pty.DisposeAsync();
         return stopped ? throw new CallFailed("the backend is stopping") : raced!;
     }
+
+    public async Task<ProgramTerminal> StartProgramAsync(ProgramStart start, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        IPty pty;
+        try
+        {
+            pty = _pty.Start(new PtyRequest(start.File, start.Args, start.Cwd, start.Env, start.Cols, start.Rows, ReplaceEnvironment: true));
+        }
+        catch (Exception) when (start.Owner.StartsWith("signin:", StringComparison.Ordinal))
+        {
+            ct.ThrowIfCancellationRequested();
+            throw new CallFailed("signin_start_failed", "signin_start_failed");
+        }
+        var info = new TerminalInfo($"term-{Guid.NewGuid():N}", start.Cwd, start.File, start.File,
+            start.Cols, start.Rows, pty.Pid, start.Owner, _time.GetUtcNow(), null);
+        lock (_lock)
+        {
+            if (!_stopped && !ct.IsCancellationRequested)
+            {
+                _terminals[info.Id] = new RunningTerminal(info, pty, _topics);
+                return new ProgramTerminal(info.Id, info.Pid);
+            }
+        }
+        try { await pty.DisposeAsync(); }
+        catch (Exception) when (start.Owner.StartsWith("signin:", StringComparison.Ordinal))
+        {
+            throw new CallFailed("signin_exit_failed", "signin_exit_failed");
+        }
+        ct.ThrowIfCancellationRequested();
+        throw new CallFailed("signin_start_failed", "signin_start_failed");
+    }
+
+    public IAsyncEnumerable<ReadOnlyMemory<byte>> OutputAsync(string terminal, CancellationToken ct) =>
+        Get(terminal).OutputAsync(ct);
+
+    public Task<int> ExitedAsync(string terminal, CancellationToken ct) => Get(terminal).ExitedAsync(ct);
+
+    ValueTask IProgramTerminals.WriteAsync(string terminal, ReadOnlyMemory<byte> data, CancellationToken ct) =>
+        Get(terminal).WriteAsync(data, ct);
 
     public Task<IReadOnlyList<TerminalInfo>> ListAsync(string? owner, CancellationToken cancellation) =>
         Task.FromResult<IReadOnlyList<TerminalInfo>>(List().Where(info => owner is null || info.Owner == owner).ToArray());

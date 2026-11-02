@@ -202,19 +202,18 @@ public static partial class MessageTransitions
     }
 
     public static IReadOnlyList<EventDraft> NeedResolved(IWriteScope s, CommandContext c, string needId,
-        string sessionId, string state, JsonElement? answer, MessageExpiryPolicy? expiryPolicy = null)
+        string sessionId, string state, JsonElement? answer, MessageExpiryPolicy? expiryPolicy = null) =>
+        NeedResolved(s, c, needId, sessionId, state, answer, expiryPolicy, null);
+
+    internal static IReadOnlyList<EventDraft> NeedResolved(IWriteScope s, CommandContext c, string needId,
+        string sessionId, string state, JsonElement? answer, MessageExpiryPolicy? expiryPolicy, NeedsMe.PreparedNeedCommand.ResolutionNote? prepared)
     {
         var id = $"need-answer/{needId}";
         if (FindRecipient(s, sessionId)?.State == "ended" || Find(s, id) is not null)
             return [];
-        var text = state switch
-        {
-            "answered" => $"Jesse answered your question {needId}: {(answer!.Value.ValueKind == JsonValueKind.String ? answer.Value.GetString() : JsonSerializer.Serialize(answer.Value, EngineJson.Default.JsonElement))}",
-            "dismissed" => $"Jesse dismissed your question {needId}.",
-            _ => $"Your question {needId} closed without an answer ({state})."
-        };
+        var text = prepared?.Text ?? NeedResolutionText(needId, state, answer);
         var message = new Message(id, 1, null, sessionId, text, "prompt", "queued");
-        Insert(s, c, message, "system", null, expiryPolicy);
+        Insert(s, c, message, "system", null, expiryPolicy, prepared?.Utf8);
         // NeedTransitions releases only after restoring session activity, using its current version.
         return [Changed(c, message)];
     }

@@ -46,10 +46,14 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
         }
     }
 
-    public async Task<InitializeResponse> InitializeAsync(Implementation clientInfo, CancellationToken cancellationToken)
+    public Task<InitializeResponse> InitializeAsync(Implementation clientInfo, CancellationToken cancellationToken) =>
+        InitializeAsync(clientInfo, false, cancellationToken);
+
+    public async Task<InitializeResponse> InitializeAsync(Implementation clientInfo, bool terminalAuthentication,
+        CancellationToken cancellationToken)
     {
         var response = await RequestAsync(AcpMethods.Initialize,
-            new InitializeRequest(AcpProtocol.Version, clientInfo, ClientCapabilities.Assembly),
+            new InitializeRequest(AcpProtocol.Version, clientInfo, ClientCapabilities.WithTerminalAuthentication(terminalAuthentication)),
             AcpJsonContext.Default.InitializeRequest, AcpJsonContext.Default.InitializeResponse, cancellationToken);
         if (response.ProtocolVersion != AcpProtocol.Version)
             throw new JsonRpcException(-32022, $"ACP version {response.ProtocolVersion} is unsupported; Assembly requires version 2.");
