@@ -7,10 +7,12 @@ on:
     paths:
       - '.github/workflows/provider-updates.yml'
       - 'scripts/package-adapters*'
+      - 'scripts/adapters/**'
   pull_request:
     paths:
       - '.github/workflows/provider-updates.yml'
       - 'scripts/package-adapters*'
+      - 'scripts/adapters/**'
 permissions:
   contents: read
 concurrency:
@@ -29,7 +31,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24
-      - run: node --test scripts/package-adapters.test.ts
+      - run: node --test scripts/package-adapters.test.ts scripts/adapters/claude-launcher.test.ts
       - id: versions
         run: node scripts/package-adapters.ts resolve
   package:
@@ -55,6 +57,7 @@ jobs:
           node-version: 24
       - name: Package and initialize both adapters from the extracted archive
         env:
+          GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
           VERSIONS: ${{ needs.resolve.outputs.versions }}
         run: node scripts/package-adapters.ts build "$TARGET" "$VERSIONS" "$RUNNER_TEMP/adapters"

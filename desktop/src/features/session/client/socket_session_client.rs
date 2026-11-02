@@ -45,8 +45,9 @@ impl SessionClient for SocketSessionClient {
         key: Option<&str>,
         cx: &App,
     ) -> Task<Result<Value, CallError>> {
-        let bulk =
-            feature == "attachments" || (feature == "rows" && matches!(method, "page" | "tool"));
+        let bulk = feature == "attachments"
+            || (feature == "rows" && matches!(method, "page" | "tool"))
+            || (feature == "engine" && method == "session_title_chunk");
         let socket = if bulk {
             SocketClient::try_bulk(cx)
         } else {

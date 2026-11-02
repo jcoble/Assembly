@@ -69,7 +69,8 @@ public sealed class BoardRemoteTests
         await using var tools = new BoardTools(sessions, registry, source.Transitions, source.Queries, CancellationToken.None);
         await using var app = ApiServer.Build(new ApiServices(hub, sessions, machines, new AttachmentStore("unused"),
             "board-test", registry.Helpers, source.Db.Writer, source.Topics,
-            [new WorkflowCalls(source.Queries, tools.AnswerAsync), new RowsFeature(hub, rows, sessions, machines)], tools), 0, out _);
+            [new WorkflowCalls(source.Queries, tools.AnswerAsync), new RowsFeature(hub, rows, sessions, machines),
+                new SessionsFeature(sessions, machines), new MachinesFeature(machines, new MachineStatus(source.Topics, []), () => { }, source.Time)], tools), 0, out _);
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         var home = Directory.CreateTempSubdirectory("assembly-board-remote-").FullName;
@@ -98,7 +99,7 @@ public sealed class BoardRemoteTests
             var agent = await launcher.NextAsync();
             await agent.StartAsync();
             var prompt = await agent.ReadAsync("session/prompt");
-            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
             await agent.CloseAsync();
             using var copiedDb = TestDatabase.Open(Path.Combine(home, "assembly.db"));
             var copied = RowStore.Open(copiedDb);

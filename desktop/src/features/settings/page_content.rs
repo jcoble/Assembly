@@ -2,6 +2,7 @@
 //! each row a title and one-line description with its control on the right, or its slider underneath.
 
 use gpui_kit::component::button::Button;
+use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::slider::Slider;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _};
@@ -125,7 +126,7 @@ impl SettingsPage {
             .iter()
             .find(|(setting, _)| number == Some(setting.key));
         if let Some((setting, state)) = slider {
-            let value = Preferences::read(cx, |appearance| appearance.number(setting));
+            let value = SettingsPage::setting_value(*setting, cx);
             return v_flex().px_4().py_3().gap_3().child(label).child(
                 h_flex()
                     .gap_4()
@@ -142,6 +143,7 @@ impl SettingsPage {
         }
         let control = match row.id {
             "machines" => return self.machines(cx),
+            "session-depth-limit" => return self.depth_row(label, cx),
             "theme" => {
                 let current = Preferences::read(cx, |appearance| appearance.theme());
                 let choices = ThemeId::ALL
@@ -200,8 +202,29 @@ fn number_row(id: &str) -> Option<NumberSetting> {
         "editor-line-height" => EDITOR_LINE_HEIGHT,
         "terminal-font-size" => TERMINAL_FONT_SIZE,
         "terminal-line-height" => TERMINAL_LINE_HEIGHT,
+        "session-child-limit" => crate::core::state::sessions_settings::CHILD_LIMIT,
         _ => return None,
     })
+}
+
+impl SettingsPage {
+    fn depth_row(&self, label: impl IntoElement, cx: &App) -> Div {
+        let theme = cx.theme();
+        let mut control = v_flex()
+            .w(CONTROL_WIDTH)
+            .gap_1()
+            .child(Input::new(&self.depth).small());
+        if let Some(error) = self.depth_error {
+            control = control.child(div().text_xs().text_color(theme.danger).child(error));
+        }
+        h_flex()
+            .px_4()
+            .py_3()
+            .gap_4()
+            .justify_between()
+            .child(label)
+            .child(control)
+    }
 }
 
 fn font_choices(fonts: &[SharedString], current: &str) -> Vec<(Value, SharedString, bool)> {

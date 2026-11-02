@@ -61,6 +61,7 @@ fn turn() -> Vec<Item> {
                 text: "go".into(),
                 at: 1,
                 from: None,
+                sender_label: None,
             },
         ),
         item(
@@ -98,6 +99,21 @@ fn turn() -> Vec<Item> {
 
 fn summary(work: &[Item]) -> String {
     Fold::summary(&work.iter().collect::<Vec<_>>())
+}
+
+#[test]
+fn cancelled_command_folds_as_terminal_work_without_adding_a_failed_call() {
+    let cancelled = tool("cancelled", "execute", json!({"state":"cancelled"}));
+    assert_eq!(summary(std::slice::from_ref(&cancelled)), "ran a command");
+    let items = vec![
+        cancelled,
+        tool("failed", "execute", json!({"state":"failed"})),
+        text("reply"),
+    ];
+    assert_eq!(summary(&items), "ran 2 commands · 1 call failed");
+    let folds = Fold::all(&items, &stats(), None);
+    assert!(folds["r1"].work.contains("cancelled"));
+    assert_eq!(folds["r1"].summary, "ran 2 commands · 1 call failed");
 }
 
 // Pins: g0-session#9

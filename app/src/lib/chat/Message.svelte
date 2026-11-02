@@ -15,7 +15,7 @@
     label?: boolean;
     speaker?: string;
     // A prompt from another session: its label, and opening its session.
-    sender?: { label: string; open: () => void } | null;
+    sender?: { label: string; open?: () => void } | null;
     notice?: ErrorNotice | null;
     children?: Snippet;
   } = $props();
@@ -24,7 +24,7 @@
 <article class="message {role}">
   {#if label}
     <div class="role">
-      {#if sender}<button class="sender" title="Open its session" onclick={sender.open}>{sender.label}</button>{:else}{role === 'user' ? 'You' : speaker}{/if}
+      {#if sender?.open}<button class="sender" title="Open its session" onclick={sender.open}>{sender.label}</button>{:else if sender}{sender.label}{:else}{role === 'user' ? 'You' : speaker}{/if}
     </div>
   {/if}
   {#if children}<div class="body">{@render children()}</div>{/if}

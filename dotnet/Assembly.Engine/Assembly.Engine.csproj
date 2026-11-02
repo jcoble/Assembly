@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Durable engine state, transitions, committed-event publishing and outbox execution.
+       Application supplies database contracts; Infrastructure supplies transport and host composition. -->
+  <PropertyGroup>
+    <IsAotCompatible>true</IsAotCompatible>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Assembly.Infrastructure" />
+    <InternalsVisibleTo Include="Assembly.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Assembly.Application\Assembly.Application.csproj" />
+    <ProjectReference Include="..\Assembly.Domain\Assembly.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol.Core" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+</Project>

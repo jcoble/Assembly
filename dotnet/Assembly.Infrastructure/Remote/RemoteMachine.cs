@@ -1,4 +1,6 @@
+using Assembly.Application.Common.Agents;
 using System.Net;
+using System.Security.Cryptography;
 using System.Net.WebSockets;
 using System.Net.Http.Headers;
 using System.Text;
@@ -22,7 +24,7 @@ namespace Assembly.Infrastructure.Remote;
 /// attachments are its routes; its rows are copied into the desktop's store (<see cref="RemoteFollower"/>), which the
 /// webview reads like any other session's.
 /// </summary>
-internal sealed class RemoteMachine : IMachine, IAsyncDisposable
+internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
 {
     private readonly string _name;
     private readonly LiveHub _hub;
@@ -32,11 +34,14 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     private readonly Action<string> _turnEnded;
     private readonly MachineStatus _status;
     private bool _formatChecked;
+    private readonly string _connectionIdentity;
+    private readonly string _instanceIdentity = Guid.NewGuid().ToString("N");
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
     public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
-        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null)
+        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null, string? connectionIdentity = null)
     {
+        _connectionIdentity = connectionIdentity ?? "";
         Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics());
         _address = address;
         _token = token;
@@ -49,7 +54,7 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         _status = status;
         _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, CheckFormatAsync, RefreshAsync, AddSubagentSession, log);
+        _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, ProbeAsync, RefreshAsync, AddSubagentSession, log);
     }
 
     public string? Name => _name;
@@ -70,25 +75,50 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
             _sessionStore.SetTitle(childId, title, "prompt");
     }
 
-    public async Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken)
     {
-        await CheckFormatAsync(cancellationToken);
-        var listed = await JsonAsync(HttpMethod.Get, "/agents", null, cancellationToken);
-        return listed.GetProperty("agents").EnumerateArray().Select(agent => (Text(agent, "id")!, Text(agent, "name")!)).ToList();
+        var owner = await CaptureOwnerReadAsync(null, cancellationToken);
+        var listed = await CallAsync("machines", "agents", JsonSerializer.SerializeToElement(new MachinesFeature.AgentsArgs(),
+            SessionsJson.Default.AgentsArgs), false, cancellationToken, owner.Identity, owner.Socket);
+        var agents = new List<ConfigTarget>();
+        if (listed.ValueKind != JsonValueKind.Object || !listed.TryGetProperty("agents", out var items) || items.ValueKind != JsonValueKind.Array)
+            throw new CallFailed("incompatible backend");
+        foreach (var item in items.EnumerateArray())
+        {
+            string? Field(string name) => item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out var value)
+                && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            var id = Field("id"); var name = Field("name"); var target = Field("targetId");
+            var account = Field("accountContext"); var providerTarget = Field("providerTargetId");
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name) || target is null || target.Length != 64
+                || target.Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
+                || !AccountContext.IsValid(account) || providerTarget != id + "/" + account)
+                throw new CallFailed("incompatible backend");
+            agents.Add(new(id, name, TargetPrefix + target, account, providerTarget));
+        }
+        await _socketSend.WaitAsync(cancellationToken);
+        try
+        {
+            if (!ReferenceEquals(RequireEngine(owner.Identity), owner.Socket))
+                throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed");
+            return agents;
+        }
+        finally { _socketSend.Release(); }
     }
 
-    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken)
+    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken,
+        InitialSessionConfig? initialConfig = null, string? workingFolder = null)
     {
-        await CheckFormatAsync(cancellationToken);
-        var created = await JsonAsync(HttpMethod.Post, "/sessions", Body(("agent", agent), ("repoUrl", repoUrl)), cancellationToken);
-        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name);
+        var initial = initialConfig is null ? null : initialConfig with { TargetId = UnwrapTarget(initialConfig.TargetId) };
+        var args = new SessionsFeature.CreateArgs(agent, repoUrl, InitialConfig: initial, WorkingFolder: workingFolder);
+        var created = initial is null
+            ? await CallAsync("sessions", "create", args, cancellationToken)
+            : await ConfiguredCallAsync("sessions", "create", JsonSerializer.SerializeToElement(args, SessionsJson.Default.CreateArgs), cancellationToken);
+        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name, workingFolder: workingFolder);
     }
 
     public async Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken)
     {
-        await CheckFormatAsync(cancellationToken);
-        var created = await JsonAsync(HttpMethod.Post, "/sessions",
-            Body(("agent", agent), ("repoUrl", parent.RepoUrl), ("parentSessionId", parent.SessionId), ("title", title)), cancellationToken);
+        var created = await CallAsync("sessions", "create", new SessionsFeature.CreateArgs(agent, parent.RepoUrl, ParentSessionId: parent.SessionId, Title: title), cancellationToken);
         var sessionId = created.GetProperty("sessionId").GetString()!;
         _sessionStore.Add(sessionId, agent, parent.RepoUrl, _name, parent.SessionId, helper: true);
         _sessionStore.SetTitle(sessionId, title, "prompt");
@@ -118,22 +148,18 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         // Before the send, so a catch-up settling meanwhile can't end the row of the turn it starts; a send that fails
         // leaves the row as it is.
         _follower.TakeShownRunning(session.SessionId);
-        using var response = await SendRequestAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/send",
-            clientId is null ? Body(("text", text)) : Body(("text", text), ("clientId", clientId)), cancellationToken);
-        if (response.StatusCode == HttpStatusCode.Conflict)
-            return null;
-        var runId = (await ReadJsonAsync(response, cancellationToken)).GetProperty("runId").GetString();
+        JsonElement result;
+        try { result = await CallAsync("send", "send", new SendFeature.SendArgs(session.SessionId, text, clientId), cancellationToken); }
+        catch (CallFailed error) when (error.Message == "the running turn can't take a message yet") { return null; }
+        var runId = result.GetProperty("runId").GetString();
         _follower.Watch(session.SessionId, runId);
         return runId;
     }
 
     public async Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken)
     {
-        using var response = await SendRequestAsync(HttpMethod.Post, $"/runs/{runId}/stop", null, cancellationToken);
-        if (response.StatusCode is HttpStatusCode.Accepted or HttpStatusCode.NotFound)
-            return response.StatusCode == HttpStatusCode.Accepted;
-        // Any other answer fails the call, a 200 included.
-        throw new CallFailed($"{_name} answered {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}");
+        try { return (await CallAsync("send", "stop", new SendFeature.StopArgs(runId), cancellationToken)).GetProperty("ok").GetBoolean(); }
+        catch (CallFailed error) when (error.Message == "that run isn't running") { return false; }
     }
 
     // From the copied rows, so it agrees with what the webview has.
@@ -145,7 +171,11 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
         if (response.StatusCode == HttpStatusCode.NotFound)
             return null;
         var call = await ReadJsonAsync(response, cancellationToken);
-        return new StoredToolCall(Text(call, "summary"), Text(call, "input"), Text(call, "output"), Text(call, "diff"), Text(call, "path"));
+        return new StoredToolCall(Text(call, "summary"), Text(call, "input"), Text(call, "output"), Text(call, "diff"), Text(call, "path"),
+            call.TryGetProperty("outputBytes", out var bytes) && bytes.ValueKind == JsonValueKind.Number ? bytes.GetInt64() : null,
+            call.TryGetProperty("outputTruncated", out var truncated) && truncated.ValueKind == JsonValueKind.True,
+            call.TryGetProperty("terminals", out var terminals) && terminals.ValueKind == JsonValueKind.Array
+                ? terminals.Deserialize(RowJsonContext.Rows.IReadOnlyListToolTerminalState) : null);
     }
 
     public async Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
@@ -157,29 +187,58 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     }
 
     public async Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
-        ReadConfig(await JsonAsync(HttpMethod.Get, $"/sessions/{session.SessionId}/config", null, cancellationToken));
+        ReadConfig(await CallAsync("config", "get", new ConfigFeature.GetArgs(session.SessionId), cancellationToken));
 
-    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken) =>
-        ReadConfig(await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/config", Body(("configId", configId), ("value", value)), cancellationToken));
+    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null)
+    {
+        var args = new ConfigFeature.SetArgs(session.SessionId, configId, value, targetId is null ? null : UnwrapTarget(targetId));
+        return ReadConfig(targetId is null
+            ? await CallAsync("config", "set", args, cancellationToken)
+            : await ConfiguredCallAsync("config", "set", JsonSerializer.SerializeToElement(args, SessionsJson.Default.SetArgs), cancellationToken));
+    }
+
+    public async Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct)
+    {
+        var args = new ConfigFeature.DiscoverArgs(agent, UnwrapTarget(targetId), cwd);
+        var result = await ConfiguredCallAsync("config", "discover", JsonSerializer.SerializeToElement(args, SessionsJson.Default.DiscoverArgs), ct);
+        if (!result.TryGetProperty("modelOptions", out var models) || models.ValueKind != JsonValueKind.Object
+            || models.EnumerateObject().Any(model => model.Value.ValueKind != JsonValueKind.Array))
+            throw new CallFailed("incompatible backend");
+        return new(ReadConfig(result), models.EnumerateObject().ToDictionary(model => model.Name, model => model.Value.GetRawText()));
+    }
+
+    public async Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken ct)
+    {
+        var args = new ConfigFeature.WarmArgs(session.SessionId, UnwrapTarget(targetId));
+        return ReadConfig(await ConfiguredCallAsync("config", "warm", JsonSerializer.SerializeToElement(args, SessionsJson.Default.WarmArgs), ct));
+    }
+
+    private async Task<JsonElement> ConfiguredCallAsync(string feature, string method, JsonElement args, CancellationToken ct)
+    {
+        var owner = await CaptureOwnerReadAsync(null, ct);
+        return await CallAsync(feature, method, args, false, ct, owner.Identity, owner.Socket);
+    }
+
+    private string TargetPrefix => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(_address.AbsoluteUri + "\0" + _token + "\0" + _connectionIdentity + "\0" + _instanceIdentity))) + ":";
+
+    private string UnwrapTarget(string target)
+    {
+        if (string.IsNullOrEmpty(target) || !target.StartsWith(TargetPrefix, StringComparison.Ordinal) || target.Length == TargetPrefix.Length)
+            throw new CallFailed("The selected remote configuration changed. Select it again.");
+        return target[TargetPrefix.Length..];
+    }
 
     public async Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
     {
-        using var content = new StringContent(answer.GetRawText(), Encoding.UTF8, "application/json");
-        using var response = await SendRequestAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/asks/{Uri.EscapeDataString(askId)}", content, cancellationToken);
-        if (response.StatusCode == HttpStatusCode.Conflict)
-            return false;
-        await ReadJsonAsync(response, cancellationToken);
-        return true;
+        try { return (await CallAsync("send", "answer", new SendFeature.AnswerArgs(session.SessionId, askId, answer), cancellationToken)).GetProperty("ok").GetBoolean(); }
+        // SendFeature.cs rejects an expired ask with this failed message.
+        catch (CallFailed error) when (error.Message == "that ask isn't open, or the answer doesn't fit it") { return false; }
     }
 
     public async Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken)
     {
-        using var response = await SendRequestAsync(HttpMethod.Post,
-            $"/sessions/{session.SessionId}/tasks/{Uri.EscapeDataString(taskId)}/stop", content: null, cancellationToken);
-        if (response.StatusCode == HttpStatusCode.Conflict)
-            return false;
-        await ReadJsonAsync(response, cancellationToken);
-        return true;
+        try { return (await CallAsync("send", "stopTask", new SendFeature.StopTaskArgs(session.SessionId, taskId), cancellationToken)).GetProperty("ok").GetBoolean(); }
+        catch (CallFailed error) when (error.Message == "that task isn't running, or can't be stopped") { return false; }
     }
 
     private static SessionConfig ReadConfig(JsonElement config) =>
@@ -200,55 +259,21 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
             _follower.Watch(sessionId);
     }
 
-    /// <summary>
-    /// Reads the remote's row format again, so a remote upgraded in place is seen, unless an open follower link already
-    /// shows it's there. Either way, the sessions the follower gave up on while it was unreachable are followed again.
-    /// </summary>
+    /// <summary>Opens the machine socket and checks the welcome before marking it reachable.</summary>
     public async Task ProbeAsync(CancellationToken cancellationToken)
     {
-        if (_socket is { State: WebSocketState.Open })
-        {
-            _status.Reachable(_name);
-            _follower.Resume();
-            return;
-        }
-        _formatChecked = false;
-        await CheckFormatAsync(cancellationToken);
+        await ConnectSocketAsync(cancellationToken);
+        await _socketSend.WaitAsync(cancellationToken);
+        try { _socketRun ??= Task.Run(SocketLoopAsync, CancellationToken.None); }
+        finally { _socketSend.Release(); }
+        _status.Reachable(_name);
         _follower.Resume();
     }
 
-    // The remote's rows are copied as they are, so it must write the format this computer reads. Until it's known to,
-    // an answer doesn't mark it reachable, so another format never shows reachable first.
-    private async Task CheckFormatAsync(CancellationToken cancellationToken)
-    {
-        if (_formatChecked)
-            return;
-        var version = (await JsonAsync(HttpMethod.Get, "/version", null, cancellationToken)).GetProperty("formatVersion").GetInt32();
-        if (version != RowStore.FormatVersion)
-        {
-            var reason = $"stores rows in format {version}; this computer reads format {RowStore.FormatVersion}";
-            throw Unreachable(reason, $"{_name} {reason}");
-        }
-        _formatChecked = true;
-        _status.Reachable(_name);
-    }
-
-    // A finished turn may have named the session on the remote, its utility model too. A title the user gave here is
-    // kept, and SetTitle keeps a helper title held here over a prompt one from the remote.
-    private async Task RefreshAsync(string sessionId)
+    private Task RefreshAsync(string sessionId)
     {
         _turnEnded(sessionId);
-        try
-        {
-            var session = await JsonAsync(HttpMethod.Get, $"/sessions/{sessionId}", null, CancellationToken.None);
-            if (Text(session, "title") is { } title && _sessionStore.Get(sessionId) is { Helper: false, TitleSource: not "user" })
-                _sessionStore.SetTitle(sessionId, title, Text(session, "titleSource") ?? "prompt");
-            _sessionStore.Touch(sessionId);
-        }
-        catch (Exception error) when (error is MachineUnreachable or CallFailed)
-        {
-            // The title can wait for the next turn.
-        }
+        return Task.CompletedTask;
     }
 
     private async Task<JsonElement> JsonAsync(HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
@@ -313,177 +338,19 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     private static string? Text(JsonElement json, string name) =>
         json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    // All followed sessions share this receive loop. A backend restart can leave SSH up, so this machine owns retry.
-    private readonly CancellationTokenSource _socketStop = new();
-    private readonly SemaphoreSlim _socketSend = new(1), _bulkCall = new(1);
-    private readonly Dictionary<long, (string Session, System.Threading.Channels.Channel<JsonElement> Frames)> _subscriptions = [];
-    private ClientWebSocket? _socket, _bulkSocket;
-    private Task? _socketRun;
-    private long _nextSub;
-    private readonly Uri _address = null!;
-    private readonly string _token = null!;
-    private readonly TimeProvider _time = null!;
-    private readonly TextWriter _log = null!;
-
-    private async IAsyncEnumerable<JsonElement> RowsAsync(string session, long after,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
-    {
-        var frames = System.Threading.Channels.Channel.CreateBounded<JsonElement>(512);
-        var id = Interlocked.Increment(ref _nextSub);
-        await _socketSend.WaitAsync(cancellationToken);
-        try
-        {
-            _subscriptions.Add(id, (session, frames));
-            _socketRun ??= Task.Run(SocketLoopAsync, CancellationToken.None);
-            if (_socket is { State: WebSocketState.Open } socket)
-                await SendFrameAsync(socket, SubFrame(id, session, after), cancellationToken);
-        }
-        catch
-        {
-            _subscriptions.Remove(id);
-            _socket?.Abort();
-            throw;
-        }
-        finally { _socketSend.Release(); }
-        try
-        {
-            await foreach (var frame in frames.Reader.ReadAllAsync(cancellationToken))
-                yield return frame;
-        }
-        finally
-        {
-            await _socketSend.WaitAsync(CancellationToken.None);
-            try
-            {
-                _subscriptions.Remove(id);
-                if (_socket is { State: WebSocketState.Open } socket)
-                    try { await SendFrameAsync(socket, $"{{\"t\":\"unsub\",\"id\":{id}}}", _socketStop.Token); }
-                    catch (Exception error) when (error is WebSocketException or OperationCanceledException) { socket.Abort(); }
-            }
-            finally { _socketSend.Release(); }
-        }
-    }
-
-    private static string SubFrame(long id, string session, long after) =>
-        $"{{\"t\":\"sub\",\"id\":{id},\"topic\":\"rows\",\"key\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after}}}";
-
-    private async Task SocketLoopAsync()
-    {
-        var backoff = TimeSpan.FromSeconds(1);
-        while (!_socketStop.IsCancellationRequested)
-        {
-            using var socket = new ClientWebSocket();
-            var copied = false;
-            try
-            {
-                await OpenSocketAsync(socket, "/socket", _socketStop.Token);
-                await _socketSend.WaitAsync(_socketStop.Token);
-                try
-                {
-                    _socket = socket;
-                    foreach (var (id, sub) in _subscriptions)
-                        await SendFrameAsync(socket, SubFrame(id, sub.Session, _hub.LastSeq(sub.Session)), _socketStop.Token);
-                }
-                finally { _socketSend.Release(); }
-                _status.Reachable(_name);
-                _follower.Resume();
-                while (true)
-                {
-                    var frame = await ReadFrameAsync(socket, _socketStop.Token);
-                    await _socketSend.WaitAsync(_socketStop.Token);
-                    try
-                    {
-                        if (frame.TryGetProperty("sub", out var sub) && _subscriptions.TryGetValue(sub.GetInt64(), out var target)
-                            && !target.Frames.Writer.TryWrite(frame))
-                            throw new IOException("remote rows queue is full");
-                    }
-                    finally { _socketSend.Release(); }
-                    copied |= frame.GetProperty("t").GetString() == "rows";
-                }
-            }
-            catch (Exception error) when (error is WebSocketException or IOException or OperationCanceledException)
-            {
-                if (_socketStop.IsCancellationRequested) break;
-                _status.Unreachable(_name, "machine socket closed");
-                _log.WriteLine($"remote {_name}: socket lost ({error.GetType().Name})");
-            }
-            finally
-            {
-                await _socketSend.WaitAsync(CancellationToken.None);
-                try { _socket = null; }
-                finally { _socketSend.Release(); }
-            }
-            if (copied) backoff = TimeSpan.FromSeconds(1);
-            try { await Task.Delay(backoff, _time, _socketStop.Token); }
-            catch (OperationCanceledException) when (_socketStop.IsCancellationRequested) { break; }
-            backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, 30));
-        }
-    }
-
-    private async Task<IReadOnlyList<StoredRow>> ReadRowsAsync(string session, long after, CancellationToken cancellationToken)
-    {
-        await _bulkCall.WaitAsync(cancellationToken);
-        try
-        {
-            if (_bulkSocket is not { State: WebSocketState.Open })
-            {
-                _bulkSocket?.Dispose();
-                _bulkSocket = new ClientWebSocket();
-                await OpenSocketAsync(_bulkSocket, "/socket/bulk", cancellationToken);
-            }
-            await SendFrameAsync(_bulkSocket,
-                $"{{\"t\":\"call\",\"id\":1,\"feature\":\"rows\",\"method\":\"after\",\"args\":{{\"session\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after},\"limit\":{RowsFeature.PageLimit}}}}}", cancellationToken);
-            var frame = await ReadFrameAsync(_bulkSocket, cancellationToken);
-            if (frame.GetProperty("t").GetString() != "result") throw new IOException("remote rows read failed");
-            return frame.GetProperty("result").GetProperty("rows").EnumerateArray().Select(RowWire.Read).ToArray();
-        }
-        catch
-        {
-            if (!cancellationToken.IsCancellationRequested) _socket?.Abort();
-            _bulkSocket?.Dispose();
-            _bulkSocket = null;
-            throw;
-        }
-        finally { _bulkCall.Release(); }
-    }
-
-    private async Task OpenSocketAsync(ClientWebSocket socket, string path, CancellationToken cancellationToken)
-    {
-        socket.Options.SetRequestHeader("Authorization", $"Bearer {_token}");
-        var uri = new UriBuilder(_address) { Scheme = _address.Scheme == "https" ? "wss" : "ws", Path = path };
-        await socket.ConnectAsync(uri.Uri, cancellationToken);
-        await SendFrameAsync(socket, $"{{\"t\":\"hello\",\"protocol\":1,\"token\":{JsonSerializer.Serialize(_token, RowJsonContext.Rows.String)}}}", cancellationToken);
-        var welcome = await ReadFrameAsync(socket, cancellationToken);
-        if (welcome.GetProperty("t").GetString() != "welcome" || welcome.GetProperty("protocol").GetInt32() != 1)
-            throw new IOException("remote socket handshake failed");
-    }
-
-    private static Task SendFrameAsync(ClientWebSocket socket, string frame, CancellationToken cancellationToken) =>
-        socket.SendAsync(Encoding.UTF8.GetBytes(frame), WebSocketMessageType.Text, true, cancellationToken);
-
-    private static async Task<JsonElement> ReadFrameAsync(ClientWebSocket socket, CancellationToken cancellationToken)
-    {
-        using var bytes = new MemoryStream();
-        var chunk = new byte[16384];
-        WebSocketReceiveResult received;
-        do
-        {
-            received = await socket.ReceiveAsync(chunk, cancellationToken);
-            if (received.MessageType == WebSocketMessageType.Close) throw new IOException("remote socket closed");
-            bytes.Write(chunk, 0, received.Count);
-            if (bytes.Length > 4 * 1024 * 1024) throw new IOException("remote frame too large");
-        } while (!received.EndOfMessage);
-        using var json = JsonDocument.Parse(bytes.ToArray());
-        return json.RootElement.Clone();
-    }
-
     public async ValueTask DisposeAsync()
     {
+        var relayLeases = StopRelayLeases();
+        await _socketSend.WaitAsync();
+        try { _ownerStopping = true; InvalidateEngine(); }
+        finally { _socketSend.Release(); }
         await Terminals.DisposeAsync();
         await _socketStop.CancelAsync();
         await _follower.DisposeAsync();
         if (_socketRun is not null) await _socketRun;
+        await Task.WhenAll(relayLeases);
         _bulkSocket?.Dispose();
+        await Task.WhenAll(_ownerCancellations);
         _socketStop.Dispose();
         _socketSend.Dispose();
         _bulkCall.Dispose();

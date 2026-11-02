@@ -312,3 +312,14 @@ test('a view the drawn rows miss is uncovered: the virtualizer kept an offset pa
   // The list ends inside the view: only the part above its end has to be covered.
   assert.equal(viewUncovered([{ start: 0, end: 400 }], 0, 400), false);
 });
+
+test('captured sender label and stable source survive live, paging and reopen independently', () => {
+  const row = { seq: 1, prevSeq: 0, runId: 'run', itemId: null, kind: 'user', createdAt: 1,
+    payload: { text: 'body', from: 'peer/x', senderLabel: 'Captured title (peer/x)' } } as Row;
+  for (const view of [live(emptyView(), [row]), prependPage(emptyView(), [row], false), live(emptyView(), JSON.parse(JSON.stringify([row])))]) {
+    const item = view.items[0]!;
+    assert.equal(item.kind, 'user');
+    assert.equal(item.from, 'peer/x');
+    assert.equal(item.senderLabel, 'Captured title (peer/x)');
+  }
+});

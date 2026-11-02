@@ -1,5 +1,6 @@
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Topics;
+using System.Runtime.CompilerServices;
 
 namespace Assembly.Application.Features.Terminal;
 
@@ -21,6 +22,11 @@ internal sealed class RunningTerminal : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Task _reader;
     private TerminalInfo _info;
+    private readonly TaskCompletionSource<int> _exit = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource _writesDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _writes;
+    private bool SignIn => _info.Owner?.StartsWith("signin:", StringComparison.Ordinal) == true;
 
     public RunningTerminal(TerminalInfo info, IPty pty, ITopics topics)
     {
@@ -41,16 +47,64 @@ internal sealed class RunningTerminal : IAsyncDisposable
 
     public async ValueTask WriteAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-        if (Info.ExitCode is not null || _stop.IsCancellationRequested)
-            throw new CallFailed("the terminal has ended");
+        lock (_lock)
+        {
+            if (_info.ExitCode is not null || _stop.IsCancellationRequested)
+                throw new CallFailed(SignIn ? "signin_write_failed" : "the terminal has ended", SignIn ? "signin_write_failed" : null);
+            if (_writes++ == 0)
+                _writesDrained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
         try
         {
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
             await _pty.WriteAsync(bytes, stop.Token);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || _stop.IsCancellationRequested) { throw; }
+        catch (Exception) when (SignIn)
+        {
+            throw new CallFailed("signin_write_failed", "signin_write_failed");
+        }
         catch (ObjectDisposedException)
         {
             throw new CallFailed("the terminal has ended");
+        }
+        finally
+        {
+            lock (_lock)
+                if (--_writes == 0)
+                    _writesDrained.TrySetResult();
+        }
+    }
+
+    public Task<int> ExitedAsync(CancellationToken ct) => _exit.Task.WaitAsync(ct);
+
+    public async IAsyncEnumerable<ReadOnlyMemory<byte>> OutputAsync([EnumeratorCancellation] CancellationToken ct)
+    {
+        long offset = 0;
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            OutputPiece piece;
+            Task changed;
+            bool ended;
+            lock (_lock)
+            {
+                piece = _ring.Read(offset);
+                changed = _changed.Task;
+                ended = _exit.Task.IsCompleted;
+            }
+            if (piece.Data.Length != 0)
+            {
+                offset = piece.Offset + piece.Data.Length;
+                yield return piece.Data;
+                continue;
+            }
+            if (ended)
+            {
+                await _exit.Task.WaitAsync(ct);
+                yield break;
+            }
+            await changed.WaitAsync(ct);
         }
     }
 
@@ -82,14 +136,29 @@ internal sealed class RunningTerminal : IAsyncDisposable
     /// <summary>Ends the process group, stops the reader and lets go of the output.</summary>
     public async ValueTask DisposeAsync()
     {
-        await _stop.CancelAsync();
-        await _pty.DisposeAsync();
-        await _reader;
+        try
+        {
+            await _stop.CancelAsync();
+            await _pty.DisposeAsync();
+        }
+        catch (Exception) when (SignIn)
+        {
+            throw new CallFailed("signin_exit_failed", "signin_exit_failed");
+        }
+        finally
+        {
+            await _reader;
+            Task writes;
+            lock (_lock)
+                writes = _writes == 0 ? Task.CompletedTask : _writesDrained.Task;
+            await writes;
+        }
     }
 
     private async Task ReadAsync()
     {
         var buffer = new byte[ReadSize];
+        var failure = "signin_read_failed";
         try
         {
             int read;
@@ -102,7 +171,9 @@ internal sealed class RunningTerminal : IAsyncDisposable
                     _ring.Append(buffer.AsSpan(0, read));
                 }
                 Publish(new OutputRow(from + read, from, buffer[..read]));
+                Changed();
             }
+            failure = "signin_exit_failed";
             var code = await _pty.Exited.WaitAsync(_stop.Token);
             long end;
             lock (_lock)
@@ -111,15 +182,28 @@ internal sealed class RunningTerminal : IAsyncDisposable
                 end = _ring.End;
             }
             Publish(new OutputRow(end + 1, end, Exit: code));
+            _exit.TrySetResult(code);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested)
         {
-            // Closed: nobody is left to tell.
+            _exit.TrySetCanceled(_stop.Token);
         }
         catch (Exception error)
         {
             // Logged here, so closing it (and the backend quitting) doesn't fail on it.
-            Console.Error.WriteLine($"terminal {_info.Id}: its output stopped: {error.Message}");
+            _exit.TrySetException(new CallFailed(failure, failure));
+            if (!SignIn)
+                Console.Error.WriteLine($"terminal {_info.Id}: its output stopped: {error.Message}");
+        }
+        finally { Changed(); }
+    }
+
+    private void Changed()
+    {
+        lock (_lock)
+        {
+            _changed.TrySetResult();
+            _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
     }
 

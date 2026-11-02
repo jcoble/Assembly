@@ -1,0 +1,116 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Engine;
+using Assembly.Infrastructure.Socket;
+using Assembly.Engine;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Handoffs;
+using Assembly.Engine.Messages;
+using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Runs;
+using Assembly.Engine.Sessions;
+using Assembly.Engine.Providers;
+
+namespace Assembly.Infrastructure.Engine;
+
+public sealed record WindowCommand(Guid CommandId, string EntityId, long ExpectedVersion,
+    long Epoch, EngineCommand Command,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null);
+public sealed record EngineUsageArgs(string EntityKind, string EntityId, string? Machine = null);
+public sealed record EngineEntityArgs(string EntityKind, string EntityId, string? Machine = null);
+
+/// <summary>The authenticated window's checked owner commands; identity and time are host-owned.</summary>
+public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFeature
+{
+    private readonly MachineForward? _forward;
+    private readonly MachineStarts? _starts;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, MachineForward forward) : this(runtime, time) => _forward = forward;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, MachineForward forward, MachineStarts starts) : this(runtime, time, forward) => _starts = starts;
+    private MachineForward Forward => _forward ?? throw new KeyNotFoundException("Unknown remote engine machine");
+    private bool IsRemote(string? machine) => machine is not null && machine != runtime.Machine;
+
+    private static int OwnerPageBytes(long id, OwnerPromptPage page) => SocketDispatcher.Result(id,
+        JsonSerializer.SerializeToElement(page, EngineSocketJson.Default.OwnerPromptPage)).Length;
+
+    private static T TitleRead<T>(Func<T> read)
+    {
+        try { return read(); }
+        catch (InvalidOperationException error) when (error.Message == "title_changed") { throw new CallFailed(error.Message); }
+    }
+
+    public void Register(ICallRegistry calls)
+    {
+        calls.Write("engine", "command", EngineSocketJson.Default.WindowCommand, EngineJson.Default.CommandResult,
+            async (args, call) =>
+            {
+                if (args.Command is not (StartSession or StopSession or StartRun or CancelRun or
+                    ResolveNeed { State: "answered" or "dismissed" } or SendMessage or RequestHandoff or CheckProvider or StartSignIn or CancelSignIn))
+                    return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
+                if (args.Command is CheckProvider or StartSignIn or CancelSignIn && args.Machine != runtime.Machine)
+                    return _ => new(false, false, "wrong_machine", args.ExpectedVersion, 0, args.Epoch);
+                if (args.Command is StartSession { RepoUrl: not null } or StartSession { ManagedCheckout: true })
+                    return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
+                if (args.CommandId == Guid.Empty || string.IsNullOrWhiteSpace(args.EntityId) || args.ExpectedVersion < 0 || args.Epoch < 0)
+                    return _ => new(false, false, "bad_args", args.ExpectedVersion, 0, args.Epoch);
+                if (IsRemote(args.Machine))
+                {
+                    if (_starts is not null && args.Command is StartSession { ParentId: { } parent } remoteStart && _starts.OwnsParent(parent, call.Cancellation))
+                    {
+                        var context = new CommandContext(args.CommandId, runtime.Machine, new(ActorKind.Window, "owner"),
+                            args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+                        var started = await _starts.StartAsync(context, remoteStart, args.Machine!, call.Cancellation);
+                        return _ => started;
+                    }
+                    var result = await Forward.CommandAsync(args.Machine!, args, call.Cancellation);
+                    return _ => result;
+                }
+                var title = args.Command is StartSession start ? EngineCommands.PrepareSessionTitle(start) : null;
+                return scope =>
+                {
+                    var context = new CommandContext(args.CommandId, runtime.Machine, new(ActorKind.Window, "owner"),
+                        args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+                    return title is null ? runtime.Commands.Apply(scope, context, args.Command) : runtime.Commands.ApplyPreparedSessionTitle(scope, context, title);
+                };
+            }, order: args => IsRemote(args.Machine) ? args.Machine : null);
+        calls.Read("engine", "owner_prompts", EngineSocketJson.Default.OwnerPromptReadArgs, EngineSocketJson.Default.OwnerPromptPage,
+            async (args, call) =>
+            {
+                if (call.ReplyId is not { } replyId) throw new CallFailed("reply metadata unavailable");
+                if (IsRemote(args.Machine))
+                    return await Forward.OwnerPromptsAsync(args.Machine!, args, candidate => OwnerPageBytes(replyId, candidate), call.Cancellation);
+                return runtime.Reader.OwnerPrompts(args, candidate => SocketDispatcher.Result(replyId,
+                    JsonSerializer.SerializeToElement(candidate, EngineSocketJson.Default.OwnerPromptPage)).Length, call.Cancellation);
+            });
+        calls.Read("engine", "owner_prompt_chunk", EngineSocketJson.Default.OwnerPromptChunkArgs, EngineSocketJson.Default.OwnerPromptChunk,
+            async (args, call) => IsRemote(args.Machine)
+                ? (await Forward.CallAsync(args.Machine!, "engine", "owner_prompt_chunk",
+                    JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.OwnerPromptChunkArgs),
+                    true, call.Cancellation)).Deserialize(EngineSocketJson.Default.OwnerPromptChunk)!
+                : runtime.Reader.OwnerPromptContent(args, call.Cancellation), bulk: true);
+        calls.Read("engine", "session_title", EngineSocketJson.Default.SessionTitleReadArgs, EngineSocketJson.Default.SessionTitleStat,
+            async (args, call) => IsRemote(args.Machine)
+                ? (await Forward.CallAsync(args.Machine!, "engine", "session_title",
+                    JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.SessionTitleReadArgs), false, call.Cancellation)).Deserialize(EngineSocketJson.Default.SessionTitleStat)!
+                : TitleRead(() => runtime.Reader.SessionTitle(args, call.Cancellation)));
+        calls.Read("engine", "session_title_chunk", EngineSocketJson.Default.SessionTitleChunkArgs, EngineSocketJson.Default.SessionTitleChunk,
+            async (args, call) => IsRemote(args.Machine)
+                ? (await Forward.CallAsync(args.Machine!, "engine", "session_title_chunk",
+                    JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.SessionTitleChunkArgs), true, call.Cancellation)).Deserialize(EngineSocketJson.Default.SessionTitleChunk)!
+                : TitleRead(() => runtime.Reader.SessionTitleChunk(args, call.Cancellation)), bulk: true);
+        calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo,
+            (_, call) => Task.FromResult(runtime.Reader.Machine(call.Cancellation)));
+        calls.Read("engine", "usage", EngineSocketJson.Default.EngineUsageArgs, EngineSocketJson.Default.UsageTotals,
+            async (args, call) => IsRemote(args.Machine)
+                ? (await Forward.CallAsync(args.Machine!, "engine", "usage",
+                    JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.EngineUsageArgs), false, call.Cancellation))
+                    .Deserialize(EngineSocketJson.Default.UsageTotals)!
+                : runtime.Usage.Sum(args.EntityKind, args.EntityId, call.Cancellation));
+        calls.Read("engine", "entity", EngineSocketJson.Default.EngineEntityArgs, EngineSocketJson.Default.NullableJsonElement,
+            async (args, call) => IsRemote(args.Machine) && args.EntityKind is "tool_call" or "usage"
+                ? (await Forward.CallAsync(args.Machine!, "engine", "entity",
+                    JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.EngineEntityArgs), true, call.Cancellation))
+                    .Deserialize(EngineSocketJson.Default.NullableJsonElement)
+                : runtime.Reader.Entity(args.EntityKind, args.EntityId, call.Cancellation, args.Machine), bulk: true);
+    }
+}

@@ -27,6 +27,7 @@ internal sealed class PreferencesFeature : IFeature
             (_, call) => _db.Query(All, Preference.Read, call.Cancellation));
         calls.Save("preferences", PreferencesJson.Default.JsonElement, (key, value, scope) =>
         {
+            MessageExpiryPreference.Validate(key, value);
             scope.Execute(Upsert, new SqlArg("$key", key), new SqlArg("$value", value.GetRawText()));
             scope.Publish("preferences", key, new Preference(key, value), PreferencesJson.Default.Preference);
         });

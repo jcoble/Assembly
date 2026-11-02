@@ -1,0 +1,98 @@
+using Assembly.Engine.Reading;
+using Assembly.Domain.Rows;
+using Assembly.Engine.Providers;
+using Assembly.Engine.Mirror;
+using Assembly.Engine.Effects;
+using Assembly.Engine.Recording;
+using System.Text.Json.Serialization;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
+using Assembly.Engine.Runs;
+using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Messages;
+using Assembly.Engine.Handoffs;
+using Assembly.Engine.Prs;
+
+namespace Assembly.Engine;
+
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(IReadOnlyList<MachineStartMirrorGeneration>))]
+[JsonSerializable(typeof(MirrorNotice))]
+[JsonSerializable(typeof(CursorAt))]
+[JsonSerializable(typeof(StreamPage))]
+[JsonSerializable(typeof(SnapshotPage))]
+[JsonSerializable(typeof(CheckProvider))]
+[JsonSerializable(typeof(RecordProviderCheck))]
+[JsonSerializable(typeof(ProviderCheckCanonical))]
+[JsonSerializable(typeof(InterruptProviderCheck))]
+[JsonSerializable(typeof(StartSignIn))]
+[JsonSerializable(typeof(SignInProgress))]
+[JsonSerializable(typeof(CancelSignIn))]
+[JsonSerializable(typeof(ExpireSignIn))]
+[JsonSerializable(typeof(InterruptSignIn))]
+[JsonSerializable(typeof(ProviderProbeBinding))]
+[JsonSerializable(typeof(ProbeProviderEffect))]
+[JsonSerializable(typeof(ProviderEffectData))]
+[JsonSerializable(typeof(SignInAttemptBinding))]
+[JsonSerializable(typeof(BeginSignInEffect))]
+[JsonSerializable(typeof(CancelSignInEffect))]
+[JsonSerializable(typeof(SignInEffectData))]
+[JsonSerializable(typeof(Effect))]
+[JsonSerializable(typeof(EffectReceipt))]
+[JsonSerializable(typeof(ClaimEffect))]
+[JsonSerializable(typeof(RecoverEffect))]
+[JsonSerializable(typeof(EnableEffect))]
+[JsonSerializable(typeof(CompleteEffect))]
+[JsonSerializable(typeof(SessionEffectData))]
+[JsonSerializable(typeof(AnswerEffectData))]
+[JsonSerializable(typeof(MessageEffectData))]
+[JsonSerializable(typeof(TurnPayload))]
+[JsonSerializable(typeof(UserPayload))]
+[JsonSerializable(typeof(AuthTerminalProof))]
+[JsonSerializable(typeof(AuthTerminalDelivery))]
+[JsonSerializable(typeof(AuthOpenFailureStage))]
+[JsonSerializable(typeof(AuthSendBlocker))]
+[JsonSerializable(typeof(AuthRetryExecution))]
+[JsonSerializable(typeof(AuthRefusalReceipt))]
+[JsonSerializable(typeof(HandoffEffectData))]
+[JsonSerializable(typeof(CommandContext))]
+[JsonSerializable(typeof(CommandResult))]
+[JsonSerializable(typeof(EngineCommand))]
+[JsonSerializable(typeof(ToolStarted))]
+[JsonSerializable(typeof(ToolEnded))]
+[JsonSerializable(typeof(TurnUsage))]
+[JsonSerializable(typeof(ReportPr))]
+[JsonSerializable(typeof(ObservePr))]
+[JsonSerializable(typeof(RequestHandoff))]
+[JsonSerializable(typeof(HandoffOutcome))]
+[JsonSerializable(typeof(HandoffTransfer))]
+[JsonSerializable(typeof(SendMessage))]
+[JsonSerializable(typeof(SendOwnerPrompt))]
+[JsonSerializable(typeof(OwnerPromptJournalEnvelope))]
+[JsonSerializable(typeof(DeliverMessage))]
+[JsonSerializable(typeof(MessageOutcome))]
+[JsonSerializable(typeof(BlockSignInNeeded))]
+[JsonSerializable(typeof(ReportSignInNeeded))]
+[JsonSerializable(typeof(EstablishForeignParent))]
+[JsonSerializable(typeof(RegisterForeignSession))]
+[JsonSerializable(typeof(StartSession))]
+[JsonSerializable(typeof(SetSessionState))]
+[JsonSerializable(typeof(ReportCapabilities))]
+[JsonSerializable(typeof(StopSession))]
+[JsonSerializable(typeof(LinkTask))]
+[JsonSerializable(typeof(ReportSessionModel))]
+[JsonSerializable(typeof(ReportSessionTitle))]
+[JsonSerializable(typeof(StartRun))]
+[JsonSerializable(typeof(CancelRun))]
+[JsonSerializable(typeof(StartStep))]
+[JsonSerializable(typeof(SetStepState))]
+[JsonSerializable(typeof(OpenNeed))]
+[JsonSerializable(typeof(ResolveNeed))]
+[JsonSerializable(typeof(EscalateNeed))]
+[JsonSerializable(typeof(NeedAnswer))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(EngineEvent))]
+[JsonSerializable(typeof(EngineEventData))]
+public sealed partial class EngineJson : JsonSerializerContext;

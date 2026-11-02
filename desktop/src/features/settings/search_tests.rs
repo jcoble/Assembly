@@ -100,3 +100,16 @@ fn a_sections_rows_are_grouped_into_cards() {
         .collect();
     assert_eq!(searched, ["Text"]);
 }
+
+#[test]
+fn session_limits_are_catalogued_and_searchable_in_agents() {
+    assert_eq!(ids(&rows("depth"), |row| row.id), ["session-depth-limit"]);
+    assert_eq!(
+        ids(&rows("sessions"), |row| row.id),
+        ["session-depth-limit", "session-child-limit"]
+    );
+    assert_eq!(
+        shown("depth", "appearance").map(|section| section.id),
+        Some("agents")
+    );
+}

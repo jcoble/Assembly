@@ -3,7 +3,7 @@ using System.Threading.Channels;
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
-using Assembly.Application.Common.Acp.V1;
+using Assembly.Application.Common.Acp.V2;
 using Assembly.Domain.Events;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
@@ -15,6 +15,8 @@ namespace Assembly.Application.Features.Chat.Sessions;
 // SessionHost, continued: reading the session's updates, the background work they tell of, and closing the session.
 public sealed partial class SessionHost
 {
+    private UpdateReader _updateReader = new();
+    private string? _readerSessionId;
     /// <summary>Closes a session that was kept for background work, once that work and any run on it are done.</summary>
     private async Task CloseKeptAsync(KeptSession kept, bool lost)
     {
@@ -40,7 +42,7 @@ public sealed partial class SessionHost
     }
 
     // Called with the lock held.
-    private void Track(TaskChanged task)
+    private void Track(TaskChanged task, RowBatch? collector = null)
     {
         if (task.Running)
             _tasks[task.TaskId] = task;
@@ -49,22 +51,22 @@ public sealed partial class SessionHost
             task = task with { Name = task.Name.Length > 0 ? task.Name : started.Name, ToolCallId = task.ToolCallId ?? started.ToolCallId };
         else
             return;
-        Apply(task);
+        Apply(task, collector);
     }
 
     // Called with the lock held: the agent says a cycle of its work is over.
-    private void EndCycle(CycleEnded cycle)
+    private void EndCycle(CycleEnded cycle, RowBatch? collector = null, List<TerminalTurn>? terminals = null)
     {
         // Claude's tag names no task, so its end ends all the untracked ones.
         if (cycle.EndsUntracked)
             foreach (var task in _tasks.Values.Where(task => !task.Tracked).ToList())
-                Track(task with { At = cycle.At, State = "completed" });
+                Track(task with { At = cycle.At, State = "completed" }, collector);
         if (_turn is { SelfStarted: true })
-            EndSelfRun(new TurnEnded(cycle.At, "end_turn", null));
+            EndSelfRun(new TurnEnded(cycle.At, "end_turn", null), collector, terminals);
     }
 
     // Called with the lock held.
-    private void StartSelfRun(long at)
+    private void StartSelfRun(long at, RowBatch? collector = null)
     {
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time))
@@ -75,16 +77,23 @@ public sealed partial class SessionHost
             Ended = ended,
             Done = ended.Task,
         };
-        Apply(new RunStarted(at, _turn.RunId, "Continued after a background task finished"));
+        PrepareObservation(_turn, at);
+        if (_kept is { } kept) BindPolicy(kept.Session, _turn);
+        Apply(new RunStarted(at, _turn.RunId, "Continued after a background task finished"), collector);
         _log.WriteLine($"session {_sessionId} run {_turn.RunId}: started by the agent");
     }
 
     // Called with the lock held.
-    private void EndSelfRun(AgentEvent end)
+    private void EndSelfRun(AgentEvent end, RowBatch? collector = null, List<TerminalTurn>? terminals = null)
     {
-        _turn?.Ended?.TrySetResult();
-        Apply(end);
+        if (_turn is not { } turn) return;
+        var batch = collector ?? new RowBatch();
+        var ended = terminals ?? [];
+        Apply(end, batch);
+        ended.Add(new(turn, end));
         _turn = null;
+        if (collector is null)
+            CommitReaderBatch(batch, turn.Observation, turn.Session?.AcpSessionId ?? "", [end], ended);
     }
 
     /// <summary>
@@ -99,20 +108,6 @@ public sealed partial class SessionHost
         {
             if (!lost)
             {
-                List<string> stoppable;
-                lock (_gate)
-                    stoppable = _tasks.Values.Where(task => task.CanStop).Select(task => task.TaskId).ToList();
-                foreach (var taskId in stoppable)
-                {
-                    try
-                    {
-                        await session.Adapter.Link.Client.StopTaskAsync(session.AcpSessionId, taskId, CancellationToken.None);
-                    }
-                    catch (JsonRpcException)
-                    {
-                        // Closing ends it anyway.
-                    }
-                }
                 await session.Pool.CloseAsync(session.Adapter, session.AcpSessionId);
                 stages?.Mark("session close");
                 if (sessionCost is { } total)
@@ -130,6 +125,7 @@ public sealed partial class SessionHost
             await pump;
             lock (_gate)
             {
+                _failedStarts.Clear();
                 foreach (var task in _tasks.Values.ToList())
                     Track(task with { At = Now(), State = "stopped" });
                 foreach (var shown in _subagents.StopAll(Now()))
@@ -160,6 +156,8 @@ public sealed partial class SessionHost
             // A kept session's updates end only when its adapter does (closing it takes it out of _kept first).
             if (_kept is not { } kept || kept.Updates != updates)
                 return;
+            _hub.Publish(_sessionId, new RowBatch(), kept.Observation is not { } observed ? null :
+                scope => _feed?.Lost(scope, observed, "provider_gone"));
             if (_turn is { SelfStarted: true })
                 EndSelfRun(new AgentLost(Now()));
             _kept = null;
@@ -204,21 +202,34 @@ public sealed partial class SessionHost
         while (updates.TryRead(out var update))
         {
             _turn?.Stages.Mark("first update");
-            // A subagent's own traffic goes to its session.
-            if (_subagents.Has(update.SessionId))
-            {
-                if (_subagents.Apply(update, Now(), _converter.KnowsTool) is { } linked)
-                    Apply(linked);
-                continue;
-            }
-
-            foreach (var agentEvent in UpdateReader.ReadAll(update, Now()))
+            var events = _updateReader.Read(update, Now());
+            var batch = new RowBatch();
+            var observed = _turn?.Observation;
+            var fallback = _kept?.Observation;
+            List<TerminalTurn> terminals = [];
+            foreach (var agentEvent in events)
             {
                 switch (agentEvent)
                 {
+                    case TurnStarted:
+                        if (_turn is null && _kept is not null) StartSelfRun(agentEvent.At, batch);
+                        observed ??= _turn?.Observation;
+                        break;
+                    case TurnEnded or TurnFailed:
+                        if (_turn is { SelfStarted: true })
+                        {
+                            EndSelfRun(agentEvent, batch, terminals);
+                        }
+                        break;
+                    case SessionMessage:
+                        // The host already recorded this prompt; user_message is its provider acknowledgement.
+                        break;
+                    case ProviderSessionMessage:
+                        // Provider-native traffic is observed provenance, not an Assembly delivery or another user prompt.
+                        break;
                     case SubagentChanged subagent:
                         // What the child asks (a permission, a question) AcpClient sends to this session's policy, as its parent's.
-                        Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent));
+                        Apply(_subagents.Changed(_sessionStore.Get(_sessionId)!, subagent), batch);
                         break;
                     case TitleChanged title when _sessionStore.Get(_sessionId) is { Helper: false }:
                         _sessionStore.SetTitle(_sessionId, title.Title, "prompt");
@@ -230,23 +241,30 @@ public sealed partial class SessionHost
                         _sessionStore.SetCommands(_sessionId, commands.Commands.GetRawText());
                         break;
                     case TaskChanged task:
-                        Track(task);
+                        Track(task, batch);
                         break;
                     case CycleEnded cycle:
-                        EndCycle(cycle);
+                        EndCycle(cycle, batch, terminals);
                         break;
                     default:
                         // New work the agent does with no prompt running, on a session kept for background work. A
                         // late update to an earlier tool call (Codex's backgrounded command finishing) isn't.
                         if (_turn is null && _kept is not null
                             && agentEvent is TextChunk or ThoughtChunk or PlanChanged or ToolCallChanged { Started: true })
-                            StartSelfRun(agentEvent.At);
+                            StartSelfRun(agentEvent.At, batch);
                         if (_turn is { SelfStarted: true } self)
                             self.LastEventAt = agentEvent.At;
-                        Apply(agentEvent);
+                        observed ??= _turn?.Observation;
+                        Apply(agentEvent, batch);
                         break;
                 }
             }
+            if (_turn is { SelfStarted: false } prompted && events.Any(e => e is TurnEnded or TurnFailed))
+            {
+                prompted.TerminalObserved = true;
+                prompted.TerminalCost = _converter.SessionCost;
+            }
+            CommitReaderBatch(batch, observed ?? fallback, update.SessionId, events, terminals);
         }
 
         CloseIfDone();

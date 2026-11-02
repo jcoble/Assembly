@@ -35,19 +35,17 @@ expect() {
   if [ "$got" = "$1" ]; then echo "ok   $2"; else echo "FAIL $2: exit $got, wanted $1"; failed=1; fi
 }
 
-r=$(repo_with 10-no-engine.sh)
-mkdir -p "$r/dotnet/Assembly.Domain" && echo x >"$r/dotnet/Assembly.Domain/A.cs"
-expect 0 "no-engine: a tree without Assembly.Engine passes" "$r" 10-no-engine.sh
-mkdir -p "$r/dotnet/Assembly.Engine" && echo x >"$r/dotnet/Assembly.Engine/A.cs"
-expect 1 "no-engine: dotnet/Assembly.Engine/ coming back fails" "$r" 10-no-engine.sh
-rm -rf "$r"
-
 r=$(repo_with 30-provider-branches.sh)
-mkdir -p "$r/app/src/lib" "$r/dotnet/Assembly.Application/Common/Acp/V1" "$r/dotnet/Assembly.Tests" "$r/shell/src"
+mkdir -p "$r/app/src/lib" "$r/dotnet/Assembly.Application/Common/Acp/V1" "$r/dotnet/Assembly.Application/Common/Acp/V2" "$r/dotnet/Assembly.Tests" "$r/shell/src"
 echo "const agent = pick(); // a comment that says claude is fine" >"$r/app/src/lib/a.ts"
-echo 'if (name == "claude") { }' >"$r/dotnet/Assembly.Application/Common/Acp/V1/Reader.cs"
+echo 'if (name == "claude") { }' >"$r/dotnet/Assembly.Application/Common/Acp/ProviderGlyph.cs"
 echo 'Assert.True(kind == "codex");' >"$r/dotnet/Assembly.Tests/T.cs"
-expect 0 "provider branches: none outside Acp/V1 and the tests passes" "$r" 30-provider-branches.sh
+expect 0 "provider branches: the exact ProviderGlyph.cs and tests pass" "$r" 30-provider-branches.sh
+for neighbor in Reader.cs V1/Reader.cs V2/Reader.cs; do
+  echo 'if (name == "claude") { }' >"$r/dotnet/Assembly.Application/Common/Acp/$neighbor"
+  expect 1 "provider branches: neighboring Acp/$neighbor is not exempt" "$r" 30-provider-branches.sh
+  rm "$r/dotnet/Assembly.Application/Common/Acp/$neighbor"
+done
 for bad in "if (agent === 'claude') go();" "case 'codex': break;" "x = agent == \"antigravity\" ? a : b" \
   "Agent::Claude => run()," "if matches!(a, Agent::Codex) {}" "const label = 'codex' !== agent"; do
   echo "$bad" >"$r/app/src/lib/a.ts"
@@ -125,7 +123,7 @@ rm -rf "$r"
 
 # A filter that matches no test is a failure, not a pass with nothing run.
 r=$(dotnet_repo_with 70-architecture.sh)
-sed -i 's/^namespace Assembly.Tests.Architecture;/namespace Assembly.Tests.Moved;/' "$r/dotnet/Assembly.Tests/Architecture/ArchitectureTests.cs"
+sed -i 's/^namespace Assembly.Tests.Architecture;/namespace Assembly.Tests.Moved;/' "$r"/dotnet/Assembly.Tests/Architecture/*.cs
 expect 1 "architecture: no architecture test found fails" "$r" 70-architecture.sh
 rm -rf "$r"
 

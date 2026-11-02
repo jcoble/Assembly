@@ -77,6 +77,11 @@ impl Appearance {
         self.saved.insert(key, value);
     }
 
+    /// The saved value for a setting with a type-specific reader.
+    pub(crate) fn saved_value(&self, key: &str) -> Option<&Value> {
+        self.saved.get(key)
+    }
+
     pub fn number(&self, setting: &NumberSetting) -> f32 {
         setting.read(self.saved.get(setting.key))
     }

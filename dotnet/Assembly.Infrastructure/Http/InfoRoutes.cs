@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Agents;
 using System.Reflection;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -33,7 +34,7 @@ internal sealed class InfoRoutes(MachineSet machines)
             return;
         }
 
-        IReadOnlyList<(string Id, string Name)> agents;
+        IReadOnlyList<ConfigTarget> agents;
         try
         {
             agents = await machine.AgentsAsync(context.RequestAborted);
@@ -48,11 +49,14 @@ internal sealed class InfoRoutes(MachineSet machines)
         {
             json.WriteStartObject();
             json.WriteStartArray("agents");
-            foreach (var (id, agentName) in agents)
+            foreach (var agent in agents)
             {
                 json.WriteStartObject();
-                json.WriteString("id", id);
-                json.WriteString("name", agentName);
+                json.WriteString("id", agent.Id);
+                json.WriteString("name", agent.Name);
+                json.WriteString("targetId", agent.TargetId);
+                json.WriteString("accountContext", agent.AccountContext);
+                json.WriteString("providerTargetId", agent.ProviderTargetId);
                 json.WriteEndObject();
             }
             json.WriteEndArray();

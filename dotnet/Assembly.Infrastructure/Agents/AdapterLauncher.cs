@@ -1,14 +1,14 @@
 using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Calls;
-using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Transcript;
 
 namespace Assembly.Infrastructure.Agents;
 
 /// <summary>Checks sessions out in <c>checkouts/&lt;session id&gt;</c> (a helper uses its parent's), and starts an agent's ACP adapter in <c>checkouts</c>.</summary>
-public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions) : IAgentLauncher
+public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions,
+    Func<SessionInfo, string?> checkoutFolder) : IAgentLauncher
 {
     public IReadOnlyList<AgentDescriptor> Agents => agents;
 
@@ -33,33 +33,21 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
 
     public async Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken)
     {
-        var folder = SessionStore.Folder(checkouts, session) ?? throw new InvalidOperationException($"{session.SessionId} has no folder");
+        var folder = checkoutFolder(session) ?? throw new InvalidOperationException($"{session.SessionId} has no folder");
         await GitCheckout.EnsureAsync(session.RepoUrl, folder, cancellationToken);
         stages.Mark("clone");
         return folder;
     }
 
-    /// <summary>
-    /// A session's checkout folder, once it exists: what its terminal starts in. Fails for a session on another
-    /// machine (a helper is on its parent's): its folder is there, and its terminal can't be reached from here yet.
-    /// </summary>
-    public static Func<string, string?> ExistingFolder(string checkouts, SessionStore sessions) => id =>
-        sessions.Get(id) switch
-        {
-            { Machine: { Length: > 0 } machine } => throw new CallFailed($"The terminal for a session on {machine} can't be opened here yet."),
-            { } session when SessionStore.Folder(checkouts, sessions.Top(session)) is { } folder && Directory.Exists(folder) => folder,
-            null => throw new CallFailed($"Unknown terminal owner: {id}"),
-            _ => null,
-        };
+    public void ValidateFolder(string folder)
+    {
+        if (!Path.IsPathFullyQualified(folder) || !Directory.Exists(folder))
+            throw new CallFailed(File.Exists(folder) ? $"This session's folder isn't a folder: {folder}" : $"This session's folder no longer exists: {folder}");
+    }
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {
-        var descriptor = agents.FirstOrDefault(agent => agent.Id == agentId)
-            ?? throw new InvalidOperationException($"This machine has no agent {agentId}.");
-        // Each ACP session gets its session's folder as its cwd; the process itself just needs somewhere to start.
-        Directory.CreateDirectory(checkouts);
-        var agent = AgentConnection.Start(descriptor.ToCommand(checkouts), permissions, TranscriptLog.Discard());
-        stages.Mark("adapter");
-        return Task.FromResult<IAgentLink>(agent);
+        var captured = ConfigTargetIdentity.Capture(this, agentId);
+        return LaunchConfiguredAsync(captured.Descriptor, captured.Environment, stages, cancellationToken);
     }
 }
