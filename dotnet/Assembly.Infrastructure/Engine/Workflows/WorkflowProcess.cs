@@ -19,7 +19,7 @@ public sealed class WorkflowProcess(string proofRoot,
     {
         var intent = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent);
         if (intent is null || effect.Kind != "workflow_command" || effect.SessionId is not null || effect.RunId != intent.RunId ||
-            effect.OrderKey != intent.OrderKey || !OwnedPath(intent.OutputPath) || !Path.IsPathFullyQualified(intent.Cwd))
+            effect.OrderKey != intent.OrderKey || !OwnedPath(intent.OutputPath) || !Path.IsPathFullyQualified(intent.Cwd) || intent.PrBody is null || intent.PrBody.Generation != intent.Generation)
             return Unknown("invalid_command_effect");
         var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(effect.Payload.GetRawText())));
         var exitPath = intent.OutputPath + ".exit.json";
@@ -28,6 +28,7 @@ public sealed class WorkflowProcess(string proofRoot,
         // No exit receipt proves no safe replay, even if the saved PID no longer exists.
         if (reconcile || File.Exists(launchPath) || File.Exists(intent.OutputPath) || File.Exists(intent.OutputPath + ".partial"))
             return Unknown("command_execution_uncertain");
+        if (!await WorkflowPrBodyFile.VerifyAsync(intent.PrBody!, proofRoot, intent.RunId, ct)) return Unknown("pr_body_changed");
         ct.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(intent.OutputPath)!);
         var nonce = Guid.NewGuid().ToString("N");

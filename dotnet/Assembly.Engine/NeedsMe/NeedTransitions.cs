@@ -10,6 +10,7 @@ using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Providers;
+using Assembly.Engine.Workflows.Execution;
 
 namespace Assembly.Engine.NeedsMe;
 
@@ -56,6 +57,15 @@ public static class NeedTransitions
         if (c.ExpectedVersion != need.Version) return Refused(c, "version_conflict", need);
         var origin = owner is not null ? AnswerOrigin.Owner : parent is not null ? AnswerOrigin.LocalParent
             : c.Actor.Kind == ActorKind.System ? AnswerOrigin.ProviderFact : AnswerOrigin.Raw;
+        if (WorkflowExecutionNeeds.IsWorkflow(s, need.Id))
+        {
+            if (command is not ResolveNeed workflowAnswer) return Refused(c, "unsupported_command", need);
+            if (owner?.Error is { } workflowPreparationError) return Refused(c, workflowPreparationError, need);
+            return WorkflowExecutionNeeds.Resolve(s, c, workflowAnswer,
+                ownerAuthorized: owner is not null,
+                parentAuthorized: parent is not null && caller is not null &&
+                    WorkflowParentMatches(s, c, need, session, caller, parent));
+        }
         if (parent is not null)
         {
             if (!LocalParentMatches(s, c, need, session, caller!, parent)) return Refused(c, "forbidden", need);
@@ -118,6 +128,27 @@ public static class NeedTransitions
         else if (need.RequestId is not null && resolve.State == "answered" && c.Actor.Kind == ActorKind.Window)
             return Refused(c, "answer_preparation_required", need);
         return Resolve(s, c, need, resolve, expiryPolicy, binding, owner, parent, origin);
+    }
+
+    private static bool WorkflowParentMatches(IReadScope s, CommandContext c, Need need, Session owner,
+        McpCaller caller, PreparedParentNeed prepared)
+    {
+        var target = prepared.Target;
+        return c.Actor.Kind == ActorKind.Session && c.Actor.Id == caller.SessionId &&
+            caller.SessionId == need.SessionId && caller.SessionId == need.AddresseeSessionId &&
+            caller.Epoch == owner.Epoch && owner.ParentId is null && owner.Machine == c.Machine &&
+            owner.Holder == "local" && owner.ReservedEpoch is null &&
+            owner.State is not ("lost" or "ended" or "foreign" or "handing_off") &&
+            prepared.Request.Action == ParentNeedAction.Answer && prepared.ProviderBinding is null &&
+            prepared.Request.NeedId == target.NeedId && target.NeedId == need.Id && target.NeedVersion == need.Version &&
+            target.ChildSessionId == need.SessionId && target.ChildOwnerMachine == owner.Machine &&
+            target.ChildEpoch == owner.Epoch && target.ChildHolder == owner.Holder &&
+            target.ChildReservedEpoch == owner.ReservedEpoch && target.Kind == need.Kind && !target.ProviderBacked &&
+            target.ParentSessionId == caller.SessionId && target.ParentOwnerMachine == owner.Machine &&
+            target.AddresseeSessionId == need.AddresseeSessionId && target.ProviderRequestId is null &&
+            target.ChatRowId is null && need.RequestId is null && need.ChatId is null &&
+            s.QueryFirst("SELECT owner_session_id FROM engine_run WHERE id=$id", r => r.Text(0),
+                new SqlArg("$id", need.RunId)) == caller.SessionId;
     }
 
     private static bool LocalParentMatches(IWriteScope s, CommandContext c, Need need, Session child,

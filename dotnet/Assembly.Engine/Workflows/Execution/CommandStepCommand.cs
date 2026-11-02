@@ -12,7 +12,7 @@ public sealed record CommandStepEnded(int Attempt, int Generation, int CommandIn
 /// <summary>Frozen command content belongs to one actual step attempt, never a provider session.</summary>
 public sealed record CommandExecutionIntent(string RunId, string StepId, int Generation, int Attempt,
     int CommandIndex, long ExecutionEpoch, string Cwd, string Script,
-    ImmutableSortedDictionary<string, string> Bindings, string OutputPath, bool Repeat, string Fingerprint, int CommandCount)
+    ImmutableSortedDictionary<string, string> Bindings, string OutputPath, bool Repeat, string Fingerprint, int CommandCount, WorkflowPrBody? PrBody = null)
 {
     public string OrderKey => $"workflow-command/{StepId}/{Generation}/{Attempt}";
 }
