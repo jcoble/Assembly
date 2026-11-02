@@ -21,7 +21,7 @@ public static partial class WorkflowExecutionNeeds
     public static CommandResult Open(IWriteScope s, CommandContext c, Effect effect, string reason)
     {
         CommandResult Refuse(string error) => new(false, false, error, c.ExpectedVersion, 0, c.Epoch);
-        if (c.Actor.Kind != ActorKind.System || reason is not ("policy" or "command_uncertain")) return Refuse("forbidden");
+        if (c.Actor.Kind != ActorKind.System || reason is not ("policy" or "command_uncertain" or "preparation_stale")) return Refuse("forbidden");
         var i = effect.Payload.Deserialize(WorkflowExecutionJson.Default.CommandExecutionIntent);
         if (i is null || effect.Kind != "workflow_command" || effect.OrderKey != i.OrderKey || effect.SessionId is not null ||
             !CommandStepTransitions.Current(s, i, c.Machine)) return Refuse("stale_attempt");
@@ -29,14 +29,17 @@ public static partial class WorkflowExecutionNeeds
             SELECT r.owner_session_id,se.epoch FROM engine_run r JOIN engine_session se ON se.id=r.owner_session_id
             JOIN engine_outbox o ON o.run_id=r.id WHERE r.id=$run AND o.id=$effect AND o.state='inflight'
               AND r.state NOT IN ('succeeded','failed','cancelled','cancelling') AND o.order_key=$key
-              AND o.payload_json=$payload AND r.machine=$machine AND se.holder='local' AND se.reserved_epoch IS NULL
+              AND o.payload_json=$payload AND ($reason!='preparation_stale' OR o.executor_json IS NULL) AND r.machine=$machine AND se.holder='local' AND se.reserved_epoch IS NULL
               AND se.state NOT IN ('ended','foreign','handing_off','lost')
             """, r => (Id: r.Text(0), Epoch: r.Long(1)), new SqlArg("$run", i.RunId), new("$effect", effect.Id),
-            new("$key", i.OrderKey), new("$payload", effect.Payload.GetRawText()), new("$machine", c.Machine));
+            new("$key", i.OrderKey), new("$payload", effect.Payload.GetRawText()), new("$machine", c.Machine), new("$reason", reason));
         if (owner.Id is null) return Refuse("forbidden");
         var id = effect.Id + "/" + reason;
         if (s.QueryFirst("SELECT COUNT(*) FROM engine_needs_me WHERE id=$id", r => r.Long(0), new SqlArg("$id", id)) != 0)
             return new(true, false, null, 1, 0, owner.Epoch);
+        if (reason == "preparation_stale")
+            CommandStepTransitions.History(s, c, i, "command_not_started", JsonSerializer.Serialize(
+                CommandStepTransitions.NotStarted(effect), WorkflowExecutionJson.Default.CommandExecutionReceipt));
         var execution = new WorkflowExecutionNeed(i.OrderKey, i.StepId, i.Generation, i.Attempt, i.CommandIndex, i.ExecutionEpoch, effect.Id, reason);
         s.Execute("""
             INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,kind,text,
@@ -45,8 +48,8 @@ public static partial class WorkflowExecutionNeeds
             UPDATE engine_workflow_policy SET need_id=$id WHERE run_id=$run AND step_id=$step AND command_hash=$hash AND decision='ask';
             UPDATE engine_step SET state='waiting',version=version+1,updated_ms=$now,outcome_reason=$reason WHERE id=$step;
             """, new("$id", id), new("$machine", c.Machine), new("$now", c.NowMs), new("$owner", owner.Id), new("$run", i.RunId), new("$step", i.StepId),
-            new("$kind", reason == "policy" ? "permission" : "command_uncertain"), new("$text", reason == "policy" ? "Allow this workflow command?" : "Command execution is uncertain; confirm its executor stopped before retrying."),
-            new("$options", reason == "policy" ? "[\"allow_once\",\"deny\"]" : i.Repeat ? "[\"retry\",\"cancel\"]" : "[\"cancel\"]"),
+            new("$kind", reason == "policy" ? "permission" : reason), new("$text", reason == "policy" ? "Allow this workflow command?" : reason == "preparation_stale" ? "Checked command preparation changed before launch; cancel and prepare a new attempt." : "Command execution is uncertain; confirm its executor stopped before retrying."),
+            new("$options", reason == "policy" ? "[\"allow_once\",\"deny\"]" : reason != "preparation_stale" && i.Repeat ? "[\"retry\",\"cancel\"]" : "[\"cancel\"]"),
             new("$execution", JsonSerializer.Serialize(execution, WorkflowNeedJson.Default.WorkflowExecutionNeed)), new("$hash", CommandStepTransitions.Digest(effect.Payload.GetRawText())), new("$reason", reason));
         List<EventDraft> events = [new("needs_me.changed", "need", id, 1, false, new(owner.Id, i.RunId, i.StepId, owner.Id, "open", owner.Epoch))];
         events.AddRange(RunTransitions.Recompute(s, c, i.RunId));
