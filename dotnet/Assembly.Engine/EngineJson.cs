@@ -1,4 +1,5 @@
 using Assembly.Engine.Reading;
+using Assembly.Domain.Rows;
 using Assembly.Engine.Providers;
 using Assembly.Engine.Mirror;
 using Assembly.Engine.Effects;
@@ -45,6 +46,12 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(SessionEffectData))]
 [JsonSerializable(typeof(AnswerEffectData))]
 [JsonSerializable(typeof(MessageEffectData))]
+[JsonSerializable(typeof(AuthTerminalProof))]
+[JsonSerializable(typeof(AuthTerminalDelivery))]
+[JsonSerializable(typeof(AuthOpenFailureStage))]
+[JsonSerializable(typeof(AuthSendBlocker))]
+[JsonSerializable(typeof(AuthRetryExecution))]
+[JsonSerializable(typeof(AuthRefusalReceipt))]
 [JsonSerializable(typeof(HandoffEffectData))]
 [JsonSerializable(typeof(CommandContext))]
 [JsonSerializable(typeof(CommandResult))]
@@ -77,6 +84,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(SetStepState))]
 [JsonSerializable(typeof(OpenNeed))]
 [JsonSerializable(typeof(ResolveNeed))]
+[JsonSerializable(typeof(EscalateNeed))]
 [JsonSerializable(typeof(NeedAnswer))]
 [JsonSerializable(typeof(string))]
 [JsonSerializable(typeof(IReadOnlyList<string>))]

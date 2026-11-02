@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
 using Assembly.Infrastructure.Engine;
@@ -107,16 +108,21 @@ public sealed class EngineFeedRecordingTests
         var feed = new EngineFeed(runtime, TextWriter.Null, f.Time); var observed = feed.Capture("s")!;
         var request = new JsonRpcRequestContext("connection", JsonSerializer.SerializeToElement("7"));
         var card = new AskPayload("permission", "open", "Run?", null, null, [new("yes", "Yes", "allow_once")], null, null);
-        f.Db.Writer.Write("test.ask", s => { feed.Asked(s, observed, "ask", card, request); return 0; });
+        var rows = RowStore.Open(f.Db); var converter = new RowConverter();
+        var asked = feed.PrepareAsked(observed, "ask", card, request);
+        rows.Commit("s", converter.Apply(new AskChanged(1000, "ask", card)), asked);
         var answer = JsonSerializer.SerializeToElement(new { optionId = "yes" });
-        f.Db.Writer.Write("test.answer", s => { feed.Settled(s, observed, "ask", "answered", answer, "manual_answered"); return 0; });
-        f.Db.Writer.Write("test.policy", s => { feed.PolicyAnswered(s, observed, request, "session/request_permission", JsonSerializer.SerializeToElement(new { outcome = "selected", optionId = "yes" })); return 0; });
+        var settled = feed.PrepareSettled(observed, "ask", "answered", answer, "manual_answered");
+        rows.Commit("s", converter.Apply(new AskChanged(1001, "ask", card with { State = "answered", Answer = answer })), settled);
+        var policy = feed.PreparePolicyAnswered(observed, request, "session/request_permission", JsonSerializer.SerializeToElement(new { outcome = "selected", optionId = "yes" }));
+        f.Db.Writer.Write("test.policy", s => { policy(s); return 0; });
         Assert.Equal("answered", f.State("engine_needs_me", "ask"));
         Assert.Equal("connection:\"7\"", f.Text("SELECT provider_request_id FROM engine_needs_me"));
         Assert.Equal(answer.GetRawText(), f.Text("SELECT answer_json FROM engine_needs_me"));
         Assert.Equal(0, f.Count("engine_outbox"));
         var count = f.Count("engine_needs_me");
-        f.Db.Writer.Write("test.auto-only", s => { feed.PolicyAnswered(s, observed, request with { Id = JsonSerializer.SerializeToElement(7) }, "session/request_permission", answer); return 0; });
+        var autoOnly = feed.PreparePolicyAnswered(observed, request with { Id = JsonSerializer.SerializeToElement(7) }, "session/request_permission", answer);
+        f.Db.Writer.Write("test.auto-only", s => { autoOnly(s); return 0; });
         Assert.Equal(count, f.Count("engine_needs_me"));
     }
 }

@@ -1,5 +1,6 @@
 using Assembly.Tests.Engine;
 using System.Text.Json;
+using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Effects;
 using Assembly.Engine.NeedsMe;
@@ -17,8 +18,13 @@ public sealed class AdapterWorkerTests
         var topics = new Topics(); using var f = new EngineFixture(topics: topics);
         f.SeedSession("slow", "running"); f.SeedSession("fast");
         Assert.True(f.Apply(new StopSession(), "slow").Applied);
-        Assert.True(f.Apply(new OpenNeed("fast", null, null, "question", "Continue?", [], "real-request", null, null), "need", actor: new(ActorKind.System, "test")).Applied);
-        Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "need", 1).Applied);
+        // A retained answer is scheduling input here; FakeEffects does not prove provider production.
+        var payload = JsonSerializer.Serialize(new NeedAnswer("need", "real-request", JsonSerializer.SerializeToElement("yes")),
+            global::Assembly.Engine.EngineJson.Default.NeedAnswer);
+        f.Db.Writer.Write("test.retained-scheduling-answer", s => s.Execute("""
+            INSERT INTO engine_outbox(id,version,machine,created_ms,updated_ms,event_seq,session_id,kind,payload_json,state,attempt,order_key)
+            VALUES('answer/need',0,$machine,1000,1000,0,'fast','answer',$payload,'pending',0,'fast')
+            """, new SqlArg("$machine", f.Machine), new("$payload", payload)));
         var stopping = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var answered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

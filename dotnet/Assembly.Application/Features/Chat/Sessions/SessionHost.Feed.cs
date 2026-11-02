@@ -60,7 +60,10 @@ public sealed partial class SessionHost
         public void Decided(string method, string acpSessionId, JsonRpcRequestContext context, JsonElement outcome)
         {
             lock (host._gate)
-                host._hub.Publish(host._sessionId, new RowBatch(), scope => host._feed!.PolicyAnswered(scope, observed, context, method, outcome));
+            {
+                var prepared = host._feed!.PreparePolicyAnswered(observed, context, method, outcome);
+                host._hub.Publish(host._sessionId, new RowBatch(), prepared);
+            }
         }
     }
 

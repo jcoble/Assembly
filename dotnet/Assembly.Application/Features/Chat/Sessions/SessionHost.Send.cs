@@ -36,9 +36,12 @@ public sealed partial class SessionHost
                     if (admission is null || !MayReuse(admission, row)) return new SendResult.Unknown();
                 }
                 if (_turn is not null) return new SendResult.Busy();
-                (var kept, _kept) = (_kept, null);
-                var turn = new RunningTurn(row?.RunId ?? Guid.NewGuid().ToString(), new StageTimes(_time)) { Session = kept?.Session, Delivery = admission };
+                var turn = new RunningTurn(row?.RunId ?? Guid.NewGuid().ToString(), new StageTimes(_time)) { Delivery = admission };
                 PrepareObservation(turn, Now());
+                if (admission is not null && (turn.Observation is not { } observedStart ||
+                    observedStart.SessionId != admission.SessionId || observedStart.Epoch != admission.Epoch)) return new SendResult.Unknown();
+                (var kept, _kept) = (_kept, null);
+                turn.Session = kept?.Session;
                 var started = new TurnStarted(Now(), turn.RunId, text, clientId, senderLabel, fromSessionId);
                 var batch = _converter.Apply(started);
                 if (row is not null) batch.Rows.RemoveAll(value => value.Kind == "user");
@@ -167,9 +170,5 @@ public sealed partial class SessionHost
         await done.WaitAsync(ct);
     }
 
-    internal bool AnswerProviderRequest(string chatRowId, string providerRequestId, System.Text.Json.JsonElement answer)
-    {
-        lock (_gate) return _asks.TryGetValue(chatRowId, out var ask) &&
-            ask.Request?.ProviderRequestId == providerRequestId && Answer(chatRowId, answer);
-    }
+
 }

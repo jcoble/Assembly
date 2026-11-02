@@ -12,6 +12,7 @@ using Assembly.Domain.Rows;
 using Assembly.Domain.Sessions;
 
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Agents.Auth;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 // The existing owning turn/open/close lifecycle.
@@ -34,7 +35,9 @@ public sealed partial class SessionHost
             {
                 await _session.WaitAsync(turn.Stopping.Token);
                 held = true;
-                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token, observation: turn.Observation);
+                turn.OpenAttempt = new AuthOpenAttempt();
+                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token,
+                    observation: turn.Observation, authAttempt: turn.OpenAttempt);
                 updates = session.Adapter.Updates.For(session.AcpSessionId);
                 BindPolicy(session, turn);
                 lock (_gate)
