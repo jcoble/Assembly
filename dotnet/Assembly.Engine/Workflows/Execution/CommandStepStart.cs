@@ -21,6 +21,7 @@ public static partial class CommandStepTransitions
             JOIN engine_workflow_workspace w ON w.id=st.workspace_id AND w.state='ready'
             LEFT JOIN engine_step_attempt a ON a.step_id=st.id AND a.attempt=st.attempt
             WHERE st.id=$step AND st.run_id=$run AND st.kind='command' AND st.dispatch_state IS NOT 'redo_pending' AND r.machine=$machine AND st.authority_machine=$machine
+              AND (st.state='pending' OR st.deadline_ms IS NULL OR st.deadline_ms>$now)
               AND w.path=$cwd AND r.setup_state='ready' AND r.paused=0 AND r.state NOT IN ('succeeded','failed','cancelled','cancelling')
               AND se.holder='local' AND se.reserved_epoch IS NULL AND se.state NOT IN ('foreign','ended','handing_off','lost')
               AND NOT EXISTS(SELECT 1 FROM engine_step_dependency d JOIN engine_step dep ON dep.id=d.dependency_id
@@ -40,7 +41,7 @@ public static partial class CommandStepTransitions
             OwnerVersion = r.Long(10),
             WorkspaceVersion = r.Long(11)
         },
-            new SqlArg("$step", i.StepId), new("$run", i.RunId), new("$machine", c.Machine), new("$cwd", i.Cwd));
+            new SqlArg("$step", i.StepId), new("$run", i.RunId), new("$machine", c.Machine), new("$cwd", i.Cwd), new("$now", c.NowMs));
         if (ready is null) return Refuse("command_not_ready");
         if (ready.Version != c.ExpectedVersion || b.StepVersion != ready.Version || b.RunVersion != ready.RunVersion ||
             b.OwnerVersion != ready.OwnerVersion || b.WorkspaceVersion != ready.WorkspaceVersion ||
@@ -70,7 +71,9 @@ public static partial class CommandStepTransitions
         s.Execute("""
             UPDATE engine_step SET state=$state,attempt=$attempt,attempt_in_generation=attempt_in_generation+$first,
               version=version+1,updated_ms=$now,started_ms=COALESCE(started_ms,$now),authority_epoch=$epoch,
-              ended_ms=$ended,outcome_reason=$reason,dispatch_state=$dispatch WHERE id=$step;
+              ended_ms=$ended,outcome_reason=$reason,dispatch_state=$dispatch,
+              deadline_ms=CASE WHEN $ended IS NOT NULL THEN NULL WHEN $first=1
+                THEN $now+(SELECT step_timeout_ms FROM engine_run WHERE id=$run) ELSE deadline_ms END WHERE id=$step;
             INSERT INTO engine_workflow_policy(id,version,machine,created_ms,updated_ms,run_id,step_id,command_hash,decision)
             VALUES($policy,1,$machine,$now,$now,$run,$step,$hash,$decision);
             """, new("$state", denied ? "failed" : "running"), new("$attempt", i.Attempt), new("$first", first ? 1 : 0),

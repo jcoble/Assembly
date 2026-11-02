@@ -13,7 +13,7 @@ public sealed record WorkflowExecutionNeed(string OrderKey, string StepId, int G
     int CommandIndex, long ExecutionEpoch, string EffectId, string Reason);
 
 /// <summary>Command needs use the real run owner as a routing anchor and never enqueue an ACP answer.</summary>
-public static class WorkflowExecutionNeeds
+public static partial class WorkflowExecutionNeeds
 {
     public static bool IsWorkflow(IReadScope s, string id) => s.QueryFirst(
         "SELECT COUNT(*) FROM engine_needs_me WHERE id=$id AND source_kind='workflow'", r => r.Long(0), new SqlArg("$id", id)) == 1;
@@ -124,7 +124,7 @@ public static class WorkflowExecutionNeeds
 
     private static void Cancel(IWriteScope s, CommandContext c, CommandExecutionIntent i, string effect, string reason) => s.Execute("""
         UPDATE engine_outbox SET version=version+CASE WHEN state='inflight' THEN 0 ELSE 1 END,updated_ms=$now,
-          state=CASE WHEN state='inflight' THEN state ELSE 'failed' END,last_error=$reason,next_ms=NULL WHERE id=$effect;
+          state=CASE WHEN state='inflight' THEN state WHEN $reason='policy_denied' THEN 'failed' ELSE 'unavailable' END,last_error=$reason,next_ms=NULL WHERE id=$effect;
         UPDATE engine_step_attempt SET cancel_requested=1,reason=$reason,
           state=CASE WHEN $reason='policy_denied' THEN 'failed' ELSE state END,
           ended_ms=CASE WHEN $reason='policy_denied' THEN $now ELSE ended_ms END,

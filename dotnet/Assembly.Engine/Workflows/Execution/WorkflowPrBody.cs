@@ -37,7 +37,7 @@ public static class WorkflowPrBodies
         var info = s.QueryFirst("SELECT task_url,request,pr_body FROM engine_run WHERE id=$run",
             r => (Task: r.IsNull(0) ? null : r.Text(0), Request: r.Text(1), Path: r.Text(2)), new SqlArg("$run", run));
         var materials = s.Query(MaterialCte + """
-            SELECT st.definition_key,r.kind,json_extract(r.body_json,'$.report.receipt'),h.safe_body_json,r.observed_head,r.checked_ms,r.id
+            SELECT st.definition_key,r.kind,COALESCE(json_extract(r.body_json,'$.report.receipt.summary'),json_extract(r.body_json,'$.report.summary'),''),h.safe_body_json,r.observed_head,r.checked_ms,r.id
             """ + MaterialFrom + " ORDER BY st.definition_key,r.id", r => new
         {
             Key = r.Text(0),
@@ -58,8 +58,9 @@ public static class WorkflowPrBodies
                     references.Add($"Checked file: {file.GetProperty("path").GetString()} (sha256 {file.GetProperty("sha256").GetString()}, {file.GetProperty("bytes").GetInt64()} bytes)");
             if (metadata.TryGetProperty("evidence", out var evidence))
                 foreach (var item in evidence.EnumerateArray())
-                    if (material.Head is not null && item.GetProperty("result").GetString() == "reachable" &&
-                        item.GetProperty("testedHead").GetString() == material.Head && item.GetProperty("url").GetString() is { } url)
+                    if (material.Head is not null && item.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.String && result.GetString() == "reachable" &&
+                        item.TryGetProperty("testedHead", out var testedHead) && testedHead.ValueKind == JsonValueKind.String && testedHead.GetString() == material.Head &&
+                        item.TryGetProperty("url", out var link) && link.ValueKind == JsonValueKind.String && link.GetString() is { } url)
                         references.Add($"Access verified: {url} (tested head {material.Head})");
         }
         var latest = materials.Where(material => material.Kind == "review").OrderByDescending(material => material.Checked).ThenByDescending(material => material.Id, StringComparer.Ordinal).FirstOrDefault();

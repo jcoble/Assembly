@@ -15,8 +15,8 @@ public sealed record ReviewFinished(string ReceiptId) : WorkflowCommand;
 public sealed record RedoStep(string TargetStepId, IReadOnlyList<string> FindingReceiptIds, string? OutputReceiptId) : WorkflowCommand;
 public sealed record WorkflowExecutionFence(string StepId, int Generation, int Attempt, long ExecutionEpoch);
 internal sealed record RedoRequest(string TargetStepId, int Generation, string SourceStepId, string ReceiptId,
-    IReadOnlyList<string> PeerStepIds, string SourceKind = "review");
-internal sealed record RedoApplied(string TargetStepId, int Generation, IReadOnlyList<string> FindingReceiptIds);
+    IReadOnlyList<string> PeerStepIds, string SourceKind = "review", string? OutputReceiptId = null);
+internal sealed record RedoApplied(string TargetStepId, int Generation, IReadOnlyList<string> FindingReceiptIds, string? OutputReceiptId = null);
 
 public static partial class ReviewTransitions
 {
@@ -60,14 +60,14 @@ public static partial class ReviewTransitions
     }
 
     private static CommandResult Request(IWriteScope s, CommandContext c, string run, int attempt, int generation,
-        long sourceVersion, string target, string receiptId, IReadOnlyList<string> peers, string sourceKind)
+        long sourceVersion, string target, string receiptId, IReadOnlyList<string> peers, string sourceKind, string? outputReceiptId = null)
     {
         if (s.QueryFirst("""
             SELECT COUNT(*) FROM engine_workflow_history WHERE run_id=$run AND kind='redo_requested'
               AND json_extract(safe_body_json,'$.receiptId')=$receipt
             """, r => r.Long(0), new SqlArg("$run", run), new("$receipt", receiptId)) != 0)
             return new(true, false, null, sourceVersion, 0, c.Epoch);
-        var request = new RedoRequest(target, generation, c.EntityId, receiptId, peers, sourceKind);
+        var request = new RedoRequest(target, generation, c.EntityId, receiptId, peers, sourceKind, outputReceiptId);
         History(s, c, run, c.EntityId, attempt, generation, "redo_requested",
             JsonSerializer.Serialize(request, ReviewTransitionJson.Default.RedoRequest));
         var peerJson = JsonSerializer.Serialize((IReadOnlyList<string>)peers, EngineJson.Default.IReadOnlyListString);
@@ -149,6 +149,7 @@ public static partial class ReviewTransitions
             """, r => r.Long(0), new SqlArg("$run", target.Run), new("$peers", peerJson)) != 0) return Refuse("executor_effects_pending");
         var receipts = ReceiptIds(s, requests);
         var current = Findings(s, receipts);
+        var outputReceipt = requests.LastOrDefault(request => request.OutputReceiptId is not null)?.OutputReceiptId;
         var previousJson = s.QueryFirst("""
             SELECT safe_body_json FROM engine_workflow_history WHERE run_id=$run AND kind='redo_applied'
               AND json_extract(safe_body_json,'$.targetStepId')=$target ORDER BY history_seq DESC LIMIT 1
@@ -158,7 +159,7 @@ public static partial class ReviewTransitions
         {
             s.Execute("UPDATE engine_run SET paused=1,version=version+1,updated_ms=$now WHERE id=$run", new("$now", c.NowMs), new("$run", target.Run));
             History(s, c, target.Run, c.EntityId, null, target.Generation, "redo_stopped",
-                JsonSerializer.Serialize(new RedoApplied(c.EntityId, target.Generation, receipts), ReviewTransitionJson.Default.RedoApplied));
+                JsonSerializer.Serialize(new RedoApplied(c.EntityId, target.Generation, receipts, outputReceipt), ReviewTransitionJson.Default.RedoApplied));
             return EngineJournal.Commit(s, c, target.Version, c.Epoch,
                 [new("workflow.redo_stopped", "run", target.Run, 0, false, new(null, target.Run, c.EntityId, null, "paused", c.Epoch))], []);
         }
@@ -172,7 +173,7 @@ public static partial class ReviewTransitions
                 """, new("$now", c.NowMs), new("$step", row.Fence.StepId));
         }
         History(s, c, target.Run, c.EntityId, null, target.Generation, "redo_applied",
-            JsonSerializer.Serialize(new RedoApplied(c.EntityId, target.Generation, receipts), ReviewTransitionJson.Default.RedoApplied));
+            JsonSerializer.Serialize(new RedoApplied(c.EntityId, target.Generation, receipts, outputReceipt), ReviewTransitionJson.Default.RedoApplied));
         return EngineJournal.Commit(s, c, target.Version + 1, c.Epoch,
             [new("workflow.redo_applied", "step", c.EntityId, target.Version + 1, false,
                 new(null, target.Run, c.EntityId, null, "pending", c.Epoch))], []);
