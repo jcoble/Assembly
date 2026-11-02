@@ -156,7 +156,7 @@ public static partial class MessageTransitions
         if (recipient.State == "ended")
             return Refused(c, "unavailable");
         if (turnReply is not null && !turnReply.HasReplyParent(s, c.Machine)) return Refused(c, "forbidden");
-        if (command.FromSessionId is not null && s.QueryFirst("""
+        if (turnReply is null && command.FromSessionId is not null && s.QueryFirst("""
             SELECT COUNT(*) FROM engine_message WHERE from_session_id=$from AND to_session_id=$to
             """, r => r.Long(0), new("$from", command.FromSessionId), new("$to", command.ToSessionId)) >= messageLimit)
             return Refused(c, "message_limit");

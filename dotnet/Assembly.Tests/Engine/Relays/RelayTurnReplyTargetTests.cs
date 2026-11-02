@@ -139,6 +139,40 @@ public sealed class RelayTurnReplyTargetTests
         Assert.Equal(1, target.Count("engine_message")); Assert.Equal(0, target.Number("SELECT COUNT(*) FROM engine_command_receipt WHERE command_id LIKE 'relay-send/v1/%'"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Proven_terminal_reply_bypasses_only_ordinary_pair_count_at_zero_or_full_capacity(bool atLimit)
+    {
+        var limit = atLimit ? 1 : 0;
+        using var target = new EngineFixture(messageLimit: () => limit); target.SeedSession("parent");
+        using var source = RelayTurnReplyTests.Source("", out var id, target: target.Machine);
+        var commands = new EngineCommands(target.Machine, target.Limits, messageLimit: () => limit); Register(target, source.Machine, commands);
+        if (atLimit) Assert.True(target.Apply(new SendMessage("child", "parent", "prior ordinary", "prompt"), "before",
+            actor: new(ActorKind.System, "machine:" + source.Machine)).Applied);
+        var capture = new EngineReader(source.Db, source.Machine).RelaySource(new(id, target.Machine), default);
+        var descriptor = RelayDigests.Describe(capture);
+        foreach (var invalid in new[] { descriptor with { ReplyEvidence = null },
+            descriptor with { ReplyEvidence = descriptor.ReplyEvidence! with { TerminalSeq = descriptor.ReplyEvidence.TerminalSeq + 1 } } })
+            Assert.Throws<RelayRefused>(() => PreparedRelaySend.Create(invalid, [], RelayHash.Utf8.GetBytes(capture.SenderLabel)));
+        Assert.Equal(atLimit ? 1 : 0, target.Count("engine_message"));
+        var prepared = PreparedRelaySend.Create(descriptor, [], RelayHash.Utf8.GetBytes(capture.SenderLabel));
+        var accepted = target.Db.Writer.Write("test.reply", scope => commands.ApplyRelaySend(scope, new(descriptor, 0), prepared, 1000));
+        Assert.True(accepted.First!.Applied, accepted.First.Error); Assert.False(accepted.Unknown);
+        Assert.Equal(atLimit ? 2 : 1, target.Count("engine_message"));
+        Assert.Equal("message_limit", target.Apply(new SendMessage("child", "parent", "generic ordinary", "prompt"), "ordinary-guid",
+            actor: new(ActorKind.System, "machine:" + source.Machine)).Error);
+        Assert.True(source.Apply(new SendMessage("child", "parent", "ordinary relay", "prompt"), "ordinary-source",
+            actor: new(ActorKind.Session, "child")).Applied);
+        var ordinary = new EngineReader(source.Db, source.Machine).RelaySource(new("ordinary-source", target.Machine), default);
+        Assert.Null(ordinary.ReplyEvidence);
+        var ordinaryDescriptor = RelayDigests.Describe(ordinary);
+        var refused = target.Db.Writer.Write("test.ordinary", scope => commands.ApplyRelaySend(scope, new(ordinaryDescriptor, 0),
+            PreparedRelaySend.Create(ordinaryDescriptor, RelayHash.Utf8.GetBytes(ordinary.Identity.Command.Text), RelayHash.Utf8.GetBytes(ordinary.SenderLabel)), 2000));
+        Assert.Equal("message_limit", refused.First!.Error); Assert.False(refused.First.Applied);
+        Assert.Equal(atLimit ? 2 : 1, target.Count("engine_message"));
+    }
+
     private static void Register(EngineFixture target, string source, EngineCommands commands)
     {
         var prepared = commands.PrepareForeignAncestry(new(source, "child", [new("parent", target.Machine, "codex", "Parent", null), new("child", source, "codex", "Child", "parent")]));
