@@ -23,6 +23,7 @@ pub enum ToolState {
     Started,
     Completed,
     Failed,
+    Cancelled,
 }
 
 /// `input` is the call's arguments as JSON text. Output and diff are cut at 1 MB each, with `truncated` set and the

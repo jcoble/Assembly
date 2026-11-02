@@ -31,6 +31,17 @@ public sealed partial class AttachmentStore
 
     public string PathOf(string sessionId, string name) => Path.Combine(_root, sessionId, name);
 
+    /// <summary>Checks only a reference's owning upload path; no file content or existence I/O.</summary>
+    public bool Owns(string sessionId, string reference)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId) || Path.GetFileName(sessionId) != sessionId || sessionId is "." or ".." ||
+            string.IsNullOrWhiteSpace(reference)) return false;
+        var name = Path.GetFileName(reference);
+        return TypeOfName(name) is not null && Guid.TryParseExact(Path.GetFileNameWithoutExtension(name), "D", out _) &&
+            string.Equals(reference, PathOf(sessionId, name), StringComparison.Ordinal);
+    }
+
+
     [GeneratedRegex("^[0-9a-f-]{36}\\.(png|jpg|gif|webp)$")]
     private static partial Regex OurName();
 }

@@ -17,7 +17,7 @@ public sealed class UpdateRouterTests
         router.Forget("s1");
 
         all.Writer.TryWrite(Text("s1", "before"));
-        all.Writer.TryWrite(SessionNotification.Resumed("s1"));
+        router.Resume("s1");
         all.Writer.TryWrite(Text("s1", "after"));
         router.Flush();
 
@@ -32,8 +32,8 @@ public sealed class UpdateRouterTests
         var all = Channel.CreateUnbounded<SessionNotification>();
         var router = new UpdateRouter(all.Reader);
 
-        // The answer came, then the opener failed and gave the session up before the router read the marker.
-        all.Writer.TryWrite(SessionNotification.Resumed("s1"));
+        // The answer came, then the opener failed and gave the session up before another notification arrived.
+        router.Resume("s1");
         router.Forget("s1");
         all.Writer.TryWrite(Text("s1", "stray"));
         router.Flush();

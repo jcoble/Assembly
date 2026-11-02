@@ -13,7 +13,7 @@ public static class SessionPaths
     public static string RootOf(SessionStore sessions, string sessionId)
     {
         var session = sessions.Get(sessionId) ?? throw new CallFailed("unknown session");
-        if (session.Machine is not null)
+        if (!string.IsNullOrEmpty(session.Machine))
             throw new CallFailed($"this session's files are on {session.Machine}, which this window can't show yet");
         var root = sessions.Root(session) ?? throw new CallFailed("this session has no folder");
         return Directory.Exists(root) ? root : throw new CallFailed("this session's folder is made on its first message");

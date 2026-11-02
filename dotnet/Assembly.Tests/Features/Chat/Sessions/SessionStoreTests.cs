@@ -31,6 +31,19 @@ public sealed class SessionStoreTests : IDisposable
     }
 
     [Fact]
+    public void Existing_nullable_chat_title_bindings_stay_sql_null_at_the_fixed_byte_boundary()
+    {
+        var root = _sessionStore.Create("claude", "repo");
+        _sessionStore.SetTitle(root.SessionId, "before", "prompt");
+        _sessionStore.SetTitle(root.SessionId, null!, "user");
+        Assert.Null(_sessionStore.Get(root.SessionId)!.Title);
+        Assert.Equal("user", _sessionStore.Get(root.SessionId)!.TitleSource);
+        var child = _sessionStore.Child(root, "native", null!);
+        var helper = _sessionStore.Helper(root, "claude", null!);
+        Assert.Null(_sessionStore.Get(child.SessionId)!.Title); Assert.Null(_sessionStore.Get(helper.SessionId)!.Title);
+    }
+
+    [Fact]
     public void A_list_read_for_a_caller_who_has_gone_stops_with_nothing_read()
     {
         Create();

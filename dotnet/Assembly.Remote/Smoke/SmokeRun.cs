@@ -65,18 +65,18 @@ public sealed class SmokeRun(SmokeOptions options) : IDisposable
     {
         var client = agent.Client;
 
-        var init = await Timed(() => client.InitializeAsync(new Implementation("assembly-backend", "0.1.0"), null, Deadline()));
-        Record("initialize", init.Value.ProtocolVersion == 1,
-            $"protocol v{init.Value.ProtocolVersion}, agent {init.Value.AgentInfo?.Name} {init.Value.AgentInfo?.Version}, {init.Ms} ms");
+        var init = await Timed(() => client.InitializeAsync(new Implementation("assembly-backend", "0.1.0"), Deadline()));
+        Record("initialize", init.Value.ProtocolVersion == 2,
+            $"protocol v{init.Value.ProtocolVersion}, agent {init.Value.Info?.Name} {init.Value.Info?.Version}, {init.Ms} ms");
 
-        var session = await Timed(() => client.NewSessionAsync(options.Agent.WorkingDirectory, Deadline()));
+        var session = await Timed(() => client.NewSessionAsync(new(options.Agent.WorkingDirectory, []), Deadline()));
         Record("session/new", session.Value.SessionId.Length > 0, $"session {session.Value.SessionId}, {session.Ms} ms");
         var sessionId = session.Value.SessionId;
 
         var toolTurn = watcher.BeginTurn();
         // Writing a file needs permission in the default mode; a read-only command like `echo` doesn't.
         var toolPrompt = $"Create a file named {FileName} in the current directory containing the single word ok. Then reply with only the word done.";
-        var tool = await Timed(() => client.PromptAsync(sessionId, toolPrompt, Deadline()));
+        var tool = await Timed(() => client.PromptAsync(sessionId, [TextBlock.Of(toolPrompt)], Deadline()).Ended);
         await watcher.DrainAsync();
         Record("prompt (tool turn)", tool.Value.StopReason == "end_turn",
             $"stop {tool.Value.StopReason}, {tool.Ms} ms; updates: {toolTurn.KindSummary}");
@@ -90,7 +90,7 @@ public sealed class SmokeRun(SmokeOptions options) : IDisposable
 
         var cancelTurn = watcher.BeginTurn();
         var started = Stopwatch.StartNew();
-        var prompt = client.PromptAsync(sessionId, "Write the numbers from 1 to 300, one per line, with no other text.", Deadline());
+        var prompt = client.PromptAsync(sessionId, [TextBlock.Of("Write the numbers from 1 to 300, one per line, with no other text.")], Deadline()).Ended;
         await Task.WhenAny(cancelTurn.FirstText, Task.Delay(TimeSpan.FromSeconds(30)));
         var cancelAt = started.ElapsedMilliseconds;
         await client.CancelAsync(sessionId, Deadline());

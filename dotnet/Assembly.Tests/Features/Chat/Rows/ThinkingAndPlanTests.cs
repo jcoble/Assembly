@@ -20,7 +20,7 @@ public sealed class ThinkingAndPlanTests
     }
 
     [Fact]
-    public void A_message_with_no_agent_id_still_gets_one_item()
+    public void A_v2_message_keeps_one_item()
     {
         var turn = Fixture("handmade/thinking.jsonl");
         var ids = turn.Rows.Where(row => row.Kind is RowKind.Delta or RowKind.Message).Select(row => row.ItemId).Distinct().ToList();

@@ -27,6 +27,8 @@ pub enum RowBody {
     User {
         text: String,
         from: Option<String>,
+        #[serde(rename = "senderLabel", default)]
+        sender_label: Option<String>,
     },
     /// `text` is only this delta's new raw text; the view draws `blocks` from block `from` on.
     Delta {

@@ -19,10 +19,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Assembly.Application\Assembly.Application.csproj" />
+    <ProjectReference Include="..\Assembly.Engine\Assembly.Engine.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
   </ItemGroup>
 
 </Project>

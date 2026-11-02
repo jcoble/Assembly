@@ -31,6 +31,8 @@ internal sealed class PreferenceStore
         _db.Writer.Write("preferences.set", scope =>
         {
             foreach (var value in values.EnumerateObject())
+                MessageExpiryPreference.Validate(value.Name, value.Value);
+            foreach (var value in values.EnumerateObject())
                 scope.Execute("INSERT INTO preferences(key, value) VALUES ($key, $value) ON CONFLICT(key) DO UPDATE SET value = $value;",
                     new SqlArg("$key", value.Name), new SqlArg("$value", value.Value.GetRawText()));
             return 0;

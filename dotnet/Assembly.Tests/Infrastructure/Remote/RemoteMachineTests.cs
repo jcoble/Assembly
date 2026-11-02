@@ -1,4 +1,5 @@
 using System.Net;
+using Assembly.Tests.Draft.Base;
 using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
@@ -96,7 +97,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await StartDesktopAsync();
         Assert.True(_desktop.ActivityHeld);
 
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         using var desktop = await OpenLiveAsync(_desktop, DesktopToken, sessionId, after: 0);
         await ApiTests.ReadUntilTurnEndsAsync(desktop);
@@ -117,7 +118,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
             await _desktop!.DisposeAsync();
 
             await agent.TextAsync("Hello");
-            await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
             await agent.CloseAsync();
         }
 
@@ -132,12 +133,9 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     [Fact]
     public async Task A_remote_that_writes_another_row_format_is_refused()
     {
-        var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
-        await using var other = builder.Build();
-        other.MapGet("/version", () => Results.Text("""{"formatVersion":99}""", "application/json"));
+        await using var other = new MachinesSocketTests.StubRemote { Format = 99 };
         await other.StartAsync();
-        var address = new Uri(other.Urls.Single());
+        var address = other.Address;
         await using var desktop = await DesktopBackend.StartAsync(Directory.CreateTempSubdirectory("assembly-desktop-").FullName, DesktopToken, 0, _desktopLauncher, _log,
             new RemoteConfig(Box, address, BoxToken));
 
@@ -181,16 +179,16 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         // Follow the helper here, and let its turn end.
         await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{helperId}/rows");
         await Until(async () => (await RowsAsync(_desktop!, DesktopToken, helperId)).Any(row => row.GetProperty("kind").GetString() == "user"));
-        await helperAgent.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await helperAgent.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         await Until(async () => (await RowsAsync(_desktop!, DesktopToken, parent)).Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}"
             && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
 
         // The parent's turn ends, and it runs another.
-        await parentAgent.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
+        await parentAgent.FinishAsync(parentPrompt, """{"stopReason":"end_turn"}""");
         await parentAgent.CloseAsync();
         await SendAsync(parent);
         await parentAgent.OpenAsync();
-        await parentAgent.ReplyAsync(await parentAgent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
+        await parentAgent.FinishAsync(await parentAgent.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
         await Until(async () => (await RowsAsync(_box, BoxToken, parent)).Count(row => row.GetProperty("kind").GetString() == "turn"
             && row.GetProperty("payload").GetProperty("state").GetString() == "finished") == 2);
         var box = await RowsAsync(_box, BoxToken, parent);
@@ -268,7 +266,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         Assert.Equal((Box, "codex"), (copy.GetProperty("machine").GetString(), copy.GetProperty("agent").GetString()));
 
         // The parent's turn ends; its session stays open while its helper works on the box.
-        await desktop.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
+        await desktop.FinishAsync(parentPrompt, """{"stopReason":"end_turn"}""");
 
         // The helper asks its parent: queued on the box, picked up by the desktop, and delivered once.
         var asked = (await ToolAsync(_box, helperToken, "send_message", new { sessionId = parent, text = "Which file?" })).GetProperty("messageId").GetString()!;
@@ -284,14 +282,14 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
 
         // The parent's answer goes back to the box.
         await desktop.TextAsync("notes.txt", "p2", "acp-parent");
-        await desktop.ReplyAsync(question, """{"stopReason":"end_turn"}""");
+        await desktop.FinishAsync(question, """{"stopReason":"end_turn"}""");
         var answered = await ToolAsync(_box, helperToken, "message_status", new { messageId = asked });
         Assert.Equal(("answered", "notes.txt"), (answered.GetProperty("state").GetString(), answered.GetProperty("reply").GetString()));
 
         // The helper answers; the parent reads it on the desktop, from the rows copied from the box.
         var status = ToolAsync(_desktop!, parentToken, "message_status", new { messageId = started.GetProperty("messageId").GetString() });
         await box.TextAsync("notes.txt has 3 lines.", "h1", "acp-helper");
-        await box.ReplyAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await box.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         var reply = await status;
         Assert.Equal(("answered", "notes.txt has 3 lines."), (reply.GetProperty("state").GetString(), reply.GetProperty("reply").GetString()));
     }
@@ -310,8 +308,8 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
             .GetProperty("sessionId").GetString()!;
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
-        await box.ReplyAsync(await box.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
-        await desktop.ReplyAsync(parentPrompt, """{"stopReason":"end_turn"}""");
+        await box.FinishAsync(await box.ReadAsync("session/prompt"), """{"stopReason":"end_turn"}""");
+        await desktop.FinishAsync(parentPrompt, """{"stopReason":"end_turn"}""");
         await Until(async () => (await GetJsonAsync(_desktop!, DesktopToken, $"/sessions/{parent}/rows")).GetProperty("rows").EnumerateArray()
             .Any(row => row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle"));
         await desktop.CloseAsync();
@@ -345,7 +343,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await Until(async () => (await http.PostAsync($"/sessions/{parent}/tasks/{helperId}/stop", null)).StatusCode == HttpStatusCode.OK);
         var cancel = await box.ReadAsync("session/cancel");
         Assert.Equal("acp-helper", cancel.GetProperty("params").GetProperty("sessionId").GetString());
-        await box.ReplyAsync(helperPrompt, """{"stopReason":"cancelled"}""");
+        await box.FinishAsync(helperPrompt, """{"stopReason":"cancelled"}""");
 
         await Until(async () =>
         {
@@ -369,8 +367,6 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await SendTextAsync(socket, $$"""{"t":"hello","token":"{{DesktopToken}}","protocol":1}""");
         Assert.StartsWith("""{"t":"welcome""", await ReadTextAsync(socket));
         await SendTextAsync(socket, """{"t":"sub","id":1,"topic":"machines"}""");
-        Assert.Contains("not checked yet", await ReadTextAsync(socket));
-        // The first tick after the subscribe probes it.
         Assert.Contains("\"reachable\":true", await ReadTextAsync(socket));
 
         File.WriteAllText(exit, "");
@@ -391,22 +387,8 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         return Encoding.UTF8.GetString(buffer, 0, received.Count);
     }
 
-    // A stand-in for the remote: /version answers this computer's format, or the status given, beside the routes the test maps.
-    private static async Task<WebApplication> StubAsync(Action<WebApplication> map, Func<int>? versionStatus = null)
-    {
-        var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
-        var app = builder.Build();
-        app.MapGet("/version", () => (versionStatus?.Invoke() ?? 200) is var status && status != 200
-            ? Results.Text("version down", statusCode: status)
-            : Results.Text($$"""{"formatVersion":{{RowStore.FormatVersion}}}""", "application/json"));
-        map(app);
-        await app.StartAsync();
-        return app;
-    }
-
-    private Task<DesktopBackend> DesktopOnAsync(WebApplication remote, string home) =>
-        DesktopBackend.StartAsync(home, DesktopToken, 0, _desktopLauncher, _log, new RemoteConfig(Box, new Uri(remote.Urls.Single()), BoxToken));
+    private Task<DesktopBackend> DesktopOnAsync(MachinesSocketTests.StubRemote remote, string home) =>
+        DesktopBackend.StartAsync(home, DesktopToken, 0, _desktopLauncher, _log, new RemoteConfig(Box, remote.Address, BoxToken));
 
     private static async Task<string> ToolErrorAsync(DesktopBackend backend, string sessionToken, string tool, object arguments)
     {
@@ -491,7 +473,7 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
     }
 

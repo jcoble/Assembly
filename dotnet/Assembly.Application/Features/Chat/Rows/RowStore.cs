@@ -12,10 +12,10 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// deltas are deleted in the transaction that saves its message row, so seqs can have gaps; next_seq never
 /// goes back, and each row sent out carries the seq before it.
 /// </summary>
-public sealed class RowStore
+public sealed partial class RowStore
 {
-    /// <summary>The row format. Two machines copy rows between them only when theirs match. 4: the session names.</summary>
-    public const int FormatVersion = 4;
+    /// <summary>The row format. Two machines copy rows between them only when theirs match. 5: positive user delivery acknowledgments.</summary>
+    public const int FormatVersion = 5;
 
     private const string Columns = "session_id, seq, run_id, item_id, kind, payload, created_at";
 
@@ -34,6 +34,11 @@ public sealed class RowStore
         {
             Schema.RenameOldNames(scope);
             scope.Execute(Schema.Create);
+            MigrateTerminalDetails(scope);
+            scope.Execute("""
+                CREATE INDEX IF NOT EXISTS rows_user_client ON rows(session_id,json_extract(payload,'$.clientId'),seq DESC)
+                WHERE kind='user' AND item_id IS NULL;
+                """);
             // Version 1 kept every delta: delete the finished messages' deltas it left, once. A newer version's
             // database is left as it is, version included.
             if (scope.QueryFirst("PRAGMA user_version;", row => row.Long(0)) < FormatVersion)
@@ -54,17 +59,26 @@ public sealed class RowStore
     public int StoredFormatVersion => (int)_db.QueryFirst("PRAGMA user_version;", row => row.Long(0), CancellationToken.None);
 
     /// <summary>Saves the batch for the session and returns its rows as saved, in seq order.</summary>
-    public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch)
+    public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch, Action<IWriteScope>? observe = null)
     {
-        if (batch.IsEmpty)
+        if (batch.IsEmpty && observe is null)
             return [];
 
         return _writer.Write("rows.commit", scope =>
         {
+            if (batch.IsEmpty)
+            {
+                observe?.Invoke(scope);
+                return (IReadOnlyList<StoredRow>)[];
+            }
             scope.Execute("INSERT INTO sessions(session_id, next_seq) VALUES ($session, 1) ON CONFLICT DO NOTHING;", new SqlArg("$session", sessionId));
             var seq = NextSeq(scope, sessionId);
 
             var saved = new List<StoredRow>(batch.Rows.Count);
+            foreach (var terminal in batch.Terminals)
+                UpsertTerminal(scope, sessionId, terminal);
+            foreach (var detail in batch.Details)
+                UpsertToolDetail(scope, sessionId, detail);
             foreach (var row in batch.Rows)
             {
                 scope.Execute(
@@ -77,8 +91,7 @@ public sealed class RowStore
             }
 
             scope.Execute("UPDATE sessions SET next_seq = $seq WHERE session_id = $session;", new SqlArg("$session", sessionId), new SqlArg("$seq", seq));
-            foreach (var detail in batch.Details)
-                UpsertToolDetail(scope, sessionId, detail);
+            observe?.Invoke(scope);
             return (IReadOnlyList<StoredRow>)saved;
         });
     }
@@ -226,15 +239,7 @@ public sealed class RowStore
         Query($"SELECT {Columns} FROM rows WHERE session_id = $session AND run_id = $run AND kind = 'message' AND seq > $after ORDER BY seq LIMIT 1;",
             reader => ReadRow(reader), new SqlArg("$session", sessionId), new SqlArg("$run", runId), new SqlArg("$after", after)).FirstOrDefault();
 
-    public StoredToolCall? ToolCall(string sessionId, string itemId) =>
-        Query(
-            """
-            SELECT (SELECT json_extract(payload, '$.summary') FROM rows WHERE session_id = $session AND item_id = $item AND kind = 'tool'
-                    ORDER BY seq DESC LIMIT 1), input, output, diff, path
-            FROM tool_details WHERE session_id = $session AND item_id = $item;
-            """,
-            reader => new StoredToolCall(Text(reader, 0), Text(reader, 1), Text(reader, 2), Text(reader, 3), Text(reader, 4)),
-            new SqlArg("$session", sessionId), new SqlArg("$item", itemId)).FirstOrDefault();
+    public StoredToolCall? ToolCall(string sessionId, string itemId) => ReadToolCall(sessionId, itemId);
 
     /// <summary>
     /// The files the session's tool calls edited, deleted or moved, newest first (<c>rows/files</c>). Each call counts once,
@@ -293,16 +298,25 @@ public sealed class RowStore
             scope.Execute("DELETE FROM rows WHERE session_id = $session AND item_id = $item AND kind = 'delta';", new SqlArg("$session", sessionId), new SqlArg("$item", itemId));
     }
 
-    private static int UpsertToolDetail(IWriteScope scope, string sessionId, ToolDetail detail) =>
-        scope.Execute(
+    private static int UpsertToolDetail(IWriteScope scope, string sessionId, ToolDetail detail)
+    {
+        UpsertTerminalRefs(scope, sessionId, detail);
+        return scope.Execute(
             """
-            INSERT INTO tool_details(session_id, item_id, input, output, diff, path) VALUES ($session, $item, $input, $output, $diff, $path)
+            INSERT INTO tool_details(session_id, item_id, input, output, diff, path, output_source, acp_session_id)
+            VALUES ($session, $item, $input, $output, $diff, $path, $source, $acp_session)
             ON CONFLICT (session_id, item_id) DO UPDATE SET
-              input = COALESCE(excluded.input, input), output = COALESCE(excluded.output, output),
-              diff = COALESCE(excluded.diff, diff), path = COALESCE(excluded.path, path);
+              input = CASE WHEN $replace THEN excluded.input ELSE COALESCE(excluded.input, input) END,
+              output = CASE WHEN $replace THEN excluded.output ELSE COALESCE(excluded.output, output) END,
+              diff = CASE WHEN $replace THEN excluded.diff ELSE COALESCE(excluded.diff, diff) END,
+              path = CASE WHEN $replace THEN excluded.path ELSE COALESCE(excluded.path, path) END,
+              output_source = CASE WHEN $replace THEN excluded.output_source ELSE COALESCE(excluded.output_source, output_source) END,
+              acp_session_id = COALESCE(excluded.acp_session_id, tool_details.acp_session_id);
             """,
             new SqlArg("$session", sessionId), new SqlArg("$item", detail.ItemId), new SqlArg("$input", detail.Input), new SqlArg("$output", detail.Output),
-            new SqlArg("$diff", detail.Diff), new SqlArg("$path", detail.Path));
+            new SqlArg("$diff", detail.Diff), new SqlArg("$path", detail.Path), new SqlArg("$replace", detail.Replace ? 1 : 0),
+            new SqlArg("$source", detail.OutputSource), new SqlArg("$acp_session", detail.AcpSessionId));
+    }
 
     private static JsonElement WholeDelta(string text) =>
         JsonSerializer.SerializeToElement(new DeltaPayload(0, SafeMarkdown.Parse(text), text), RowJsonContext.Rows.DeltaPayload);

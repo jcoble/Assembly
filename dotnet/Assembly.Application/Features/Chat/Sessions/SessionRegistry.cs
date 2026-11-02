@@ -23,20 +23,25 @@ public sealed class SessionRegistry : IAsyncDisposable
     private readonly TextWriter _log;
     private readonly BackgroundWork _work;
     private readonly SessionTitler? _titler;
+    private readonly ISessionFeed? _feed;
+    private readonly SessionMcp _mcp;
     // Each session another session's agent started, by id, with the session whose agent started it.
     private readonly ConcurrentDictionary<string, string> _startedBy = new();
     // The last run a helper's prompt or message went into, before its rows reach here from another machine.
     private readonly ConcurrentDictionary<string, string> _helperRun = new();
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
-        BackgroundWork work, HelperLimits? limits = null, SessionTitler? titler = null)
+        BackgroundWork work, HelperLimits? limits = null, SessionTitler? titler = null, ISessionFeed? feed = null, SessionMcp? mcp = null)
     {
+        _feed = feed;
         _hub = hub;
         _sessionStore = sessionStore;
         _launcher = launcher;
         Helpers = new HelperSessions(sessionStore, this, hub, limits ?? new HelperLimits());
+        _mcp = mcp ?? new SessionMcp(_ => Task.CompletedTask, (id, _) => Helpers.Tokens.ServersFor(id),
+            Helpers.Tokens.Revoke, (_, _) => { });
         _opener = new SessionOpener(sessionStore, launcher, agent => _adapters.GetOrAdd(agent, id => new SharedAdapter(launcher, id, time, log)),
-            Helpers.Tokens.ServersFor);
+            _mcp);
         _time = time;
         _log = log;
         _work = work;
@@ -54,8 +59,8 @@ public sealed class SessionRegistry : IAsyncDisposable
         {
             if (_sessionStore.Get(id) is { Helper: true, ParentSessionId: { } parent })
                 _startedBy[id] = parent;
-            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => StartedWorking(id), Helpers.Row.TurnEnded, Helpers.Tokens.Revoke,
-                _titler);
+            return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => StartedWorking(id), Helpers.Row.TurnEnded, _mcp.Revoke,
+                _titler, _feed);
         });
 
     /// <summary>Whether a session the session's agent started has a turn running.</summary>

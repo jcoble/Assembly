@@ -14,7 +14,7 @@ public sealed partial class SessionHostTests
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
-        await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await first.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
 
         await TimeOutClose(runId);
@@ -35,7 +35,7 @@ public sealed partial class SessionHostTests
         var first = await _launcher.NextAsync();
         await first.StartAsync();
         var prompt = await first.ReadAsync("session/prompt");
-        await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await first.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.CloseAsync();
         await Until(() => _host.ActiveRunId is null);
 
@@ -67,7 +67,7 @@ public sealed partial class SessionHostTests
         await first.OpenAsync("acp-2");
         var otherPrompt = await first.ReadAsync("session/prompt");
 
-        await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await first.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
         await TimeOutClose(runId);
         var second = new FakeLink();
@@ -80,7 +80,7 @@ public sealed partial class SessionHostTests
         _host.Send("two");
 
         await first.TextAsync("still here", acpSessionId: "acp-2");
-        await first.ReplyAsync(otherPrompt, """{"stopReason":"end_turn"}""");
+        await first.FinishAsync(otherPrompt, """{"stopReason":"end_turn"}""");
         var close = await first.ReadAsync("session/close");
         Assert.False(first.Disposed);
         Assert.Equal(1, _launcher.Launches);
@@ -107,7 +107,7 @@ public sealed partial class SessionHostTests
         await first.OpenAsync("acp-2");
         var otherPrompt = await first.ReadAsync("session/prompt");
 
-        await first.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await first.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await first.ReadAsync("session/close");
         await TimeOutClose(runId);
 
@@ -119,7 +119,7 @@ public sealed partial class SessionHostTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
         Assert.False(first.Disposed);
 
-        await first.ReplyAsync(otherPrompt, """{"stopReason":"end_turn"}""");
+        await first.FinishAsync(otherPrompt, """{"stopReason":"end_turn"}""");
         await first.CloseAsync();
         await Until(() => first.Disposed);
         await _adapter.ClosedAsync(FakeLink.AcpSessionId, CancellationToken.None);
@@ -133,7 +133,7 @@ public sealed partial class SessionHostTests
         var runId = _host.Send("one")!;
         await Kinds(2);
         var agent = await _launcher.NextAsync();
-        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        await agent.ReplyAsync(await agent.ReadAsync("initialize"), """{"protocolVersion":2,"capabilities":{},"authMethods":[]}""");
         var open = await agent.ReadAsync("session/new");
 
         Assert.True(_host.Stop(runId));
@@ -144,15 +144,17 @@ public sealed partial class SessionHostTests
     }
 
     [Fact]
-    public async Task A_new_session_stopped_while_it_is_being_named_is_closed()
+    public async Task A_new_session_stopped_after_open_is_cancelled_and_closed()
     {
         var runId = _host.Send("one")!;
         await Kinds(2);
         var agent = await _launcher.NextAsync();
-        await agent.StartAsync(canRename: true);
-        await agent.ReadAsync("_session/rename");
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
 
         Assert.True(_host.Stop(runId));
+        await agent.ReadAsync("session/cancel");
+        await agent.FinishAsync(prompt, """{"stopReason":"cancelled"}""");
 
         Assert.Equal(FakeLink.AcpSessionId, await agent.CloseAsync());
         Assert.Equal("cancelled", (await Rows(2))[1].Payload.GetProperty("state").GetString());
@@ -189,7 +191,7 @@ public sealed partial class SessionHostTests
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await Kinds(4);
         await Until(() => _host.ActiveRunId is null);
@@ -251,7 +253,7 @@ public sealed partial class SessionHostTests
         var launcher = new FakeLauncher { Launch = _ => Task.FromResult<IAgentLink>(new HeldLink(link)) };
         var adapter = new SharedAdapter(launcher, "claude", _time, _log);
         var getting = adapter.GetAsync(new StageTimes(_time), CancellationToken.None);
-        await link.ReplyAsync(await link.ReadAsync("initialize"), """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[]}""");
+        await link.ReplyAsync(await link.ReadAsync("initialize"), """{"protocolVersion":2,"capabilities":{},"authMethods":[]}""");
         return (adapter, link, await getting.WaitAsync(Wait));
     }
 

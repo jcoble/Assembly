@@ -11,7 +11,7 @@ namespace Assembly.Infrastructure.Socket;
 /// socket, which serves only the large calls and no topics.
 /// With <paramref name="terminal"/> it serves only terminal calls and the terminal topic on <c>/socket/terminal</c>.
 /// </summary>
-internal sealed class SocketEndpoint(string token, SocketDispatcher calls, string machine, TimeProvider time, bool bulk = false, bool terminal = false)
+internal sealed class SocketEndpoint(string token, SocketDispatcher calls, string machine, TimeProvider time, bool bulk = false, bool terminal = false, string? engineMachine = null)
 {
     private readonly byte[] _token = Encoding.UTF8.GetBytes(token);
     private readonly CancellationTokenSource _stopping = new();
@@ -29,7 +29,7 @@ internal sealed class SocketEndpoint(string token, SocketDispatcher calls, strin
         // Linked before the accept, so a drop while it's accepted still ends it.
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, _stopping.Token, Volatile.Read(ref _drop).Token);
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
-        await new SocketConnection(socket, calls, time, bulk, terminal).RunAsync(_token, machine, stopping.Token);
+        await new SocketConnection(socket, calls, time, bulk, terminal).RunAsync(_token, machine, stopping.Token, engineMachine);
     }
 
     /// <summary>Closes every socket, as the host starts stopping, so it doesn't wait on them.</summary>

@@ -9,6 +9,8 @@ public interface IAppDatabase
     /// <summary>The file's one writer: every write to it goes through this.</summary>
     IAtomicWriter Writer { get; }
 
+    IReadSnapshot OpenSnapshot(CancellationToken cancellationToken);
+
     List<T> Query<T>(string sql, Func<IRow, T> map, CancellationToken cancel, params SqlArg[] args);
 
     /// <summary>The first row mapped, or default when there's none.</summary>

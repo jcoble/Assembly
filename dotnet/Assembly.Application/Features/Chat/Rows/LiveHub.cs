@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Database;
 using System.Threading.Channels;
 using Assembly.Domain.Rows;
 using Assembly.Application.Common.Topics;
@@ -39,14 +40,14 @@ public sealed class LiveHub : IDisposable
     }
 
     /// <summary>Commits the batch, then queues its saved rows for the session's sockets. Returns them as saved.</summary>
-    public IReadOnlyList<StoredRow> Publish(string sessionId, RowBatch batch)
+    public IReadOnlyList<StoredRow> Publish(string sessionId, RowBatch batch, Action<IWriteScope>? observe = null)
     {
-        if (batch.IsEmpty)
+        if (batch.IsEmpty && observe is null)
             return [];
         lock (_gate)
         {
-            var saved = _store.Commit(sessionId, batch);
-            Push(sessionId, saved);
+            var saved = _store.Commit(sessionId, batch, observe);
+            if (saved.Count > 0) Push(sessionId, saved);
             return saved;
         }
     }
@@ -138,6 +139,11 @@ public sealed class LiveHub : IDisposable
     {
         lock (_gate)
             return _store.UserRowOfClient(sessionId, clientId);
+    }
+
+    internal UserDeliveryRow? UserDeliveryOfClient(string sessionId, string clientId)
+    {
+        lock (_gate) return _store.UserDeliveryOfClient(sessionId, clientId);
     }
 
     public bool RunEnded(string sessionId, string runId)

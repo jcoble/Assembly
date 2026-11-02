@@ -199,7 +199,7 @@ public sealed class ApiTests : IAsyncLifetime
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
 
         var rows = await ReadRowsAsync(socket, 6);
         Assert.Equal([1L, 2L, 3L, 4L, 5L, 6L], rows.Select(row => row.GetProperty("seq").GetInt64()));
@@ -228,7 +228,7 @@ public sealed class ApiTests : IAsyncLifetime
         }
 
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         using var second = await OpenLiveAsync(sessionId, after: 2);
         AssertCaughtUpFrom(2, await ReadUntilTurnEndsAsync(second));
     }
@@ -241,9 +241,9 @@ public sealed class ApiTests : IAsyncLifetime
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"}}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"}}""");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":"a.txt"}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         using var socket = await OpenLiveAsync(sessionId, after: 0);
         await ReadRowsAsync(socket, 6);
 
@@ -267,7 +267,7 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await _http.PostAsync("/runs/nope/stop", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, (await _http.PostAsync($"/runs/{runId}/stop", null)).StatusCode);
         await agent.ReadAsync("session/cancel");
-        await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"cancelled"}""");
 
         using var socket = await OpenLiveAsync(sessionId, after: 0);
         var rows = await ReadRowsAsync(socket, 4);

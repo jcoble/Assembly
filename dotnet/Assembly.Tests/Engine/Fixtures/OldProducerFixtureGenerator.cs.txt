@@ -1,0 +1,71 @@
+using System.Text.Json;
+using Assembly.Engine;
+using Assembly.Engine.Contracts;
+using Assembly.Engine.Effects;
+using Assembly.Engine.Messages;
+using Assembly.Engine.Sessions;
+using Assembly.Engine.Runs;
+using Assembly.Application.Features.Chat.Rows;
+using Microsoft.Data.Sqlite;
+namespace Assembly.Tests.Engine;
+public sealed class OldProducerFixtureGenerator
+{
+ [Fact] public async Task GenerateCrash()
+ {
+  var topics=new global::Assembly.Infrastructure.Topics.Topics();
+  using var f=new EngineFixture(topics:topics); f.SeedSession("inflight");
+  FakeEffects fake=null!;
+  fake=new FakeEffects {Execute=async(e,ct)=>{fake.SucceededExternally(e);await Task.Delay(Timeout.Infinite,ct);return new(EffectDisposition.Confirmed,JsonSerializer.SerializeToElement((string?)null),null);}};
+  var runtime=global::Assembly.Infrastructure.Engine.EngineRuntime.Start(f.Db,topics,f.Time,()=>5,fake);
+  Assert.True(f.Apply(new SendMessage(null,"inflight","actual crash","prompt"),"inflight").Applied);
+  await fake.ExternalSuccess.WaitAsync(TimeSpan.FromSeconds(10)); await runtime.DisposeAsync();
+  Assert.Single(fake.ExecutedIds);Assert.Empty(fake.ReconciledIds);Assert.Equal("inflight",f.State("engine_outbox","send/inflight"));
+  var field=typeof(EngineFixture).GetField("_file",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance)!;
+  var file=(TempDatabase)field.GetValue(f)!;
+  using var source=new SqliteConnection("Data Source="+file.Path);source.Open();
+  using var target=new SqliteConnection("Data Source="+Environment.GetEnvironmentVariable("A13_FIXTURE_OUT")+"-crash");target.Open();source.BackupDatabase(target);
+ }
+ [Fact] public void Generate()
+ {
+  var destination=Environment.GetEnvironmentVariable("A13_FIXTURE_OUT")!;
+  using var f=new EngineFixture(); int n=0;
+  void Apply(EngineCommand command,string id,long version=0,bool system=false) {
+   var bytes=new byte[16]; BitConverter.GetBytes(++n).CopyTo(bytes,0);
+   var c=new CommandContext(new Guid(bytes),f.Machine,new(system?ActorKind.System:ActorKind.Window,system?"adapter":"window"),id,version,0,1000);
+   Assert.True(f.Apply(c,command).Applied);
+  }
+  EffectReceipt Receipt(EffectDisposition disposition,string? state=null,string? error=null)=>new(disposition,
+   state==null?JsonSerializer.SerializeToElement((string?)null):JsonSerializer.SerializeToElement(new MessageEffectData(state,"old-turn",error),EngineJson.Default.MessageEffectData),error);
+  foreach(var name in new[]{"pending","transient","inflight","uncertain","unavailable","unknown-unavailable","failed","held","terminal-pending","terminal-delivered_to_turn","terminal-next_turn","terminal-unsupported","terminal-failed","child-parent"}) f.SeedSession(name);
+  void Send(string name){Apply(new SendMessage(null,name,"body "+name,"prompt"),name);}
+  Send("pending");Apply(new SendMessage(null,"pending","second","prompt"),"pending-2");
+  foreach(var name in new[]{"transient","inflight","uncertain","unavailable","unknown-unavailable","failed","terminal-pending","terminal-delivered_to_turn","terminal-next_turn","terminal-unsupported","terminal-failed"}) Send(name);
+  foreach(var name in new[]{"transient","inflight","uncertain","unavailable","unknown-unavailable","failed","terminal-delivered_to_turn","terminal-next_turn","terminal-unsupported","terminal-failed"}) Apply(new ClaimEffect(),"send/"+name,system:true);
+  Apply(new CompleteEffect(Receipt(EffectDisposition.TransientFailure,error:"retry")),"send/transient",1,true);
+  Apply(new RecoverEffect(),"send/uncertain",1,true);
+  Apply(new CompleteEffect(Receipt(EffectDisposition.Unavailable,error:"offline")),"send/unavailable",1,true);
+  Apply(new CompleteEffect(Receipt(EffectDisposition.Unknown,error:"missing acknowledgment")),"send/unknown-unavailable",1,true);
+  f.Time.Advance(TimeSpan.FromSeconds(1));
+  // Fixed contexts intentionally advance only for the due retry claim.
+  var cv=new CommandContext(Guid.Parse("11111111-1111-1111-1111-111111111111"),f.Machine,new(ActorKind.System,"adapter"),"send/unknown-unavailable",2,0,2000);
+  Assert.True(f.Apply(cv,new ClaimEffect()).Applied);
+  Apply(new CompleteEffect(Receipt(EffectDisposition.Unavailable,error:"offline")),"send/unknown-unavailable",3,true);
+  Apply(new CompleteEffect(Receipt(EffectDisposition.Failed,error:"permanent")),"send/failed",1,true);
+  foreach(var state in new[]{"delivered_to_turn","next_turn","unsupported","failed"}) Apply(new CompleteEffect(Receipt(EffectDisposition.Confirmed,state)),"send/terminal-"+state,1,true);
+  Apply(new MessageOutcome("unsupported","old-turn","historical"),"terminal-pending",1,true);
+  Apply(new SendMessage(null,"held","interrupt","interrupt"),"held");
+  f.SeedSession("child/x",parentId:"child-parent"); Apply(new SetSessionState("ended",null,null),"child/x",system:true);
+  f.SeedRun("history-run","pending"); f.SeedStep("history-step","history-run");
+  f.SeedSession("history-worker",parentId:"pending",runId:"history-run");
+  Apply(new StartStep("history-worker"),"history-step");
+  Apply(new SetStepState("failed",1,[],"old failure",false),"history-step",1,true);
+  Apply(new SetStepState("failed",1,[],"late failure",false),"history-step",2,true);
+  var batch=new RowBatch();batch.Rows.Add(new NewRow("turn","old-chat","message",JsonSerializer.SerializeToElement(new {blocks=Array.Empty<string>()}),1000));RowStore.Open(f.Db).Commit("old-chat",batch);
+  f.Db.Writer.Write("fixture.cursors",s=>s.Execute("UPDATE engine_meta SET retained_after=1,snapshot_seq=2"));
+  if(f.Number("SELECT schema_version FROM engine_meta")==2) f.Db.Writer.Write("fixture.mirror",s=>s.Execute("INSERT INTO engine_mirror VALUES('remote','Remote',7,4,'{}',2,'live',1000); INSERT INTO engine_mirror_row VALUES('remote','session','remote-session',7,3,'{}'); INSERT INTO engine_event SELECT 'remote:1',version,'remote',created_ms,updated_ms,task_url,1,kind,entity_kind,entity_id,entity_version,at_ms,late,data_json FROM engine_event LIMIT 1"));
+  var field=typeof(EngineFixture).GetField("_file",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Instance)!;
+  var file=(TempDatabase)field.GetValue(f)!;
+  using var source=new SqliteConnection("Data Source="+file.Path);source.Open();
+  using var target=new SqliteConnection("Data Source="+destination);target.Open();source.BackupDatabase(target);
+ }
+}

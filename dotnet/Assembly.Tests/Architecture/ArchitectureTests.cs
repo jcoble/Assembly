@@ -35,6 +35,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     public void The_core_uses_no_sqlite_web_server_or_process(string name)
     {
         var references = Load(name).GetReferencedAssemblies().Select(reference => reference.Name!).ToList();
@@ -47,6 +48,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     public void The_core_opens_no_files(string name)
     {
         // Files on disk are an outside system: Infrastructure and the hosts open them and hand the core a stream or text.
@@ -58,6 +60,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     public void The_core_makes_no_native_calls(string name)
     {
         // Native calls go in Infrastructure. A LibraryImport's generated stub is a DllImport, so this catches both.
@@ -72,6 +75,12 @@ public sealed partial class ArchitectureTests
     }
 
     [Fact]
+    public void Engine_references_only_application_contracts()
+    {
+        Assert.Equal(["Assembly.Application"], OurReferences("Assembly.Engine"));
+    }
+
+    [Fact]
     public void Infrastructure_references_no_host()
     {
         var references = OurReferences("Assembly.Infrastructure");
@@ -82,6 +91,7 @@ public sealed partial class ArchitectureTests
     [Theory]
     [InlineData("Assembly.Domain")]
     [InlineData("Assembly.Application")]
+    [InlineData("Assembly.Engine")]
     [InlineData("Assembly.Infrastructure")]
     public void Every_file_s_namespace_matches_its_folder(string project)
     {

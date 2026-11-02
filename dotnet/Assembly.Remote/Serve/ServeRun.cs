@@ -1,4 +1,12 @@
 using Assembly.Application.Features.Workflows;
+using Assembly.Application.Features.Chat.Helpers;
+using Assembly.Engine.Effects;
+using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Engine;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Assembly.Infrastructure.Workflows;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Application.Common;
@@ -36,6 +44,12 @@ public static class ServeRun
             return 2;
         }
 
+        return await RunAsync(options, null, null, null, default);
+    }
+
+    internal static async Task<int> RunAsync(ServeOptions options, IAgentLauncher? launcher,
+        IEngineEffects? engineEffects, Action<Uri, EngineRuntime>? started, CancellationToken cancellationToken)
+    {
         Directory.CreateDirectory(options.Home);
         // Before the database opens, so a second host on this home writes nothing into the live one's; disposed last.
         using var homeLock = HomeLock.Take(options.Home);
@@ -47,16 +61,19 @@ public static class ServeRun
         var boardTransitions = new WorkflowTransitions(db, TimeProvider.System);
         boardTransitions.Recover();
         var store = RowStore.Open(db);
-        var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts);
-        using var hub = new LiveHub(store, topics: topics);
+        var summaries = SessionSummaries.Load(store);
+        var sessionStore = SessionStore.Open(db, TimeProvider.System, options.Checkouts, summaries);
+        using var hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: sessionStore.PublishSummary);
         var closed = RunRecovery.CloseUnfinished(store, hub, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), runsHere: _ => true);
         AdapterLauncher.MoveOldCheckouts(options.Home, options.Checkouts, Console.Out);
-        var agents = AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile));
-        var launcher = new AdapterLauncher(agents, options.Checkouts, new UnclaimedPermissions());
+        var agents = launcher is null ? AgentDescriptor.Parse(File.ReadAllText(options.AgentsFile)) : null;
+        launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
+        var preferences = new PreferenceStore(db);
+        var limits = new HelperLimits();
         // Stopped after the sessions, before the hub and the database.
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
-        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
-            titler: new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"), new PreferenceStore(db), TimeProvider.System, Console.Out)));
+        await using var sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work, limits,
+            titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"), preferences, TimeProvider.System, Console.Out)));
         var attachments = new AttachmentStore(options.Attachments);
 
         var machines = new MachineSet(new LocalMachine(hub, sessionStore, sessions, attachments));
@@ -69,7 +86,12 @@ public static class ServeRun
         sessions.Helpers.Tokens.Url = $"http://127.0.0.1:{options.Port}/mcp";
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             AdapterLauncher.ExistingFolder(options.Checkouts, sessionStore));
-        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines)], board), options.Port, out _,
+        var sessionLimits = new SessionLimits(
+            () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
+            () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
+        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects, readExpiryMinutes: MessageExpiryPreferences.ReadMinutes);
+        await using var machineCalls = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
+        await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board, Engine: engine), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));
         Console.WriteLine($"listening on 127.0.0.1:{options.Port}");
         Console.WriteLine($"home:  {options.Home}");
@@ -79,10 +101,15 @@ public static class ServeRun
         using var stopping = app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
         try
         {
-            await app.RunAsync();
+            await app.StartAsync(cancellationToken);
+            var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+            sessions.Helpers.Tokens.Url = new Uri(address, "/mcp").ToString();
+            started?.Invoke(address, engine);
+            await app.WaitForShutdownAsync(cancellationToken);
         }
         finally
         {
+            await app.StopAsync(CancellationToken.None);
             await hostStop.CancelAsync();
         }
         return 0;

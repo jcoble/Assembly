@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Sessions;
@@ -10,7 +11,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// <summary>
 /// A session's turns over the socket (plan C1), on whichever machine runs its agent: <c>send/send</c> starts a turn or
 /// steers the one running, <c>send/stop</c> stops a run, <c>send/answer</c> answers an ask the agent opened, and
-/// <c>send/stopTask</c> stops background work. One the machine turns down (an ask no longer open, a task that can't
+/// session close stops background work. One the machine turns down (an ask no longer open, a task that can't
 /// be stopped) is <c>failed</c>.
 /// </summary>
 internal sealed class SendFeature : IFeature
@@ -63,12 +64,9 @@ internal sealed class SendFeature : IFeature
         calls.Write(Feature, "stopTask", SessionsJson.Default.StopTaskArgs, SessionsJson.Default.Done, async (args, call) =>
         {
             var session = Session(args.Session);
-            // A helper on another machine than its parent's stops there; the parent's machine stops its own.
-            var stopped = _store.Get(args.Task) is { Helper: true, Machine: not null } helper && helper.ParentSessionId == session.SessionId
-                && helper.Machine != session.Machine
-                ? _machines.For(helper).ActiveRun(helper) is { } run && await _machines.For(helper).StopAsync(helper, run, call.Cancellation)
-                : await _machines.For(session).StopTaskAsync(session, args.Task, call.Cancellation);
-            return stopped ? _ => new Done(true) : throw new CallFailed("that task isn't running, or can't be stopped");
+            return await _machines.For(session).StopTaskAsync(session, args.Task, call.Cancellation)
+                ? _ => new Done(true)
+                : throw new CallFailed("that task isn't running, or can't be stopped");
         }, args => OrderOf(args.Session));
     }
 
@@ -84,7 +82,16 @@ internal sealed class SendFeature : IFeature
             : "clientId must be 1 to 64 letters, digits, - or _";
 
     /// <summary><c>ClientId</c>, when given, names the message, so a resend of it answers the first send's run.</summary>
-    internal sealed record SendArgs([property: JsonRequired] string Session, [property: JsonRequired] string Text, string? ClientId = null);
+    internal sealed record SendArgs([property: JsonRequired] string Session, [property: JsonRequired] string Text, string? ClientId = null,
+        IReadOnlyList<string>? AttachmentIds = null, long? Epoch = null);
+
+    internal static OwnerPromptRequest OwnerRequest(SendArgs args)
+    {
+        if (args.Epoch < 0) throw new CallFailed("epoch must be nonnegative");
+        if (args.ClientId is not null && ClientIdError(args.ClientId) is { } error) throw new CallFailed(error);
+        return new(args.Session, args.Text, args.ClientId ?? Guid.NewGuid().ToString("N"),
+            args.AttachmentIds?.ToArray() ?? [], args.Epoch);
+    }
 
     internal sealed record Sent(string RunId);
 
