@@ -16,6 +16,7 @@ public sealed partial class EngineFeed
         var source = RowStore.TerminalReply(scope, observed.SessionId, final.ChatRunId);
         if (source is null || source.EndedAt != final.EndedAt) throw new CallFailed("turn_reply_changed");
         RequireReply(runtime.Commands.ApplyTurnReply(scope, EngineCommands.PrepareTurnReply(observed, final, source), time.GetUtcNow().ToUnixTimeMilliseconds()));
+        helperCards?.Observe(scope, observed.SessionId);
     }
 
     public void Recovered(IWriteScope scope, RecoveredChatTurn recovered)
@@ -31,6 +32,7 @@ public sealed partial class EngineFeed
         var source = RowStore.TerminalReply(scope, recovered.SessionId, recovered.ChatRunId) ?? throw new CallFailed("turn_reply_changed");
         var prepared = EngineCommands.PrepareRecoveredTurnReply(recovered, source, runtime.Machine, epoch.Value);
         RequireReply(runtime.Commands.ApplyRecoveredTurnReply(scope, prepared, time.GetUtcNow().ToUnixTimeMilliseconds()));
+        helperCards?.Observe(scope, recovered.SessionId);
     }
     private static void RequireReply(CommandResult result)
     {

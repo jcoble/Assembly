@@ -10,12 +10,13 @@ using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Engine.Helpers;
 
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Imports and projects owning chat sessions in the Engine's single initialization transaction.</summary>
 public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgentLauncher launcher, string checkouts,
-    TimeProvider time, Func<string, string?>? inheritedEnvironment = null) : IEngineSessions
+    TimeProvider time, Func<string, string?>? inheritedEnvironment = null, EngineHelperCards? helperCards = null) : IEngineSessions
 {
     private EngineCommands? _commands;
     private string? _machine;
@@ -84,6 +85,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
                 throw new CallFailed("A direct peer folder cannot override its repository.");
         }
         Project(scope, context.EntityId, command.RepoUrl);
+        helperCards?.Observe(scope, context.EntityId);
     }
 
     private void Project(IWriteScope scope, string id, string? sourceRepo = null)
@@ -136,6 +138,7 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         var row = Owning(scope, sessionId);
         if (row is null || row.Title == actualStoredTitle) return;
         Apply(scope, sessionId, row.Version, row.Epoch, new(ActorKind.System, "session.titled"), new ReportSessionTitle(actualStoredTitle), exactTitleUtf8);
+        helperCards?.Observe(scope, sessionId);
     }
 
     private sealed record OwningSession(long Version, long Epoch, string? Model, string Title);

@@ -14,11 +14,12 @@ using Assembly.Engine.Hosting;
 using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Recording;
 using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Engine.Helpers;
 
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Translates owning provider facts inside the chat writer; owns no adapter or background work.</summary>
-public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, TimeProvider time) : ISessionFeed
+public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, TimeProvider time, EngineHelperCards? helperCards = null) : ISessionFeed
 {
     private static readonly JsonElement Empty = JsonSerializer.SerializeToElement(null, global::Assembly.Engine.EngineJson.Default.String);
 
@@ -48,9 +49,11 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
                 case TurnStarted: State(scope, observed, "running", acpSessionId, null); break;
                 case TurnEnded: State(scope, observed, "idle", acpSessionId, null); break;
                 case TurnFailed failed: State(scope, observed, "idle", acpSessionId, failed.Code ?? "provider_failed"); break;
-                case AgentLost: Lost(scope, observed, "provider_gone"); break;
+                case AgentLost: State(scope, observed, "lost", null, "provider_gone"); break;
                 case ToolCallChanged tool: Tool(scope, observed, acpSessionId, tool); break;
             }
+        if (events.Any(e => e is TurnStarted or TurnEnded or TurnFailed or AgentLost))
+            helperCards?.Observe(scope, observed.SessionId);
     }
 
     public void Connected(IWriteScope scope, SessionObservation observed, string acpSessionId, bool canSteer)
@@ -59,9 +62,14 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
             new ReportCapabilities(canSteer, acpSessionId, AttributionOf(observed)));
         if (!result.Applied) throw new CallFailed("provider_fact_refused", "provider_fact_refused");
         if (CurrentState(scope, observed.SessionId) == "lost") State(scope, observed, "idle", acpSessionId, null);
+        helperCards?.Observe(scope, observed.SessionId);
     }
 
-    public void Lost(IWriteScope scope, SessionObservation observed, string reason) => State(scope, observed, "lost", null, reason);
+    public void Lost(IWriteScope scope, SessionObservation observed, string reason)
+    {
+        State(scope, observed, "lost", null, reason);
+        helperCards?.Observe(scope, observed.SessionId);
+    }
 
     private void State(IWriteScope scope, SessionObservation observed, string state, string? acpSessionId, string? reason)
     {
