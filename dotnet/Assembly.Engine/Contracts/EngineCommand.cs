@@ -24,6 +24,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(HandoffOutcome), "handoff_outcome")]
 [JsonDerivedType(typeof(SendMessage), "send_message")]
 [JsonDerivedType(typeof(MessageOutcome), "message_outcome")]
+[JsonDerivedType(typeof(RegisterForeignSession), "register_foreign_session")]
 [JsonDerivedType(typeof(StartSession), "start_session")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]
 [JsonDerivedType(typeof(StopSession), "stop_session")]

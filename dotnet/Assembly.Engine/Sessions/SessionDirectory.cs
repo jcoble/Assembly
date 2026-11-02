@@ -2,7 +2,7 @@ using Assembly.Application.Common.Database;
 
 namespace Assembly.Engine.Sessions;
 
-public sealed record DirectoryEntry(string SessionId, string Title, string Provider, string Model,
+public sealed record DirectoryEntry(string SessionId, string Title, string Provider, string? Model,
     string State, string Relation, string Machine);
 
 /// <summary>Local session discovery. A listed relationship does not grant command authority.</summary>
@@ -26,7 +26,7 @@ public static class SessionDirectory
         scope.Query(Candidates + """
             SELECT id,title,provider,model,state,relation,machine FROM candidates
             WHERE relation IS NOT NULL ORDER BY relation,updated_ms DESC LIMIT 200
-            """, r => new DirectoryEntry(r.Text(0), r.Text(1), r.Text(2), r.Text(3), r.Text(4), r.Text(5), r.Text(6)),
+            """, r => new DirectoryEntry(r.Text(0), r.Text(1), r.Text(2), r.IsNull(3) ? null : r.Text(3), r.Text(4), r.Text(5), r.Text(6)),
             new SqlArg("$caller", callerId));
 
     public static bool CanReach(IReadScope scope, string fromId, string toId) =>

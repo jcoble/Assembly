@@ -40,7 +40,7 @@ public sealed class McpRecorder(IEngineRuntime runtime, McpGate gate, TimeProvid
                 if (row is null)
                 {
                     refusal ??= new("session_gone");
-                    if (scope.QueryFirst("SELECT COUNT(*) FROM engine_session WHERE id=$id", r => r.Long(0), new SqlArg("$id", session)) == 0)
+                    if (scope.QueryFirst("SELECT COUNT(*) FROM engine_session WHERE id=$id AND machine=$machine AND holder='local' AND state<>'foreign'", r => r.Long(0), new("$id", session), new("$machine", runtime.Machine)) == 0)
                         return 0;
                     attribution = new(session, null, null, null, epoch);
                 }

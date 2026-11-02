@@ -4,7 +4,7 @@ using Assembly.Engine.Sessions;
 namespace Assembly.Engine.Mcp.Tools;
 
 public sealed record ListSessionsArguments;
-public sealed record ListedSession(string SessionId, string Title, string Provider, string Model, string State, string Relation);
+public sealed record ListedSession(string SessionId, string Title, string Provider, string? Model, string State, string Relation);
 public sealed record ListSessionsAnswer(IReadOnlyList<ListedSession> Sessions);
 
 public sealed class ListSessionsTool(McpGate gate)

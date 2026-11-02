@@ -8,7 +8,7 @@ namespace Assembly.Engine.Messages;
 public static class MessageTransitions
 {
     private sealed record Message(string Id, long Version, string? From, string To, string Text, string Mode, string State);
-    private sealed record Recipient(long Epoch, string State, bool CancelRequested, string? RunId);
+    private sealed record Recipient(long Epoch, string State, bool CancelRequested, string? RunId, string Machine);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, MessageCommand command, int messageLimit = 20)
     {
@@ -30,6 +30,10 @@ public static class MessageTransitions
             return Refused(c, "unsupported_command", current.Version);
         if (outcome.State is not ("queued" or "delivered_to_turn" or "next_turn" or "unsupported" or "failed"))
             return Refused(c, "bad_args", current.Version);
+        if (recipient.State == "foreign" || recipient.Machine != c.Machine)
+            return ForeignOutcome(s, c, current, recipient, outcome);
+        if (c.Actor.Id.StartsWith("machine:", StringComparison.Ordinal))
+            return Refused(c, "forbidden", current.Version);
         if (current.State == "held")
             return Refused(c, "unavailable", current.Version);
         if (current.State != "queued" || s.QueryFirst("SELECT in_flight FROM engine_message WHERE id=$id", r => r.Long(0), new SqlArg("$id", current.Id)) != 1)
@@ -64,17 +68,39 @@ public static class MessageTransitions
         return EngineJournal.Commit(s, c, Find(s, current.Id)!.Version, c.Epoch, events, effects);
     }
 
+    private static CommandResult ForeignOutcome(IWriteScope s, CommandContext c, Message current, Recipient recipient, MessageOutcome outcome)
+    {
+        if (recipient.State != "foreign" || recipient.Machine == c.Machine || c.Actor.Id != "machine:" + recipient.Machine)
+            return Refused(c, "forbidden", current.Version);
+        if (current.State != "queued") return Refused(c, "invalid_transition", current.Version);
+        s.Execute("""
+            UPDATE engine_message SET version=version+1,updated_ms=$now,state=$state,provider_turn_id=$turn,reason=$reason WHERE id=$id
+            """, new("$now", c.NowMs), new("$state", outcome.State), new("$turn", outcome.ProviderTurnId),
+            new("$reason", outcome.Reason), new("$id", current.Id));
+        var updated = current with { Version = current.Version + 1, State = outcome.State };
+        return EngineJournal.Commit(s, c, updated.Version, c.Epoch, [Changed(c, updated)], []);
+    }
+
     private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit)
     {
-        if (c.Actor.Kind == ActorKind.Window ? command.FromSessionId is not null :
-            c.Actor.Kind != ActorKind.Session || command.FromSessionId != c.Actor.Id)
+        var peer = c.Actor.Kind == ActorKind.System && c.Actor.Id.StartsWith("machine:", StringComparison.Ordinal);
+        if (!peer && (c.Actor.Kind == ActorKind.Window ? command.FromSessionId is not null :
+            c.Actor.Kind != ActorKind.Session || command.FromSessionId != c.Actor.Id))
             return Refused(c, "forbidden");
         if (command.Mode is not ("prompt" or "interrupt") || string.IsNullOrWhiteSpace(command.Text) ||
             string.IsNullOrWhiteSpace(command.ToSessionId))
             return Refused(c, "bad_args");
         var recipient = FindRecipient(s, command.ToSessionId);
-        if (recipient is null || command.FromSessionId is not null && FindRecipient(s, command.FromSessionId) is null)
+        var sender = command.FromSessionId is null ? null : FindRecipient(s, command.FromSessionId);
+        if (recipient is null || command.FromSessionId is not null && sender is null)
             return Refused(c, "bad_args");
+        var foreignRecipient = recipient.State == "foreign" && recipient.Machine != c.Machine;
+        if (peer ? sender is null || sender.State != "foreign" || sender.Machine == c.Machine ||
+                c.Actor.Id != "machine:" + sender.Machine || recipient.Machine != c.Machine || recipient.State == "foreign"
+            : sender is not null && (sender.State == "foreign" || sender.Machine != c.Machine))
+            return Refused(c, "forbidden");
+        if (recipient.Machine != c.Machine && !foreignRecipient || recipient.State == "foreign" && !foreignRecipient)
+            return Refused(c, "forbidden");
         if (c.Epoch != recipient.Epoch)
             return Refused(c, "stale_epoch", current?.Version ?? 0, recipient.Epoch);
         if (c.ExpectedVersion != (current?.Version ?? 0))
@@ -88,11 +114,11 @@ public static class MessageTransitions
             """, r => r.Long(0), new("$from", command.FromSessionId), new("$to", command.ToSessionId)) >= messageLimit)
             return Refused(c, "message_limit");
         var message = new Message(c.EntityId, 1, command.FromSessionId, command.ToSessionId, command.Text,
-            command.Mode, command.Mode == "interrupt" ? "held" : "queued");
+            command.Mode, command.Mode == "interrupt" && !foreignRecipient ? "held" : "queued");
         Insert(s, c, message, c.Actor.Kind == ActorKind.Window ? "window" : "session", null);
         List<EffectDraft> effects = [];
         List<EventDraft> events = [Changed(c, message)];
-        if (message.State == "queued")
+        if (message.State == "queued" && !foreignRecipient)
             ReleaseNext(s, c, message.To, effects, events);
         if (message.State == "held" && !recipient.CancelRequested)
         {
@@ -184,8 +210,8 @@ public static class MessageTransitions
     private static EventDraft Changed(CommandContext c, Message message) => new("message.changed", "message", message.Id,
         message.Version, false, new(message.To, null, null, message.From, message.State, c.Epoch));
     private static Recipient? FindRecipient(IWriteScope s, string id) => s.QueryFirst(
-        "SELECT epoch,state,cancel_requested,run_id FROM engine_session WHERE id=$id",
-        r => new Recipient(r.Long(0), r.Text(1), r.Long(2) != 0, r.IsNull(3) ? null : r.Text(3)), new SqlArg("$id", id));
+        "SELECT epoch,state,cancel_requested,run_id,machine FROM engine_session WHERE id=$id",
+        r => new Recipient(r.Long(0), r.Text(1), r.Long(2) != 0, r.IsNull(3) ? null : r.Text(3), r.Text(4)), new SqlArg("$id", id));
     private static Message? Find(IWriteScope s, string id) => s.QueryFirst(
         "SELECT id,version,from_session_id,to_session_id,text,mode,state FROM engine_message WHERE id=$id", ReadMessage, new SqlArg("$id", id));
     private static Message ReadMessage(IRow r) => new(r.Text(0), r.Long(1), r.IsNull(2) ? null : r.Text(2), r.Text(3), r.Text(4), r.Text(5), r.Text(6));

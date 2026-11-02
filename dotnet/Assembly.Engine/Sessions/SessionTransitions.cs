@@ -10,7 +10,7 @@ namespace Assembly.Engine.Sessions;
 public static class SessionTransitions
 {
     private sealed record Session(long Version, long Epoch, string State, string Activity,
-        string? ParentId, string? RunId, bool CancelRequested = false, long? ReservedEpoch = null);
+        string? ParentId, string? RunId, string Machine, bool CancelRequested = false, long? ReservedEpoch = null);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
         SessionCommand command, int depthLimit, int childLimit, string accountContext = "")
@@ -18,6 +18,10 @@ public static class SessionTransitions
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
         var current = Find(scope, context.EntityId);
+        if (command is RegisterForeignSession foreign)
+            return RegisterForeign(scope, context, foreign, current);
+        if (current is not null && (current.State == "foreign" || current.Machine != context.Machine))
+            return Refused(context, "invalid_transition", current);
         if (current?.State == "handing_off")
             return Refused(context, "handing_off", current);
         if (current is not null && current.Epoch != context.Epoch)
@@ -39,6 +43,25 @@ public static class SessionTransitions
         };
     }
 
+    private static CommandResult RegisterForeign(IWriteScope scope, CommandContext context, RegisterForeignSession command, Session? current)
+    {
+        if (string.IsNullOrWhiteSpace(command.Machine) || command.Machine == context.Machine ||
+            context.Actor != new EngineActor(ActorKind.System, "machine:" + command.Machine))
+            return Refused(context, "forbidden", current);
+        if (context.ExpectedVersion != 0 || context.Epoch != 0 || string.IsNullOrWhiteSpace(command.Provider) || command.Title is null)
+            return Refused(context, "bad_args", current);
+        if (current is not null)
+            return current.State == "foreign" && current.Machine == command.Machine
+                ? new(true, false, null, current.Version, 0, current.Epoch) : Refused(context, "forbidden", current);
+        scope.Execute("""
+            INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
+                activity_state,holder,epoch,cancel_requested,account_context,managed_checkout)
+            VALUES($id,0,$machine,$now,$now,$provider,NULL,'',$title,'foreign','idle',$machine,0,0,'',0)
+            """, new("$id", context.EntityId), new("$machine", command.Machine), new("$now", context.NowMs),
+            new("$provider", command.Provider), new("$title", command.Title));
+        return new(true, false, null, 0, 0, 0);
+    }
+
     private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext)
     {
         var untitledOwnerRoot = command.Title == "" && context.Actor == new EngineActor(ActorKind.Window, "owner") &&
@@ -46,7 +69,8 @@ public static class SessionTransitions
         if (string.IsNullOrWhiteSpace(command.Provider) || command.Model is not null && string.IsNullOrWhiteSpace(command.Model) ||
             string.IsNullOrWhiteSpace(command.Folder) || string.IsNullOrWhiteSpace(command.Title) && !untitledOwnerRoot)
             return Refused(context, "bad_args");
-        if (context.Actor.Kind != ActorKind.Window &&
+        var peer = context.Actor.Kind == ActorKind.System && context.Actor.Id.StartsWith("machine:", StringComparison.Ordinal);
+        if (!peer && context.Actor.Kind != ActorKind.Window &&
             (context.Actor.Kind != ActorKind.Session || context.Actor.Id != command.ParentId))
             return Refused(context, "forbidden");
         Session? parent = null;
@@ -55,25 +79,35 @@ public static class SessionTransitions
             parent = Find(scope, command.ParentId);
             if (parent is null)
                 return Refused(context, "bad_args");
-            var ancestry = scope.QueryFirst("""
-                WITH RECURSIVE ancestors(id,parent_id) AS (
-                    SELECT id,parent_id FROM engine_session WHERE id=$parent
-                    UNION
-                    SELECT p.id,p.parent_id
-                    FROM engine_session p JOIN ancestors a ON p.id=a.parent_id
-                    LIMIT $ancestorBudget
-                )
-                SELECT COUNT(*),COALESCE(MAX(CASE WHEN parent_id IS NULL THEN 1 ELSE 0 END),0)
-                FROM ancestors
-                """, r => (Count: r.Long(0), Root: r.Long(1)),
-                new("$parent", command.ParentId), new("$ancestorBudget", (long)depthLimit + 1L));
-            if (ancestry.Count > depthLimit)
-                return Refused(context, "depth_limit");
-            if (ancestry.Count == 0 || ancestry.Root == 0)
-                return Refused(context, "bad_args");
+            if (parent.State == "foreign" || parent.Machine != context.Machine)
+            {
+                if (!peer || parent.State != "foreign" || parent.Machine == context.Machine || context.Actor.Id != "machine:" + parent.Machine)
+                    return Refused(context, "forbidden");
+            }
+            else if (peer) return Refused(context, "forbidden");
+            if (!peer)
+            {
+                var ancestry = scope.QueryFirst("""
+                    WITH RECURSIVE ancestors(id,parent_id) AS (
+                        SELECT id,parent_id FROM engine_session WHERE id=$parent
+                        UNION
+                        SELECT p.id,p.parent_id
+                        FROM engine_session p JOIN ancestors a ON p.id=a.parent_id
+                        LIMIT $ancestorBudget
+                    )
+                    SELECT COUNT(*),COALESCE(MAX(CASE WHEN parent_id IS NULL THEN 1 ELSE 0 END),0)
+                    FROM ancestors
+                    """, r => (Count: r.Long(0), Root: r.Long(1)),
+                    new("$parent", command.ParentId), new("$ancestorBudget", (long)depthLimit + 1L));
+                if (ancestry.Count > depthLimit)
+                    return Refused(context, "depth_limit");
+                if (ancestry.Count == 0 || ancestry.Root == 0)
+                    return Refused(context, "bad_args");
+            }
             if (parent.State == "ended")
                 return Refused(context, "invalid_transition");
         }
+        if (peer && (parent is null || command.RunId is not null)) return Refused(context, "forbidden");
         if (command.ManagedCheckout == true && context.Actor.Kind == ActorKind.Session && scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_session WHERE id=$parent AND machine=$machine AND holder='local'
                   AND managed_checkout=1 AND folder=$folder
@@ -88,7 +122,7 @@ public static class SessionTransitions
             if (owner != command.ParentId)
                 return Refused(context, "forbidden");
         }
-        if (parent is not null && scope.QueryFirst("""
+        if (!peer && parent is not null && scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_session WHERE parent_id=$parent AND state != 'ended'
                 """, r => r.Long(0), new SqlArg("$parent", command.ParentId)) >= childLimit)
             return Refused(context, "child_limit");
@@ -102,7 +136,7 @@ public static class SessionTransitions
             """, new("$id", context.EntityId), new("$machine", context.Machine), new("$now", context.NowMs),
             new("$task", command.TaskUrl), new("$provider", command.Provider), new("$model", command.Model),
             new("$folder", command.Folder), new("$title", command.Title), new("$parent", command.ParentId), new("$run", command.RunId), new("$account", accountContext), new("$managed", command.ManagedCheckout == true ? 1 : 0));
-        var created = new Session(1, 0, "starting", "idle", command.ParentId, command.RunId);
+        var created = new Session(1, 0, "starting", "idle", command.ParentId, command.RunId, context.Machine);
         return Commit(scope, context, created, "session.started",
             [new("", "start", context.EntityId, command.RunId, JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession))]);
     }
@@ -234,9 +268,9 @@ public static class SessionTransitions
     }
 
     private static Session? Find(IWriteScope scope, string id) => scope.QueryFirst("""
-        SELECT version,epoch,state,activity_state,parent_id,run_id,cancel_requested,reserved_epoch FROM engine_session WHERE id=$id
+        SELECT version,epoch,state,activity_state,parent_id,run_id,machine,cancel_requested,reserved_epoch FROM engine_session WHERE id=$id
         """, r => new Session(r.Long(0), r.Long(1), r.Text(2), r.Text(3),
-            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5), r.Long(6) != 0, r.IsNull(7) ? null : r.Long(7)), new SqlArg("$id", id));
+            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5), r.Text(6), r.Long(7) != 0, r.IsNull(8) ? null : r.Long(8)), new SqlArg("$id", id));
 
     private static CommandResult Refused(CommandContext context, string error, Session? current = null) =>
         new(false, false, error, current?.Version ?? 0, 0, current?.ReservedEpoch ?? current?.Epoch ?? context.Epoch);
