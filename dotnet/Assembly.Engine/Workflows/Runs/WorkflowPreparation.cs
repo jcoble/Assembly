@@ -10,13 +10,26 @@ internal static class WorkflowPreparation
     internal static PreparedWorkflowCommand Freeze(WorkflowStartBody body, CancellationToken ct)
     {
         var value = JsonSerializer.SerializeToElement(body, WorkflowPreparationJson.Default.WorkflowStartBody);
+        var (json, sha, bytes) = Digest(value, ct);
+        var frozen = JsonSerializer.Deserialize(json, WorkflowPreparationJson.Default.WorkflowStartBody)!;
+        return new(frozen, json, sha, bytes);
+    }
+
+    internal static PreparedWorkflowCommand Freeze(Workspaces.WorkspaceBody body, CancellationToken ct)
+    {
+        var value = JsonSerializer.SerializeToElement(body, Workspaces.WorkspacePreparationJson.Default.WorkspaceBody);
+        var (json, sha, bytes) = Digest(value, ct);
+        var frozen = JsonSerializer.Deserialize(json, Workspaces.WorkspacePreparationJson.Default.WorkspaceBody)!;
+        return new(frozen, json, sha, bytes);
+    }
+
+    private static (string Json, string Sha, long Bytes) Digest(JsonElement value, CancellationToken ct)
+    {
         var json = Canonical(value);
-        var bytes = Encoding.UTF8.GetBytes(json);
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Append(hash, Encoding.UTF8.GetBytes("workflow-prepared/v1"), ct);
         HashValue(hash, value, ct);
-        var frozen = JsonSerializer.Deserialize(json, WorkflowPreparationJson.Default.WorkflowStartBody)!;
-        return new(frozen, json, Convert.ToHexStringLower(hash.GetHashAndReset()), bytes.LongLength);
+        return (json, Convert.ToHexStringLower(hash.GetHashAndReset()), Encoding.UTF8.GetByteCount(json));
     }
 
     internal static string RequestFingerprint(WorkflowStartRequest request, string projectId, string root)
