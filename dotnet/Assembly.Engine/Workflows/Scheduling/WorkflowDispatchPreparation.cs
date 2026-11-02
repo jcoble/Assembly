@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Buffers.Binary;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Definitions;
 using Assembly.Engine.Workflows.Runs;
 
@@ -25,7 +26,7 @@ internal sealed record DispatchEligibility(string Machine, string RunId, string 
     string WorkspaceState, string Folder, string? BaseHead, string? Head, string SourceDigest, string Provider, string? Model,
     string? Permission, string AccountContext, DispatchProvider ProviderFacts, int DepthLimit, int ChildLimit, long RunLimit, long SharedLimit,
     ImmutableArray<DispatchAncestor> Ancestors, ImmutableArray<DispatchChild> Children,
-    ImmutableArray<DispatchDependency> Dependencies, ImmutableArray<DispatchReservation> Reservations);
+    ImmutableArray<DispatchDependency> Dependencies, ImmutableArray<DispatchReservation> Reservations, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] WorkflowResumeProof? Resume);
 internal sealed record DispatchAdmission(DispatchEligibility Witness, string Hash, bool Ready, string? Reason);
 internal sealed record DispatchBody(CommandContext Context, DispatchAdmission Prepared, Guid? Predecessor,
     string SessionId, string MessageId, string CheckoutFingerprint, string Prompt, string PromptSha256, long PromptBytes, string Title, string? TaskUrl);
@@ -69,7 +70,7 @@ public static partial class WorkflowDispatch
             SELECT meta.machine_id,run.id,run.machine,run.version,run.state,st.version,st.state,st.generation,st.attempt,
               st.attempt_in_generation,run.definition_hash,owner.id,owner.epoch,owner.state,owner.activity_state,owner.cancel_requested,
               st.authority_machine,st.authority_session_id,st.authority_epoch,w.id,w.version,w.state,w.path,w.base_head,w.head,
-              snapshot.snapshot_json,run.max_sessions,run.paused,run.setup_state,owner.holder,owner.reserved_epoch,st.kind,st.dispatch_state
+              snapshot.snapshot_json,run.max_sessions,run.paused,run.setup_state,owner.holder,owner.reserved_epoch,st.kind,st.dispatch_state,st.session_id
             FROM engine_step st JOIN engine_run run ON run.id=st.run_id JOIN engine_session owner ON owner.id=run.owner_session_id
             JOIN engine_workflow_snapshot snapshot ON snapshot.run_id=run.id
             JOIN engine_workflow_workspace w ON w.id=st.workspace_id JOIN engine_meta meta ON meta.singleton=1
@@ -108,20 +109,24 @@ public static partial class WorkflowDispatch
             Holder = r.Text(29),
             Reserved = !r.IsNull(30),
             Kind = r.Text(31),
-            Dispatch = r.IsNull(32) ? null : r.Text(32)
+            Dispatch = r.IsNull(32) ? null : r.Text(32),
+            Session = r.IsNull(33) ? null : r.Text(33)
         }, new SqlArg("$step", stepId));
         if (row is null) return null;
         var start = JsonSerializer.Deserialize(row.Snapshot, WorkflowPreparationJson.Default.WorkflowStartBody)!;
         var key = start.StepIds.SingleOrDefault(p => p.Value == stepId).Key;
         if (key is null || !start.Snapshot.Definition.Steps.TryGetValue(key, out var spec)) return null;
-        var account = accountContext?.Invoke(spec.Provider ?? "") ?? "";
+        var resume = row.Session is null ? null : SessionTransitions.ReadWorkflowResume(scope, stepId);
+        var selectedProvider = resume is null ? spec.Provider ?? "" : resume.Provider;
+        var selectedModel = resume is null ? spec.Model : resume.Model;
+        var account = accountContext?.Invoke(selectedProvider) ?? "";
         var provider = scope.QueryFirst("""
             SELECT installation,auth_state,facts_json IS NOT NULL AND ($model IS NULL OR EXISTS(
               SELECT 1 FROM json_each(facts_json,'$.models') model WHERE json_extract(model.value,'$.id')=$model))
             FROM engine_provider WHERE machine=$machine AND provider=$provider AND account_context=$account
-            """, r => new DispatchProvider(configured?.Invoke(spec.Provider ?? "", account) == true, r.Text(0), r.Text(1), r.Long(2) != 0),
-            new SqlArg("$machine", row.Machine), new("$provider", spec.Provider), new("$account", account), new("$model", spec.Model))
-            ?? new DispatchProvider(configured?.Invoke(spec.Provider ?? "", account) == true, null, null, false);
+            """, r => new DispatchProvider(configured?.Invoke(selectedProvider, account) == true, r.Text(0), r.Text(1), r.Long(2) != 0),
+            new SqlArg("$machine", row.Machine), new("$provider", selectedProvider), new("$account", account), new("$model", selectedModel))
+            ?? new DispatchProvider(configured?.Invoke(selectedProvider, account) == true, null, null, false);
         var dependencies = scope.Query("""
             SELECT dep.id,d.optional,dep.rule_skippable,dep.version,dep.state,dep.generation,dep.attempt,receipt.hash,receipt.observed_head,dep.outcome_reason
             FROM engine_step_dependency d JOIN engine_step dep ON dep.id=d.dependency_id
@@ -154,13 +159,15 @@ public static partial class WorkflowDispatch
             row.StepState, row.Generation, row.Attempt, checked(row.Attempt + 1), checked(row.InGeneration + 1), row.Hash, row.Owner, row.OwnerEpoch,
             row.OwnerState, row.Activity, row.Cancelled, row.AuthorityMachine, row.AuthoritySession, row.AuthorityEpoch, row.Workspace,
             row.WorkspaceVersion, row.WorkspaceState, row.Folder, row.Base, row.Head, DispatchIdentity.Hash("workflow-dispatch-source/v1", row.Snapshot),
-            spec.Provider ?? "", spec.Model, spec.Permission, account, provider, depthLimit, childLimit, row.RunLimit, shared, ancestors, children, dependencies, reservations);
+            selectedProvider, selectedModel, spec.Permission, account, provider, depthLimit, childLimit, row.RunLimit, shared, ancestors, children, dependencies, reservations, resume);
         var reason = row.RunMachine != row.Machine ? "wrong_machine" : row.Paused ? "run_paused" : row.Setup != "ready" ? "setup_not_ready" :
             row.RunState is not ("queued" or "running" or "needs_me") ? "run_not_ready" : row.Reserved || row.Holder != "local" || row.Cancelled ||
             row.OwnerState is not ("idle" or "running" or "needs_me") ? "owner_reserved" :
-            row.StepState != "pending" || row.Dispatch == "redo_pending" || row.Kind is not ("agent" or "review") || row.AuthoritySession is not null ? "step_not_ready" :
+            row.StepState != "pending" || row.Dispatch == "redo_pending" || row.Kind is not ("agent" or "review") || row.Session is null && row.Kind != "review" && row.AuthoritySession is not null ? "step_not_ready" :
+            row.Session is not null && resume is null ? "workflow_resume_unavailable" :
+            resume is not null && (resume.AccountContext != account || resume.Folder != row.Folder || resume.WorkspaceId != row.Workspace || resume.Head != row.Head) ? "workflow_resume_context_changed" :
             row.WorkspaceState != "ready" || row.Folder == "" || row.Head is null ? "workspace_not_ready" :
-            !provider.Configured || provider.Installation != "installed" || spec.Model is null && !provider.ModelAvailable ? "provider_unavailable" :
+            !provider.Configured || provider.Installation != "installed" || selectedModel is null && !provider.ModelAvailable ? "provider_unavailable" :
             provider.Authentication is not ("signed_in" or "unverified" or "unsupported") ? "sign_in_required" :
             !provider.ModelAvailable ? "model_unavailable" :
             dependencies.Any(d => !(d.State == "succeeded" && d.ReceiptHash is not null || d.State == "skipped" && d.RuleSkippable && d.RuleReason is not null || d.Optional && (d.State is "failed" or "cancelled"))) ? "dependency_not_ready" :

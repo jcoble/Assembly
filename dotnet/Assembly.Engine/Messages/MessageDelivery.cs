@@ -14,7 +14,7 @@ public sealed record MessageDelivery(DeliverMessage Intent, string? Label, long 
         if (intent is null || intent.ToSessionId != effect.SessionId || intent.How is not ("prompt" or "steer")) return null;
         return scope.QueryFirst("""
             SELECT CAST(m.text AS BLOB),CAST(m.sender_label AS BLOB),COALESCE(m.client_id,m.id),m.framed,m.held_epoch,m.attachment_ids_json,
-                s.epoch,m.state,m.in_flight,s.state,m.attempt,m.client_id,m.from_session_id,m.sender_kind
+                s.epoch,m.state,m.in_flight,s.state,m.attempt,m.client_id,m.from_session_id,m.sender_kind,m.target_epoch
             FROM engine_message m JOIN engine_session s ON s.id=m.to_session_id
             JOIN engine_meta meta ON meta.singleton=1 AND s.machine=meta.machine_id AND m.machine=meta.machine_id
             WHERE m.id=$message AND m.to_session_id=$session AND s.holder='local'
@@ -32,6 +32,8 @@ public sealed record MessageDelivery(DeliverMessage Intent, string? Label, long 
                 (intent.Framed != false) != framed || (!framed && (intent.HeldEpoch != r.Long(6) ||
                     r.IsNull(4) || r.Long(4) != intent.HeldEpoch || !(intent.AttachmentIds ?? []).SequenceEqual(refs))) ||
                 !allowDone && (r.Text(7) != "queued" || r.Long(8) != 1 || r.Text(9) == "ended")) return null;
+            if (framed && !r.IsNull(14) && (r.IsNull(4) || r.Long(14) != r.Long(4) ||
+                r.Long(14) != r.Long(6) || intent.HeldEpoch != r.Long(14))) return null;
             var from = framed && r.Text(13) == "session" ? r.IsNull(12) ? null : r.Text(12) : null;
             if (framed && r.Text(13) == "session" && from is null) return null;
             return new MessageDelivery(intent, framed ? intent.SenderLabel : null, r.Long(6), from);
