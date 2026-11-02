@@ -129,20 +129,35 @@ internal sealed partial class MachineStarts
             var currentCaller = _gate.Read(caller, (row, _) => row, stop.Token);
             var prompt = $"Session \"{currentCaller.Title}\" ({caller.SessionId}) started you. Do the task below. Your last reply each turn goes back to it as a message; you can also message it with the Assembly MCP server's send_message tool.\n\n{arguments.Prompt}";
             var preparedPrompt = PreparedHelperPrompt.Prepare(new SendMessage(caller.SessionId, childId, prompt, "prompt"), currentCaller.Title, caller.Epoch);
+            var retainedPrompt = new RetainedInitialPrompt(
+                new(promptCommandId, _runtime.Machine, new(ActorKind.Session, caller.SessionId), messageId, 0, 0, Now), preparedPrompt);
             var chain = source.RootToParent.Append(new ForeignAncestor(childId, arguments.Machine, provider, arguments.Title, caller.SessionId)).ToArray();
             var childAncestry = _runtime.Commands.PrepareForeignAncestry(new(arguments.Machine, childId, chain));
             await child.Titles.RequireCurrentAsync(stop.Token);
             stop.Token.ThrowIfCancellationRequested();
-            _engine.Write(scope =>
+            CommandResult committed;
+            try
             {
-                RevalidateSource(scope, source, caller);
-                // Actual target acceptance authorizes this reference; keep links and the initial M atomic.
-                _runtime.Commands.ApplyForeignAncestryBatch(scope, childAncestry);
-                var result = _runtime.Commands.ApplyPreparedHelperPrompt(scope,
-                    new(promptCommandId, _runtime.Machine, new(ActorKind.Session, caller.SessionId), messageId, 0, 0, Now), preparedPrompt);
-                if (!result.Applied) throw Refused(result.Error!);
-                return 0;
-            });
+                committed = _engine.Write(scope =>
+                {
+                    if (retainedPrompt.ReplayExisting(scope, _runtime.Commands) is { } existing) return existing;
+                    RevalidateSource(scope, source, caller);
+                    // Actual target acceptance authorizes this reference; keep links and the initial M atomic.
+                    _runtime.Commands.ApplyForeignAncestryBatch(scope, childAncestry);
+                    var result = retainedPrompt.Apply(scope, _runtime.Commands);
+                    if (!result.Applied) throw Refused(result.Error!);
+                    return result;
+                });
+            }
+            catch (Exception primary)
+            {
+                CommandResult? existing = null;
+                try { existing = _engine.Write(scope => retainedPrompt.ReplayExisting(scope, _runtime.Commands)); }
+                catch (Exception checkFailure) { primary.Data["MachineStarts.ReplayCheckFailed"] = checkFailure; }
+                if (existing is null) throw; // No receipt is Unknown, never permission for another fresh Apply.
+                committed = existing;
+            }
+            if (!committed.Applied) throw Refused(committed.Error!);
             return new(childId, messageId);
         }
         catch (McpRefused error) when (error.Refusal.Values is null && error.Refusal.Code is "depth_limit" or "child_limit")
