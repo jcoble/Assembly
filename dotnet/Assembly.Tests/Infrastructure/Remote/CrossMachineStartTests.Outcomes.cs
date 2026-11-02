@@ -280,11 +280,13 @@ public sealed partial class CrossMachineStartTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Lost_Start_answer_resolves_same_invocation_at_its_own_child_cap_before_initial_M(bool disconnect)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Lost_Start_answer_resolves_same_invocation_at_its_own_child_cap_before_initial_M(bool disconnect, bool foreignAncestor)
     {
-        await using var f = await StartHosts.Open(children: 1); var h = f.H;
+        await using var f = await StartHosts.Open(children: 1, foreignRootTitle: foreignAncestor ? "Actual target-owned ancestor" : null); var h = f.H;
         var starts = 0;
         h.Remote.WriteCommitted = what =>
         {
@@ -409,6 +411,25 @@ public sealed partial class CrossMachineStartTests
         Assert.Equal("unknown", error.Reason); Assert.Equal(2, acknowledgements);
         Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
         Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_session WHERE parent_id=$id", new SqlArg("$id", f.Parent)));
+    }
+
+    [Fact]
+    public async Task Actual_bulk_exchange_failure_revokes_lease_without_invalidating_normal_owner()
+    {
+        await using var f = await StartHosts.Open(foreignRootTitle: "Actual target-owned ancestor");
+        var owner = Assert.Single(f.H.Connections.CaptureMirrorOwners());
+        var proof = (await owner.Mirror.CaptureLiveBindingAsync(default))!;
+        await using var failed = await owner.Machine.AcquireRelayBulkAsync(proof.OwnerBinding, default, proof);
+        var args = System.Text.Json.JsonSerializer.SerializeToElement(new Assembly.Engine.Relays.RelayHandleArgs("not-an-owned-handle"),
+            EngineSocketJson.Default.RelayHandleArgs);
+        await Assert.ThrowsAsync<CallFailed>(() => failed.CallAsync("foreign_title_source_check", args, default));
+        Assert.Throws<CallFailed>(() => failed.StartTransport());
+        Assert.True(await owner.Mirror.IsCurrentLiveBindingAsync(proof, default));
+        Assert.True(await owner.Machine.IsCurrentOwnerBindingAsync(proof.OwnerBinding, default));
+        await failed.DisposeAsync();
+        await AssertBulkOwnerUsable(f); // Fresh exact lease can read and close an actual owning source again.
+        Assert.Equal(0, f.H.Mac.Fixture.Count("engine_message"));
+        Assert.Equal(0, f.Launcher.ProviderCalls);
     }
 
     private sealed record StoredStart(string Id, string Child, string Body, string Label,

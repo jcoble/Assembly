@@ -97,17 +97,13 @@ internal sealed partial class MachineStarts
                 catch (Exception) when (!ct.IsCancellationRequested && intent.Phase != StartIssuePhase.NotIssued)
                 {
                     // Send has terminated. Its actual phase, rather than the exception, governs the probe.
-                    if (await target.Mirror.IsCurrentLiveBindingAsync(target.Live, ct))
-                        resolution = await _forward.ProbeStartAsync(intent, target.Remote, target.Live.OwnerBinding, lease, ct, target.Live);
-                    else
-                    {
-                        var old = titles; titles = null;
-                        await old.DisposeAsync();
-                        var current = await WaitForTargetAsync(target, ct);
-                        await using var probeLease = await current.Remote.AcquireRelayBulkAsync(current.Live.OwnerBinding, ct, current.Live);
-                        resolution = await _forward.ProbeStartAsync(intent, current.Remote, current.Live.OwnerBinding, probeLease, ct, current.Live);
-                        acknowledged = current;
-                    }
+                    // A bulk failure may leave the normal binding live while invalidating captured source handles.
+                    var old = titles; titles = null;
+                    await old.DisposeAsync();
+                    var current = await WaitForTargetAsync(target, ct);
+                    await using var probeLease = await current.Remote.AcquireRelayBulkAsync(current.Live.OwnerBinding, ct, current.Live);
+                    resolution = await _forward.ProbeStartAsync(intent, current.Remote, current.Live.OwnerBinding, probeLease, ct, current.Live);
+                    acknowledged = current;
                 }
                 if (resolution.Evidence.State == MachineStartAckState.Missing &&
                     resolution.MissingProof is StartMissingProof.NotIssued or StartMissingProof.SameOriginalOrderedBarrier)
@@ -120,6 +116,11 @@ internal sealed partial class MachineStarts
                 // A matching accepted receipt is resolved before mutable source admission checks; its own child is not new capacity.
                 if (result.Applied)
                 {
+                    if (titles is { } captured)
+                    {
+                        try { captured.TargetLease.StartTransport(); }
+                        catch (CallFailed) { titles = null; await captured.DisposeAsync(); }
+                    }
                     titles ??= await StartTitleSources.CaptureAsync(this, source, targetMachine, caller, ct);
                     if (!ReferenceEquals(titles.Target.Live, acknowledged.Live) || !ReferenceEquals(titles.Target.Remote, acknowledged.Remote))
                         throw new CallFailed("Acknowledged target owner changed", "unknown");
