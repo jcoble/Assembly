@@ -117,12 +117,12 @@ public sealed partial class WorkflowReceiptSubmissionTests
                 UPDATE engine_step_attempt SET fingerprint=$fingerprint,workspace_id='ws',session_id='worker',authority_machine=$machine,execution_epoch=7;
                 """, new("$machine", Core.Machine), new("$head", new string('a', 40)), new("$fingerprint", new string('b', 64))));
         }
-        internal PreparedWorkflowCommand Prepare(string? body = null, string summary = "done", Guid? command = null, long? version = null, bool receipt = true)
+        internal PreparedWorkflowCommand Prepare(string? body = null, string summary = "done", Guid? command = null, long? version = null, bool receipt = true, string state = "succeeded")
         {
             var context = new CommandContext(command ?? Guid.NewGuid(), Core.Machine, new(ActorKind.Session, "worker"), "step",
                 version ?? Core.Number("SELECT version FROM engine_step WHERE id='step'"), 7, 1000);
             using var json = JsonDocument.Parse(body ?? Recon);
-            return WorkflowPreparation.Receipt(context, new(1, 0, "succeeded", summary, ["https://evidence.invalid/proof"], receipt ? json.RootElement : null),
+            return WorkflowPreparation.Receipt(context, new(1, 0, state, summary, ["https://evidence.invalid/proof"], receipt ? json.RootElement : null),
                 new("step", 1, 0, "worker", 7, "ws", 1, new string('a', 40), new string('b', 64), "execution-1"), default);
         }
         internal CommandResult Apply(PreparedWorkflowCommand prepared) => Core.Db.Writer.Write("test.workflow-receipt", s =>
