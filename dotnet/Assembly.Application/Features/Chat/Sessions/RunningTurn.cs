@@ -21,6 +21,7 @@ internal sealed class RunningTurn(string runId, StageTimes stages)
     internal Assembly.Domain.Rows.AuthTerminalProof? AuthBinding { get; set; }
     internal Assembly.Domain.Rows.AuthTerminalProof? AuthFinalProof { get; set; }
     internal long AuthTerminalSeq { get; set; }
+    internal bool AuthRequired { get; set; }
     public bool TerminalObserved { get; set; }
     public decimal? TerminalCost { get; set; }
 

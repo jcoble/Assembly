@@ -28,8 +28,11 @@ internal static partial class AuthTransitions
         var blockContext = new CommandContext(binding.BlockCommandId, context.Machine, new(ActorKind.System, "adapter"),
             "auth-blocker/" + binding.BlockCommandId.ToString("N"), 0, binding.Epoch, context.NowMs);
         var block = new BlockSignInNeeded(command.SessionId, binding);
+        var expiredCurrent = execution is { ConfirmedProviderId: null, User.AuthBlocker: null } && proof.ProviderMessageId is null &&
+            scope.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.IsNull(0) ? (long?)null : r.Long(0),
+                new SqlArg("$id", execution.Delivery.Intent.MessageId)) <= context.NowMs;
         var result = EngineJournal.Execute(scope, blockContext, JsonSerializer.Serialize<EngineCommand>(block, EngineJson.Default.EngineCommand),
-            () => Block(scope, blockContext, block, configured, expiryPolicy));
+            () => expiredCurrent ? Expired(context) : Block(scope, blockContext, block, configured, expiryPolicy));
         if (expired) return result == Expired(context) ? result : Rejected(context);
         if (!result.Applied) return result;
         List<EventDraft> events = [];

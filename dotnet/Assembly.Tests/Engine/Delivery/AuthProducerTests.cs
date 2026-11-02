@@ -64,7 +64,7 @@ public sealed class AuthProducerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Expired_completion_before_delayed_real_helper_terminal_preserves_C6_and_exact_negative_replay(bool failedOpen)
+    public async Task Expired_normal_refusal_waits_for_real_helper_terminal_and_preserves_C6_and_exact_negative_replay(bool failedOpen)
     {
         await using var f = new AdapterDeliveryFixture(worker: true, configured: (provider, account) => provider == "claude" && account == "", gateWrites: true);
         var child = f.Sessions.Helper(f.Session, "claude", "Captured helper");
@@ -85,6 +85,8 @@ public sealed class AuthProducerTests
             f.DatabaseGate!.Arm("rows.commit");
             await agent.ReplyErrorAsync(request, -32000, "Sign in");
             await f.DatabaseGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+            Assert.Equal("inflight", f.State("engine_outbox", effectId));
+            f.DatabaseGate.Release();
             await f.StateAsync("engine_outbox", effectId, "done");
             Assert.Equal("failed", f.State("engine_message", message));
             Assert.Equal("expired", f.Db.QueryFirst("SELECT reason FROM engine_message WHERE id=$id", r => r.Text(0), default, new SqlArg("$id", message)));

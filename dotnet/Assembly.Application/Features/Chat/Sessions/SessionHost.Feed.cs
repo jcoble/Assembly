@@ -150,8 +150,7 @@ public sealed partial class SessionHost
         {
             if (turn.Session is not null || turn.Prompt is not null || turn.ProviderMessageId is not null ||
                 turn.OpenAttempt is not { IdentityAccepted: false, Failure: { } failure } || !Enum.IsDefined(failure) ||
-                !turn.Inserted.Task.IsCompletedSuccessfully || turn.Inserted.Task.Result is not SendResult.AuthRequired required ||
-                required.UserRow != user) return null;
+                !turn.AuthRequired) return null;
             version = 2; stage = failure;
         }
         return turn.AuthBinding = new(version, Guid.NewGuid(), Guid.NewGuid(), turn.RunId, acpSessionId, observed.Epoch,
