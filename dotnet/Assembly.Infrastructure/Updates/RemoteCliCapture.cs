@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Machines;
 
 namespace Assembly.Infrastructure.Updates;
 
@@ -33,6 +34,17 @@ internal static class RemoteCliCapture
         if (!ReadSource(agentsFile).AsSpan().SequenceEqual(source)) throw Unavailable();
         return new(machineId, installationId, home, agentsFile, Hash(source), helperCommand with
         { Arguments = helperCommand.Arguments.ToArray(), Environment = helperCommand.Environment?.ToDictionary(p => p.Key, p => p.Value) }, targets);
+    }
+
+    internal static RemoteCliLocator Locator(RemoteCliCaptureData capture, string ownerChosenCaptureFile)
+    {
+        if (capture.HelperCommand.Environment?.Count > 0 || capture.HelperCommand.ReplaceEnvironment) throw Unavailable();
+        var locator = new RemoteCliLocator(capture.MachineId, capture.InstallationId, ownerChosenCaptureFile,
+            capture.HelperCommand.FileName, capture.HelperCommand.Arguments.ToArray(), capture.HelperCommand.WorkingDirectory,
+            capture.Targets.Select(target => new RemoteCliTargetIdentity(target.Descriptor.Id, target.Descriptor.VendorFamily!,
+                target.AccountContext, target.ConfigurationTargetId)).ToArray());
+        locator.Validate();
+        return locator;
     }
 
     internal static async Task SaveAsync(string ownerChosenFile, RemoteCliCaptureData capture, CancellationToken ct)

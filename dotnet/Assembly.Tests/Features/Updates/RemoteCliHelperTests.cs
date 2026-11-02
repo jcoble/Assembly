@@ -62,7 +62,7 @@ public sealed class RemoteCliHelperTests
         var helper = Path.Combine(f.Home, "helper ' executable");
         CliCheckFixture.WriteExecutable(helper, "print join(qq(\\0), @ARGV);");
         var binding = new RemoteCliBinding(new("saved", "workbox-test", 12345), "remote", Guid.NewGuid().ToString("N"), captureFile,
-            new(helper, ["managed ' argument"], f.Home), "codex", "provider", "", new string('0', 64));
+            new(helper, ["managed ' argument"], f.Home), "codex", "provider", "", new string('0', 64), new string('1', 32));
         var ssh = RemoteCliClient.FixedInvocation(binding);
         var shell = new AgentCommand("/bin/sh", ["-c", ssh.Arguments.Last()], f.Home);
         var bytes = await new SshUpdateProcess(TimeProvider.System).ReadAsync(new(shell), default, default);

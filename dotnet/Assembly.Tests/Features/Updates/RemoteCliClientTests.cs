@@ -20,8 +20,10 @@ public sealed class RemoteCliClientTests
         Assert.Equal("update_available", result.Comparison); Assert.Null(result.Reason);
     }
 
-    [Fact]
-    public async Task Profile_replacement_after_actual_readback_cannot_redirect_or_accept_the_old_result()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Profile_or_generation_replacement_after_actual_readback_cannot_accept_the_old_result(bool generationOnly)
     {
         using var f = new CliCheckFixture(); var binding = await Binding(f);
         var current = binding;
@@ -31,7 +33,8 @@ public sealed class RemoteCliClientTests
             .CheckAsync(binding, f.Args, () => current, default, default);
         using var bound = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await entered.Task.WaitAsync(bound.Token);
-        current = binding with { Profile = binding.Profile with { Ssh = "changed-profile" } };
+        current = generationOnly ? binding with { ProfileGeneration = new string('2', 32) }
+            : binding with { Profile = binding.Profile with { Ssh = "changed-profile" } };
         release.SetResult();
         Assert.Equal("selection_changed", (await Assert.ThrowsAsync<CallFailed>(() => read)).Reason);
         Assert.True(File.Exists(Path.Combine(f.Home, "probe-record")));
@@ -111,6 +114,6 @@ public sealed class RemoteCliClientTests
             Environment.GetEnvironmentVariable("PATH")!.Split(Path.PathSeparator).Select(p => Path.Combine(p, "dotnet")).First(File.Exists);
         return new(new("selected", "workbox-test", 12345), capture.MachineId, capture.InstallationId, file,
             new AgentCommand(dotnet, [typeof(Assembly.Remote.Serve.ServeOptions).Assembly.Location], f.Home),
-            f.Family, f.Args.ProviderId, f.Args.AccountContext, f.Args.ConfigurationTargetId);
+            f.Family, f.Args.ProviderId, f.Args.AccountContext, f.Args.ConfigurationTargetId, new string('1', 32));
     }
 }

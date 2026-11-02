@@ -9,7 +9,7 @@ namespace Assembly.Infrastructure.Updates;
 // No descriptor/environment or authentication token is copied off the remote.
 internal sealed record RemoteCliBinding(SavedMachine Profile, string MachineId, string InstallationId,
     string CaptureFile, AgentCommand HelperCommand, string VendorFamily, string ProviderId,
-    string AccountContext, string ConfigurationTargetId);
+    string AccountContext, string ConfigurationTargetId, string ProfileGeneration);
 
 internal sealed class RemoteCliClient(HttpClient http, TimeProvider time,
     Func<SshCliReadInvocation, CancellationToken, CancellationToken, Task<byte[]>>? readProcess = null)
@@ -71,6 +71,7 @@ internal sealed class RemoteCliClient(HttpClient http, TimeProvider time,
             caller.ThrowIfCancellationRequested(); hostStop.ThrowIfCancellationRequested();
             var current = currentBinding();
             if (current is null || current.Profile != binding.Profile || current.MachineId != binding.MachineId ||
+                current.ProfileGeneration != binding.ProfileGeneration ||
                 current.InstallationId != binding.InstallationId || current.CaptureFile != binding.CaptureFile ||
                 current.VendorFamily != binding.VendorFamily || current.ProviderId != binding.ProviderId ||
                 current.AccountContext != binding.AccountContext || current.ConfigurationTargetId != binding.ConfigurationTargetId ||
@@ -88,7 +89,7 @@ internal sealed class RemoteCliClient(HttpClient http, TimeProvider time,
         var helper = binding.HelperCommand;
         if (!Path.IsPathFullyQualified(binding.CaptureFile) || !Path.IsPathFullyQualified(helper.FileName) ||
             !Path.IsPathFullyQualified(helper.WorkingDirectory) || helper.Environment?.Count > 0 || helper.ReplaceEnvironment ||
-            !Guid.TryParseExact(binding.InstallationId, "N", out _) || string.IsNullOrWhiteSpace(binding.Profile.Ssh) ||
+            !Guid.TryParseExact(binding.ProfileGeneration, "N", out _) || !Guid.TryParseExact(binding.InstallationId, "N", out _) || string.IsNullOrWhiteSpace(binding.Profile.Ssh) ||
             binding.Profile.Ssh.StartsWith('-') || binding.Profile.Ssh.Any(char.IsControl)) throw Failure("configuration_unavailable");
         var words = new[] { helper.FileName }.Concat(helper.Arguments).Concat(["cli-read", "--capture", binding.CaptureFile]);
         var remote = "cd -- " + Quote(helper.WorkingDirectory) + " && exec " + string.Join(' ', words.Select(Quote));
