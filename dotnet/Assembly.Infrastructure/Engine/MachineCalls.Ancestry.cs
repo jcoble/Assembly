@@ -15,9 +15,12 @@ public sealed partial class MachineCalls
                 RequireOwner(call);
                 if (string.IsNullOrWhiteSpace(args.FromMachine) || args.FromMachine == runtime.Machine)
                     throw new CallFailed("forbidden");
+                PreparedForeignAncestryBatch prepared;
+                try { prepared = runtime.Commands.PrepareForeignAncestry(args); }
+                catch (ForeignAncestryRefused refusal) { throw new CallFailed(refusal.Result.Error!); }
                 return Task.FromResult<Func<IWriteScope, CommandResult>>(scope =>
                 {
-                    try { return runtime.Commands.ApplyForeignAncestryBatch(scope, args); }
+                    try { return runtime.Commands.ApplyForeignAncestryBatch(scope, prepared); }
                     catch (ForeignAncestryRefused refusal)
                     {
                         // Keep throwing through AtomicWriter: no partial FK/marker/reference may commit.

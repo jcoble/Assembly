@@ -7,6 +7,8 @@ namespace Assembly.Engine;
 
 public sealed partial class EngineCommands
 {
-    public CommandResult ApplyForeignAncestryBatch(IWriteScope scope, ForeignAncestryArgs args) =>
-        EngineJournal.ApplyForeignAncestryBatch(scope, _machine, args);
+    public PreparedForeignAncestryBatch PrepareForeignAncestry(ForeignAncestryArgs args) => new(_machine, args);
+
+    public CommandResult ApplyForeignAncestryBatch(IWriteScope scope, PreparedForeignAncestryBatch prepared) =>
+        EngineJournal.ApplyForeignAncestryBatch(scope, _machine, prepared);
 }

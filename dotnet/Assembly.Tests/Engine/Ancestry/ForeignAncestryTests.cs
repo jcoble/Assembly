@@ -15,9 +15,12 @@ public sealed class ForeignAncestryTests
     private static ForeignAncestryArgs Chain(string source = "source") => new(source, Parent,
         [new(Root, source, "codex", "Root", null), new(Parent, source, "codex", "Parent", Root)]);
 
-    private static CommandResult Batch(EngineFixture f, ForeignAncestryArgs? args = null) =>
-        f.Db.Writer.Write("test.ancestry", s => new EngineCommands(f.Machine, f.Limits)
-            .ApplyForeignAncestryBatch(s, args ?? Chain()));
+    private static CommandResult Batch(EngineFixture f, ForeignAncestryArgs? args = null)
+    {
+        var commands = new EngineCommands(f.Machine, f.Limits);
+        var prepared = commands.PrepareForeignAncestry(args ?? Chain());
+        return f.Db.Writer.Write("test.ancestry", s => commands.ApplyForeignAncestryBatch(s, prepared));
+    }
 
     [Fact]
     public void Batch_is_invisible_version_zero_and_replays_after_reopen()

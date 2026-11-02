@@ -7,8 +7,8 @@ namespace Assembly.Engine.Persistence;
 
 public static partial class EngineJournal
 {
-    internal static CommandResult ApplyForeignAncestryBatch(IWriteScope scope, string target, ForeignAncestryArgs args) =>
-        ForeignParentAdmission.ApplyBatch(scope, target, args);
+    internal static CommandResult ApplyForeignAncestryBatch(IWriteScope scope, string target, PreparedForeignAncestryBatch prepared) =>
+        ForeignParentAdmission.ApplyBatch(scope, target, prepared);
 
     internal static CommandContext ForeignParentContext(string target, ForeignAncestor node) =>
         new(RelayReceiptKeys.ContextGuid(RelayReceiptKeys.ForeignParent(target, node.SessionId)), target,
@@ -39,36 +39,40 @@ public static partial class EngineJournal
         internal CommandContext Context { get; }
         internal string Key { get; }
         internal string Canonical { get; }
-        private readonly ForeignAncestor[] _nodes;
+        private readonly IReadOnlyList<ForeignAncestor> _nodes;
+        private readonly PreparedForeignAncestryBatch _prepared;
         private readonly int _index;
         private readonly string _target;
         private readonly string _chainDigest;
         private readonly HashSet<string> _accepted;
 
-        private ForeignParentAdmission(IWriteScope scope, string target, ForeignAncestor[] nodes, int index, string digest, HashSet<string> accepted)
+        private ForeignParentAdmission(IWriteScope scope, string target, PreparedForeignAncestryBatch prepared, int index, HashSet<string> accepted)
         {
-            Scope = scope; _target = target; _nodes = nodes; _index = index; _chainDigest = digest;
+            Scope = scope; _target = target; _prepared = prepared; _nodes = prepared.Nodes; _index = index; _chainDigest = prepared.ChainDigest;
+            var nodes = _nodes;
             _accepted = accepted;
             Context = ForeignParentContext(target, nodes[index]);
             Key = RelayReceiptKeys.ForeignParent(target, nodes[index].SessionId);
             Canonical = ForeignParentCanonical(nodes[index].ParentId);
         }
 
-        internal static CommandResult ApplyBatch(IWriteScope scope, string target, ForeignAncestryArgs args)
+        internal static CommandResult ApplyBatch(IWriteScope scope, string target, PreparedForeignAncestryBatch prepared)
         {
-            var nodes = args.RootToParent?.ToArray();
-            if (string.IsNullOrWhiteSpace(args.FromMachine) || args.FromMachine == target || nodes is not { Length: > 0 } ||
-                !Plain(args.ParentSessionId) || scope.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", r => r.Text(0)) != target)
+            if (prepared.TargetMachine != target || scope.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", r => r.Text(0)) != target)
+                throw Refusal("wrong_machine");
+            var nodes = prepared.Nodes;
+            if (string.IsNullOrWhiteSpace(prepared.FromMachine) || prepared.FromMachine == target || nodes is not { Count: > 0 } ||
+                !Plain(prepared.ParentSessionId))
                 throw Refusal("bad_args");
             var ids = new HashSet<string>(StringComparer.Ordinal);
-            for (var i = 0; i < nodes.Length; i++)
+            for (var i = 0; i < nodes.Count; i++)
             {
                 var node = nodes[i];
                 if (node is null || !Plain(node.SessionId) || !ids.Add(node.SessionId) || string.IsNullOrWhiteSpace(node.Machine) ||
                     string.IsNullOrWhiteSpace(node.Provider) || node.Title is null || node.ParentId != (i == 0 ? null : nodes[i - 1].SessionId))
                     throw Refusal("bad_args");
             }
-            if (nodes[^1].SessionId != args.ParentSessionId || nodes[^1].Machine != args.FromMachine)
+            if (nodes[^1].SessionId != prepared.ParentSessionId || nodes[^1].Machine != prepared.FromMachine)
                 throw Refusal("forbidden");
 
             // Read all existing targets once, before any reference, FK or private receipt is written.
@@ -106,33 +110,31 @@ public static partial class EngineJournal
                 if (!IsForeignParentProof(target, node, receipt.Hash, receipt.Result)) throw Refusal("command_id_conflict");
                 if (!existing.TryGetValue(node.SessionId, out var actual) || actual.Parent != node.ParentId) throw Refusal("bad_args");
             }
-            var digest = ChainDigest(target, args.FromMachine, args.ParentSessionId, nodes);
             HashSet<string> accepted = new(StringComparer.Ordinal);
             foreach (var (node, i) in nodes.Select((node, i) => (node, i)))
             {
                 if (node.Machine == target) { accepted.Add(node.SessionId); continue; }
-                var admitted = new ForeignParentAdmission(scope, target, nodes, i, digest, accepted);
+                var admitted = new ForeignParentAdmission(scope, target, prepared, i, accepted);
                 var result = ExecuteForeignParent(admitted);
                 if (!result.Applied) throw new ForeignAncestryRefused(result);
                 accepted.Add(node.SessionId);
             }
             // One shared recursive proof read after the whole batch, never a chain read for each node.
-            if (!SessionAncestry.Read(scope, target, args.ParentSessionId).Known) throw Refusal("bad_args");
+            if (!SessionAncestry.Read(scope, target, prepared.ParentSessionId).Known) throw Refusal("bad_args");
             return new(true, false, null, 0, 0, 0);
         }
 
         internal CommandResult Transition()
         {
             var node = _nodes[_index];
-            if (_chainDigest != ChainDigest(_target, _nodes[^1].Machine, _nodes[^1].SessionId, _nodes) ||
+            if (_prepared.TargetMachine != _target || _chainDigest != _prepared.ChainDigest || !ReferenceEquals(_nodes, _prepared.Nodes) ||
                 Context != ForeignParentContext(_target, node) || Key != RelayReceiptKeys.ForeignParent(_target, node.SessionId) || Canonical != ForeignParentCanonical(node.ParentId))
                 throw Refusal("forbidden");
             if (_index == 0 ? node.ParentId is not null :
                 node.ParentId != _nodes[_index - 1].SessionId || !_accepted.Contains(_nodes[_index - 1].SessionId))
                 throw Refusal("bad_args");
             var registration = new RegisterForeignSession(node.Machine, node.Provider, node.Title);
-            var prepared = PreparedSessionTitleCommand.Prepare(registration);
-            var result = SessionTransitions.ApplyPreparedTitle(Scope, Context, registration, 1, 1, "", prepared.TitleUtf8);
+            var result = SessionTransitions.ApplyPreparedTitle(Scope, Context, registration, 1, 1, "", _prepared.TitleUtf8(_index));
             if (!result.Applied) return result;
             var row = Scope.QueryFirst("SELECT machine,state,parent_id,version FROM engine_session WHERE id=$id",
                 r => (Machine: r.Text(0), State: r.Text(1), Parent: r.IsNull(2) ? null : r.Text(2), Version: r.Long(3)), new SqlArg("$id", node.SessionId));
@@ -142,9 +144,6 @@ public static partial class EngineJournal
             return new(true, false, null, 0, 0, 0);
         }
 
-        private static string ChainDigest(string target, string source, string parent, ForeignAncestor[] nodes) =>
-            RelayReceiptKeys.Digest(new[] { "foreign-parent-batch/v1", target, source, parent }
-                .Concat(nodes.SelectMany(n => new[] { n.SessionId, n.Machine, n.Provider, n.Title, n.ParentId })).ToArray());
         private static bool Plain(string? id) => !string.IsNullOrWhiteSpace(id) && id is not ("." or "..") && !id.Contains('/') && !id.Contains('\\') && !id.Any(char.IsControl);
         private sealed record Existing(string Id, string Machine, string State, string? Parent, long Version, long Epoch, string Holder, long Managed);
     }
