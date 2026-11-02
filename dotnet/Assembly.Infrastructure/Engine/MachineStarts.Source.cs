@@ -1,6 +1,9 @@
 using System.Text;
 using Assembly.Application.Common.Database;
+using Assembly.Engine;
+using Assembly.Engine.Contracts;
 using Assembly.Engine.Mcp;
+using Assembly.Engine.Messages;
 using Assembly.Engine.Sessions;
 
 namespace Assembly.Infrastructure.Engine;
@@ -84,6 +87,29 @@ internal sealed partial class MachineStarts
             if (error is not null) throw Refused(error);
             return 0;
         });
+    }
+
+    internal sealed class RetainedInitialPrompt
+    {
+        internal CommandContext Context { get; }
+        internal PreparedHelperPrompt Prepared { get; }
+
+        internal RetainedInitialPrompt(CommandContext context, PreparedHelperPrompt prepared)
+        {
+            if (context.CommandId == Guid.Empty || !Guid.TryParse(context.EntityId, out _) ||
+                context.Actor.Kind != ActorKind.Session || context.Actor.Id != prepared.Command.FromSessionId)
+                throw new ArgumentException("Invalid retained helper identity.");
+            Context = context with { Actor = context.Actor with { } };
+            Prepared = prepared;
+        }
+
+        internal CommandResult Apply(IWriteScope scope, EngineCommands commands) =>
+            commands.ApplyPreparedHelperPrompt(scope, Context, Prepared);
+
+        internal CommandResult? ReplayExisting(IWriteScope scope, EngineCommands commands) =>
+            scope.QueryFirst("SELECT EXISTS(SELECT 1 FROM engine_command_receipt WHERE command_id=$id)",
+                row => row.Long(0), new SqlArg("$id", Context.CommandId.ToString("N"))) == 1
+                ? Apply(scope, commands) : null;
     }
 
     private static readonly UTF8Encoding Utf8 = new(false, true);
