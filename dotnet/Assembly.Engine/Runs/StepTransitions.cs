@@ -11,12 +11,16 @@ public static class StepTransitions
         bool RuleSkippable, string? SessionId, string OwnerId, string RunState, long OwnerEpoch, string? Proof, string? Reason);
     private sealed record Worker(string? ParentId, string? RunId, string State, long Epoch);
 
-    public static CommandResult Apply(IWriteScope s, CommandContext c, StepCommand command)
+    public static CommandResult Apply(IWriteScope s, CommandContext c, StepCommand command) => ApplyCore(s, c, command, null);
+
+    private static CommandResult ApplyCore(IWriteScope s, CommandContext c, StepCommand command, string? checkedReceiptId)
     {
         var step = Find(s, c.EntityId);
         if (step is null) return Refused(c, "bad_args");
         if (command is StartStep start) return Start(s, c, step, start);
         if (command is not SetStepState fact) return Refused(c, "unsupported_command", step);
+        if (checkedReceiptId is null && fact.State == "succeeded" && s.QueryFirst("SELECT result IS NOT NULL FROM engine_step WHERE id=$id", r => r.Long(0), new SqlArg("$id", c.EntityId)) != 0)
+            return Refused(c, "receipt_required", step);
         var worker = step.SessionId is null ? null : FindWorker(s, step.SessionId);
         var epoch = worker?.Epoch ?? step.OwnerEpoch;
         if (c.Epoch != epoch) return new(false, false, "stale_epoch", step.Version, 0, epoch);
@@ -57,6 +61,27 @@ public static class StepTransitions
         return EngineJournal.Commit(s, c, step.Version + 1, epoch, events, []);
     }
 
+    internal static CommandResult CompleteCheckedReceipt(IWriteScope s, CommandContext c, string receiptId)
+    {
+        var receipt = s.QueryFirst("""
+            SELECT receipt.attempt,json_extract(receipt.body_json,'$.report.proofUrls')
+            FROM engine_workflow_receipt receipt JOIN engine_step st ON st.id=receipt.step_id
+            JOIN engine_run run ON run.id=st.run_id JOIN engine_session worker ON worker.id=st.session_id
+            JOIN engine_step_attempt attempt ON attempt.step_id=st.id AND attempt.attempt=st.attempt
+            WHERE receipt.id=$receipt AND receipt.state='accepted' AND receipt.step_id=$step
+              AND receipt.run_id=run.id AND receipt.machine=$machine AND run.machine=$machine
+              AND receipt.generation=st.generation AND receipt.attempt=st.attempt
+              AND receipt.session_id=st.session_id AND receipt.session_id=st.authority_session_id
+              AND receipt.epoch=worker.epoch AND receipt.epoch=st.authority_epoch AND receipt.epoch=$epoch
+              AND worker.machine=$machine AND worker.holder='local' AND st.authority_machine=$machine AND attempt.authority_machine=$machine AND attempt.execution_epoch=$epoch
+              AND attempt.generation=st.generation AND attempt.receipt_id=receipt.id AND st.receipt_id=receipt.id
+            """, r => (Attempt: (int)r.Long(0), Proof: r.Text(1)), new SqlArg("$receipt", receiptId),
+            new("$step", c.EntityId), new("$machine", c.Machine), new("$epoch", c.Epoch));
+        if (c.Actor.Kind != ActorKind.System || receipt.Proof is null) return Refused(c, "receipt_required");
+        var proof = JsonSerializer.Deserialize(receipt.Proof, EngineJson.Default.IReadOnlyListString)!;
+        return ApplyCore(s, c, new SetStepState("succeeded", receipt.Attempt, proof, null, false), receiptId);
+    }
+
     private static CommandResult Start(IWriteScope s, CommandContext c, Step step, StartStep command)
     {
         if (step.RunState == "cancelling") return Refused(c, "run_cancelling", step);
@@ -71,7 +96,10 @@ public static class StepTransitions
             return Refused(c, "invalid_transition", step);
         if (s.QueryFirst("""
             SELECT COUNT(*) FROM engine_step_dependency d JOIN engine_step dep ON dep.id=d.dependency_id
-            WHERE d.step_id=$id AND d.optional=0 AND dep.state!='succeeded'
+            WHERE d.step_id=$id AND NOT (
+                dep.state='succeeded'
+                OR (dep.state='skipped' AND dep.rule_skippable=1 AND dep.outcome_reason IS NOT NULL)
+                OR (d.optional=1 AND dep.state IN ('failed','cancelled')))
             """, r => r.Long(0), new SqlArg("$id", c.EntityId)) > 0)
             return Refused(c, "dependency_not_ready", step);
         var attempt = step.Attempt + 1;
@@ -105,8 +133,10 @@ public static class StepTransitions
             VALUES($id,$step,$attempt,$kind,$now,$data,1)
             """, new("$id", c.CommandId.ToString("N")), new("$step", c.EntityId), new("$attempt", fact.Attempt),
             new("$kind", fact.State), new("$now", c.NowMs), new("$data", JsonSerializer.Serialize(fact, EngineJson.Default.SetStepState)));
-        UpdateAttempt(s, c, fact, true, JsonSerializer.Serialize(fact.ProofUrls, EngineJson.Default.IReadOnlyListString),
-            fact.State is "succeeded" or "failed" or "skipped" or "cancelled");
+        if (s.QueryFirst("SELECT run.definition_hash IS NOT NULL FROM engine_step st JOIN engine_run run ON run.id=st.run_id WHERE st.id=$id",
+            r => r.Long(0), new SqlArg("$id", c.EntityId)) == 0)
+            UpdateAttempt(s, c, fact, true, JsonSerializer.Serialize(fact.ProofUrls, EngineJson.Default.IReadOnlyListString),
+                fact.State is "succeeded" or "failed" or "skipped" or "cancelled");
         var late = Changed(c.EntityId, step, step.Version, step.State, epoch) with { Kind = "step.late", Late = true };
         return EngineJournal.Commit(s, c, step.Version, epoch, [late], [], late: true);
     }
