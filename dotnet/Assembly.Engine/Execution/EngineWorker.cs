@@ -77,6 +77,16 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             _recovering = rows.Count == 100;
             if (_recovering) return (null, null, true);
         }
+        var expiryContext = new CommandContext(Guid.NewGuid(), machine, new(ActorKind.System, "engine.worker"), "message.expiry", 0, 0, now);
+        var expiry = MessageExpiry.ExpireDue(s, expiryContext);
+        if (expiry.Events.Count > 0)
+        {
+            List<EventDraft> events = [.. expiry.Events];
+            List<EffectDraft> drafts = [];
+            foreach (var recipient in expiry.Recipients)
+                events.AddRange(MessageRelease.Next(s, expiryContext with { EntityId = recipient }, recipient, drafts));
+            EngineJournal.Commit(s, expiryContext, 0, 0, events, drafts);
+        }
         if (_releaseAfter is not null)
         {
             var recipients = s.Query("""
@@ -138,7 +148,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         }
         retention.Apply(s, now);
         _retentionDeadline = retention.NextDeadlineMs(s, now);
-        return (claim, Earlier(deadline, _retentionDeadline), needs.Count == 100 || runs.Count == 100);
+        return (claim, Earlier(Earlier(deadline, MessageExpiry.NextDeadline(s, machine)), _retentionDeadline), expiry.More || needs.Count == 100 || runs.Count == 100);
     }
 
     private void Complete(Candidate claimed, EffectReceipt receipt)
@@ -193,8 +203,10 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     {
         using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var pushed = _wake.Reader.ReadAsync(wait.Token).AsTask();
-        Task? elapsed = deadline is null ? null : Task.Delay(
-            TimeSpan.FromMilliseconds(Math.Max(0, deadline.Value - time.GetUtcNow().ToUnixTimeMilliseconds())), time, wait.Token);
+        const long maxWaitMs = 4_294_967_294L;
+        Int128 remaining = deadline is null ? 0 : (Int128)deadline.Value - time.GetUtcNow().ToUnixTimeMilliseconds();
+        var sliceMs = remaining <= 0 ? 0 : remaining > maxWaitMs ? maxWaitMs : (long)remaining;
+        Task? elapsed = deadline is null ? null : Task.Delay(TimeSpan.FromMilliseconds(sliceMs), time, wait.Token);
         var signals = _active.Values.Select(active => (Task)active.Task).Append(pushed);
         if (elapsed is not null) signals = signals.Append(elapsed);
         await Task.WhenAny(signals);

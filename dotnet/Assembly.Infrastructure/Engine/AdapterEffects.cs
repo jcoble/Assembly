@@ -4,6 +4,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine.Effects;
+using Assembly.Engine.Messages;
 using Assembly.Engine.NeedsMe;
 using Assembly.Domain.Rows;
 
@@ -42,7 +43,7 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
                         return Receipt(EffectDisposition.Failed, "request_gone");
                     return new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new AnswerEffectData(answer.Value.Intent.ProviderRequestId), global::Assembly.Engine.EngineJson.Default.AnswerEffectData), null);
                 case "send":
-                    var delivery = Delivery(scope, effect);
+                    var delivery = MessageDelivery.Read(scope, effect);
                     if (delivery is null) return Receipt(EffectDisposition.Unknown, "delivery_owner_changed");
                     var prior = Positive(scope, delivery);
                     if (prior is not null) return prior;
@@ -80,7 +81,7 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
             if (!Owns(scope, effect, allowDone: true)) return Task.FromResult(Receipt(EffectDisposition.Unknown, "delivery_owner_changed"));
             var result = effect.Kind switch
             {
-                "send" => Delivery(scope, effect, allowDone: true) is { } delivery ? Positive(scope, delivery) ?? Receipt(EffectDisposition.Unknown, "delivery_unknown") : Receipt(EffectDisposition.Unknown, "delivery_owner_changed"),
+                "send" => MessageDelivery.Read(scope, effect, allowDone: true) is { } delivery ? Positive(scope, delivery) ?? Receipt(EffectDisposition.Unknown, "delivery_unknown") : Receipt(EffectDisposition.Unknown, "delivery_owner_changed"),
                 "start" => sessions.Get(scope, effect.SessionId!) is null ? Receipt(EffectDisposition.Failed, "session_projection_missing") : SessionReceipt(),
                 "stop" => rows.OpenRun(effect.SessionId!) is null ? SessionReceipt() : Receipt(EffectDisposition.Unknown),
                 "answer" => ReconcileAnswer(scope, effect),

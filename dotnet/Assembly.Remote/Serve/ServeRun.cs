@@ -89,7 +89,7 @@ public static class ServeRun
         var sessionLimits = new SessionLimits(
             () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
             () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
-        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects);
+        await using var engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects, readExpiryMinutes: MessageExpiryPreferences.ReadMinutes);
         await using var machineCalls = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
         await using var app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics, [new EngineCalls(engine, TimeProvider.System), new TerminalFeature(terminals), workflowCalls, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines), new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machineCalls], board, Engine: engine), options.Port, out _,
             routes => MachineFeatureList.Add(routes, new FeatureContext(db)));

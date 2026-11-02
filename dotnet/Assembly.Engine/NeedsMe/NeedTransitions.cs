@@ -14,7 +14,7 @@ public static class NeedTransitions
         string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline);
     private sealed record Session(long Epoch, string State, string? RunId, string? ParentId);
 
-    public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command)
+    public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy = null)
     {
         if (string.IsNullOrWhiteSpace(c.EntityId)) return Refused(c, "bad_args");
         if (command is OpenNeed open) return Open(s, c, open);
@@ -24,10 +24,10 @@ public static class NeedTransitions
         if (c.Epoch != session.Epoch) return Refused(c, "stale_epoch", need, session.Epoch);
         if (need.State != "open") return Refused(c, "already_resolved", need);
         if (c.ExpectedVersion != need.Version) return Refused(c, "version_conflict", need);
-        return command is ResolveNeed resolve ? Resolve(s, c, need, resolve) : Refused(c, "unsupported_command", need);
+        return command is ResolveNeed resolve ? Resolve(s, c, need, resolve, expiryPolicy) : Refused(c, "unsupported_command", need);
     }
 
-    public static CommandResult Expire(IWriteScope s, CommandContext c) => Apply(s, c, new ResolveNeed("expired", null));
+    public static CommandResult Expire(IWriteScope s, CommandContext c, MessageExpiryPolicy? expiryPolicy = null) => Apply(s, c, new ResolveNeed("expired", null), expiryPolicy);
 
     public static long? NextDeadline(IAppDatabase db) => db.QueryFirst(
         "SELECT MIN(deadline_ms) FROM engine_needs_me WHERE state='open' AND deadline_ms IS NOT NULL",
@@ -115,7 +115,7 @@ public static class NeedTransitions
             """, r => r.Long(0), new("$step", command.StepId), new("$run", command.RunId), new("$session", command.SessionId)) == 1;
     }
 
-    private static CommandResult Resolve(IWriteScope s, CommandContext c, Need need, ResolveNeed command)
+    private static CommandResult Resolve(IWriteScope s, CommandContext c, Need need, ResolveNeed command, MessageExpiryPolicy? expiryPolicy)
     {
         if (command.State is not ("answered" or "dismissed" or "expired" or "cancelled")) return Refused(c, "bad_args", need);
         var allowed = c.Actor.Kind switch
@@ -147,7 +147,7 @@ public static class NeedTransitions
                 JsonSerializer.SerializeToElement(new NeedAnswer(need.Id, need.RequestId, answer.Value), EngineJson.Default.NeedAnswer)));
         List<EventDraft> events = [Changed(c, updated, "needs_me.answered", command.Reason)];
         if (need.RequestId is null)
-            events.AddRange(MessageTransitions.NeedResolved(s, c, need.Id, need.SessionId, command.State, command.Answer));
+            events.AddRange(MessageTransitions.NeedResolved(s, c, need.Id, need.SessionId, command.State, command.Answer, expiryPolicy));
         return Commit(s, c, updated, events, effects);
     }
 

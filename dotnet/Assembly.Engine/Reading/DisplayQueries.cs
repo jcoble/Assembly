@@ -12,7 +12,7 @@ internal static class DisplayQueries
         "run" => "owner_session_id,worktree,branch,pr_id,state,owner_loss_limit_ms,owner_lost_ms",
         "step" => "run_id,name,session_id,state,attempt,max_attempts,required,rule_skippable,started_ms,ended_ms,outcome_reason",
         "needs_me" => "session_id,run_id,step_id,kind,text,options_json,state,deadline_ms,answered_by,answered_ms",
-        "message" => "from_session_id,sender_kind,to_session_id,run_id,step_id,text,mode,state,reason",
+        "message" => "from_session_id,sender_kind,to_session_id,run_id,step_id,text,mode,state,reason,expires_ms",
         "handoff" => "session_id,old_holder,new_holder,old_epoch,next_epoch,state,reason",
         "pr" => "run_id,repo,number,head,state,reported_by,reported_state,observed_head,observed_ms,url",
         "tool_call" => "session_id,run_id,step_id,attempt,epoch,tool,input_preview,output_preview,input_bytes,output_bytes,started_ms,ended_ms,outcome,late",

@@ -48,6 +48,19 @@ public sealed partial class AdapterEffectsTests
         Assert.Equal(1, f.Launcher.Launches);
     }
 
+    [Fact]
+    public async Task Actual_positive_provider_insertion_wins_after_deadline_with_atomic_ack()
+    {
+        await using var f = new AdapterDeliveryFixture(); var message = f.Queue("late accepted", "late", refs: ["original.png"]); var effect = f.Claim(message);
+        var sending = f.Effects.ExecuteAsync(effect, default); var agent = await f.Launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
+        await agent.InsertAsync(prompt, "actual-late-provider"); var receipt = await sending.WaitAsync(DeliveryWait);
+        f.Time.Advance(TimeSpan.FromMinutes(31)); Assert.True(f.Complete(effect, receipt).Applied);
+        Assert.Equal("next_turn", f.State("engine_message", message));
+        using (var scope = f.Db.OpenSnapshot(default)) Assert.Equal("actual-late-provider", f.Rows.UserDeliveryOfClient(scope, f.Session.SessionId, "late")!.Acknowledgment!.ProviderMessageId);
+        Assert.Equal(0, f.Db.QueryFirst("SELECT COUNT(*) FROM engine_event WHERE entity_id=$id AND json_extract(data_json,'$.state')='failed'", r => r.Long(0), default, new SqlArg("$id", message)));
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}"""); await agent.CloseAsync();
+    }
+
     [Theory]
     [InlineData("injected", "delivered_to_turn")]
     [InlineData("promptRequired", "queued")]

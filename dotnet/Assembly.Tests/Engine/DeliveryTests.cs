@@ -59,7 +59,7 @@ public sealed class DeliveryTests
         using var f = new EngineFixture();
         f.SeedSession();
         f.Apply(new SendMessage(null, "s", "hi", "prompt"), "m");
-        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "m", 2, actor: System).Applied);
+        QueueBusy(f, "m");
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message"));
         Assert.Equal(1, f.Count("engine_outbox"));
         State(f, "running");
@@ -74,7 +74,7 @@ public sealed class DeliveryTests
         f.Apply(new SendMessage(null, "s", "hi", "prompt"), "m");
         State(f, "running");
         State(f, "idle");
-        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "m", 2, actor: System).Applied);
+        QueueBusy(f, "m");
         Assert.Equal(2, f.Number("SELECT attempt FROM engine_message"));
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message"));
     }
@@ -154,7 +154,7 @@ public sealed class DeliveryTests
     {
         using var f = new EngineFixture(); f.SeedSession(); f.SeedSession("child", parentId: "s");
         Assert.True(f.Apply(new SendMessage(null, "s", "older", "prompt"), "older").Applied);
-        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "older", 2, actor: System).Applied);
+        QueueBusy(f, "older");
         var before = f.Events().Last().Seq;
         Assert.True(f.Apply(new SetSessionState("ended", null, null), "child", actor: System).Applied);
         var committed = f.Events().Where(e => e.Seq > before).ToArray();
@@ -163,6 +163,32 @@ public sealed class DeliveryTests
         Assert.Equal(1, f.Number("SELECT in_flight FROM engine_message WHERE id='older'"));
         Assert.Equal(0, f.Number("SELECT in_flight FROM engine_message WHERE id='child-ended/child'"));
         Assert.Equal(committed.Max(e => e.Seq), f.Number("SELECT event_seq FROM engine_outbox WHERE id='send/older/2'"));
+    }
+
+    [Fact]
+    public void Generic_queued_busy_outcome_cannot_retire_pending_send_or_authorize_resend_or_expiry()
+    {
+        using var f = new EngineFixture(); f.SeedSession();
+        Assert.True(f.Apply(new SendMessage(null, "s", "body", "prompt"), "m").Applied);
+        Assert.True(f.Apply(new MessageOutcome("queued", null, "busy"), "m", 2, actor: System).Applied);
+        State(f, "running"); State(f, "idle");
+        var batch = f.Db.Writer.Write("test.expiry", s => MessageExpiry.ExpireDue(s,
+            new(Guid.NewGuid(), f.Machine, System, "expiry", 0, 0, 999999999)));
+        Assert.Empty(batch.Events);
+        Assert.Equal(1, f.Number("SELECT attempt FROM engine_message WHERE id='m'"));
+        Assert.Equal("queued", f.State("engine_message", "m"));
+        Assert.Equal("pending", f.State("engine_outbox", "send/m/1"));
+        Assert.Equal(1, f.Count("engine_outbox"));
+    }
+
+    private static void QueueBusy(EngineFixture f, string messageId)
+    {
+        var effect = $"send/{messageId}/1";
+        Assert.True(f.Apply(new Assembly.Engine.Effects.ClaimEffect(), effect, actor: System).Applied);
+        var receipt = new Assembly.Engine.Effects.EffectReceipt(Assembly.Engine.Effects.EffectDisposition.Confirmed,
+            JsonSerializer.SerializeToElement(new Assembly.Engine.Effects.MessageEffectData("queued", null, "busy"),
+                Assembly.Engine.EngineJson.Default.MessageEffectData), null);
+        Assert.True(f.Apply(new Assembly.Engine.Effects.CompleteEffect(receipt), effect, 1, actor: System).Applied);
     }
 
     private static void State(EngineFixture f, string state) => Assert.True(f.Apply(new SetSessionState(state, null, null), "s", f.Number("SELECT version FROM engine_session WHERE id='s'"), actor: System).Applied);

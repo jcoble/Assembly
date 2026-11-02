@@ -183,7 +183,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var clock = new BackendClock(topics, TimeProvider.System, work);
             machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, store: profiles,
                 connection: (name, connect, cancel) => connections!.ConnectionAsync(name, connect, cancel));
-            engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects);
+            engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects, readExpiryMinutes: MessageExpiryPreferences.ReadMinutes);
             engineStarted?.Invoke(engine);
             connections = new RemoteConnections(profiles, db.Writer, machines, status, hub, sessionStore, topics, log,
                 machinesFeature, sessions.Helpers.Row.TurnEnded,

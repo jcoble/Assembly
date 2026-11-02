@@ -25,5 +25,18 @@ public sealed partial class AdapterEffectsTests
         Assert.Equal(refs, first.Payload.GetProperty("attachmentIds").EnumerateArray().Select(value => value.GetString())); Assert.Equal("failed", f.State("engine_message", id));
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}"""); await agent.CloseAsync();
     }
+    [Fact]
+    public async Task Due_typed_model_unavailable_expires_without_provider_insertion_or_ack()
+    {
+        await using var f = new AdapterDeliveryFixture();
+        f.Db.Writer.Write("test.pending", s => s.Execute("INSERT INTO session_config(session_id,pending_model) VALUES($id,'unavailable')", new SqlArg("$id", f.Session.SessionId)));
+        var message = f.Queue("original draft", "due-model", refs: ["one.png"]); var effect = f.Claim(message); f.Time.Advance(TimeSpan.FromMinutes(30));
+        var sending = f.Effects.ExecuteAsync(effect, default); var agent = await f.Launcher.NextAsync(); await agent.StartAsync(configOptions: ModelOptions); await agent.CloseAsync();
+        var receipt = await sending.WaitAsync(DeliveryWait); Assert.Equal("model_unavailable", Message(receipt).Reason); Assert.True(f.Complete(effect, receipt).Applied);
+        Assert.Equal("failed", f.State("engine_message", message)); Assert.Equal("expired", f.Db.QueryFirst("SELECT reason FROM engine_message WHERE id=$id", r => r.Text(0), default, new SqlArg("$id", message)));
+        Assert.Equal("unavailable", f.Sessions.Config(f.Session.SessionId).PendingModel);
+        using var scope = f.Db.OpenSnapshot(default); Assert.Null(f.Rows.UserDeliveryOfClient(scope, f.Session.SessionId, "due-model")!.Acknowledgment);
+    }
+
     private const string ModelOptions = """[{"id":"model","category":"model","type":"select","name":"Model","currentValue":"offered","options":[{"value":"offered","name":"Friendly"}]}]""";
 }

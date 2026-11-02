@@ -69,6 +69,10 @@ public sealed partial class AdapterEffectsTests
         });
         var positive = await f.Effects.ReconcileAsync(effect, default);
         Assert.Equal(EffectDisposition.Confirmed, positive.Disposition); Assert.Equal("actual-historical-provider", Message(positive).ProviderTurnId);
+        f.Time.Advance(TimeSpan.FromMinutes(31));
+        Assert.True(effect.Attempt > f.Number("SELECT attempt FROM engine_message WHERE id=$id", "uncertain"));
+        Assert.True(f.Complete(effect, positive).Applied);
+        Assert.Equal("next_turn", f.State("engine_message", "uncertain")); Assert.Equal("done", f.State("engine_outbox", effect.Id));
         Assert.Equal(0, f.Launcher.Launches);
     }
 

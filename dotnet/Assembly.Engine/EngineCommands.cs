@@ -18,18 +18,20 @@ public sealed class EngineCommands
     private readonly string _machine;
     private readonly SessionLimits _limits;
     private readonly Func<int> _messageLimit;
+    private readonly MessageExpiryPolicy _expiryPolicy;
     private readonly Action<IWriteScope, CommandContext, StartSession>? _projectStart;
     private readonly Func<string, string>? _accountContext;
     private readonly Action<IWriteScope, CommandContext, Effect, EffectReceipt>? _projectCompletion;
 
     public EngineCommands(string machine, SessionLimits limits, Func<int>? messageLimit = null,
         Action<IWriteScope, CommandContext, StartSession>? projectStart = null, Func<string, string>? accountContext = null,
-        Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null)
+        Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
     {
         _machine = machine;
         _projectStart = projectStart;
         _accountContext = accountContext;
         _projectCompletion = projectCompletion;
+        _expiryPolicy = expiryPolicy ?? new();
         ArgumentNullException.ThrowIfNull(limits);
         _limits = limits;
         _messageLimit = messageLimit ?? (() => 20);
@@ -47,12 +49,12 @@ public sealed class EngineCommands
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
-                EffectCommand effect => EffectTransitions.Apply(scope, context, effect, _projectCompletion),
+                EffectCommand effect => EffectTransitions.Apply(scope, context, effect, _projectCompletion, _expiryPolicy),
                 RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
-                MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit()),
-                NeedCommand need => NeedTransitions.Apply(scope, context, need),
+                MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit(), _expiryPolicy),
+                NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy),
                 RunCommand run => RunTransitions.Apply(scope, context, run),
                 StepCommand step => StepTransitions.Apply(scope, context, step),
                 SessionCommand session => ApplySession(scope, context, session),
@@ -73,7 +75,7 @@ public sealed class EngineCommands
                 context.EntityId != OwnerPromptIdentity.MessageId(prepared.ToSessionId, prepared.ClientId) ||
                 context.CommandId != OwnerPromptIdentity.CommandId(_machine, prepared.ToSessionId, prepared.ClientId))
                 return new(false, false, "bad_args", context.ExpectedVersion, 0, context.Epoch);
-            return MessageTransitions.ApplyOwnerPrompt(scope, context, prepared);
+            return MessageTransitions.ApplyOwnerPrompt(scope, context, prepared, _expiryPolicy);
         });
         return result.Error == "command_id_conflict" ? result with { Error = "client_id_conflict" } : result;
     }
@@ -83,7 +85,7 @@ public sealed class EngineCommands
         var depth = _limits.ReadDepth();
         var children = _limits.ReadChildren();
         var accountContext = command is StartSession start ? _accountContext?.Invoke(start.Provider) ?? "" : "";
-        var result = SessionTransitions.Apply(scope, context, command, depth, children, accountContext);
+        var result = SessionTransitions.Apply(scope, context, command, depth, children, accountContext, _expiryPolicy);
         if (result.Applied && command is StartSession accepted)
             _projectStart?.Invoke(scope, context, accepted);
         return result;
