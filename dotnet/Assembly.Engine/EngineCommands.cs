@@ -47,6 +47,8 @@ public sealed partial class EngineCommands
 
     public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command, string? preparedError = null)
     {
+        if (command is CompleteEffect { Receipt.WorkflowReceiptConfirmation: not null } completion)
+            return ApplyPreparedReceiptCompletion(scope, context, completion);
         if (command is SendOwnerPrompt or RecordProviderCheck or WorkflowCommand)
             return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
         // Raw boundary arguments are transient: even the journal fingerprint and size check use structural previews.

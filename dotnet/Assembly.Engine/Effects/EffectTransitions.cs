@@ -10,6 +10,8 @@ using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Workspaces;
+using Assembly.Engine.Workflows.Receipts;
+using Assembly.Engine.Workflows.Reviews;
 using Assembly.Engine.Workflows.Execution;
 
 namespace Assembly.Engine.Effects;
@@ -125,6 +127,7 @@ public static class EffectTransitions
         try
         {
             if (effect.Kind == "workflow_command") return CommandStepTransitions.ValidConfirmation(scope, effect, receipt);
+            if (effect.Kind == "workflow_receipt") return ReceiptTransitions.ValidConfirmation(scope, effect, receipt);
             if (effect.Kind is "workflow_setup" or "workflow_workspace") return WorkspaceTransitions.ValidConfirmation(scope, effect, receipt);
             if (AuthEffectBinding.IsAuth(effect.Kind)) return AuthEffectBinding.ValidConfirmation(scope, context, effect, receipt);
             return effect.Kind switch
@@ -145,6 +148,7 @@ public static class EffectTransitions
     private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy, MessageOutcome? projected)
     {
         if (effect.Kind == "workflow_command") { CommandStepTransitions.Confirm(s, c, effect, receipt); return; }
+        if (effect.Kind == "workflow_receipt") { ReceiptTransitions.Confirm(s, c, effect, receipt, StepTransitions.CompleteCheckedReceipt, ReviewTransitions.Finished, expiryPolicy); return; }
         if (effect.Kind is "workflow_setup" or "workflow_workspace") { WorkspaceTransitions.Confirm(s, c, effect, receipt); return; }
         if (AuthEffectBinding.IsAuth(effect.Kind)) return;
         var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested FROM engine_session WHERE id=$id",

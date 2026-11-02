@@ -7,7 +7,7 @@ using Assembly.Engine.Sessions;
 namespace Assembly.Engine.Mcp;
 
 /// <summary>Valid only within the synchronous McpGate.Write callback. Never retain its scope or nest writes.</summary>
-public sealed class McpWrite
+public sealed partial class McpWrite
 {
     private readonly IEngineRuntime _runtime;
     private readonly SessionLimits _limits;
