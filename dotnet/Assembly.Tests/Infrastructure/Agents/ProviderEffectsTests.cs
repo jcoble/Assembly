@@ -48,7 +48,7 @@ public sealed class ProviderEffectsTests
         Assert.Equal("Fixture", facts.Name);
         Assert.Equal("1.2", facts.Version);
         Assert.Equal(1000, facts.CheckedMs);
-        Assert.Equal(h.Account, h.Probe.Descriptor!.Env!["CODEX_HOME"]);
+        Assert.Equal(h.RawHome, h.Probe.Descriptor!.Env!["CODEX_HOME"]);
         Assert.Equal(ConfigTargetIdentity.Of(h.Probe.Descriptor, h.Probe.Descriptor.Env!), h.Probe.Target);
         Assert.Equal(0, h.Launcher.Launches);
     }
@@ -162,7 +162,7 @@ public sealed class ProviderEffectsTests
         await h.Probe.Entered.Task.WaitAsync(Limit);
         var original = h.Probe.Descriptor!;
         ((Dictionary<string, string>)h.Launcher.Agent.Env!)["CODEX_HOME"] = "/replacement";
-        Assert.Equal(h.Account, original.Env!["CODEX_HOME"]);
+        Assert.Equal(h.RawHome, original.Env!["CODEX_HOME"]);
         h.Probe.Release.TrySetResult();
         Assert.Equal(EffectDisposition.Unknown, (await pending).Disposition);
         Assert.Null(h.Text("SELECT facts_json FROM engine_provider"));
@@ -264,7 +264,8 @@ public sealed class ProviderEffectsTests
     private sealed class Harness : IAsyncDisposable
     {
         internal const string Provider = "fixture/provider";
-        internal string Account { get; } = "/fixture/account/one";
+        internal string RawHome { get; } = "/fixture/account/one";
+        internal string Account { get; }
         internal string Target => Provider + "/" + Account;
         internal Topics Topics { get; } = new();
         internal EngineFixture Core { get; }
@@ -284,7 +285,8 @@ public sealed class ProviderEffectsTests
         internal Harness()
         {
             Core = new(topics: Topics);
-            Launcher = new(new(Provider, "Fixture", "fixture-only-no-process", [], new Dictionary<string, string> { ["CODEX_HOME"] = Account }, VendorFamily: "codex"));
+            Launcher = new(new(Provider, "Fixture", "fixture-only-no-process", [], new Dictionary<string, string> { ["CODEX_HOME"] = RawHome }, VendorFamily: "codex"));
+            Account = AccountContext.Of(Launcher.Agent, _ => null);
             var sessions = SessionStore.Open(Core.Db, Core.Time, "checkouts");
             var rows = RowStore.Open(Core.Db);
             _hub = new(rows);

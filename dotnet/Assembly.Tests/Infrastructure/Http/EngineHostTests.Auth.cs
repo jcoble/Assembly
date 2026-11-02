@@ -1,3 +1,7 @@
+using System.Collections.Concurrent;
+using Assembly.Application.Common.Acp;
+using Assembly.Application.Common.Database;
+using Assembly.Domain.Sessions;
 using System.Text.Json;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Engine;
@@ -11,27 +15,35 @@ namespace Assembly.Tests.Infrastructure.Http;
 public sealed partial class EngineHostTests
 {
     [Theory]
-    [InlineData("desktop")]
-    [InlineData("remote")]
-    public async Task Actual_default_auth_composition_only_produces_three_auth_kinds_and_owns_cancel_cleanup(string host)
+    [InlineData("desktop", false)]
+    [InlineData("desktop", true)]
+    [InlineData("remote", false)]
+    [InlineData("remote", true)]
+    public async Task Actual_default_auth_composition_only_produces_three_auth_kinds_and_owns_cancel_cleanup(string host, bool privateHome)
     {
         var home = Directory.CreateTempSubdirectory("assembly-auth-host-").FullName;
         var launcher = new FakeLauncher();
+        const string rawHome = "/private/HOST_AUTH_HOME_CANARY";
+        if (privateHome)
+            launcher.Agents = [launcher.Agents[0] with { VendorFamily = "claude", Env = new Dictionary<string, string> { ["CLAUDE_CONFIG_DIR"] = rawHome } }, launcher.Agents[1]];
+        var account = AccountContext.Of(launcher.Agents[0], _ => null);
+        var target = "claude/" + account;
+        var captured = new AuthEnvironmentLauncher(launcher);
         try
         {
-            await using var running = await Host.Start(host, home, null, launcher: launcher);
+            await using var running = await Host.Start(host, home, null, launcher: captured);
             AssertEmptyOrdinaryCensus(running);
             using var socket = await running.Open();
-            await AuthCommand(socket, running, "claude/", new CheckProvider());
+            await AuthCommand(socket, running, target, new CheckProvider());
             var probe = await launcher.NextAsync();
             var initialized = await probe.ReadAsync("initialize");
             await probe.ReplyAsync(initialized, InitializeWithAgentMethod);
             var opening = await probe.OpenAsync("host-auth-probe");
             Assert.Equal(Path.Combine(home, "probe"), opening.GetProperty("params").GetProperty("cwd").GetString());
             Assert.Equal("host-auth-probe", await probe.CloseAsync());
-            await WaitProviderAuth(running, "claude/", "unverified");
+            await WaitProviderAuth(running, target, "unverified");
 
-            await AuthCommand(socket, running, "successful-auth", new StartSignIn("claude", "", "actual", null));
+            await AuthCommand(socket, running, "successful-auth", new StartSignIn("claude", account, "actual", null));
             var loginLink = await launcher.NextAsync();
             await loginLink.ReplyAsync(await loginLink.ReadAsync("initialize"), InitializeWithAgentMethod);
             var login = await loginLink.ReadAsync("auth/login");
@@ -58,14 +70,14 @@ public sealed partial class EngineHostTests
             await running.WaitState("providers", "successful-auth", "signed_in");
             await loginLink.Exited.WaitAsync(Timeout);
             Assert.True(loginLink.Disposed);
-            await WaitProviderAuth(running, "claude/", "signed_in");
+            await WaitProviderAuth(running, target, "signed_in");
             // The Engine deliberately queues a fresh check after committing positive login facts.
             var refreshed = await launcher.NextAsync();
             await refreshed.ReplyAsync(await refreshed.ReadAsync("initialize"), InitializeWithAgentMethod);
             await refreshed.OpenAsync("post-signin-probe");
             Assert.Equal("post-signin-probe", await refreshed.CloseAsync());
 
-            await AuthCommand(socket, running, "cancelled-auth", new StartSignIn("claude", "", "actual", null));
+            await AuthCommand(socket, running, "cancelled-auth", new StartSignIn("claude", account, "actual", null));
             var cancelled = await launcher.NextAsync();
             await cancelled.ReplyAsync(await cancelled.ReadAsync("initialize"), InitializeWithAgentMethod);
             await cancelled.ReadAsync("auth/login");
@@ -86,8 +98,50 @@ public sealed partial class EngineHostTests
             Assert.Equal(["claude", "claude", "claude", "claude"], launcher.Launched);
             Assert.False(refreshed.Disposed); // Cancelling the dedicated attempt preserves the unrelated shared adapter.
             Assert.True(probe.Disposed); // Successful sign-in retired the exact idle shared probe instance.
+            Assert.Equal(4, captured.Environments.Count);
+            if (privateHome)
+            {
+                Assert.True(AccountContext.IsValid(account));
+                Assert.All(captured.Environments, map => Assert.True(map.TryGetValue("CLAUDE_CONFIG_DIR", out var value) && value == rawHome));
+                using var read = await running.Open(bulk: true);
+                var provider = await Entity(read, "provider", target);
+                Assert.Equal(account, provider.GetProperty("accountContext").GetString());
+                Assert.False(provider.GetRawText().Contains(rawHome, StringComparison.Ordinal));
+                var operationView = await Entity(read, "sign_in", "successful-auth");
+                Assert.Equal(account, operationView.GetProperty("accountContext").GetString());
+                Assert.False(operationView.GetRawText().Contains(rawHome, StringComparison.Ordinal));
+                var leaks = ((IEngineRuntime)running.Runtime).Read(scope => new[]
+                {
+                    scope.QueryFirst("SELECT COUNT(*) FROM engine_provider WHERE instr(id,$raw)>0 OR instr(account_context,$raw)>0", row => row.Long(0), new SqlArg("$raw", rawHome)),
+                    scope.QueryFirst("SELECT COUNT(*) FROM engine_sign_in WHERE instr(account_context,$raw)>0", row => row.Long(0), new SqlArg("$raw", rawHome)),
+                    scope.QueryFirst("SELECT COUNT(*) FROM engine_event WHERE instr(entity_id,$raw)>0 OR instr(data_json,$raw)>0", row => row.Long(0), new SqlArg("$raw", rawHome)),
+                    scope.QueryFirst("SELECT COUNT(*) FROM engine_outbox WHERE instr(id,$raw)>0 OR instr(order_key,$raw)>0 OR instr(payload_json,$raw)>0 OR instr(COALESCE(receipt_json,''),$raw)>0", row => row.Long(0), new SqlArg("$raw", rawHome))
+                }, default);
+                Assert.All(leaks, count => Assert.Equal(0, count));
+            }
         }
         finally { Directory.Delete(home, true); }
+    }
+
+    private sealed class AuthEnvironmentLauncher(IAgentLauncher inner) : IAgentLauncher
+    {
+        internal ConcurrentQueue<IReadOnlyDictionary<string, string>> Environments { get; } = new();
+        public IReadOnlyList<AgentDescriptor> Agents => inner.Agents;
+        public bool CanRunTerminalAuthentication => inner.CanRunTerminalAuthentication;
+        public void ValidateFolder(string folder) => inner.ValidateFolder(folder);
+        public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken ct) => inner.CheckoutAsync(session, stages, ct);
+        public Task<IAgentLink> LaunchAsync(string agent, StageTimes stages, CancellationToken ct) => inner.LaunchAsync(agent, stages, ct);
+        public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, StageTimes stages, CancellationToken ct)
+        {
+            Environments.Enqueue(environment.ToDictionary(pair => pair.Key, pair => pair.Value));
+            return inner.LaunchConfiguredAsync(descriptor, environment, stages, ct);
+        }
+        public Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment,
+            IPermissionPolicy policy, StageTimes stages, CancellationToken ct)
+        {
+            Environments.Enqueue(environment.ToDictionary(pair => pair.Key, pair => pair.Value));
+            return inner.LaunchSignInAsync(descriptor, environment, policy, stages, ct);
+        }
     }
 
     private static async Task AuthCommand(System.Net.WebSockets.ClientWebSocket socket, Host running, string id, EngineCommand command)
