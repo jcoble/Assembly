@@ -5,6 +5,7 @@ using Assembly.Engine.Messages;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
+using Assembly.Engine.Workflows.Reviews;
 
 namespace Assembly.Engine.Workflows.Receipts;
 
@@ -74,7 +75,16 @@ public static partial class ReceiptTransitions
             new(observed.SessionId, observed.RunId, observed.StepId, null, "released", observed.Epoch))];
         if (!active)
         {
-            // The release can settle aggregate run state without reviving an ended/lost worker or rewriting its outcome.
+            // Failed/cancelled work can release its slot only after proof covering the latest actual execution.
+            var fence = new WorkflowExecutionFence(observed.StepId!, original.OriginalGeneration, observed.Attempt!.Value, observed.Epoch);
+            if (current && original.State is "failed" or "cancelled" && original.SessionState is "idle" or "running" or "lost" &&
+                WorkflowExecutionReleases.IsReleased(scope, fence))
+            {
+                var finalized = SessionTransitions.EndReleasedWorkflowWorker(scope,
+                    context with { EntityId = observed.SessionId, ExpectedVersion = original.SessionVersion }, fence, policy);
+                if (!finalized.Applied) throw new InvalidOperationException("Released terminal workflow worker finalization refused: " + finalized.Error);
+            }
+            // Aggregate settlement never revives a step/session or replaces its original outcome.
             if (current && !RunTransitions.IsTerminal(original.RunState)) events.AddRange(RunTransitions.Recompute(scope, context, observed.RunId!));
             return EngineJournal.Commit(scope, context, original.Version, observed.Epoch, events, [], late: true);
         }

@@ -66,7 +66,7 @@ internal sealed partial class ReceiptChecks : IReceiptChecks
             if (original is null || start is null || original.Report.Receipt is null) return Unavailable("receipt_unknown");
             var key = start.StepIds.SingleOrDefault(pair => pair.Value == intent.StepId).Key;
             if (key is null || !start.Snapshot.Definition.Steps.TryGetValue(key, out var spec)) return Unavailable("receipt_unknown");
-            var values = EngineCommands.TemplateValues(scope, start, effect.RunId!);
+            var values = EngineCommands.TemplateValues(scope, start, effect.RunId!, intent.StepId, intent.Generation);
             var expected = spec.ExpectFiles.Select(pattern => WorkflowTemplates.Render(pattern, values)).ToArray();
             IReadOnlyList<string> earlier = [];
             if (spec.Kind == "review" && spec.RedoTarget is { } targetKey && start.StepIds.TryGetValue(targetKey, out var targetStep))
