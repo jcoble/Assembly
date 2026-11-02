@@ -1,4 +1,6 @@
 using Assembly.Engine.Execution;
+using Assembly.Infrastructure.Engine.Auth;
+using Assembly.Engine.Providers;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Hosting;
 using Assembly.Engine.Sessions;
@@ -42,7 +44,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, SessionLimits limits,
-        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover, Func<EngineRuntime, IEngineEffects>? effectsFactory, Func<IReadScope, int>? readExpiryMinutes, Task? effectsReady)
+        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover, Func<EngineRuntime, IEngineEffects>? effectsFactory, Func<IReadScope, int>? readExpiryMinutes, Task? effectsReady, Func<string, string, bool>? isConfiguredProvider = null)
     {
         if (effects is not null && effectsFactory is not null) throw new ArgumentException("Supply effects or effectsFactory, not both.");
         _db = db;
@@ -56,8 +58,9 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         var initialized = db.Writer.Write("engine.initialize", scope =>
         {
             var schema = EngineSchema.Initialize(scope, now, projectionSchema, readExpiryMinutes?.Invoke(scope) ?? 30);
-            var commands = new EngineCommands(schema.Machine, limits, messageLimit, projectStart, accountContext, ProjectCompletion, expiryPolicy);
+            var commands = new EngineCommands(schema.Machine, limits, messageLimit, projectStart, accountContext, ProjectCompletion, expiryPolicy, isConfiguredProvider);
             cutover?.Initialize(scope, commands, schema.Machine, now, schema.PreviousVersion is 1 or 2 or 3);
+            AuthInitialization.Interrupt(scope, commands, schema.Machine, now);
             return (Machine: schema.Machine, Commands: commands);
         });
         Machine = initialized.Machine;
@@ -67,6 +70,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         Usage = new(db);
         Publisher = new(db);
         _effects = effectsFactory is null ? effects : effectsFactory(this);
+        if (_effects is EffectRouter router) router.Seal();
         _worker = new(db, Commands, Machine, time, _effects, retention ?? new EngineRetention(
             () => Publisher.PublishedThrough, () => Publisher.MinimumReaderAck, Publisher.InvalidateReadersBefore));
         _subscription = topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => _wake.Writer.TryWrite(true));
@@ -78,8 +82,8 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
         SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null, SessionCutover? cutover = null,
-        Func<EngineRuntime, IEngineEffects>? effectsFactory = null, Func<IReadScope, int>? readExpiryMinutes = null, Task? effectsReady = null) =>
-        new(db, topics, time, limits, effects, retention, messageLimit, cutover, effectsFactory, readExpiryMinutes, effectsReady);
+        Func<EngineRuntime, IEngineEffects>? effectsFactory = null, Func<IReadScope, int>? readExpiryMinutes = null, Task? effectsReady = null, Func<string, string, bool>? isConfiguredProvider = null) =>
+        new(db, topics, time, limits, effects, retention, messageLimit, cutover, effectsFactory, readExpiryMinutes, effectsReady, isConfiguredProvider);
 
     private async Task RunWorkerAsync(Task? ready)
     {
@@ -92,9 +96,12 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         catch (OperationCanceledException) when (_stop.IsCancellationRequested || ready?.IsCanceled == true) { }
     }
 
-    private void ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt)
+    private MessageOutcome? ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt, MessageDelivery? delivery)
     {
-        if (_effects is AdapterEffects adapter) adapter.ProjectCompletion(scope, context, effect, receipt);
+        if (_effects is EffectRouter router) return router.ProjectCompletion(scope, context, effect, receipt, delivery);
+        if (_effects is AdapterEffects adapter && effect.Kind == "send")
+            return adapter.ProjectCompletion(scope, context, effect, receipt, delivery ?? throw new InvalidOperationException("Missing validated delivery."));
+        return null;
     }
 
     T IEngineRuntime.Write<T>(Func<IWriteScope, T> body)
@@ -220,6 +227,10 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         _topics.Unsubscribe(_mirrorSubscription);
         await _stop.CancelAsync();
         try { await Task.WhenAll(_workerTask, _publisherTask); }
-        finally { _stop.Dispose(); }
+        finally
+        {
+            try { if (_effects is EffectRouter router) await router.DisposeAsync(); }
+            finally { _stop.Dispose(); }
+        }
     }
 }

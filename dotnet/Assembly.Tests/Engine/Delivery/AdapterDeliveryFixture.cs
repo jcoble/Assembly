@@ -13,6 +13,7 @@ using Assembly.Engine.Messages;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Auth;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Tests.Features.Chat.Sessions;
 using Microsoft.Extensions.Time.Testing;
@@ -25,6 +26,8 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
     private readonly TempDatabase _file = new();
     private readonly bool _worker;
     private readonly bool _legacy;
+    private readonly bool _router;
+    public EffectRouter? Router { get; private set; }
     private IDisposable _subscription = null!;
     public Topics Topics { get; private set; } = null!;
     public AppDatabase Db { get; private set; } = null!;
@@ -40,7 +43,7 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
     public AdapterEffects Effects { get; private set; } = null!;
     public EngineCommands Commands { get; private set; } = null!;
     public Channel<EngineEvent> Events { get; } = Channel.CreateUnbounded<EngineEvent>();
-    public AdapterDeliveryFixture(bool worker = false, bool legacy = false) { _worker = worker; _legacy = legacy; Open(); }
+    public AdapterDeliveryFixture(bool worker = false, bool legacy = false, bool router = false) { _worker = worker; _legacy = legacy; _router = router; Open(); }
     private void Open()
     {
         var topics = Topics = new Topics(); Db = AppDatabase.Open(_file.Path, Time, topics);
@@ -53,17 +56,22 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
         AdapterEffects Create(EngineRuntime runtime)
         {
             Assert.NotNull(Sessions.Get(Session.SessionId));
-            Assert.Equal(6, Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+            Assert.Equal(8, Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
             Hosts = new SessionRegistry(Hub, Sessions, Launcher, Time, TextWriter.Null, Work, feed: new EngineFeed(runtime, TextWriter.Null, Time));
             return Effects = new AdapterEffects(Db, Hosts, Sessions, Rows);
+        }
+        IEngineEffects CreateOwner(EngineRuntime runtime)
+        {
+            var adapter = Create(runtime);
+            return _router ? Router = new EffectRouter(adapter) : adapter;
         }
         using var ready = new ManualResetEventSlim();
         using var readiness = topics.Subscribe("test.worker.ready", null, _ => { }, (_, _) => ready.Set());
         Runtime = EngineRuntime.Start(Db, topics, Time, new(() => 5, () => 10), cutover: cutover,
-            effectsFactory: _worker ? Create : null, retention: new ReadyRetention());
+            effectsFactory: _worker ? CreateOwner : null, retention: new ReadyRetention());
         Assert.True(ready.Wait(TimeSpan.FromSeconds(8)));
         if (!_worker) Create(Runtime);
-        Commands = _worker ? Runtime.Commands : new EngineCommands(Runtime.Machine, new(() => 5, () => 10), projectCompletion: Effects.ProjectCompletion);
+        Commands = _worker ? Runtime.Commands : new EngineCommands(Runtime.Machine, new(() => 5, () => 10), projectCompletion: (s, c, e, r, d) => d is null ? null : Effects.ProjectCompletion(s, c, e, r, d));
         _subscription = Runtime.Publisher.Register(e => Events.Writer.TryWrite(e), out _);
     }
     public string Queue(string text = "exact body", string client = "C", bool raw = true, IReadOnlyList<string>? refs = null, string? sessionId = null)

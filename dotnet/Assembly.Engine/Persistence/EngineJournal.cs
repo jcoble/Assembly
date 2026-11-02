@@ -9,7 +9,7 @@ namespace Assembly.Engine.Persistence;
 public sealed record EventDraft(string Kind, string EntityKind, string EntityId,
     long Version, bool Late, EngineEventData Data);
 public sealed record EffectDraft(string Id, string Kind, string? SessionId,
-    string? RunId, JsonElement Payload);
+    string? RunId, JsonElement Payload, string? OrderKey = null);
 
 /// <summary>Uses the caller's writer transaction for state, journal, effects and durable command receipts.</summary>
 public static partial class EngineJournal
@@ -73,13 +73,16 @@ public static partial class EngineJournal
         for (var index = 0; index < effects.Count; index++)
         {
             var effect = effects[index];
+            var id = (effect.Kind is "answer" or "send" or "probe_provider" or "begin_sign_in" or "cancel_sign_in" ||
+                effect.Kind == "stop" && effect.Id.StartsWith("message-stop/", StringComparison.Ordinal))
+                ? effect.Id : $"{context.CommandId:N}-{index}";
             scope.Execute("""
-                INSERT INTO engine_outbox(id,version,machine,created_ms,updated_ms,event_seq,session_id,run_id,kind,payload_json,state,attempt)
-                VALUES($id,0,$machine,$now,$now,$seq,$session,$run,$kind,$payload,'pending',0)
-                """, new("$id", (effect.Kind is "answer" or "send" || effect.Kind == "stop" && effect.Id.StartsWith("message-stop/", StringComparison.Ordinal))
-                    ? effect.Id : $"{context.CommandId:N}-{index}"), new("$machine", context.Machine), new("$now", context.NowMs),
+                INSERT INTO engine_outbox(id,version,machine,created_ms,updated_ms,event_seq,session_id,run_id,kind,payload_json,state,attempt,order_key)
+                VALUES($id,0,$machine,$now,$now,$seq,$session,$run,$kind,$payload,'pending',0,$order)
+                """, new("$id", id), new("$machine", context.Machine), new("$now", context.NowMs),
                 new("$seq", last), new("$session", effect.SessionId), new("$run", effect.RunId),
-                new("$kind", effect.Kind), new("$payload", effect.Payload.GetRawText()));
+                new("$kind", effect.Kind), new("$payload", effect.Payload.GetRawText()),
+                new("$order", effect.OrderKey ?? effect.SessionId ?? ("effect/" + id)));
         }
         if (events.Count > 0 || effects.Count > 0)
             scope.Publish("__engine_committed", null, last, EngineJson.Default.Int64);

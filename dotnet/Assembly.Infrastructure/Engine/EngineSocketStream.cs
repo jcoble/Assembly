@@ -27,7 +27,7 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
     {
         machine ??= runtime.Machine;
         var high = runtime.Reader.HighWatermark(cancellationToken, machine);
-        if (topic is not ("runs" or "sessions" or "needs_me" or "messages" or "prs" or "usage" or "mirror"))
+        if (topic is not ("runs" or "sessions" or "needs_me" or "messages" or "prs" or "usage" or "providers" or "mirror"))
             throw new ArgumentException("Unknown engine topic");
         if (key is not null && (topic == "mirror" || string.IsNullOrWhiteSpace(key))) throw new ArgumentException("Invalid engine key");
         if (after is { } cursor && (cursor < 0 || cursor > high))

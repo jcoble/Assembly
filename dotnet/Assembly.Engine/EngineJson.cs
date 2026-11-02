@@ -1,4 +1,5 @@
 using Assembly.Engine.Reading;
+using Assembly.Engine.Providers;
 using Assembly.Engine.Mirror;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Recording;
@@ -19,6 +20,22 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(CursorAt))]
 [JsonSerializable(typeof(StreamPage))]
 [JsonSerializable(typeof(SnapshotPage))]
+[JsonSerializable(typeof(CheckProvider))]
+[JsonSerializable(typeof(RecordProviderCheck))]
+[JsonSerializable(typeof(ProviderCheckCanonical))]
+[JsonSerializable(typeof(InterruptProviderCheck))]
+[JsonSerializable(typeof(StartSignIn))]
+[JsonSerializable(typeof(SignInProgress))]
+[JsonSerializable(typeof(CancelSignIn))]
+[JsonSerializable(typeof(ExpireSignIn))]
+[JsonSerializable(typeof(InterruptSignIn))]
+[JsonSerializable(typeof(ProviderProbeBinding))]
+[JsonSerializable(typeof(ProbeProviderEffect))]
+[JsonSerializable(typeof(ProviderEffectData))]
+[JsonSerializable(typeof(SignInAttemptBinding))]
+[JsonSerializable(typeof(BeginSignInEffect))]
+[JsonSerializable(typeof(CancelSignInEffect))]
+[JsonSerializable(typeof(SignInEffectData))]
 [JsonSerializable(typeof(Effect))]
 [JsonSerializable(typeof(EffectReceipt))]
 [JsonSerializable(typeof(ClaimEffect))]

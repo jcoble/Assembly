@@ -20,6 +20,8 @@ internal static class DisplayQueries
         "pr" => "run_id,repo,number,head,state,reported_by,reported_state,observed_head,observed_ms,url",
         "tool_call" => "session_id,run_id,step_id,attempt,epoch,tool,input_preview,output_preview,input_bytes,output_bytes,started_ms,ended_ms,outcome,late",
         "usage" => "session_id,run_id,step_id,attempt,epoch,input_tokens,output_tokens,cached_tokens,cost_nanodollars,duration_ms,late",
+        "provider" => "provider,account_context,installation,auth_state,reason,facts_json,checked_ms",
+        "sign_in" => "provider,account_context,method_id,state,reason,deadline_ms,origin_need_id",
         _ => throw new ArgumentException("Unknown entity kind", nameof(kind))
     });
 
@@ -115,13 +117,14 @@ internal static class DisplayQueries
 
     internal static string[] Kinds(string topic) => topic switch
     {
-        "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr"],
+        "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr", "provider", "sign_in"],
         "runs" => ["run", "step", "handoff"],
         "sessions" => ["session", "handoff"],
         "needs_me" => ["needs_me"],
         "messages" => ["message"],
         "prs" => ["pr"],
         "usage" => ["usage", "tool_call"],
+        "providers" => ["provider", "sign_in"],
         _ => throw new ArgumentException("Unknown topic", nameof(topic))
     };
 

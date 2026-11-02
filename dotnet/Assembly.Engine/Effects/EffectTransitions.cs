@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Providers;
 using Assembly.Engine.Handoffs;
 using Assembly.Engine.Messages;
 using Assembly.Engine.NeedsMe;
@@ -16,17 +17,17 @@ public static class EffectTransitions
     // Shared by selection and the SQL claim guard; ids are deliberately not an ordering key.
     public const string NoEarlierUnresolved = """
         NOT EXISTS (SELECT 1 FROM engine_outbox earlier
-          WHERE earlier.session_id=engine_outbox.session_id AND earlier.kind<>'parent_need' AND earlier.state NOT IN ('done','failed','dead')
+          WHERE earlier.order_key=engine_outbox.order_key AND earlier.kind<>'parent_need' AND earlier.state NOT IN ('done','failed','dead')
           AND (earlier.event_seq<engine_outbox.event_seq OR
             (earlier.event_seq=engine_outbox.event_seq AND earlier.rowid<engine_outbox.rowid)))
         """;
 
     public static Effect? Read(IAppDatabase db, string effectId, CancellationToken cancellationToken) => db.QueryFirst(
-        "SELECT id,kind,session_id,run_id,payload_json,attempt FROM engine_outbox WHERE id=$id", Map,
+        "SELECT id,kind,session_id,run_id,payload_json,attempt,order_key FROM engine_outbox WHERE id=$id", Map,
         cancellationToken, new SqlArg("$id", effectId));
 
     private static Effect Map(IRow r) => new(r.Text(0), r.Text(1), r.IsNull(2) ? null : r.Text(2),
-        r.IsNull(3) ? null : r.Text(3), ParsePayload(r.Text(4)), checked((int)r.Long(5)));
+        r.IsNull(3) ? null : r.Text(3), ParsePayload(r.Text(4)), checked((int)r.Long(5)), r.Text(6));
 
     private static JsonElement ParsePayload(string json)
     {
@@ -35,7 +36,7 @@ public static class EffectTransitions
     }
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command,
-        Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
+        Func<IWriteScope, CommandContext, Effect, EffectReceipt, MessageDelivery?, MessageOutcome?>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
     {
         var row = s.QueryFirst("SELECT version,state,attempt,next_ms,kind FROM engine_outbox WHERE id=$id",
             r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3), Kind = r.Text(4) }, new SqlArg("$id", c.EntityId));
@@ -81,18 +82,19 @@ public static class EffectTransitions
                 break;
             default: return Reject("invalid_transition");
         }
-        var effect = s.QueryFirst("SELECT id,kind,session_id,run_id,payload_json,attempt FROM engine_outbox WHERE id=$id", Map, new SqlArg("$id", c.EntityId))!;
+        var effect = s.QueryFirst("SELECT id,kind,session_id,run_id,payload_json,attempt,order_key FROM engine_outbox WHERE id=$id", Map, new SqlArg("$id", c.EntityId))!;
         if (command is EnableEffect && state == "pending" && effect.Kind == "send") state = "dead";
         // Validate receipts before touching the row; the provider can report data, never an injected command.
-        if (state == "done" && !ValidConfirmation(effect, receipt!)) return Reject("bad_receipt");
+        if (state == "done" && !ValidConfirmation(s, c, effect, receipt!)) return Reject("bad_receipt");
+        MessageDelivery? delivery = null;
         if (effect.Kind == "send" && (state is "done" or "failed" || state == "dead" && command is EnableEffect))
         {
-            MessageDelivery? delivery;
             try { delivery = MessageDelivery.Read(s, effect); }
             catch (Exception error) when (error is JsonException or DecoderFallbackException) { delivery = null; }
             if (delivery is null || delivery.Epoch != c.Epoch) return Reject("stale_delivery");
         }
-        if (command is CompleteEffect && state == "done") projectCompletion?.Invoke(s, c, effect, receipt!);
+        var projected = command is CompleteEffect && state == "done"
+            ? projectCompletion?.Invoke(s, c, effect, receipt!, delivery) : null;
         // Preserve uncertainty while the reconciliation service is unavailable.
         if (state == "unavailable" && s.QueryFirst("SELECT json_extract(receipt_json,'$.disposition') FROM engine_outbox WHERE id=$id",
                 r => !r.IsNull(0) && r.Long(0) == (long)EffectDisposition.Unknown, new SqlArg("$id", c.EntityId)))
@@ -102,7 +104,7 @@ public static class EffectTransitions
                 receipt_json=COALESCE($receipt,receipt_json),last_error=CASE WHEN $receipt IS NULL THEN last_error ELSE $error END WHERE id=$id
             """, new("$state", state), new("$now", c.NowMs), new("$next", next), new("$id", c.EntityId),
             new("$receipt", receipt is null ? null : JsonSerializer.Serialize(receipt, EngineJson.Default.EffectReceipt)), new("$error", receipt?.Error));
-        if (state == "done") Confirm(s, c, effect, receipt!, expiryPolicy);
+        if (state == "done") Confirm(s, c, effect, receipt!, expiryPolicy, projected);
         if (effect.Kind == "send" && (state == "failed" || state == "dead" && command is EnableEffect))
             SetMessageOutcome(s, c, effect, new(state == "failed" ? "failed" : "queued", null, state == "failed" ? receipt?.Error ?? "effect_failed" : "not_delivered"));
         return Commit(s, c, row.Version + 1, state);
@@ -110,10 +112,11 @@ public static class EffectTransitions
 
     private static long RetryDelayMs(long attempt) => Math.Min(1000L << (int)Math.Clamp(attempt - 1, 0, 6), 60000);
 
-    private static bool ValidConfirmation(Effect effect, EffectReceipt receipt)
+    private static bool ValidConfirmation(IReadScope scope, CommandContext context, Effect effect, EffectReceipt receipt)
     {
         try
         {
+            if (AuthEffectBinding.IsAuth(effect.Kind)) return AuthEffectBinding.ValidConfirmation(scope, context, effect, receipt);
             return effect.Kind switch
             {
                 "answer" => receipt.Data.Deserialize(EngineJson.Default.AnswerEffectData)?.ProviderRequestId ==
@@ -129,8 +132,9 @@ public static class EffectTransitions
         catch (JsonException) { return false; }
     }
 
-    private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy)
+    private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy, MessageOutcome? projected)
     {
+        if (AuthEffectBinding.IsAuth(effect.Kind)) return;
         var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested FROM engine_session WHERE id=$id",
             r => (Version: r.Long(0), Epoch: r.Long(1), State: r.Text(2), CancelRequested: r.Long(3) != 0), new SqlArg("$id", effect.SessionId));
         var target = c with { EntityId = effect.SessionId!, ExpectedVersion = session.Version, Epoch = session.Epoch };
@@ -146,7 +150,7 @@ public static class EffectTransitions
         if (effect.Kind == "send")
         {
             var data = receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)!;
-            SetMessageOutcome(s, c, effect, new(data.State, data.ProviderTurnId, data.Reason));
+            SetMessageOutcome(s, c, effect, projected ?? new(data.State, data.ProviderTurnId, data.Reason));
         }
         if (effect.Kind == "handoff")
         {
