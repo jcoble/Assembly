@@ -25,7 +25,7 @@ public sealed class AskOwnerToolTests
     {
         await using var h = new Harness();
         h.Fixture.SeedSession("s"); h.Fixture.SeedRun(); h.Fixture.SeedStep();
-        var response = await h.Call(new AskOwnerTool(h.Gate), "s", """{"question":"Proceed?","runId":"r"}""");
+        var response = await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", """{"question":"Proceed?","runId":"r"}""");
         Assert.False(response.IsError);
         using var json = JsonDocument.Parse(Text(response));
         var id = json.RootElement.GetProperty("needId").GetString()!;
@@ -44,7 +44,7 @@ public sealed class AskOwnerToolTests
     public async Task Child_ask_owner_is_refused()
     {
         await using var h = new Harness(); h.Fixture.SeedSession("parent"); h.Fixture.SeedSession("s", parentId: "parent");
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", """{"question":"Proceed?"}""");
+        var result = await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", """{"question":"Proceed?"}""");
         Assert.True(result.IsError);
         Assert.Equal("Only a top-level session can ask Jesse. Send your question to your starter with send_message.", Text(result));
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Empty(h.Fixture.Events());
@@ -58,7 +58,7 @@ public sealed class AskOwnerToolTests
     public async Task Choice_needs_two_to_eight_options(string options)
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}");
+        var result = await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}");
         Assert.True(result.IsError); Assert.Equal("ask_owner: options needs 2 to 8 distinct entries.", Text(result));
         Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
     }
@@ -74,7 +74,7 @@ public sealed class AskOwnerToolTests
     public async Task Invalid_arguments_mutate_nothing(string args)
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
-        Assert.True((await h.Call(new AskOwnerTool(h.Gate), "s", args)).IsError);
+        Assert.True((await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", args)).IsError);
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Empty(h.Fixture.Events());
     }
 
@@ -82,7 +82,7 @@ public sealed class AskOwnerToolTests
     public async Task Foreign_run_is_refused_through_engine_gate()
     {
         await using var h = new Harness(); h.Fixture.SeedSession("other"); h.Fixture.SeedRun(ownerSessionId: "other"); h.Fixture.SeedSession(runId: "r");
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", """{"question":"Proceed?","runId":"r"}""");
+        var result = await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", """{"question":"Proceed?","runId":"r"}""");
         Assert.True(result.IsError); Assert.Equal("ask_owner: Assembly refused these arguments.", Text(result));
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
     }
@@ -173,7 +173,7 @@ public sealed class AskOwnerToolTests
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
         var options = JsonSerializer.Serialize(Enumerable.Range(0, count).Select(i => i.ToString()).ToArray());
-        Assert.False((await h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}")).IsError);
+        Assert.False((await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}")).IsError);
         Assert.Equal("choice", h.Fixture.Text("SELECT kind FROM engine_needs_me"));
     }
 
@@ -184,7 +184,7 @@ public sealed class AskOwnerToolTests
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
         var args = "{\"question\":\"" + new string('q', length) + "\"}";
-        Assert.Equal(refused, (await h.Call(new AskOwnerTool(h.Gate), "s", args)).IsError == true);
+        Assert.Equal(refused, (await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", args)).IsError == true);
         Assert.Equal(refused ? 0 : 1, h.Fixture.Count("engine_needs_me"));
     }
 
@@ -195,7 +195,7 @@ public sealed class AskOwnerToolTests
         var published = 0;
         using var subscription = h.Topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => Interlocked.Increment(ref published));
         h.Fixture.Db.Writer.Write("test.fail", s => s.Execute("CREATE TRIGGER fail_need AFTER INSERT ON engine_needs_me BEGIN SELECT RAISE(ABORT,'injected'); END"));
-        await Assert.ThrowsAsync<SqliteException>(() => h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Proceed?\"}"));
+        await Assert.ThrowsAsync<SqliteException>(() => h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", "{\"question\":\"Proceed?\"}"));
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
         Assert.Empty(h.Fixture.Events()); Assert.Equal("idle", h.Fixture.State("engine_session", "s")); Assert.Equal(0, published);
     }
@@ -217,7 +217,7 @@ public sealed class AskOwnerToolTests
     public async Task Caller_and_window_answer_use_the_need_sessions_epoch()
     {
         await using var h = new Harness(); h.Fixture.SeedSession(epoch: 7);
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Proceed?\"}", epoch: 7);
+        var result = await h.Call(new AskOwnerTool(h.Gate, h.Needs), "s", "{\"question\":\"Proceed?\"}", epoch: 7);
         Assert.False(result.IsError);
         var id = h.Fixture.Text("SELECT id FROM engine_needs_me")!;
         var command = new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes"));
@@ -235,6 +235,7 @@ public sealed class AskOwnerToolTests
         public EngineFixture Fixture { get; }
         private readonly EngineRuntime _runtime;
         public McpGate Gate { get; }
+        public INeedAnswers Needs { get; } = new UnexpectedNeeds();
 
         public Harness()
         {
@@ -244,7 +245,7 @@ public sealed class AskOwnerToolTests
             Gate = new(_runtime, limits, Fixture.Time);
         }
 
-        public async Task<CallToolResult> Call(EngineTool tool, string session, string arguments, long epoch = 0)
+        public async Task<CallToolResult> Call(McpServerTool tool, string session, string arguments, long epoch = 0)
         {
             using var input = new MemoryStream();
             using var output = new MemoryStream();
@@ -253,6 +254,7 @@ public sealed class AskOwnerToolTests
             var request = new RequestContext<CallToolRequestParams>(server, new() { Method = "tools/call", Id = new RequestId(1) },
                 new() { Name = tool.ProtocolTool.Name, Arguments = values })
             { User = new ClaimsPrincipal(new ClaimsIdentity([new("assembly:session", session), new("assembly:epoch", epoch.ToString(System.Globalization.CultureInfo.InvariantCulture))], "test")) };
+            using var captured = McpRequestWait.Capture(request, CancellationToken.None);
             return await tool.InvokeAsync(request);
         }
 
@@ -261,5 +263,11 @@ public sealed class AskOwnerToolTests
             await _runtime.DisposeAsync();
             Fixture.Dispose();
         }
+    }
+
+    private sealed class UnexpectedNeeds : INeedAnswers
+    {
+        public Task<CommandResult> ApplyAsync(McpCaller caller, ParentNeedRequest request, CancellationToken workCancellation, CancellationToken waitCancellation) =>
+            throw new InvalidOperationException("An ordinary own question must not invoke the routed-needs service.");
     }
 }

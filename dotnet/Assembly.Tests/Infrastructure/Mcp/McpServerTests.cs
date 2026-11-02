@@ -28,7 +28,7 @@ using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Mcp;
 
-public sealed class McpServerTests
+public sealed partial class McpServerTests
 {
     [Theory]
     [InlineData(false)]
@@ -197,7 +197,7 @@ public sealed class McpServerTests
         public HttpClient Http { get; private set; } = null!;
         private Host() => Fixture = new(topics: _topics);
 
-        public static async Task<Host> StartAsync(bool unauthenticated = false, bool board = false, bool helper = false)
+        public static async Task<Host> StartAsync(bool unauthenticated = false, bool board = false, bool helper = false, McpServerTool? extraTool = null, Action<Microsoft.AspNetCore.Http.HttpContext>? requestFinished = null)
         {
             var h = new Host();
             if (board)
@@ -218,6 +218,7 @@ public sealed class McpServerTests
             h._runtime = EngineRuntime.Start(h.Fixture.Db, h._topics, h.Fixture.Time, h.Fixture.Limits, effectsReady: h._endpoint.Ready);
             var gate = new McpGate(h._runtime, h.Fixture.Limits, h.Fixture.Time);
             IReadOnlyList<McpServerTool> tools = h.Board is null ? [new ListSessionsTool(gate)] : [new ListSessionsTool(gate), new BoardUpdateTool(gate, h.Board)];
+            if (extraTool is not null) tools = [.. tools, extraTool];
             var host = new McpServerHost(h.Tokens, new(h._runtime, gate, h.Fixture.Time), tools);
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
@@ -225,6 +226,12 @@ public sealed class McpServerTests
             host.AddServices(builder.Services);
             h._app = builder.Build();
             host.Map(h._app);
+            if (requestFinished is not null)
+                h._app.Use(next => async context =>
+                {
+                    try { await next(context); }
+                    finally { requestFinished(context); }
+                });
             if (unauthenticated)
             {
                 h._app.Use(next => context =>
