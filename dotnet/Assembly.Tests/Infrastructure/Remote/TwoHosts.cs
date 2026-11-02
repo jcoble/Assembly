@@ -37,6 +37,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         public WebApplication App { get; private set; } = null!;
         public Uri Address { get; private set; } = null!;
         public SocketEndpoint Endpoint { get; private set; } = null!;
+        public SocketEndpoint BulkEndpoint { get; private set; } = null!;
         private bool _running;
         public int MachineCalls;
         public event Action? RetentionCommitted;
@@ -89,7 +90,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));
             App = builder.Build(); App.UseWebSockets();
             Endpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, engineMachine: Runtime.Machine);
-            var bulk = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, bulk: true, engineMachine: OmitBulkIdentity ? null : BulkIdentity ?? Runtime.Machine);
+            var bulk = BulkEndpoint = new SocketEndpoint("isolated-token", calls, Fixture.Machine, Fixture.Time, bulk: true, engineMachine: OmitBulkIdentity ? null : BulkIdentity ?? Runtime.Machine);
             App.Map("/socket", Endpoint.HandleAsync);
             App.Map("/socket/bulk", async context =>
             {
@@ -151,7 +152,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.OwnerReadCalls);
                         if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);
                     }
-                    if (machineReads && feature == "engine" && method is ("foreign_title_source_close" or "relay_source_open" or "relay_source_part") && host.MachineReading is { } machineRead)
+                    if (machineReads && feature == "engine" && method is ("foreign_title_source_close" or "relay_source_open" or "relay_source_part" or "relay_send_ack") && host.MachineReading is { } machineRead)
                         await machineRead(method, call).WaitAsync(call.Cancellation);
                     return await handler(value, call);
                 }, bulk);
@@ -162,7 +163,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                     if (machineReads && feature == "engine" && method is ("machine_command" or "relay_send_begin" or "relay_send_part") && host.MachineWriting is { } writing)
                         await writing(method, call);
                     var write = await handler(value, call);
-                    if (machineReads && feature == "engine" && method == "machine_command" && host.MachinePrepared is { } prepared)
+                    if (machineReads && feature == "engine" && method is ("machine_command" or "relay_send_commit") && host.MachinePrepared is { } prepared)
                         await prepared(method, call);
                     return write;
                 }, order, failed, bulk);
@@ -208,6 +209,7 @@ internal sealed class TwoHosts : IAsyncDisposable
     private RemoteConnections? _connections;
     private MachinesFeature? _machinesFeature;
     private MachineStore? _profiles;
+    private readonly Dictionary<string, Host> _additionalHosts = new(StringComparer.Ordinal);
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
         IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null)
     {
@@ -243,7 +245,8 @@ internal sealed class TwoHosts : IAsyncDisposable
                 var status = new MachineStatus(Mac.Topics, []);
                 _machinesFeature = new(machines, status, () => { }, TimeProvider.System);
                 _connections = new(profiles, Mac.Fixture.Db.Writer, machines, status, _hub, sessions, Mac.Topics, MirrorLog, _machinesFeature,
-                    open: (_, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new("workbox-test", Remote.Address, "isolated-token"), null)));
+                    open: (profile, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name,
+                        (profile.Name == "workbox-test" ? Remote : _additionalHosts[profile.Name]).Address, "isolated-token"), null)));
                 _connections.Start(new("workbox-test", "isolated"));
                 await _connections.ReadyAsync("workbox-test");
                 _machine = _connections.StartupSnapshot("workbox-test")!.Value.Machine;
@@ -257,10 +260,18 @@ internal sealed class TwoHosts : IAsyncDisposable
         }
         finally { Mac.Topics.Unsubscribe(sub); }
     }
-    public async Task Reached(long through)
+    public async Task AddMirror(string name, Host host)
+    {
+        _additionalHosts.Add(name, host);
+        _connections!.Start(new(name, "isolated"));
+        await _connections.ReadyAsync(name);
+        await Reached(host, host.Through);
+    }
+    public Task Reached(long through) => Reached(Remote, through);
+    public async Task Reached(Host host, long through)
     {
         var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Observe() { if (Mac.Fixture.Number("SELECT COALESCE(MAX(through),-1) FROM engine_mirror WHERE state='live' AND machine=$m", new SqlArg("$m", Remote.Fixture.Machine)) >= through) done.TrySetResult(); }
+        void Observe() { if (Mac.Fixture.Number("SELECT COALESCE(MAX(through),-1) FROM engine_mirror WHERE state='live' AND machine=$m", new SqlArg("$m", host.Fixture.Machine)) >= through) done.TrySetResult(); }
         if (!_forwardCommands) Mirror.CaughtUp += Observe;
         var sub = Mac.Topics.Subscribe("__engine_mirrored", null, _ => { }, (_, _) => Observe());
         try { Observe(); await done.Task.WaitAsync(TimeSpan.FromSeconds(30)); }

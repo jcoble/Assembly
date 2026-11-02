@@ -8,8 +8,10 @@ namespace Assembly.Tests.Infrastructure.Remote.Relays;
 
 public sealed partial class MachineRelayTests
 {
-    [Fact]
-    public async Task Dispose_joins_held_source_read_then_new_coordinator_recovers_original_queue()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Owner_or_coordinator_stop_joins_held_source_read_then_recovers_original_queue(bool disconnectOwner)
     {
         var delivery = new Delivery();
         await using var h = new TwoHosts(forwardCommands: true, effects: delivery, macEffects: delivery,
@@ -38,22 +40,25 @@ public sealed partial class MachineRelayTests
         {
             relay.Start();
             await reading.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await relay.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+            if (disconnectOwner) await h.DisconnectMirror().WaitAsync(TimeSpan.FromSeconds(10));
+            else await relay.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Empty(delivery.Sent);
             Assert.Equal("queued", h.Remote.Fixture.State("engine_message", "message"));
             Assert.Equal(0, h.Mac.Fixture.Count("engine_message"));
         }
-        finally { release.TrySetResult(); await relay.DisposeAsync(); }
+        catch { await relay.DisposeAsync(); throw; }
+        finally { release.TrySetResult(); }
         h.Remote.MachineReading = null;
         var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sub = h.Remote.Topics.Subscribe("__engine_committed", null, _ => { }, (_, _) =>
         {
             if (h.Remote.Fixture.State("engine_message", "message") == "next_turn") settled.TrySetResult();
         });
-        await using var recovered = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog);
+        await using var recovered = disconnectOwner ? relay : new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog);
         try
         {
-            recovered.Start();
+            if (disconnectOwner) await h.ReconnectSaved();
+            else recovered.Start();
             await settled.Task.WaitAsync(TimeSpan.FromSeconds(20));
             Assert.Single(delivery.Sent);
             Assert.Equal(1, h.Mac.Fixture.Count("engine_message"));

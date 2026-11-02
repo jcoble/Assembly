@@ -25,8 +25,10 @@ internal sealed partial class MachineRelay : IAsyncDisposable
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { SingleReader = true, FullMode = BoundedChannelFullMode.DropWrite });
     private readonly Lock _gate = new();
     private readonly HashSet<EngineMirror> _watched = [];
+    private readonly HashSet<string> _retryWakes = new(StringComparer.Ordinal);
     private TopicSet.Subscription? _mirrored;
     private IDisposable? _localEvents;
+    private readonly ConcurrentDictionary<string, EngineMirror.LiveMirrorBinding> _observedLive = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, IDisposable> _remoteEvents = new(StringComparer.Ordinal);
     private Task _run = Task.CompletedTask;
     private Task? _dispose;
@@ -61,7 +63,7 @@ internal sealed partial class MachineRelay : IAsyncDisposable
     {
         try
         {
-            if (machine is null || !_remoteEvents.ContainsKey(machine) || JsonSerializer.Deserialize(json, EngineJson.Default.MirrorNotice)?.Reset == true) Wake();
+            if (machine is null || !_observedLive.TryGetValue(machine, out var observed) || observed.IsInvalidated || JsonSerializer.Deserialize(json, EngineJson.Default.MirrorNotice)?.Reset == true) Wake();
         }
         catch (JsonException) { Wake(); }
     }
@@ -110,6 +112,8 @@ internal sealed partial class MachineRelay : IAsyncDisposable
             if (live.Machine == _runtime.Machine || !result.TryAdd(live.Machine, new(live.Machine, owner.Machine, owner.Mirror, live)))
                 throw new CallFailed("ambiguous engine owner");
         }
+        foreach (var machine in _observedLive.Keys.Where(machine => !result.ContainsKey(machine))) _observedLive.TryRemove(machine, out _);
+        foreach (var endpoint in result.Values) _observedLive[endpoint.Machine] = endpoint.Live!;
         foreach (var machine in _remoteEvents.Keys.Where(machine => !result.ContainsKey(machine)))
             if (_remoteEvents.TryRemove(machine, out var registration)) registration.Dispose();
         foreach (var machine in result.Keys)
@@ -152,9 +156,9 @@ internal sealed partial class MachineRelay : IAsyncDisposable
         finally
         {
             foreach (var mirror in _watched) mirror.CaughtUp -= Wake;
-            _watched.Clear();
+            _watched.Clear(); _retryWakes.Clear();
             foreach (var registration in _remoteEvents.Values) registration.Dispose();
-            _remoteEvents.Clear(); _stop.Dispose();
+            _remoteEvents.Clear(); _observedLive.Clear(); _stop.Dispose();
         }
     }
 }

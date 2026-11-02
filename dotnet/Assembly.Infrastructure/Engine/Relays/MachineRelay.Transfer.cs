@@ -18,6 +18,7 @@ internal sealed partial class MachineRelay
         ct = stop.Token;
         Dictionary<string, RemoteMachine.RelayBulkLease> leases = new(StringComparer.Ordinal);
         Source? opened = null;
+        var retryWake = false;
         try
         {
             foreach (var owner in new[] { source, target }.Where(owner => owner.Remote is not null).OrderBy(owner => owner.Machine, StringComparer.Ordinal))
@@ -38,6 +39,7 @@ internal sealed partial class MachineRelay
                 ack = await ReadAck(target, original, ct);
             }
             if (ack.Unknown) return;
+            if (ack.DestinationPresent || ack.Retry is not null) _retryWakes.Remove(ack.FirstKey);
             // Read both fixed receipt slots before choosing a fresh root or its one stale-epoch successor.
             for (var slot = 0; slot < 2 && !ack.DestinationPresent; slot++)
             {
@@ -48,8 +50,17 @@ internal sealed partial class MachineRelay
                 var epoch = ack.Destination?.RecipientEpoch;
                 if (epoch is null || ack.Destination is not { RecipientHolder: "local", RecipientReservedEpoch: null }) return;
                 var request = new RelaySendRequest(opened.Descriptor, epoch.Value, retry ? ack.FirstKey : null);
-                ack = await Send(target, leases.GetValueOrDefault(target.Machine), opened, request, ct);
+                var sent = await Send(target, leases.GetValueOrDefault(target.Machine), opened, request, ct);
+                ack = sent.Ack;
                 if (ack.Unknown) return;
+                if (ack.DestinationPresent || ack.Retry is not null) _retryWakes.Remove(ack.FirstKey);
+                if (sent.Uncertain)
+                {
+                    // Only an actual first stale refusal admits a later checked retry, after this failed lease is released.
+                    if (!ack.DestinationPresent && ack.Retry is null && ack.First is { Applied: false, Error: "stale_epoch" })
+                        retryWake = _retryWakes.Add(ack.FirstKey);
+                    break;
+                }
             }
             var outcome = Outcome(ack);
             if (outcome is null) return;
@@ -66,6 +77,7 @@ internal sealed partial class MachineRelay
                 try { await opened.DisposeAsync(); } catch (Exception error) { Diagnostic(error); }
             foreach (var lease in leases.Values.Reverse())
                 try { await lease.DisposeAsync(); } catch (Exception error) { Diagnostic(error); }
+            if (retryWake) Wake();
         }
     }
     private long Now => _time.GetUtcNow().ToUnixTimeMilliseconds();
@@ -83,7 +95,7 @@ internal sealed partial class MachineRelay
         ? Task.FromResult(_engine.Read(scope => _runtime.Commands.ReadRelayAck(scope, source), ct))
         : _forward.RelayAckAsync(target.Remote, target.Live!.OwnerBinding, source, ct, target.Live);
 
-    private async Task<RelaySendAck> Send(Endpoint target, RemoteMachine.RelayBulkLease? lease, Source source, RelaySendRequest request, CancellationToken ct)
+    private async Task<(RelaySendAck Ack, bool Uncertain)> Send(Endpoint target, RemoteMachine.RelayBulkLease? lease, Source source, RelaySendRequest request, CancellationToken ct)
     {
         string? transfer = null;
         try
@@ -91,7 +103,7 @@ internal sealed partial class MachineRelay
             var begin = target.Remote is null
                 ? _engine.Read(scope => _runtime.Commands.ProbeRelaySend(scope, request), ct)
                 : await _forward.RelayBeginAsync(lease!, request, ct);
-            if (begin.Status != "parts_required") return begin.Ack;
+            if (begin.Status != "parts_required") return (begin.Ack, false);
             transfer = begin.Transfer;
             var complete = new byte[2][]; var index = 0;
             foreach (var kind in new[] { RelayPartKind.Body, RelayPartKind.SenderLabel })
@@ -113,10 +125,27 @@ internal sealed partial class MachineRelay
             }
             var prepared = PreparedRelaySend.Create(source.Descriptor, complete[0], complete[1]);
             await source.RequireCurrent(ct); await target.RequireCurrent(ct);
-            return target.Remote is null ? _engine.Write(scope => _runtime.Commands.ApplyRelaySend(scope, request, prepared, Now))
-                : await _forward.RelayCommitAsync(lease!, new(request, transfer), ct);
+            if (target.Remote is null) return (_engine.Write(scope => _runtime.Commands.ApplyRelaySend(scope, request, prepared, Now)), false);
+            try
+            {
+                var ack = await _forward.RelayCommitAsync(lease!, new(request, transfer), ct);
+                transfer = null; // Successful commit replies own complete detachment, including recorded races.
+                return (ack, false);
+            }
+            catch (Exception error) when (!ct.IsCancellationRequested)
+            {
+                await source.RequireCurrent(ct); await target.RequireCurrent(ct);
+                Diagnostic(error);
+                // Normal ACK may overtake the bulk writer. Missing is unresolved, never permission to send again.
+                return (await ReadAck(target, source.Descriptor, ct), true);
+            }
         }
-        finally { if (transfer is not null) await _forward.DropRelayTargetAsync(lease!, transfer, CancellationToken.None); }
+        finally
+        {
+            if (transfer is not null)
+                try { await _forward.DropRelayTargetAsync(lease!, transfer, CancellationToken.None); }
+                catch (Exception error) { Diagnostic(error); }
+        }
     }
 
     private async Task RegisterSender(Candidate candidate, Endpoint source, Endpoint target, IReadOnlyDictionary<string, RemoteMachine.RelayBulkLease> leases, CancellationToken ct)

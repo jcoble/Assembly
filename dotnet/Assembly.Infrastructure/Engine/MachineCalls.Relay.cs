@@ -69,7 +69,11 @@ public sealed partial class MachineCalls : IAsyncDisposable
             {
                 var probe = ((IEngineRuntime)runtime).Read(s => runtime.Commands.ProbeRelaySend(s, args.Request), operation.Token);
                 PreparedRelaySend? prepared = probe.Status == "parts_required" ? await operation.Admit(args) : null;
-                if (prepared is null) operation.Return(true);
+                if (prepared is null)
+                {
+                    if (args.Transfer is not null) operation.DropTarget(args.Transfer);
+                    operation.Return(true);
+                }
                 // Admission has detached immutable bytes. This closure remains valid after connection loss.
                 return scope =>
                 {
