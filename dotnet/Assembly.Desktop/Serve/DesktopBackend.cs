@@ -1,6 +1,7 @@
 using CallFailed = Assembly.Application.Common.Calls.CallFailed;
 using Assembly.Application.Features.Agents;
 using Assembly.Infrastructure.Engine.Auth;
+using Assembly.Infrastructure.Updates;
 using Assembly.Infrastructure.Chat;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Helpers;
@@ -65,11 +66,13 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly DiagnosticsHost _diagnostics;
     private readonly MachinesFeature _machinesFeature;
     private readonly TerminalHost _terminals;
+    private readonly HttpClient _cliHttp;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, EngineRuntime engine)
+        WebApplication app, DiagnosticsHost diagnostics, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, EngineRuntime engine, HttpClient cliHttp)
     {
         _engine = engine;
+        _cliHttp = cliHttp;
         _homeLock = homeLock;
         _terminals = terminals;
         _board = board;
@@ -139,6 +142,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         RemoteWorkflowMirror? boardMirror = null;
         Topics.Subscription? boardMachines = null;
         CancellationTokenSource? hostStop = null;
+        HttpClient? cliHttp = null;
         try
         {
             WorkflowSchema.Open(db);
@@ -248,8 +252,9 @@ public sealed class DesktopBackend : IAsyncDisposable
                 if (item is not null && item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
             });
             boardMirror?.Reconnect();
+            cliHttp = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, new MachineForward(machine => connections.ByEngineMachine(db, machine))), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                [new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token), new EngineCalls(engine, TimeProvider.System, new MachineForward(machine => connections.ByEngineMachine(db, machine))), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore),
@@ -268,7 +273,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             });
             app.Lifetime.ApplicationStopping.Register(hostStop.Cancel);
             await app.StartAsync();
-            var backend = new DesktopBackend(homeLock, db, hub, sessions, work, connections, app, diagnostics, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, engine);
+            var backend = new DesktopBackend(homeLock, db, hub, sessions, work, connections, app, diagnostics, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, engine, cliHttp);
             address = backend.Address;
             // Sessions here join this machine's MCP server, on the API's port.
             sessions.Helpers.Tokens.Url = new Uri(backend.Address, "/mcp").ToString();
@@ -281,6 +286,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 await app.StopAsync();
                 await app.DisposeAsync();
             }
+            cliHttp?.Dispose();
             if (engine is not null) await engine.DisposeAsync();
             if (hostStop is not null) await hostStop.CancelAsync();
             if (boardMachines is not null) topics.Unsubscribe(boardMachines);
@@ -319,6 +325,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _hostStop.CancelAsync();
         await _app.StopAsync();
         await _app.DisposeAsync();
+        _cliHttp.Dispose();
         await _engine.DisposeAsync();
         if (_boardMachines is not null) _topics.Unsubscribe(_boardMachines);
         if (_boardMirror is not null) await _boardMirror.DisposeAsync();
