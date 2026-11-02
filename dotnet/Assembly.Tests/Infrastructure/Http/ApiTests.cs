@@ -106,6 +106,34 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal("no-store", listed.Headers.CacheControl?.ToString());
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("/isolated-profile")]
+    public async Task Agent_discovery_exposes_distinct_frozen_configuration_and_provider_targets_without_launch(string account)
+    {
+        var descriptor = new AgentDescriptor("configured-codex", "Configured Codex", "private-command-canary",
+            ["private-argument-canary"], new Dictionary<string, string>
+            { ["CODEX_HOME"] = account, ["PRIVATE_DISCOVERY_CANARY"] = "private-environment-canary" }, VendorFamily: "codex");
+        _launcher.Agents = [descriptor];
+        var capture = ConfigTargetIdentity.Capture(_launcher, descriptor.Id);
+        var item = (await GetJsonAsync("/agents")).GetProperty("agents").EnumerateArray().Single();
+        Assert.Equal(["accountContext", "id", "name", "providerTargetId", "targetId"], item.EnumerateObject().Select(p => p.Name).Order());
+        Assert.Equal(descriptor.Id, item.GetProperty("id").GetString());
+        Assert.Equal(descriptor.Name, item.GetProperty("name").GetString());
+        Assert.Equal(capture.TargetId, item.GetProperty("targetId").GetString());
+        Assert.Equal(account, item.GetProperty("accountContext").GetString());
+        Assert.Equal(descriptor.Id + "/" + account, item.GetProperty("providerTargetId").GetString());
+        Assert.DoesNotContain("private-", item.GetRawText());
+        Assert.Equal(0, _launcher.Launches);
+        Assert.Empty(_sessionStore.List(null, 10).Sessions);
+
+        _launcher.Agents = [descriptor with { Args = ["replacement-private-argument"] }];
+        var replaced = (await GetJsonAsync("/agents")).GetProperty("agents").EnumerateArray().Single();
+        Assert.NotEqual(item.GetProperty("targetId").GetString(), replaced.GetProperty("targetId").GetString());
+        Assert.Equal(item.GetProperty("providerTargetId").GetString(), replaced.GetProperty("providerTargetId").GetString());
+        Assert.Equal(0, _launcher.Launches);
+    }
+
     [Fact]
     public async Task A_session_runs_the_agent_it_was_made_with()
     {

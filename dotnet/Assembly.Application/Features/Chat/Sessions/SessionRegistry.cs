@@ -51,6 +51,15 @@ public sealed partial class SessionRegistry : IAsyncDisposable
     /// <summary>The agents this machine can run.</summary>
     public IReadOnlyList<AgentDescriptor> Agents => _launcher.Agents;
 
+    /// <summary>Safe configured targets, with both identities derived from one frozen launch environment.</summary>
+    public IReadOnlyList<ConfigTarget> ConfigTargets => _launcher.Agents.Select(agent =>
+    {
+        var captured = ConfigTargetIdentity.Capture(_launcher, agent.Id);
+        var account = AccountContext.Of(captured.Descriptor, key => captured.Environment.GetValueOrDefault(key));
+        return new ConfigTarget(captured.Descriptor.Id, captured.Descriptor.Name, captured.TargetId,
+            account, captured.Descriptor.Id + "/" + account);
+    }).ToList();
+
     /// <summary>The Assembly MCP server's side: helper sessions, and the messages between sessions.</summary>
     public HelperSessions Helpers { get; }
 
