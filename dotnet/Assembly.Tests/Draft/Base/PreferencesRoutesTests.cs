@@ -80,6 +80,39 @@ public sealed class PreferencesRoutesTests : IAsyncLifetime
         Assert.Contains("values", (await answer.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    [InlineData("\"45\"")]
+    [InlineData("true")]
+    [InlineData("1.5")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("2147483648")]
+    public async Task Invalid_expiry_rejects_the_whole_HTTP_save(string value)
+    {
+        using var body = JsonDocument.Parse("{\"values\":{\"theme\":\"changed\",\"messageExpiryMinutes\":" + value + "}}");
+        var answer = await _http.PostAsJsonAsync("/preferences/set", body.RootElement);
+        Assert.Equal(HttpStatusCode.BadRequest, answer.StatusCode);
+        Assert.Equal("messageExpiryMinutes: enter a positive integer from 1 to 2147483647.",
+            (await answer.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+        Assert.Empty((await (await _http.PostAsJsonAsync("/preferences/get", new { })).Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("result").EnumerateObject());
+    }
+
+    [Theory]
+    [InlineData(45)]
+    [InlineData(72000)]
+    [InlineData(int.MaxValue)]
+    public async Task Positive_Int32_expiry_values_are_saved_without_a_timer_cap(int minutes)
+    {
+        var answer = await _http.PostAsJsonAsync("/preferences/set", new { values = new { messageExpiryMinutes = minutes } });
+        Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
+        var saved = (await (await _http.PostAsJsonAsync("/preferences/get", new { })).Content.ReadFromJsonAsync<JsonElement>()).GetProperty("result");
+        Assert.Equal(minutes, saved.GetProperty("messageExpiryMinutes").GetInt32());
+    }
+
     public async Task DisposeAsync()
     {
         _http.Dispose();

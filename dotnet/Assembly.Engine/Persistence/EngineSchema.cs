@@ -6,11 +6,12 @@ public sealed record EngineSchemaInitialization(string Machine, long? PreviousVe
 
 public static class EngineSchema
 {
-    public static string Open(IAppDatabase db, long nowMs, Action<IWriteScope>? projectionSchema = null) =>
-        db.Writer.Write("engine.schema", scope => Initialize(scope, nowMs, projectionSchema).Machine);
+    public static string Open(IAppDatabase db, long nowMs, Action<IWriteScope>? projectionSchema = null, int expiryMinutes = 30) =>
+        db.Writer.Write("engine.schema", scope => Initialize(scope, nowMs, projectionSchema, expiryMinutes).Machine);
 
-    public static EngineSchemaInitialization Initialize(IWriteScope scope, long nowMs, Action<IWriteScope>? projectionSchema = null)
+    public static EngineSchemaInitialization Initialize(IWriteScope scope, long nowMs, Action<IWriteScope>? projectionSchema = null, int expiryMinutes = 30)
     {
+        if (expiryMinutes <= 0) throw new ArgumentOutOfRangeException(nameof(expiryMinutes));
         scope.Execute("""
             CREATE TABLE IF NOT EXISTS engine_meta (
                 singleton INTEGER PRIMARY KEY CHECK(singleton = 1), schema_version INTEGER NOT NULL,
@@ -27,13 +28,13 @@ public static class EngineSchema
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,5,$machine,1,0,0);
+                VALUES(1,6,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version == 5)
+        if (meta.Version == 6)
         {
             projectionSchema?.Invoke(scope);
             return new(meta.Machine, meta.Version);
@@ -50,7 +51,8 @@ public static class EngineSchema
         }
         if (meta.Version < 4) SessionSchemaUpgrade.Apply(scope, projectionSchema);
         else projectionSchema?.Invoke(scope);
-        ComposerSchemaUpgrade.Apply(scope);
+        if (meta.Version < 5) ComposerSchemaUpgrade.Apply(scope);
+        MessageExpirySchemaUpgrade.Apply(scope, expiryMinutes);
         return new(meta.Machine, meta.Version);
     }
 
@@ -127,6 +129,7 @@ public static class EngineSchema
             provider_turn_id TEXT, reason TEXT, delivery TEXT NOT NULL DEFAULT 'wait',
             attempt INTEGER NOT NULL DEFAULT 0, in_flight INTEGER NOT NULL DEFAULT 0,
             sender_label TEXT NOT NULL DEFAULT '', client_id TEXT NULL,
+            expires_ms INTEGER NULL,
             framed INTEGER NOT NULL DEFAULT 1 CHECK(framed IN (0,1)),
             attachment_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(attachment_ids_json) AND json_type(attachment_ids_json)='array'),
             held_epoch INTEGER NULL, target_epoch INTEGER NULL CHECK(target_epoch IS NULL OR target_epoch>=0),
@@ -172,6 +175,7 @@ public static class EngineSchema
         CREATE INDEX engine_session_parent_state ON engine_session(parent_id,state);
         CREATE INDEX engine_session_run_state ON engine_session(run_id,state);
         CREATE INDEX engine_step_run_state ON engine_step(run_id,state);
+        {{MessageExpirySchemaUpgrade.Index}}
         CREATE INDEX engine_message_recipient_state ON engine_message(to_session_id,state);
         CREATE INDEX engine_needs_me_state_deadline ON engine_needs_me(state,deadline_ms);
         CREATE UNIQUE INDEX engine_needs_me_provider_request ON engine_needs_me(session_id,provider_request_id)
