@@ -36,11 +36,12 @@ public sealed class ProviderRecordTests
     }
 
     [Theory]
-    [InlineData("codex", "/home/test/account/with/slashes")]
-    [InlineData("vendor/team/codex", "/home/test/account")]
-    [InlineData("vendor/team", "")]
-    public void Initial_check_resolves_the_unique_configured_literal_pair(string provider, string account)
+    [InlineData("codex", true)]
+    [InlineData("vendor/team/codex", true)]
+    [InlineData("vendor/team", false)]
+    public void Initial_check_resolves_the_unique_configured_literal_pair(string provider, bool nonempty)
     {
+        var account = nonempty ? "acct-v1:" + new string('a', 64) : "";
         using var f = new AuthRecordFixture((p, a) => p == provider && a == account);
         var id = provider + "/" + account;
         var result = f.Apply(new CheckProvider(), id);

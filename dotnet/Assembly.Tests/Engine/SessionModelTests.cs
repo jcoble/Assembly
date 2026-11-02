@@ -84,13 +84,14 @@ public sealed class SessionModelTests
     {
         using var f = new EngineFixture();
         var calls = 0;
+        var account = "acct-v1:" + new string('a', 64);
         var fail = true;
         var commands = new EngineCommands(f.Machine, f.Limits, projectStart: (scope, context, start) =>
         {
             calls++;
-            Assert.Equal("/owning-account", scope.QueryFirst("SELECT account_context FROM engine_session WHERE id=$id", r => r.Text(0), new Assembly.Application.Common.Database.SqlArg("$id", context.EntityId)));
+            Assert.Equal(account, scope.QueryFirst("SELECT account_context FROM engine_session WHERE id=$id", r => r.Text(0), new Assembly.Application.Common.Database.SqlArg("$id", context.EntityId)));
             if (fail) throw new IOException("projection failed");
-        }, accountContext: _ => "/owning-account");
+        }, accountContext: _ => account);
         var context = new CommandContext(Guid.NewGuid(), f.Machine, new(ActorKind.Window, "window"), "root", 0, 0, 1000);
         var command = new StartSession("custom", "wire", "/folder", "Title", null, null, null);
         Assert.Throws<IOException>(() => f.Db.Writer.Write("test.start", scope => commands.Apply(scope, context, command)));

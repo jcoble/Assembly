@@ -78,7 +78,7 @@ public static class SessionTransitions
     {
         var untitledOwnerRoot = command.Title == "" && context.Actor == new EngineActor(ActorKind.Window, "owner") &&
             command.ParentId is null && command.RunId is null;
-        if (string.IsNullOrWhiteSpace(command.Provider) || command.Model is not null && string.IsNullOrWhiteSpace(command.Model) ||
+        if (!Assembly.Application.Common.Agents.AccountContext.IsValid(accountContext) || string.IsNullOrWhiteSpace(command.Provider) || command.Model is not null && string.IsNullOrWhiteSpace(command.Model) ||
             string.IsNullOrWhiteSpace(command.Folder) || string.IsNullOrWhiteSpace(command.Title) && !untitledOwnerRoot)
             return Refused(context, "bad_args");
         var peer = context.Actor.Kind == ActorKind.System && context.Actor.Id.StartsWith("machine:", StringComparison.Ordinal);
