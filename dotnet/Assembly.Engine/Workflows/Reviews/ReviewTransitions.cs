@@ -127,7 +127,8 @@ public static partial class ReviewTransitions
               AND json_extract(safe_body_json,'$.targetStepId')=$target ORDER BY history_seq DESC LIMIT 1
             """, r => r.Text(0), new SqlArg("$run", target.Run), new("$target", c.EntityId));
         var previous = previousJson is null ? [] : Findings(s, JsonSerializer.Deserialize(previousJson, ReviewTransitionJson.Default.RedoApplied)!.FindingReceiptIds);
-        if (ReviewRounds.ShouldPause(previous, current, target.Round, target.Max))
+        var allowance = AdditionalRoundAllowance(s, target, c.EntityId, receipts, outputReceipt);
+        if (allowance.Grant is null && ReviewRounds.ShouldPause(previous, current, target.Round, allowance.Max))
         {
             s.Execute("UPDATE engine_run SET paused=1,version=version+1,updated_ms=$now WHERE id=$run", new("$now", c.NowMs), new("$run", target.Run));
             History(s, c, target.Run, c.EntityId, null, target.Generation, "redo_stopped",
@@ -135,6 +136,10 @@ public static partial class ReviewTransitions
             return EngineJournal.Commit(s, c, target.Version, c.Epoch,
                 [new("workflow.redo_stopped", "run", target.Run, 0, false, new(null, target.Run, c.EntityId, null, "paused", c.Epoch))], []);
         }
+        if (allowance.Grant is { } granted)
+            History(s, c, target.Run, c.EntityId, null, target.Generation, "redo_round_consumed",
+                JsonSerializer.Serialize(new AdditionalRoundConsumption(c.EntityId, target.Generation, granted.Id, granted.Body.StoppedId),
+                    AdditionalRoundJson.Default.AdditionalRoundConsumption));
         foreach (var row in affected)
         {
             s.Execute("""

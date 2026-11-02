@@ -17,7 +17,7 @@ using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Engine.Workflows.Execution;
 
-public sealed class WorkflowAdvancementTests
+public sealed partial class WorkflowAdvancementTests
 {
     [Fact]
     public async Task Existing_worker_callback_coalesces_once_only_after_exact_original_releases()
@@ -136,31 +136,63 @@ public sealed class WorkflowAdvancementTests
         }
         internal void Finding(string step, string text)
         {
+            var attempt = checked((int)Core.Number("SELECT attempt FROM engine_step WHERE id=$step", new SqlArg("$step", step)));
+            var generation = checked((int)Core.Number("SELECT generation FROM engine_step WHERE id=$step", new SqlArg("$step", step)));
+            var session = Core.Text("SELECT session_id FROM engine_step WHERE id=$step", new SqlArg("$step", step))!;
+            var epoch = Core.Number("SELECT authority_epoch FROM engine_step WHERE id=$step", new SqlArg("$step", step));
+            var receiptId = step + "-receipt-" + generation;
             var report = JsonSerializer.Serialize(new { report = new { receipt = new { verdict = "fail", findings = new[] { new { severity = "blocking", late = false, path_line = "src/work.cs:1", text, fix = "Apply the correction", grades_of_earlier = Array.Empty<string>() } }, head = new string('a', 40) } } });
             Core.Db.Writer.Write("test.accepted-review", s =>
             {
                 s.Execute("""
                     INSERT INTO engine_workflow_receipt(id,version,machine,created_ms,updated_ms,run_id,step_id,attempt,generation,session_id,epoch,hash,kind,body_json,state)
-                    VALUES($id,1,$machine,1000,1000,'r',$step,1,0,$session,7,$id,'review',$body,'accepted');
-                    """, new("$id", step + "-receipt"), new("$machine", Core.Machine), new("$step", step), new("$session", step + "-worker"), new("$body", report));
+                    VALUES($id,1,$machine,1000,1000,'r',$step,$attempt,$generation,$session,$epoch,$id,'review',$body,'accepted');
+                    """, new("$id", receiptId), new("$machine", Core.Machine), new("$step", step), new("$session", session), new("$body", report), new("$attempt", attempt), new("$generation", generation), new("$epoch", epoch));
                 var c = new CommandContext(Guid.NewGuid(), Core.Machine, new(ActorKind.System, "receipt.check"), step,
-                    s.QueryFirst("SELECT version FROM engine_step WHERE id=$step", r => r.Long(0), new SqlArg("$step", step)), 7, 1000);
-                var result = ReviewTransitions.Finished(s, c, step + "-receipt"); Assert.True(result.Applied, result.Error); return result;
+                    s.QueryFirst("SELECT version FROM engine_step WHERE id=$step", r => r.Long(0), new SqlArg("$step", step)), epoch, 1000);
+                var result = ReviewTransitions.Finished(s, c, receiptId); Assert.True(result.Applied, result.Error); return result;
             });
         }
         internal void Terminal(string step)
         {
-            var rows = new RowBatch(); rows.Rows.Add(new(step + "-turn", null, "turn", JsonSerializer.SerializeToElement(new { state = "started" }), 1000));
-            rows.Rows.Add(new(step + "-turn", null, "turn", JsonSerializer.SerializeToElement(new { state = "finished" }), 1001));
-            RowStore.Open(Core.Db).Commit(step + "-worker", rows);
+            var session = Core.Text("SELECT session_id FROM engine_step WHERE id=$step", new SqlArg("$step", step))!;
+            var chat = step + "-turn-" + Core.Number("SELECT generation FROM engine_step WHERE id=$step", new SqlArg("$step", step));
+            var rows = new RowBatch(); rows.Rows.Add(new(chat, null, "turn", JsonSerializer.SerializeToElement(new { state = "started" }), 1000));
+            rows.Rows.Add(new(chat, null, "turn", JsonSerializer.SerializeToElement(new { state = "finished" }), 1001));
+            RowStore.Open(Core.Db).Commit(session, rows);
         }
         internal void Release(string step)
         {
             PreparedWorkflowRelease prepared;
-            using (var s = Core.Db.OpenSnapshot(default)) prepared = EngineCommands.PrepareWorkflowRelease(s,
-                new(step + "-worker", "r", step, 1, 7), RowStore.TerminalReply(s, step + "-worker", step + "-turn")!)!;
+            using (var s = Core.Db.OpenSnapshot(default))
+            {
+                var current = s.QueryFirst("SELECT session_id,attempt,generation,authority_epoch FROM engine_step WHERE id=$step",
+                    r => (Session: r.Text(0), Attempt: (int)r.Long(1), Generation: r.Long(2), Epoch: r.Long(3)), new SqlArg("$step", step));
+                prepared = EngineCommands.PrepareWorkflowRelease(s, new(current.Session, "r", step, current.Attempt, current.Epoch),
+                    RowStore.TerminalReply(s, current.Session, step + "-turn-" + current.Generation)!)!;
+            }
             var result = Core.Db.Writer.Write("test.real-release-command", s => Commands.ApplyWorkflowRelease(s, prepared, 1002));
             Assert.True(result.Applied, result.Error);
+        }
+        internal void NextRound()
+        {
+            var generation = Core.Number("SELECT generation FROM engine_step WHERE id='build'");
+            foreach (var review in new[] { "review1", "review2" }) Core.SeedSession(review + "-worker-" + generation, "ended", "owner", "r", epoch: 7 + generation);
+            Core.Db.Writer.Write("test.next-completed-build-and-reviewers", s =>
+            {
+                foreach (var step in new[] { "build", "review1", "review2" })
+                {
+                    var session = step == "build" ? "build-worker" : step + "-worker-" + generation;
+                    s.Execute("""
+                        UPDATE engine_session SET epoch=$epoch WHERE id=$session;
+                        UPDATE engine_step SET attempt=attempt+1,state=$state,session_id=$session,authority_session_id=$session,authority_epoch=$epoch,
+                          dispatch_state='running' WHERE id=$step;
+                        INSERT INTO engine_step_attempt(step_id,attempt,state,started_ms,late,generation,execution_epoch,session_id,authority_machine,gate_state)
+                        SELECT id,attempt,$state,1000,0,generation,$epoch,$session,$machine,'executing' FROM engine_step WHERE id=$step;
+                        """, new("$epoch", 7 + generation), new("$session", session), new("$step", step), new("$state", step == "build" ? "succeeded" : "running"), new("$machine", Core.Machine));
+                }
+                return 0;
+            });
         }
         public void Dispose() => Core.Dispose();
     }
