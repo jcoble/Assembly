@@ -10,7 +10,7 @@ public sealed record Effect(string Id, string Kind, string? SessionId, string? R
     JsonElement Payload, int Attempt,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OrderKey = null);
 public enum EffectDisposition { Confirmed, TransientFailure, Unavailable, Failed, Unknown }
-public sealed record EffectReceipt(EffectDisposition Disposition, JsonElement Data, string? Error);
+public sealed partial record EffectReceipt(EffectDisposition Disposition, JsonElement Data, string? Error);
 public interface IEngineEffects
 {
     Task<EffectReceipt> ExecuteAsync(Effect effect, CancellationToken cancellationToken);
