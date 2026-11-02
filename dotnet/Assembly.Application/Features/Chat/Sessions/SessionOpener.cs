@@ -20,16 +20,18 @@ internal sealed record OpenSession(SharedAdapter Pool, RunningAdapter Adapter, s
 /// is titled from its first message when the agent takes a title, so it doesn't spend a model call making one. Every
 /// ACP session gets the session's chosen config values (model, effort, mode…) that its agent offers, in the agent's order
 /// (a model's effort levels can depend on the model). The session holds its place on the adapter until
-/// <see cref="SharedAdapter.ReleaseAsync"/>; its next open waits for an adapter retired by its timed-out close to exit. <paramref name="mcpServers"/> gives a session's ACP session the MCP servers it joins.
+/// <see cref="SharedAdapter.ReleaseAsync"/>; its next open waits for an adapter retired by its timed-out close to exit. <paramref name="mcp"/> gives a session's ACP session the MCP servers it joins.
 /// </summary>
 public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher launcher, Func<string, SharedAdapter> adapters,
-    Func<string, IReadOnlyList<JsonElement>>? mcpServers = null)
+    SessionMcp? mcp = null)
 {
     /// <summary>The longest title a first message gives a new session.</summary>
     public const int TitleLength = 60;
 
-    internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken)
+    internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken,
+        SessionObservation? observation = null)
     {
+        if (mcp is not null) await mcp.WaitReady(cancellationToken);
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
         var location = sessionStore.Location(session) ?? throw new CallFailed($"This session has no working folder: {sessionId}");
         string folder;
@@ -49,10 +51,11 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         var running = await adapter.GetAsync(stages, cancellationToken);
         try
         {
-            return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken);
+            return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken, observation);
         }
         catch
         {
+            mcp?.Revoke(sessionId);
             await adapter.ReleaseAsync(running);
             throw;
         }
@@ -60,7 +63,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
 
     private async Task<OpenSession> OpenOnAsync(
         SharedAdapter adapter, RunningAdapter running, SessionInfo session, string folder, string firstText, StageTimes stages,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, SessionObservation? observation)
     {
         var sessionId = session.SessionId;
         if (session.AcpSessionId is { } previous)
@@ -68,7 +71,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             cancellationToken.ThrowIfCancellationRequested();
             // The same ACP id on the same warm adapter, so the closed turn's late updates share it. The router opens it
             // again at the answer, in pipe order (UpdateRouter), not when this await resumes on another thread.
-            var resuming = running.Link.Client.ResumeSessionAsync(new(previous, folder, mcpServers?.Invoke(sessionId) ?? []), CancellationToken.None);
+            var resuming = running.Link.Client.ResumeSessionAsync(new(previous, folder, mcp?.ServersFor(sessionId, observation) ?? []), CancellationToken.None);
             ResumeSessionResponse? resumed = null;
             try
             {
@@ -77,10 +80,12 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
                 if (resumed.AvailableCommands.ValueKind == JsonValueKind.Array)
                     sessionStore.SetCommands(sessionId, resumed.AvailableCommands.GetRawText());
                 var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
+                mcp?.ValidateOpen(sessionId, observation);
                 return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
             }
             catch (JsonRpcException error) when (resumed is null)
             {
+                mcp?.Revoke(sessionId);
                 // The agent lost its transcript. A new ACP session keeps the session usable; the agent won't remember it.
                 Console.Error.WriteLine($"session {sessionId}: could not resume {previous} ({error.Message}); starting a new session");
             }
@@ -88,6 +93,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             {
                 // Stopped or failed after the resume answered: the agent has the session open, so it's closed there
                 // too, and anything it sends for it from now on is dropped.
+                mcp?.Revoke(sessionId);
                 running.Updates.Forget(previous);
                 await CloseQuietlyAsync(adapter, running, previous);
                 throw;
@@ -95,7 +101,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var opening = running.Link.Client.NewSessionAsync(new(folder, mcpServers?.Invoke(sessionId) ?? []), CancellationToken.None);
+        var opening = running.Link.Client.NewSessionAsync(new(folder, mcp?.ServersFor(sessionId, observation) ?? []), CancellationToken.None);
         var acp = await AnsweredAsync(adapter, running, sessionId, opening, late => late.SessionId, cancellationToken);
 
         try
@@ -110,11 +116,13 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             if (acp.ConfigOptions.ValueKind == JsonValueKind.Array)
                 sessionStore.SetAgentConfig(session.Agent, acp.ConfigOptions.GetRawText());
             var chosen = await ApplyChoicesAsync(running, sessionId, acp.SessionId, acp.ConfigOptions, stages, cancellationToken);
+            mcp?.ValidateOpen(sessionId, observation);
             return new OpenSession(adapter, running, acp.SessionId, Resumed: false, SavedCost: null, chosen, Titled: title is not null);
         }
         catch (Exception)
         {
             // Stopped or failed once the agent had opened it: it's closed there too, as after a resume.
+            mcp?.Revoke(sessionId);
             running.Updates.Forget(acp.SessionId);
             await CloseQuietlyAsync(adapter, running, acp.SessionId);
             throw;
@@ -124,7 +132,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     // Neither adapter honours a request's cancel, so a session/new or session/resume goes out on a token the cancel
     // doesn't cut: a cancel after it went out waits for the answer and closes the session the agent opened. That delays
     // the cancel by up to twice the close limit: the wait for the answer, then the close.
-    private static async Task<T> AnsweredAsync<T>(
+    private async Task<T> AnsweredAsync<T>(
         SharedAdapter adapter, RunningAdapter running, string sessionId, Task<T> opening, Func<T, string> acpSessionId,
         CancellationToken cancellationToken)
     {
@@ -134,6 +142,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            mcp?.Revoke(sessionId);
             try
             {
                 var late = acpSessionId(await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, CancellationToken.None));

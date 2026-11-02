@@ -34,7 +34,7 @@ public sealed partial class SessionHost
             {
                 await _session.WaitAsync(turn.Stopping.Token);
                 held = true;
-                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token);
+                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token, observation: turn.Observation);
                 updates = session.Adapter.Updates.For(session.AcpSessionId);
                 BindPolicy(session, turn);
                 lock (_gate)
