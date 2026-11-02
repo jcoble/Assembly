@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Agents;
 using System.Text.Json;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat;
@@ -57,8 +58,8 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
         return Probe(cancellationToken);
     }
 
-    public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
-        Remote<IReadOnlyList<(string, string)>>("agents", () => [("claude", "Claude")], cancellationToken);
+    public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
+        Remote<IReadOnlyList<ConfigTarget>>("agents", () => [new("claude", "Claude", new string('a', 64), "", "claude/")], cancellationToken);
 
     public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
         Remote("create", () => name is null ? store.Create(agent, repoUrl) : store.Add(Guid.NewGuid().ToString(), agent, repoUrl, name),

@@ -40,6 +40,8 @@ internal sealed class UnixPtyStarter : IPtyStarter
             var start = new ProcessStartInfo("/usr/bin/perl") { UseShellExecute = false, WorkingDirectory = request.Cwd };
             foreach (var argument in (string[])["-e", Child, "--", slavePath, PtyNative.TiocSctty.ToString(CultureInfo.InvariantCulture), request.FileName, .. request.Arguments])
                 start.ArgumentList.Add(argument);
+            if (request.ReplaceEnvironment)
+                start.Environment.Clear();
             foreach (var (name, value) in request.Environment)
                 start.Environment[name] = value;
             var process = Process.Start(start) ?? throw new IOException("perl didn't start");

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Agents;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -15,7 +16,7 @@ using Assembly.Tests.Features.Chat.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Http;
 
-public sealed class EngineHostTests
+public sealed partial class EngineHostTests
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(15);
 
@@ -123,23 +124,18 @@ public sealed class EngineHostTests
         var home = Directory.CreateTempSubdirectory("assembly-engine-lifecycle-").FullName;
         try
         {
-            await using (var noHandler = await Host.Start(host, home, null))
-            {
-                using var socket = await noHandler.Open();
-                using var bulk = await noHandler.Open(bulk: true);
-                await Command(socket, "pending", new StartSession("codex", "model", home, "Pending", null, null, null));
-                Assert.Equal("starting", (await Entity(bulk, "session", "pending")).GetProperty("state").GetString());
-            }
             var blocked = new HostEffects { Block = true };
             var running = await Host.Start(host, home, blocked);
             try
             {
+                using var socket = await running.Open();
+                await Command(socket, "pending", new StartSession("codex", "model", home, "Pending", null, null, null));
                 var intent = await blocked.Entered.Task.WaitAsync(Timeout);
-                Assert.Equal(1, intent.Attempt); // No handler left the start pending, never claimed or completed.
+                Assert.Equal(1, intent.Attempt); // The injected owner receives the first claim, then shutdown joins its exact blocked work.
             }
             finally { await running.DisposeAsync(); }
             Assert.True(blocked.Joined.Task.IsCompletedSuccessfully);
-            await using var reopened = await Host.Start(host, home, null);
+            await using var reopened = await Host.Start(host, home, new UnavailableEffects());
             using var bulkAgain = await reopened.Open(bulk: true);
             Assert.Equal("starting", (await Entity(bulkAgain, "session", "pending")).GetProperty("state").GetString());
         }
@@ -155,11 +151,18 @@ public sealed class EngineHostTests
         try
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => Host.Start(host, home, null, failStarted: true));
-            await using var reopened = await Host.Start(host, home, null);
+            await using var reopened = await Host.Start(host, home, new UnavailableEffects());
             using var socket = await reopened.Open();
             await Command(socket, "s", new StartSession("codex", "model", home, "After failure", null, null, null));
         }
         finally { Directory.Delete(home, true); }
+    }
+
+    private sealed class UnavailableEffects : IEngineEffects
+    {
+        public Task<EffectReceipt> ExecuteAsync(Effect effect, CancellationToken ct) => Task.FromResult(new EffectReceipt(
+            EffectDisposition.Unavailable, JsonSerializer.SerializeToElement((string?)null, EngineJson.Default.String), "no_handler"));
+        public Task<EffectReceipt> ReconcileAsync(Effect effect, CancellationToken ct) => ExecuteAsync(effect, ct);
     }
 
     private sealed class HostEffects : IEngineEffects
@@ -217,20 +220,22 @@ public sealed class EngineHostTests
         private Task<int>? _remote;
         private readonly CancellationTokenSource _stop = new();
         private Uri _address = null!;
+        public EngineRuntime Runtime { get; private set; } = null!;
 
-        public static async Task<Host> Start(string host, string home, HostEffects? effects, bool failStarted = false)
+        public static async Task<Host> Start(string host, string home, IEngineEffects? effects, bool failStarted = false, IAgentLauncher? launcher = null)
         {
             var result = new Host();
             void Started(EngineRuntime runtime)
             {
-                if (effects is not null) effects.Runtime = runtime;
+                result.Runtime = runtime;
+                if (effects is HostEffects controlled) controlled.Runtime = runtime;
                 if (failStarted) throw new InvalidOperationException("injected startup failure");
             }
             try
             {
                 if (host == "desktop")
                 {
-                    result._desktop = await DesktopBackend.StartAsync(home, "engine-token", 0, new FakeLauncher(), TextWriter.Null,
+                    result._desktop = await DesktopBackend.StartAsync(home, "engine-token", 0, launcher ?? new FakeLauncher(), TextWriter.Null,
                         engineEffects: effects, engineStarted: Started);
                     result._address = result._desktop.Address;
                 }
@@ -240,7 +245,7 @@ public sealed class EngineHostTests
                     await File.WriteAllTextAsync(tokenFile, "ASSEMBLY_TOKEN=engine-token\n");
                     var ready = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
                     result._remote = ServeRun.RunAsync(new(0, home, tokenFile, Path.Combine(home, "agents.json")),
-                        new FakeLauncher(), effects, (address, runtime) => { Started(runtime); ready.TrySetResult(address); }, result._stop.Token);
+                        launcher ?? new FakeLauncher(), effects, (address, runtime) => { Started(runtime); ready.TrySetResult(address); }, result._stop.Token);
                     var completed = await Task.WhenAny(ready.Task, result._remote).WaitAsync(Timeout);
                     if (completed == result._remote) await result._remote;
                     result._address = await ready.Task.WaitAsync(Timeout);

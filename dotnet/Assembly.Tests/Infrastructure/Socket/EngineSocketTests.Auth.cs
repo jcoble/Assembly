@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Assembly.Engine;
 using Assembly.Engine.Contracts;
+using Assembly.Infrastructure.Engine;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Providers;
 
@@ -7,6 +9,41 @@ namespace Assembly.Tests.Infrastructure.Socket;
 
 public sealed partial class EngineSocketTests
 {
+    private int _forwardAttempts;
+
+    [Theory]
+    [InlineData("check", null)]
+    [InlineData("check", "")]
+    [InlineData("check", "other-machine")]
+    [InlineData("start", null)]
+    [InlineData("start", "")]
+    [InlineData("start", "other-machine")]
+    [InlineData("cancel", null)]
+    [InlineData("cancel", "")]
+    [InlineData("cancel", "other-machine")]
+    public async Task Local_auth_commands_require_the_captured_owner_machine_before_apply_or_forward(string kind, string? machine)
+    {
+        EngineCommand command = kind switch
+        {
+            "check" => new CheckProvider(),
+            "start" => new StartSignIn("codex", "", null, null),
+            _ => new CancelSignIn()
+        };
+        using var socket = await Open();
+        var args = JsonSerializer.SerializeToElement(new WindowCommand(Guid.NewGuid(), "codex/", 0, 0, command, machine), EngineSocketJson.Default.WindowCommand);
+        await Send(socket, $$"""{"t":"call","id":10,"feature":"engine","method":"command","args":{{args.GetRawText()}}}""");
+        var frame = await Read(socket);
+        Assert.Equal("result", frame.GetProperty("t").GetString());
+        var result = frame.GetProperty("result").Deserialize(EngineJson.Default.CommandResult)!;
+        Assert.False(result.Applied);
+        Assert.Equal("wrong_machine", result.Error);
+        Assert.Equal(0, _forwardAttempts);
+        Assert.Equal(0, _f.Count("engine_command_receipt"));
+        Assert.Equal(0, _f.Count("engine_provider"));
+        Assert.Equal(0, _f.Count("engine_sign_in"));
+        Assert.Equal(0, _f.Count("engine_outbox"));
+    }
+
     [Fact]
     public async Task Auth_window_admits_exact_three_checked_owner_commands()
     {

@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Agents;
 using System.Net;
 using System.Net.WebSockets;
 using System.Net.Http.Headers;
@@ -70,10 +71,34 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
             _sessionStore.SetTitle(childId, title, "prompt");
     }
 
-    public async Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken)
     {
-        var listed = await CallAsync("machines", "agents", new MachinesFeature.AgentsArgs(), cancellationToken);
-        return listed.GetProperty("agents").EnumerateArray().Select(agent => (Text(agent, "id")!, Text(agent, "name")!)).ToList();
+        var owner = await CaptureOwnerReadAsync(null, cancellationToken);
+        var listed = await CallAsync("machines", "agents", JsonSerializer.SerializeToElement(new MachinesFeature.AgentsArgs(),
+            SessionsJson.Default.AgentsArgs), false, cancellationToken, owner.Identity, owner.Socket);
+        var agents = new List<ConfigTarget>();
+        if (listed.ValueKind != JsonValueKind.Object || !listed.TryGetProperty("agents", out var items) || items.ValueKind != JsonValueKind.Array)
+            throw new CallFailed("incompatible backend");
+        foreach (var item in items.EnumerateArray())
+        {
+            string? Field(string name) => item.ValueKind == JsonValueKind.Object && item.TryGetProperty(name, out var value)
+                && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+            var id = Field("id"); var name = Field("name"); var target = Field("targetId");
+            var account = Field("accountContext"); var providerTarget = Field("providerTargetId");
+            if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name) || target is null || target.Length != 64
+                || target.Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
+                || !AccountContext.IsValid(account) || providerTarget != id + "/" + account)
+                throw new CallFailed("incompatible backend");
+            agents.Add(new(id, name, target, account, providerTarget));
+        }
+        await _socketSend.WaitAsync(cancellationToken);
+        try
+        {
+            if (!ReferenceEquals(RequireEngine(owner.Identity), owner.Socket))
+                throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed");
+            return agents;
+        }
+        finally { _socketSend.Release(); }
     }
 
     public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken)
