@@ -26,7 +26,7 @@ public sealed class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source";
+    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source, working_folder";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -102,6 +102,10 @@ public sealed class SessionStore
                 scope.Execute("ALTER TABLE session_info ADD COLUMN settled_at INTEGER;");
             if (Missing(HasTitleSource))
                 scope.Execute("ALTER TABLE session_info ADD COLUMN title_source TEXT;");
+            if (Missing("SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'working_folder';"))
+                scope.Execute("ALTER TABLE session_info ADD COLUMN working_folder TEXT NULL;");
+            if (Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name = 'config_target';"))
+                scope.Execute("ALTER TABLE session_config ADD COLUMN config_target TEXT NULL;");
             if (Missing(HasMessageError))
                 scope.Execute("ALTER TABLE helper_messages ADD COLUMN error TEXT;");
             if (Missing(HasMessageAnswer))
@@ -120,24 +124,32 @@ public sealed class SessionStore
             .ToDictionary(choice => choice.Name, choice => choice.Value.GetString()!);
     }
 
-    public SessionInfo Create(string agent, string repoUrl)
+    public SessionInfo Create(string agent, string repoUrl, InitialSessionConfig? initialConfig = null, string? workingFolder = null,
+        Action? validate = null)
     {
-        var session = new SessionInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now());
-        Change(session.SessionId,
-            "INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at) VALUES ($id, $agent, $repo, $now, $now);",
-            ("$id", session.SessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt));
-        return session;
+        var session = new SessionInfo(Guid.NewGuid().ToString(), agent, repoUrl, null, null, Now(), WorkingFolder: workingFolder);
+        return _writer.Write("sessions.create", scope =>
+        {
+            validate?.Invoke();
+            scope.Execute("INSERT INTO session_info(session_id, agent, repo_url, working_folder, created_at, updated_at) VALUES ($id, $agent, $repo, $folder, $now, $now);",
+                new SqlArg("$id", session.SessionId), new SqlArg("$agent", agent), new SqlArg("$repo", repoUrl), new SqlArg("$folder", workingFolder), new SqlArg("$now", session.UpdatedAt));
+            if (initialConfig is not null)
+                scope.Execute("INSERT INTO session_config(session_id, choices, config_target) VALUES ($id, $choices, $target);",
+                    new SqlArg("$id", session.SessionId), new SqlArg("$choices", ChoicesJson(initialConfig.Choices)), new SqlArg("$target", initialConfig.TargetId));
+            Publish(scope, session.SessionId);
+            return session;
+        });
     }
 
     /// <summary>Records a session another machine created and runs, under that machine's id for it.</summary>
-    public SessionInfo Add(string sessionId, string agent, string repoUrl, string machine, string? parentSessionId = null, bool helper = false)
+    public SessionInfo Add(string sessionId, string agent, string repoUrl, string machine, string? parentSessionId = null, bool helper = false, string? workingFolder = null)
     {
-        var session = new SessionInfo(sessionId, agent, repoUrl, null, null, Now(), machine, ParentSessionId: parentSessionId, Helper: helper);
+        var session = new SessionInfo(sessionId, agent, repoUrl, null, null, Now(), machine, ParentSessionId: parentSessionId, Helper: helper, WorkingFolder: workingFolder);
         Change(sessionId, """
-            INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at, machine, parent_session_id, helper)
-            VALUES ($id, $agent, $repo, $now, $now, $machine, $parent, $helper);
+            INSERT INTO session_info(session_id, agent, repo_url, created_at, updated_at, machine, parent_session_id, helper, working_folder)
+            VALUES ($id, $agent, $repo, $now, $now, $machine, $parent, $helper, $folder);
             """, ("$id", sessionId), ("$agent", agent), ("$repo", repoUrl), ("$now", session.UpdatedAt), ("$machine", machine),
-            ("$parent", parentSessionId), ("$helper", helper ? 1 : 0));
+            ("$parent", parentSessionId), ("$helper", helper ? 1 : 0), ("$folder", workingFolder));
         return session;
     }
 
@@ -334,7 +346,7 @@ public sealed class SessionStore
     /// </summary>
     public SessionConfig Config(string sessionId) =>
         _db.QueryFirst("""
-            SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands)
+            SELECT c.options, c.choices, COALESCE(tc.commands, ac.commands), c.config_target
             FROM (SELECT $id AS session_id) t
             LEFT JOIN session_config c ON c.session_id = t.session_id
             LEFT JOIN session_commands tc ON tc.session_id = t.session_id
@@ -343,7 +355,7 @@ public sealed class SessionStore
             """, row => new SessionConfig(
                 row.IsNull(0) ? null : row.Text(0),
                 row.IsNull(1) ? new Dictionary<string, string>() : ReadChoices(row.Text(1)),
-                row.IsNull(2) ? null : row.Text(2)), CancellationToken.None, new SqlArg("$id", sessionId))!;
+                row.IsNull(2) ? null : row.Text(2), row.IsNull(3) ? null : row.Text(3)), CancellationToken.None, new SqlArg("$id", sessionId))!;
 
     /// <summary>Saves the slash commands the session's agent sent, as the session's and as that agent's latest.</summary>
     public void SetCommands(string sessionId, string commands) =>
@@ -362,10 +374,55 @@ public sealed class SessionStore
 
     /// <summary>Chooses <paramref name="value"/> for the option: it's applied to every ACP session the session opens from now on.</summary>
     public void SetConfigChoice(string sessionId, string configId, string value) =>
-        Execute("""
-            INSERT INTO session_config(session_id, choices) VALUES ($id, json_object($config, $value))
-            ON CONFLICT(session_id) DO UPDATE SET choices = json_set(choices, '$."' || $config || '"', $value);
-            """, ("$id", sessionId), ("$config", configId.Replace("\"", "")), ("$value", value));
+        _writer.Write("sessions.config", scope =>
+        {
+            var choices = scope.QueryFirst("SELECT choices FROM session_config WHERE session_id = $id;", row => ReadChoices(row.Text(0)), new SqlArg("$id", sessionId))
+                ?.ToDictionary(x => x.Key, x => x.Value) ?? new Dictionary<string, string>();
+            choices[configId] = value;
+            scope.Execute("INSERT INTO session_config(session_id, choices) VALUES ($id, $choices) ON CONFLICT(session_id) DO UPDATE SET choices = $choices;",
+                new SqlArg("$id", sessionId), new SqlArg("$choices", ChoicesJson(choices)));
+            return 0;
+        });
+
+    internal void ObserveConfig(SessionInfo expected, string nativeId, string? options, string? commands,
+        IReadOnlyDictionary<string, string>? choices, Action validate, CancellationToken ct, string? agentOptions = null)
+    {
+        _writer.Write("sessions.config.observation", scope =>
+        {
+            ct.ThrowIfCancellationRequested();
+            validate();
+            var current = scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE session_id = $id;", ReadSession, new SqlArg("$id", expected.SessionId));
+            if (current is null || current.Agent != expected.Agent || current.Machine != expected.Machine
+                || current.AcpSessionId != expected.AcpSessionId || current.WorkingFolder != expected.WorkingFolder || current.RepoUrl != expected.RepoUrl)
+                throw new Assembly.Application.Common.Calls.CallFailed("The session changed while its settings were being read.");
+            scope.Execute("UPDATE session_info SET acp_session_id = $native WHERE session_id = $id;", new SqlArg("$native", nativeId), new SqlArg("$id", expected.SessionId));
+            scope.Execute("INSERT INTO session_config(session_id, options) VALUES ($id, $options) ON CONFLICT(session_id) DO UPDATE SET options = $options;",
+                new SqlArg("$id", expected.SessionId), new SqlArg("$options", options ?? "null"));
+            if (choices is not null)
+                scope.Execute("UPDATE session_config SET choices = $choices WHERE session_id = $id;", new SqlArg("$id", expected.SessionId), new SqlArg("$choices", ChoicesJson(choices)));
+            if (agentOptions is not null)
+                scope.Execute("INSERT INTO agent_config(agent, options) VALUES ($agent, $options) ON CONFLICT(agent) DO UPDATE SET options = $options;",
+                    new SqlArg("$agent", expected.Agent), new SqlArg("$options", agentOptions));
+            if (commands is not null)
+                scope.Execute("INSERT INTO agent_commands(agent, commands) VALUES ($agent, $commands) ON CONFLICT(agent) DO UPDATE SET commands = $commands;",
+                    new SqlArg("$agent", expected.Agent), new SqlArg("$commands", commands));
+            scope.Execute("INSERT INTO session_commands(session_id, commands) VALUES ($id, $commands) ON CONFLICT(session_id) DO UPDATE SET commands = $commands;",
+                    new SqlArg("$id", expected.SessionId), new SqlArg("$commands", commands ?? "null"));
+            return 0;
+        });
+    }
+
+    private static string ChoicesJson(IReadOnlyDictionary<string, string> choices)
+    {
+        using var buffer = new MemoryStream();
+        using (var json = new Utf8JsonWriter(buffer))
+        {
+            json.WriteStartObject();
+            foreach (var (id, value) in choices) json.WriteString(id, value);
+            json.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
 
     /// <summary>The config options of the agent's latest new session: what a session that hasn't opened one yet starts with.</summary>
     public string? AgentConfig(string agent) =>
@@ -415,9 +472,9 @@ public sealed class SessionStore
     /// </summary>
     /// Null when that id isn't one plain name: a parent id given as a path, or "..", would put the folder outside.
     public static string? Folder(string checkouts, SessionInfo session) =>
-        (session.ParentSessionId ?? session.SessionId) is var id && id is not ("" or "." or "..") && Path.GetFileName(id) == id
+        session.WorkingFolder ?? ((session.ParentSessionId ?? session.SessionId) is var id && id is not ("" or "." or "..") && Path.GetFileName(id) == id
             ? Path.Combine(checkouts, id)
-            : null;
+            : null);
 
     /// <summary>
     /// Marks the session read up to <paramref name="seq"/>, or its last row if that's lower, publishing its item; a seq
@@ -486,7 +543,7 @@ public sealed class SessionStore
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
             row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10),
-            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12), row.IsNull(13) ? null : row.Text(13));
+            row.IsNull(11) ? null : row.Long(11), row.IsNull(12) ? null : row.Long(12), row.IsNull(13) ? null : row.Text(13), row.IsNull(14) ? null : row.Text(14));
 
     private static SqlArg[] Args((string Name, object? Value)[] parameters) =>
         Array.ConvertAll(parameters, parameter => new SqlArg(parameter.Name, parameter.Value));

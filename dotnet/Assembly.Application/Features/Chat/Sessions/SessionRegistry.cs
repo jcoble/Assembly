@@ -45,6 +45,11 @@ public sealed class SessionRegistry : IAsyncDisposable
 
     /// <summary>The agents this machine can run.</summary>
     public IReadOnlyList<AgentDescriptor> Agents => _launcher.Agents;
+    public IReadOnlyList<ConfigTarget> ConfigTargets => _launcher.ConfigTargets;
+    public Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct) =>
+        new ComposerConfigDiscovery(_launcher, _time).DiscoverAsync(agent, targetId, cwd, ct);
+    public void ValidateTarget(string agent, string targetId) => ConfigTargetIdentity.Capture(_launcher, agent, targetId);
+    public void ValidateFolder(string folder) => _launcher.ValidateFolder(folder);
 
     /// <summary>The Assembly MCP server's side: helper sessions, and the messages between sessions.</summary>
     public HelperSessions Helpers { get; }
@@ -95,6 +100,7 @@ public sealed class SessionRegistry : IAsyncDisposable
     /// <summary>Stops every running turn and the adapter. A turn cut short here ends as rows like any other.</summary>
     public async ValueTask DisposeAsync()
     {
+        await Task.WhenAll(_hosts.Values.Select(host => host.StopWarmForShutdownAsync()));
         // Sessions kept for background work stop it and close cleanly while their adapter is still there.
         try
         {

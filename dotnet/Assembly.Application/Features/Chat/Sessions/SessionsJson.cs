@@ -21,6 +21,8 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(SendFeature.AnswerArgs))]
 [JsonSerializable(typeof(SendFeature.StopTaskArgs))]
 [JsonSerializable(typeof(SendFeature.Done))]
+[JsonSerializable(typeof(ConfigFeature.DiscoverArgs))]
+[JsonSerializable(typeof(ConfigFeature.WarmArgs))]
 [JsonSerializable(typeof(ConfigFeature.GetArgs))]
 [JsonSerializable(typeof(ConfigFeature.SetArgs))]
 [JsonSerializable(typeof(JsonElement))]

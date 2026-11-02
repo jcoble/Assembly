@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using Assembly.Application.Common.Agents;
 using System.Net.WebSockets;
 using System.Net.Http.Headers;
 using System.Text;
@@ -32,11 +34,14 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     private readonly Action<string> _turnEnded;
     private readonly MachineStatus _status;
     private bool _formatChecked;
+    private readonly string _connectionIdentity;
+    private readonly string _instanceIdentity = Guid.NewGuid().ToString("N");
 
     /// <param name="turnEnded">Told when a copied turn ends (a helper's row goes idle).</param>
     public RemoteMachine(string name, Uri address, string token, LiveHub hub, SessionStore sessionStore, TextWriter log, MachineStatus status,
-        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null)
+        Action<string>? turnEnded = null, Assembly.Application.Common.Topics.ITopics? topics = null, TimeProvider? time = null, string? connectionIdentity = null)
     {
+        _connectionIdentity = connectionIdentity ?? "";
         Terminals = new RemoteTerminalSocket(name, address, token, topics ?? new Topics.Topics());
         _address = address;
         _token = token;
@@ -70,18 +75,20 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
             _sessionStore.SetTitle(childId, title, "prompt");
     }
 
-    public async Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken)
     {
         await CheckFormatAsync(cancellationToken);
         var listed = await JsonAsync(HttpMethod.Get, "/agents", null, cancellationToken);
-        return listed.GetProperty("agents").EnumerateArray().Select(agent => (Text(agent, "id")!, Text(agent, "name")!)).ToList();
+        return listed.GetProperty("agents").EnumerateArray().Select(agent => new ConfigTarget(Text(agent, "id")!, Text(agent, "name")!, WrapTarget(Text(agent, "targetId")))).ToList();
     }
 
-    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken)
+    public async Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken, InitialSessionConfig? initialConfig = null, string? workingFolder = null)
     {
         await CheckFormatAsync(cancellationToken);
-        var created = await JsonAsync(HttpMethod.Post, "/sessions", Body(("agent", agent), ("repoUrl", repoUrl)), cancellationToken);
-        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name);
+        var owner = initialConfig is null ? null : initialConfig with { TargetId = UnwrapTarget(initialConfig.TargetId) };
+        using var body = CreateBody(agent, repoUrl, owner, workingFolder);
+        var created = await JsonAsync(HttpMethod.Post, "/sessions", body, cancellationToken);
+        return _sessionStore.Add(created.GetProperty("sessionId").GetString()!, agent, repoUrl, _name, workingFolder: workingFolder);
     }
 
     public async Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken)
@@ -159,8 +166,46 @@ internal sealed class RemoteMachine : IMachine, IAsyncDisposable
     public async Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
         ReadConfig(await JsonAsync(HttpMethod.Get, $"/sessions/{session.SessionId}/config", null, cancellationToken));
 
-    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken) =>
-        ReadConfig(await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/config", Body(("configId", configId), ("value", value)), cancellationToken));
+    public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken, string? targetId = null) =>
+        ReadConfig(await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/config",
+            targetId is null ? Body(("configId", configId), ("value", value)) : Body(("configId", configId), ("value", value), ("targetId", UnwrapTarget(targetId))), cancellationToken));
+
+    public async Task<ComposerCatalogue> DiscoverConfigAsync(string agent, string targetId, string cwd, CancellationToken ct)
+    {
+        var result = await JsonAsync(HttpMethod.Post, "/config/discover", Body(("agent", agent), ("targetId", UnwrapTarget(targetId)), ("cwd", cwd)), ct);
+        return new ComposerCatalogue(ReadConfig(result), result.GetProperty("modelOptions").EnumerateObject().ToDictionary(x => x.Name, x => x.Value.GetRawText()));
+    }
+
+    public async Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken ct) =>
+        ReadConfig(await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/config/warm", Body(("targetId", UnwrapTarget(targetId))), ct));
+
+    private string TargetPrefix => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(_address.AbsoluteUri + "\0" + _token + "\0" + _connectionIdentity + "\0" + _instanceIdentity))) + ":";
+    private string? WrapTarget(string? ownerTarget) => ownerTarget is null ? null : TargetPrefix + ownerTarget;
+    private string UnwrapTarget(string target)
+    {
+        if (string.IsNullOrEmpty(target) || !target.StartsWith(TargetPrefix, StringComparison.Ordinal) || target.Length == TargetPrefix.Length)
+            throw new CallFailed("The selected remote configuration changed. Select it again.");
+        return target[TargetPrefix.Length..];
+    }
+
+    private static HttpContent CreateBody(string agent, string repo, InitialSessionConfig? initial, string? folder)
+    {
+        using var stream = new MemoryStream();
+        using (var json = new Utf8JsonWriter(stream))
+        {
+            json.WriteStartObject();
+            json.WriteString("agent", agent); json.WriteString("repoUrl", repo);
+            if (folder is not null) json.WriteString("workingFolder", folder);
+            if (initial is not null)
+            {
+                json.WriteStartObject("initialConfig"); json.WriteString("targetId", initial.TargetId);
+                json.WriteStartObject("choices"); foreach (var (id, value) in initial.Choices) json.WriteString(id, value);
+                json.WriteEndObject(); json.WriteEndObject();
+            }
+            json.WriteEndObject();
+        }
+        return new StringContent(Encoding.UTF8.GetString(stream.ToArray()), Encoding.UTF8, "application/json");
+    }
 
     public async Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
     {

@@ -18,7 +18,7 @@ internal sealed class FakeLauncher : IAgentLauncher
 
     public Func<CancellationToken, Task<IAgentLink>>? Launch { get; set; }
 
-    public IReadOnlyList<AgentDescriptor> Agents { get; } =
+    public IReadOnlyList<AgentDescriptor> Agents { get; set; } =
     [
         new("claude", "Claude Code", "claude-agent-acp", [], null),
         new("codex", "Codex", "codex-acp", [], null),
@@ -34,8 +34,12 @@ internal sealed class FakeLauncher : IAgentLauncher
     {
         lock (CheckedOut)
             CheckedOut.Add(session.SessionId);
-        return Task.FromResult(Checkout);
+        return Task.FromResult(session.WorkingFolder ?? Checkout);
     }
+
+    public IReadOnlyList<ConfigTarget> ConfigTargets => ((IAgentLauncher)this).Agents.Select(a => new ConfigTarget(a.Id, a.Name, ConfigTargetIdentity.Of(a, ConfigTargetIdentity.EnvironmentOf(a)))).ToList();
+    public void ValidateFolder(string folder) { if (!Path.IsPathFullyQualified(folder)) throw new InvalidOperationException("Invalid folder"); }
+    public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> environment, StageTimes stages, CancellationToken ct) => LaunchAsync(descriptor.Id, stages, ct);
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {

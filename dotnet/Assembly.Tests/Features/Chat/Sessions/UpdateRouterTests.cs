@@ -41,6 +41,28 @@ public sealed class UpdateRouterTests
         Assert.False(router.For("s1").TryRead(out _));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Metadata_collection_preserves_nonmetadata_receive_order_and_raw_command_hints(bool exited)
+    {
+        var all = Channel.CreateUnbounded<SessionNotification>();
+        var router = new UpdateRouter(all.Reader);
+        all.Writer.TryWrite(Text("s1", "first"));
+        all.Writer.TryWrite(new SessionNotification("s1", JsonDocument.Parse("""{"sessionUpdate":"available_commands_update","availableCommands":[{"name":"plan","input":{"hint":"提示"},"custom":true}]}""").RootElement));
+        all.Writer.TryWrite(Text("s1", "second"));
+        if (exited) { all.Writer.Complete(); await router.Completion; }
+        var observed = router.Metadata("s1", JsonDocument.Parse("[]").RootElement, null);
+        Assert.Equal("提示", JsonDocument.Parse(observed.Commands!).RootElement[0].GetProperty("input").GetProperty("hint").GetString());
+        var first = await router.For("s1").ReadAsync();
+        var second = await router.For("s1").ReadAsync();
+        Assert.Equal("first", first.Update.GetProperty("content").GetProperty("text").GetString());
+        Assert.Equal("second", second.Update.GetProperty("content").GetProperty("text").GetString());
+        Assert.False(router.For("s1").TryRead(out _));
+        all.Writer.TryComplete();
+        await router.Completion;
+    }
+
     private static SessionNotification Text(string sessionId, string text) =>
         new(sessionId, JsonDocument.Parse($$$"""{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"{{{text}}}"}}""").RootElement);
 }

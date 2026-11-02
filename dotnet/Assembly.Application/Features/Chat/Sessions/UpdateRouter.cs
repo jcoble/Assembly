@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Text.Json;
 using Assembly.Application.Common.Acp.Messages;
 
 using Assembly.Application.Common.Agents;
@@ -37,6 +38,33 @@ internal sealed class UpdateRouter
     {
         lock (_gate)
             return Queue(acpSessionId).Reader;
+    }
+
+    // Only the opener uses this before its normal update pump starts. Preserve replay/text/tool updates in order.
+    internal ConfigObservation Metadata(string nativeId, JsonElement responseOptions, string? commands)
+    {
+        lock (_gate)
+        {
+            Flush();
+            var retained = new List<SessionNotification>();
+            var options = responseOptions;
+            var queue = Queue(nativeId);
+            while (queue.Reader.TryRead(out var update))
+            {
+                if (update.Kind == "available_commands_update" && update.Update.TryGetProperty("availableCommands", out var available)) commands = available.GetRawText();
+                else if (update.Kind == "config_option_update" && update.Update.TryGetProperty("configOptions", out var changed))
+                {
+                    // A full response follows these notifications on the wire and is authoritative.
+                    if (responseOptions.ValueKind != JsonValueKind.Array) options = changed.Clone();
+                }
+                else retained.Add(update);
+            }
+            if (_closed)
+                _acpSessions[nativeId] = queue = Channel.CreateUnbounded<SessionNotification>();
+            foreach (var update in retained) queue.Writer.TryWrite(update);
+            if (_closed) queue.Writer.TryComplete();
+            return new ConfigObservation(options, commands);
+        }
     }
 
     public void Flush()

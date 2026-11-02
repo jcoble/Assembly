@@ -12,6 +12,13 @@ public interface IAgentLauncher
     /// <summary>The agents this machine can run.</summary>
     IReadOnlyList<AgentDescriptor> Agents { get; }
 
+    IReadOnlyList<ConfigTarget> ConfigTargets { get; }
+
+    void ValidateFolder(string folder);
+
+    Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+        StageTimes stages, CancellationToken cancellationToken);
+
     /// <summary>Starts the agent's adapter process, which its sessions' ACP sessions then share. Marks the adapter start.</summary>
     Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken);
 }

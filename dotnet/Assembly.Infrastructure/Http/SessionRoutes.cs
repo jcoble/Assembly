@@ -73,11 +73,15 @@ internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machin
                 await JsonReply.ErrorAsync(context, StatusCodes.Status400BadRequest, $"this machine has no agent {agent}");
                 return;
             }
+            var initial = ComposerConfigJson.Initial(body);
+            var folder = JsonReply.String(body, "workingFolder");
+            if (JsonReply.String(body, "parentSessionId") is not null && (initial is not null || folder is not null))
+                throw new Assembly.Application.Common.Calls.CallFailed("Helper creation does not accept owner initial settings.");
             // A helper session, started by a session on the machine that reaches this one.
             session = JsonReply.String(body, "parentSessionId") is { } parentId
                 ? await machine.CreateHelperAsync(new SessionInfo(parentId, agent, repoUrl, null, null, 0), agent,
                     JsonReply.String(body, "title") ?? "Helper", context.RequestAborted)
-                : await machine.CreateSessionAsync(agent, repoUrl, context.RequestAborted);
+                : await machine.CreateSessionAsync(agent, repoUrl, context.RequestAborted, initial, folder);
         }
         catch (Exception error) when (error is MachineUnreachable or Assembly.Application.Common.Calls.CallFailed)
         {
@@ -99,6 +103,7 @@ internal sealed class SessionRoutes(SessionStore sessionStore, MachineSet machin
         json.WriteString("sessionId", session.SessionId);
         json.WriteString("agent", session.Agent);
         json.WriteString("repoUrl", session.RepoUrl);
+        json.WriteString("workingFolder", session.WorkingFolder);
         json.WriteString("title", session.Title);
         json.WriteString("titleSource", session.TitleSource);
         json.WriteString("machine", session.Machine);
