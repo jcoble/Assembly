@@ -20,12 +20,7 @@ public sealed class McpGate(IEngineRuntime runtime, SessionLimits limits, TimePr
     public CallerRow? Resolve(IReadScope scope, McpCaller caller)
     {
         var row = scope.QueryFirst("""
-            WITH RECURSIVE ancestors(id,parent_id) AS (
-                SELECT id,parent_id FROM engine_session WHERE id=$id
-                UNION
-                SELECT p.id,p.parent_id FROM engine_session p JOIN ancestors a ON p.id=a.parent_id
-            )
-            SELECT s.id,s.epoch,s.state,s.parent_id,(SELECT COUNT(*)-1 FROM ancestors),
+            SELECT s.id,s.epoch,s.state,s.parent_id,0,
                 COALESCE(st.run_id,s.run_id),st.id,st.attempt,s.provider,s.model,s.folder,CAST(s.title AS BLOB),s.managed_checkout
             FROM engine_session s
             LEFT JOIN engine_step st ON st.id=(
@@ -39,6 +34,8 @@ public sealed class McpGate(IEngineRuntime runtime, SessionLimits limits, TimePr
         if (row is null || row.State is "ended" or "lost") return null;
         if (row.Epoch != caller.Epoch) throw new McpRefused(new("stale_epoch"));
         if (row.State == "handing_off") throw new McpRefused(new("handing_off"));
-        return row;
+        var ancestry = SessionAncestry.Read(scope, runtime.Machine, row.SessionId);
+        if (!ancestry.Known) throw new McpRefused(new("bad_args"));
+        return row with { Depth = ancestry.Nodes.Count - 1L };
     }
 }

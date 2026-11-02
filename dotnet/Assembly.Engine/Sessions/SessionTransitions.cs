@@ -97,25 +97,11 @@ public static class SessionTransitions
                     return Refused(context, "forbidden");
             }
             else if (peer) return Refused(context, "forbidden");
-            if (!peer)
-            {
-                var ancestry = scope.QueryFirst("""
-                    WITH RECURSIVE ancestors(id,parent_id) AS (
-                        SELECT id,parent_id FROM engine_session WHERE id=$parent
-                        UNION
-                        SELECT p.id,p.parent_id
-                        FROM engine_session p JOIN ancestors a ON p.id=a.parent_id
-                        LIMIT $ancestorBudget
-                    )
-                    SELECT COUNT(*),COALESCE(MAX(CASE WHEN parent_id IS NULL THEN 1 ELSE 0 END),0)
-                    FROM ancestors
-                    """, r => (Count: r.Long(0), Root: r.Long(1)),
-                    new("$parent", command.ParentId), new("$ancestorBudget", (long)depthLimit + 1L));
-                if (ancestry.Count > depthLimit)
-                    return Refused(context, "depth_limit");
-                if (ancestry.Count == 0 || ancestry.Root == 0)
-                    return Refused(context, "bad_args");
-            }
+            var ancestry = SessionAncestry.Read(scope, context.Machine, command.ParentId);
+            if (!ancestry.Known)
+                return Refused(context, "bad_args");
+            if (ancestry.Nodes.Count > depthLimit)
+                return Refused(context, "depth_limit");
             if (parent.State == "ended")
                 return Refused(context, "invalid_transition");
         }
@@ -134,7 +120,7 @@ public static class SessionTransitions
             if (owner != command.ParentId)
                 return Refused(context, "forbidden");
         }
-        if (!peer && parent is not null && scope.QueryFirst("""
+        if (parent is not null && scope.QueryFirst("""
                 SELECT COUNT(*) FROM engine_session WHERE parent_id=$parent AND state != 'ended'
                 """, r => r.Long(0), new SqlArg("$parent", command.ParentId)) >= childLimit)
             return Refused(context, "child_limit");
