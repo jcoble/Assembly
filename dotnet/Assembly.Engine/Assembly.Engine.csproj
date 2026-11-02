@@ -3,6 +3,7 @@
        Application supplies database contracts; Infrastructure supplies transport and host composition. -->
   <PropertyGroup>
     <IsAotCompatible>true</IsAotCompatible>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Assembly.Infrastructure" />
@@ -13,5 +14,6 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol.Core" />
+    <PackageReference Include="YamlDotNet" />
   </ItemGroup>
 </Project>

@@ -1,0 +1,7 @@
+{
+  "source": "mac-command-bar",
+  "commit": "d5f5fe68cfe395f6cc7aef0ef6ea57d94147559f",
+  "sourceDirectory": ".assembly/workflows",
+  "fixtureDirectory": "workflows",
+  "use": "Immutable parser/template compatibility inputs only; authored shell commands are never executed."
+}
