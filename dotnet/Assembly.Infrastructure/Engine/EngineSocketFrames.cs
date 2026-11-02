@@ -5,6 +5,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Recording;
 using Assembly.Engine.Reading;
+using Assembly.Engine.Relays;
 
 namespace Assembly.Infrastructure.Engine;
 
@@ -23,6 +24,20 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(RelaySourceReadArgs))]
+[JsonSerializable(typeof(RelaySourceOpened))]
+[JsonSerializable(typeof(RelaySourcePartArgs))]
+[JsonSerializable(typeof(RelaySourcePart))]
+[JsonSerializable(typeof(RelaySourceDescriptor))]
+[JsonSerializable(typeof(RelayHandleArgs))]
+[JsonSerializable(typeof(RelaySendRequest))]
+[JsonSerializable(typeof(RelaySendBeginReply))]
+[JsonSerializable(typeof(RelaySendPartArgs))]
+[JsonSerializable(typeof(RelaySendPartAccepted))]
+[JsonSerializable(typeof(RelaySendCommitArgs))]
+[JsonSerializable(typeof(RelaySendAck))]
+[JsonSerializable(typeof(RelayOutcomeArgs))]
 [JsonSerializable(typeof(SessionTitleReadArgs))]
 [JsonSerializable(typeof(SessionTitleStat))]
 [JsonSerializable(typeof(SessionTitleChunkArgs))]

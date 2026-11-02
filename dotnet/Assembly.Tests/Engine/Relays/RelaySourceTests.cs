@@ -83,10 +83,10 @@ public sealed class RelaySourceTests
         Assert.Throws<RelayRefused>(() => new EngineReader(f.Db, f.Machine).RelaySource(new("message", "wrong-target"), default));
     }
 
-    internal static EngineFixture Source(int size, out string text, out string label, string target = "target")
+    internal static EngineFixture Source(int size, out string text, out string label, string target = "target", int labelChars = 15000)
     {
         var f = new EngineFixture(); f.SeedSession("sender");
-        var title = "Before\0" + new string('界', 15000) + " AFTER_LABEL_NUL\n[quotes\"]";
+        var title = "Before\0" + new string('界', labelChars) + " AFTER_LABEL_NUL\n[quotes\"]";
         var commands = new EngineCommands(f.Machine, f.Limits);
         Assert.True(f.Db.Writer.Write("test.title", s => commands.ApplyPreparedSessionTitle(s,
             new(Guid.NewGuid(), f.Machine, new(ActorKind.System, "observer"), "sender", 0, 0, 1000),

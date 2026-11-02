@@ -36,6 +36,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     private readonly Assembly.Infrastructure.Topics.Topics _topics = new();
     private EngineFixture _f = null!;
     private EngineRuntime _runtime = null!;
+    private MachineCalls _machineCalls = null!;
     private SessionStore _store = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
@@ -52,12 +53,16 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
         _f = new(topics: _topics); _store = SessionStore.Open(_f.Db, _f.Time, _root);
         _runtime = EngineRuntime.Start(_f.Db, _topics, _f.Time, _f.Limits, cutover: new(_f.Db, _store, _launcher, _root, _f.Time));
         var dispatcher = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
-        new MachineCalls(_runtime, _f.Time, _launcher, _root).Register(new PeerGate(dispatcher, this));
+        _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root);
+        _machineCalls.Register(new PeerGate(dispatcher, this));
         new EngineCalls(_runtime, _f.Time).Register(dispatcher);
         dispatcher.Topic("peer", TestJson.Default.Note, n => n.Text, (_, c) => [new(c.Peer is OwnerPeer && c.ReplyId == 37 ? "owner" : "missing")]);
         var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders(); builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         _app = builder.Build(); _app.UseWebSockets();
         var endpoint = new SocketEndpoint("token", dispatcher, _runtime.Machine, _f.Time);
+        var bulkEndpoint = new SocketEndpoint("token", dispatcher, _runtime.Machine, _f.Time, bulk: true);
+        _app.Map("/socket/bulk", bulkEndpoint.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(bulkEndpoint.CloseAll);
         _app.Map("/socket", endpoint.HandleAsync); _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -66,7 +71,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        await _app.DisposeAsync(); await _runtime.DisposeAsync(); _f.Dispose(); Directory.Delete(_root, true);
+        await _app.DisposeAsync(); await _machineCalls.DisposeAsync(); await _runtime.DisposeAsync(); _f.Dispose(); Directory.Delete(_root, true);
     }
 
     [Fact]

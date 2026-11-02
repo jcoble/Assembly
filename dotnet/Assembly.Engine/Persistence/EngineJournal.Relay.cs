@@ -14,31 +14,37 @@ public static partial class EngineJournal
     internal static RelaySendAck ApplyRelaySend(IWriteScope scope, string machine, RelaySendRequest request,
         PreparedRelaySend? prepared, Func<int> messageLimit, MessageExpiryPolicy policy, long nowMs)
     {
-        RelayDigests.Validate(request.Source);
-        if (request.Source.RecipientMachine != machine || request.PreparedRecipientEpoch < 0 ||
-            request.PredecessorRefusalKey is not null && request.PredecessorRefusalKey != RootKey(request.Source))
-            throw new RelayRefused("bad_args");
-        var state = ReadRelayState(scope, machine, request.Source);
-        if (state.Ack.Unknown) return state.Ack;
+        var probe = ProbeRelaySend(scope, machine, request);
+        if (probe.Status != "parts_required") return probe.Ack;
+        if (prepared is null) throw new RelayRefused("parts_required");
+        if (prepared.Source != request.Source) throw new RelayRefused("source_changed");
         var retry = request.PredecessorRefusalKey is not null;
-        var selected = retry ? state.Retry : state.Root;
-        if (selected is not null && selected.RequestedEpoch != request.PreparedRecipientEpoch)
-            throw new RelayRefused("command_id_conflict");
-        if (state.Ack.DestinationPresent) return state.Ack;
-        if (retry && (state.Root?.Result is not { Applied: false, Error: "stale_epoch" } || state.Ack.First is null))
-            throw new RelayRefused("bad_args");
-        if (selected is null)
-        {
-            if (!RelayDigests.CanSend(request.Source) || state.Target is not { Holder: "local", ReservedEpoch: null } ||
-                state.Target.State == "handing_off") return state.Ack with { Unknown = true };
-            if (prepared is null) throw new RelayRefused("parts_required");
-            if (prepared.Source != request.Source) throw new RelayRefused("source_changed");
-        }
         var key = retry ? RetryKey(request.Source) : RootKey(request.Source);
         var context = RelayContext(machine, request.Source, key, request.PreparedRecipientEpoch, nowMs);
         var admission = RelaySendAdmission.Create(scope, context, key, request.Source, prepared, messageLimit, policy);
         ExecuteCore(scope, context, key, admission.Canonical, admission.Transition, admission);
         return ReadRelayState(scope, machine, request.Source).Ack;
+    }
+
+    internal static RelaySendBeginReply ProbeRelaySend(IReadScope scope, string machine, RelaySendRequest request)
+    {
+        RelayDigests.Validate(request.Source);
+        if (request.Source.RecipientMachine != machine || request.PreparedRecipientEpoch < 0 ||
+            request.PredecessorRefusalKey is not null && request.PredecessorRefusalKey != RootKey(request.Source))
+            throw new RelayRefused("bad_args");
+        var state = ReadRelayState(scope, machine, request.Source);
+        if (state.Ack.Unknown) return new("unknown", null, state.Ack);
+        var retry = request.PredecessorRefusalKey is not null;
+        var selected = retry ? state.Retry : state.Root;
+        if (selected is not null && selected.RequestedEpoch != request.PreparedRecipientEpoch)
+            throw new RelayRefused("command_id_conflict");
+        if (state.Ack.DestinationPresent) return new("recorded", null, state.Ack);
+        if (retry && state.Root?.Result is not { Applied: false, Error: "stale_epoch" })
+            throw new RelayRefused("bad_args");
+        if (selected is not null) return new("recorded", null, state.Ack);
+        if (!RelayDigests.CanSend(request.Source) || state.Target is not { Holder: "local", ReservedEpoch: null } ||
+            state.Target.State == "handing_off") return new("unknown", null, state.Ack with { Unknown = true });
+        return new("parts_required", null, state.Ack);
     }
 
     private static string RootKey(RelaySourceDescriptor source) => "relay-send/v1/" + source.IdentitySha256 + "/root";
