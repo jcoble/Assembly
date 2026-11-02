@@ -17,10 +17,10 @@ public sealed partial class EngineCommands
         var chain = SessionAncestry.Read(scope, _machine, query.ParentSessionId);
         if (!chain.Known) return new(chain.InvalidProof ? ForeignTitleReplyKind.Unknown : ForeignTitleReplyKind.PartsRequired, null, null, null, null);
         var nodes = StoredTitleNodes(scope, chain.Nodes.Reverse().Select(n => n.Id).ToArray());
-        if (nodes.Length != query.NodeCount || nodes[^1].Machine != query.FromMachine ||
+        if (chain.MarkerResult is null || nodes.Length != query.NodeCount || nodes[^1].Machine != query.FromMachine ||
             ForeignTitleDigests.Structure(_machine, query.FromMachine, query.ParentSessionId, nodes) != query.StructureSha256)
             return new(ForeignTitleReplyKind.Unknown, null, null, null, null);
-        return new(ForeignTitleReplyKind.ExistingStructure, null, null, query.StructureSha256, ForeignTitleDigests.Stored(_machine, nodes));
+        return new(ForeignTitleReplyKind.ExistingStructure, null, chain.MarkerResult, query.StructureSha256, ForeignTitleDigests.Stored(_machine, nodes));
     }
 
     internal ForeignTitleReply ReadForeignRegisterTitleAck(IReadScope scope, ForeignRegisterReceiptQuery query)

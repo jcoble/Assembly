@@ -8,6 +8,28 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed partial class EngineForwardTests
 {
     [Fact]
+    public async Task Legacy_command_result_ancestry_mapping_carries_large_title_and_returns_actual_marker_result()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "b11-title-legacy-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+        try
+        {
+            await using var h = new TwoHosts(windowCalls: true, forwardCommands: true, machineLauncher: new RelayTestLauncher(), checkouts: root);
+            await h.Start(); await h.StartMirror(); var mirror = Assert.Single(h.Connections.CaptureMirrorOwners()).Mirror;
+            var proof = await ReadyForPinned(mirror); var id = Guid.NewGuid().ToString();
+            var title = "\0" + new string('界', 1500000) + "end\0";
+            var args = new ForeignAncestryArgs(h.Mac.Runtime.Machine, id, [new(id, h.Mac.Runtime.Machine, "codex", title, null)]);
+            var applied = await h.Mac.Forwarder!.ForeignAncestryAsync(h.ConnectedMachine, proof.OwnerBinding, args, default, proof);
+            Assert.True(applied.Applied);
+            var repeated = await h.Mac.Forwarder.ForeignAncestryAsync(h.Remote.Runtime.Machine, args, default);
+            Assert.Equal(applied, repeated);
+            var raw = h.Remote.Fixture.Text("SELECT result_json FROM engine_command_receipt WHERE command_id=$key",
+                new SqlArg("$key", Assembly.Engine.Persistence.RelayReceiptKeys.ForeignParent(h.Remote.Runtime.Machine, id)));
+            Assert.Equal(raw, System.Text.Json.JsonSerializer.Serialize(repeated, Assembly.Engine.EngineJson.Default.CommandResult));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task Actual_owner_lease_reads_full_frozen_titles_through_progress_and_source_rename()
     {
         var root = Path.Combine(Path.GetTempPath(), "b11-title-forward-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);

@@ -6,6 +6,32 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed partial class EngineForwardTests
 {
     [Fact]
+    public async Task Owner_disposal_joins_between_call_lease_and_waiting_admission_before_disposing_gates()
+    {
+        await using var h = new TwoHosts(windowCalls: true, forwardCommands: true);
+        await h.Start(); await h.StartMirror();
+        var remote = h.ConnectedMachine; var binding = await remote.CaptureOwnerBindingAsync(h.Remote.Fixture.Machine, default);
+        var lease = await remote.AcquireRelayBulkAsync(binding, default);
+        var args = JsonSerializer.Deserialize("""{"entityKind":"tool_call","entityId":"tool"}""", EngineJson.Default.JsonElement);
+        await lease.CallAsync("entity", args, default);
+        var waiting = remote.AcquireRelayBulkAsync(binding, default); Assert.False(waiting.IsCompleted);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var registration = binding.Invalidated.Register(() => cancelled.TrySetResult());
+        var disconnect = h.DisconnectMirror();
+        try
+        {
+            await cancelled.Task.WaitAsync(Wait);
+            Assert.IsNotType<ObjectDisposedException>(await Assert.ThrowsAnyAsync<Exception>(() => waiting));
+            Assert.False(disconnect.IsCompleted);
+            Assert.IsNotType<ObjectDisposedException>(await Assert.ThrowsAnyAsync<Exception>(() => remote.AcquireRelayBulkAsync(binding, default)));
+            Assert.IsNotType<ObjectDisposedException>(await Assert.ThrowsAnyAsync<Exception>(() => lease.CallAsync("entity", args, default)));
+            await lease.AbortAsync();
+        }
+        finally { await lease.DisposeAsync(); }
+        await disconnect.WaitAsync(Wait);
+    }
+
+    [Fact]
     public async Task Relay_lease_holds_one_bulk_slot_across_all_parts_without_recursively_waiting()
     {
         await using var h = await Started();

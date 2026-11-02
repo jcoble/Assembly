@@ -21,7 +21,7 @@ public static partial class EngineJournal
         var row = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$id",
             r => new ForeignRegisterReceipt(r.Text(0), r.Text(1)), new SqlArg("$id", query.CommandId.ToString("N")));
         if (row is null) return null;
-        if (row.Fingerprint != Fingerprint(context, canonical)) return new(false, false, "command_id_conflict", 0, 0, query.Epoch);
+        if (row.Fingerprint != Fingerprint(context, canonical)) return Rejected(context, "command_id_conflict");
         try
         {
             var result = JsonSerializer.Deserialize(row.Result, EngineJson.Default.CommandResult);

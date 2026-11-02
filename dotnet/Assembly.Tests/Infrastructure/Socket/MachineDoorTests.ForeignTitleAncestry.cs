@@ -40,7 +40,7 @@ public sealed partial class MachineDoorTests
             Assert.Equal(Encoding.UTF8.GetBytes(title), _f.Db.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id=$id", r => r.Blob(0), default, new SqlArg("$id", id)));
         Assert.Equal(root, _f.Text("SELECT parent_id FROM engine_session WHERE id=$id", new SqlArg("$id", parent)));
         var repeated = await TitleBegin(socket, request with { Titles = request.Titles with { Sha256 = new string('a', 64) } });
-        Assert.Equal(ForeignTitleReplyKind.ExistingStructure, repeated.Kind); Assert.Null(repeated.Handle); Assert.Null(repeated.Result);
+        Assert.Equal(ForeignTitleReplyKind.ExistingStructure, repeated.Kind); Assert.Null(repeated.Handle); Assert.Equal(committed.Result, repeated.Result);
         Assert.Equal(proof.StructureSha256, repeated.VerifiedStructureSha256);
         Assert.Equal(ForeignTitleDigests.Stored(_runtime.Machine, capture.Nodes), repeated.ObservedStoredMetadataSha256);
         Assert.Equal(2, _f.Count("engine_command_receipt")); Assert.Empty(_f.Events());

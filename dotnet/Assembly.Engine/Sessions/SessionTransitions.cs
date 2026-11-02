@@ -14,14 +14,14 @@ public static class SessionTransitions
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
         SessionCommand command, int depthLimit, int childLimit, string accountContext = "", MessageExpiryPolicy? expiryPolicy = null) =>
-        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, null, expiryPolicy);
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, null, expiryPolicy, null);
 
     internal static CommandResult ApplyPreparedTitle(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy = null) =>
-        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, titleUtf8, expiryPolicy);
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy = null, PreparedStartEffectPayload? startEffectPayload = null) =>
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, titleUtf8, expiryPolicy, startEffectPayload);
 
     private static CommandResult ApplyCore(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy)
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy, PreparedStartEffectPayload? startEffectPayload)
     {
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
@@ -40,7 +40,7 @@ public static class SessionTransitions
         if ((current?.Version ?? 0) != context.ExpectedVersion)
             return Refused(context, "version_conflict", current);
         if (command is StartSession start)
-            return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext, titleUtf8) : Refused(context, "invalid_transition", current);
+            return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext, titleUtf8, startEffectPayload) : Refused(context, "invalid_transition", current);
         if (current is null)
             return Refused(context, "bad_args");
         return command switch
@@ -74,7 +74,7 @@ public static class SessionTransitions
         return new(true, false, null, 0, 0, 0);
     }
 
-    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8)
+    private static CommandResult Start(IWriteScope scope, CommandContext context, StartSession command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, PreparedStartEffectPayload? startEffectPayload)
     {
         var untitledOwnerRoot = command.Title == "" && context.Actor == new EngineActor(ActorKind.Window, "owner") &&
             command.ParentId is null && command.RunId is null;
@@ -140,6 +140,8 @@ public static class SessionTransitions
             return Refused(context, "child_limit");
         if (context.Epoch != 0)
             return new(false, false, "stale_epoch", 0, 0, 0);
+        var startPayload = startEffectPayload is null ? JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession)
+            : startEffectPayload.ForExact(command);
         scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,task_url,
                 provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,account_context,managed_checkout)
@@ -150,7 +152,7 @@ public static class SessionTransitions
             new("$folder", command.Folder), new("$title", titleUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(command.Title)), new("$parent", command.ParentId), new("$run", command.RunId), new("$account", accountContext), new("$managed", command.ManagedCheckout == true ? 1 : 0));
         var created = new Session(1, 0, "starting", "idle", command.ParentId, command.RunId, context.Machine);
         return Commit(scope, context, created, "session.started",
-            [new("", "start", context.EntityId, command.RunId, JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession))]);
+            [new("", "start", context.EntityId, command.RunId, startPayload)]);
     }
 
     private static CommandResult Capabilities(IWriteScope scope, CommandContext context, Session current, ReportCapabilities command)

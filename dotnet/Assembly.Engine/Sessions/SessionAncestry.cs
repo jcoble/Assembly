@@ -1,11 +1,13 @@
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Persistence;
+using Assembly.Engine.Contracts;
+using System.Text.Json;
 
 namespace Assembly.Engine.Sessions;
 
 internal sealed record AncestryNode(string Id, string Machine, string State, string? ParentId,
     long Version, long Epoch, string Holder, long Managed);
-internal sealed record AncestryChain(bool Known, IReadOnlyList<AncestryNode> Nodes, bool InvalidProof = false);
+internal sealed record AncestryChain(bool Known, IReadOnlyList<AncestryNode> Nodes, bool InvalidProof = false, CommandResult? MarkerResult = null);
 
 /// <summary>One recursive FK read and one batched private-marker read on the caller's snapshot.</summary>
 internal static class SessionAncestry
@@ -52,6 +54,10 @@ internal static class SessionAncestry
             if (!byId.TryGetValue(next, out var node)) { known = false; invalid |= chain.Count > 0; break; }
             chain.Add(node); next = node.ParentId;
         }
-        return new(known, chain, invalid);
+        // This is the exact final-node result from the same already-validated batched marker snapshot.
+        CommandResult? result = null;
+        if (known && chain[0].Machine != target && receipts.TryGetValue(RelayReceiptKeys.ForeignParent(target, sessionId), out var final))
+            result = JsonSerializer.Deserialize(final.Result, EngineJson.Default.CommandResult);
+        return new(known, chain, invalid, result);
     }
 }

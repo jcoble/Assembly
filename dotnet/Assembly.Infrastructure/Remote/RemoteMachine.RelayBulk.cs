@@ -8,6 +8,33 @@ namespace Assembly.Infrastructure.Remote;
 
 internal sealed partial class RemoteMachine
 {
+    private readonly object _relayLeaseGate = new();
+    private readonly HashSet<Task> _relayLeaseOwners = [];
+    private bool _relayLeaseStopping;
+    private RelayLeaseLifetime EnterRelayLease()
+    {
+        lock (_relayLeaseGate)
+        {
+            if (_relayLeaseStopping) throw new CallFailed("relay_connection_changed");
+            var lifetime = new RelayLeaseLifetime(this, _socketStop.Token);
+            _relayLeaseOwners.Add(lifetime.Completion.Task); return lifetime;
+        }
+    }
+    private Task[] StopRelayLeases()
+    {
+        lock (_relayLeaseGate) { _relayLeaseStopping = true; return _relayLeaseOwners.ToArray(); }
+    }
+    private sealed class RelayLeaseLifetime(RemoteMachine owner, CancellationToken stopping)
+    {
+        internal readonly CancellationToken Stopping = stopping;
+        internal readonly TaskCompletionSource Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal void Complete()
+        {
+            lock (owner._relayLeaseGate) owner._relayLeaseOwners.Remove(Completion.Task);
+            Completion.TrySetResult();
+        }
+    }
+
     internal Task<RelayBulkLease> AcquireRelayBulkAsync(OwnerConnectionBinding binding, CancellationToken ct, EngineMirror.LiveMirrorBinding? live = null) =>
         RelayBulkLease.AcquireAsync(this, binding, ct, live);
 
@@ -17,31 +44,39 @@ internal sealed partial class RemoteMachine
         private readonly RemoteMachine _owner;
         private readonly OwnerConnectionBinding _binding;
         private readonly EngineMirror.LiveMirrorBinding? _live;
+        private readonly RelayLeaseLifetime _lifetime;
         private readonly SemaphoreSlim _exchange = new(1);
         private ClientWebSocket? _bulk;
         private bool _failed;
         private int _disposed;
-        private RelayBulkLease(RemoteMachine owner, OwnerConnectionBinding binding, EngineMirror.LiveMirrorBinding? live) => (_owner, _binding, _live) = (owner, binding, live);
+        private RelayBulkLease(RemoteMachine owner, OwnerConnectionBinding binding, EngineMirror.LiveMirrorBinding? live, RelayLeaseLifetime lifetime)
+            => (_owner, _binding, _live, _lifetime) = (owner, binding, live, lifetime);
         internal string Machine => _binding.Machine;
         internal static async Task<RelayBulkLease> AcquireAsync(RemoteMachine owner, OwnerConnectionBinding binding, CancellationToken ct, EngineMirror.LiveMirrorBinding? live)
         {
-            if (binding.IsInvalidated) throw new CallFailed("relay_connection_changed");
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, binding.Invalidated, owner._socketStop.Token);
-            ct = linked.Token;
-            await owner._bulkCall.WaitAsync(ct).ConfigureAwait(false);
+            var lifetime = owner.EnterRelayLease();
             try
             {
-                await owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
-                try { owner.RequireOwnerBinding(binding); RequireLiveMirror(binding, live); return new(owner, binding, live); }
-                finally { owner._socketSend.Release(); }
+                if (binding.IsInvalidated) throw new CallFailed("relay_connection_changed");
+                using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, binding.Invalidated, lifetime.Stopping);
+                ct = linked.Token;
+                await owner._bulkCall.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    await owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
+                    try { owner.RequireOwnerBinding(binding); RequireLiveMirror(binding, live); return new(owner, binding, live, lifetime); }
+                    finally { owner._socketSend.Release(); }
+                }
+                catch { owner._bulkCall.Release(); throw; }
             }
-            catch { owner._bulkCall.Release(); throw; }
+            catch { lifetime.Complete(); throw; }
         }
+
         internal async Task<JsonElement> CallAsync(string method, JsonElement args, CancellationToken ct)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (_binding.IsInvalidated) throw new CallFailed("relay_connection_changed");
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _binding.Invalidated, _owner._socketStop.Token);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _binding.Invalidated, _lifetime.Stopping);
             ct = linked.Token;
             await _exchange.WaitAsync(ct).ConfigureAwait(false);
             try
@@ -101,7 +136,7 @@ internal sealed partial class RemoteMachine
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
             await _exchange.WaitAsync().ConfigureAwait(false);
             try { _owner._bulkCall.Release(); }
-            finally { _exchange.Release(); }
+            finally { _exchange.Release(); _lifetime.Complete(); }
         }
     }
 }
