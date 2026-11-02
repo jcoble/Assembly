@@ -42,7 +42,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     public EnginePublisher Publisher { get; }
 
     private EngineRuntime(IAppDatabase db, EngineTopics topics, TimeProvider time, SessionLimits limits,
-        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover, Func<EngineRuntime, IEngineEffects>? effectsFactory, Func<IReadScope, int>? readExpiryMinutes)
+        IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover, Func<EngineRuntime, IEngineEffects>? effectsFactory, Func<IReadScope, int>? readExpiryMinutes, Task? effectsReady)
     {
         if (effects is not null && effectsFactory is not null) throw new ArgumentException("Supply effects or effectsFactory, not both.");
         _db = db;
@@ -72,14 +72,25 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         _subscription = topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => _wake.Writer.TryWrite(true));
         _mirrorSubscription = topics.Subscribe("__engine_mirrored", null, _ => { }, (machine, _) => MirrorChanged(machine!));
         _publisherTask = Task.Run(PublishAsync);
-        _workerTask = Task.Run(() => _worker.RunAsync(_stop.Token));
+        _workerTask = Task.Run(() => RunWorkerAsync(effectsReady));
         _wake.Writer.TryWrite(true); // catch up the durable log even without a new commit
     }
 
     public static EngineRuntime Start(IAppDatabase db, EngineTopics topics, TimeProvider time,
         SessionLimits limits, IEngineEffects? effects = null, IEngineRetention? retention = null, Func<int>? messageLimit = null, SessionCutover? cutover = null,
-        Func<EngineRuntime, IEngineEffects>? effectsFactory = null, Func<IReadScope, int>? readExpiryMinutes = null) =>
-        new(db, topics, time, limits, effects, retention, messageLimit, cutover, effectsFactory, readExpiryMinutes);
+        Func<EngineRuntime, IEngineEffects>? effectsFactory = null, Func<IReadScope, int>? readExpiryMinutes = null, Task? effectsReady = null) =>
+        new(db, topics, time, limits, effects, retention, messageLimit, cutover, effectsFactory, readExpiryMinutes, effectsReady);
+
+    private async Task RunWorkerAsync(Task? ready)
+    {
+        try
+        {
+            if (ready is not null) await ready.WaitAsync(_stop.Token);
+            _stop.Token.ThrowIfCancellationRequested();
+            await _worker.RunAsync(_stop.Token);
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested || ready?.IsCanceled == true) { }
+    }
 
     private void ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt)
     {

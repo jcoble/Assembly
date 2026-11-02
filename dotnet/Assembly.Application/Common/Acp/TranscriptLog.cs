@@ -32,7 +32,23 @@ public sealed class TranscriptLog : IDisposable
         return message.ToJsonString();
     }
 
-    public void Received(string jsonLine) => Write("in", jsonLine, isJson: true);
+    public void Received(string jsonLine) => Write("in", RedactUrl(jsonLine), isJson: true);
+
+    private static string RedactUrl(string line)
+    {
+        try
+        {
+            if (JsonNode.Parse(line) is not JsonObject message || message["method"]?.GetValueKind() != JsonValueKind.String
+                || message["method"]!.GetValue<string>() != AcpMethods.ElicitationCreate
+                || message["params"] is not JsonObject parameters || parameters["mode"]?.GetValueKind() != JsonValueKind.String
+                || parameters["mode"]!.GetValue<string>() != "url") return line;
+            var safe = new JsonObject { ["method"] = AcpMethods.ElicitationCreate, ["params"] = "[redacted URL elicitation]" };
+            if (message.TryGetPropertyValue("jsonrpc", out var protocol)) safe["jsonrpc"] = protocol?.DeepClone();
+            if (message.TryGetPropertyValue("id", out var id)) safe["id"] = id?.DeepClone();
+            return safe.ToJsonString();
+        }
+        catch (JsonException) { return line; }
+    }
 
     public void AgentStderr(string text) => Write("err", text, isJson: false);
 

@@ -143,7 +143,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         if (effects is not null && claim is null)
         {
             var available = AvailableOwners();
-            deadline = Earlier(deadline, s.QueryFirst($"SELECT MIN(next_ms) FROM engine_outbox WHERE state IN ('pending','uncertain') AND {EffectTransitions.NoEarlierUnresolved} {available.Sql}",
+            deadline = Earlier(deadline, s.QueryFirst($"SELECT MIN(next_ms) FROM engine_outbox WHERE kind<>'parent_need' AND state IN ('pending','uncertain') AND {EffectTransitions.NoEarlierUnresolved} {available.Sql}",
                 r => r.IsNull(0) ? (long?)null : r.Long(0), available.Args));
         }
         retention.Apply(s, now);
@@ -175,7 +175,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     private CommandResult Apply(IWriteScope s, Candidate row, EngineCommand command) => commands.Apply(s, Context(row), command);
     private static List<Candidate> Candidates(IWriteScope s, string predicate, int limit = 100, params SqlArg[] args) => s.Query($"""
         SELECT id,version,state,COALESCE((SELECT epoch FROM engine_session WHERE id=engine_outbox.session_id),0),COALESCE(session_id,'effect/'||id)
-        FROM engine_outbox WHERE {predicate} ORDER BY event_seq,rowid LIMIT {limit}
+        FROM engine_outbox WHERE kind<>'parent_need' AND {predicate} ORDER BY event_seq,rowid LIMIT {limit}
         """, r => new Candidate(r.Text(0), r.Long(1), r.Text(2), r.Long(3), r.Text(4)), args);
 
     private (string Sql, SqlArg[] Args) AvailableOwners()

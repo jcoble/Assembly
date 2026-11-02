@@ -76,18 +76,21 @@ public sealed class McpTests : IAsyncLifetime
         var tools = (await ResultAsync(parentToken, "tools/list", "{}")).GetProperty("tools").EnumerateArray().Select(tool => tool.GetProperty("name").GetString());
         Assert.Equal(["start_session", "send_message", "message_status", "list_sessions"], tools);
 
-        var started = await CallAsync(parentToken, "start_session", new { prompt = "Count the lines in notes.txt.", agent = "codex" });
-        var helperId = started.GetProperty("sessionId").GetString()!;
-        var messageId = started.GetProperty("messageId").GetString()!;
-        var helper = _sessionStore.Get(helperId)!;
-        Assert.Equal((parent.SessionId, true, "codex"), (helper.ParentSessionId, helper.Helper, helper.Agent));
-
-        // The helper is a session of its own, on its agent's adapter, with a token of its own.
+        var starting = CallAsync(parentToken, "start_session", new { prompt = "Count the lines in notes.txt.", agent = "codex" });
+        // The start reply owns actual provider insertion, so answer its open/prompt before awaiting HTTP.
         var helperAgent = await _launcher.NextAsync();
         var helperToken = SessionToken(await helperAgent.StartAsync(acpSessionId: "acp-helper"));
         Assert.NotEqual(parentToken, helperToken);
         var helperPrompt = await helperAgent.ReadAsync("session/prompt");
         Assert.Contains("Count the lines in notes.txt.", helperPrompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
+        Assert.False(starting.IsCompleted);
+        await helperAgent.InsertAsync(helperPrompt, "prompt-" + helperPrompt.GetProperty("id").GetRawText());
+        var started = await starting;
+        var helperId = started.GetProperty("sessionId").GetString()!;
+        var messageId = started.GetProperty("messageId").GetString()!;
+        var helper = _sessionStore.Get(helperId)!;
+        Assert.Equal((parent.SessionId, true, "codex"), (helper.ParentSessionId, helper.Helper, helper.Agent));
+
         var refused = await CallResultAsync(helperToken, "start_session", new { prompt = "more" });
         Assert.True(refused.GetProperty("isError").GetBoolean());
 
@@ -97,7 +100,7 @@ public sealed class McpTests : IAsyncLifetime
         await Task.Delay(500);
         Assert.False(status.IsCompleted);
         await helperAgent.TextAsync("notes.txt has 3 lines.", "h1", "acp-helper");
-        await helperAgent.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
+        await helperAgent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-helper");
         var answered = await status;
         Assert.Equal(("answered", "notes.txt has 3 lines."), (answered.GetProperty("state").GetString(), answered.GetProperty("reply").GetString()));
 
@@ -120,12 +123,18 @@ public sealed class McpTests : IAsyncLifetime
         var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
         await agent.ReadAsync("session/prompt");
 
-        var first = (await CallAsync(parentToken, "start_session", new { prompt = "one" })).GetProperty("sessionId").GetString()!;
+        var startingFirst = CallAsync(parentToken, "start_session", new { prompt = "one" });
         var firstToken = SessionToken(await agent.OpenAsync("acp-one"));
         var firstPrompt = await agent.ReadAsync("session/prompt");
-        var second = (await CallAsync(parentToken, "start_session", new { prompt = "two" })).GetProperty("sessionId").GetString()!;
+        Assert.False(startingFirst.IsCompleted);
+        await agent.InsertAsync(firstPrompt, "prompt-" + firstPrompt.GetProperty("id").GetRawText());
+        var first = (await startingFirst).GetProperty("sessionId").GetString()!;
+        var startingSecond = CallAsync(parentToken, "start_session", new { prompt = "two" });
         await agent.OpenAsync("acp-two");
         var secondPrompt = await agent.ReadAsync("session/prompt");
+        Assert.False(startingSecond.IsCompleted);
+        await agent.InsertAsync(secondPrompt, "prompt-" + secondPrompt.GetProperty("id").GetRawText());
+        var second = (await startingSecond).GetProperty("sessionId").GetString()!;
         Assert.True((await CallResultAsync(parentToken, "start_session", new { prompt = "three" })).GetProperty("isError").GetBoolean());
 
         // A helper reaches its parent and its sibling.
@@ -135,20 +144,23 @@ public sealed class McpTests : IAsyncLifetime
         Assert.Contains((second, "sibling"), listed);
 
         // The second finishes; the first may message it once.
-        await agent.FinishAsync(secondPrompt, """{"stopReason":"end_turn"}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-two");
         Assert.Equal("acp-two", await agent.CloseAsync());
-        var sent = await CallAsync(firstToken, "send_message", new { sessionId = second, text = "What did you find?" });
-        Assert.True(sent.TryGetProperty("messageId", out _));
+        var sending = CallAsync(firstToken, "send_message", new { sessionId = second, text = "What did you find?" });
         await agent.OpenAsync("acp-two");
         var delivered = await agent.ReadAsync("session/prompt");
+        Assert.False(sending.IsCompleted);
+        await agent.InsertAsync(delivered, "prompt-" + delivered.GetProperty("id").GetRawText());
+        var sent = await sending;
+        Assert.True(sent.TryGetProperty("messageId", out _));
         Assert.Contains("What did you find?", delivered.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
         // Its row in the receiving session says who sent it, so the page doesn't show it as the person's.
         Assert.Equal(first, _store.RowsAfter(second, 0).Last(row => row.Kind == "user").Payload.GetProperty("from").GetString());
         Assert.True((await CallResultAsync(firstToken, "send_message", new { sessionId = second, text = "again" })).GetProperty("isError").GetBoolean());
         // The limit holds between any two sessions: the parent's prompt was its one message to the helper.
         Assert.True((await CallResultAsync(parentToken, "send_message", new { sessionId = second, text = "and you?" })).GetProperty("isError").GetBoolean());
-        await agent.FinishAsync(delivered, """{"stopReason":"end_turn"}""");
-        await agent.FinishAsync(firstPrompt, """{"stopReason":"end_turn"}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-two");
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""", "acp-one");
     }
 
     // The session's token for the Assembly MCP server, from its session/new or session/resume: kept in memory only.

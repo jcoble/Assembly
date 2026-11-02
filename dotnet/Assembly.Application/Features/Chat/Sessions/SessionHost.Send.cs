@@ -167,9 +167,5 @@ public sealed partial class SessionHost
         await done.WaitAsync(ct);
     }
 
-    internal bool AnswerProviderRequest(string chatRowId, string providerRequestId, System.Text.Json.JsonElement answer)
-    {
-        lock (_gate) return _asks.TryGetValue(chatRowId, out var ask) &&
-            ask.Request?.ProviderRequestId == providerRequestId && Answer(chatRowId, answer);
-    }
+
 }

@@ -16,7 +16,7 @@ public sealed class MessageExpiryTests
     public void Fresh_schema_has_nullable_expiry_and_version_six()
     {
         using var f = new EngineFixture();
-        Assert.Equal(6, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(7, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_message') WHERE name='expires_ms' AND type='INTEGER' AND [notnull]=0"));
     }
 

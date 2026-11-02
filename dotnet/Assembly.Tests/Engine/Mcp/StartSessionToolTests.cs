@@ -169,7 +169,7 @@ public sealed partial class StartSessionToolTests
         using var subscription = h.Topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => Interlocked.Increment(ref publications));
         var result = await h.Call(h.Start, "owner", """{"prompt":"Task","title":"Helper"}""");
         Assert.True(result.IsError);
-        Assert.Equal("start_session was refused: message_limit.", Text(result));
+        Assert.Equal("You've reached the message limit for that session.", Text(result));
         Assert.Equal(before, tables.Select(h.Fixture.Count).ToArray());
         Assert.Equal(0, publications);
     }

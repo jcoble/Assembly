@@ -8,7 +8,7 @@ namespace Assembly.Application.Common.Acp.Messages;
 /// object (strings, <c>oneOf</c> choices, arrays of <c>anyOf</c> choices). Claude Code's AskUserQuestion comes this way.
 /// </summary>
 public sealed record ElicitationRequest(string? SessionId, string Mode, string? Message, JsonElement RequestedSchema,
-    string? ToolCallId, JsonElement? RequestId = null);
+    string? ToolCallId, JsonElement? RequestId = null, string? Url = null, string? ElicitationId = null);
 
 /// <summary><c>{ action: "accept", content }</c>, <c>{ action: "decline" }</c> (skip) or <c>{ action: "cancel" }</c>.</summary>
 public sealed record ElicitationResponse(string Action, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] JsonElement Content = default)
@@ -21,3 +21,5 @@ public sealed record ElicitationCapabilities(FormElicitation Form, UrlElicitatio
 
 public sealed record FormElicitation;
 public sealed record UrlElicitation;
+
+public sealed record ElicitationCompleteNotification(string ElicitationId);

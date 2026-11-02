@@ -3,6 +3,7 @@ using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Relays;
+using Assembly.Engine.Sessions;
 
 namespace Assembly.Engine.Messages;
 
@@ -156,6 +157,9 @@ public static partial class MessageTransitions
         if (recipient.State == "ended")
             return Refused(c, "unavailable");
         if (turnReply is not null && !turnReply.HasReplyParent(s, c.Machine)) return Refused(c, "forbidden");
+        if (c.Actor.Kind == ActorKind.Session && !foreignRecipient &&
+            !SessionDirectory.CanReach(s, c.Actor.Id, command.ToSessionId))
+            return Refused(c, "not_reachable");
         if (turnReply is null && command.FromSessionId is not null && s.QueryFirst("""
             SELECT COUNT(*) FROM engine_message WHERE from_session_id=$from AND to_session_id=$to
             """, r => r.Long(0), new("$from", command.FromSessionId), new("$to", command.ToSessionId)) >= messageLimit)
@@ -198,19 +202,18 @@ public static partial class MessageTransitions
     }
 
     public static IReadOnlyList<EventDraft> NeedResolved(IWriteScope s, CommandContext c, string needId,
-        string sessionId, string state, JsonElement? answer, MessageExpiryPolicy? expiryPolicy = null)
+        string sessionId, string state, JsonElement? answer, MessageExpiryPolicy? expiryPolicy = null) =>
+        NeedResolved(s, c, needId, sessionId, state, answer, expiryPolicy, null);
+
+    internal static IReadOnlyList<EventDraft> NeedResolved(IWriteScope s, CommandContext c, string needId,
+        string sessionId, string state, JsonElement? answer, MessageExpiryPolicy? expiryPolicy, NeedsMe.PreparedNeedCommand.ResolutionNote? prepared)
     {
         var id = $"need-answer/{needId}";
         if (FindRecipient(s, sessionId)?.State == "ended" || Find(s, id) is not null)
             return [];
-        var text = state switch
-        {
-            "answered" => $"Jesse answered your question {needId}: {(answer!.Value.ValueKind == JsonValueKind.String ? answer.Value.GetString() : JsonSerializer.Serialize(answer.Value, EngineJson.Default.JsonElement))}",
-            "dismissed" => $"Jesse dismissed your question {needId}.",
-            _ => $"Your question {needId} closed without an answer ({state})."
-        };
+        var text = prepared?.Text ?? NeedResolutionText(needId, state, answer);
         var message = new Message(id, 1, null, sessionId, text, "prompt", "queued");
-        Insert(s, c, message, "system", null, expiryPolicy);
+        Insert(s, c, message, "system", null, expiryPolicy, prepared?.Utf8);
         // NeedTransitions releases only after restoring session activity, using its current version.
         return [Changed(c, message)];
     }

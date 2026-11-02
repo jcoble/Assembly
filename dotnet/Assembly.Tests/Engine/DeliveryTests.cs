@@ -20,7 +20,7 @@ public sealed class DeliveryTests
     [InlineData("child", "parent", "steer")]
     [InlineData("sib-a", "sib-b", "steer")]
     [InlineData(null, "child", "steer")]
-    [InlineData("other-top", "child", "wait")]
+    [InlineData("child", "other-top", "wait")]
     [InlineData("other-top", "parent", "wait")]
     public void Rule_is_decided_once_and_stored(string? from, string to, string expected)
     {

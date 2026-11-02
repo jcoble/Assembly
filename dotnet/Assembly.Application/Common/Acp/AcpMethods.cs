@@ -3,6 +3,10 @@ namespace Assembly.Application.Common.Acp;
 /// <summary>The ACP v2 method names this client uses.</summary>
 public static class AcpMethods
 {
+    public const string AuthLogin = "auth/login";
+    public const string AuthLogout = "auth/logout";
+    public const string AuthStatusUpdate = "_auth/status_update";
+    public const string ElicitationComplete = "elicitation/complete";
     public const string Initialize = "initialize";
     public const string SessionNew = "session/new";
     public const string SessionResume = "session/resume";

@@ -6,6 +6,7 @@ using Assembly.Application.Common.Machines;
 namespace Assembly.Application.Features.Chat.Sessions;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(Dictionary<string, JsonElement>))]
 [JsonSerializable(typeof(OwnerPromptRequest))]
 [JsonSerializable(typeof(OwnerPromptAccepted))]
 [JsonSerializable(typeof(LegacySessionTitleRef))]

@@ -66,19 +66,23 @@ public sealed class BoardToolsTests
         var args = Enumerable.Range(1, 3).Select(i => host.F.Answer("q" + i)).ToArray();
         foreach (var answer in args)
             host.Tools.Update(session.SessionId, host.F.Report(question: host.F.Ask(answer.QuestionKey)));
-        await host.Tools.AnswerAsync(args[0], CancellationToken.None);
+        var firstDelivery = host.Tools.AnswerAsync(args[0], CancellationToken.None);
         var agent = await host.Launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
+        Assert.False(firstDelivery.IsCompleted);
+        await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
+        await firstDelivery;
         var later = args.Skip(1).Select(a => host.Tools.AnswerAsync(a, CancellationToken.None)).ToArray();
         for (var i = 0; i < 3; i++)
         {
-            await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
+            await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
             // Each turn closes before another opens; any steering request fails here.
             await agent.CloseAsync();
             if (i == 2) break;
             await agent.OpenAsync();
             prompt = await agent.ReadAsync("session/prompt");
+            await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
         }
         await Task.WhenAll(later).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.All(host.F.Detail().Questions, q => Assert.Equal("delivered", q.DeliveryState));
@@ -115,7 +119,13 @@ public sealed class BoardToolsTests
         tools.Update(session.SessionId, f.Report(question: f.Ask(kind: kind)));
         tools.Update(session.SessionId, f.Report(question: f.Ask("q2")));
         var args = f.Answer(value: new(answerKind, text));
-        await tools.AnswerAsync(args, CancellationToken.None);
+        var delivering = tools.AnswerAsync(args, CancellationToken.None);
+        var agent = await host.Launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.False(delivering.IsCompleted);
+        await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
+        await delivering;
         Assert.Equal(1, Assert.Single(f.Page().Items).QuestionCount);
         var message = Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user").Payload.GetProperty("text").GetString();
         var identity = $"""question "q1" (task "task", generation 1, answer key "{args.AnswerKey}")""";
@@ -126,6 +136,8 @@ public sealed class BoardToolsTests
             _ => $"Answer to {identity}: {text}"
         }, message);
         Assert.Equal("delivered", f.Detail().Questions.Single(q => q.QuestionKey == "q1").DeliveryState);
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.CloseAsync();
     }
 
     [Fact]
@@ -152,7 +164,13 @@ public sealed class BoardToolsTests
         await using var tools = new BoardTools(sessions, host.Registry, f.Transitions, f.Queries, CancellationToken.None);
         tools.Update(session.SessionId, f.Report(question: f.Ask()));
         var args = f.Answer();
-        var accepted = await tools.AnswerAsync(args, CancellationToken.None);
+        var delivering = tools.AnswerAsync(args, CancellationToken.None);
+        var agent = await host.Launcher.NextAsync();
+        await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        Assert.False(delivering.IsCompleted);
+        await agent.InsertAsync(prompt, "prompt-" + prompt.GetProperty("id").GetRawText());
+        var accepted = await delivering;
         Assert.Equal(Assert.Single(f.Detail().Questions).DeliveryClientId,
             Assert.Single(host.Rows.RowsAfter(session.SessionId, 0), row => row.Kind == "user").Payload.GetProperty("clientId").GetString());
         Assert.Equal(accepted, await tools.AnswerAsync(args, CancellationToken.None));
@@ -160,6 +178,8 @@ public sealed class BoardToolsTests
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(f.Answer(), CancellationToken.None));
         await Assert.ThrowsAsync<CallFailed>(() => tools.AnswerAsync(args with { Answer = new("text", "Different") }, CancellationToken.None));
         Assert.Equal("board-answer/" + args.AnswerKey, Assert.Single(f.Detail().Questions).DeliveryClientId);
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.CloseAsync();
     }
 
     [Fact]
@@ -306,12 +326,18 @@ public sealed class BoardToolsTests
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await agent.CloseAsync();
+        await agent.OpenAsync();
+        var answerPrompt = await agent.ReadAsync("session/prompt");
+        Assert.False(sending.IsCompleted);
+        await agent.InsertAsync(answerPrompt, "prompt-" + answerPrompt.GetProperty("id").GetRawText());
         await sending;
         tools.Update(session.SessionId, f.Report(question: f.Ask(generation: 1)));
         var revision = f.Detail().Task.Revision;
         f.Transitions.Settle(args, "delivered", "late");
         Assert.Equal(revision, f.Detail().Task.Revision);
         Assert.Equal("none", Assert.Single(f.Detail().Questions).DeliveryState);
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
+        await agent.CloseAsync();
     }
 
     [Fact]

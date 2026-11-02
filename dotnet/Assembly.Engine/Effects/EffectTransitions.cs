@@ -16,7 +16,7 @@ public static class EffectTransitions
     // Shared by selection and the SQL claim guard; ids are deliberately not an ordering key.
     public const string NoEarlierUnresolved = """
         NOT EXISTS (SELECT 1 FROM engine_outbox earlier
-          WHERE earlier.session_id=engine_outbox.session_id AND earlier.state NOT IN ('done','failed','dead')
+          WHERE earlier.session_id=engine_outbox.session_id AND earlier.kind<>'parent_need' AND earlier.state NOT IN ('done','failed','dead')
           AND (earlier.event_seq<engine_outbox.event_seq OR
             (earlier.event_seq=engine_outbox.event_seq AND earlier.rowid<engine_outbox.rowid)))
         """;
@@ -37,11 +37,12 @@ public static class EffectTransitions
     public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command,
         Action<IWriteScope, CommandContext, Effect, EffectReceipt>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
     {
-        var row = s.QueryFirst("SELECT version,state,attempt,next_ms FROM engine_outbox WHERE id=$id",
-            r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3) }, new SqlArg("$id", c.EntityId));
+        var row = s.QueryFirst("SELECT version,state,attempt,next_ms,kind FROM engine_outbox WHERE id=$id",
+            r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3), Kind = r.Text(4) }, new SqlArg("$id", c.EntityId));
         CommandResult Reject(string reason) => new(false, false, reason, row?.Version ?? 0, 0, c.Epoch);
         if (c.Actor.Kind != ActorKind.System) return Reject("forbidden");
         if (row is null) return Reject("bad_args");
+        if (row.Kind == "parent_need") return Reject("forbidden");
         if (row.Version != c.ExpectedVersion) return Reject("version_conflict");
         string state;
         long? next = null;
