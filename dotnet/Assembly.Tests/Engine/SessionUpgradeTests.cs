@@ -173,6 +173,7 @@ public sealed class SessionUpgradeTests
             if (sql.Contains(failAfter, StringComparison.Ordinal)) throw new IOException("injected initialization failure");
             return changed;
         }
+        public void AfterCommit(Action publishState) => inner.AfterCommit(publishState);
         public List<T> Query<T>(string sql, Func<IRow, T> map, params SqlArg[] args) => inner.Query(sql, map, args);
         public T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args) => inner.QueryFirst(sql, map, args);
         public void Publish<T>(string topic, string? key, T change, JsonTypeInfo<T> type, bool keyedOnly = false) => inner.Publish(topic, key, change, type, keyedOnly);

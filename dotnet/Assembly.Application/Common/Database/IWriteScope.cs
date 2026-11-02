@@ -10,6 +10,10 @@ public interface IWriteScope : IReadScope
 {
     int Execute(string sql, params SqlArg[] args);
 
+    /// <summary>Publishes in-memory state after commit, under the writer gate and before topics. A callback failure
+    /// propagates after the database has committed; it cannot roll the transaction back. Callbacks must do no IO.</summary>
+    void AfterCommit(Action publishState);
+
     /// <summary>
     /// Queues a change for the topic's subscribers (see <see cref="Topics.ITopics.Publish"/>). It's sent after the write
     /// commits, and never if it doesn't.
