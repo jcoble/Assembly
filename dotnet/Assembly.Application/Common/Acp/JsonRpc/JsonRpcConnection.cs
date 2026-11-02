@@ -19,7 +19,8 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     private readonly TranscriptLog _transcript;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     // Each request's reply, and what to run on the reader thread as a success reply arrives (see RequestAsync).
-    private readonly ConcurrentDictionary<long, (TaskCompletionSource<JsonElement> Reply, Action? OnReply)> _pending = new();
+    private readonly record struct Pending(TaskCompletionSource<JsonElement> Reply, Action? OnReply, Action? OnSettled);
+    private readonly ConcurrentDictionary<long, Pending> _pending = new();
     // Taken to remove a pending request, so a caller that gave up never sees its OnReply run after it returns.
     private readonly Lock _removing = new();
     private readonly CancellationTokenSource _stopping = new();
@@ -44,17 +45,23 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     /// <summary>
     /// Sends a request and waits for its reply. <paramref name="onReply"/>, if given, runs on the reader thread as a
     /// success reply arrives, before any later line is read, so it falls in pipe order with the notifications around
-    /// it. It must not block or throw. A reply that comes after the caller gave up runs nothing.
+    /// it. The request hook registers the numeric ID before any write; the settled hook fences it exactly once,
+    /// including errors and local removal, before a later line can be dispatched. Hooks must not block or throw.
+    /// A reply that comes after the caller gave up runs nothing.
     /// </summary>
-    public async Task<JsonElement> RequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken, Action? onReply = null)
+    public async Task<JsonElement> RequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken, Action? onReply = null,
+        Action<long>? onRequest = null, Action? onSettled = null)
     {
         var id = Interlocked.Increment(ref _lastId);
         var reply = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pending[id] = (reply, onReply);
         try
         {
-            if (_closedReason is { } closed)
-                throw new IOException("The connection is closed.", closed);
+            lock (_removing)
+            {
+                if (_closedReason is { } closed) throw new IOException("The connection is closed.", closed);
+                _pending[id] = new(reply, onReply, onSettled);
+                onRequest?.Invoke(id);
+            }
 
             await WriteAsync(json =>
             {
@@ -69,7 +76,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
         finally
         {
             lock (_removing)
-                _pending.TryRemove(id, out _);
+                if (_pending.TryRemove(id, out var pending)) pending.OnSettled?.Invoke();
         }
     }
 
@@ -104,9 +111,22 @@ public sealed class JsonRpcConnection : IAsyncDisposable
             reason = ex;
         }
 
-        _closedReason = reason;
-        foreach (var (reply, _) in _pending.Values)
-            reply.TrySetException(new IOException("The connection closed before the agent answered.", reason));
+        Close(reason);
+    }
+
+    private void Close(Exception reason)
+    {
+        lock (_removing)
+        {
+            if (_closedReason is not null) return;
+            _closedReason = reason;
+            foreach (var id in _pending.Keys)
+            {
+                if (!_pending.TryRemove(id, out var pending)) continue;
+                pending.OnSettled?.Invoke();
+                pending.Reply.TrySetException(new IOException("The connection closed before the agent answered.", reason));
+            }
+        }
         _target.OnClosed(reason);
     }
 
@@ -138,13 +158,14 @@ public sealed class JsonRpcConnection : IAsyncDisposable
                 _target.OnNotification(method.GetString() ?? "", parameters);
             else if (hasId && id.TryGetInt64(out var number))
             {
-                (TaskCompletionSource<JsonElement> Reply, Action? OnReply) pending;
+                Pending pending;
                 lock (_removing)
                 {
                     if (!_pending.TryRemove(number, out pending))
                         return;
                     if (!root.TryGetProperty("error", out _))
                         pending.OnReply?.Invoke();
+                    pending.OnSettled?.Invoke();
                 }
                 Settle(pending.Reply, root);
             }
@@ -240,6 +261,7 @@ public sealed class JsonRpcConnection : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _stopping.Cancel();
+        Close(new ObjectDisposedException(nameof(JsonRpcConnection)));
         // The read loop ends first, so no answer starts after the answers' stop has looked; the answers end on
         // _stopping, which is disposed only after they have.
         try

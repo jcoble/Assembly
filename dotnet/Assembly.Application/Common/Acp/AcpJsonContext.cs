@@ -7,6 +7,13 @@ namespace Assembly.Application.Common.Acp;
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(AuthMethod))]
+[JsonSerializable(typeof(AuthLoginRequest))]
+[JsonSerializable(typeof(AuthLogoutRequest))]
+[JsonSerializable(typeof(AuthResponse))]
+[JsonSerializable(typeof(AuthStatusNotification))]
+[JsonSerializable(typeof(AuthCancelRequest))]
+[JsonSerializable(typeof(ElicitationCompleteNotification))]
 [JsonSerializable(typeof(InitializeRequest))]
 [JsonSerializable(typeof(InitializeResponse))]
 [JsonSerializable(typeof(NewSessionRequest))]

@@ -3,14 +3,17 @@ using System.Text.Json.Serialization;
 
 namespace Assembly.Application.Common.Acp.Messages;
 
-/// <summary>Capabilities and auth methods stay raw until a step needs them typed.</summary>
+/// <summary>The initialized capabilities and normalized, supported authentication descriptors.</summary>
 public sealed record InitializeResponse(
     int ProtocolVersion,
     Implementation? Info,
     JsonElement Capabilities,
-    JsonElement? AuthMethods,
+    IReadOnlyList<AuthMethod>? AuthMethods,
     [property: JsonPropertyName("_meta")] JsonElement? Meta)
 {
+    [JsonConverter(typeof(AuthMethodsConverter))]
+    public IReadOnlyList<AuthMethod> AuthMethods { get; init; } = AuthMethods ?? [];
+
     /// <summary>Whether the agent takes <c>_session/steering</c> (<c>_meta.steering.supported</c>).</summary>
     [JsonIgnore]
     public bool CanSteer =>

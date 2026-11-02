@@ -19,6 +19,7 @@ public interface IPermissionPolicy
         CancellationToken cancellationToken) => DecideAsync(request, cancellationToken);
     Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, JsonRpcRequestContext context,
         CancellationToken cancellationToken) => ElicitAsync(request, cancellationToken);
+    ValueTask<bool> ElicitUrlAsync(string? sessionId, Uri url, string host, CancellationToken ct) => ValueTask.FromResult(false);
     void Cancelling(string actualAcpSessionId) { }
     void Decided(string method, string acpSessionId, JsonRpcRequestContext context, JsonElement outcome) { }
 }

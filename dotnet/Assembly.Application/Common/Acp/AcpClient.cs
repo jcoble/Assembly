@@ -9,7 +9,7 @@ using Assembly.Application.Common.Acp.V2;
 namespace Assembly.Application.Common.Acp;
 
 /// <summary>One ACP v2 connection. Adapter differences stay outside this client.</summary>
-public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
+public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
 {
     private readonly IPermissionPolicy _permissions;
     private readonly ConcurrentDictionary<string, IPermissionPolicy> _sessionPolicies = new();
@@ -53,6 +53,7 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
             AcpJsonContext.Default.InitializeRequest, AcpJsonContext.Default.InitializeResponse, cancellationToken);
         if (response.ProtocolVersion != AcpProtocol.Version)
             throw new JsonRpcException(-32022, $"ACP version {response.ProtocolVersion} is unsupported; Assembly requires version 2.");
+        _authMethods = response.AuthMethods;
         return response;
     }
 
@@ -185,6 +186,11 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
                 var requestId = question.RequestId is { ValueKind: JsonValueKind.String or JsonValueKind.Number };
                 if (session == requestId)
                     throw new JsonRpcException(JsonRpcException.InvalidParams, "Elicitation requires exactly one of sessionId or requestId.");
+                if (question.Mode == "url")
+                {
+                    var response = await AnswerUrlAsync(question, context, cancellationToken);
+                    return JsonSerializer.SerializeToElement(response, AcpJsonContext.Default.ElicitationResponse);
+                }
                 var answer = question.Mode != "form" || !session
                     ? ElicitationResponse.Cancel
                     : await AskAsync(question.SessionId!, ElicitationResponse.Cancel,
@@ -227,6 +233,8 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
 
     void IJsonRpcTarget.OnNotification(string method, JsonElement parameters)
     {
+        if (method == AcpMethods.ElicitationComplete) { CompleteElicitation(parameters); return; }
+        if (method == AcpMethods.AuthStatusUpdate) { AuthStatusUpdated(parameters); return; }
         if (method != AcpMethods.SessionUpdate ||
             parameters.Deserialize(AcpJsonContext.Default.SessionNotification) is not { } update)
             return;
@@ -260,6 +268,7 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
 
     void IJsonRpcTarget.OnClosed(Exception reason)
     {
+        CloseAuthentication();
         _nativeParents.Clear();
         foreach (var foreground in _foreground.Values) foreground.Close(reason);
         _updates.Writer.TryComplete();
@@ -279,6 +288,8 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
     {
         await _rpc.DisposeAsync();
         await _prompts.DisposeAsync();
+        await _authWork.DisposeAsync();
+        _authClosing.Dispose();
         foreach (var foreground in _foreground.Values) foreground.Dispose();
         _foreground.Clear();
         _nativeParents.Clear();
