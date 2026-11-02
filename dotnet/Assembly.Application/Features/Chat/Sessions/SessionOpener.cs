@@ -3,6 +3,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Agents;
+using Assembly.Application.Common.Agents.Auth;
 using Assembly.Application.Common.Calls;
 using Assembly.Domain.Sessions;
 
@@ -30,7 +31,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     public const int TitleLength = 60;
 
     internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken,
-        SessionObservation? observation = null)
+        SessionObservation? observation = null, AuthOpenAttempt? authAttempt = null)
     {
         if (mcp is not null) await mcp.WaitReady(cancellationToken);
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
@@ -48,10 +49,11 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             launcher.ValidateFolder(folder);
         }
         var adapter = adapters(session.Agent);
-        var running = await adapter.GetForSessionAsync(session.AcpSessionId, stages, cancellationToken);
+        var running = await adapter.GetForSessionAsync(session.AcpSessionId, stages, cancellationToken,
+            initializeAuthRequired: authAttempt is null ? null : authAttempt.InitializeRejected);
         try
         {
-            return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken, observation);
+            return await OpenOnAsync(adapter, running, session, folder, firstText, stages, cancellationToken, observation, authAttempt);
         }
         catch
         {
@@ -63,7 +65,7 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
 
     private async Task<OpenSession> OpenOnAsync(
         SharedAdapter adapter, RunningAdapter running, SessionInfo session, string folder, string firstText, StageTimes stages,
-        CancellationToken cancellationToken, SessionObservation? observation)
+        CancellationToken cancellationToken, SessionObservation? observation, AuthOpenAttempt? authAttempt)
     {
         var sessionId = session.SessionId;
         if (session.AcpSessionId is { } previous)
@@ -75,13 +77,18 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             ResumeSessionResponse? resumed = null;
             try
             {
-                resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken);
+                resumed = await AnsweredAsync(adapter, running, sessionId, resuming, _ => previous, cancellationToken, authAttempt);
                 stages.Mark("session resume");
                 if (resumed.AvailableCommands.ValueKind == JsonValueKind.Array)
                     sessionStore.SetCommands(sessionId, resumed.AvailableCommands.GetRawText());
                 var model = await ApplyChoicesAsync(running, sessionId, previous, resumed.ConfigOptions, stages, cancellationToken);
                 mcp?.ValidateOpen(sessionId, observation);
                 return new OpenSession(adapter, running, previous, Resumed: true, session.SessionCost, model);
+            }
+            catch (JsonRpcException error) when (resumed is null && error.Code == -32000)
+            {
+                authAttempt?.ResumeSessionRejected();
+                throw;
             }
             catch (JsonRpcException error) when (resumed is null)
             {
@@ -102,7 +109,9 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
 
         cancellationToken.ThrowIfCancellationRequested();
         var opening = running.Link.Client.NewSessionAsync(new(folder, mcp?.ServersFor(sessionId, observation) ?? []), CancellationToken.None);
-        var acp = await AnsweredAsync(adapter, running, sessionId, opening, late => late.SessionId, cancellationToken);
+        NewSessionResponse acp;
+        try { acp = await AnsweredAsync(adapter, running, sessionId, opening, late => late.SessionId, cancellationToken, authAttempt); }
+        catch (JsonRpcException error) when (error.Code == -32000) { authAttempt?.NewSessionRejected(); throw; }
 
         try
         {
@@ -134,18 +143,22 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
     // the cancel by up to twice the close limit: the wait for the answer, then the close.
     private async Task<T> AnsweredAsync<T>(
         SharedAdapter adapter, RunningAdapter running, string sessionId, Task<T> opening, Func<T, string> acpSessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, AuthOpenAttempt? authAttempt)
     {
         try
         {
-            return await opening.WaitAsync(cancellationToken);
+            var accepted = await opening.WaitAsync(cancellationToken);
+            authAttempt?.AcceptedIdentity();
+            return accepted;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             mcp?.Revoke(sessionId);
             try
             {
-                var late = acpSessionId(await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, CancellationToken.None));
+                var accepted = await opening.WaitAsync(SharedAdapter.CloseLimit, adapter.Time, CancellationToken.None);
+                authAttempt?.AcceptedIdentity();
+                var late = acpSessionId(accepted);
                 running.Updates.Forget(late);
                 await CloseQuietlyAsync(adapter, running, late);
                 Console.Error.WriteLine($"session {sessionId}: closed {late}, which answered after the open was cancelled");

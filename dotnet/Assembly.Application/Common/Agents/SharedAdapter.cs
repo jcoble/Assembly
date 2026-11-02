@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Agents;
 
 using Assembly.Application.Features.Chat.Sessions;
@@ -49,7 +50,7 @@ public sealed partial class SharedAdapter(IAgentLauncher launcher, string agentI
         GetForSessionAsync(null, stages, cancellationToken);
 
     // Native-id admission and borrowing happen under the SAME gate. A detached/retired writer must exit first.
-    internal async Task<RunningAdapter> GetForSessionAsync(string? nativeId, StageTimes stages, CancellationToken cancellationToken, string? targetId = null, Action<IAgentLink>? observeLink = null, AgentDescriptor? suppliedDescriptor = null)
+    internal async Task<RunningAdapter> GetForSessionAsync(string? nativeId, StageTimes stages, CancellationToken cancellationToken, string? targetId = null, Action<IAgentLink>? observeLink = null, AgentDescriptor? suppliedDescriptor = null, Action? initializeAuthRequired = null)
     {
         while (true)
         {
@@ -89,7 +90,9 @@ public sealed partial class SharedAdapter(IAgentLauncher launcher, string agentI
                         try
                         {
                             observeLink?.Invoke(link);
-                            var init = await link.Client.InitializeAsync(ClientInfo, launcher.CanRunTerminalAuthentication, cancellationToken);
+                            InitializeResponse init;
+                            try { init = await link.Client.InitializeAsync(ClientInfo, launcher.CanRunTerminalAuthentication, cancellationToken); }
+                            catch (JsonRpcException error) when (error.Code == -32000) { initializeAuthRequired?.Invoke(); throw; }
                             ConfigTargetIdentity.Validate(launcher, captured.Descriptor, captured.Environment);
                             stages.Mark("initialize");
                             running = _running = new RunningAdapter(link, init, new UpdateRouter(link.Client), captured.TargetId);

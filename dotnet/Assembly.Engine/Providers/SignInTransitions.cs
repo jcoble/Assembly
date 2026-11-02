@@ -1,6 +1,4 @@
 using System.Text.Json;
-using System.Text;
-using System.Globalization;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
@@ -45,9 +43,31 @@ internal static class SignInTransitions
     }
 
     private static CommandResult Start(IWriteScope scope, CommandContext context, StartSignIn start,
+        Operation? existing, Func<string, string, bool>? configured) => context.Actor.Kind != ActorKind.Window
+        ? Reject(context, "forbidden", existing) : StartCore(scope, context, start, existing, configured);
+
+    internal static CommandResult StartFromNeed(IWriteScope scope, CommandContext context, string needId,
+        Func<string, string, bool>? configured)
+    {
+        var need = AuthNeed.Open(scope, context.Machine, needId);
+        if (need is null || need.Version != context.ExpectedVersion || need.Epoch != context.Epoch)
+            return Reject(context, "bad_args");
+        if (context.Actor.Kind != ActorKind.Window && (context.Actor.Kind != ActorKind.Session ||
+            need.ParentId != context.Actor.Id || need.Addressee != context.Actor.Id)) return Reject(context, "forbidden");
+        var operationId = context.CommandId.ToString("N");
+        var operationContext = context with { EntityId = operationId, ExpectedVersion = 0, Epoch = 0 };
+        var result = StartCore(scope, operationContext, new(need.Target.Provider, need.Target.AccountContext, null, need.Id),
+            Read(scope, operationId), configured);
+        if (result.Error != "already_running") return result;
+        // StartCore checked the exact configured pair and local provider before reporting this existing active target.
+        var active = scope.QueryFirst($"SELECT version FROM engine_sign_in WHERE machine=$machine AND provider=$provider AND account_context=$account AND state IN {ActiveStates}",
+            r => (long?)r.Long(0), new SqlArg("$machine", context.Machine), new("$provider", need.Target.Provider), new("$account", need.Target.AccountContext));
+        return active is null ? result : new(true, false, null, active.Value, 0, 0);
+    }
+
+    private static CommandResult StartCore(IWriteScope scope, CommandContext context, StartSignIn start,
         Operation? existing, Func<string, string, bool>? configured)
     {
-        if (context.Actor.Kind != ActorKind.Window) return Reject(context, "forbidden", existing);
         if (existing is not null || context.ExpectedVersion != 0) return Reject(context, "version_conflict", existing);
         if (string.IsNullOrWhiteSpace(start.Provider) || start.AccountContext is null ||
             start.MethodId is not null && string.IsNullOrWhiteSpace(start.MethodId)) return Reject(context, "bad_args");
@@ -81,24 +101,8 @@ internal static class SignInTransitions
             [new("begin_sign_in/" + context.EntityId, "begin_sign_in", null, null, payload, "provider/" + target.Id)]);
     }
 
-    private static bool MatchingNeed(IReadScope scope, CommandContext context, ConfiguredProviderTarget target, string need)
-    {
-        var matched = scope.QueryFirst("""
-            SELECT n.id,n.session_id FROM engine_needs_me n JOIN engine_session se ON se.id=n.session_id
-            WHERE n.id=$need AND n.machine=$machine AND se.machine=$machine AND se.holder='local' AND se.reserved_epoch IS NULL
-              AND se.state NOT IN ('foreign','handing_off','ended') AND se.provider=$provider AND se.account_context=$account
-              AND n.state='open' AND n.kind='confirmation' AND n.provider_request_id IS NULL AND n.chat_row_id IS NULL
-              AND CAST(n.text AS BLOB)=$text
-              AND json_type(n.options_json)='array' AND json_array_length(n.options_json)=2
-              AND json_extract(n.options_json,'$[0]')='sign_in' AND json_extract(n.options_json,'$[1]')='dismiss'
-            """, r => new { Id = r.Text(0), Session = r.Text(1) }, new SqlArg("$need", need), new("$machine", context.Machine),
-            new("$provider", target.Provider), new("$account", target.AccountContext),
-            new("$text", new UTF8Encoding(false, true).GetBytes(target.Provider + " needs you to sign in on " + context.Machine + ".")));
-        if (matched is null) return false;
-        var prefix = "sign-in/" + matched.Session + "/";
-        return matched.Id.StartsWith(prefix, StringComparison.Ordinal) &&
-            long.TryParse(matched.Id.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out _);
-    }
+    private static bool MatchingNeed(IReadScope scope, CommandContext context, ConfiguredProviderTarget target, string need) =>
+        AuthNeed.Open(scope, context.Machine, need)?.Target == target;
 
     private static CommandResult Progress(IWriteScope scope, CommandContext context, Operation row,
         SignInProgress progress, Func<string, string, bool>? configured)

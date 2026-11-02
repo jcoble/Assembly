@@ -18,13 +18,13 @@ public static partial class EngineJournal
     }
 
     internal static CommandResult ExecuteOwnerNeed(IWriteScope scope, PreparedNeedCommand prepared, long nowMs,
-        MessageExpiryPolicy expiryPolicy)
+        MessageExpiryPolicy expiryPolicy, Func<string, string, bool>? isConfiguredProvider = null)
     {
         var owner = prepared.Owner ?? throw new ArgumentException("Owner need preparation is required.", nameof(prepared));
         var context = OwnerContext(owner.Identity, nowMs);
         var admission = new OwnerNeedAdmission(prepared);
         return ExecuteCore(scope, context, context.CommandId.ToString("N"), prepared.CanonicalJournal,
-            () => NeedTransitions.ApplyOwner(scope, context, prepared, expiryPolicy), ownerNeedAdmission: admission);
+            () => NeedTransitions.ApplyOwner(scope, context, prepared, expiryPolicy, isConfiguredProvider), ownerNeedAdmission: admission);
     }
 
     private static CommandContext OwnerContext(PreparedNeedCommand.OwnerIdentity identity, long nowMs) =>

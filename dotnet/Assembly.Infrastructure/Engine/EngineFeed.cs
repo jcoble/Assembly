@@ -28,7 +28,8 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
             FROM engine_session s LEFT JOIN engine_step st ON st.id=(
                 SELECT id FROM engine_step WHERE session_id=s.id AND state IN ('running','waiting')
                 ORDER BY updated_ms DESC,id LIMIT 1)
-            WHERE s.id=$id AND s.machine=$machine AND s.state NOT IN ('foreign','ended')
+            WHERE s.id=$id AND s.machine=$machine AND s.holder='local' AND s.reserved_epoch IS NULL
+              AND s.state NOT IN ('foreign','ended','handing_off')
             """, r => new SessionObservation(r.Text(0), Text(r, 1), Text(r, 2),
                 r.IsNull(3) ? null : checked((int)r.Long(3)), r.Long(4)),
             new SqlArg("$id", sessionId), new SqlArg("$machine", runtime.Machine)), CancellationToken.None);

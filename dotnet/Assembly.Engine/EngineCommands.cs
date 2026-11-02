@@ -62,7 +62,7 @@ public sealed partial class EngineCommands
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
                 MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit(), _expiryPolicy),
-                NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy),
+                NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy, _isConfiguredProvider),
                 RunCommand run => RunTransitions.Apply(scope, context, run),
                 StepCommand step => StepTransitions.Apply(scope, context, step),
                 SessionCommand session => ApplySession(scope, context, session),

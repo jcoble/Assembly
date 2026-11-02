@@ -9,6 +9,7 @@ using Assembly.Engine.Mcp;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
+using Assembly.Engine.Providers;
 
 namespace Assembly.Engine.NeedsMe;
 
@@ -19,27 +20,31 @@ public static class NeedTransitions
         string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline, string? AddresseeSessionId);
     private sealed record Session(long Epoch, string State, string? RunId, string? ParentId, string Machine, string Holder, long? ReservedEpoch);
 
-    public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy = null) =>
-        ApplyCore(s, c, command, expiryPolicy, null);
+    public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy = null,
+        Func<string, string, bool>? isConfiguredProvider = null) =>
+        ApplyCore(s, c, command, expiryPolicy, null, isConfiguredProvider: isConfiguredProvider);
 
-    internal static CommandResult ApplyOwner(IWriteScope s, CommandContext c, PreparedNeedCommand prepared, MessageExpiryPolicy expiryPolicy)
+    internal static CommandResult ApplyOwner(IWriteScope s, CommandContext c, PreparedNeedCommand prepared, MessageExpiryPolicy expiryPolicy,
+        Func<string, string, bool>? isConfiguredProvider = null)
     {
         if (c.Actor is not { Kind: ActorKind.Window, Id: "owner" } || prepared.Owner is null ||
             prepared.Command is not ResolveNeed { State: "answered" } command) return Refused(c, "bad_args");
-        return ApplyCore(s, c, command, expiryPolicy, prepared.Owner);
+        return ApplyCore(s, c, command, expiryPolicy, prepared.Owner, isConfiguredProvider: isConfiguredProvider);
     }
 
     internal static CommandResult ApplyLocalParent(IWriteScope s, CommandContext c, McpCaller caller,
-        PreparedParentNeed prepared, MessageExpiryPolicy expiryPolicy)
+        PreparedParentNeed prepared, MessageExpiryPolicy expiryPolicy,
+        Func<string, string, bool>? isConfiguredProvider = null)
     {
         if (c.Actor is not { Kind: ActorKind.Session } || c.Actor.Id != caller.SessionId) return Refused(c, "forbidden");
         NeedCommand command = prepared.Request.Action == ParentNeedAction.Escalate ? new EscalateNeed()
             : new ResolveNeed("answered", prepared.Request.Answer);
-        return ApplyCore(s, c, command, expiryPolicy, null, prepared, caller);
+        return ApplyCore(s, c, command, expiryPolicy, null, prepared, caller, isConfiguredProvider);
     }
 
     private static CommandResult ApplyCore(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy,
-        PreparedNeedCommand.OwnerPreparation? owner, PreparedParentNeed? parent = null, McpCaller? caller = null)
+        PreparedNeedCommand.OwnerPreparation? owner, PreparedParentNeed? parent = null, McpCaller? caller = null,
+        Func<string, string, bool>? isConfiguredProvider = null)
     {
         if (string.IsNullOrWhiteSpace(c.EntityId)) return Refused(c, "bad_args");
         if (command is OpenNeed open) return Open(s, c, open, expiryPolicy);
@@ -65,6 +70,31 @@ public static class NeedTransitions
             }
         }
         if (command is not ResolveNeed resolve) return Refused(c, "unsupported_command", need);
+        if (resolve.State is "answered" or "dismissed" && AuthNeed.Open(s, c.Machine, need.Id) is not null)
+        {
+            if (c.Actor.Kind != ActorKind.Window && (c.Actor.Kind != ActorKind.Session || origin != AnswerOrigin.LocalParent))
+                return Refused(c, "forbidden", need);
+            if (owner?.Error is { } preparationError) return Refused(c, preparationError, need);
+            var choice = resolve.Answer is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
+            var dismissed = resolve.State == "dismissed" && resolve.Answer is null || resolve.State == "answered" && choice == "dismiss";
+            if (dismissed)
+            {
+                s.Execute("""
+                    UPDATE engine_needs_me SET state='dismissed',version=version+1,updated_ms=$now,
+                        answer_json=NULL,answered_by=$actor,answered_ms=$now WHERE id=$id
+                    """, new("$now", c.NowMs), new("$actor", c.Actor.Id), new("$id", need.Id));
+                var closed = need with { Version = need.Version + 1, State = "dismissed" };
+                List<EventDraft> events = [Changed(c, closed, "needs_me.answered")];
+                events.AddRange(AuthNeed.FailDismissedMessages(s, c, need.SessionId));
+                return Commit(s, c, closed, events, []);
+            }
+            if (resolve.State != "answered" || choice != "sign_in") return Refused(c, "bad_args", need);
+            var started = SignInTransitions.StartFromNeed(s, c, need.Id, isConfiguredProvider);
+            if (!started.Applied) return Refused(c, started.Error ?? "unavailable", need);
+            s.Execute("UPDATE engine_needs_me SET version=version+1,updated_ms=$now WHERE id=$id", new("$now", c.NowMs), new("$id", need.Id));
+            var waiting = need with { Version = need.Version + 1 };
+            return Commit(s, c, waiting, [Changed(c, waiting, "needs_me.changed")], []);
+        }
         ProviderAnswerBinding? binding = null;
         if (owner is not null)
         {
