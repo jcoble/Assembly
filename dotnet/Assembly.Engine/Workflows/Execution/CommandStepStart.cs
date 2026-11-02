@@ -46,6 +46,8 @@ public static partial class CommandStepTransitions
             b.OwnerVersion != ready.OwnerVersion || b.WorkspaceVersion != ready.WorkspaceVersion ||
             !b.Dependencies.SequenceEqual(CommandStepPreparation.Dependencies(s, i.StepId))) return Refuse("version_conflict");
         if (ready.Epoch != c.Epoch || ready.Hash != b.DefinitionHash || ready.Generation != i.Generation) return Refuse("stale_attempt");
+        if (i.PrBody is null || i.PrBody.Generation != i.Generation ||
+            i.PrBody.InputSetSha256 != WorkflowPrBodies.InputSetHash(s, i.RunId, i.StepId, i.Generation)) return Refuse("pr_body_stale");
         var first = ready.State == "pending";
         if (first ? i.Attempt != ready.Attempt + 1 || i.CommandIndex != 0 || i.ExecutionEpoch != ready.ExecutionEpoch + 1
             : ready.State != "running" || ready.Gate != "ready" || i.Attempt != ready.Attempt || i.CommandIndex != ready.Index || i.ExecutionEpoch != ready.ExecutionEpoch)

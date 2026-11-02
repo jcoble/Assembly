@@ -53,16 +53,16 @@ public sealed class CommandStepTests
         var need = f.Core.Text("SELECT id FROM engine_needs_me")!;
         var context = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.Window, "owner"), need, 1, 0, 1000);
         var answer = new ResolveNeed("answered", JsonSerializer.SerializeToElement("allow_once"));
-        var accepted = f.Core.Db.Writer.Write("test.workflow.answer", s => EngineJournal.Execute(s, context, "\"allow_once\"",
-            () => WorkflowExecutionNeeds.Resolve(s, context, answer, true, false)));
+        var preparedAnswer = EngineCommands.PrepareOwnerNeedCommand(context.CommandId, context.Machine, need, 1, 0, answer, null, null, default);
+        var accepted = f.Core.Db.Writer.Write("test.workflow.answer", s => f.Commands.ApplyPreparedOwnerNeed(s, preparedAnswer, 1000));
         Assert.True(accepted.Applied, accepted.Error);
         Assert.Equal("pending", f.Core.Text("SELECT state FROM engine_outbox WHERE kind='workflow_command'"));
         effect = f.Claim(); Assert.True(f.Complete(effect, await f.Host().ExecuteAsync(effect, default)).Applied);
         Assert.Equal("succeeded", f.Core.Text("SELECT state FROM engine_step"));
         Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='answer'"));
         Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='command_ended'"));
-        Assert.Equal("already_resolved", f.Core.Db.Writer.Write("test.workflow.duplicate", s =>
-            WorkflowExecutionNeeds.Resolve(s, context with { CommandId = Guid.NewGuid() }, answer, true, false)).Error);
+        var duplicate = EngineCommands.PrepareOwnerNeedCommand(Guid.NewGuid(), context.Machine, need, 1, 0, answer, null, null, default);
+        Assert.Equal("already_resolved", f.Core.Db.Writer.Write("test.workflow.duplicate", s => f.Commands.ApplyPreparedOwnerNeed(s, duplicate, 1000)).Error);
     }
 
     [Fact]
@@ -74,8 +74,8 @@ public sealed class CommandStepTests
         var need = f.Core.Text("SELECT id FROM engine_needs_me")!;
         var c = new CommandContext(Guid.NewGuid(), f.Core.Machine, new(ActorKind.Window, "owner"), need, 1, 0, 1000);
         var answer = new ResolveNeed("answered", JsonSerializer.SerializeToElement("deny"));
-        Assert.True(f.Core.Db.Writer.Write("test.deny", s => EngineJournal.Execute(s, c, "\"deny\"",
-            () => WorkflowExecutionNeeds.Resolve(s, c, answer, true, false))).Applied);
+        var prepared = EngineCommands.PrepareOwnerNeedCommand(c.CommandId, c.Machine, need, 1, 0, answer, null, null, default);
+        Assert.True(f.Core.Db.Writer.Write("test.deny", s => f.Commands.ApplyPreparedOwnerNeed(s, prepared, 1000)).Applied);
         Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_step"));
         Assert.Equal("failed", f.Core.Text("SELECT state FROM engine_run"));
         Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE executor_json IS NOT NULL"));
@@ -178,7 +178,7 @@ public sealed class CommandStepTests
         Assert.Equal(1, f.Core.Count("engine_step_attempt"));
     }
 
-    private sealed class Fixture : IDisposable
+    internal sealed class Fixture : IDisposable
     {
         private readonly string _temp = Directory.CreateTempSubdirectory("assembly-command-engine-").FullName;
         public EngineFixture Core { get; } = new();
@@ -187,8 +187,9 @@ public sealed class CommandStepTests
         public string Step => Core.Text("SELECT id FROM engine_step WHERE definition_key='checks'")!;
         private string Managed => Path.Combine(_temp, "managed");
         private string Proof => Path.Combine(_temp, "proof");
+        public string ProofRoot => Proof;
         public Fixture(params string[] scripts) : this(scripts, "allow") { }
-        public Fixture(string[] scripts, string policy, bool onFail = false)
+        public Fixture(string[] scripts, string policy, bool onFail = false, bool repeat = false)
         {
             Core.SeedSession("owner"); var root = Path.Combine(_temp, "repo"); Directory.CreateDirectory(root);
             var store = new ProjectStore(Core.Db, Core.Time);
@@ -199,7 +200,7 @@ public sealed class CommandStepTests
             var yaml = "name: Flow\npolicy:\n  commands:\n    " + policy + ": ['*']\nsteps:\n"
                 + (onFail ? "  build:\n    run: [printf built]\n" : "")
                 + "  checks:\n" + (onFail ? "    needs: [build]\n    on_fail: build\n" : "")
-                + "    run: " + JsonSerializer.Serialize(scripts) + "\n";
+                + (repeat ? "    repeat: true\n" : "") + "    run: " + JsonSerializer.Serialize(scripts) + "\n";
             var snapshot = WorkflowParser.Parse(new(yaml, ImmutableSortedDictionary<string, string>.Empty));
             var prepared = WorkflowStarts.Prepare(c, request, snapshot, project);
             Assert.True(Core.Db.Writer.Write("test.run", s => WorkflowStarts.Apply(s, Commands, c, prepared)).Result.Applied);
@@ -222,6 +223,8 @@ public sealed class CommandStepTests
             }
             Assert.True(Core.Db.Writer.Write("test.workspace", s => Commands.ApplyPreparedWorkflow(s, prepared.Workspace!.Context with { NowMs = 1000 }, prepared)).Applied);
             Directory.CreateDirectory(prepared.Workspace!.Intent.Path);
+            Directory.CreateDirectory(prepared.Workspace.Intent.ProofDir);
+            File.WriteAllText(Path.Combine(prepared.Workspace.Intent.ProofDir, ".assembly-workflow-allocation"), Run);
             return prepared.Workspace.Intent;
         }
         private void CompleteWorkspace(WorkspaceIntent workspace)
@@ -247,7 +250,11 @@ public sealed class CommandStepTests
                 Core.Number("SELECT version FROM engine_step WHERE id='" + step + "'"), 0, now);
             return CommandStepPreparation.Prepare(scope, c, "tree");
         }
-        public CommandResult Start(PreparedCommandStep prepared) => Core.Db.Writer.Write("test.command", s => Commands.ApplyPreparedCommandStep(s, prepared.Context, prepared));
+        public CommandResult Start(PreparedCommandStep prepared)
+        {
+            WorkflowPrBodyFile.WriteAsync(prepared.PrBody, Proof, Run, default).GetAwaiter().GetResult();
+            return Core.Db.Writer.Write("test.command", s => Commands.ApplyPreparedCommandStep(s, prepared.Context, prepared));
+        }
         public Effect Claim()
         {
             var id = Core.Text("SELECT id FROM engine_outbox WHERE kind='workflow_command' AND state='pending' ORDER BY rowid LIMIT 1")!;
