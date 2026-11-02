@@ -28,13 +28,45 @@ public sealed class PreparedParentNeed
     {
         ct.ThrowIfCancellationRequested();
         request = request with { Answer = request.Answer?.Clone() };
-        byte[]? bytes = null; NeedAnswerManifest? manifest = null; JsonElement? payload = null;
-        PreparedNeedCommand.ResolutionNote? note = null;
+        byte[]? bytes = null;
         if (request.Answer is { } answer)
         {
             PreparedNeedCommand.ValidateAnswer(answer, ct);
             bytes = JsonSerializer.SerializeToUtf8Bytes(answer, EngineJson.Default.JsonElement);
-            manifest = new(bytes.LongLength, RelayHash.Sha(bytes));
+        }
+        return Build(operationId, request, target, binding, bytes, ct);
+    }
+
+    internal static PreparedParentNeed Receive(NeedAnswerRequestDescriptor descriptor, byte[]? answerUtf8, CancellationToken ct)
+    {
+        var bytes = answerUtf8?.ToArray();
+        JsonElement? answer = null;
+        if (descriptor.Source.Action == ParentNeedAction.Escalate)
+        {
+            if (bytes is not null || descriptor.Answer is not null || descriptor.ProviderBinding is not null)
+                throw new RelayRefused("bad_args");
+        }
+        else
+        {
+            if (bytes is null || descriptor.Answer is not { } manifest || manifest.Utf8Length != bytes.LongLength ||
+                manifest.Sha256 != RelayHash.Sha(bytes)) throw new RelayRefused("source_changed");
+            RelayHash.Utf8.GetString(bytes);
+            using var parsed = JsonDocument.Parse(bytes);
+            answer = parsed.RootElement.Clone();
+            PreparedNeedCommand.ValidateAnswer(answer.Value, ct);
+        }
+        var request = new ParentNeedRequest(descriptor.Source.NeedId, descriptor.Source.Action, answer);
+        return Build(descriptor.Source.OperationId, request, descriptor.Target, descriptor.ProviderBinding, bytes, ct);
+    }
+
+    private static PreparedParentNeed Build(Guid operationId, ParentNeedRequest request, NeedAnswerTarget target,
+        ProviderAnswerBinding? binding, byte[]? bytes, CancellationToken ct)
+    {
+        NeedAnswerManifest? manifest = null; JsonElement? payload = null;
+        PreparedNeedCommand.ResolutionNote? note = null;
+        if (request.Answer is { } answer)
+        {
+            manifest = new(bytes!.LongLength, RelayHash.Sha(bytes));
             if (target.ProviderBacked && binding is not null)
                 payload = JsonSerializer.SerializeToElement(new NeedAnswer(request.NeedId, binding.ProviderRequestId, answer, Binding: binding), EngineJson.Default.NeedAnswer);
             else if (!target.ProviderBacked)

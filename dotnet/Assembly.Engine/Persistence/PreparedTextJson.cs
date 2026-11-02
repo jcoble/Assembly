@@ -31,6 +31,13 @@ internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, str
         return sink.Finish(kind);
     }
 
+    internal static string ParentNeedInputSha(ParentNeedRequest request, CancellationToken ct)
+    {
+        using var sink = new CanonicalSink(ct);
+        JsonSerializer.Serialize(sink, request, EngineJson.Default.ParentNeedRequest);
+        return sink.Finish("parent_need_source").Sha256;
+    }
+
     internal static PreparedTextJson CreateOwnerNeed(ResolveNeed original, CanonicalVisitor fingerprint, CancellationToken ct)
     {
         using var sink = new CanonicalSink(ct, fingerprint);

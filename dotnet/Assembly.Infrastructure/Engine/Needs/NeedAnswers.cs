@@ -5,11 +5,13 @@ using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Hosting;
 using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Mcp;
 
 namespace Assembly.Infrastructure.Engine.Needs;
 
 /// <summary>Prepares fixed need operations outside their caller's existing atomic writer.</summary>
-public sealed class NeedAnswers(EngineRuntime runtime, SessionRegistry sessions, TimeProvider time)
+public sealed partial class NeedAnswers(McpGate gate, EngineRuntime runtime, SessionRegistry sessions, TimeProvider time)
+    : INeedAnswers, IAsyncDisposable
 {
     internal Task<Func<IWriteScope, CommandResult>> PrepareOwnerAsync(WindowCommand request, CancellationToken cancellationToken)
     {

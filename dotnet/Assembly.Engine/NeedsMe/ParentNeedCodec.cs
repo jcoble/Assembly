@@ -6,6 +6,15 @@ namespace Assembly.Engine.NeedsMe;
 /// <summary>The one closed parent-need key and descriptor codec shared by source, coordinator and target.</summary>
 public static class ParentNeedCodec
 {
+    public static string SourceKey(ParentNeedSource source)
+    {
+        if (source.OperationId == Guid.Empty) throw new RelayRefused("bad_args");
+        using var hash = new RelayHash();
+        hash.String("assembly-parent-need-source-key/v1"); hash.String(source.SourceMachine);
+        hash.String(source.ParentSessionId); hash.String(source.OperationId.ToString("N"));
+        return "parent-need-source/v1/" + hash.Finish();
+    }
+
     public static string Key(ParentNeedSource source, NeedAnswerTarget target)
     {
         if (source.OperationId == Guid.Empty) throw new RelayRefused("bad_args");

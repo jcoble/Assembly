@@ -42,9 +42,21 @@ public static class NeedTransitions
         return ApplyCore(s, c, command, expiryPolicy, null, prepared, caller, isConfiguredProvider);
     }
 
+    internal static CommandResult ApplyForwardedParent(IWriteScope s, CommandContext c,
+        PreparedForwardedParentNeed prepared, MessageExpiryPolicy expiryPolicy)
+    {
+        if (c.Actor is not { Kind: ActorKind.Session } || c.Actor.Id != prepared.Source.ParentSessionId)
+            return Refused(c, "forbidden");
+        var caller = new McpCaller(prepared.Source.ParentSessionId, prepared.Source.ParentEpoch);
+        NeedCommand command = prepared.Source.Action == ParentNeedAction.Escalate ? new EscalateNeed()
+            : new ResolveNeed("answered", prepared.Prepared.Request.Answer);
+        return ApplyCore(s, c, command, expiryPolicy, null, prepared.Prepared, caller, forwarded: prepared.Source, parentError: prepared.PreparationError);
+    }
+
     private static CommandResult ApplyCore(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy,
         PreparedNeedCommand.OwnerPreparation? owner, PreparedParentNeed? parent = null, McpCaller? caller = null,
-        Func<string, string, bool>? isConfiguredProvider = null)
+        Func<string, string, bool>? isConfiguredProvider = null, ParentNeedSource? forwarded = null,
+        ParentNeedPreparationError parentError = ParentNeedPreparationError.None)
     {
         if (string.IsNullOrWhiteSpace(c.EntityId)) return Refused(c, "bad_args");
         if (command is OpenNeed open) return Open(s, c, open, expiryPolicy);
@@ -54,11 +66,12 @@ public static class NeedTransitions
         if (c.Epoch != session.Epoch) return Refused(c, "stale_epoch", need, session.Epoch);
         if (need.State != "open") return Refused(c, "already_resolved", need);
         if (c.ExpectedVersion != need.Version) return Refused(c, "version_conflict", need);
-        var origin = owner is not null ? AnswerOrigin.Owner : parent is not null ? AnswerOrigin.LocalParent
+        var origin = owner is not null ? AnswerOrigin.Owner : forwarded is not null ? AnswerOrigin.ForwardedParent : parent is not null ? AnswerOrigin.LocalParent
             : c.Actor.Kind == ActorKind.System ? AnswerOrigin.ProviderFact : AnswerOrigin.Raw;
         if (parent is not null)
         {
-            if (!LocalParentMatches(s, c, need, session, caller!, parent)) return Refused(c, "forbidden", need);
+            if (!(forwarded is null ? LocalParentMatches(s, c, need, session, caller!, parent)
+                : ForwardedParentMatches(s, c, need, session, forwarded, parent))) return Refused(c, "forbidden", need);
             if (command is EscalateNeed)
             {
                 if (parent.Request.Answer is not null || parent.ProviderBinding is not null) return Refused(c, "bad_args", need);
@@ -117,23 +130,44 @@ public static class NeedTransitions
         }
         else if (need.RequestId is not null && resolve.State == "answered" && c.Actor.Kind == ActorKind.Window)
             return Refused(c, "answer_preparation_required", need);
+        if (forwarded is not null && parentError != ParentNeedPreparationError.None)
+            return Refused(c, parentError == ParentNeedPreparationError.BadAnswer ? "bad_answer" : "answer_preparation_required", need);
         return Resolve(s, c, need, resolve, expiryPolicy, binding, owner, parent, origin);
     }
 
     private static bool LocalParentMatches(IWriteScope s, CommandContext c, Need need, Session child,
         McpCaller caller, PreparedParentNeed prepared)
     {
-        var parent = FindSession(s, caller.SessionId); var target = prepared.Target;
+        var parent = FindSession(s, caller.SessionId);
         return parent is not null && parent.Epoch == caller.Epoch && parent.Machine == c.Machine &&
             parent.Holder == "local" && parent.ReservedEpoch is null && parent.State is not ("lost" or "ended" or "foreign" or "handing_off") &&
             child.ParentId == caller.SessionId && need.AddresseeSessionId == caller.SessionId &&
             child.Machine == c.Machine && child.Holder == "local" && child.ReservedEpoch is null &&
             child.State is not ("foreign" or "handing_off" or "ended") &&
-            prepared.Request.NeedId == target.NeedId && target.NeedId == need.Id && target.NeedVersion == need.Version &&
+            ParentTargetMatches(need, child, prepared, caller.SessionId, parent.Machine);
+    }
+
+    private static bool ForwardedParentMatches(IWriteScope s, CommandContext c, Need need, Session child,
+        ParentNeedSource source, PreparedParentNeed prepared)
+    {
+        var parent = FindSession(s, source.ParentSessionId);
+        return source.SourceMachine != c.Machine && parent is not null && parent.State == "foreign" &&
+            parent.Machine == source.SourceMachine && parent.Holder == source.SourceMachine && parent.ReservedEpoch is null &&
+            child.ParentId == source.ParentSessionId && need.AddresseeSessionId == source.ParentSessionId &&
+            child.Machine == c.Machine && child.Holder == "local" && child.ReservedEpoch is null &&
+            child.State is not ("foreign" or "handing_off" or "ended") &&
+            ParentTargetMatches(need, child, prepared, source.ParentSessionId, parent.Machine);
+    }
+
+    private static bool ParentTargetMatches(Need need, Session child, PreparedParentNeed prepared,
+        string parent, string parentMachine)
+    {
+        var target = prepared.Target;
+        return prepared.Request.NeedId == target.NeedId && target.NeedId == need.Id && target.NeedVersion == need.Version &&
             target.ChildSessionId == need.SessionId && target.ChildOwnerMachine == child.Machine && target.ChildEpoch == child.Epoch &&
             target.ChildHolder == child.Holder && target.ChildReservedEpoch == child.ReservedEpoch && target.Kind == need.Kind &&
-            target.ProviderBacked == (need.RequestId is not null) && target.ParentSessionId == caller.SessionId &&
-            target.ParentOwnerMachine == parent.Machine && target.AddresseeSessionId == need.AddresseeSessionId &&
+            target.ProviderBacked == (need.RequestId is not null) && target.ParentSessionId == parent &&
+            target.ParentOwnerMachine == parentMachine && target.AddresseeSessionId == need.AddresseeSessionId &&
             target.ProviderRequestId == need.RequestId && target.ChatRowId == need.ChatId;
     }
 

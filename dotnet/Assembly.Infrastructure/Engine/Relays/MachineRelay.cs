@@ -6,6 +6,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Application.Common.Calls;
 using Assembly.Engine.Hosting;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Engine.Needs;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Infrastructure.Engine.Relays;
@@ -14,6 +15,7 @@ namespace Assembly.Infrastructure.Engine.Relays;
 internal sealed partial class MachineRelay : IAsyncDisposable
 {
     private readonly EngineRuntime _runtime;
+    private readonly NeedAnswers _needs;
     private readonly IEngineRuntime _engine;
     private readonly MachineForward _forward;
     private readonly RemoteConnections _connections;
@@ -34,9 +36,9 @@ internal sealed partial class MachineRelay : IAsyncDisposable
     private Task? _dispose;
     private bool _started;
 
-    internal MachineRelay(EngineRuntime runtime, MachineForward forward, RemoteConnections connections, TopicSet topics, TimeProvider time, TextWriter log)
+    internal MachineRelay(EngineRuntime runtime, MachineForward forward, RemoteConnections connections, TopicSet topics, TimeProvider time, TextWriter log, NeedAnswers needs)
     {
-        (_runtime, _engine, _forward, _connections, _topics, _time, _log) = (runtime, runtime, forward, connections, topics, time, log);
+        (_runtime, _engine, _forward, _connections, _topics, _time, _log, _needs) = (runtime, runtime, forward, connections, topics, time, log, needs);
         _stop = CancellationTokenSource.CreateLinkedTokenSource(runtime.Stopping); _stopping = _stop.Token;
     }
 
@@ -57,7 +59,7 @@ internal sealed partial class MachineRelay : IAsyncDisposable
     private void Wake() => _wake.Writer.TryWrite(true);
     private void OnEvent(EngineEvent item)
     {
-        if (item.EntityKind is "message" or "session" or "handoff") Wake();
+        if (item.EntityKind is "message" or "session" or "handoff" || item.Kind is "parent_need.requested" or "parent_need.changed") Wake();
     }
     private void MirrorNotice(string? machine, string json)
     {
@@ -91,6 +93,7 @@ internal sealed partial class MachineRelay : IAsyncDisposable
                         if (candidates.Count < 200) break;
                         after = candidates[^1];
                     }
+                    await RelayParentNeeds(endpoints, _stopping);
                 }
                 catch (OperationCanceledException) when (_stopping.IsCancellationRequested) { throw; }
                 catch (Exception error) { Diagnostic(error); }

@@ -143,7 +143,7 @@ public sealed partial class AdapterEffectsTests
         }
     }
 
-    private static NeedAnswers OwnerNeedService(AdapterDeliveryFixture f) => new(f.Runtime, f.Hosts, f.Time);
+    private static NeedAnswers OwnerNeedService(AdapterDeliveryFixture f) => new(new(f.Runtime, new(() => 5, () => 10), f.Time), f.Runtime, f.Hosts, f.Time);
     private static WindowCommand OwnerWindow(AdapterDeliveryFixture f, string need, JsonElement answer) =>
         new(Guid.NewGuid(), need, 1, f.Number("SELECT epoch FROM engine_session WHERE id=$id", f.Session.SessionId), new ResolveNeed("answered", answer));
 

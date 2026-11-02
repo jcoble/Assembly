@@ -19,10 +19,14 @@ public sealed partial class SessionHostTests
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
         await agent.RequestAsync(7, "session/request_permission", BindingPermission("original"));
         var card = (await RowsUntil(r => r.Kind == "ask"))[^1]; var id = card.ItemId![4..];
+        var captured = host.CaptureProviderAnswerBinding(id);
+        Assert.NotNull(captured);
+        Assert.Null(host.CaptureProviderAnswerBinding("missing"));
         var invalid = host.PrepareProviderAnswer(id, JsonSerializer.SerializeToElement("allow"));
         var blank = host.PrepareProviderAnswer(id, JsonSerializer.SerializeToElement(""));
         var prepared = host.PrepareProviderAnswer(id, JsonSerializer.SerializeToElement("persistent"))!;
         var binding = prepared.Binding;
+        Assert.Equal(binding, captured);
         var variants = new[]
         {
             binding with { SessionId = "other" }, binding with { ChatRowId = "other" },
@@ -47,6 +51,7 @@ public sealed partial class SessionHostTests
         Assert.Equal(_session.SessionId, binding.SessionId); Assert.Equal(id, binding.ChatRowId);
         Assert.EndsWith(":7", binding.ProviderRequestId); Assert.Equal(FakeLink.AcpSessionId, binding.AcpSessionId);
         Assert.Null(host.PrepareProviderAnswer(id, prepared.Answer));
+        Assert.Null(host.CaptureProviderAnswerBinding(id));
     }
 
     [Fact]
@@ -111,6 +116,7 @@ public sealed partial class SessionHostTests
         if (kind == "permission") Assert.Equal("cancelled", actual.GetProperty("outcome").GetProperty("outcome").GetString());
         else Assert.Equal("cancel", actual.GetProperty("action").GetString());
         Assert.Null(host.PrepareProviderAnswer(id, prepared.Answer));
+        Assert.Null(host.CaptureProviderAnswerBinding(id));
     }
 
     [Fact]

@@ -39,7 +39,7 @@ public sealed partial class MachineRelayTests
             for (var i = 0; i < ids.Length; i++)
                 if (source.Fixture.State("engine_message", ids[i]) == "next_turn") settled[i].TrySetResult();
         });
-        await using var relay = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog);
+        await using var relay = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog, h.Mac.Needs);
         try
         {
             relay.Start();

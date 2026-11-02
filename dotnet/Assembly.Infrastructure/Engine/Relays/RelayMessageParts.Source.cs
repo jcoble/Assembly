@@ -17,7 +17,7 @@ internal sealed partial class RelayMessageParts
                 lock (_owner._gate)
                 {
                     RequireLive();
-                    if (_connection.Source is not null || _connection.ForeignSource is not null) throw new CallFailed("relay_busy");
+                    if (_connection.NeedSource is not null || _connection.Source is not null || _connection.ForeignSource is not null) throw new CallFailed("relay_busy");
                     _connection.Source = candidate; published = true;
                     return new(candidate.Handle, candidate.Source);
                 }

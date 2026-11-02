@@ -61,6 +61,8 @@ internal sealed partial class RelayMessageParts : IAsyncDisposable
         try { await await ready.ConfigureAwait(false); } catch { /* Still join and dispose every owner. */ }
         try { await Task.WhenAll(operations).ConfigureAwait(false); } catch { /* Completion fences are authoritative. */ }
         foreach (var registration in connection.Registrations) registration.Dispose();
+        connection.NeedSource?.Dispose(); connection.NeedTarget?.Dispose();
+        connection.NeedSource = null; connection.NeedTarget = null;
         connection.Source?.Dispose();
         connection.Target?.Dispose();
         connection.ForeignSource?.Dispose(); connection.ForeignTarget?.Dispose(); connection.StartTarget?.Dispose();
@@ -86,6 +88,8 @@ internal sealed partial class RelayMessageParts : IAsyncDisposable
         internal readonly CancellationToken ClosedToken = closedToken;
         internal bool Registered;
         internal bool Closed;
+        internal NeedSourceStage? NeedSource;
+        internal NeedTargetStage? NeedTarget;
         internal SourceStage? Source;
         internal TargetStage? Target;
         internal ForeignSourceStage? ForeignSource;

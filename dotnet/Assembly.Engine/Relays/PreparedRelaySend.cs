@@ -45,6 +45,10 @@ internal sealed class PreparedRelaySend
             chain.Nodes[1].Id == Source.ToSessionId && chain.Nodes[1].Machine == machine && chain.Nodes[1].State != "foreign";
     }
 
-    internal CommandResult Apply(IWriteScope scope, CommandContext context, int messageLimit, MessageExpiryPolicy policy) =>
-        MessageTransitions.ApplyRelaySend(scope, context, Command, _body, _label, Source.SenderKind, messageLimit, policy, Source.ReplyEvidence is null ? null : this);
+    internal CommandResult Apply(IWriteScope scope, CommandContext context, int messageLimit, MessageExpiryPolicy policy)
+    {
+        if (Source.SenderKind == "system" && Source.MessageId.StartsWith("need/", StringComparison.Ordinal) && !HasReplyParent(scope, context.Machine))
+            return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
+        return MessageTransitions.ApplyRelaySend(scope, context, Command, _body, _label, Source.SenderKind, messageLimit, policy, Source.ReplyEvidence is null ? null : this);
+    }
 }

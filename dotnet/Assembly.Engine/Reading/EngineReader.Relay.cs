@@ -38,8 +38,14 @@ public sealed partial class EngineReader
             row.RecipientReserved is not null || row.Kind is not ("session" or "system")) throw new RelayRefused("bad_args");
         var text = RelayHash.Utf8.GetString(row.Body);
         var label = RelayHash.Utf8.GetString(row.Label);
-        if (row.Kind == "system" && (row.Id != "child-ended/" + row.From || row.Parent != row.To || row.SenderState != "ended" || label != "Assembly"))
-            throw new RelayRefused("bad_args");
+        if (row.Kind == "system")
+        {
+            var ended = row.Id == "child-ended/" + row.From && row.SenderState == "ended";
+            var need = row.Id.StartsWith("need/", StringComparison.Ordinal) && scope.QueryFirst("""
+                SELECT COUNT(*) FROM engine_needs_me WHERE id=$need AND session_id=$child AND machine=$machine
+                """, r => r.Long(0), new SqlArg("$need", row.Id[5..]), new("$child", row.From), new("$machine", machine)) == 1;
+            if (row.Parent != row.To || label != "Assembly" || !ended && !need) throw new RelayRefused("bad_args");
+        }
         var evidence = ReadTurnReplyEvidence(scope, machine, row, text);
         var fence = new RelaySourceFence(row.Version, row.State, row.Attempt, row.InFlight == 1,
             row.SenderEpoch, row.SenderHolder, row.SenderReserved, row.RecipientEpoch, row.RecipientHolder);
