@@ -37,10 +37,11 @@ public sealed class PreparedTurnReply
             || recovered.SavedThrough < recovered.StartedTurnSeq || epoch < 0 || string.IsNullOrEmpty(machine)) throw new CallFailed("turn_reply_changed");
         return new(null, null, recovered, source, machine, epoch);
     }
-    internal string MessageId(string machine)
+    internal string MessageId(string machine) => MessageId(machine, Source.SessionId, Source.ChatRunId);
+    internal static string MessageId(string machine, string child, string chatRun)
     {
         using var hash = new RelayHash(); hash.Raw("assembly-turn-reply-id/v1"u8);
-        hash.String(machine); hash.String(Source.SessionId); hash.String(Source.ChatRunId);
+        hash.String(machine); hash.String(child); hash.String(chatRun);
         return "turn-reply/" + hash.Finish();
     }
     internal string Canonical(string machine)

@@ -110,4 +110,65 @@ public sealed partial class MachineDoorTests
         Assert.Equal("error", (await RelayCall(normal, "relay_source_open", new("message", "B"), EngineSocketJson.Default.RelaySourceReadArgs)).GetProperty("t").GetString());
         Assert.Equal(0, _f.Count("engine_message"));
     }
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4194321)]
+    public async Task Registered_reply_source_emits_actual_carrier_and_zero_or_full_body_parts(int size)
+    {
+        var body = size == 0 ? "" : new string('x', size) + "\0AFTER_BODY😀";
+        var id = RelayTurnReplyTests.CreateReply(_f, body, "B");
+        using var socket = await OpenBulk();
+        var frame = await RelayCall(socket, "relay_source_open", new(id, "B"), EngineSocketJson.Default.RelaySourceReadArgs);
+        Assert.Equal("result", frame.GetProperty("t").GetString());
+        var opened = frame.GetProperty("result").Deserialize(EngineSocketJson.Default.RelaySourceOpened)!;
+        Assert.NotNull(opened.Source.ReplyEvidence); Assert.Equal("chat-run", opened.Source.ReplyEvidence.ChatRunId);
+        Assert.Equal(_f.Text("SELECT fingerprint FROM engine_command_receipt WHERE command_id LIKE 'turn-reply/v1/%'"), opened.Source.ReplyEvidence.ReceiptFingerprint);
+        using var actual = new MemoryStream();
+        for (long offset = 0; offset < opened.Source.Body.Utf8Bytes;)
+        {
+            var partFrame = await RelayCall(socket, "relay_source_part", new(opened.Handle, RelayPartKind.Body, offset), EngineSocketJson.Default.RelaySourcePartArgs);
+            var part = partFrame.GetProperty("result").Deserialize(EngineSocketJson.Default.RelaySourcePart)!;
+            actual.Write(part.Data); offset = part.Next;
+        }
+        Assert.Equal(Encoding.UTF8.GetBytes(body), actual.ToArray());
+        Assert.Equal("result", (await RelayCall(socket, "relay_source_revalidate", new(opened.Handle), EngineSocketJson.Default.RelayHandleArgs)).GetProperty("t").GetString());
+        _f.Db.Writer.Write("test.damage", scope => scope.Execute("DELETE FROM engine_command_receipt WHERE command_id LIKE 'turn-reply/v1/%'"));
+        var changed = await RelayCall(socket, "relay_source_revalidate", new(opened.Handle), EngineSocketJson.Default.RelayHandleArgs);
+        Assert.Equal("error", changed.GetProperty("t").GetString()); Assert.Contains("source_changed", changed.GetProperty("message").GetString());
+        Assert.Equal("result", (await RelayCall(socket, "relay_source_close", new(opened.Handle), EngineSocketJson.Default.RelayHandleArgs)).GetProperty("t").GetString());
+    }
+    [Theory]
+    [InlineData(0)]
+    [InlineData(4194321)]
+    public async Task Registered_reply_target_admits_exact_owning_evidence_and_empty_or_large_body_once(int size)
+    {
+        var body = size == 0 ? "" : new string('x', size) + "\0FULL_REPLY😀";
+        using var source = RelayTurnReplyTests.Source(body, out var id, target: _runtime.Machine);
+        _f.SeedSession("parent");
+        var ancestry = _runtime.Commands.PrepareForeignAncestry(new(source.Machine, "child",
+            [new("parent", _runtime.Machine, "codex", "Parent", null), new("child", source.Machine, "codex", "Child", "parent")]));
+        Assert.True(_f.Db.Writer.Write("test.ancestry", scope => _runtime.Commands.ApplyForeignAncestryBatch(scope, ancestry)).Applied);
+        var descriptor = RelayDigests.Describe(new EngineReader(source.Db, source.Machine).RelaySource(new(id, _runtime.Machine), default));
+        var request = new RelaySendRequest(descriptor, 0); using var socket = await OpenBulk();
+        var frame = await RelayCall(socket, "relay_send_begin", request, EngineSocketJson.Default.RelaySendRequest);
+        Assert.Equal("result", frame.GetProperty("t").GetString());
+        var begin = frame.GetProperty("result").Deserialize(EngineSocketJson.Default.RelaySendBeginReply)!;
+        Assert.Equal("parts_required", begin.Status);
+        foreach (var (kind, bytes) in new[] { (RelayPartKind.Body, Encoding.UTF8.GetBytes(body)), (RelayPartKind.SenderLabel, Encoding.UTF8.GetBytes("Test (child)")) })
+            for (var offset = 0; offset < bytes.Length; offset += RelaySegments.ChunkBytes)
+            {
+                var data = bytes.AsSpan(offset, Math.Min(RelaySegments.ChunkBytes, bytes.Length - offset)).ToArray();
+                var part = await RelayCall(socket, "relay_send_part", new(begin.Transfer!, kind, offset, data), EngineSocketJson.Default.RelaySendPartArgs);
+                Assert.Equal("result", part.GetProperty("t").GetString());
+            }
+        var committed = await RelayCall(socket, "relay_send_commit", new(request, begin.Transfer), EngineSocketJson.Default.RelaySendCommitArgs);
+        Assert.Equal("result", committed.GetProperty("t").GetString());
+        var ack = committed.GetProperty("result").Deserialize(EngineSocketJson.Default.RelaySendAck)!;
+        Assert.True(ack.First!.Applied, ack.First.Error); Assert.False(ack.Unknown); Assert.True(ack.DestinationPresent);
+        Assert.Equal(Encoding.UTF8.GetBytes(body), _f.Db.QueryFirst("SELECT CAST(text AS BLOB) FROM engine_message WHERE id=$id", r => r.Blob(0), default, new Assembly.Application.Common.Database.SqlArg("$id", id)));
+        var replay = await RelayCall(socket, "relay_send_begin", request, EngineSocketJson.Default.RelaySendRequest);
+        var recorded = replay.GetProperty("result").Deserialize(EngineSocketJson.Default.RelaySendBeginReply)!;
+        Assert.Equal("recorded", recorded.Status); Assert.Null(recorded.Transfer); Assert.Equal(ack.First, recorded.Ack.First);
+        Assert.Equal(1, _f.Count("engine_message")); Assert.Equal(1, _f.Count("engine_outbox"));
+    }
 }

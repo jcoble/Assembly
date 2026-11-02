@@ -83,7 +83,7 @@ public static partial class EngineJournal
                 try
                 {
                     var capture = RelayDigests.Capture(source.FromMachine, machine, source.MessageId, message.Kind,
-                        new(message.From, message.To, RelayHash.Utf8.GetString(message.Body), message.Mode), RelayHash.Utf8.GetString(message.Label), source.Fence);
+                        new(message.From, message.To, RelayHash.Utf8.GetString(message.Body), message.Mode), RelayHash.Utf8.GetString(message.Label), source.Fence, source.ReplyEvidence);
                     var actual = RelayDigests.Describe(capture);
                     if (actual with { Fence = source.Fence } != source) unknown = true;
                     else evidence = new(actual.IdentitySha256, actual.SourceSha256, true, message.Version,
@@ -95,6 +95,7 @@ public static partial class EngineJournal
         }
         var present = evidence?.Present == true;
         if (!present && (root?.Result.Applied == true || retry?.Result.Applied == true)) unknown = true;
+        if (present && root?.Result.Applied != true && retry?.Result.Applied != true) unknown = true;
         return new(new(source.IdentitySha256, rootKey, root?.Result, retryKey, retry?.Result, present, evidence, unknown), target, root, retry);
     }
 
@@ -105,7 +106,7 @@ public static partial class EngineJournal
         {
             result = JsonSerializer.Deserialize(json, EngineJson.Default.CommandResult);
             return result is not null && !result.Late && result.Version >= 0 && result.Seq >= 0 && result.Epoch >= 0 &&
-                (result.Applied ? result.Error is null : !string.IsNullOrWhiteSpace(result.Error) && result.Seq == 0) &&
+                (result.Applied ? result.Error is null && result.Version > 0 && result.Seq > 0 : !string.IsNullOrWhiteSpace(result.Error) && result.Seq == 0) &&
                 JsonSerializer.Serialize(result, EngineJson.Default.CommandResult) == json;
         }
         catch (JsonException) { return false; }

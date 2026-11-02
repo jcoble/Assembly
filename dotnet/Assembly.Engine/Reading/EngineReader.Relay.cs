@@ -1,6 +1,8 @@
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Messages;
+using Assembly.Engine.Persistence;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Engine.Relays;
 
 namespace Assembly.Engine.Reading;
@@ -38,10 +40,35 @@ public sealed partial class EngineReader
         var label = RelayHash.Utf8.GetString(row.Label);
         if (row.Kind == "system" && (row.Id != "child-ended/" + row.From || row.Parent != row.To || row.SenderState != "ended" || label != "Assembly"))
             throw new RelayRefused("bad_args");
+        var evidence = ReadTurnReplyEvidence(scope, machine, row, text);
         var fence = new RelaySourceFence(row.Version, row.State, row.Attempt, row.InFlight == 1,
             row.SenderEpoch, row.SenderHolder, row.SenderReserved, row.RecipientEpoch, row.RecipientHolder);
         return RelayDigests.Capture(machine, args.RecipientMachine, row.Id, row.Kind,
-            new(row.From, row.To, text, row.Mode), label, fence);
+            new(row.From, row.To, text, row.Mode), label, fence, evidence);
+    }
+
+    private static RelayTurnReplyEvidence? ReadTurnReplyEvidence(IReadScope scope, string machine, SourceRow row, string body)
+    {
+        if (!row.Id.StartsWith("turn-reply/", StringComparison.Ordinal)) return null;
+        var suffix = row.Id["turn-reply/".Length..];
+        if (!RelayHash.IsSha(suffix) || row.Parent != row.To || row.Kind != "session" || row.Mode != "prompt") throw new RelayRefused("source_changed");
+        var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$id",
+            r => new { Fingerprint = r.Text(0), Result = r.Text(1) }, new SqlArg("$id", "turn-reply/v1/" + suffix));
+        if (receipt is null || !TurnReplyFingerprint.TryDecode(receipt.Fingerprint, machine, row.From, row.Id, out var carrier)) throw new RelayRefused("source_changed");
+        try
+        {
+            var result = JsonSerializer.Deserialize(receipt.Result, EngineJson.Default.CommandResult);
+            if (result is not { Applied: true, Late: false, Error: null, Version: 1, Seq: > 0, Epoch: >= 0 } ||
+                JsonSerializer.Serialize(result, EngineJson.Default.CommandResult) != receipt.Result) throw new RelayRefused("source_changed");
+            var run = scope.QueryFirst("SELECT CAST(run_id AS BLOB) FROM rows WHERE session_id=$child AND seq=$seq AND kind='turn'",
+                r => r.IsNull(0) ? null : RelayHash.Utf8.GetString(r.Blob(0)), new SqlArg("$child", row.From), new SqlArg("$seq", carrier!.TerminalSeq));
+            if (run is null || RelayHash.Sha(RelayHash.Utf8.GetBytes(run)) != carrier!.ChatRunIdSha256 ||
+                PreparedTurnReply.MessageId(machine, row.From, run) != row.Id ||
+                RowStore.TerminalReplyAt(scope, row.From, run, carrier.TerminalSeq)?.Text != body) throw new RelayRefused("source_changed");
+            return new(run, carrier.TerminalSeq, receipt.Fingerprint);
+        }
+        catch (Exception error) when (error is JsonException or System.Text.DecoderFallbackException or ArgumentException or InvalidOperationException or KeyNotFoundException)
+        { throw new RelayRefused("source_changed"); }
     }
 
     private sealed record SourceRow(string Id, long Version, string From, string Kind, string To, byte[] Body, byte[] Label,

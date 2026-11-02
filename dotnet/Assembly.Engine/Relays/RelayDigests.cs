@@ -9,15 +9,16 @@ namespace Assembly.Engine.Relays;
 internal static class RelayDigests
 {
     internal static RelaySourceCapture Capture(string source, string target, string messageId, string senderKind,
-        SendMessage command, string label, RelaySourceFence fence)
+        SendMessage command, string label, RelaySourceFence fence, RelayTurnReplyEvidence? replyEvidence = null)
     {
         ValidateScalars(source, target, messageId, command.FromSessionId, senderKind, command.ToSessionId, command.Mode);
+        RelayTurnReplies.Validate(source, messageId, command.FromSessionId, senderKind, command.Mode, replyEvidence);
         var body = RelayHash.Utf8.GetBytes(command.Text);
         var labelBytes = RelayHash.Utf8.GetBytes(label);
         var canonical = PreparedTextJson.Create(command with { Text = "" }, "text", command.Text);
-        var identity = Identity(source, target, messageId, senderKind, command, canonical.Utf8Bytes);
+        var identity = RelayTurnReplies.Identity(Identity(source, target, messageId, senderKind, command, canonical.Utf8Bytes), replyEvidence);
         var content = Content(source, target, messageId, senderKind, command, body, labelBytes);
-        return new(new(source, messageId, senderKind, command), target, label, fence, content, identity);
+        return new(new(source, messageId, senderKind, command), target, label, fence, content, identity, replyEvidence);
     }
 
     internal static RelaySourceDescriptor Describe(RelaySourceCapture capture)
@@ -29,12 +30,13 @@ internal static class RelayDigests
         var body = RelayHash.Utf8.GetBytes(command.Text);
         var label = RelayHash.Utf8.GetBytes(capture.SenderLabel);
         var canonical = PreparedTextJson.Create(command with { Text = "" }, "text", command.Text);
-        if (Identity(identity.FromMachine, capture.RecipientMachine, identity.MessageId, identity.SenderKind, command, canonical.Utf8Bytes) != capture.IdentitySha256 ||
+        RelayTurnReplies.Validate(identity.FromMachine, identity.MessageId, command.FromSessionId, identity.SenderKind, command.Mode, capture.ReplyEvidence);
+        if (RelayTurnReplies.Identity(Identity(identity.FromMachine, capture.RecipientMachine, identity.MessageId, identity.SenderKind, command, canonical.Utf8Bytes), capture.ReplyEvidence) != capture.IdentitySha256 ||
             Content(identity.FromMachine, capture.RecipientMachine, identity.MessageId, identity.SenderKind, command, body, label) != capture.SourceSha256)
             throw new RelayRefused("source_changed");
         return new(identity.FromMachine, capture.RecipientMachine, identity.MessageId, command.FromSessionId,
             identity.SenderKind, command.ToSessionId, command.Mode, capture.Fence, capture.IdentitySha256, capture.SourceSha256,
-            canonical.Sha256, canonical.Utf8Bytes, new(body.LongLength, RelayHash.Sha(body)), new(label.LongLength, RelayHash.Sha(label)));
+            canonical.Sha256, canonical.Utf8Bytes, new(body.LongLength, RelayHash.Sha(body)), new(label.LongLength, RelayHash.Sha(label)), capture.ReplyEvidence);
     }
 
     private static string Identity(string source, string target, string messageId, string senderKind, SendMessage command, long length)
@@ -66,7 +68,7 @@ internal static class RelayDigests
         hash.String(source.SourceSha256); hash.String(source.CommandSha256); hash.Length(source.CommandUtf8Bytes);
         hash.Length(source.Body.Utf8Bytes); hash.String(source.Body.Sha256);
         hash.Length(source.SenderLabel.Utf8Bytes); hash.String(source.SenderLabel.Sha256);
-        return hash.Finish();
+        return RelayTurnReplies.Descriptor(hash.Finish(), source.ReplyEvidence);
     }
 
     internal static string Canonical(RelaySourceDescriptor source)
@@ -92,6 +94,7 @@ internal static class RelayDigests
         ValidateScalars(source.FromMachine, source.RecipientMachine, source.MessageId, source.FromSessionId,
             source.SenderKind, source.ToSessionId, source.Mode);
         ValidateManifest(source);
+        RelayTurnReplies.Validate(source.FromMachine, source.MessageId, source.FromSessionId, source.SenderKind, source.Mode, source.ReplyEvidence);
         var fence = source.Fence;
         if (fence is null || fence.MessageVersion < 1 || fence.Attempt < 0 || fence.SenderEpoch < 0 || fence.RecipientStubEpoch < 0 ||
             fence.SenderReservedEpoch < 0 || string.IsNullOrWhiteSpace(fence.SenderHolder) || string.IsNullOrWhiteSpace(fence.RecipientHolder) ||

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
 
@@ -8,13 +9,15 @@ public sealed record RelaySendIdentity(string FromMachine, string MessageId, str
 public sealed record RelaySourceFence(long MessageVersion, string State, long Attempt, bool InFlight,
     long SenderEpoch, string SenderHolder, long? SenderReservedEpoch, long RecipientStubEpoch, string RecipientHolder);
 public sealed record RelaySourceCapture(RelaySendIdentity Identity, string RecipientMachine, string SenderLabel,
-    RelaySourceFence Fence, string SourceSha256, string IdentitySha256);
+    RelaySourceFence Fence, string SourceSha256, string IdentitySha256,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RelayTurnReplyEvidence? ReplyEvidence = null);
 public enum RelayPartKind { Body, SenderLabel }
 public sealed record RelayPartManifest(long Utf8Bytes, string Sha256);
 public sealed record RelaySourceDescriptor(string FromMachine, string RecipientMachine, string MessageId,
     string? FromSessionId, string SenderKind, string ToSessionId, string Mode, RelaySourceFence Fence,
     string IdentitySha256, string SourceSha256, string CommandSha256, long CommandUtf8Bytes,
-    RelayPartManifest Body, RelayPartManifest SenderLabel);
+    RelayPartManifest Body, RelayPartManifest SenderLabel,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] RelayTurnReplyEvidence? ReplyEvidence = null);
 public sealed record RelayDestinationEvidence(string IdentitySha256, string SourceSha256, bool Present,
     long? MessageVersion, string? State, string? ProviderTurnId, string? Reason,
     long RecipientEpoch, string RecipientHolder, long? RecipientReservedEpoch);

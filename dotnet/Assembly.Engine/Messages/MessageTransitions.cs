@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
+using Assembly.Engine.Relays;
 
 namespace Assembly.Engine.Messages;
 
@@ -125,13 +126,14 @@ public static partial class MessageTransitions
         return EngineJournal.Commit(s, c, updated.Version, c.Epoch, [Changed(c, updated)], []);
     }
 
-    private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit, MessageExpiryPolicy? expiryPolicy, byte[]? bodyUtf8 = null, byte[]? labelUtf8 = null, string? senderKind = null, RelayEffectAssertion? assertion = null)
+    private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit, MessageExpiryPolicy? expiryPolicy, byte[]? bodyUtf8 = null, byte[]? labelUtf8 = null, string? senderKind = null, RelayEffectAssertion? assertion = null, PreparedRelaySend? turnReply = null)
     {
         var peer = c.Actor.Kind == ActorKind.System && c.Actor.Id.StartsWith("machine:", StringComparison.Ordinal);
+        turnReply?.AssertReplyBindings(c, command, bodyUtf8, labelUtf8, senderKind);
         if (!peer && (c.Actor.Kind == ActorKind.Window ? command.FromSessionId is not null :
             c.Actor.Kind != ActorKind.Session || command.FromSessionId != c.Actor.Id))
             return Refused(c, "forbidden");
-        if (command.Mode is not ("prompt" or "interrupt") || string.IsNullOrWhiteSpace(command.Text) ||
+        if (command.Mode is not ("prompt" or "interrupt") || turnReply is null && string.IsNullOrWhiteSpace(command.Text) ||
             string.IsNullOrWhiteSpace(command.ToSessionId))
             return Refused(c, "bad_args");
         var recipient = FindRecipient(s, command.ToSessionId);
@@ -153,6 +155,7 @@ public static partial class MessageTransitions
             return Refused(c, "invalid_transition", current.Version);
         if (recipient.State == "ended")
             return Refused(c, "unavailable");
+        if (turnReply is not null && !turnReply.HasReplyParent(s, c.Machine)) return Refused(c, "forbidden");
         if (command.FromSessionId is not null && s.QueryFirst("""
             SELECT COUNT(*) FROM engine_message WHERE from_session_id=$from AND to_session_id=$to
             """, r => r.Long(0), new("$from", command.FromSessionId), new("$to", command.ToSessionId)) >= messageLimit)
