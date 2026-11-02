@@ -1,11 +1,13 @@
 using System.Net;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Agents;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
 using Assembly.Engine.Effects;
 using Assembly.Tests.Draft.Base.Chat;
 using Assembly.Engine.Persistence;
@@ -40,6 +42,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         public event Action? RetentionCommitted;
         private readonly IEngineEffects? _effects;
         public Action? CommandCommitted { get; set; }
+        public Action<string>? WriteCommitted { get; set; }
         public Func<Task>? Identifying { get; set; }
         public Func<Task>? OpeningBulk { get; set; }
         public bool OmitBulkIdentity { get; set; }
@@ -47,18 +50,37 @@ internal sealed class TwoHosts : IAsyncDisposable
         public int OwnerReadCalls;
         public Func<string, CallContext, Task>? OwnerReading { get; set; }
         internal MachineForward? Forwarder { get; set; }
-        private EngineRuntime StartRuntime() => EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time, new(() => 1, () => 5), _effects);
+        private EngineRuntime StartRuntime()
+        {
+            var sessions = _machineLauncher is null ? null : SessionStore.Open(Fixture.Db, Fixture.Time, _checkouts!);
+            var cutover = sessions is null ? null : new SessionCutover(Fixture.Db, sessions, _machineLauncher!, _checkouts!, Fixture.Time);
+            return EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
+                Fixture.Limits, _effects, cutover: cutover);
+        }
         private readonly bool _windowCalls;
-        public Host(bool windowCalls = false, IEngineEffects? effects = null) { _windowCalls = windowCalls; _effects = effects; Fixture = new(topics: Topics); Runtime = StartRuntime(); }
+        private readonly IAgentLauncher? _machineLauncher;
+        private readonly string? _checkouts;
+        private MachineCalls? _machineCalls;
+        public Host(bool windowCalls = false, IEngineEffects? effects = null, IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? limits = null)
+        {
+            _windowCalls = windowCalls; _effects = effects; _machineLauncher = machineLauncher; _checkouts = checkouts;
+            if (machineLauncher is not null && checkouts is null) throw new ArgumentException("Isolated checkouts required", nameof(checkouts));
+            Fixture = new(topics: Topics, limits: limits); Runtime = StartRuntime();
+        }
         public async Task Start(int port = 0)
         {
-            var calls = new SocketDispatcher(new CommandWriter(Fixture.Db.Writer, () => CommandCommitted?.Invoke()), Topics, Fixture.Time, NullLogger.Instance, new EngineSocketStream(Runtime));
+            var calls = new SocketDispatcher(new CommandWriter(Fixture.Db.Writer, () => CommandCommitted?.Invoke(), what => WriteCommitted?.Invoke(what)), Topics, Fixture.Time, NullLogger.Instance, new EngineSocketStream(Runtime));
             if (_windowCalls)
             {
                 var engineCalls = Forwarder is null ? new EngineCalls(Runtime, Fixture.Time) : new EngineCalls(Runtime, Fixture.Time, Forwarder);
                 engineCalls.Register(new IdentityGate(calls, this));
             }
             else calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, (_, c) => { Interlocked.Increment(ref MachineCalls); return Task.FromResult(Runtime.Reader.Machine(c.Cancellation)); });
+            if (_machineLauncher is not null)
+            {
+                _machineCalls = new(Runtime, Fixture.Time, _machineLauncher, _checkouts!);
+                _machineCalls.Register(calls);
+            }
             calls.Topic("sessions", SessionsJson.Default.SessionItem, s => s.SessionId, (_, _) => []);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));
@@ -99,7 +121,9 @@ internal sealed class TwoHosts : IAsyncDisposable
         public async Task Stop()
         {
             if (!_running) return;
-            await App.DisposeAsync(); await Runtime.DisposeAsync(); _running = false;
+            await App.DisposeAsync();
+            if (_machineCalls is not null) await _machineCalls.DisposeAsync();
+            await Runtime.DisposeAsync(); _running = false;
         }
         public async Task Restart()
         {
@@ -136,12 +160,13 @@ internal sealed class TwoHosts : IAsyncDisposable
             public void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
                 Action<string, CallContext>? opened = null) => inner.Rows(topic, state, opened);
         }
-        private sealed class CommandWriter(IAtomicWriter writer, Action committed) : IAtomicWriter
+        private sealed class CommandWriter(IAtomicWriter writer, Action committed, Action<string> written) : IAtomicWriter
         {
             public T Write<T>(string what, Func<IWriteScope, T> write)
             {
                 var result = writer.Write(what, write);
                 if (what == "engine/command") committed();
+                written(what);
                 return result;
             }
         }
@@ -170,11 +195,12 @@ internal sealed class TwoHosts : IAsyncDisposable
     private RemoteConnections? _connections;
     private MachinesFeature? _machinesFeature;
     private MachineStore? _profiles;
-    public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null)
+    public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
+        IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null)
     {
         _forwardCommands = forwardCommands;
-        Remote = new(forwardCommands, effects);
-        Mac = new(windowCalls);
+        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits);
+        Mac = new(windowCalls, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits);
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
     }
     public EngineMirror Mirror { get; private set; } = null!;
@@ -182,7 +208,7 @@ internal sealed class TwoHosts : IAsyncDisposable
     private RemoteMachine? _machine;
     private LiveHub? _hub;
     public async Task Start() { await Remote.Start(); await Mac.Start(); Remote.Fixture.SeedSession(); }
-    public async Task StartMirror(TimeProvider? mirrorTime = null)
+    public async Task StartMirror(TimeProvider? mirrorTime = null, IAtomicWriter? mirrorWriter = null)
     {
         var store = RowStore.Open(Mac.Fixture.Db);
         _hub = new LiveHub(store, topics: Mac.Topics);
@@ -211,7 +237,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             }
             else
             {
-                Mirror = new(_machine!, Mac.Fixture.Db.Writer, mirrorTime ?? TimeProvider.System, MirrorLog);
+                Mirror = new(_machine!, mirrorWriter ?? Mac.Fixture.Db.Writer, mirrorTime ?? TimeProvider.System, MirrorLog);
                 await _machine!.ProbeAsync(default);
             }
             await applied.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -242,6 +268,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         Remote.Fixture.SeedSession();
     }
     internal RemoteMachine ConnectedMachine => _machine!;
+    internal RemoteConnections Connections => _connections ?? throw new InvalidOperationException("No configured connection owner");
     public Task DisconnectMirror() => _connections!.ConnectionAsync("workbox-test", false, default);
     public async Task StopMirror()
     {

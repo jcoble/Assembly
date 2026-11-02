@@ -14,6 +14,7 @@ using Assembly.Engine.Prs;
 namespace Assembly.Engine;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(IReadOnlyList<MachineStartMirrorGeneration>))]
 [JsonSerializable(typeof(MirrorNotice))]
 [JsonSerializable(typeof(CursorAt))]
 [JsonSerializable(typeof(StreamPage))]
@@ -44,6 +45,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(OwnerPromptJournalEnvelope))]
 [JsonSerializable(typeof(DeliverMessage))]
 [JsonSerializable(typeof(MessageOutcome))]
+[JsonSerializable(typeof(EstablishForeignParent))]
 [JsonSerializable(typeof(RegisterForeignSession))]
 [JsonSerializable(typeof(StartSession))]
 [JsonSerializable(typeof(SetSessionState))]

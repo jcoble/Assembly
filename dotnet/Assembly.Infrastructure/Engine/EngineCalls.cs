@@ -23,7 +23,9 @@ public sealed record EngineEntityArgs(string EntityKind, string EntityId, string
 public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFeature
 {
     private readonly MachineForward? _forward;
+    private readonly MachineStarts? _starts;
     internal EngineCalls(EngineRuntime runtime, TimeProvider time, MachineForward forward) : this(runtime, time) => _forward = forward;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, MachineForward forward, MachineStarts starts) : this(runtime, time, forward) => _starts = starts;
     private MachineForward Forward => _forward ?? throw new KeyNotFoundException("Unknown remote engine machine");
     private bool IsRemote(string? machine) => machine is not null && machine != runtime.Machine;
 
@@ -50,6 +52,13 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFea
                     return _ => new(false, false, "bad_args", args.ExpectedVersion, 0, args.Epoch);
                 if (IsRemote(args.Machine))
                 {
+                    if (_starts is not null && args.Command is StartSession { ParentId: { } parent } remoteStart && _starts.OwnsParent(parent, call.Cancellation))
+                    {
+                        var context = new CommandContext(args.CommandId, runtime.Machine, new(ActorKind.Window, "owner"),
+                            args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+                        var started = await _starts.StartAsync(context, remoteStart, args.Machine!, call.Cancellation);
+                        return _ => started;
+                    }
                     var result = await Forward.CommandAsync(args.Machine!, args, call.Cancellation);
                     return _ => result;
                 }

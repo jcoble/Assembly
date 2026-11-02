@@ -5,12 +5,13 @@ using Assembly.Application.Common.Machines;
 using Assembly.Application.Common.Engine;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Remote;
 
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Forwards through the existing owner's sockets without creating local engine state.</summary>
-internal sealed class MachineForward(Func<string, RemoteMachine?> byMachineId)
+internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMachineId)
 {
     public Task<OwnerPromptPage> OwnerPromptsAsync(string machine, OwnerPromptReadArgs args,
         Func<OwnerPromptPage, int> encodedBytes, CancellationToken ct)
@@ -35,6 +36,13 @@ internal sealed class MachineForward(Func<string, RemoteMachine?> byMachineId)
 
     public async Task<CommandResult> MachineCommandAsync(string machine, MachineCommand command, CancellationToken ct)
     {
+        if (command.Command is RegisterForeignSession && !FitsMachineFrame("machine_command", command, EngineSocketJson.Default.MachineCommand))
+        {
+            var owner = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
+            var binding = await owner.CaptureOwnerBindingAsync(machine, ct);
+            await using var lease = await owner.AcquireRelayBulkAsync(binding, ct);
+            return TitleResult(await RegisterForeignTitleAsync(lease, command, ct));
+        }
         var args = JsonSerializer.SerializeToElement(command, EngineSocketJson.Default.MachineCommand);
         var result = await CallAsync(machine, "engine", "machine_command", args, false, ct);
         return result.Deserialize(EngineJson.Default.CommandResult) ?? throw new IOException("Invalid machine command result");

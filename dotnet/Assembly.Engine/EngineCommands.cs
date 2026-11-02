@@ -82,12 +82,12 @@ public sealed partial class EngineCommands
         return result.Error == "command_id_conflict" ? result with { Error = "client_id_conflict" } : result;
     }
 
-    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command, byte[]? titleUtf8 = null)
+    private CommandResult ApplySession(IWriteScope scope, CommandContext context, SessionCommand command, byte[]? titleUtf8 = null, PreparedStartEffectPayload? startEffectPayload = null)
     {
         var depth = _limits.ReadDepth();
         var children = _limits.ReadChildren();
         var accountContext = command is StartSession start ? _accountContext?.Invoke(start.Provider) ?? "" : "";
-        var result = SessionTransitions.ApplyPreparedTitle(scope, context, command, depth, children, accountContext, titleUtf8, _expiryPolicy);
+        var result = SessionTransitions.ApplyPreparedTitle(scope, context, command, depth, children, accountContext, titleUtf8, _expiryPolicy, startEffectPayload);
         if (result.Applied && command is StartSession accepted)
             _projectStart?.Invoke(scope, context, accepted);
         return result;
