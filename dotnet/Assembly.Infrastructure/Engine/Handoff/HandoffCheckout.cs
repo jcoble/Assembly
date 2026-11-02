@@ -1,5 +1,4 @@
 using System.Text;
-using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.SourceControl;
 
 namespace Assembly.Infrastructure.Engine.Handoff;
@@ -12,6 +11,7 @@ internal static class HandoffCheckout
     internal static async Task<string> PrepareAsync(string checkouts, string handoffId, WorkspaceCheck source, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (HandoffGit.HasHttpUserInfo(source.RepoUrl)) throw new HandoffRefused("bad_args");
         // Controller B's implementation mapping: invalid inputs/protected content use existing bad_args.
         if (handoffId.Length != 36 || !Guid.TryParseExact(handoffId, "D", out var id) || !HandoffGit.IsBranch(source.Branch) ||
             !HandoffGit.IsOid(source.Head) || !HandoffGit.IsUrl(source.RepoUrl) || HandoffGit.IsRelativeFileUrl(source.RepoUrl)) throw new HandoffRefused("bad_args");
@@ -43,21 +43,21 @@ internal static class HandoffCheckout
             reservation = null;
             ownedPartial = true;
             var repository = Path.Combine(partial, "repository");
-            try
-            {
-                await HandoffGit.Records(partial, ["clone", "--quiet", "--no-checkout", "--single-branch", "--no-tags",
-                    "--branch", source.Branch, "--", source.RepoUrl, repository], ct);
-                var advertised = await HandoffGit.Scalar(repository,
-                    ["rev-parse", "--verify", "refs/remotes/origin/" + source.Branch + "^{commit}"], ct);
-                if (advertised != source.Head || !HandoffGit.IsOid(advertised) ||
-                    await HandoffGit.Scalar(repository, ["cat-file", "-t", source.Head], ct) != "commit")
-                    throw new HandoffRefused("head_not_found");
-                await HandoffGit.Records(repository, ["checkout", "--quiet", source.Branch, "--"], ct);
-                // The clone's requested branch must still point at the advertised exact commit after checkout.
-                await WriteOwner(Path.Combine(repository, ".git"), identity);
-                await VerifyFinal(repository, identity, source, ct);
-            }
-            catch (CallFailed) { throw new HandoffRefused("head_not_found"); }
+            // A successful advertisement can prove a missing/mismatching branch. Failed transport/auth cannot.
+            var remoteRef = "refs/heads/" + source.Branch;
+            var advertised = await HandoffGit.Scalar(partial, ["ls-remote", "--refs", "--", source.RepoUrl, remoteRef], ct);
+            if (advertised != source.Head + "\t" + remoteRef) throw new HandoffRefused("head_not_found");
+            await HandoffGit.Records(partial, ["clone", "--quiet", "--no-checkout", "--single-branch", "--no-tags",
+                "--branch", source.Branch, "--", source.RepoUrl, repository], ct);
+            var fetched = await HandoffGit.Scalar(repository,
+                ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/" + source.Branch + "^{commit}"], ct);
+            if (fetched != source.Head || !HandoffGit.IsOid(fetched) ||
+                await HandoffGit.Scalar(repository, ["cat-file", "-t", source.Head], ct) != "commit")
+                throw new HandoffRefused("head_not_found");
+            await HandoffGit.Records(repository, ["checkout", "--quiet", source.Branch, "--"], ct);
+            // The clone's requested branch must still point at the advertised exact commit after checkout.
+            await WriteOwner(Path.Combine(repository, ".git"), identity);
+            await VerifyFinal(repository, identity, source, ct);
             ct.ThrowIfCancellationRequested();
             HandoffGit.NoLinks(target);
             Directory.Move(repository, target);
@@ -80,15 +80,11 @@ internal static class HandoffCheckout
         var owner = Path.Combine(target, ".git", OwnerFile);
         HandoffGit.NoLinks(owner);
         if (!File.Exists(owner) || await File.ReadAllTextAsync(owner, ct) != identity) throw new HandoffRefused("bad_args");
-        try
-        {
-            var status = await new GitStatusReader(HandoffGit.Cli).ReadAsync(target, ct);
-            if (status.TotalFiles != 0 || status.Branch != source.Branch || status.Head != source.Head ||
-                await HandoffGit.Scalar(target, ["remote", "get-url", "--all", "origin"], ct) != source.RepoUrl ||
-                await HandoffGit.Scalar(target, ["cat-file", "-t", source.Head], ct) != "commit")
-                throw new HandoffRefused("bad_args");
-        }
-        catch (CallFailed) { throw new HandoffRefused("bad_args"); }
+        var status = await new GitStatusReader(HandoffGit.Cli).ReadAsync(target, ct);
+        if (status.TotalFiles != 0 || status.Branch != source.Branch || status.Head != source.Head ||
+            await HandoffGit.Scalar(target, ["remote", "get-url", "--all", "origin"], ct) != source.RepoUrl ||
+            await HandoffGit.Scalar(target, ["cat-file", "-t", source.Head], ct) != "commit")
+            throw new HandoffRefused("bad_args");
     }
 
     private static async Task WriteOwner(string folder, string identity)

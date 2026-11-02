@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Engine.Handoff;
 
 namespace Assembly.Tests.Infrastructure.Engine.Handoff;
@@ -28,6 +29,69 @@ public sealed class HandoffWorkspaceTests : IDisposable
         var target = await HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, check, default);
         Assert.Equal(upstream, await Git(target, "remote", "get-url", "origin"));
         Assert.Equal(head, await Git(target, "rev-parse", "HEAD"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Source_preserves_ssh_username_identity(bool scp)
+    {
+        var (source, _, head) = await Repo();
+        var url = scp ? "git@host.invalid:org/repo.git" : "ssh://git@host.invalid/org/repo.git";
+        await Git(source, "remote", "set-url", "origin", url);
+        Assert.Equal(new WorkspaceCheck(url, "published", head), await HandoffWorkspace.CheckSourceAsync(source, default));
+    }
+
+    [Theory]
+    [InlineData("http", false)]
+    [InlineData("http", true)]
+    [InlineData("https", false)]
+    [InlineData("https", true)]
+    public async Task Source_refuses_http_userinfo_before_returning_a_workspace(string scheme, bool password)
+    {
+        var (source, _, _) = await Repo();
+        // Dummy values only; source inspection never connects to this URL.
+        var user = password ? "fixture-user:dummy-not-secret" : "dummy-not-secret";
+        await Git(source, "remote", "set-url", "origin", scheme + "://" + user + "@host.invalid/org/repo.git");
+        await Refused("bad_args", () => HandoffWorkspace.CheckSourceAsync(source, default));
+        Assert.False(Directory.Exists(Checkouts));
+    }
+
+    [Theory]
+    [InlineData("http", false)]
+    [InlineData("http", true)]
+    [InlineData("https", false)]
+    [InlineData("https", true)]
+    public async Task Target_refuses_http_userinfo_before_any_filesystem_change(string scheme, bool password)
+    {
+        var (_, _, head) = await Repo();
+        var user = password ? "fixture-user:dummy-not-secret" : "dummy-not-secret";
+        // .git has an empty sanitized basename: the old helper fails locally after creating checkouts,
+        // so this regression proves early credential refusal without making any network request.
+        var url = scheme + "://" + user + "@host.invalid/.git";
+        await Refused("bad_args", () => HandoffWorkspace.PrepareTargetAsync(Checkouts, Id,
+            new(url, "published", head), default));
+        Assert.False(Directory.Exists(Checkouts));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Unavailable_source_repository_preserves_the_actual_git_failure(bool nonRepository)
+    {
+        var (source, upstream, _) = await Repo();
+        var check = await HandoffWorkspace.CheckSourceAsync(source, default);
+        Directory.Move(upstream, upstream + ".offline");
+        if (nonRepository)
+        {
+            Directory.CreateDirectory(upstream);
+            await File.WriteAllTextAsync(Path.Combine(upstream, "precious"), "keep");
+        }
+        var error = await Assert.ThrowsAsync<CallFailed>(() => HandoffWorkspace.PrepareTargetAsync(Checkouts, Id, check, default));
+        Assert.Contains("failed:", error.Message);
+        Assert.Contains(upstream, error.Message);
+        Assert.Empty(Directory.GetFileSystemEntries(Checkouts));
+        if (nonRepository) Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(upstream, "precious")));
     }
 
     [Fact]

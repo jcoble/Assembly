@@ -30,6 +30,9 @@ internal static class HandoffGit
         return !Path.IsPathRooted(url) && (colon < 0 || slash >= 0 && slash < colon);
     }
 
+    internal static bool HasHttpUserInfo(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        uri.Scheme is "http" or "https" && uri.UserInfo.Length > 0;
+
     internal static bool IsUrl(string value) => value.Length > 0 && value[0] != '-' && !value.Any(char.IsControl);
 
     internal static bool IsBranch(string? value) => !string.IsNullOrEmpty(value) && value != "@" &&

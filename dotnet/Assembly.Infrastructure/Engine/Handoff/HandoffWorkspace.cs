@@ -40,6 +40,7 @@ public static class HandoffWorkspace
                 throw new HandoffRefused("branch_not_pushed");
             // get-url resolves the configured fetch URL exactly as Git would, including a configured insteadOf rule.
             var url = await HandoffGit.Scalar(folder, ["remote", "get-url", "--all", remote], ct);
+            if (HandoffGit.HasHttpUserInfo(url)) throw new HandoffRefused("bad_args");
             if (!HandoffGit.IsUrl(url)) throw new HandoffRefused("branch_not_pushed");
             // Controller B mapping: relative filesystem remotes are resolved from Git's actual worktree root,
             // including linked worktrees and calls made inside a nested folder. Transport/host aliases stay exact.
