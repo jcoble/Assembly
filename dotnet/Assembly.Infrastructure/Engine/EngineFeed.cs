@@ -2,6 +2,9 @@ using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Engine;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
@@ -62,26 +65,60 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
         Apply(scope, observed, "session", observed.SessionId, new SetSessionState(state, acpSessionId, reason));
     }
 
-    public void Asked(IWriteScope scope, SessionObservation observed, string askId, AskPayload card, JsonRpcRequestContext request) =>
-        Apply(scope, observed, "needs_me", askId, new OpenNeed(observed.SessionId, observed.RunId, observed.StepId,
-            card.Kind, string.IsNullOrWhiteSpace(card.Message) ? card.Title ?? "" : card.Message,
-            card.Options?.Select(o => o.OptionId).ToArray() ?? [], request.ProviderRequestId, askId, null));
-
-    public void Settled(IWriteScope scope, SessionObservation observed, string askId, string how, JsonElement? answer, string reason)
+    public Action<IWriteScope> PrepareAsked(SessionObservation observed, string askId, AskPayload card, JsonRpcRequestContext request)
     {
-        var state = scope.QueryFirst("SELECT state FROM engine_needs_me WHERE id=$id AND session_id=$session AND machine=$machine",
-            r => r.Text(0), new SqlArg("$id", askId), new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine));
-        if (state is null || state != "open") return;
-        Apply(scope, observed, "needs_me", askId, new ResolveNeed(how, answer, reason));
+        var command = EngineCommands.PrepareNeedCommand(new OpenNeed(observed.SessionId, observed.RunId, observed.StepId,
+            card.Kind, card.Message ?? card.Title ?? "", card.Options?.Select(o => o.OptionId).ToArray() ?? [],
+            request.ProviderRequestId, askId, null, JsonSerializer.SerializeToElement(card, RowJsonContext.Rows.AskPayload)));
+        var factId = Guid.NewGuid();
+        return scope => ApplyNeedFact(scope, observed, askId, command, factId, opening: true);
     }
 
-    public void PolicyAnswered(IWriteScope scope, SessionObservation observed, JsonRpcRequestContext request, string method, JsonElement outcome)
+    public Action<IWriteScope> PrepareSettled(SessionObservation observed, string askId, string how, JsonElement? answer, string reason)
     {
-        var id = scope.QueryFirst("""
-            SELECT id FROM engine_needs_me WHERE session_id=$session AND machine=$machine AND provider_request_id=$request
-            """, r => r.Text(0), new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine),
-            new SqlArg("$request", request.ProviderRequestId));
-        if (id is not null) Settled(scope, observed, id, "answered", outcome, "policy_answered");
+        var command = EngineCommands.PrepareNeedCommand(new ResolveNeed(how, answer, reason));
+        var factId = Guid.NewGuid();
+        return scope => ApplyNeedFact(scope, observed, askId, command, factId, opening: false);
+    }
+
+    public Action<IWriteScope> PreparePolicyAnswered(SessionObservation observed, JsonRpcRequestContext request, string method, JsonElement outcome)
+    {
+        var requestId = request.ProviderRequestId;
+        var command = EngineCommands.PrepareNeedCommand(new ResolveNeed("answered", outcome, "policy_answered"));
+        var factId = Guid.NewGuid();
+        return scope =>
+        {
+            var id = scope.QueryFirst("""
+                SELECT id FROM engine_needs_me WHERE session_id=$session AND machine=$machine AND provider_request_id=$request
+                """, r => r.Text(0), new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine),
+                new SqlArg("$request", requestId));
+            if (id is not null) ApplyNeedFact(scope, observed, id, command, factId, opening: false);
+        };
+    }
+
+    private void ApplyNeedFact(IWriteScope scope, SessionObservation observed, string askId,
+        PreparedNeedCommand command, Guid factId, bool opening)
+    {
+        var need = scope.QueryFirst("""
+            SELECT version,state FROM engine_needs_me WHERE id=$id AND session_id=$session AND machine=$machine
+            """, r => new { Version = r.Long(0), State = r.Text(1) }, new SqlArg("$id", askId),
+            new SqlArg("$session", observed.SessionId), new SqlArg("$machine", runtime.Machine));
+        if (!opening && (need is null || need.State != "open")) return;
+        var current = scope.QueryFirst("""
+            SELECT s.id,COALESCE(st.run_id,s.run_id),st.id,st.attempt,s.epoch
+            FROM engine_session s LEFT JOIN engine_step st ON st.id=(
+                SELECT id FROM engine_step WHERE session_id=s.id AND state IN ('running','waiting')
+                ORDER BY updated_ms DESC,id LIMIT 1)
+            WHERE s.id=$id AND s.machine=$machine AND s.holder='local' AND s.reserved_epoch IS NULL
+                AND s.state NOT IN ('foreign','ended','handing_off')
+            """, r => new SessionObservation(r.Text(0), Text(r, 1), Text(r, 2),
+                r.IsNull(3) ? null : checked((int)r.Long(3)), r.Long(4)),
+            new SqlArg("$id", observed.SessionId), new SqlArg("$machine", runtime.Machine));
+        if (current != observed) throw new CallFailed("provider_request_changed");
+        var result = runtime.Commands.ApplyPreparedNeed(scope,
+            new(factId, runtime.Machine, new(ActorKind.System, "adapter"), askId, opening ? 0 : need!.Version,
+                observed.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+        if (!result.Applied) throw new CallFailed(result.Error ?? "provider_fact_refused", result.Error);
     }
 
     private void Tool(IWriteScope scope, SessionObservation observed, string acpSessionId, ToolCallChanged change)

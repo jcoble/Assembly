@@ -31,6 +31,13 @@ internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, str
         return sink.Finish(kind);
     }
 
+    internal static PreparedTextJson CreateOwnerNeed(ResolveNeed original, CanonicalVisitor fingerprint, CancellationToken ct)
+    {
+        using var sink = new CanonicalSink(ct, fingerprint);
+        JsonSerializer.Serialize(sink, (EngineCommand)original, EngineJson.Default.EngineCommand);
+        return sink.Finish("resolve_need");
+    }
+
     internal static string VisitCanonical(EngineCommand emptyCommand, string property, string? value, CanonicalVisitor visit)
     {
         if (property is not ("title" or "text")) throw new ArgumentOutOfRangeException(nameof(property));
@@ -66,7 +73,7 @@ internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, str
     }
 
     // The same checked hash/prefix accumulator serves string substitution and generated whole-need JSON.
-    private sealed class CanonicalSink(CancellationToken cancellationToken) : Stream
+    private sealed class CanonicalSink(CancellationToken cancellationToken, CanonicalVisitor? fingerprint = null) : Stream
     {
         private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         private readonly MemoryStream _prefix = new(32 * 1024);
@@ -85,6 +92,7 @@ internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, str
         {
             cancellationToken.ThrowIfCancellationRequested();
             _hash.AppendData(bytes);
+            fingerprint?.Invoke(bytes);
             _length = checked(_length + bytes.Length);
             if (_prefix.Length < 32 * 1024)
                 _prefix.Write(bytes[..Math.Min(bytes.Length, 32 * 1024 - checked((int)_prefix.Length))]);

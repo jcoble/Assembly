@@ -1,8 +1,11 @@
 using System.Text.Json;
 using System.Text;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Engine;
+using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
+using Assembly.Engine.Mcp;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
@@ -11,11 +14,32 @@ namespace Assembly.Engine.NeedsMe;
 
 public static class NeedTransitions
 {
+    private enum AnswerOrigin { Raw, Owner, LocalParent, ForwardedParent, ProviderFact }
     private sealed record Need(string Id, long Version, string SessionId, string? RunId, string? StepId,
         string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline, string? AddresseeSessionId);
     private sealed record Session(long Epoch, string State, string? RunId, string? ParentId, string Machine, string Holder, long? ReservedEpoch);
 
-    public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy = null)
+    public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy = null) =>
+        ApplyCore(s, c, command, expiryPolicy, null);
+
+    internal static CommandResult ApplyOwner(IWriteScope s, CommandContext c, PreparedNeedCommand prepared, MessageExpiryPolicy expiryPolicy)
+    {
+        if (c.Actor is not { Kind: ActorKind.Window, Id: "owner" } || prepared.Owner is null ||
+            prepared.Command is not ResolveNeed { State: "answered" } command) return Refused(c, "bad_args");
+        return ApplyCore(s, c, command, expiryPolicy, prepared.Owner);
+    }
+
+    internal static CommandResult ApplyLocalParent(IWriteScope s, CommandContext c, McpCaller caller,
+        PreparedParentNeed prepared, MessageExpiryPolicy expiryPolicy)
+    {
+        if (c.Actor is not { Kind: ActorKind.Session } || c.Actor.Id != caller.SessionId) return Refused(c, "forbidden");
+        NeedCommand command = prepared.Request.Action == ParentNeedAction.Escalate ? new EscalateNeed()
+            : new ResolveNeed("answered", prepared.Request.Answer);
+        return ApplyCore(s, c, command, expiryPolicy, null, prepared, caller);
+    }
+
+    private static CommandResult ApplyCore(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy,
+        PreparedNeedCommand.OwnerPreparation? owner, PreparedParentNeed? parent = null, McpCaller? caller = null)
     {
         if (string.IsNullOrWhiteSpace(c.EntityId)) return Refused(c, "bad_args");
         if (command is OpenNeed open) return Open(s, c, open, expiryPolicy);
@@ -25,7 +49,62 @@ public static class NeedTransitions
         if (c.Epoch != session.Epoch) return Refused(c, "stale_epoch", need, session.Epoch);
         if (need.State != "open") return Refused(c, "already_resolved", need);
         if (c.ExpectedVersion != need.Version) return Refused(c, "version_conflict", need);
-        return command is ResolveNeed resolve ? Resolve(s, c, need, resolve, expiryPolicy) : Refused(c, "unsupported_command", need);
+        var origin = owner is not null ? AnswerOrigin.Owner : parent is not null ? AnswerOrigin.LocalParent
+            : c.Actor.Kind == ActorKind.System ? AnswerOrigin.ProviderFact : AnswerOrigin.Raw;
+        if (parent is not null)
+        {
+            if (!LocalParentMatches(s, c, need, session, caller!, parent)) return Refused(c, "forbidden", need);
+            if (command is EscalateNeed)
+            {
+                if (parent.Request.Answer is not null || parent.ProviderBinding is not null) return Refused(c, "bad_args", need);
+                if (FindSession(s, caller!.SessionId)!.ParentId is not null) return Refused(c, "owner_reserved", need);
+                s.Execute("UPDATE engine_needs_me SET addressee_session_id=NULL,version=version+1,updated_ms=$now WHERE id=$id",
+                    new("$now", c.NowMs), new("$id", need.Id));
+                var updated = need with { Version = need.Version + 1, AddresseeSessionId = null };
+                return Commit(s, c, updated, [Changed(c, updated, "needs_me.changed")], []);
+            }
+        }
+        if (command is not ResolveNeed resolve) return Refused(c, "unsupported_command", need);
+        ProviderAnswerBinding? binding = null;
+        if (owner is not null)
+        {
+            if (session.Machine != c.Machine || session.Holder != "local" || session.ReservedEpoch is not null ||
+                session.State is "foreign" or "handing_off" or "ended") return Refused(c, "forbidden", need);
+            if (owner.Error is { } error) return Refused(c, error, need);
+            if (need.RequestId is not null)
+            {
+                if (owner.Captured is not { } captured || !MatchesProviderBinding(s, need, session, captured.Binding))
+                    return Refused(c, "answer_preparation_required", need);
+                binding = captured.Binding;
+                resolve = resolve with { Answer = captured.Answer };
+            }
+        }
+        else if (parent is not null && need.RequestId is not null)
+        {
+            if (parent.ProviderBinding is not { } captured || !MatchesProviderBinding(s, need, session, captured))
+                return Refused(c, "answer_preparation_required", need);
+            binding = captured;
+        }
+        else if (need.RequestId is not null && resolve.State == "answered" && c.Actor.Kind == ActorKind.Window)
+            return Refused(c, "answer_preparation_required", need);
+        return Resolve(s, c, need, resolve, expiryPolicy, binding, owner, parent, origin);
+    }
+
+    private static bool LocalParentMatches(IWriteScope s, CommandContext c, Need need, Session child,
+        McpCaller caller, PreparedParentNeed prepared)
+    {
+        var parent = FindSession(s, caller.SessionId); var target = prepared.Target;
+        return parent is not null && parent.Epoch == caller.Epoch && parent.Machine == c.Machine &&
+            parent.Holder == "local" && parent.ReservedEpoch is null && parent.State is not ("lost" or "ended" or "foreign" or "handing_off") &&
+            child.ParentId == caller.SessionId && need.AddresseeSessionId == caller.SessionId &&
+            child.Machine == c.Machine && child.Holder == "local" && child.ReservedEpoch is null &&
+            child.State is not ("foreign" or "handing_off" or "ended") &&
+            prepared.Request.NeedId == target.NeedId && target.NeedId == need.Id && target.NeedVersion == need.Version &&
+            target.ChildSessionId == need.SessionId && target.ChildOwnerMachine == child.Machine && target.ChildEpoch == child.Epoch &&
+            target.ChildHolder == child.Holder && target.ChildReservedEpoch == child.ReservedEpoch && target.Kind == need.Kind &&
+            target.ProviderBacked == (need.RequestId is not null) && target.ParentSessionId == caller.SessionId &&
+            target.ParentOwnerMachine == parent.Machine && target.AddresseeSessionId == need.AddresseeSessionId &&
+            target.ProviderRequestId == need.RequestId && target.ChatRowId == need.ChatId;
     }
 
     public static CommandResult Expire(IWriteScope s, CommandContext c, MessageExpiryPolicy? expiryPolicy = null) => Apply(s, c, new ResolveNeed("expired", null), expiryPolicy);
@@ -37,6 +116,7 @@ public static class NeedTransitions
     private static CommandResult Open(IWriteScope s, CommandContext c, OpenNeed command, MessageExpiryPolicy? expiryPolicy)
     {
         var providerQuestion = command.ProviderQuestion is not null;
+        if (command.ProviderRequestId is not null && !providerQuestion) return Refused(c, "bad_args");
         if (command.Kind is not ("question" or "permission" or "choice" or "confirmation") || command.Options is null ||
             !providerQuestion && (string.IsNullOrWhiteSpace(command.Text) ||
                 command.Options.Any(string.IsNullOrWhiteSpace) || command.Options.Distinct().Count() != command.Options.Count ||
@@ -172,13 +252,15 @@ public static class NeedTransitions
             """, r => r.Long(0), new("$step", command.StepId), new("$run", command.RunId), new("$session", command.SessionId)) == 1;
     }
 
-    private static CommandResult Resolve(IWriteScope s, CommandContext c, Need need, ResolveNeed command, MessageExpiryPolicy? expiryPolicy)
+    private static CommandResult Resolve(IWriteScope s, CommandContext c, Need need, ResolveNeed command, MessageExpiryPolicy? expiryPolicy,
+        ProviderAnswerBinding? binding, PreparedNeedCommand.OwnerPreparation? owner, PreparedParentNeed? parent, AnswerOrigin origin)
     {
         if (command.State is not ("answered" or "dismissed" or "expired" or "cancelled")) return Refused(c, "bad_args", need);
         var allowed = c.Actor.Kind switch
         {
             ActorKind.Window => command.State is "answered" or "dismissed",
             ActorKind.System => command.State is "answered" or "expired" or "cancelled",
+            ActorKind.Session => command.State == "answered" && origin is AnswerOrigin.LocalParent or AnswerOrigin.ForwardedParent,
             _ => false
         };
         if (!allowed) return Refused(c, "forbidden", need);
@@ -188,8 +270,7 @@ public static class NeedTransitions
             return Refused(c, "not_expired", need);
         if (command.State == "answered" && (command.Answer is null || command.Answer.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) ||
             command.State != "answered" && command.Answer is not null) return Refused(c, "bad_args", need);
-        var answer = command.State == "answered" ? command.Answer : need.Kind == "permission"
-            ? JsonSerializer.SerializeToElement("deny", EngineJson.Default.String) : (JsonElement?)null;
+        var answer = command.State == "answered" ? command.Answer : null;
         s.Execute("""
             UPDATE engine_needs_me SET state=$state,version=version+1,updated_ms=$now,answer_json=$answer,answered_by=$actor,answered_ms=$now
             WHERE id=$id
@@ -199,13 +280,39 @@ public static class NeedTransitions
         List<EffectDraft> effects = [];
         var alreadySettled = c.Actor.Kind == ActorKind.System && (command.State == "answered" ||
             command.State == "cancelled" && command.Reason is "provider_gone" or "turn_cancelled" or "session_ended");
-        if (answer is not null && need.RequestId is not null && !alreadySettled)
-            effects.Add(new($"answer/{need.Id}", "answer", need.SessionId, need.RunId,
-                JsonSerializer.SerializeToElement(new NeedAnswer(need.Id, need.RequestId, answer.Value), EngineJson.Default.NeedAnswer)));
+        if (need.RequestId is not null && !alreadySettled)
+        {
+            ProviderTerminalBinding? cancellation = null;
+            if (command.State != "answered" && !string.IsNullOrWhiteSpace(need.ChatId))
+            {
+                var attempt = need.StepId is null ? null : s.QueryFirst("""
+                    SELECT attempt FROM engine_step WHERE id=$step AND session_id=$session AND run_id=$run
+                    """, r => (int?)checked((int)r.Long(0)), new SqlArg("$step", need.StepId),
+                    new("$session", need.SessionId), new("$run", need.RunId));
+                cancellation = new(need.SessionId, need.ChatId, c.Epoch, need.RunId, need.StepId, attempt, command.State);
+            }
+            var value = answer ?? JsonSerializer.SerializeToElement((string?)null, EngineJson.Default.String);
+            var payload = owner?.AnswerPayload ?? parent?.AnswerPayload ?? JsonSerializer.SerializeToElement(
+                new NeedAnswer(need.Id, need.RequestId, value, Binding: binding, Cancellation: cancellation), EngineJson.Default.NeedAnswer);
+            effects.Add(new($"answer/{need.Id}", "answer", need.SessionId, need.RunId, payload));
+        }
         List<EventDraft> events = [Changed(c, updated, "needs_me.answered", command.Reason)];
         if (need.RequestId is null)
-            events.AddRange(MessageTransitions.NeedResolved(s, c, need.Id, need.SessionId, command.State, command.Answer, expiryPolicy));
+            events.AddRange(MessageTransitions.NeedResolved(s, c, need.Id, need.SessionId, command.State, command.Answer, expiryPolicy, owner?.Note ?? parent?.Note));
         return Commit(s, c, updated, events, effects);
+    }
+
+    private static bool MatchesProviderBinding(IWriteScope s, Need need, Session session, ProviderAnswerBinding binding)
+    {
+        if (string.IsNullOrWhiteSpace(need.ChatId) || binding.SessionId != need.SessionId || binding.ChatRowId != need.ChatId ||
+            binding.ProviderRequestId != need.RequestId || string.IsNullOrWhiteSpace(binding.AcpSessionId) ||
+            binding.Observation is not { } observed || observed.SessionId != need.SessionId || observed.Epoch != session.Epoch ||
+            observed.RunId != need.RunId || observed.StepId != need.StepId) return false;
+        var current = s.QueryFirst("""
+            SELECT id,run_id,attempt FROM engine_step WHERE session_id=$session AND state IN ('running','waiting')
+            ORDER BY updated_ms DESC,id LIMIT 1
+            """, r => new { Id = r.Text(0), RunId = r.Text(1), Attempt = checked((int)r.Long(2)) }, new SqlArg("$session", need.SessionId));
+        return observed == new SessionObservation(need.SessionId, current?.RunId ?? session.RunId, current?.Id, current?.Attempt, session.Epoch);
     }
 
     private static CommandResult Commit(IWriteScope s, CommandContext c, Need need, List<EventDraft> events, List<EffectDraft> effects)

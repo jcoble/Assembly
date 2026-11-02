@@ -16,9 +16,9 @@ public interface ISessionFeed
 {
     SessionObservation? Capture(string sessionId);
     void ObserveBatch(IWriteScope scope, SessionObservation observed, string acpSessionId, IReadOnlyList<AgentEvent> events);
-    void Asked(IWriteScope scope, SessionObservation observed, string askId, AskPayload card, JsonRpcRequestContext request);
-    void Settled(IWriteScope scope, SessionObservation observed, string askId, string how, JsonElement? answer, string reason);
-    void PolicyAnswered(IWriteScope scope, SessionObservation observed, JsonRpcRequestContext request, string method, JsonElement outcome);
+    Action<IWriteScope> PrepareAsked(SessionObservation observed, string askId, AskPayload card, JsonRpcRequestContext request);
+    Action<IWriteScope> PrepareSettled(SessionObservation observed, string askId, string how, JsonElement? answer, string reason);
+    Action<IWriteScope> PreparePolicyAnswered(SessionObservation observed, JsonRpcRequestContext request, string method, JsonElement outcome);
     void Connected(IWriteScope scope, SessionObservation observed, string acpSessionId, bool canSteer);
     void Lost(IWriteScope scope, SessionObservation observed, string reason);
     void Replied(IWriteScope scope, SessionObservation observed, SessionTurnReply final);

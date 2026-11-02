@@ -101,6 +101,9 @@ internal sealed class FakeLink : IAgentLink
     public Task RequestAsync(int id, string method, string paramsJson) =>
         _agent.SendAsync($$$"""{"jsonrpc":"2.0","id":{{{id}}},"method":"{{{method}}}","params":{{{paramsJson}}}}""");
 
+    public Task RequestAsync(string id, string method, string paramsJson) =>
+        _agent.SendAsync($$$"""{"jsonrpc":"2.0","id":{{{JsonSerializer.Serialize(id)}}},"method":"{{{method}}}","params":{{{paramsJson}}}}""");
+
     public Task<JsonElement> NextMessageAsync() => _agent.ReadAsync();
 
     /// <summary>The client's answer to the agent's request: the next message, which must be a result.</summary>

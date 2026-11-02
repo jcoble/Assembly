@@ -19,12 +19,14 @@ public static partial class EngineJournal
         => ExecuteCore(scope, context, context.CommandId.ToString("N"), canonicalCommandJson, transition);
 
     private static CommandResult ExecuteCore(IWriteScope scope, CommandContext context, string receiptKey,
-        string canonicalCommandJson, Func<CommandResult> transition, RelaySendAdmission? relayAdmission = null, TurnReplyAdmission? turnReplyAdmission = null)
+        string canonicalCommandJson, Func<CommandResult> transition, RelaySendAdmission? relayAdmission = null, TurnReplyAdmission? turnReplyAdmission = null, OwnerNeedAdmission? ownerNeedAdmission = null)
     {
-        if (relayAdmission is not null && turnReplyAdmission is not null) throw new ArgumentException("Conflicting journal admissions.");
+        if ((relayAdmission is null ? 0 : 1) + (turnReplyAdmission is null ? 0 : 1) + (ownerNeedAdmission is null ? 0 : 1) > 1)
+            throw new ArgumentException("Conflicting journal admissions.");
         relayAdmission?.ValidateBindings(scope, context, receiptKey, canonicalCommandJson);
         turnReplyAdmission?.ValidateBindings(scope, context, receiptKey, canonicalCommandJson);
-        var fingerprint = Fingerprint(context, canonicalCommandJson);
+        ownerNeedAdmission?.Validate(context, receiptKey, canonicalCommandJson);
+        var fingerprint = ownerNeedAdmission?.OriginalFingerprint ?? Fingerprint(context, canonicalCommandJson);
         if (relayAdmission is not null) fingerprint = RelayFingerprint.Encode(context.Epoch, fingerprint);
         if (turnReplyAdmission is not null) fingerprint = turnReplyAdmission.Fingerprint(fingerprint);
         var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$id",
@@ -89,10 +91,15 @@ public static partial class EngineJournal
     private static CommandResult Rejected(CommandContext context, string error) =>
         new(false, false, error, context.ExpectedVersion, 0, context.Epoch);
 
+    private static byte[] FingerprintPrefix(CommandContext context) => Encoding.UTF8.GetBytes(
+        JsonSerializer.Serialize(context with { CommandId = Guid.Empty, NowMs = 0 }, EngineJson.Default.CommandContext) + "\n");
+
     private static string Fingerprint(CommandContext context, string command)
     {
         // Serialize components independently to avoid delimiter ambiguity. Receipt time is intentionally absent.
-        var identity = JsonSerializer.Serialize(context with { CommandId = Guid.Empty, NowMs = 0 }, EngineJson.Default.CommandContext);
-        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity + "\n" + command)));
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(FingerprintPrefix(context));
+        hash.AppendData(Encoding.UTF8.GetBytes(command));
+        return Convert.ToHexStringLower(hash.GetHashAndReset());
     }
 }

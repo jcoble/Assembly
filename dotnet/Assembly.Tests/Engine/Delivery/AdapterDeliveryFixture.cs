@@ -53,7 +53,7 @@ internal sealed class AdapterDeliveryFixture : IAsyncDisposable
         AdapterEffects Create(EngineRuntime runtime)
         {
             Assert.NotNull(Sessions.Get(Session.SessionId));
-            Assert.Equal(6, Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+            Assert.Equal(7, Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
             Hosts = new SessionRegistry(Hub, Sessions, Launcher, Time, TextWriter.Null, Work, feed: new EngineFeed(runtime, TextWriter.Null, Time));
             return Effects = new AdapterEffects(Db, Hosts, Sessions, Rows);
         }
