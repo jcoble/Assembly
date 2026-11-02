@@ -1,4 +1,4 @@
-using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Application.Common.Acp;
 using Assembly.Domain.Sessions;
 
 namespace Assembly.Application.Common.Agents;
@@ -17,4 +17,13 @@ public interface IAgentLauncher
 
     /// <summary>Starts the agent's adapter process, which its sessions' ACP sessions then share. Marks the adapter start.</summary>
     Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken);
+
+    /// <summary>Whether this owner can reproduce its configured command in its direct program terminal.</summary>
+    bool CanRunTerminalAuthentication { get; }
+
+    Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+        StageTimes stages, CancellationToken cancellationToken);
+
+    Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+        IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken);
 }

@@ -136,6 +136,13 @@ public sealed class SessionLocationTests
             return new AdapterLauncher([], checkouts, new UnclaimedPermissions(), item => SessionStore.Folder(checkouts, item)).CheckoutAsync(session, stages, cancellationToken);
         }
         public void ValidateFolder(string folder) => new AdapterLauncher([], checkouts, new UnclaimedPermissions(), item => SessionStore.Folder(checkouts, item)).ValidateFolder(folder);
+        public bool CanRunTerminalAuthentication => false;
+        public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);
+        public Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            Assembly.Application.Common.Acp.IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken) =>
+            LaunchAsync(descriptor.Id, stages, cancellationToken);
+
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) => Fake.LaunchAsync(agentId, stages, cancellationToken);
     }
     private static void Git(string folder, params string[] arguments)

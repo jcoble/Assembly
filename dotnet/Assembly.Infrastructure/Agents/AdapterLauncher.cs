@@ -7,7 +7,7 @@ using Assembly.Infrastructure.Transcript;
 namespace Assembly.Infrastructure.Agents;
 
 /// <summary>Checks sessions out in <c>checkouts/&lt;session id&gt;</c> (a helper uses its parent's), and starts an agent's ACP adapter in <c>checkouts</c>.</summary>
-public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions,
+public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions,
     Func<SessionInfo, string?> checkoutFolder) : IAgentLauncher
 {
     public IReadOnlyList<AgentDescriptor> Agents => agents;
@@ -47,12 +47,7 @@ public sealed class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, strin
 
     public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken)
     {
-        var descriptor = agents.FirstOrDefault(agent => agent.Id == agentId)
-            ?? throw new InvalidOperationException($"This machine has no agent {agentId}.");
-        // Each ACP session gets its session's folder as its cwd; the process itself just needs somewhere to start.
-        Directory.CreateDirectory(checkouts);
-        var agent = AgentConnection.Start(descriptor.ToCommand(checkouts), permissions, TranscriptLog.Discard());
-        stages.Mark("adapter");
-        return Task.FromResult<IAgentLink>(agent);
+        var captured = ConfigTargetIdentity.Capture(this, agentId);
+        return LaunchConfiguredAsync(captured.Descriptor, captured.Environment, stages, cancellationToken);
     }
 }

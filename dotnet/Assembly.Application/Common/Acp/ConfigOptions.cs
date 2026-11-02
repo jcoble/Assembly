@@ -48,6 +48,21 @@ public static class ConfigOptions
             .Select(option => Text(option, "currentValue")).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 
+    /// <summary>The values and labels of the existing model selector, in the provider's order.</summary>
+    public static IReadOnlyList<(string Id, string Name)> Models(JsonElement options)
+    {
+        if (options.ValueKind != JsonValueKind.Array) return [];
+        foreach (var option in options.EnumerateArray())
+        {
+            if (Text(option, "category") != "model" || Text(option, "type") != "select"
+                || !option.TryGetProperty("options", out var list) || list.ValueKind != JsonValueKind.Array)
+                continue;
+            return list.EnumerateArray().Where(value => Text(value, "value") is not null)
+                .Select(value => (Text(value, "value")!, Text(value, "name") ?? Text(value, "value")!)).ToList();
+        }
+        return [];
+    }
+
     private static string? Text(JsonElement json, string name) =>
         json.ValueKind == JsonValueKind.Object && json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()

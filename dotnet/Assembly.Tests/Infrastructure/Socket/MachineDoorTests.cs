@@ -295,6 +295,13 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
         public IReadOnlyList<AgentDescriptor> Agents => Available ? [new("custom", "Target", "unused", [], null)] : [];
         public void ValidateFolder(string folder) => new AdapterLauncher([], "", new UnclaimedPermissions(), _ => null).ValidateFolder(folder);
         public Task<string> CheckoutAsync(SessionInfo session, StageTimes stages, CancellationToken cancellationToken) { ProviderCalls++; throw new InvalidOperationException("No clone at start"); }
+        public bool CanRunTerminalAuthentication => false;
+        public Task<IAgentLink> LaunchConfiguredAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            StageTimes stages, CancellationToken cancellationToken) => LaunchAsync(descriptor.Id, stages, cancellationToken);
+        public Task<IAgentLink> LaunchSignInAsync(AgentDescriptor descriptor, IReadOnlyDictionary<string, string> effectiveEnvironment,
+            Assembly.Application.Common.Acp.IPermissionPolicy policy, StageTimes stages, CancellationToken cancellationToken) =>
+            LaunchAsync(descriptor.Id, stages, cancellationToken);
+
         public Task<IAgentLink> LaunchAsync(string agentId, StageTimes stages, CancellationToken cancellationToken) { ProviderCalls++; throw new InvalidOperationException("No provider at start"); }
     }
     private sealed class PeerGate(ICallRegistry inner, MachineDoorTests fixture) : ICallRegistry
