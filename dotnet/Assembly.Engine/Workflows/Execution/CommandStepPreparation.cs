@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
@@ -15,6 +14,8 @@ public sealed class PreparedCommandStep
 {
     internal CommandStartBody Body { get; }
     public CommandContext Context { get; }
+    public WorkflowPrBody PrBody => Body.Intent.PrBody!;
+    public string RunId => Body.Intent.RunId;
     internal string CanonicalJournal { get; }
     internal PreparedCommandStep(CommandStartBody body)
     {
@@ -75,20 +76,7 @@ public static class CommandStepPreparation
         if (!first && (row.State != "running" || row.Gate != "ready")) throw new InvalidOperationException("command_not_ready");
         var start = JsonSerializer.Deserialize(row.Snapshot, WorkflowPreparationJson.Default.WorkflowStartBody)!;
         var spec = start.Snapshot.Definition.Steps[row.Key];
-        var values = new JsonObject
-        {
-            ["inputs"] = JsonNode.Parse(start.Inputs.Values.GetRawText()),
-            ["task"] = start.Request.Task is { } task ? JsonNode.Parse(task.GetRawText()) : new JsonObject(),
-            ["run"] = new JsonObject { ["proof_dir"] = row.Proof, ["pr_body"] = Path.Combine(row.Proof, "pr-body.md") },
-            ["steps"] = new JsonObject(),
-            ["redo"] = new JsonObject()
-        };
-        var outputs = s.Query("""
-            SELECT st.definition_key,json_extract(receipt.body_json,'$.report.receipt') FROM engine_step st JOIN engine_workflow_receipt receipt ON receipt.id=st.receipt_id
-            WHERE st.run_id=$run AND receipt.state='accepted' AND receipt.attempt=st.attempt AND receipt.generation=st.generation
-            """, r => (Key: r.Text(0), Body: r.Text(1)), new SqlArg("$run", row.Run));
-        foreach (var output in outputs) values["steps"]![output.Key] = JsonNode.Parse(output.Body);
-        var bindings = JsonSerializer.SerializeToElement(values, WorkflowExecutionJson.Default.JsonObject);
+        var bindings = EngineCommands.TemplateValues(s, start, row.Run);
         var index = first ? 0 : row.Index;
         if (index >= spec.Commands.Length) throw new InvalidOperationException("command_already_settled");
         var command = WorkflowTemplates.Commands([spec.Commands[index]], bindings)[0];
@@ -98,7 +86,8 @@ public static class CommandStepPreparation
             first ? checked(row.Epoch + 1) : row.Epoch, row.Cwd, command.Script,
             command.Bindings.ToImmutableSortedDictionary(StringComparer.Ordinal),
             Path.Combine(row.Proof, $"{c.EntityId}-{row.Generation}-{attempt}-{index}.txt"), spec.Repeat,
-            first ? fingerprint : row.Fingerprint ?? throw new InvalidOperationException("command_fingerprint_missing"), spec.Commands.Length);
+            first ? fingerprint : row.Fingerprint ?? throw new InvalidOperationException("command_fingerprint_missing"), spec.Commands.Length,
+            WorkflowPrBodies.Prepare(s, row.Run, c.EntityId, row.Generation));
         return new(new(c, row.Hash, row.RunVersion, row.Version, intent, decision, spec.Commands.Length,
             row.OwnerVersion, row.WorkspaceVersion, Dependencies(s, c.EntityId)));
     }

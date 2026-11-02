@@ -9,15 +9,18 @@ using Assembly.Engine.Messages;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Providers;
+using Assembly.Engine.Workflows.Scheduling;
 
 namespace Assembly.Engine.Execution;
 
 /// <summary>Owns effect I/O and the engine's sole earliest-deadline wait; all mutations are journaled commands.</summary>
 public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, string machine,
-    TimeProvider time, IEngineEffects? effects, IEngineRetention retention)
+    TimeProvider time, IEngineEffects? effects, IEngineRetention retention,
+    Func<CancellationToken, Task<IReadOnlyList<PreparedWorkflowDispatch>>>? prepareWorkflowDispatch = null)
 {
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private int _enable;
+    private int _prepareWorkflow = 1;
     private readonly Dictionary<string, ActiveEffect> _active = [];
     private sealed record ActiveEffect(Candidate Claim, Task<EffectReceipt> Task, CancellationTokenSource Stop);
     private bool _recovering = true;
@@ -25,7 +28,11 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
     private long? _retentionDeadline;
     private sealed record Candidate(string Id, long Version, string State, long Epoch, string? Owner = null);
 
-    public void Wake() => _wake.Writer.TryWrite(true);
+    public void Wake()
+    {
+        Interlocked.Exchange(ref _prepareWorkflow, 1);
+        _wake.Writer.TryWrite(true);
+    }
     public void EffectsAvailable() { Interlocked.Exchange(ref _enable, 1); Wake(); }
 
     public async Task RunAsync(CancellationToken cancellationToken)
@@ -43,6 +50,16 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
                     Complete(active.Claim, receipt);
                     active.Stop.Dispose();
                     _active.Remove(owner);
+                }
+                if (prepareWorkflowDispatch is not null && Interlocked.Exchange(ref _prepareWorkflow, 0) != 0)
+                {
+                    // Host checkout/prompt capture happens before entering the single writer.
+                    var prepared = await prepareWorkflowDispatch(cancellationToken);
+                    foreach (var candidate in prepared)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        db.Writer.Write("engine.workflow.dispatch", scope => commands.ApplyPreparedDispatch(scope, candidate.Context, candidate));
+                    }
                 }
                 var pass = db.Writer.Write("engine.worker", s => Pass(s));
                 if (pass.Claim is { } claim)
@@ -224,7 +241,7 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         {
             return reconcile ? await effects!.ReconcileAsync(effect, cancellationToken) : await effects!.ExecuteAsync(effect, cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && effect.Kind == "workflow_command")
         {
             return new(EffectDisposition.Unknown, JsonSerializer.SerializeToElement((string?)null, EngineJson.Default.String), "execution_cancelled_without_receipt");
         }

@@ -71,8 +71,13 @@ public sealed class WorkflowProcessTests
         public Fixture(string script)
         {
             Directory.CreateDirectory(_root);
+            var proof = Path.Combine(_root, "proof"); Directory.CreateDirectory(proof);
+            File.WriteAllText(Path.Combine(proof, ".assembly-workflow-allocation"), "run");
+            var text = "Request: actual command fixture";
+            var body = new WorkflowPrBody(Path.Combine(proof, "pr-body.md"), 0, "inputset", CommandStepTransitions.Digest(text), text);
+            WorkflowPrBodyFile.WriteAsync(body, proof, "run", default).GetAwaiter().GetResult();
             var intent = new CommandExecutionIntent("run", "step", 0, 1, 0, 1, _root, script,
-                ImmutableSortedDictionary<string, string>.Empty, Path.Combine(_root, "proof", "output.txt"), false, "tree", 1);
+                ImmutableSortedDictionary<string, string>.Empty, Path.Combine(_root, "proof", "output.txt"), false, "tree", 1, body);
             Effect = new("effect", "workflow_command", null, "run", JsonSerializer.SerializeToElement(intent,
                 WorkflowExecutionJson.Default.CommandExecutionIntent), 1, intent.OrderKey);
         }

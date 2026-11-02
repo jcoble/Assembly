@@ -23,6 +23,11 @@ public sealed partial class EngineCommands
             : WorkflowExecutionNeeds.Open(scope, context, effect, reason));
     }
 
+    public CommandResult ApplyPreparedWorkflowCommandRetry(IWriteScope scope, CommandContext context, PreparedWorkflowCommandRetry prepared) =>
+        EngineJournal.Execute(scope, context, prepared.CanonicalJournal, () => context.Machine != _machine
+            ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
+            : CommandRetryTransitions.Apply(scope, context, prepared));
+
     public CommandResult ObserveWorkflowProcess(IWriteScope scope, CommandContext context, CommandProcessObserved observed) =>
         EngineJournal.Execute(scope, context, JsonSerializer.Serialize(observed, WorkflowExecutionJson.Default.CommandProcessObserved), () =>
             context.Machine != _machine ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
