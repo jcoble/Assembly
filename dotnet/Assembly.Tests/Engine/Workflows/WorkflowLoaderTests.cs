@@ -95,6 +95,8 @@ public sealed class WorkflowLoaderTests : IDisposable
         var review = Load(yaml).Definition.Steps["review"];
         Assert.Equal("build", review.RedoTarget); Assert.Equal("checks", review.OnFail);
         Assert.Contains("review.on_fail", Assert.Throws<WorkflowFieldException>(() => Load(yaml.Replace("on_fail: checks", "on_fail: unknown"))).Message);
+        var invalidReview = yaml.Replace("of: build", "of: unrelated") + "  unrelated: {gate: {}}\n";
+        Assert.Equal("steps.review.review.of", Assert.Throws<WorkflowFieldException>(() => Load(invalidReview)).Field);
     }
     [Fact]
     public void Definition_hash_is_canonical_and_full_content_with_more_than_two_hundred_steps()
