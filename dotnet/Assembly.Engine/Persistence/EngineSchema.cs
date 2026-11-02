@@ -28,15 +28,16 @@ public static class EngineSchema
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,6,$machine,1,0,0);
+                VALUES(1,7,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version == 6)
+        if (meta.Version is 6 or 7)
         {
             projectionSchema?.Invoke(scope);
+            if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -53,6 +54,7 @@ public static class EngineSchema
         else projectionSchema?.Invoke(scope);
         if (meta.Version < 5) ComposerSchemaUpgrade.Apply(scope);
         MessageExpirySchemaUpgrade.Apply(scope, expiryMinutes);
+        NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
         return new(meta.Machine, meta.Version);
     }
 
@@ -121,6 +123,7 @@ public static class EngineSchema
             step_id TEXT REFERENCES engine_step(id), kind TEXT NOT NULL, text TEXT NOT NULL,
             options_json TEXT NOT NULL CHECK(json_valid(options_json)), provider_request_id TEXT, chat_row_id TEXT,
             state TEXT NOT NULL, deadline_ms INTEGER,
+            addressee_session_id TEXT NULL REFERENCES engine_session(id),
             answer_json TEXT CHECK(answer_json IS NULL OR json_valid(answer_json)), answered_by TEXT, answered_ms INTEGER);
         CREATE TABLE engine_message ({{Shared}}
             from_session_id TEXT REFERENCES engine_session(id), sender_kind TEXT NOT NULL,

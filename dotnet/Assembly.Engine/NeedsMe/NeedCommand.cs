@@ -7,7 +7,8 @@ namespace Assembly.Engine.NeedsMe;
 public abstract record NeedCommand : EngineCommand;
 public sealed record OpenNeed(string SessionId, string? RunId, string? StepId,
     [property: JsonPropertyName("needKind")] string Kind, string Text, IReadOnlyList<string> Options, string? ProviderRequestId,
-    string? ChatRowId, long? DeadlineMs) : NeedCommand;
+    string? ChatRowId, long? DeadlineMs,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? ProviderQuestion = null) : NeedCommand;
 public sealed record ResolveNeed(string State, JsonElement? Answer,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Reason = null) : NeedCommand;
 

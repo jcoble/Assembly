@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.NeedsMe;
 
 namespace Assembly.Engine.Persistence;
 
@@ -12,17 +13,22 @@ internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, str
 {
     internal static PreparedTextJson Create(EngineCommand emptyCommand, string property, string? value)
     {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        using var prefix = new MemoryStream(32 * 1024);
-        long length = 0;
-        void Add(ReadOnlySpan<byte> bytes)
+        using var sink = new CanonicalSink(CancellationToken.None);
+        var kind = VisitCanonical(emptyCommand, property, value, sink.Write);
+        return sink.Finish(kind);
+    }
+
+    internal static PreparedTextJson CreateNeed(NeedCommand command, CancellationToken cancellationToken)
+    {
+        var kind = command switch
         {
-            hash.AppendData(bytes); length = checked(length + bytes.Length);
-            if (prefix.Length < 32 * 1024) prefix.Write(bytes[..Math.Min(bytes.Length, 32 * 1024 - checked((int)prefix.Length))]);
-        }
-        var kind = VisitCanonical(emptyCommand, property, value, Add);
-        return new(kind, length <= 32 * 1024 ? Encoding.UTF8.GetString(prefix.ToArray()) : null,
-            Convert.ToHexStringLower(hash.GetHashAndReset()), length);
+            OpenNeed => "open_need",
+            ResolveNeed => "resolve_need",
+            _ => throw new ArgumentException("Unsupported prepared need command.", nameof(command))
+        };
+        using var sink = new CanonicalSink(cancellationToken);
+        JsonSerializer.Serialize(sink, (EngineCommand)command, EngineJson.Default.EngineCommand);
+        return sink.Finish(kind);
     }
 
     internal static string VisitCanonical(EngineCommand emptyCommand, string property, string? value, CanonicalVisitor visit)
@@ -58,4 +64,39 @@ internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, str
         using var shape = JsonDocument.Parse(empty);
         return shape.RootElement.GetProperty("kind").GetString()!;
     }
+
+    // The same checked hash/prefix accumulator serves string substitution and generated whole-need JSON.
+    private sealed class CanonicalSink(CancellationToken cancellationToken) : Stream
+    {
+        private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        private readonly MemoryStream _prefix = new(32 * 1024);
+        private long _length;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _length;
+        public override long Position { get => _length; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+        public override void Write(ReadOnlySpan<byte> bytes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _hash.AppendData(bytes);
+            _length = checked(_length + bytes.Length);
+            if (_prefix.Length < 32 * 1024)
+                _prefix.Write(bytes[..Math.Min(bytes.Length, 32 * 1024 - checked((int)_prefix.Length))]);
+        }
+        internal PreparedTextJson Finish(string kind) => new(kind,
+            _length <= 32 * 1024 ? Encoding.UTF8.GetString(_prefix.ToArray()) : null,
+            Convert.ToHexStringLower(_hash.GetHashAndReset()), _length);
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { _hash.Dispose(); _prefix.Dispose(); }
+            base.Dispose(disposing);
+        }
+    }
+
 }

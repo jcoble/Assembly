@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
@@ -11,13 +12,13 @@ namespace Assembly.Engine.NeedsMe;
 public static class NeedTransitions
 {
     private sealed record Need(string Id, long Version, string SessionId, string? RunId, string? StepId,
-        string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline);
-    private sealed record Session(long Epoch, string State, string? RunId, string? ParentId);
+        string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline, string? AddresseeSessionId);
+    private sealed record Session(long Epoch, string State, string? RunId, string? ParentId, string Machine, string Holder, long? ReservedEpoch);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy = null)
     {
         if (string.IsNullOrWhiteSpace(c.EntityId)) return Refused(c, "bad_args");
-        if (command is OpenNeed open) return Open(s, c, open);
+        if (command is OpenNeed open) return Open(s, c, open, expiryPolicy);
         var need = Find(s, c.EntityId);
         if (need is null) return Refused(c, "bad_args");
         var session = FindSession(s, need.SessionId)!;
@@ -33,18 +34,21 @@ public static class NeedTransitions
         "SELECT MIN(deadline_ms) FROM engine_needs_me WHERE state='open' AND deadline_ms IS NOT NULL",
         r => r.IsNull(0) ? (long?)null : r.Long(0), default);
 
-    private static CommandResult Open(IWriteScope s, CommandContext c, OpenNeed command)
+    private static CommandResult Open(IWriteScope s, CommandContext c, OpenNeed command, MessageExpiryPolicy? expiryPolicy)
     {
-        if (command.Kind is not ("question" or "permission" or "choice" or "confirmation") ||
-            string.IsNullOrWhiteSpace(command.Text) || command.Options is null ||
-            command.Options.Any(string.IsNullOrWhiteSpace) || command.Options.Distinct().Count() != command.Options.Count ||
-            command.Kind == "choice" && command.Options.Count < 2 ||
+        var providerQuestion = command.ProviderQuestion is not null;
+        if (command.Kind is not ("question" or "permission" or "choice" or "confirmation") || command.Options is null ||
+            !providerQuestion && (string.IsNullOrWhiteSpace(command.Text) ||
+                command.Options.Any(string.IsNullOrWhiteSpace) || command.Options.Distinct().Count() != command.Options.Count ||
+                command.Kind == "choice" && command.Options.Count < 2) ||
             command.ProviderRequestId is not null && string.IsNullOrWhiteSpace(command.ProviderRequestId) ||
             command.ChatRowId is not null && string.IsNullOrWhiteSpace(command.ChatRowId))
             return Refused(c, "bad_args");
         var session = FindSession(s, command.SessionId);
         if (session is null) return Refused(c, "bad_args");
         if (c.Epoch != session.Epoch) return Refused(c, "stale_epoch", epoch: session.Epoch);
+        if (session.Machine != c.Machine || session.Holder != "local" || session.ReservedEpoch is not null)
+            return Refused(c, "forbidden");
         if (c.Actor.Kind != ActorKind.System && (c.Actor.Kind != ActorKind.Session || c.Actor.Id != command.SessionId))
             return Refused(c, "forbidden");
         if (c.Actor.Kind == ActorKind.Session)
@@ -67,22 +71,30 @@ public static class NeedTransitions
             var same = existing.SessionId == command.SessionId && existing.RunId == command.RunId &&
                 existing.StepId == command.StepId && existing.Kind == command.Kind && existing.Text == command.Text &&
                 existing.Options == options && existing.RequestId == command.ProviderRequestId &&
-                existing.ChatId == command.ChatRowId && existing.Deadline == command.DeadlineMs;
+                existing.ChatId == command.ChatRowId && existing.Deadline == command.DeadlineMs &&
+                (!providerQuestion || ProviderQuestionMatches(s, c, command, requireOpen: false));
             return same ? new(true, false, null, existing.Version, 0, session.Epoch)
                 : Refused(c, "provider_request_conflict", existing);
+        }
+        if (providerQuestion && !ProviderQuestionMatches(s, c, command, requireOpen: true)) return Refused(c, "bad_args");
+        if (session.ParentId is { } parentId)
+        {
+            var parent = FindSession(s, parentId);
+            if (parent is null || (parent.State == "foreign") == (parent.Machine == c.Machine)) return Refused(c, "bad_args");
         }
         if (c.ExpectedVersion != 0) return Refused(c, "version_conflict");
         if (session.State is not ("idle" or "running" or "needs_me")) return Refused(c, "invalid_transition");
         if (!ValidLinks(s, command, session)) return Refused(c, "bad_args");
         s.Execute("""
             INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,
-                kind,text,options_json,provider_request_id,chat_row_id,state,deadline_ms)
-            VALUES($id,1,$machine,$now,$now,$session,$run,$step,$kind,$text,$options,$request,$chat,'open',$deadline)
+                kind,text,options_json,provider_request_id,chat_row_id,state,deadline_ms,addressee_session_id)
+            VALUES($id,1,$machine,$now,$now,$session,$run,$step,$kind,CAST($text AS TEXT),$options,$request,$chat,'open',$deadline,$addressee)
             """, new("$id", c.EntityId), new("$machine", c.Machine), new("$now", c.NowMs), new("$session", command.SessionId),
-            new("$run", command.RunId), new("$step", command.StepId), new("$kind", command.Kind), new("$text", command.Text),
-            new("$options", options), new("$request", command.ProviderRequestId), new("$chat", command.ChatRowId), new("$deadline", command.DeadlineMs));
+            new("$run", command.RunId), new("$step", command.StepId), new("$kind", command.Kind), new("$text", new UTF8Encoding(false, true).GetBytes(command.Text)),
+            new("$options", options), new("$request", command.ProviderRequestId), new("$chat", command.ChatRowId),
+            new("$deadline", command.DeadlineMs), new("$addressee", session.ParentId));
         var need = new Need(c.EntityId, 1, command.SessionId, command.RunId, command.StepId,
-            command.Kind, command.Text, options, command.ProviderRequestId, command.ChatRowId, "open", command.DeadlineMs);
+            command.Kind, command.Text, options, command.ProviderRequestId, command.ChatRowId, "open", command.DeadlineMs, session.ParentId);
         List<EventDraft> events = [Changed(c, need, "needs_me.opened")];
         if (command.StepId is not null)
         {
@@ -97,7 +109,52 @@ public static class NeedTransitions
                   AND attempt=(SELECT attempt FROM engine_step WHERE id=$id)
                 """, new SqlArg("$id", command.StepId));
         }
-        return Commit(s, c, need, events, []);
+        List<EffectDraft> effects = [];
+        if (session.ParentId is { } addressee)
+            events.AddRange(MessageTransitions.NeedOpened(s, c, need.Id, command, addressee, options, effects, expiryPolicy));
+        return Commit(s, c, need, events, effects);
+    }
+
+    private static bool ProviderQuestionMatches(IWriteScope s, CommandContext c, OpenNeed command, bool requireOpen)
+    {
+        if (c.Actor.Kind != ActorKind.System || c.Actor.Id != "adapter" ||
+            string.IsNullOrWhiteSpace(command.ProviderRequestId) || string.IsNullOrWhiteSpace(command.ChatRowId) ||
+            command.ProviderQuestion is not { ValueKind: JsonValueKind.Object } card ||
+            command.Kind is not ("permission" or "question") ||
+            !card.TryGetProperty("kind", out var kind) || kind.ValueKind != JsonValueKind.String || kind.GetString() != command.Kind ||
+            !card.TryGetProperty("state", out var state) || state.ValueKind != JsonValueKind.String || state.GetString() != "open" ||
+            !DisplayText(card, "message", out var message) || !DisplayText(card, "title", out var title) ||
+            command.Text != (message ?? title ?? "")) return false;
+        if (card.TryGetProperty("options", out var options) && options.ValueKind != JsonValueKind.Null)
+        {
+            if (options.ValueKind != JsonValueKind.Array || options.GetArrayLength() != command.Options.Count) return false;
+            var index = 0;
+            foreach (var option in options.EnumerateArray())
+                if (option.ValueKind != JsonValueKind.Object || !option.TryGetProperty("optionId", out var id) ||
+                    id.ValueKind != JsonValueKind.String || id.GetString() != command.Options[index++]) return false;
+        }
+        else if (command.Options.Count != 0) return false;
+        var stored = s.QueryFirst("SELECT payload FROM rows WHERE session_id=$session AND item_id=$item AND kind='ask' ORDER BY seq DESC LIMIT 1",
+            r => JsonDocument.Parse(r.Text(0)).RootElement.Clone(), new SqlArg("$session", command.SessionId), new("$item", "ask:" + command.ChatRowId));
+        if (stored.ValueKind != JsonValueKind.Object || requireOpen &&
+            (!stored.TryGetProperty("state", out var actualState) || actualState.ValueKind != JsonValueKind.String || actualState.GetString() != "open")) return false;
+        return SameQuestion(card, stored) && SameQuestion(stored, card);
+    }
+
+    private static bool DisplayText(JsonElement card, string name, out string? value)
+    {
+        value = null;
+        if (!card.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null) return true;
+        if (property.ValueKind != JsonValueKind.String) return false;
+        value = property.GetString(); return true;
+    }
+
+    private static bool SameQuestion(JsonElement first, JsonElement second)
+    {
+        foreach (var property in first.EnumerateObject())
+            if (property.Name is not ("state" or "answer") && (!second.TryGetProperty(property.Name, out var other) ||
+                !JsonElement.DeepEquals(property.Value, other))) return false;
+        return true;
     }
 
     private static bool ValidLinks(IWriteScope s, OpenNeed command, Session session)
@@ -168,14 +225,15 @@ public static class NeedTransitions
     private static EventDraft Changed(CommandContext c, Need need, string kind, string? reason = null) =>
         new(kind, "needs_me", need.Id, need.Version, false, new(need.SessionId, need.RunId, need.StepId, null, need.State, c.Epoch, reason));
     private static Session? FindSession(IWriteScope s, string id) => s.QueryFirst(
-        "SELECT epoch,state,run_id,parent_id FROM engine_session WHERE id=$id",
-        r => new Session(r.Long(0), r.Text(1), r.IsNull(2) ? null : r.Text(2), r.IsNull(3) ? null : r.Text(3)), new SqlArg("$id", id));
+        "SELECT epoch,state,run_id,parent_id,machine,holder,reserved_epoch FROM engine_session WHERE id=$id",
+        r => new Session(r.Long(0), r.Text(1), r.IsNull(2) ? null : r.Text(2), r.IsNull(3) ? null : r.Text(3),
+            r.Text(4), r.Text(5), r.IsNull(6) ? null : r.Long(6)), new SqlArg("$id", id));
     private static Need? Find(IWriteScope s, string id) => s.QueryFirst("""
-        SELECT id,version,session_id,run_id,step_id,kind,text,options_json,provider_request_id,chat_row_id,state,deadline_ms
+        SELECT id,version,session_id,run_id,step_id,kind,CAST(text AS BLOB),options_json,provider_request_id,chat_row_id,state,deadline_ms,addressee_session_id
         FROM engine_needs_me WHERE id=$id
         """, r => new Need(r.Text(0), r.Long(1), r.Text(2), r.IsNull(3) ? null : r.Text(3), r.IsNull(4) ? null : r.Text(4),
-            r.Text(5), r.Text(6), r.Text(7), r.IsNull(8) ? null : r.Text(8), r.IsNull(9) ? null : r.Text(9),
-            r.Text(10), r.IsNull(11) ? null : r.Long(11)), new SqlArg("$id", id));
+            r.Text(5), new UTF8Encoding(false, true).GetString(r.Blob(6)), r.Text(7), r.IsNull(8) ? null : r.Text(8), r.IsNull(9) ? null : r.Text(9),
+            r.Text(10), r.IsNull(11) ? null : r.Long(11), r.IsNull(12) ? null : r.Text(12)), new SqlArg("$id", id));
     private static CommandResult Refused(CommandContext c, string error, Need? need = null, long? epoch = null) =>
         new(false, false, error, need?.Version ?? 0, 0, epoch ?? c.Epoch);
 }
