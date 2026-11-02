@@ -151,7 +151,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.OwnerReadCalls);
                         if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);
                     }
-                    if (machineReads && feature == "engine" && method == "foreign_title_source_close" && host.MachineReading is { } machineRead)
+                    if (machineReads && feature == "engine" && method is ("foreign_title_source_close" or "relay_source_open" or "relay_source_part") && host.MachineReading is { } machineRead)
                         await machineRead(method, call).WaitAsync(call.Cancellation);
                     return await handler(value, call);
                 }, bulk);
@@ -159,7 +159,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                 Func<TArgs, CallContext, Task<Func<IWriteScope, TResult>>> handler, Func<TArgs, string?>? order = null,
                 Action<TArgs, CallContext>? failed = null, bool bulk = false) => inner.Write(feature, method, args, result, async (value, call) =>
                 {
-                    if (machineReads && feature == "engine" && method == "machine_command" && host.MachineWriting is { } writing)
+                    if (machineReads && feature == "engine" && method is ("machine_command" or "relay_send_begin" or "relay_send_part") && host.MachineWriting is { } writing)
                         await writing(method, call);
                     var write = await handler(value, call);
                     if (machineReads && feature == "engine" && method == "machine_command" && host.MachinePrepared is { } prepared)
@@ -209,11 +209,11 @@ internal sealed class TwoHosts : IAsyncDisposable
     private MachinesFeature? _machinesFeature;
     private MachineStore? _profiles;
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
-        IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null)
+        IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null)
     {
         _forwardCommands = forwardCommands;
         Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits);
-        Mac = new(windowCalls, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits);
+        Mac = new(windowCalls, effects: macEffects, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits);
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
     }
     public EngineMirror Mirror { get; private set; } = null!;
