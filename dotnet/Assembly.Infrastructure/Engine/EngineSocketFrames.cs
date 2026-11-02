@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Engine;
 using System.Text.Json.Serialization;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
 using Assembly.Engine.Recording;
 using Assembly.Engine.Reading;
 
@@ -34,6 +35,7 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 [JsonSerializable(typeof(MachineInfo))]
 [JsonSerializable(typeof(WindowCommand))]
 [JsonSerializable(typeof(MachineCommand))]
+[JsonSerializable(typeof(ForeignAncestryArgs))]
 [JsonSerializable(typeof(StartLocationArgs))]
 [JsonSerializable(typeof(StartLocation))]
 [JsonSerializable(typeof(EngineUsageArgs))]

@@ -25,6 +25,7 @@ public static class SessionTransitions
     {
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
+        if (command is EstablishForeignParent) return Refused(context, "forbidden");
         var current = Find(scope, context.EntityId);
         if (command is RegisterForeignSession foreign)
             return RegisterForeign(scope, context, foreign, current, titleUtf8);

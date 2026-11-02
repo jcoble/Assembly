@@ -12,14 +12,18 @@ public sealed record EffectDraft(string Id, string Kind, string? SessionId,
     string? RunId, JsonElement Payload);
 
 /// <summary>Uses the caller's writer transaction for state, journal, effects and durable command receipts.</summary>
-public static class EngineJournal
+public static partial class EngineJournal
 {
     public static CommandResult Execute(IWriteScope scope, CommandContext context,
+        string canonicalCommandJson, Func<CommandResult> transition)
+        => ExecuteCore(scope, context, context.CommandId.ToString("N"), canonicalCommandJson, transition);
+
+    private static CommandResult ExecuteCore(IWriteScope scope, CommandContext context, string receiptKey,
         string canonicalCommandJson, Func<CommandResult> transition)
     {
         var fingerprint = Fingerprint(context, canonicalCommandJson);
         var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$id",
-            r => new { Fingerprint = r.Text(0), Result = r.Text(1) }, new SqlArg("$id", context.CommandId.ToString("N")));
+            r => new { Fingerprint = r.Text(0), Result = r.Text(1) }, new SqlArg("$id", receiptKey));
         if (receipt is not null)
             return receipt.Fingerprint == fingerprint
                 ? JsonSerializer.Deserialize(receipt.Result, EngineJson.Default.CommandResult)!
@@ -32,7 +36,7 @@ public static class EngineJournal
             : Encoding.UTF8.GetByteCount(canonicalCommandJson) > 32 * 1024 ? Rejected(context, "command_too_large")
             : transition();
         scope.Execute("INSERT INTO engine_command_receipt(command_id,fingerprint,result_json) VALUES($id,$hash,$result)",
-            new("$id", context.CommandId.ToString("N")), new("$hash", fingerprint),
+            new("$id", receiptKey), new("$hash", fingerprint),
             new("$result", JsonSerializer.Serialize(result, EngineJson.Default.CommandResult)));
         return result;
     }

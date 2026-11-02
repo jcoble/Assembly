@@ -10,7 +10,7 @@ using Assembly.Infrastructure.Remote;
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Forwards through the existing owner's sockets without creating local engine state.</summary>
-internal sealed class MachineForward(Func<string, RemoteMachine?> byMachineId)
+internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMachineId)
 {
     public Task<OwnerPromptPage> OwnerPromptsAsync(string machine, OwnerPromptReadArgs args,
         Func<OwnerPromptPage, int> encodedBytes, CancellationToken ct)

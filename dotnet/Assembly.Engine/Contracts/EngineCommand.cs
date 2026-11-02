@@ -25,6 +25,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(SendMessage), "send_message")]
 [JsonDerivedType(typeof(SendOwnerPrompt), "send_owner_prompt")]
 [JsonDerivedType(typeof(MessageOutcome), "message_outcome")]
+[JsonDerivedType(typeof(EstablishForeignParent), "establish_foreign_parent")]
 [JsonDerivedType(typeof(RegisterForeignSession), "register_foreign_session")]
 [JsonDerivedType(typeof(StartSession), "start_session")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]

@@ -30,7 +30,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Assembly.Tests.Infrastructure.Socket;
 
-public sealed class MachineDoorTests : IAsyncLifetime
+public sealed partial class MachineDoorTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "assembly-machine-" + Guid.NewGuid().ToString("N"));
     private readonly Assembly.Infrastructure.Topics.Topics _topics = new();
