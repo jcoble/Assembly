@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common;
+using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Infrastructure.Socket;
@@ -38,6 +39,8 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     // Why the socket closes, once the receive loop ends; closed after the last answer is sent, since a socket can't
     // send two things at once.
     private (WebSocketCloseStatus Status, string Reason)? _closing;
+
+    public CallPeer? Peer { get; private set; }
 
     public string Id { get; } = $"socket-{Interlocked.Increment(ref _last)}";
 
@@ -164,6 +167,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             await CloseAsync((WebSocketCloseStatus)4401, "unauthorized");
         else
         {
+            Peer = new OwnerPeer();
             await socket.SendAsync(SocketDispatcher.Frame(new WelcomeFrame(Protocol, machine, Assembly.Application.Features.Chat.Rows.RowStore.FormatVersion, engineMachine), SocketJson.Default.WelcomeFrame),
                 WebSocketMessageType.Text, endOfMessage: true, stopping);
             return true;

@@ -112,6 +112,25 @@ public sealed class OwnerPromptTests
         Assert.Equal(command.AttachmentIds, restored.AttachmentIds);
     }
 
+    [Fact]
+    public void Raw_owner_prompt_refuses_a_foreign_stub_without_local_state_or_effects()
+    {
+        using var f = new EngineFixture();
+        Assert.True(f.Apply(new global::Assembly.Engine.Sessions.RegisterForeignSession("source", "p", "Foreign"),
+            "foreign", actor: new(ActorKind.System, "machine:source")).Applied);
+        var command = new SendOwnerPrompt("foreign", "Owner text", "C", [], null);
+        var context = Context(f, command);
+        var refused = ApplyPrepared(f, context, command);
+        Assert.False(refused.Applied);
+        Assert.Equal("forbidden", refused.Error);
+        Assert.Equal(0, f.Count("engine_message"));
+        Assert.Equal(0, f.Count("engine_outbox"));
+        Assert.Empty(f.Events());
+        f.Reopen();
+        Assert.Equal(refused, ApplyPrepared(f, context, command));
+        Assert.Equal(0, f.Count("engine_message"));
+    }
+
     private static CommandResult ApplyPrepared(EngineFixture f, CommandContext context, SendOwnerPrompt command)
     {
         var prepared = OwnerPromptFingerprint.Prepare(f.Machine, command, default);

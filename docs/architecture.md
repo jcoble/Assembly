@@ -52,6 +52,8 @@ A host's `Program.cs` only reads its arguments, registers the layers and maps it
 
 ## One socket
 
+The machine-coordinator producer and its staged activation are specified in [Engine plan 4, Task 6](https://app.notion.com/p/40b394b0689d81de88eee91932250b84); that Notion contract is authoritative.
+
 The authenticated `/socket` also carries the engine's six filtered topics and local display-only `mirror` topic through `stream:"engine"`, with cursor fingerprints, client-pulled mirror snapshots, catch-up pages and reader acknowledgements; `engine/machine` reports the local identity and watermark, and omitting `stream` preserves the existing topics.
 Each active remote has one `EngineMirror` on that same socket. Socket-open events restart its identity check and
 subscription; it has no timer. `MirrorApply` copies remote display rows and journal events through the existing

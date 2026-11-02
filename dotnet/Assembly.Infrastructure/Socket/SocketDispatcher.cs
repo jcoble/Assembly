@@ -163,7 +163,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             connection.Send(Error(id, "bad_args", $"{frame.Topic} needs a key"));
             return null;
         }
-        var context = new CallContext(connection.Closed, connection.Id, connection.Closed);
+        var context = new CallContext(connection.Closed, connection.Id, Closed: connection.Closed, ReplyId: id, Peer: connection.Peer);
         TopicSet.Subscription? self = null;
         Func<string?, string, ReadOnlyMemory<byte>?>? change = null;
         try
@@ -258,7 +258,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         using var token = call.Writes
             ? CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token)
             : CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token, connection.Closed);
-        var context = new CallContext(token.Token, connection.Id, Closed: connection.Closed, ReplyId: id);
+        var context = new CallContext(token.Token, connection.Id, Closed: connection.Closed, ReplyId: id, Peer: connection.Peer);
         try
         {
             // A write joins its key's queue, or else its socket's, now, in arrival order; a read runs off the receive

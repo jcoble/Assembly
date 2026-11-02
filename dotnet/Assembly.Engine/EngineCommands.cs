@@ -32,7 +32,7 @@ public sealed class EngineCommands
         _messageLimit = messageLimit ?? (() => 20);
     }
 
-    public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command)
+    public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command, string? preparedError = null)
     {
         if (command is SendOwnerPrompt)
             return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
@@ -42,6 +42,8 @@ public sealed class EngineCommands
         {
             if (context.Machine != _machine)
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
+            if (preparedError is not null)
+                return new(false, false, preparedError, context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
                 EffectCommand effect => EffectTransitions.Apply(scope, context, effect),

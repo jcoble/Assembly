@@ -140,6 +140,19 @@ public sealed class McpRecorderTests
     }
 
     [Fact]
+    public async Task Foreign_stub_cannot_become_a_local_caller_or_recorded_tool_actor()
+    {
+        await using var h = new Harness(seed: false);
+        Assert.True(h.Fixture.Apply(new Assembly.Engine.Sessions.RegisterForeignSession("source", "p", "T"), "s",
+            actor: new(ActorKind.System, "machine:source")).Applied);
+        Assert.Null(((IEngineRuntime)h.Runtime).Read(scope => h.Gate.Resolve(scope, new("s", 0)), default));
+        var receipts = h.Fixture.Count("engine_command_receipt");
+        Assert.True((await h.Call((_, _) => throw new InvalidOperationException("must not execute"))).IsError);
+        Assert.Equal(0, h.Fixture.Count("engine_tool_call")); Assert.Empty(h.Fixture.Events());
+        Assert.Equal(receipts, h.Fixture.Count("engine_command_receipt"));
+    }
+
+    [Fact]
     public async Task Missing_session_is_the_only_unrecorded_case()
     {
         await using var h = new Harness(seed: false);

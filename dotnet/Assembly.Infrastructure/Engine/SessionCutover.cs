@@ -67,9 +67,25 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
         Recover(scope, commands, machine, nowMs);
     }
 
-    public void ProjectStart(IWriteScope scope, CommandContext context, StartSession command) => Project(scope, context.EntityId);
+    public void ProjectStart(IWriteScope scope, CommandContext context, StartSession command)
+    {
+        if (context.Actor.Kind == ActorKind.System && context.Actor.Id.StartsWith("machine:", StringComparison.Ordinal))
+        {
+            var source = context.Actor.Id[8..];
+            if (source == context.Machine || command.ParentId is null || scope.QueryFirst("""
+                    SELECT COUNT(*) FROM engine_session WHERE id=$parent AND state='foreign' AND machine=$source AND machine<>$local
+                    """, r => r.Long(0), new("$parent", command.ParentId), new("$source", source), new("$local", context.Machine)) != 1)
+                throw new CallFailed("The peer parent does not belong to the source machine.");
+            if (command.ManagedCheckout == true && (string.IsNullOrWhiteSpace(command.RepoUrl) ||
+                command.Folder != SessionStore.Folder(checkouts, new SessionInfo(command.ParentId, "", "", null, null, 0))))
+                throw new CallFailed("The managed peer location contradicts the target checkout.");
+            if (command.ManagedCheckout != true && command.RepoUrl is not null)
+                throw new CallFailed("A direct peer folder cannot override its repository.");
+        }
+        Project(scope, context.EntityId, command.RepoUrl);
+    }
 
-    private void Project(IWriteScope scope, string id)
+    private void Project(IWriteScope scope, string id, string? sourceRepo = null)
     {
         if (sessions.Get(scope, id) is not null) return;
         var row = scope.QueryFirst("""
@@ -84,9 +100,12 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
             Updated = r.Long(5),
             Model = r.IsNull(6) ? null : r.Text(6)
         }, new SqlArg("$id", id))!;
-        if (row.Parent is { } parentId && sessions.Get(scope, parentId) is null) Project(scope, parentId);
-        var repo = row.Parent is { } parent ? sessions.Get(scope, parent)?.RepoUrl
-            ?? throw new InvalidOperationException("The parent requires its trusted repository projection.") : row.Folder;
+        var foreignParent = row.Parent is { } parentId && scope.QueryFirst(
+            "SELECT COUNT(*) FROM engine_session WHERE id=$id AND state='foreign' AND machine<>(SELECT machine_id FROM engine_meta WHERE singleton=1)",
+            r => r.Long(0), new SqlArg("$id", parentId)) == 1;
+        if (!foreignParent && row.Parent is { } localParent && sessions.Get(scope, localParent) is null) Project(scope, localParent);
+        var repo = sourceRepo ?? (foreignParent ? row.Folder : row.Parent is { } parent ? sessions.Get(scope, parent)?.RepoUrl
+            ?? throw new InvalidOperationException("The parent requires its trusted repository projection.") : row.Folder);
         sessions.ProjectEngineSession(scope, new(id, row.Provider, repo, row.Title == "" && row.Parent is null ? null : row.Title, row.Acp, row.Updated,
             ParentSessionId: row.Parent, Helper: row.Parent is not null), row.Model, row.Folder);
     }

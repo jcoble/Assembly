@@ -26,6 +26,20 @@ internal sealed class MachineForward(Func<string, RemoteMachine?> byMachineId)
         return result.Deserialize(EngineJson.Default.CommandResult) ?? throw new IOException("Invalid engine command result");
     }
 
+    public async Task<StartLocation> StartLocationAsync(string machine, string parentSessionId, CancellationToken ct)
+    {
+        var args = JsonSerializer.SerializeToElement(new StartLocationArgs(parentSessionId), EngineSocketJson.Default.StartLocationArgs);
+        var result = await CallAsync(machine, "engine", "start_location", args, false, ct);
+        return result.Deserialize(EngineSocketJson.Default.StartLocation) ?? throw new IOException("Invalid start location result");
+    }
+
+    public async Task<CommandResult> MachineCommandAsync(string machine, MachineCommand command, CancellationToken ct)
+    {
+        var args = JsonSerializer.SerializeToElement(command, EngineSocketJson.Default.MachineCommand);
+        var result = await CallAsync(machine, "engine", "machine_command", args, false, ct);
+        return result.Deserialize(EngineJson.Default.CommandResult) ?? throw new IOException("Invalid machine command result");
+    }
+
     public async Task<JsonElement> CallAsync(string machine, string feature, string method, JsonElement args, bool bulk, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
