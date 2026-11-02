@@ -19,6 +19,8 @@ internal sealed class EngineMirror : IAsyncDisposable
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
     private readonly CancellationTokenSource _stop = new();
+    private readonly CancellationToken _stoppingToken;
+    internal CancellationToken Stopping => _stoppingToken;
     private readonly Channel<FollowConnection> _opens = Channel.CreateUnbounded<FollowConnection>(new() { SingleReader = true });
     private readonly Lock _gate = new();
     private FollowConnection? _connection;
@@ -32,6 +34,7 @@ internal sealed class EngineMirror : IAsyncDisposable
     public EngineMirror(RemoteMachine remote, IAtomicWriter writer, TimeProvider time, TextWriter log)
     {
         (_remote, _writer, _time, _log) = (remote, writer, time, log);
+        _stoppingToken = _stop.Token;
         remote.SocketOpened += Opened;
         _run = RunAsync();
     }
