@@ -95,7 +95,7 @@ internal sealed class TerminalHost : ITerminals, IProgramTerminals, IAsyncDispos
         IPty pty;
         try
         {
-            pty = _pty.Start(new PtyRequest(start.File, start.Args, start.Cwd, start.Env, start.Cols, start.Rows));
+            pty = _pty.Start(new PtyRequest(start.File, start.Args, start.Cwd, start.Env, start.Cols, start.Rows, ReplaceEnvironment: true));
         }
         catch (Exception) when (start.Owner.StartsWith("signin:", StringComparison.Ordinal))
         {
