@@ -33,6 +33,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     private readonly TextWriter _log;
     private readonly BackgroundWork _work;
     private readonly RowConverter _converter = new();
+    private readonly ISessionFeed? _feed;
     private readonly Lock _gate = new();
     // Held from a turn's open to its close, so a quick next send resumes only once the session is closed.
     private readonly SemaphoreSlim _session = new(1, 1);
@@ -65,18 +66,20 @@ public sealed partial class SessionHost : IPermissionPolicy
     /// <summary>A self-started run with no word from the agent this long, no tool running and no task open, ends.</summary>
     public const long QuietMs = 30_000;
 
-    private sealed record OpenAsk(AskPayload Card, TaskCompletionSource<JsonElement> Answer);
+    private sealed record OpenAsk(AskPayload Card, TaskCompletionSource<JsonElement> Answer,
+        SessionObservation? Observation, JsonRpcRequestContext? Request, string AcpSessionId);
 
     /// <summary>How long a turn that ended with a tool call still running keeps its session for a task to show up.</summary>
     public const long TaskGraceMs = 2_000;
 
     private sealed record KeptSession(OpenSession Session, ChannelReader<SessionNotification> Updates, Task Pump,
-        CancellationTokenSource Ticking, Task Ticks, long TasksDueBy);
+        CancellationTokenSource Ticking, Task Ticks, long TasksDueBy, SessionObservation? Observation);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
         BackgroundWork work, Func<bool>? startedWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null,
-        SessionTitler? titler = null)
+        SessionTitler? titler = null, ISessionFeed? feed = null)
     {
+        _feed = feed;
         _sessionClosed = sessionClosed;
         _titler = titler;
         _startedWorking = startedWorking ?? (() => false);
@@ -122,6 +125,7 @@ public sealed partial class SessionHost : IPermissionPolicy
             // A session kept open for background work takes the prompt as it is.
             (kept, _kept) = (_kept, null);
             turn = _turn = new RunningTurn(Guid.NewGuid().ToString(), new StageTimes(_time)) { Session = kept?.Session };
+            PrepareObservation(turn, Now());
             Apply(new TurnStarted(Now(), turn.RunId, text, clientId));
         }
 
@@ -248,18 +252,26 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
     }
 
-    public async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken)
+    public Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken) =>
+        DecideAsync(request, cancellationToken, null, null);
+
+    private async Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, CancellationToken cancellationToken,
+        SessionObservation? observed, JsonRpcRequestContext? context, Func<bool>? providerGone = null)
     {
         var options = request.Options.Select(option => new AskOption(option.OptionId, option.Name, option.Kind)).ToList();
         var card = new AskPayload("permission", "open", Titled(request.SessionId, request.Title), request.Description, ToolCallId(request.ToolCall), options, null, null);
-        var answer = await AskAsync(card, cancellationToken);
+        var answer = await AskAsync(card, cancellationToken, observed, context, providerGone, request.SessionId);
         return PermissionOutcome.Selected(answer.GetProperty("optionId").GetString()!);
     }
 
-    public async Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken)
+    public Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken) =>
+        ElicitAsync(request, cancellationToken, null, null);
+
+    private async Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken,
+        SessionObservation? observed, JsonRpcRequestContext? context, Func<bool>? providerGone = null)
     {
         var card = new AskPayload("question", "open", Titled(request.SessionId ?? "", null), request.Message, request.ToolCallId, null, request.RequestedSchema.Clone(), null);
-        var answer = await AskAsync(card, cancellationToken);
+        var answer = await AskAsync(card, cancellationToken, observed, context, providerGone, request.SessionId ?? "");
         return new ElicitationResponse(answer.GetProperty("action").GetString()!,
             answer.TryGetProperty("content", out var content) ? content.Clone() : default);
     }
@@ -285,14 +297,25 @@ public sealed partial class SessionHost : IPermissionPolicy
     }
 
     // Shows the card and waits for its answer; a cancel settles the card as cancelled and goes on up.
-    private async Task<JsonElement> AskAsync(AskPayload card, CancellationToken cancellationToken)
+    private async Task<JsonElement> AskAsync(AskPayload card, CancellationToken cancellationToken,
+        SessionObservation? observed, JsonRpcRequestContext? request, Func<bool>? providerGone, string acpSessionId)
     {
         var askId = Guid.NewGuid().ToString();
-        var ask = new OpenAsk(card, new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously));
+        var ask = new OpenAsk(card, new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously), observed, request, acpSessionId);
         lock (_gate)
         {
             _asks[askId] = ask;
-            Apply(new AskChanged(Now(), askId, card));
+            if (_feed is not null && request is null) _log.WriteLine("engine feed: provider_request_context_missing");
+            try
+            {
+                Apply(new AskChanged(Now(), askId, card), observe: observed is null || request is null ? null :
+                    scope => _feed?.Asked(scope, observed, askId, card, request));
+            }
+            catch
+            {
+                _asks.Remove(askId);
+                throw;
+            }
         }
 
         JsonElement? answer = null;
@@ -307,7 +330,10 @@ public sealed partial class SessionHost : IPermissionPolicy
             lock (_gate)
             {
                 _asks.Remove(askId);
-                Apply(new AskChanged(Now(), askId, card with { State = answer is null ? "cancelled" : "answered", Answer = answer }));
+                Apply(new AskChanged(Now(), askId, card with { State = answer is null ? "cancelled" : "answered", Answer = answer }),
+                    observe: observed is null || request is null ? null : scope => _feed?.Settled(scope, observed, askId,
+                        answer is null ? "cancelled" : "answered", answer,
+                        answer is not null ? "manual_answered" : providerGone?.Invoke() == true ? "provider_gone" : "turn_cancelled"));
             }
         }
     }
@@ -425,142 +451,6 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
     }
 
-    private async Task RunAsync(RunningTurn turn, string text, KeptSession? kept)
-    {
-        // The ticker and the update pump last as long as the session: a kept session hands its own on.
-        var ticking = kept?.Ticking ?? new CancellationTokenSource();
-        var ticks = kept?.Ticks ?? TickAsync(ticking.Token);
-        var session = kept?.Session;
-        var updates = kept?.Updates;
-        var pump = kept?.Pump ?? Task.CompletedTask;
-        var lost = false;
-        var held = kept is not null;
-        Func<long, AgentEvent> end;
-        try
-        {
-            if (session is null)
-            {
-                await _session.WaitAsync(turn.Stopping.Token);
-                held = true;
-                session = await _opener.OpenAsync(_sessionId, text, turn.Stages, turn.Stopping.Token);
-                updates = session.Adapter.Updates.For(session.AcpSessionId);
-                session.Adapter.Link.Client.SetSessionPolicy(session.AcpSessionId, this);
-                lock (_gate)
-                {
-                    // The previous pump has completed before the session semaphore is released. Switch the
-                    // reader under the same gate used to drain updates, before starting this session's pump.
-                    if (_readerSessionId != session.AcpSessionId)
-                    {
-                        _updateReader = new UpdateReader();
-                        _readerSessionId = session.AcpSessionId;
-                    }
-                    turn.Session = session;
-                    _titlePending |= session.Titled;
-                    turn.Opened.TrySetResult();
-                    Apply(new AgentStarted(Now(), session.Resumed, session.SavedCost, session.Model));
-                }
-
-                pump = PumpAsync(updates);
-            }
-            // A stop that lands between here and the prompt reaching the agent is lost; the turn then runs to its end.
-            if (turn.Stopping.IsCancellationRequested)
-            {
-                end = at => new TurnEnded(at, "cancelled", null);
-            }
-            else
-            {
-                var response = await session.Adapter.Link.Client.PromptAsync(session.AcpSessionId, [TextBlock.Of(text)], CancellationToken.None).Ended;
-                turn.Stages.Mark("answer");
-                end = at => response.Error is { } failure
-                    ? new TurnFailed(at, failure.Message, failure.Code.ToString(System.Globalization.CultureInfo.InvariantCulture))
-                    : UpdateReader.TurnEnd(response, at);
-            }
-        }
-        catch (OperationCanceledException) when (turn.Stopping.IsCancellationRequested)
-        {
-            end = at => new TurnEnded(at, "cancelled", null);
-        }
-        catch (JsonRpcException error)
-        {
-            end = at => UpdateReader.TurnFailure(error, at);
-        }
-        catch (IOException) when (session is not null)
-        {
-            // The pipe closed under the prompt: the adapter is gone, whether or not its exit has been seen yet.
-            // Its process group is killed as it exits, and the next send starts a new adapter.
-            lost = true;
-            end = at => new AgentLost(at);
-        }
-        catch (Exception error)
-        {
-            end = at => new TurnFailed(at, error.Message, null);
-        }
-
-        decimal? sessionCost;
-        var keep = false;
-        var toolsOpen = false;
-        var title = false;
-        lock (_gate)
-        {
-            try
-            {
-                // Everything the agent sent before its answer has arrived by now, so it goes in before the end.
-                if (session is not null && updates is not null)
-                {
-                    session.Adapter.Updates.Flush();
-                    Drain(updates);
-                }
-
-                // A tool call still running as the turn ends may be work the agent moved to the background
-                // and tells us of only after its answer (Codex's async_task_spawned can follow the prompt's result).
-                toolsOpen = _converter.HasOpenTools;
-                var ended = end(Now());
-                if (!lost && !_shuttingDown)
-                    foreach (var task in _updateReader.RetainOutstanding(ended.At))
-                        Track(task);
-                Apply(ended);
-                title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };
-                if (title)
-                    _titlePending = false;
-            }
-            catch (Exception error)
-            {
-                Console.Error.WriteLine($"session {_sessionId}: the turn's end wasn't saved: {error.Message}");
-            }
-            finally
-            {
-                // Even if saving the end failed, the session takes sends again.
-                sessionCost = _converter.SessionCost;
-                _turn = null;
-                turn.Opened.TrySetResult();
-                // Background work still going keeps the session, and with it the work, alive.
-                var working = _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking();
-                keep = session is not null && updates is not null && !lost && !_shuttingDown && (working || toolsOpen);
-                if (keep)
-                    _kept = new KeptSession(session!, updates!, pump, ticking, ticks, TasksDueBy: working ? 0 : Now() + TaskGraceMs);
-            }
-        }
-
-        _turnEnded?.Invoke(_sessionId);
-        if (title && _titler is { } titler)
-            _work.Start($"title {_sessionId}", stopping => titler.TitleAsync(_sessionId, text, turn.RunId, stopping));
-        if (keep)
-        {
-            _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
-            _log.WriteLine($"session {_sessionId}: session kept open for background work");
-            return;
-        }
-
-        if (session is not null)
-            await CloseAsync(session, turn.Stages, sessionCost, lost, pump);
-        if (held)
-            _session.Release();
-        _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
-        await ticking.CancelAsync();
-        await ticks;
-        ticking.Dispose();
-    }
-
     // Called with the lock held.
     /// <summary>The row in this session of a session its agent started, as it stands now.</summary>
     internal void Show(SubagentShown started)
@@ -569,7 +459,17 @@ public sealed partial class SessionHost : IPermissionPolicy
             Apply(started);
     }
 
-    private void Apply(AgentEvent agentEvent) => _hub.Publish(_sessionId, _converter.Apply(agentEvent));
+    private void Apply(AgentEvent agentEvent, RowBatch? collector = null, Action<Assembly.Application.Common.Database.IWriteScope>? observe = null)
+    {
+        var batch = _converter.Apply(agentEvent);
+        if (collector is null) _hub.Publish(_sessionId, batch, observe);
+        else
+        {
+            collector.Rows.AddRange(batch.Rows);
+            collector.Details.AddRange(batch.Details);
+            collector.Terminals.AddRange(batch.Terminals);
+        }
+    }
 
     private long Now() => _time.GetUtcNow().ToUnixTimeMilliseconds();
 

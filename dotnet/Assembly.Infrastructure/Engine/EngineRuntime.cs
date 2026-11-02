@@ -20,6 +20,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
     private readonly CancellationTokenSource _stop = new();
     private readonly Channel<bool> _wake = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
     private readonly IAppDatabase _db;
+    private readonly TimeProvider _time;
     private readonly EngineTopics _topics;
     private readonly EngineTopics.Subscription _subscription;
     private readonly EngineTopics.Subscription _mirrorSubscription;
@@ -42,6 +43,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         IEngineEffects? effects, IEngineRetention? retention, Func<int>? messageLimit, SessionCutover? cutover)
     {
         _db = db;
+        _time = time;
         _topics = topics;
         Action<IWriteScope>? projectionSchema = cutover is null ? null : cutover.EnsureSchema;
         Action<IWriteScope, CommandContext, StartSession>? projectStart = cutover is null ? null : cutover.ProjectStart;
@@ -113,6 +115,36 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
 
     internal CommandResult Submit(CommandContext context, EngineCommand command) =>
         ((IEngineRuntime)this).Write(scope => Commands.Apply(scope, context, command));
+
+    /// <summary>Refreshes the entity version while preserving the callback's original epoch.</summary>
+    internal CommandResult SubmitCurrent(string kind, string entityId, EngineCommand command, long observedEpoch) =>
+        ((IEngineRuntime)this).Write(scope => SubmitCurrent(scope, kind, entityId, command, observedEpoch));
+
+    internal CommandResult SubmitCurrent(IWriteScope scope, string kind, string entityId, EngineCommand command, long observedEpoch)
+    {
+        var sql = kind switch
+        {
+            "session" => "SELECT version FROM engine_session WHERE id=$id AND machine=$machine AND state<>'foreign'",
+            "needs_me" => "SELECT n.version FROM engine_needs_me n JOIN engine_session s ON s.id=n.session_id WHERE n.id=$id AND s.machine=$machine AND s.state<>'foreign'",
+            "tool_call" => "SELECT version FROM engine_tool_call WHERE id=$id AND machine=$machine",
+            "usage" => "SELECT version FROM engine_usage WHERE id=$id AND machine=$machine",
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+        var version = scope.QueryFirst(sql, r => (long?)r.Long(0), new SqlArg("$id", entityId), new SqlArg("$machine", Machine));
+        var parent = command switch
+        {
+            global::Assembly.Engine.NeedsMe.OpenNeed open when kind == "needs_me" => open.SessionId,
+            ToolStarted start when kind == "tool_call" => start.Attribution.SessionId,
+            TurnUsage usage when kind == "usage" => usage.Attribution.SessionId,
+            _ => null
+        };
+        if (version is null && (parent is null || scope.QueryFirst(
+                "SELECT COUNT(*) FROM engine_session WHERE id=$id AND machine=$machine AND state<>'foreign'",
+                r => r.Long(0), new SqlArg("$id", parent), new SqlArg("$machine", Machine)) != 1))
+            return new(false, false, "bad_args", 0, 0, observedEpoch);
+        return Commands.Apply(scope, new(Guid.NewGuid(), Machine, new(ActorKind.System, "adapter"),
+            entityId, version ?? 0, observedEpoch, _time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+    }
 
     public void EffectsAvailable() => _worker.EffectsAvailable();
 

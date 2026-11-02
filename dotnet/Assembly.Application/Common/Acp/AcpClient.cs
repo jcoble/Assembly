@@ -13,6 +13,8 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
 {
     private readonly IPermissionPolicy _permissions;
     private readonly ConcurrentDictionary<string, IPermissionPolicy> _sessionPolicies = new();
+    private sealed record NativeParent(string Id, bool Conflicted = false);
+    private readonly ConcurrentDictionary<string, NativeParent> _nativeParents = new();
     private readonly ConcurrentDictionary<string, Foreground> _foreground = new();
     private readonly Channel<SessionNotification> _updates =
         Channel.CreateUnbounded<SessionNotification>(new UnboundedChannelOptions { SingleWriter = true });
@@ -32,8 +34,16 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
 
     public void SetSessionPolicy(string sessionId, IPermissionPolicy? policy)
     {
-        if (policy is not null) _sessionPolicies[sessionId] = policy;
-        else _sessionPolicies.TryRemove(sessionId, out _);
+        if (policy is not null)
+        {
+            _nativeParents.TryRemove(sessionId, out _); // an independently installed root is never a child alias
+            _sessionPolicies[sessionId] = policy;
+        }
+        else
+        {
+            _sessionPolicies.TryRemove(sessionId, out _);
+            ForgetNativeChildren(sessionId);
+        }
     }
 
     public async Task<InitializeResponse> InitializeAsync(Implementation clientInfo, CancellationToken cancellationToken)
@@ -63,8 +73,7 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
                     SessionResumed?.Invoke(request.SessionId);
                     if (resumed?.Snapshot is { } snapshot)
                     {
-                        For(request.SessionId).Read(snapshot);
-                        _updates.Writer.TryWrite(snapshot);
+                        For(request.SessionId).Read(snapshot, () => _updates.Writer.TryWrite(snapshot));
                     }
                 });
         }
@@ -81,7 +90,7 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
         finally
         {
             if (_foreground.TryRemove(sessionId, out var foreground)) foreground.Dispose();
-            _sessionPolicies.TryRemove(sessionId, out _);
+            SetSessionPolicy(sessionId, null);
         }
     }
 
@@ -131,6 +140,9 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
 
     public async Task CancelAsync(string sessionId, CancellationToken cancellationToken)
     {
+        if (_nativeParents.TryGetValue(sessionId, out var parent) && !parent.Conflicted
+            && _sessionPolicies.TryGetValue(parent.Id, out var policy))
+            policy.Cancelling(sessionId);
         var foreground = For(sessionId);
         var waiting = foreground.Cancelling();
         try
@@ -145,7 +157,14 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
         }
     }
 
-    async Task<JsonElement> IJsonRpcTarget.OnRequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken)
+    Task<JsonElement> IJsonRpcTarget.OnRequestAsync(string method, JsonElement parameters, CancellationToken cancellationToken) =>
+        OnRequestAsync(method, parameters, null, cancellationToken);
+
+    Task<JsonElement> IJsonRpcTarget.OnRequestAsync(string method, JsonElement parameters, JsonRpcRequestContext request,
+        CancellationToken cancellationToken) => OnRequestAsync(method, parameters, request, cancellationToken);
+
+    private async Task<JsonElement> OnRequestAsync(string method, JsonElement parameters, JsonRpcRequestContext? context,
+        CancellationToken cancellationToken)
     {
         switch (method)
         {
@@ -155,7 +174,9 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
                 var outcome = await AskAsync(request.SessionId, PermissionOutcome.Cancelled,
                     (policy, token) => request.ToolTitle == "mcp__assembly__board_update"
                         && request.Options.FirstOrDefault(option => option.Kind == "allow_once") is { } allow
-                        ? Task.FromResult(PermissionOutcome.Selected(allow.OptionId)) : policy.DecideAsync(request, token), cancellationToken);
+                        ? Task.FromResult(PermissionOutcome.Selected(allow.OptionId))
+                        : context is null ? policy.DecideAsync(request, token) : policy.DecideAsync(request, context, token),
+                    cancellationToken, context, method, value => JsonSerializer.SerializeToElement(value, AcpJsonContext.Default.PermissionOutcome));
                 return JsonSerializer.SerializeToElement(new RequestPermissionResponse(outcome), AcpJsonContext.Default.RequestPermissionResponse);
             case AcpMethods.ElicitationCreate:
                 var question = parameters.Deserialize(AcpJsonContext.Default.ElicitationRequest)
@@ -167,7 +188,8 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
                 var answer = question.Mode != "form" || !session
                     ? ElicitationResponse.Cancel
                     : await AskAsync(question.SessionId!, ElicitationResponse.Cancel,
-                        (policy, token) => policy.ElicitAsync(question, token), cancellationToken);
+                        (policy, token) => context is null ? policy.ElicitAsync(question, token) : policy.ElicitAsync(question, context, token),
+                        cancellationToken, context, method, value => JsonSerializer.SerializeToElement(value, AcpJsonContext.Default.ElicitationResponse));
                 return JsonSerializer.SerializeToElement(answer, AcpJsonContext.Default.ElicitationResponse);
             default:
                 throw new JsonRpcException(JsonRpcException.MethodNotFound, $"Method not found: {method}");
@@ -175,14 +197,27 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
     }
 
     private async Task<T> AskAsync<T>(string sessionId, T cancelled,
-        Func<IPermissionPolicy, CancellationToken, Task<T>> ask, CancellationToken connectionClosing)
+        Func<IPermissionPolicy, CancellationToken, Task<T>> ask, CancellationToken connectionClosing,
+        JsonRpcRequestContext? context, string method, Func<T, JsonElement> serialize)
     {
         try
         {
-            if (!_foreground.TryGetValue(sessionId, out var foreground) || !foreground.Running)
+            var owner = sessionId;
+            IPermissionPolicy policy;
+            if (_nativeParents.TryGetValue(sessionId, out var parent))
+            {
+                if (parent.Conflicted || !_sessionPolicies.TryGetValue(parent.Id, out var parentPolicy)) return cancelled;
+                owner = parent.Id;
+                policy = parentPolicy;
+            }
+            else policy = _sessionPolicies.GetValueOrDefault(sessionId) ?? _permissions;
+            if (!_foreground.TryGetValue(owner, out var foreground) || !foreground.Running)
                 return cancelled;
+            // This selection runs inline in request arrival order. Retain both through the await.
             using var either = CancellationTokenSource.CreateLinkedTokenSource(connectionClosing, foreground.Work);
-            return await ask(_sessionPolicies.GetValueOrDefault(sessionId) ?? _permissions, either.Token);
+            var result = await ask(policy, either.Token);
+            if (context is not null) policy.Decided(method, sessionId, context, serialize(result));
+            return result;
         }
         catch (Exception error) when (error is OperationCanceledException or ObjectDisposedException)
         {
@@ -201,13 +236,31 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
             if (update.Kind == "state_update") resuming.Snapshot = update;
             return;
         }
-        if (update.Kind == "state_update") For(update.SessionId).Read(update);
-        else if (_foreground.TryGetValue(update.SessionId, out var foreground)) foreground.Read(update);
+        if (update.Kind == "state_update") For(update.SessionId).Read(update, () => PublishAccepted(update));
+        else if (_foreground.TryGetValue(update.SessionId, out var foreground))
+            foreground.Read(update, () => PublishAccepted(update));
+        else PublishAccepted(update);
+    }
+
+    private void PublishAccepted(SessionNotification update)
+    {
+        if (update.Kind == "subagent_update" && _sessionPolicies.ContainsKey(update.SessionId)
+            && update.Update.TryGetProperty("sessionId", out var child) && child.ValueKind == JsonValueKind.String
+            && child.GetString() is { Length: > 0 } id && id != update.SessionId && !_sessionPolicies.ContainsKey(id))
+            _nativeParents.AddOrUpdate(id, new NativeParent(update.SessionId), (_, known) =>
+                known.Id == update.SessionId ? known : known with { Conflicted = true });
         _updates.Writer.TryWrite(update);
+    }
+
+    private void ForgetNativeChildren(string parent)
+    {
+        foreach (var entry in _nativeParents.Where(p => p.Value.Id == parent).ToArray())
+            _nativeParents.TryRemove(entry);
     }
 
     void IJsonRpcTarget.OnClosed(Exception reason)
     {
+        _nativeParents.Clear();
         foreach (var foreground in _foreground.Values) foreground.Close(reason);
         _updates.Writer.TryComplete();
     }
@@ -228,5 +281,7 @@ public sealed class AcpClient : IJsonRpcTarget, IAsyncDisposable
         await _prompts.DisposeAsync();
         foreach (var foreground in _foreground.Values) foreground.Dispose();
         _foreground.Clear();
+        _nativeParents.Clear();
+        _sessionPolicies.Clear();
     }
 }

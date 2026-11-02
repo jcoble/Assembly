@@ -1,4 +1,6 @@
 using Assembly.Application.Common.Acp.Messages;
+using Assembly.Application.Common.Acp.JsonRpc;
+using System.Text.Json;
 
 namespace Assembly.Application.Common.Acp;
 
@@ -13,4 +15,10 @@ public interface IPermissionPolicy
     /// <summary>Without a person to ask, a question is cancelled, which ends just the asking tool call.</summary>
     Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, CancellationToken cancellationToken) =>
         Task.FromResult(ElicitationResponse.Cancel);
+    Task<PermissionOutcome> DecideAsync(RequestPermissionRequest request, JsonRpcRequestContext context,
+        CancellationToken cancellationToken) => DecideAsync(request, cancellationToken);
+    Task<ElicitationResponse> ElicitAsync(ElicitationRequest request, JsonRpcRequestContext context,
+        CancellationToken cancellationToken) => ElicitAsync(request, cancellationToken);
+    void Cancelling(string actualAcpSessionId) { }
+    void Decided(string method, string acpSessionId, JsonRpcRequestContext context, JsonElement outcome) { }
 }

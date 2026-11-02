@@ -31,6 +31,7 @@ public static class SessionTransitions
         return command switch
         {
             SetSessionState fact => SetState(scope, context, current, fact),
+            ReportCapabilities capabilities => Capabilities(scope, context, current, capabilities),
             StopSession => Stop(scope, context, current),
             LinkTask link => Link(scope, context, current, link),
             ReportSessionModel model => ReportModel(scope, context, current, model),
@@ -105,6 +106,24 @@ public static class SessionTransitions
         var created = new Session(1, 0, "starting", "idle", command.ParentId, command.RunId);
         return Commit(scope, context, created, "session.started",
             [new("", "start", context.EntityId, command.RunId, JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession))]);
+    }
+
+    private static CommandResult Capabilities(IWriteScope scope, CommandContext context, Session current, ReportCapabilities command)
+    {
+        if (context.Actor.Kind != ActorKind.System)
+            return Refused(context, "forbidden", current);
+        if (current.State is "ended" or "foreign")
+            return Refused(context, "invalid_transition", current);
+        if (scope.QueryFirst("SELECT machine FROM engine_session WHERE id=$id", r => r.Text(0),
+                new SqlArg("$id", context.EntityId)) != context.Machine)
+            return Refused(context, "wrong_machine", current);
+        var changed = scope.Execute("""
+            UPDATE engine_session SET can_steer=$steer,version=version+1,updated_ms=$now
+            WHERE id=$id AND machine=$machine AND can_steer<>$steer
+            """, new("$steer", command.CanSteer ? 1 : 0), new("$now", context.NowMs),
+            new("$id", context.EntityId), new("$machine", context.Machine));
+        return changed == 0 ? new(true, false, null, current.Version, 0, current.Epoch)
+            : Commit(scope, context, current with { Version = current.Version + 1 }, "session.changed", []);
     }
 
     private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command)

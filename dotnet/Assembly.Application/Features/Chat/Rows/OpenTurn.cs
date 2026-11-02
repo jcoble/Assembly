@@ -6,8 +6,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 /// <summary>A turn in progress, and the tallies its stats row needs.</summary>
 internal sealed class OpenTurn(string runId, long startedAt, decimal? sessionCostAtStart)
 {
-    private decimal? _costAtStart = sessionCostAtStart;
-    private bool _costUnknown;
+    private readonly TurnCost _cost = new(sessionCostAtStart);
 
     public string RunId { get; } = runId;
 
@@ -23,8 +22,7 @@ internal sealed class OpenTurn(string runId, long startedAt, decimal? sessionCos
     /// </summary>
     public void AgentStarted(bool resumed, decimal? savedCost)
     {
-        _costAtStart = resumed ? savedCost : null;
-        _costUnknown = resumed && savedCost is null;
+        _cost.AgentStarted(resumed, savedCost);
     }
 
     /// <param name="sessionCost">The session's cost so far, as the agent last reported it.</param>
@@ -43,7 +41,7 @@ internal sealed class OpenTurn(string runId, long startedAt, decimal? sessionCos
             usage?.OutputTokens,
             CacheHitPct: usage is null || allInput == 0 ? null : Math.Round(100.0 * read / allInput, 1),
             // A failed or lost turn's total isn't settled, so its cost is unknown, not 0.
-            CostUsd: _costUnknown || status == "failed" ? null : sessionCost - (_costAtStart ?? 0),
+            CostUsd: _cost.Delta(status, sessionCost),
             ToolCalls);
     }
 }

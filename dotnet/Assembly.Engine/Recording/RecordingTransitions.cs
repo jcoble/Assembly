@@ -120,9 +120,9 @@ public static class RecordingTransitions
         if (string.IsNullOrWhiteSpace(a.SessionId) || a.Epoch < 0 || a.Attempt < 0 ||
             a.StepId is not null && (a.RunId is null || a.Attempt is null) || a.StepId is null && a.Attempt is not null)
             return ("bad_args", false);
-        var session = s.QueryFirst("SELECT state,run_id FROM engine_session WHERE id=$id", r => new { State = r.Text(0), RunId = r.IsNull(1) ? null : r.Text(1) }, new SqlArg("$id", a.SessionId));
+        var session = s.QueryFirst("SELECT state,run_id,epoch FROM engine_session WHERE id=$id", r => new { State = r.Text(0), RunId = r.IsNull(1) ? null : r.Text(1), Epoch = r.Long(2) }, new SqlArg("$id", a.SessionId));
         if (session is null) return ("bad_args", false);
-        var late = session.State == "ended";
+        var late = session.State == "ended" || session.Epoch != a.Epoch;
         if (a.RunId is not null)
         {
             var run = s.QueryFirst("SELECT state,owner_session_id FROM engine_run WHERE id=$id",
