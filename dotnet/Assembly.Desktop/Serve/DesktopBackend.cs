@@ -1,3 +1,6 @@
+using CallFailed = Assembly.Application.Common.Calls.CallFailed;
+using Assembly.Application.Features.Agents;
+using Assembly.Infrastructure.Engine.Auth;
 using Assembly.Infrastructure.Chat;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Helpers;
@@ -184,7 +187,33 @@ public sealed class DesktopBackend : IAsyncDisposable
             var clock = new BackendClock(topics, TimeProvider.System, work);
             machinesFeature = new MachinesFeature(machines, status, clock.Start, TimeProvider.System, store: profiles,
                 connection: (name, connect, cancel) => connections!.ConnectionAsync(name, connect, cancel));
-            engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects, readExpiryMinutes: MessageExpiryPreferences.ReadMinutes);
+            terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, SessionTerminalFolders.ExistingFolder(checkouts, sessionStore));
+            var probeFolder = Path.Combine(home, "probe");
+            Directory.CreateDirectory(probeFolder);
+            var challenges = new ChallengeBoard();
+            var catalogue = new AgentCatalogue(sessions, probeFolder, TimeProvider.System);
+            var runner = new SignInRunner(challenges, terminals, launcher, probeFolder, TimeProvider.System, log);
+            bool IsConfiguredProvider(string provider, string account)
+            {
+                try
+                {
+                    var capture = ConfigTargetIdentity.Capture(launcher, provider);
+                    var current = ConfigTargetIdentity.RequireSameConfiguration(launcher, capture.Descriptor, capture.Environment);
+                    return AccountContext.Of(current, key => capture.Environment.GetValueOrDefault(key)) == account;
+                }
+                catch (CallFailed) { return false; }
+            }
+            engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits, engineEffects,
+                effectsFactory: engineEffects is null ? runtime =>
+                {
+                    var signIn = new SignInEffects(db, runner, launcher, sessions, challenges, runtime, TimeProvider.System);
+                    return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
+                        .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
+                        .Add("begin_sign_in", signIn)
+                        .Add("cancel_sign_in", signIn);
+                }
+            : null,
+                readExpiryMinutes: MessageExpiryPreferences.ReadMinutes, isConfiguredProvider: IsConfiguredProvider);
             engineStarted?.Invoke(engine);
             connections = new RemoteConnections(profiles, db.Writer, machines, status, hub, sessionStore, topics, log,
                 machinesFeature, sessions.Helpers.Row.TurnEnded,
@@ -219,9 +248,8 @@ public sealed class DesktopBackend : IAsyncDisposable
                 if (item is not null && item.Name == boardMirror.Name && item.Reachable) boardMirror.Reconnect();
             });
             boardMirror?.Reconnect();
-            terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System, SessionTerminalFolders.ExistingFolder(checkouts, sessionStore));
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, sessions.Helpers, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, new MachineForward(machine => connections.ByEngineMachine(db, machine))), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                [new EngineCalls(engine, TimeProvider.System, new MachineForward(machine => connections.ByEngineMachine(db, machine))), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, attachments, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore),
