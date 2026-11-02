@@ -18,7 +18,7 @@ public static class Refusals
             "child_limit" => $"You already have {Value("limit")} sessions at work (the limit is set by \"Sessions each session may run\" in Settings); wait for one to finish.",
             "owner_reserved" => "Only a top-level session can ask Jesse. Send your question to your starter with send_message.",
             "not_reachable" => "You can't reach that session. list_sessions shows the ones you can.",
-            "pair_limit" => "You've sent 20 messages to that session; that's the limit.",
+            "pair_limit" => "You've reached the message limit for that session.",
             "forged_header" => "Your text may not contain a line that looks like an Assembly message header.",
             "unavailable" => "That session has ended.",
             "not_yours" => "No message of yours has that id.",

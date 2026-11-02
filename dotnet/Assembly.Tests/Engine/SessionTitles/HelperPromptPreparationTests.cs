@@ -60,4 +60,46 @@ public sealed class HelperPromptPreparationTests
         Assert.Equal(0, f.Count("engine_outbox"));
     }
 
+    [Theory]
+    [InlineData(10)]
+    [InlineData(40000)]
+    public void Actual_receipt_replays_before_changed_contact_caller_limit_and_expiry(int size)
+    {
+        using var f = new EngineFixture(); f.SeedSession("caller", epoch: 7); f.SeedSession("child", state: "starting", parentId: "caller", epoch: 3);
+        var body = "[message from copied]\n" + new string('é', size) + "\0ORIGINAL_SUFFIX";
+        var command = new SendMessage("caller", "child", body, "prompt");
+        var prepared = PreparedHelperPrompt.Prepare(command, "Test", 7);
+        var context = new CommandContext(Guid.NewGuid(), f.Machine, new(ActorKind.Session, "caller"), "m", 0, 3, 1000);
+        var limit = 20; var minutes = 30; var capReads = 0; var expiryReads = 0;
+        var commands = new EngineCommands(f.Machine, f.Limits, () => { capReads++; return limit; },
+            expiryPolicy: new(_ => { expiryReads++; return minutes; }));
+        CommandResult Apply(PreparedHelperPrompt value, CommandContext ctx) => f.Db.Writer.Write("prepared", s => commands.ApplyPreparedHelperPrompt(s, ctx, value));
+        var first = Apply(prepared, context); Assert.True(first.Applied);
+        var resultBytes = f.Text("SELECT result_json FROM engine_command_receipt");
+        var originalDeadline = f.Number("SELECT expires_ms FROM engine_message");
+        f.Db.Writer.Write("changed-facts", s =>
+        {
+            s.Execute("UPDATE engine_session SET title='changed',epoch=99 WHERE id='caller'");
+            return s.Execute("UPDATE engine_session SET parent_id=NULL,state='ended',epoch=4 WHERE id='child'");
+        });
+        limit = 0; minutes = 60;
+        Assert.Equal(first, Apply(prepared, context with { NowMs = 9000000 }));
+        Assert.Equal(1, capReads); Assert.Equal(1, expiryReads);
+        foreach (var changedBody in new[] { body + "last-byte", body.Replace("\0", "", StringComparison.Ordinal), body.Replace("ORIGINAL_SUFFIX", "CHANGED_SUFFIX", StringComparison.Ordinal) })
+            Assert.Equal("command_id_conflict", Apply(PreparedHelperPrompt.Prepare(command with { Text = changedBody }, "Test", 7), context).Error);
+        Assert.Equal(resultBytes, f.Text("SELECT result_json FROM engine_command_receipt"));
+        Assert.Equal(originalDeadline, f.Number("SELECT expires_ms FROM engine_message")); Assert.Equal(0, f.Count("engine_outbox"));
+        f.Reopen(); Assert.Equal(first, Apply(prepared, context));
+        Assert.Equal(Encoding.UTF8.GetBytes(body), f.Db.QueryFirst("SELECT CAST(text AS BLOB) FROM engine_message", r => r.Blob(0), default));
+        f.Db.Writer.Write("current-facts", s => s.Execute("UPDATE engine_session SET state='starting',parent_id='caller' WHERE id='child'"));
+        var fresh = PreparedHelperPrompt.Prepare(command, "changed", 99);
+        var freshContext = context with { CommandId = Guid.NewGuid(), EntityId = "fresh", Epoch = 4, NowMs = 2000 };
+        Assert.Equal("message_limit", Apply(fresh, freshContext).Error);
+        Assert.Equal(2, capReads); Assert.Equal(1, expiryReads);
+        limit = 2;
+        Assert.True(Apply(fresh, freshContext with { CommandId = Guid.NewGuid(), EntityId = "accepted-fresh" }).Applied);
+        Assert.Equal(3602000, f.Number("SELECT expires_ms FROM engine_message WHERE id='accepted-fresh'"));
+        Assert.Equal(3, capReads); Assert.Equal(2, expiryReads);
+    }
+
 }
