@@ -47,7 +47,7 @@ public sealed partial class MachineRelayTests
             EngineCommands.PrepareSessionTitle(new RegisterForeignSession(source.Runtime.Machine, "codex", title)))).Applied);
         await h.StartMirror();
         var owner = h.Connections.CaptureMirrorOwners().Single();
-        var binding = await owner.Mirror.CaptureLiveBindingAsync(default);
+        var binding = await ReadyBindingAsync(owner.Mirror);
         var through = h.Remote.Through;
         var unrelated = Guid.NewGuid().ToString();
         h.Remote.Fixture.SeedSession(unrelated);

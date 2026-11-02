@@ -22,6 +22,7 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Assembly.Infrastructure.Engine.Titles;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -34,6 +35,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         public TopicSet Topics { get; } = new();
         public EngineFixture Fixture { get; }
         public EngineRuntime Runtime { get; private set; }
+        public SessionStore Sessions { get; private set; } = null!;
         public WebApplication App { get; private set; } = null!;
         public Uri Address { get; private set; } = null!;
         public SocketEndpoint Endpoint { get; private set; } = null!;
@@ -50,14 +52,15 @@ internal sealed class TwoHosts : IAsyncDisposable
         public string? BulkIdentity { get; set; }
         public int OwnerReadCalls;
         public Func<string, CallContext, Task>? OwnerReading { get; set; }
+        public Func<Assembly.Application.Common.Engine.LegacySessionTitleChunkArgs, CallContext, Task>? LegacyTitleReading { get; set; }
         public Func<string, CallContext, Task>? MachineReading { get; set; }
         public Func<string, CallContext, Task>? MachineWriting { get; set; }
         public Func<string, CallContext, Task>? MachinePrepared { get; set; }
         internal MachineForward? Forwarder { get; set; }
         private EngineRuntime StartRuntime()
         {
-            var sessions = _machineLauncher is null ? null : SessionStore.Open(Fixture.Db, Fixture.Time, _checkouts!);
-            var cutover = sessions is null ? null : new SessionCutover(Fixture.Db, sessions, _machineLauncher!, _checkouts!, Fixture.Time);
+            Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, _checkouts ?? Path.GetTempPath());
+            var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time);
             return EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
                 Fixture.Limits, _effects, cutover: cutover);
         }
@@ -79,13 +82,19 @@ internal sealed class TwoHosts : IAsyncDisposable
                 var engineCalls = Forwarder is null ? new EngineCalls(Runtime, Fixture.Time) : new EngineCalls(Runtime, Fixture.Time, Forwarder);
                 engineCalls.Register(new IdentityGate(calls, this));
             }
-            else calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, (_, c) => { Interlocked.Increment(ref MachineCalls); return Task.FromResult(Runtime.Reader.Machine(c.Cancellation)); });
+            else calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, async (_, c) =>
+            {
+                Interlocked.Increment(ref MachineCalls);
+                if (Identifying is { } identify) await identify().WaitAsync(c.Cancellation);
+                return Runtime.Reader.Machine(c.Cancellation);
+            });
+            new SessionTitleCalls(Runtime, Sessions, Forwarder).Register(new IdentityGate(calls, this));
             if (_machineLauncher is not null)
             {
                 _machineCalls = new(Runtime, Fixture.Time, _machineLauncher, _checkouts!);
                 _machineCalls.Register(new IdentityGate(calls, this, machineReads: true));
             }
-            calls.Topic("sessions", SessionsJson.Default.SessionItem, s => s.SessionId, (_, _) => []);
+            new SessionsFeature(Sessions, new MachineSet(new FakeMachine(null, Sessions))).Register(calls);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, port));
             App = builder.Build(); App.UseWebSockets();
@@ -147,13 +156,15 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.MachineCalls);
                         if (host.Identifying is { } identify) await identify().WaitAsync(call.Cancellation);
                     }
-                    if (feature == "engine" && method is "entity" or "usage" or "owner_prompts" or "owner_prompt_chunk" or "session_title" or "session_title_chunk")
+                    if (feature == "engine" && method is "entity" or "usage" or "owner_prompts" or "owner_prompt_chunk" or "session_title" or "session_title_chunk" or "legacy_session_title" or "legacy_session_title_chunk")
                     {
                         Interlocked.Increment(ref host.OwnerReadCalls);
                         if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);
                     }
                     if (machineReads && feature == "engine" && method is ("foreign_title_source_close" or "relay_source_open" or "relay_source_part" or "relay_send_ack") && host.MachineReading is { } machineRead)
                         await machineRead(method, call).WaitAsync(call.Cancellation);
+                    if (feature == "engine" && method == "legacy_session_title_chunk" && value is Assembly.Application.Common.Engine.LegacySessionTitleChunkArgs chunk && host.LegacyTitleReading is { } titleRead)
+                        await titleRead(chunk, call).WaitAsync(call.Cancellation);
                     return await handler(value, call);
                 }, bulk);
             public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,
@@ -227,7 +238,7 @@ internal sealed class TwoHosts : IAsyncDisposable
     {
         var store = RowStore.Open(Mac.Fixture.Db);
         _hub = new LiveHub(store, topics: Mac.Topics);
-        var sessions = SessionStore.Open(Mac.Fixture.Db, Mac.Fixture.Time, "/isolated");
+        var sessions = Mac.Sessions;
         if (!_forwardCommands)
             _machine = new("workbox-test", Remote.Address, "isolated-token", _hub, sessions, TextWriter.Null, new MachineStatus(Mac.Topics, []), topics: Mac.Topics);
         var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

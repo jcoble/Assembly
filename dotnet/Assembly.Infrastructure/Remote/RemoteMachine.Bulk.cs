@@ -8,10 +8,11 @@ namespace Assembly.Infrastructure.Remote;
 
 internal sealed partial class RemoteMachine
 {
-    private async Task<JsonElement> BulkCallAsync(string feature, string method, JsonElement args, CancellationToken ct, string? expectedEngineId, ClientWebSocket? expectedConnection)
+    private async Task<JsonElement> BulkCallAsync(string feature, string method, JsonElement args, CancellationToken ct, string? expectedEngineId, ClientWebSocket? expectedConnection,
+        OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null)
     {
         await _bulkCall.WaitAsync(ct);
-        try { return await BulkCallHeldAsync(feature, method, args, ct, expectedEngineId, expectedConnection); }
+        try { return await BulkCallHeldAsync(feature, method, args, ct, expectedEngineId, expectedConnection, expectedOwner, expectedMirror); }
         finally { _bulkCall.Release(); }
     }
 
@@ -54,7 +55,8 @@ internal sealed partial class RemoteMachine
             finally { _socketSend.Release(); }
             var frame = await ReadFrameAsync(_bulkSocket, ct);
             if (frame.GetProperty("id").GetInt64() != id) throw new IOException("remote bulk response id differs");
-            if (frame.GetProperty("t").GetString() != "result") throw new CallFailed(frame.GetProperty("message").GetString()!);
+            var succeeded = frame.GetProperty("t").GetString() == "result";
+            if (!succeeded && relayBinding is null) throw new CallFailed(frame.GetProperty("message").GetString()!);
             if (expectedEngineId is not null)
             {
                 await _socketSend.WaitAsync(ct);
@@ -69,6 +71,7 @@ internal sealed partial class RemoteMachine
                 }
                 finally { _socketSend.Release(); }
             }
+            if (!succeeded) throw new CallFailed(frame.GetProperty("message").GetString()!);
             return frame.GetProperty("result");
         }
         catch (Exception error)

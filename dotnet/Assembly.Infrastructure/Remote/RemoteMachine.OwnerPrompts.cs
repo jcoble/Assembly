@@ -54,9 +54,9 @@ internal sealed partial class RemoteMachine
     }
 
     private async Task<JsonElement> ReadOwnerOnAsync(string method, JsonElement args, bool bulk,
-        (string Identity, System.Net.WebSockets.ClientWebSocket Socket) owner, CancellationToken cancellationToken)
+        (string Identity, System.Net.WebSockets.ClientWebSocket Socket) owner, CancellationToken cancellationToken, OwnerConnectionBinding? ownerBinding = null)
     {
-        try { return await CallAsync("engine", method, args, bulk, cancellationToken, owner.Identity, owner.Socket); }
+        try { return await CallAsync("engine", method, args, bulk, cancellationToken, owner.Identity, owner.Socket, expectedOwner: ownerBinding); }
         catch (Exception error) when (error is System.Net.WebSockets.WebSocketException or IOException or ObjectDisposedException ||
             error is OperationCanceledException && !cancellationToken.IsCancellationRequested)
         { throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed", error); }

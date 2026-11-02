@@ -1,6 +1,3 @@
-using System.Buffers.Binary;
-using System.Security.Cryptography;
-using System.Text;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Engine;
 
@@ -17,12 +14,7 @@ public static class SessionTitleContent
             r => (Version: r.Long(0), Epoch: r.Long(1), Bytes: r.Blob(2), Machine: r.Text(3)), new("$id", args.Session), new("$machine", machine));
         if (row.Bytes is null) throw new KeyNotFoundException("unknown session");
         if (row.Machine != machine) throw new InvalidOperationException("title_changed");
-        _ = new UTF8Encoding(false, true).GetCharCount(row.Bytes);
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData("session-title/v1"u8);
-        Span<byte> length = stackalloc byte[8]; BinaryPrimitives.WriteUInt64BigEndian(length, (ulong)row.Bytes.LongLength);
-        hash.AppendData(length); hash.AppendData(row.Bytes);
-        return new(row.Machine, row.Version, row.Epoch, row.Bytes.LongLength, Convert.ToHexStringLower(hash.GetHashAndReset()));
+        return new(row.Machine, row.Version, row.Epoch, row.Bytes.LongLength, SessionTitleHash.Compute(row.Bytes));
     }
 
     public static SessionTitleChunk Chunk(IReadScope scope, string machine, SessionTitleChunkArgs args)

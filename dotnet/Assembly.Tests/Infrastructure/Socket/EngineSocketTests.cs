@@ -15,6 +15,9 @@ using Assembly.Engine.Effects;
 using Assembly.Engine.Prs;
 using Assembly.Engine.Recording;
 using Assembly.Infrastructure.Engine;
+using Assembly.Application.Common.Calls;
+using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Infrastructure.Engine.Titles;
 using Assembly.Infrastructure.Socket;
 using Assembly.Tests.Engine;
 using Microsoft.AspNetCore.Builder;
@@ -34,6 +37,9 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
     private readonly TopicSet _topics = new();
     private EngineFixture _f = null!;
     private EngineRuntime _runtime = null!;
+    private SessionStore _titleSessions = null!;
+    private bool _overrideTitlePeer;
+    private CallPeer? _titlePeer;
     private WebApplication _app = null!;
     private Uri _address = null!;
     private SnapshotGate _database = null!;
@@ -46,6 +52,8 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         _runtime = EngineRuntime.Start(_database, _topics, _f.Time, new(() => 1, () => 5));
         var calls = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
         new EngineCalls(_runtime, _f.Time).Register(calls);
+        _titleSessions = SessionStore.Open(_f.Db, _f.Time, "/isolated");
+        new SessionTitleCalls(_runtime, _titleSessions).Register(new TitlePeerGate(calls, this));
         calls.Topic("sessions", TestJson.Default.Note, n => n.Text, (_, _) => [new Note("legacy")]);
         calls.Read("test", "barrier", TestJson.Default.Note, TestJson.Default.Note, (n, _) =>
         {

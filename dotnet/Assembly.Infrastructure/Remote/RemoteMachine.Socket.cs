@@ -25,7 +25,7 @@ internal sealed partial class RemoteMachine
             {
                 await OpenSocketAsync(socket, "/socket", cancellationToken);
                 _sessionsSub = Interlocked.Increment(ref _nextSub);
-                await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{_sessionsSub},\"topic\":\"sessions\"}}", cancellationToken);
+                await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{_sessionsSub},\"topic\":\"sessions\",\"sessionTitleParts\":1}}", cancellationToken);
                 foreach (var (id, sub) in _subscriptions)
                     await SendFrameAsync(socket, SubFrame(id, sub.Session, _hub.LastSeq(sub.Session)), cancellationToken);
                 foreach (var pending in _calls.Values)
@@ -34,6 +34,7 @@ internal sealed partial class RemoteMachine
                 _socketFailure = null;
                 InvalidateEngine();
                 _socket = socket;
+                BeginSessionPublications(socket);
                 SocketOpened?.Invoke();
                 return socket;
             }
@@ -48,16 +49,6 @@ internal sealed partial class RemoteMachine
         finally { _socketSend.Release(); }
     }
 
-    private void ApplySession(JsonElement json)
-    {
-        if (json.ValueKind == JsonValueKind.Object && JsonSerializer.Deserialize(json, SessionsJson.Default.SessionItem) is { } item
-            && _sessionStore.Get(item.SessionId) is { Machine: var machine } && machine == _name)
-        {
-            _sessionStore.ApplyRemote(item);
-            if (item.ActiveRunId is { } runId) _follower.Watch(item.SessionId, runId);
-        }
-    }
-
     private Task<JsonElement> CallAsync(string feature, string method, object args, CancellationToken cancellationToken) =>
         CallAsync(feature, method, JsonSerializer.SerializeToElement(args, args.GetType(), SessionsJson.Default), false, cancellationToken);
 
@@ -65,7 +56,7 @@ internal sealed partial class RemoteMachine
         OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null,
         Assembly.Infrastructure.Engine.Relays.FrozenMachineStartIntent? startIntent = null)
     {
-        if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken, expectedEngineId, expectedConnection);
+        if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken, expectedEngineId, expectedConnection, expectedOwner, expectedMirror);
         if (_socket is not { State: WebSocketState.Open })
             throw _socketFailure ?? Unreachable("machine socket closed", $"{_name}: machine socket closed");
         var id = Interlocked.Increment(ref _nextSub);
@@ -125,6 +116,8 @@ internal sealed partial class RemoteMachine
                         if (_ownerStopping || _socketStop.IsCancellationRequested) throw new OperationCanceledException();
                         if (_engineIdentity is not null && _engineIdentity != identity) InvalidateEngine();
                         _engineIdentity = identity;
+                        if (_sessionPublication is null) BeginSessionPublications(sentOn);
+                        _sessionPublication!.Identity.TrySetResult(identity);
                     }
                     finally { _socketSend.Release(); }
                 }
@@ -254,9 +247,7 @@ internal sealed partial class RemoteMachine
                         {
                             if (sub.GetInt64() == _sessionsSub)
                             {
-                                if (frame.TryGetProperty("items", out var items))
-                                    foreach (var entry in items.EnumerateArray()) ApplySession(entry.GetProperty("item"));
-                                else if (frame.TryGetProperty("item", out var item)) ApplySession(item);
+                                ReceiveSessionPublication(frame, socket);
                             }
                             else if (_subscriptions.TryGetValue(sub.GetInt64(), out var target) && !target.Frames.Writer.TryWrite(frame))
                                 throw new IOException("remote rows queue is full");
@@ -274,11 +265,13 @@ internal sealed partial class RemoteMachine
             }
             finally
             {
+                Task titleDrain = Task.CompletedTask;
                 await _socketSend.WaitAsync(CancellationToken.None);
                 try
                 {
                     if (ReferenceEquals(_socket, socket))
                     {
+                        titleDrain = EndSessionPublications();
                         InvalidateEngine();
                         _socket = null;
                         foreach (var pending in _calls.Values)
@@ -288,6 +281,7 @@ internal sealed partial class RemoteMachine
                     socket?.Dispose();
                 }
                 finally { _socketSend.Release(); }
+                await titleDrain;
             }
             if (copied) backoff = TimeSpan.FromSeconds(1);
             try { await Task.Delay(backoff, _time, _socketStop.Token); }
@@ -367,6 +361,7 @@ internal sealed partial class RemoteMachine
 
     private void InvalidateEngine()
     {
+        _ = EndSessionPublications();
         InvalidateOwnerBinding();
         _engineIdentity = null;
         _bulkEngineIdentity = null;

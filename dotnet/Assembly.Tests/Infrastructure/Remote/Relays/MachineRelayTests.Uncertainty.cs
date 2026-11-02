@@ -4,6 +4,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Engine.Relays;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Tests.Infrastructure.Remote.Relays;
 
@@ -34,7 +35,7 @@ public sealed partial class MachineRelayTests
             new(Guid.NewGuid(), source.Runtime.Machine, new(ActorKind.Session, sender), "message", 0, 0, 1000), prompt)).Applied);
         await h.StartMirror();
         var owner = h.Connections.CaptureMirrorOwners().Single();
-        var binding = await owner.Mirror.CaptureLiveBindingAsync(default);
+        var binding = await ReadyBindingAsync(owner.Mirror);
         var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var commits = 0;
         target.WriteCommitted = what =>
@@ -83,7 +84,7 @@ public sealed partial class MachineRelayTests
             new(Guid.NewGuid(), h.Mac.Runtime.Machine, new(ActorKind.Session, sender), "message", 0, 0, 1000), prompt)).Applied);
         await h.StartMirror();
         var owner = h.Connections.CaptureMirrorOwners().Single();
-        var binding = await owner.Mirror.CaptureLiveBindingAsync(default);
+        var binding = await ReadyBindingAsync(owner.Mirror);
         var prepared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var committed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -195,6 +196,21 @@ public sealed partial class MachineRelayTests
             Assert.Equal(1, h.Mac.Fixture.Number("SELECT COUNT(*) FROM engine_command_receipt WHERE command_id LIKE 'relay-outcome/v1/%'"));
         }
         finally { h.Mac.Topics.Unsubscribe(sub); }
+    }
+
+
+    private static async Task<EngineMirror.LiveMirrorBinding> ReadyBindingAsync(EngineMirror mirror)
+    {
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void CaughtUp() => ready.TrySetResult();
+        mirror.CaughtUp += CaughtUp;
+        try
+        {
+            if (await mirror.CaptureLiveBindingAsync(default) is { } current) return current;
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            return Assert.IsType<EngineMirror.LiveMirrorBinding>(await mirror.CaptureLiveBindingAsync(default));
+        }
+        finally { mirror.CaughtUp -= CaughtUp; }
     }
 
 }
