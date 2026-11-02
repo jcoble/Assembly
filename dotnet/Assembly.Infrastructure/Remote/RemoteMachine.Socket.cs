@@ -106,6 +106,8 @@ internal sealed partial class RemoteMachine
                             throw Unreachable("machine socket changed", $"{_name}: machine socket changed during identity handshake");
                         var identity = result.GetProperty("machine").GetString();
                         if (string.IsNullOrWhiteSpace(identity)) throw new IOException("Invalid remote engine identity");
+                        if (_ownerStopping || _socketStop.IsCancellationRequested) throw new OperationCanceledException();
+                        if (_engineIdentity is not null && _engineIdentity != identity) InvalidateEngine();
                         _engineIdentity = identity;
                     }
                     finally { _socketSend.Release(); }
@@ -275,7 +277,7 @@ internal sealed partial class RemoteMachine
     }
 
     internal async IAsyncEnumerable<JsonElement> EngineFramesAsync(Func<(long? After, CursorAt? At)> cursor,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct, OwnerConnectionBinding binding)
     {
         var id = Interlocked.Increment(ref _nextSub);
         // Snapshot pages are pulled. Event pages remain bounded by the socket's existing receive path.
@@ -285,6 +287,7 @@ internal sealed partial class RemoteMachine
         {
             if (_socket is not { State: WebSocketState.Open } socket)
                 throw Unreachable("machine socket closed", $"{_name}: machine socket closed");
+            socket = RequireOwnerBinding(binding);
             _engineSubscriptions.Add(id, frames);
             var (after, at) = cursor();
             var position = after is null ? "" : $",\"after\":{after}";
@@ -303,26 +306,12 @@ internal sealed partial class RemoteMachine
             try
             {
                 _engineSubscriptions.Remove(id);
-                if (_socket is { State: WebSocketState.Open } socket)
+                if (_socket is { State: WebSocketState.Open } socket && binding.Matches(this, socket, _ownerLifecycle))
                     try { await SendFrameAsync(socket, $"{{\"t\":\"unsub\",\"id\":{id}}}", _socketStop.Token); }
                     catch (Exception error) when (error is WebSocketException or OperationCanceledException) { socket.Abort(); }
             }
             finally { _socketSend.Release(); }
         }
-    }
-
-    internal async Task SendAsync(string frame, CancellationToken ct)
-    {
-        await _socketSend.WaitAsync(ct);
-        try
-        {
-            if (_socket is not { State: WebSocketState.Open } socket)
-                throw Unreachable("machine socket closed", $"{_name}: machine socket closed");
-            await SendFrameAsync(socket, frame, ct);
-        }
-        catch (OperationCanceledException error) when (!ct.IsCancellationRequested)
-        { throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error); }
-        finally { _socketSend.Release(); }
     }
 
     private async Task<IReadOnlyList<StoredRow>> ReadRowsAsync(string session, long after, CancellationToken ct)
@@ -419,11 +408,12 @@ internal sealed partial class RemoteMachine
     }
 
     // Both helpers run only under the existing send gate; the socket reference is the connection epoch.
-    private ClientWebSocket RequireEngine(string machine) => _socket is { State: WebSocketState.Open } socket && _engineIdentity == machine
+    private ClientWebSocket RequireEngine(string machine) => !_ownerStopping && !_socketStop.IsCancellationRequested && _socket is { State: WebSocketState.Open } socket && _engineIdentity == machine
         ? socket : throw Unreachable("unverified engine peer", $"{_name}: socket engine identity differs or is unverified");
 
     private void InvalidateEngine()
     {
+        InvalidateOwnerBinding();
         _engineIdentity = null;
         _bulkEngineIdentity = null;
         _bulkSocket?.Abort();

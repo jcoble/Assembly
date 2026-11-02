@@ -19,10 +19,14 @@ internal sealed class EngineMirror : IAsyncDisposable
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
     private readonly CancellationTokenSource _stop = new();
-    private readonly Channel<CancellationToken> _opens = Channel.CreateUnbounded<CancellationToken>(new() { SingleReader = true });
+    private readonly Channel<FollowConnection> _opens = Channel.CreateUnbounded<FollowConnection>(new() { SingleReader = true });
     private readonly Lock _gate = new();
-    private CancellationTokenSource? _connection;
+    private FollowConnection? _connection;
     private readonly Task _run;
+    private readonly List<Task> _cancellations = [];
+    private LiveMirrorBinding? _live;
+    private long _readinessLifetime;
+    private bool _stopping;
     public event Action? CaughtUp;
 
     public EngineMirror(RemoteMachine remote, IAtomicWriter writer, TimeProvider time, TextWriter log)
@@ -32,16 +36,96 @@ internal sealed class EngineMirror : IAsyncDisposable
         _run = RunAsync();
     }
 
+    internal sealed class LiveMirrorBinding
+    {
+        private readonly EngineMirror _mirror;
+        private readonly long _lifetime;
+        private readonly CancellationTokenSource _stop = new();
+        private readonly CancellationToken _invalidated;
+        private int _lost;
+        internal string Machine { get; }
+        internal long Generation { get; }
+        internal RemoteMachine.OwnerConnectionBinding OwnerBinding { get; }
+        internal bool IsInvalidated => Volatile.Read(ref _lost) != 0 || OwnerBinding.IsInvalidated;
+        internal CancellationToken Invalidated => _invalidated;
+        private LiveMirrorBinding(EngineMirror mirror, RemoteMachine.OwnerConnectionBinding owner, string machine, long generation, long lifetime)
+        {
+            (_mirror, OwnerBinding, Machine, Generation, _lifetime) = (mirror, owner, machine, generation, lifetime);
+            _invalidated = _stop.Token;
+        }
+        internal static LiveMirrorBinding Publish(EngineMirror mirror, RemoteMachine.OwnerConnectionBinding owner,
+            string machine, long generation, long lifetime) => new(mirror, owner, machine, generation, lifetime);
+        internal bool Matches(EngineMirror mirror, long lifetime) => ReferenceEquals(_mirror, mirror) && _lifetime == lifetime && !IsInvalidated;
+        internal void Revoke() => Interlocked.Exchange(ref _lost, 1);
+        internal async Task CancelAsync()
+        {
+            try { await _stop.CancelAsync(); }
+            finally { _stop.Dispose(); }
+        }
+    }
+
+    // Called under _gate; atomic loss precedes asynchronous callback cleanup.
+    private void LoseReadiness()
+    {
+        _readinessLifetime++;
+        if (_live is not { } live) return;
+        _live = null;
+        live.Revoke();
+        _cancellations.RemoveAll(task => task.IsCompletedSuccessfully);
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _cancellations.Add(CancelReadinessAfterAsync(start.Task, live));
+        start.SetResult();
+    }
+
+    private static async Task CancelReadinessAfterAsync(Task start, LiveMirrorBinding binding)
+    {
+        await start;
+        await binding.CancelAsync();
+    }
+
+    // Cancellation runs through this owned task, never inside the socket/mirror locks.
+    private sealed class FollowConnection
+    {
+        private readonly CancellationTokenSource _stop = new();
+        private readonly TaskCompletionSource _cancel = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Task _cancellation;
+        internal FollowConnection() => _cancellation = CancelAsync();
+        internal CancellationToken Token => _stop.Token;
+        internal void Revoke() => _cancel.TrySetResult();
+        private async Task CancelAsync() { await _cancel.Task; await _stop.CancelAsync(); }
+        internal async Task FinishAsync()
+        {
+            Revoke();
+            try { await _cancellation; }
+            finally { _stop.Dispose(); }
+        }
+    }
+
     private void Opened()
     {
         lock (_gate)
         {
-            if (_stop.IsCancellationRequested) return;
-            _connection?.Cancel();
-            _connection?.Dispose();
-            _connection = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-            _opens.Writer.TryWrite(_connection.Token);
+            if (_stopping) return;
+            LoseReadiness();
+            _connection?.Revoke();
+            _connection = new FollowConnection();
+            _opens.Writer.TryWrite(_connection);
         }
+    }
+
+    internal async Task<LiveMirrorBinding?> CaptureLiveBindingAsync(CancellationToken ct)
+    {
+        LiveMirrorBinding? live;
+        lock (_gate) live = _live;
+        return live is not null && await IsCurrentLiveBindingAsync(live, ct) ? live : null;
+    }
+
+    internal async Task<bool> IsCurrentLiveBindingAsync(LiveMirrorBinding binding, CancellationToken ct)
+    {
+        lock (_gate)
+            if (!ReferenceEquals(binding, _live) || !binding.Matches(this, _readinessLifetime)) return false;
+        if (!await _remote.IsCurrentOwnerBindingAsync(binding.OwnerBinding, ct)) return false;
+        lock (_gate) return ReferenceEquals(binding, _live) && binding.Matches(this, _readinessLifetime);
     }
 
     private long Now => _time.GetUtcNow().ToUnixTimeMilliseconds();
@@ -49,13 +133,22 @@ internal sealed class EngineMirror : IAsyncDisposable
     {
         try
         {
-            await foreach (var ct in _opens.Reader.ReadAllAsync(_stop.Token))
+            await foreach (var connection in _opens.Reader.ReadAllAsync(_stop.Token))
             {
-                try { ct.ThrowIfCancellationRequested(); await FollowAsync(ct); }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-                catch (Exception error) when (error is MachineUnreachable or CallFailed or IOException or WebSocketException or ObjectDisposedException)
+                using (var linked = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token, connection.Token))
                 {
-                    _log.WriteLine($"engine mirror {_remote.Name}: {error.Message}");
+                    var ct = linked.Token;
+                    try { ct.ThrowIfCancellationRequested(); await FollowAsync(ct); }
+                    catch (OperationCanceledException) { }
+                    catch (Exception error) when (error is MachineUnreachable or CallFailed or IOException or WebSocketException or ObjectDisposedException)
+                    {
+                        _log.WriteLine($"engine mirror {_remote.Name}: {error.Message}");
+                    }
+                    finally
+                    {
+                        lock (_gate) { LoseReadiness(); if (ReferenceEquals(_connection, connection)) _connection = null; }
+                        await connection.FinishAsync();
+                    }
                 }
             }
         }
@@ -64,9 +157,11 @@ internal sealed class EngineMirror : IAsyncDisposable
 
     private async Task FollowAsync(CancellationToken ct)
     {
-        var info = await _remote.CallAsync("engine", "machine", JsonSerializer.Deserialize("{}", EngineJson.Default.JsonElement), false, ct);
-        var machine = info.GetProperty("machine").GetString()!;
-        var watermark = info.GetProperty("through").GetInt64();
+        var (info, owner) = await _remote.ReadMirrorOwnerAsync(ct);
+        using var ownerStop = CancellationTokenSource.CreateLinkedTokenSource(ct, owner.Invalidated);
+        ct = ownerStop.Token;
+        var machine = info.Machine;
+        var watermark = info.Through;
         var cursor = _writer.Write("engine.mirror.open", s => MirrorApply.Open(s, machine, _remote.Name!, Now));
         if (cursor.State == "snapshotting") cursor = _writer.Write("engine.mirror.begin", s => MirrorApply.BeginSnapshot(s, machine, Now));
         var caughtUp = false;
@@ -74,13 +169,17 @@ internal sealed class EngineMirror : IAsyncDisposable
         {
             long? cut = null;
             CursorAt? cutAt = null;
-            await foreach (var frame in _remote.EngineFramesAsync(() => cursor.State == "live" ? (cursor.Through, cursor.At) : (null, null), ct))
+            await foreach (var frame in _remote.EngineFramesAsync(() => cursor.State == "live" ? (cursor.Through, cursor.At) : (null, null), ct, owner))
             {
+                ct.ThrowIfCancellationRequested();
+                if (!await _remote.IsCurrentOwnerBindingAsync(owner, ct)) throw new IOException("Mirror owner changed");
                 var type = frame.GetProperty("t").GetString();
                 if (type == "error")
                 {
                     if (frame.GetProperty("code").GetString() == "bad_args" && frame.GetProperty("message").GetString() == "Invalid engine cursor")
                     {
+                        lock (_gate) LoseReadiness();
+                        caughtUp = false;
                         cursor = _writer.Write("engine.mirror.begin", s => MirrorApply.BeginSnapshot(s, machine, Now));
                         break;
                     }
@@ -95,6 +194,8 @@ internal sealed class EngineMirror : IAsyncDisposable
                 {
                     if (cut is null)
                     {
+                        lock (_gate) LoseReadiness();
+                        caughtUp = false;
                         cursor = _writer.Write("engine.mirror.begin", s => MirrorApply.BeginSnapshot(s, machine, Now));
                         cut = through; cutAt = at;
                     }
@@ -104,7 +205,7 @@ internal sealed class EngineMirror : IAsyncDisposable
                         MirrorApply.SnapshotPage(s, machine, frame.GetProperty("items").EnumerateArray().ToArray());
                         return more ? cursor : MirrorApply.EndSnapshot(s, machine, through, at, Now);
                     });
-                    if (more) { await _remote.SendAsync($"{{\"t\":\"next\",\"id\":{id}}}", ct); continue; }
+                    if (more) { await _remote.SendOwnerBindingAsync(owner, $"{{\"t\":\"next\",\"id\":{id}}}", ct); continue; }
                     cut = null; cutAt = null;
                 }
                 else
@@ -116,11 +217,28 @@ internal sealed class EngineMirror : IAsyncDisposable
                             JsonSerializer.Deserialize(frame.GetProperty("events"), EngineJson.Default.IReadOnlyListEngineEvent)!,
                             frame.GetProperty("rows").EnumerateArray().ToArray(), Now));
                     }
-                    catch (MirrorGap) { break; }
+                    catch (MirrorGap)
+                    {
+                        lock (_gate) LoseReadiness();
+                        caughtUp = false;
+                        cursor = _writer.Write("engine.mirror.begin", s => MirrorApply.BeginSnapshot(s, machine, Now));
+                        break;
+                    }
                 }
                 // Write returned after AtomicWriter committed and published. Only now release the remote page.
-                await _remote.SendAsync($"{{\"t\":\"ack\",\"id\":{id},\"stream\":\"engine\",\"after\":{through}}}", ct);
-                if (!caughtUp && (type == "engine_snapshot" || through >= watermark)) { caughtUp = true; CaughtUp?.Invoke(); }
+                await _remote.SendOwnerBindingAsync(owner, $"{{\"t\":\"ack\",\"id\":{id},\"stream\":\"engine\",\"after\":{through}}}", ct);
+                if (!caughtUp && (type == "engine_snapshot" || through >= watermark))
+                {
+                    if (!await _remote.IsCurrentOwnerBindingAsync(owner, ct)) throw new IOException("Mirror owner changed");
+                    lock (_gate)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        if (_stopping || owner.IsInvalidated) throw new IOException("Mirror owner changed");
+                        _live = LiveMirrorBinding.Publish(this, owner, machine, cursor.Generation, _readinessLifetime);
+                        caughtUp = true;
+                    }
+                    CaughtUp?.Invoke();
+                }
             }
         }
     }
@@ -128,8 +246,14 @@ internal sealed class EngineMirror : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _remote.SocketOpened -= Opened;
+        lock (_gate) { _stopping = true; LoseReadiness(); }
         await _stop.CancelAsync();
         try { await _run; }
-        finally { lock (_gate) { _connection?.Dispose(); } _stop.Dispose(); }
+        finally
+        {
+            while (_opens.Reader.TryRead(out var pending)) await pending.FinishAsync();
+            await Task.WhenAll(_cancellations);
+            _stop.Dispose();
+        }
     }
 }

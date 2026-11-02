@@ -182,7 +182,7 @@ internal sealed class TwoHosts : IAsyncDisposable
     private RemoteMachine? _machine;
     private LiveHub? _hub;
     public async Task Start() { await Remote.Start(); await Mac.Start(); Remote.Fixture.SeedSession(); }
-    public async Task StartMirror(TimeProvider? mirrorTime = null)
+    public async Task StartMirror(TimeProvider? mirrorTime = null, IAtomicWriter? mirrorWriter = null)
     {
         var store = RowStore.Open(Mac.Fixture.Db);
         _hub = new LiveHub(store, topics: Mac.Topics);
@@ -211,7 +211,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             }
             else
             {
-                Mirror = new(_machine!, Mac.Fixture.Db.Writer, mirrorTime ?? TimeProvider.System, MirrorLog);
+                Mirror = new(_machine!, mirrorWriter ?? Mac.Fixture.Db.Writer, mirrorTime ?? TimeProvider.System, MirrorLog);
                 await _machine!.ProbeAsync(default);
             }
             await applied.Task.WaitAsync(TimeSpan.FromSeconds(30));
