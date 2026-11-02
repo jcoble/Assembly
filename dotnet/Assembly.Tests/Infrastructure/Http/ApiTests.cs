@@ -121,8 +121,9 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(descriptor.Id, item.GetProperty("id").GetString());
         Assert.Equal(descriptor.Name, item.GetProperty("name").GetString());
         Assert.Equal(capture.TargetId, item.GetProperty("targetId").GetString());
-        Assert.Equal(account, item.GetProperty("accountContext").GetString());
-        Assert.Equal(descriptor.Id + "/" + account, item.GetProperty("providerTargetId").GetString());
+        var identity = account.Length == 0 ? "" : "acct-v1:bba8f0244af078a391d9faaebbd7df99750b21889fda2190393b2863a58c6e5b";
+        Assert.True(identity == item.GetProperty("accountContext").GetString(), "Discovery account identity must be opaque.");
+        Assert.True(descriptor.Id + "/" + identity == item.GetProperty("providerTargetId").GetString(), "Discovery provider target must contain only opaque account identity.");
         Assert.DoesNotContain("private-", item.GetRawText());
         Assert.Equal(0, _launcher.Launches);
         Assert.Empty(_sessionStore.List(null, 10).Sessions);
@@ -132,6 +133,25 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.NotEqual(item.GetProperty("targetId").GetString(), replaced.GetProperty("targetId").GetString());
         Assert.Equal(item.GetProperty("providerTargetId").GetString(), replaced.GetProperty("providerTargetId").GetString());
         Assert.Equal(0, _launcher.Launches);
+    }
+
+    [Fact]
+    public async Task Discovery_keeps_synthetic_home_private_while_retaining_exact_captured_launch_environment()
+    {
+        const string raw = "/synthetic/PRIVATE_ACCOUNT_CANARY_7b9f/配置";
+        const string identity = "acct-v1:affb7550e6419024cafd75d2c3ed3d9f5c29f2dcc486ead8457a9efdac63a2c2";
+        _launcher.Agents = [new("provider/with/slash", "Provider", "adapter", [],
+            new Dictionary<string, string> { ["CODEX_HOME"] = raw }, VendorFamily: "codex")];
+        var reply = await GetJsonAsync("/agents");
+        Assert.True(!reply.GetRawText().Contains("PRIVATE_ACCOUNT_CANARY_7b9f", StringComparison.Ordinal), "Private account material escaped discovery.");
+        var target = reply.GetProperty("agents")[0];
+        Assert.True(identity == target.GetProperty("accountContext").GetString());
+        Assert.True("provider/with/slash/" + identity == target.GetProperty("providerTargetId").GetString());
+        var captured = ConfigTargetIdentity.Capture(_launcher, "provider/with/slash");
+        Assert.True(captured.Environment["CODEX_HOME"] == raw);
+        Assert.Equal(captured.TargetId, target.GetProperty("targetId").GetString());
+        Assert.Equal(0, _launcher.Launches);
+        Assert.Empty(_sessionStore.List(null, 10).Sessions);
     }
 
     [Fact]
