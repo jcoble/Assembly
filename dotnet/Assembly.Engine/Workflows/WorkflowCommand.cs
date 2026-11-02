@@ -1,4 +1,6 @@
 using Assembly.Engine.Contracts;
+using System.Collections.Immutable;
+using Assembly.Engine.Workflows.Definitions;
 
 namespace Assembly.Engine.Workflows;
 
@@ -6,11 +8,12 @@ public abstract record WorkflowCommand : EngineCommand;
 public sealed record WorkflowPreparedEnvelope(string Kind, int FormatVersion, string Sha256, long BodyBytes);
 
 // Only Engine preparation constructs this owned immutable body. It is never a raw command argument.
-public sealed class PreparedWorkflowCommand
+public sealed partial class PreparedWorkflowCommand
 {
     private readonly Runs.WorkflowStartBody? _start;
     internal Runs.WorkflowStartBody Start => _start ?? throw new InvalidOperationException("Not a workflow start.");
     internal Workspaces.WorkspaceBody? Workspace { get; }
+    internal ImmutableArray<WorkflowStepSpec> StartSteps { get; } = [];
     internal string BodyJson { get; }
     internal string CanonicalJournal { get; }
     public string Sha256 { get; }
@@ -19,6 +22,8 @@ public sealed class PreparedWorkflowCommand
     internal PreparedWorkflowCommand(Runs.WorkflowStartBody start, string bodyJson, string sha256, long bodyBytes)
     {
         _start = start; BodyJson = bodyJson; Sha256 = sha256; BodyBytes = bodyBytes;
+        StartSteps = WorkflowYaml.Parse(start.Snapshot.Yaml, default).GetProperty("steps").EnumerateObject()
+            .Select(property => start.Snapshot.Definition.Steps[property.Name]).ToImmutableArray();
         CanonicalJournal = System.Text.Json.JsonSerializer.Serialize(new WorkflowPreparedEnvelope("workflow_start", 1, sha256, bodyBytes),
             EngineJson.Default.WorkflowPreparedEnvelope);
     }
