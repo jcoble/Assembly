@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Assembly.Application.Features.Chat.Helpers;
+namespace Assembly.Application.Features.Chat.Sessions;
 
 /// <summary>A message row's blocks as plain text: blocks and list items on lines of their own, inline parts run together.</summary>
 internal static class PlainText
