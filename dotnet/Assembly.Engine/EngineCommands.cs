@@ -67,6 +67,7 @@ public sealed partial class EngineCommands
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
                 ReportSignInNeeded report => AuthTransitions.Report(scope, context, report, _isConfiguredProvider, _expiryPolicy),
                 BlockSignInNeeded block => AuthTransitions.Block(scope, context, block, _isConfiguredProvider, _expiryPolicy),
+                RecordAuthRetryStarted retry => AuthRetryStart.Apply(scope, context, retry, _isConfiguredProvider),
                 MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit(), _expiryPolicy),
                 NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy, _isConfiguredProvider),
                 RunCommand run => RunTransitions.Apply(scope, context, run),

@@ -56,12 +56,30 @@ public sealed partial class RowStore
             new SqlArg("$session", sessionId), new("$seq", userRowSeq));
         if (row is null || row.Run != userRunId || row.Payload is null || row.Payload.ClientId != clientId ||
             row.Payload.Acknowledgment is not null && !Positive(row.Payload.Acknowledgment) ||
-            row.Payload.AuthBlocker is { } old && old != binding) throw new CallFailed("auth_binding_conflict");
+            row.Payload.AuthBlocker is { } old && old != binding &&
+                (row.Payload.RetryExecution is not { } retry || retry.EffectId != binding.EffectId ||
+                    retry.ClaimAttempt != binding.OriginalClaimAttempt || retry.PriorEffectId != old.EffectId))
+            throw new CallFailed("auth_binding_conflict");
         if (row.Payload.AuthBlocker == binding) return;
         scope.Execute("""
             UPDATE rows SET payload=json_set(payload,'$.authBlocker',json($binding)) WHERE session_id=$session AND seq=$seq
             """, new("$binding", JsonSerializer.Serialize(binding, RowJsonContext.Rows.AuthSendBlocker)),
             new("$session", sessionId), new("$seq", userRowSeq));
+    }
+
+    public static void BindAuthRetryExecution(IWriteScope scope, string sessionId, string clientId,
+        long userRowSeq, string userRunId, AuthRetryExecution execution)
+    {
+        var user = scope.QueryFirst("SELECT payload FROM rows WHERE session_id=$session AND seq=$seq AND run_id=$run AND kind='user' AND item_id IS NULL",
+            r => JsonSerializer.Deserialize(r.Text(0), RowJsonContext.Rows.UserPayload),
+            new SqlArg("$session", sessionId), new("$seq", userRowSeq), new("$run", userRunId));
+        if (user is null || user.ClientId != clientId || user.Acknowledgment is not null || execution.UserRowSeq != userRowSeq ||
+            execution.UserRunId != userRunId || execution.ClientId != clientId || execution.ChatRunId == userRunId ||
+            user.RetryExecution is { } old && old != execution && old.EffectId != execution.PriorEffectId)
+            throw new CallFailed("auth_binding_conflict");
+        if (user.RetryExecution == execution) return;
+        scope.Execute("UPDATE rows SET payload=json_set(payload,'$.retryExecution',json($execution)) WHERE session_id=$session AND seq=$seq",
+            new("$execution", JsonSerializer.Serialize(execution, RowJsonContext.Rows.AuthRetryExecution)), new("$session", sessionId), new("$seq", userRowSeq));
     }
 
     public static bool Positive(UserAcknowledgment? acknowledgment) => acknowledgment switch

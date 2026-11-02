@@ -36,20 +36,21 @@ internal static partial class AuthTransitions
         var row = users[0]; var user = row.User;
         if (row.Seq != original.Seq || row.Run != original.RunId || original.Epoch != delivery.Epoch || user is null ||
             user.Text != delivery.Intent.Text || user.From != delivery.FromSessionId || user.SenderLabel != delivery.Label ||
-            user.Acknowledgment != new UserAcknowledgment("prompt_inserted", provider) || user.RetryExecution is not null)
+            user.Acknowledgment != new UserAcknowledgment("prompt_inserted", provider) || user.RetryExecution != data.RetryExecution)
             throw new CallFailed("bad_receipt");
         var terminals = scope.Query("""
             SELECT seq,payload FROM rows INDEXED BY rows_auth_terminal WHERE session_id=$session AND run_id=$run
               AND json_extract(payload,'$.authFailure.delivery.effectId')=$effect AND kind='turn' AND json_type(payload,'$.authFailure')='object'
             ORDER BY seq LIMIT 2
             """, r => new { Seq = r.Long(0), Turn = JsonSerializer.Deserialize(r.Text(1), EngineJson.Default.TurnPayload) },
-            new SqlArg("$session", delivery.Intent.ToSessionId), new("$run", original.RunId), new("$effect", effect.Id));
+            new SqlArg("$session", delivery.Intent.ToSessionId), new("$run", data.RetryExecution?.ChatRunId ?? original.RunId), new("$effect", effect.Id));
         if (terminals.Count != 1 || terminals[0].Turn is not { State: "failed", AuthFailure: { } proof } ||
-            proof.Version != 1 || proof.Epoch != delivery.Epoch || proof.ChatRunId != original.RunId ||
+            proof.Version != 1 || proof.Epoch != delivery.Epoch ||
             proof.ProviderMessageId is not null && proof.ProviderMessageId != provider || proof.ClientId != delivery.Intent.ClientId ||
             proof.Delivery is not { } bound || bound.MessageId != delivery.Intent.MessageId || bound.EffectId != effect.Id ||
             bound.ClientId != delivery.Intent.ClientId || bound.UserRowSeq != original.Seq || bound.UserRunId != original.RunId ||
             bound.ClaimAttempt <= 0 || bound.ClaimAttempt > effect.Attempt ||
+            !AuthExecution.MatchesRetry(scope, delivery.Intent.ToSessionId, data.RetryExecution, proof.ChatRunId, bound, proof.Epoch) ||
             !EngineCommands.IsAcceptedAuthTerminal(scope, delivery.Intent.ToSessionId, terminals[0].Seq, proof)) throw new CallFailed("bad_receipt");
         var notice = Notice(scope, context, delivery.Intent.ToSessionId, proof);
         if (notice.Count > 0) EngineJournal.Commit(scope, context, context.ExpectedVersion, context.Epoch, notice, []);

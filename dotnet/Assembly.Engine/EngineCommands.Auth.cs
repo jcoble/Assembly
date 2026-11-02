@@ -6,6 +6,12 @@ namespace Assembly.Engine;
 
 public sealed partial class EngineCommands
 {
+    public static bool IsAcceptedAuthRetryStarted(IReadScope scope, string sessionId, AuthRetryExecution execution)
+    {
+        var machine = scope.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", r => r.Text(0));
+        return !string.IsNullOrWhiteSpace(machine) && EngineJournal.IsAcceptedAuthRetryStarted(scope, machine, sessionId, execution);
+    }
+
     public static bool HasPriorAuthTerminal(IReadScope scope, string sessionId, string priorChatRunId)
     {
         if (string.IsNullOrWhiteSpace(sessionId) || string.IsNullOrWhiteSpace(priorChatRunId)) return false;

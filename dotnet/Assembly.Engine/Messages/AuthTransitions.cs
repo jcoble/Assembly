@@ -28,7 +28,7 @@ internal static partial class AuthTransitions
         var blockContext = new CommandContext(binding.BlockCommandId, context.Machine, new(ActorKind.System, "adapter"),
             "auth-blocker/" + binding.BlockCommandId.ToString("N"), 0, binding.Epoch, context.NowMs);
         var block = new BlockSignInNeeded(command.SessionId, binding);
-        var expiredCurrent = execution is { ConfirmedProviderId: null, User.AuthBlocker: null } && proof.ProviderMessageId is null &&
+        var expiredCurrent = execution is { ConfirmedProviderId: null } && execution.User.AuthBlocker?.EffectId != execution.Effect.Id && proof.ProviderMessageId is null &&
             scope.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.IsNull(0) ? (long?)null : r.Long(0),
                 new SqlArg("$id", execution.Delivery.Intent.MessageId)) <= context.NowMs;
         var result = EngineJournal.Execute(scope, blockContext, JsonSerializer.Serialize<EngineCommand>(block, EngineJson.Default.EngineCommand),
@@ -55,7 +55,7 @@ internal static partial class AuthTransitions
             AuthExecution.CompletedPositive(scope, context, command.SessionId, proof, configured);
         if (execution is null) return AuthExecution.ExpiredUnbound(scope, context, command.SessionId, proof, configured)
             ? Expired(context) : Rejected(context);
-        if (execution.User.AuthBlocker is { } retained)
+        if (execution.User.AuthBlocker is { } retained && retained.EffectId == execution.Effect.Id)
         {
             if (retained.EffectId != execution.Effect.Id || retained.OriginalClaimAttempt != execution.Effect.Attempt ||
                 retained.ObservationId != proof.ObservationId || retained.BlockCommandId != proof.BlockCommandId ||
@@ -64,6 +64,8 @@ internal static partial class AuthTransitions
                 return Rejected(context);
             return new(true, false, null, existing.Version, 0, context.Epoch);
         }
+        if (execution.User.AuthBlocker is { } prior && (execution.User.RetryExecution is not { } retry ||
+            retry.EffectId != execution.Effect.Id || retry.PriorEffectId != prior.EffectId)) return Rejected(context);
         var original = proof.Delivery!;
         return BindRefusalNeed(scope, context, execution, new(original.UserRowSeq, original.UserRunId, proof.Epoch),
             proof.ObservationId, proof.BlockCommandId, expiryPolicy);

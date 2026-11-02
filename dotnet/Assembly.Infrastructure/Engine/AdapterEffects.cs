@@ -18,8 +18,8 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
     private static EffectReceipt Receipt(EffectDisposition disposition, string? error = null) => new(disposition, Empty, error);
     private static EffectReceipt SessionReceipt() => new(EffectDisposition.Confirmed,
         JsonSerializer.SerializeToElement(new SessionEffectData("idle", null, null), global::Assembly.Engine.EngineJson.Default.SessionEffectData), null);
-    private static EffectReceipt MessageReceipt(string state, string? providerId, string? reason, UserRowReference? userRow = null) =>
-        new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new MessageEffectData(state, providerId, reason, userRow),
+    private static EffectReceipt MessageReceipt(string state, string? providerId, string? reason, UserRowReference? userRow = null, AuthRetryExecution? retry = null) =>
+        new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(new MessageEffectData(state, providerId, reason, userRow, retry),
             global::Assembly.Engine.EngineJson.Default.MessageEffectData), null);
 
     public async Task<EffectReceipt> ExecuteAsync(Effect effect, CancellationToken ct)
@@ -42,7 +42,7 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
                 case "send":
                     var delivery = MessageDelivery.Read(scope, effect);
                     if (delivery is null) return Receipt(EffectDisposition.Unknown, "delivery_owner_changed");
-                    var prior = Positive(scope, delivery);
+                    var prior = Positive(scope, effect, delivery);
                     if (prior is not null) return prior;
                     var host = hosts.For(effect.SessionId!);
                     var admission = Admission(scope, effect, delivery);
@@ -51,11 +51,11 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
                         var steered = await host.SteerDeliveryAsync(delivery.Intent.Text, delivery.Intent.ClientId, delivery.Label, admission, ct, delivery.FromSessionId);
                         return steered.Outcome == SteerResult.Injected ? MessageReceipt("delivered_to_turn", null, null, steered.UserRow) : MessageReceipt("queued", null, "prompt_required");
                     }
-                    var sent = await host.SendAsync(delivery.Intent.Text, delivery.Intent.ClientId, delivery.Label, admission, ct, delivery.FromSessionId);
+                    var sent = await host.SendAsync(delivery.Intent.Text, delivery.Intent.ClientId, delivery.Label, admission, ct, delivery.FromSessionId, delivery.Intent.AttachmentIds ?? []);
                     return sent switch
                     {
-                        SendResult.Inserted inserted => MessageReceipt("next_turn", inserted.ProviderMessageId, null, inserted.UserRow),
-                        SendResult.AuthRequired auth => MessageReceipt("queued", null, "auth_required", auth.UserRow),
+                        SendResult.Inserted inserted => MessageReceipt("next_turn", inserted.ProviderMessageId, null, inserted.UserRow, inserted.RetryExecution),
+                        SendResult.AuthRequired auth => MessageReceipt("queued", null, "auth_required", auth.UserRow, auth.RetryExecution),
                         SendResult.Busy => MessageReceipt("queued", null, "busy"),
                         SendResult.Failed failed => MessageReceipt("failed", null, failed.Reason),
                         _ => Receipt(EffectDisposition.Unknown, "delivery_unknown")

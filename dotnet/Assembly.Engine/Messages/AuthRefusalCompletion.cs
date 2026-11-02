@@ -29,10 +29,12 @@ internal static partial class AuthTransitions
         if (target is null || target.Provider.Length == 0 || !AccountContext.IsValid(target.AccountContext) || original.Epoch != delivery.Epoch ||
             context.Epoch != delivery.Epoch || effect.SessionId != delivery.Intent.ToSessionId || effect.OrderKey != effect.SessionId || delivery.Intent.How != "prompt" ||
             user is null || user.ClientId != delivery.Intent.ClientId || user.Text != delivery.Intent.Text || user.From != delivery.FromSessionId || user.SenderLabel != delivery.Label ||
-            user.Acknowledgment is not null || user.RetryExecution is not null || data.RetryExecution is not null ||
+            user.Acknowledgment is not null || user.RetryExecution != data.RetryExecution ||
+            !AuthExecution.MatchesRetry(scope, delivery.Intent.ToSessionId, data.RetryExecution, data.RetryExecution?.ChatRunId ?? original.RunId,
+                new(delivery.Intent.MessageId, effect.Id, data.RetryExecution?.ClaimAttempt ?? effect.Attempt, delivery.Intent.ClientId, original.Seq, original.RunId), delivery.Epoch) ||
             scope.QueryFirst("""
                 SELECT COUNT(*) FROM rows WHERE session_id=$session AND run_id=$run AND kind='turn' AND seq>$seq AND json_extract(payload,'$.state')='started'
-                """, r => r.Long(0), new SqlArg("$session", delivery.Intent.ToSessionId), new("$run", original.RunId), new("$seq", original.Seq)) != 1) throw new CallFailed("bad_receipt");
+                """, r => r.Long(0), new SqlArg("$session", delivery.Intent.ToSessionId), new("$run", data.RetryExecution?.ChatRunId ?? original.RunId), new("$seq", original.Seq)) != 1) throw new CallFailed("bad_receipt");
         var provider = ProviderState.Read(scope, target.Id);
         if (provider is not null && (provider.Machine != context.Machine || provider.Target != target)) throw new CallFailed("bad_receipt");
         return (user, target);
@@ -45,7 +47,7 @@ internal static partial class AuthTransitions
         if (delivery is null || data.AuthRefusal is not null) throw new CallFailed("bad_receipt");
         var captured = RefusalUser(scope, context, effect, delivery, data);
         var message = scope.QueryFirst("SELECT attempt,expires_ms FROM engine_message WHERE id=$id", r => (Attempt: r.Long(0), Expires: r.IsNull(1) ? (long?)null : r.Long(1)), new SqlArg("$id", delivery.Intent.MessageId));
-        if (captured.User.AuthBlocker is null)
+        if (captured.User.AuthBlocker?.EffectId != effect.Id)
         {
             // Ordinary expiry grants neither a new need nor historical auth authority.
             if (message.Expires <= context.NowMs) return null;
@@ -61,7 +63,7 @@ internal static partial class AuthTransitions
         if (RefusalData(effect, receipt) is not { } data) return null;
         var captured = RefusalUser(scope, context, effect, delivery, data);
         var blocker = captured.User.AuthBlocker;
-        if (blocker is null)
+        if (blocker?.EffectId != effect.Id)
         {
             if (scope.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.IsNull(0) ? (long?)null : r.Long(0), new SqlArg("$id", delivery.Intent.MessageId)) <= context.NowMs) return null;
             throw new CallFailed("bad_receipt");

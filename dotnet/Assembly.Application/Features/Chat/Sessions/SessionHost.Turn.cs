@@ -66,6 +66,11 @@ public sealed partial class SessionHost
                 turn.Inserted.TrySetResult(new SendResult.Unknown());
                 throw new CallFailed("The delivery owner changed.");
             }
+            if (turn.Delivery?.ExpiresMs <= Now())
+            {
+                turn.Inserted.TrySetResult(new SendResult.Failed("expired"));
+                throw new CallFailed("expired", "expired");
+            }
             // A stop that lands between here and the prompt reaching the agent is lost; the turn then runs to its end.
             if (turn.Stopping.IsCancellationRequested)
             {
@@ -78,7 +83,7 @@ public sealed partial class SessionHost
                 try
                 {
                     turn.ProviderMessageId = await turn.Prompt.Inserted;
-                    turn.Inserted.TrySetResult(new SendResult.Inserted(turn.RunId, turn.ProviderMessageId, turn.UserRow));
+                    turn.Inserted.TrySetResult(new SendResult.Inserted(turn.RunId, turn.ProviderMessageId, turn.UserRow, turn.RetryExecution));
                     response = await turn.Prompt.Ended;
                 }
                 catch
@@ -163,7 +168,7 @@ public sealed partial class SessionHost
                 if (completed) turn.FeedCompleted = true;
                 // A refusal is safe to complete only after its real terminal/report/reply writer succeeds.
                 // Otherwise the worker could finalize E1 before Report has its owning inflight authority.
-                if (turn.AuthRequired) turn.Inserted.TrySetResult(new SendResult.AuthRequired(turn.UserRow));
+                if (turn.AuthRequired) turn.Inserted.TrySetResult(new SendResult.AuthRequired(turn.UserRow, turn.RetryExecution));
                 title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };
                 if (title)
                     _titlePending = false;

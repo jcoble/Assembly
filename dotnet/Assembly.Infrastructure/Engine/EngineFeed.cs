@@ -215,6 +215,15 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
         ReportAuth(scope, observed, terminalSeq, proof, null);
     }
 
+    public void RetryStarted(IWriteScope scope, SessionObservation observed, AuthRetryExecution execution)
+    {
+        var context = new CommandContext(Guid.Parse(execution.ChatRunId), runtime.Machine, new(ActorKind.System, "adapter"),
+            "auth-retry/" + execution.ChatRunId, 0, execution.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+        var result = runtime.Commands.Apply(scope, context, new RecordAuthRetryStarted(observed.SessionId, execution),
+            CaptureObservation(scope, observed.SessionId) == observed ? null : "provider_auth_fact_refused");
+        if (!result.Applied) throw new CallFailed(result.Error ?? "provider_auth_fact_refused", result.Error);
+    }
+
     private void BlockAuth(IWriteScope scope, SessionObservation observed, AuthTerminalProof binding, string? acp)
     {
         var context = new CommandContext(binding.BlockCommandId, runtime.Machine, new(ActorKind.System, "adapter"),

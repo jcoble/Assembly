@@ -12,6 +12,7 @@ internal sealed class RunningTurn(string runId, StageTimes stages)
     public TaskCompletionSource<SendResult> Inserted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public Assembly.Application.Common.Engine.UserRowReference? UserRow { get; set; }
     public OwningSendAdmission? Delivery { get; set; }
+    public Assembly.Domain.Rows.AuthRetryExecution? RetryExecution { get; set; }
     public SessionObservation? Observation { get; set; }
     public long StartedAt { get; set; }
     public TurnCost Cost { get; set; } = new(null);

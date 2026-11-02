@@ -27,6 +27,7 @@ public sealed partial class SessionHostTests
         public void SignInNeeded(IWriteScope s, SessionObservation o, string acp, long seq, AuthTerminalProof p) => inner.SignInNeeded(s, o, acp, seq, p);
         public void BlockFailedOpenSignInNeeded(IWriteScope s, SessionObservation o, AuthTerminalProof p) => inner.BlockFailedOpenSignInNeeded(s, o, p);
         public void FailedOpenSignInNeeded(IWriteScope s, SessionObservation o, long seq, AuthTerminalProof p) => inner.FailedOpenSignInNeeded(s, o, seq, p);
+        public void RetryStarted(IWriteScope s, SessionObservation o, AuthRetryExecution e) => inner.RetryStarted(s, o, e);
         public void Replied(IWriteScope s, SessionObservation o, SessionTurnReply final) => inner.Replied(s, o, final);
         public void Recovered(IWriteScope s, RecoveredChatTurn recovered) => inner.Recovered(s, recovered);
         public bool Complete(IWriteScope s, SessionObservation o, string acp, SessionTurnFinalization final)

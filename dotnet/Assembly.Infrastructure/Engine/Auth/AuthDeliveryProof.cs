@@ -14,17 +14,22 @@ internal static class AuthDeliveryProof
 {
     internal static AuthTerminalProof? Read(IReadScope scope, Effect effect, MessageDelivery delivery, UserDeliveryRow row)
     {
-        if (row.RunId is null || row.RetryExecution is not null) throw new CallFailed("bad_receipt");
+        if (row.RunId is null) throw new CallFailed("bad_receipt");
+        var execution = row.RetryExecution;
+        if (execution is not null && (execution.EffectId != effect.Id || execution.MessageId != delivery.Intent.MessageId ||
+            execution.ClientId != row.ClientId || execution.Epoch != delivery.Epoch || execution.UserRowSeq != row.Seq || execution.UserRunId != row.RunId ||
+            !EngineCommands.IsAcceptedAuthRetryStarted(scope, delivery.Intent.ToSessionId, execution))) throw new CallFailed("bad_receipt");
+        var run = execution?.ChatRunId ?? row.RunId;
         var terminals = scope.Query("""
             SELECT seq,payload FROM rows INDEXED BY rows_auth_terminal
             WHERE session_id=$session AND run_id=$run AND json_extract(payload,'$.authFailure.delivery.effectId')=$effect
               AND kind='turn' AND json_type(payload,'$.authFailure')='object' ORDER BY seq LIMIT 2
             """, r => new { Seq = r.Long(0), Turn = JsonSerializer.Deserialize(r.Text(1), EngineJson.Default.TurnPayload) },
-            new SqlArg("$session", delivery.Intent.ToSessionId), new("$run", row.RunId), new("$effect", effect.Id));
+            new SqlArg("$session", delivery.Intent.ToSessionId), new("$run", run), new("$effect", effect.Id));
         if (terminals.Count == 0) return null;
         if (terminals.Count != 1 || terminals[0].Turn is not { State: "failed", AuthFailure: { } proof } ||
             row.Text != delivery.Intent.Text || row.From != delivery.FromSessionId || row.SenderLabel != delivery.Label ||
-            row.ClientId != delivery.Intent.ClientId || proof.ClientId != row.ClientId || proof.ChatRunId != row.RunId ||
+            row.ClientId != delivery.Intent.ClientId || proof.ClientId != row.ClientId || proof.ChatRunId != run ||
             proof.Epoch != delivery.Epoch || proof.Delivery is not { } original || original.MessageId != delivery.Intent.MessageId ||
             original.EffectId != effect.Id || original.ClientId != row.ClientId || original.UserRowSeq != row.Seq || original.UserRunId != row.RunId ||
             original.ClaimAttempt <= 0 || original.ClaimAttempt > effect.Attempt || row.AuthBlocker is not { } blocker ||

@@ -14,22 +14,24 @@ namespace Assembly.Infrastructure.Engine;
 
 public sealed partial class AdapterEffects
 {
-    private EffectReceipt? Positive(IReadScope scope, MessageDelivery delivery)
+    private EffectReceipt? Positive(IReadScope scope, Effect effect, MessageDelivery delivery)
     {
         var row = rows.UserDeliveryOfClient(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId);
         if (row is null || row.Text != delivery.Intent.Text || row.From != delivery.FromSessionId || row.SenderLabel != delivery.Label || !RowStore.Positive(row.Acknowledgment)) return null;
+        if (row.RetryExecution is { } retry && !RetryMatches(scope, effect, delivery, row, retry)) throw new CallFailed("bad_receipt");
         return row.Acknowledgment!.Kind == "prompt_inserted"
-            ? MessageReceipt("next_turn", row.Acknowledgment.ProviderMessageId, null)
+            ? MessageReceipt("next_turn", row.Acknowledgment.ProviderMessageId, null,
+                row.RetryExecution is null ? null : new(row.Seq, row.RunId!, delivery.Epoch), row.RetryExecution)
             : MessageReceipt("delivered_to_turn", null, null);
     }
 
     private EffectReceipt ReconcileAuthDelivery(IReadScope scope, Effect effect, MessageDelivery delivery)
     {
-        if (Positive(scope, delivery) is { } positive) return positive;
+        if (Positive(scope, effect, delivery) is { } positive) return positive;
         var row = rows.UserDeliveryOfClient(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId);
         if (row is not null && AuthDeliveryProof.Read(scope, effect, delivery, row) is { Version: 1, ProviderMessageId: { } provider } proof &&
             !string.IsNullOrWhiteSpace(provider))
-            return MessageReceipt("next_turn", provider, null, new(row.Seq, proof.Delivery!.UserRunId, proof.Epoch));
+            return MessageReceipt("next_turn", provider, null, new(row.Seq, proof.Delivery!.UserRunId, proof.Epoch), row.RetryExecution);
         return Receipt(EffectDisposition.Unknown, "delivery_unknown");
     }
 
@@ -57,7 +59,8 @@ public sealed partial class AdapterEffects
             { reference = original; priorId = previous.Id; }
         }
         return new(effect.Id, intent.MessageId, effect.Attempt, intent.ToSessionId, intent.ClientId, intent.Text,
-            delivery.Label, delivery.Epoch, reference, intent.AttachmentIds ?? [], priorId, delivery.FromSessionId);
+            delivery.Label, delivery.Epoch, reference, intent.AttachmentIds ?? [], priorId, delivery.FromSessionId,
+            scope.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.IsNull(0) ? (long?)null : r.Long(0), new SqlArg("$id", intent.MessageId)));
     }
 
     public MessageOutcome? ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt, MessageDelivery delivery)
@@ -70,6 +73,8 @@ public sealed partial class AdapterEffects
         var row = rows.UserDeliveryOfClient(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId)
             ?? throw new CallFailed("delivery_ack_conflict");
         if (row.Text != delivery.Intent.Text || row.From != delivery.FromSessionId || row.SenderLabel != delivery.Label) throw new CallFailed("delivery_ack_conflict");
+        if (data.RetryExecution != row.RetryExecution || data.RetryExecution is { } retry && !RetryMatches(scope, effect, delivery, row, retry))
+            throw new CallFailed("delivery_ack_conflict");
         if (data.UserRow is { } reference)
         {
             if (reference.Seq != row.Seq || reference.RunId != row.RunId || reference.Epoch != delivery.Epoch)
@@ -89,4 +94,9 @@ public sealed partial class AdapterEffects
             throw new CallFailed("bad_receipt");
         return new("failed", data.ProviderTurnId, "inserted_before_sign_in");
     }
+
+    private static bool RetryMatches(IReadScope scope, Effect effect, MessageDelivery delivery, UserDeliveryRow row, AuthRetryExecution retry) =>
+        retry.EffectId == effect.Id && retry.ClaimAttempt > 0 && retry.ClaimAttempt <= effect.Attempt && retry.MessageId == delivery.Intent.MessageId &&
+        retry.ClientId == delivery.Intent.ClientId && retry.Epoch == delivery.Epoch && retry.UserRowSeq == row.Seq && retry.UserRunId == row.RunId &&
+        retry.ChatRunId != row.RunId && global::Assembly.Engine.EngineCommands.IsAcceptedAuthRetryStarted(scope, delivery.Intent.ToSessionId, retry);
 }

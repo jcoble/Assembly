@@ -8,6 +8,18 @@ namespace Assembly.Engine.Persistence;
 
 public static partial class EngineJournal
 {
+    internal static bool IsAcceptedAuthRetryStarted(IReadScope scope, string machine, string sessionId, AuthRetryExecution execution)
+    {
+        if (!Guid.TryParse(execution.ChatRunId, out var id)) return false;
+        var context = AuthRetryStart.Context(machine, 0, execution);
+        var canonical = JsonSerializer.Serialize<EngineCommand>(new RecordAuthRetryStarted(sessionId, execution), EngineJson.Default.EngineCommand);
+        var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$id",
+            r => new { Fingerprint = r.Text(0), Result = r.Text(1) }, new SqlArg("$id", id.ToString("N")));
+        if (receipt is null || receipt.Fingerprint != Fingerprint(context, canonical)) return false;
+        try { return JsonSerializer.Deserialize(receipt.Result, EngineJson.Default.CommandResult)?.Applied == true && AuthRetryStart.Started(scope, sessionId, execution); }
+        catch (JsonException) { return false; }
+    }
+
     internal static bool IsAcceptedAuthTerminal(IReadScope scope, string machine, string sessionId, long terminalSeq, AuthTerminalProof proof)
     {
         var context = AuthTransitions.ReportContext(machine, 0, proof);
