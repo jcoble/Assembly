@@ -270,11 +270,17 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        var relayLeases = StopRelayLeases();
+        await _socketSend.WaitAsync();
+        try { _ownerStopping = true; InvalidateEngine(); }
+        finally { _socketSend.Release(); }
         await Terminals.DisposeAsync();
         await _socketStop.CancelAsync();
         await _follower.DisposeAsync();
         if (_socketRun is not null) await _socketRun;
+        await Task.WhenAll(relayLeases);
         _bulkSocket?.Dispose();
+        await Task.WhenAll(_ownerCancellations);
         _socketStop.Dispose();
         _socketSend.Dispose();
         _bulkCall.Dispose();

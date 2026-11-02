@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Database;
+using Assembly.Engine.Providers;
 
 namespace Assembly.Engine.Persistence;
 
@@ -23,20 +24,23 @@ public static class EngineSchema
         if (meta.Machine is null)
         {
             scope.Execute(Create);
+            scope.Execute(ProviderSchema.Create);
             scope.Execute(CreateMirrors);
             projectionSchema?.Invoke(scope);
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,6,$machine,1,0,0);
+                VALUES(1,8,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version == 6)
+        if (meta.Version is 6 or 7 or 8)
         {
             projectionSchema?.Invoke(scope);
+            if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
+            if (meta.Version < 8) AuthSchemaUpgrade.Apply(scope);
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -53,6 +57,8 @@ public static class EngineSchema
         else projectionSchema?.Invoke(scope);
         if (meta.Version < 5) ComposerSchemaUpgrade.Apply(scope);
         MessageExpirySchemaUpgrade.Apply(scope, expiryMinutes);
+        NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
+        AuthSchemaUpgrade.Apply(scope);
         return new(meta.Machine, meta.Version);
     }
 
@@ -65,7 +71,7 @@ public static class EngineSchema
         ALTER TABLE engine_message ADD COLUMN client_id TEXT NULL;
         """;
 
-    private const string Shared = """
+    internal const string Shared = """
         id TEXT PRIMARY KEY, version INTEGER NOT NULL, machine TEXT NOT NULL,
         created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL, task_url TEXT NULL,
         """;
@@ -121,6 +127,7 @@ public static class EngineSchema
             step_id TEXT REFERENCES engine_step(id), kind TEXT NOT NULL, text TEXT NOT NULL,
             options_json TEXT NOT NULL CHECK(json_valid(options_json)), provider_request_id TEXT, chat_row_id TEXT,
             state TEXT NOT NULL, deadline_ms INTEGER,
+            addressee_session_id TEXT NULL REFERENCES engine_session(id),
             answer_json TEXT CHECK(answer_json IS NULL OR json_valid(answer_json)), answered_by TEXT, answered_ms INTEGER);
         CREATE TABLE engine_message ({{Shared}}
             from_session_id TEXT REFERENCES engine_session(id), sender_kind TEXT NOT NULL,
@@ -159,7 +166,7 @@ public static class EngineSchema
             event_seq INTEGER NOT NULL, session_id TEXT REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),
             kind TEXT NOT NULL, payload_json TEXT NOT NULL CHECK(json_valid(payload_json)), state TEXT NOT NULL,
             attempt INTEGER NOT NULL, next_ms INTEGER, receipt_json TEXT CHECK(receipt_json IS NULL OR json_valid(receipt_json)),
-            last_error TEXT);
+            last_error TEXT, order_key TEXT NOT NULL DEFAULT '');
         CREATE TABLE engine_command_receipt (
             command_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result_json TEXT NOT NULL CHECK(json_valid(result_json)));
         CREATE TABLE engine_step_dependency (
@@ -182,6 +189,7 @@ public static class EngineSchema
             WHERE provider_request_id IS NOT NULL;
         CREATE INDEX engine_outbox_state_next ON engine_outbox(state,next_ms);
         CREATE INDEX engine_outbox_session_order ON engine_outbox(session_id,event_seq);
+        {{AuthSchemaUpgrade.OrderIndex}}
         CREATE INDEX engine_tool_call_session_time ON engine_tool_call(session_id,started_ms);
         CREATE INDEX engine_tool_call_run_time ON engine_tool_call(run_id,started_ms);
         CREATE INDEX engine_tool_call_step_attempt_time ON engine_tool_call(step_id,attempt,started_ms);

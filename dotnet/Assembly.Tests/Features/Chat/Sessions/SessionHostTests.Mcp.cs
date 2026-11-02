@@ -20,7 +20,7 @@ public sealed partial class SessionHostTests
             cutover: new(_database, _sessionStore, _launcher, "checkouts", _time), effectsReady: endpoint.Ready);
         var callbacks = McpSessionCallbacks.Create(runtime, endpoint, tokens);
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work,
-            feed: new EngineFeed(runtime, _log), mcp: callbacks);
+            feed: new EngineFeed(runtime, _log, _time), mcp: callbacks);
         var host = registry.For(_session.SessionId);
         Assert.NotNull(host.Send("first"));
         var agent = await _launcher.NextAsync();

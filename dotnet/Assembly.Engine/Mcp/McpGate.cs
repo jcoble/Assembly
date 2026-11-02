@@ -6,6 +6,8 @@ namespace Assembly.Engine.Mcp;
 
 public sealed class McpGate(IEngineRuntime runtime, SessionLimits limits, TimeProvider time)
 {
+    public string Machine => runtime.Machine;
+
     public T Write<T>(McpCaller caller, Func<McpWrite, T> body) => runtime.Write(scope =>
         body(new(Require(scope, caller), scope, runtime, limits, time)));
 

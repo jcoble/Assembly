@@ -14,12 +14,14 @@ internal static class DisplayQueries
         "session" => "provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,lost_ms",
         "run" => "owner_session_id,worktree,branch,pr_id,state,owner_loss_limit_ms,owner_lost_ms",
         "step" => "run_id,name,session_id,state,attempt,max_attempts,required,rule_skippable,started_ms,ended_ms,outcome_reason",
-        "needs_me" => "session_id,run_id,step_id,kind,text,options_json,state,deadline_ms,answered_by,answered_ms",
+        "needs_me" => "session_id,run_id,step_id,kind,text,options_json,state,deadline_ms,answered_by,answered_ms,addressee_session_id",
         "message" => "from_session_id,sender_kind,to_session_id,run_id,step_id,text,mode,state,reason,expires_ms",
         "handoff" => "session_id,old_holder,new_holder,old_epoch,next_epoch,state,reason",
         "pr" => "run_id,repo,number,head,state,reported_by,reported_state,observed_head,observed_ms,url",
         "tool_call" => "session_id,run_id,step_id,attempt,epoch,tool,input_preview,output_preview,input_bytes,output_bytes,started_ms,ended_ms,outcome,late",
         "usage" => "session_id,run_id,step_id,attempt,epoch,input_tokens,output_tokens,cached_tokens,cost_nanodollars,duration_ms,late",
+        "provider" => "provider,account_context,installation,auth_state,reason,facts_json,checked_ms",
+        "sign_in" => "provider,account_context,method_id,state,reason,deadline_ms,origin_need_id",
         _ => throw new ArgumentException("Unknown entity kind", nameof(kind))
     });
 
@@ -115,13 +117,14 @@ internal static class DisplayQueries
 
     internal static string[] Kinds(string topic) => topic switch
     {
-        "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr"],
+        "mirror" => ["session", "run", "step", "needs_me", "message", "handoff", "pr", "provider", "sign_in"],
         "runs" => ["run", "step", "handoff"],
         "sessions" => ["session", "handoff"],
         "needs_me" => ["needs_me"],
         "messages" => ["message"],
         "prs" => ["pr"],
         "usage" => ["usage", "tool_call"],
+        "providers" => ["provider", "sign_in"],
         _ => throw new ArgumentException("Unknown topic", nameof(topic))
     };
 

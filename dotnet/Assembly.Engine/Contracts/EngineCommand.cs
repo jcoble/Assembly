@@ -1,4 +1,5 @@
 using Assembly.Engine.Effects;
+using Assembly.Engine.Providers;
 using Assembly.Engine.Recording;
 using System.Text.Json.Serialization;
 using Assembly.Engine.Sessions;
@@ -10,6 +11,14 @@ using Assembly.Engine.Prs;
 
 namespace Assembly.Engine.Contracts;
 
+[JsonDerivedType(typeof(CheckProvider), "check_provider")]
+[JsonDerivedType(typeof(RecordProviderCheck), "record_provider_check")]
+[JsonDerivedType(typeof(InterruptProviderCheck), "interrupt_provider_check")]
+[JsonDerivedType(typeof(StartSignIn), "start_sign_in")]
+[JsonDerivedType(typeof(SignInProgress), "sign_in_progress")]
+[JsonDerivedType(typeof(CancelSignIn), "cancel_sign_in")]
+[JsonDerivedType(typeof(ExpireSignIn), "expire_sign_in")]
+[JsonDerivedType(typeof(InterruptSignIn), "interrupt_sign_in")]
 [JsonDerivedType(typeof(ClaimEffect), "claim_effect")]
 [JsonDerivedType(typeof(RecoverEffect), "recover_effect")]
 [JsonDerivedType(typeof(EnableEffect), "enable_effect")]
@@ -25,6 +34,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(SendMessage), "send_message")]
 [JsonDerivedType(typeof(SendOwnerPrompt), "send_owner_prompt")]
 [JsonDerivedType(typeof(MessageOutcome), "message_outcome")]
+[JsonDerivedType(typeof(EstablishForeignParent), "establish_foreign_parent")]
 [JsonDerivedType(typeof(RegisterForeignSession), "register_foreign_session")]
 [JsonDerivedType(typeof(StartSession), "start_session")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]

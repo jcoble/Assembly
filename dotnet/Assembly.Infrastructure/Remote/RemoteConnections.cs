@@ -88,6 +88,9 @@ internal sealed class RemoteConnections : IAsyncDisposable
             : throw new MachineUnreachable(name, $"{name}: machine socket is disconnected");
     }
 
+    internal IReadOnlyList<(RemoteMachine Machine, EngineMirror Mirror)> CaptureMirrorOwners() =>
+        _active.Values.Select(active => (active.Machine, active.Mirror)).ToArray();
+
     private Task Queue(string name, bool connect, bool probe = false, CancellationToken cancel = default)
     {
         lock (_gate)

@@ -30,18 +30,23 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Assembly.Tests.Infrastructure.Socket;
 
-public sealed class MachineDoorTests : IAsyncLifetime
+public sealed partial class MachineDoorTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "assembly-machine-" + Guid.NewGuid().ToString("N"));
     private readonly Assembly.Infrastructure.Topics.Topics _topics = new();
     private EngineFixture _f = null!;
     private EngineRuntime _runtime = null!;
+    private MachineCalls _machineCalls = null!;
+    private RelayPausedDatabase _relayDatabase = null!;
+    private DeadlineTimeProvider _socketTime = null!;
+    private readonly TaskCompletionSource _bulkClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private SessionStore _store = null!;
     private WebApplication _app = null!;
     private Uri _address = null!;
     private readonly Launcher _launcher = new();
     private CallPeer? _peer;
     private bool _overridePeer;
+    private TaskCompletionSource? _relayWriterPrepared, _relayWriterContinue, _relayWriterClosed;
     private TaskCompletionSource? _prepared;
     private TaskCompletionSource? _continue;
 
@@ -50,14 +55,21 @@ public sealed class MachineDoorTests : IAsyncLifetime
     {
         Directory.CreateDirectory(_root);
         _f = new(topics: _topics); _store = SessionStore.Open(_f.Db, _f.Time, _root);
-        _runtime = EngineRuntime.Start(_f.Db, _topics, _f.Time, _f.Limits, cutover: new(_f.Db, _store, _launcher, _root, _f.Time));
+        _relayDatabase = new(_f.Db);
+        _socketTime = new(_f.Time);
+        _runtime = EngineRuntime.Start(_relayDatabase, _topics, _f.Time, _f.Limits, cutover: new(_f.Db, _store, _launcher, _root, _f.Time));
         var dispatcher = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
-        new MachineCalls(_runtime, _f.Time, _launcher, _root).Register(new PeerGate(dispatcher, this));
+        _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root);
+        _machineCalls.Register(new PeerGate(dispatcher, this));
+        dispatcher.Closed(_ => _bulkClosed.TrySetResult());
         new EngineCalls(_runtime, _f.Time).Register(dispatcher);
         dispatcher.Topic("peer", TestJson.Default.Note, n => n.Text, (_, c) => [new(c.Peer is OwnerPeer && c.ReplyId == 37 ? "owner" : "missing")]);
         var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders(); builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         _app = builder.Build(); _app.UseWebSockets();
-        var endpoint = new SocketEndpoint("token", dispatcher, _runtime.Machine, _f.Time);
+        var endpoint = new SocketEndpoint("token", dispatcher, _runtime.Machine, _socketTime);
+        var bulkEndpoint = new SocketEndpoint("token", dispatcher, _runtime.Machine, _socketTime, bulk: true);
+        _app.Map("/socket/bulk", bulkEndpoint.HandleAsync);
+        _app.Lifetime.ApplicationStopping.Register(bulkEndpoint.CloseAll);
         _app.Map("/socket", endpoint.HandleAsync); _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
         await _app.StartAsync();
         var http = new Uri(_app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
@@ -66,7 +78,7 @@ public sealed class MachineDoorTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        await _app.DisposeAsync(); await _runtime.DisposeAsync(); _f.Dispose(); Directory.Delete(_root, true);
+        await _app.DisposeAsync(); await _machineCalls.DisposeAsync(); await _runtime.DisposeAsync(); _f.Dispose(); Directory.Delete(_root, true);
     }
 
     [Fact]
@@ -295,6 +307,11 @@ public sealed class MachineDoorTests : IAsyncLifetime
             if (a is MachineCommand { Command: StartSession } && fixture._prepared is { } prepared)
             {
                 prepared.TrySetResult(); await fixture._continue!.Task.WaitAsync(c.Cancellation);
+            }
+            if (a is Assembly.Engine.Relays.RelaySendCommitArgs && fixture._relayWriterPrepared is { } relayPrepared)
+            {
+                using var closed = c.Closed.Register(() => fixture._relayWriterClosed!.TrySetResult());
+                relayPrepared.TrySetResult(); await fixture._relayWriterContinue!.Task;
             }
             return write;
         }, order, failed, bulk);

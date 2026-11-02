@@ -3,6 +3,7 @@ using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Database;
 using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
+using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -20,5 +21,10 @@ public interface ISessionFeed
     void PolicyAnswered(IWriteScope scope, SessionObservation observed, JsonRpcRequestContext request, string method, JsonElement outcome);
     void Connected(IWriteScope scope, SessionObservation observed, string acpSessionId, bool canSteer);
     void Lost(IWriteScope scope, SessionObservation observed, string reason);
+    void Replied(IWriteScope scope, SessionObservation observed, SessionTurnReply final);
+    void Recovered(IWriteScope scope, RecoveredChatTurn recovered);
     bool Complete(IWriteScope scope, SessionObservation observed, string acpSessionId, SessionTurnFinalization final);
 }
+
+public sealed record SessionTurnReply(string ChatRunId, string? AcpSessionId,
+    string? ProviderMessageId, bool SelfStarted, long EndedAt);

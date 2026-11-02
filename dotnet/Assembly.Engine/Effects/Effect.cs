@@ -6,7 +6,8 @@ using Assembly.Engine.Contracts;
 namespace Assembly.Engine.Effects;
 
 public sealed record Effect(string Id, string Kind, string? SessionId, string? RunId,
-    JsonElement Payload, int Attempt);
+    JsonElement Payload, int Attempt,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? OrderKey = null);
 public enum EffectDisposition { Confirmed, TransientFailure, Unavailable, Failed, Unknown }
 public sealed record EffectReceipt(EffectDisposition Disposition, JsonElement Data, string? Error);
 public interface IEngineEffects

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Domain.Events;
-using Assembly.Application.Features.Chat.Helpers;
+using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
 using Assembly.Domain.Rows;

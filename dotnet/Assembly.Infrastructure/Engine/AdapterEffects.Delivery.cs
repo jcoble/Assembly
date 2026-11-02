@@ -49,14 +49,13 @@ public sealed partial class AdapterEffects
             delivery.Label, delivery.Epoch, reference, intent.AttachmentIds ?? [], priorId, delivery.FromSessionId);
     }
 
-    public void ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt)
+    public MessageOutcome? ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt, MessageDelivery delivery)
     {
-        if (effect.Kind != "send") return;
+        if (effect.Kind != "send") return null;
         if (!Owns(scope, effect)) throw new CallFailed("delivery_ack_conflict");
-        var delivery = MessageDelivery.Read(scope, effect) ?? throw new CallFailed("delivery_ack_conflict");
         if (context.Epoch != delivery.Epoch) throw new CallFailed("delivery_ack_conflict");
         var data = receipt.Data.Deserialize(global::Assembly.Engine.EngineJson.Default.MessageEffectData)!;
-        if (data.State is not ("next_turn" or "delivered_to_turn") && data.UserRow is null) return;
+        if (data.State is not ("next_turn" or "delivered_to_turn") && data.UserRow is null) return null;
         var row = rows.UserDeliveryOfClient(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId)
             ?? throw new CallFailed("delivery_ack_conflict");
         if (row.Text != delivery.Intent.Text || row.From != delivery.FromSessionId || row.SenderLabel != delivery.Label) throw new CallFailed("delivery_ack_conflict");
@@ -66,7 +65,7 @@ public sealed partial class AdapterEffects
                 throw new CallFailed("delivery_ack_conflict");
         }
         else if (!RowStore.Positive(row.Acknowledgment)) throw new CallFailed("delivery_ack_conflict");
-        if (data.State == "queued" && data.Reason == "auth_required") return;
+        if (data.State == "queued" && data.Reason == "auth_required") return null;
         var acknowledgment = data.State switch
         {
             "next_turn" when !string.IsNullOrWhiteSpace(data.ProviderTurnId) => new UserAcknowledgment("prompt_inserted", data.ProviderTurnId),
@@ -74,5 +73,6 @@ public sealed partial class AdapterEffects
             _ => throw new CallFailed("delivery_ack_conflict")
         };
         rows.AcknowledgeUser(scope, delivery.Intent.ToSessionId, delivery.Intent.ClientId, acknowledgment);
+        return null;
     }
 }

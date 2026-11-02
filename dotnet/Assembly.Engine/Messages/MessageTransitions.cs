@@ -6,12 +6,16 @@ using Assembly.Engine.Sessions;
 
 namespace Assembly.Engine.Messages;
 
-public static class MessageTransitions
+public static partial class MessageTransitions
 {
     private sealed record Message(string Id, long Version, string? From, string To, string Text, string Mode, string State);
     private sealed record Recipient(long Epoch, string State, bool CancelRequested, string? RunId, string Machine);
 
-    public static CommandResult Apply(IWriteScope s, CommandContext c, MessageCommand command, int messageLimit = 20, MessageExpiryPolicy? expiryPolicy = null)
+    public static CommandResult Apply(IWriteScope s, CommandContext c, MessageCommand command, int messageLimit = 20, MessageExpiryPolicy? expiryPolicy = null) =>
+        ApplyCore(s, c, command, messageLimit, expiryPolicy, null);
+
+    private static CommandResult ApplyCore(IWriteScope s, CommandContext c, MessageCommand command, int messageLimit,
+        MessageExpiryPolicy? expiryPolicy, RelayEffectAssertion? assertion)
     {
         if (string.IsNullOrWhiteSpace(c.EntityId))
             return Refused(c, "bad_args");
@@ -35,7 +39,7 @@ public static class MessageTransitions
         if (outcome.State is not ("queued" or "delivered_to_turn" or "next_turn" or "unsupported" or "failed"))
             return Refused(c, "bad_args", current.Version);
         if (recipient.State == "foreign" || recipient.Machine != c.Machine)
-            return ForeignOutcome(s, c, current, recipient, outcome);
+            return ForeignOutcome(s, c, current, recipient, outcome, assertion);
         if (c.Actor.Id.StartsWith("machine:", StringComparison.Ordinal))
             return Refused(c, "forbidden", current.Version);
         if (current.State == "held")
@@ -69,6 +73,7 @@ public static class MessageTransitions
             """, r => r.Long(0), new SqlArg("$id", current.Id));
         if (outcome.State != "queued" || outcome.Reason == "not_delivered" || recipientVersion != releasedVersion)
             ReleaseNext(s, c, current.To, effects, events);
+        assertion?.Validate(s, c, effects);
         return EngineJournal.Commit(s, c, Find(s, current.Id)!.Version, c.Epoch, events, effects);
     }
 
@@ -107,7 +112,7 @@ public static class MessageTransitions
         return EngineJournal.Commit(s, captured, Find(s, message.Id)!.Version, recipient.Epoch, events, effects);
     }
 
-    private static CommandResult ForeignOutcome(IWriteScope s, CommandContext c, Message current, Recipient recipient, MessageOutcome outcome)
+    private static CommandResult ForeignOutcome(IWriteScope s, CommandContext c, Message current, Recipient recipient, MessageOutcome outcome, RelayEffectAssertion? assertion)
     {
         if (recipient.State != "foreign" || recipient.Machine == c.Machine || c.Actor.Id != "machine:" + recipient.Machine)
             return Refused(c, "forbidden", current.Version);
@@ -117,10 +122,11 @@ public static class MessageTransitions
             """, new("$now", c.NowMs), new("$state", outcome.State), new("$turn", outcome.ProviderTurnId),
             new("$reason", outcome.Reason), new("$id", current.Id));
         var updated = current with { Version = current.Version + 1, State = outcome.State };
+        assertion?.Validate(s, c, []);
         return EngineJournal.Commit(s, c, updated.Version, c.Epoch, [Changed(c, updated)], []);
     }
 
-    private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit, MessageExpiryPolicy? expiryPolicy, byte[]? bodyUtf8 = null)
+    private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit, MessageExpiryPolicy? expiryPolicy, byte[]? bodyUtf8 = null, byte[]? labelUtf8 = null, string? senderKind = null, RelayEffectAssertion? assertion = null)
     {
         var peer = c.Actor.Kind == ActorKind.System && c.Actor.Id.StartsWith("machine:", StringComparison.Ordinal);
         if (!peer && (c.Actor.Kind == ActorKind.Window ? command.FromSessionId is not null :
@@ -157,7 +163,7 @@ public static class MessageTransitions
             return Refused(c, "message_limit");
         var message = new Message(c.EntityId, 1, command.FromSessionId, command.ToSessionId, command.Text,
             command.Mode, command.Mode == "interrupt" && !foreignRecipient ? "held" : "queued");
-        Insert(s, c, message, c.Actor.Kind == ActorKind.Window ? "window" : "session", null, expiryPolicy, bodyUtf8);
+        Insert(s, c, message, senderKind ?? (c.Actor.Kind == ActorKind.Window ? "window" : "session"), null, expiryPolicy, bodyUtf8, labelUtf8);
         List<EffectDraft> effects = [];
         List<EventDraft> events = [Changed(c, message)];
         if (message.State == "queued" && !foreignRecipient)
@@ -172,6 +178,7 @@ public static class MessageTransitions
             effects.Add(new($"message-stop/{message.Id}", "stop", message.To, recipient.RunId,
                 JsonSerializer.SerializeToElement(new Sessions.StopSession(), EngineJson.Default.StopSession)));
         }
+        assertion?.Validate(s, c, effects);
         return EngineJournal.Commit(s, c, Find(s, message.Id)!.Version, c.Epoch, events, effects);
     }
 
@@ -236,7 +243,7 @@ public static class MessageTransitions
         }
     }
 
-    private static void Insert(IWriteScope s, CommandContext c, Message message, string senderKind, string? reason, MessageExpiryPolicy? expiryPolicy, byte[]? bodyUtf8 = null)
+    private static void Insert(IWriteScope s, CommandContext c, Message message, string senderKind, string? reason, MessageExpiryPolicy? expiryPolicy, byte[]? bodyUtf8 = null, byte[]? labelUtf8 = null)
     {
         long? expiresMs = message.State is "queued" or "held" ? (expiryPolicy ?? new()).Deadline(s, c.NowMs) : null;
         s.Execute("""
@@ -245,10 +252,10 @@ public static class MessageTransitions
             """, new("$id", message.Id), new("$machine", c.Machine), new("$now", c.NowMs), new("$from", message.From),
             new("$sender", senderKind), new("$to", message.To), new("$text", bodyUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(message.Text)), new("$mode", message.Mode),
             new("$state", message.State), new("$reason", reason), new("$expires", expiresMs));
-        var title = message.From is null ? null : s.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id=$id", r => new System.Text.UTF8Encoding(false, true).GetString(r.Blob(0)), new SqlArg("$id", message.From));
+        var title = labelUtf8 is not null || message.From is null ? null : s.QueryFirst("SELECT CAST(title AS BLOB) FROM engine_session WHERE id=$id", r => new System.Text.UTF8Encoding(false, true).GetString(r.Blob(0)), new SqlArg("$id", message.From));
         s.Execute("UPDATE engine_message SET delivery=$delivery,sender_label=CAST($label AS TEXT) WHERE id=$id",
             new("$delivery", DeliveryRule.For(s, message.From, senderKind, message.To)),
-            new("$label", new System.Text.UTF8Encoding(false, true).GetBytes(MessageText.Label(title, message.From, senderKind))), new("$id", message.Id));
+            new("$label", labelUtf8 ?? new System.Text.UTF8Encoding(false, true).GetBytes(MessageText.Label(title, message.From, senderKind))), new("$id", message.Id));
     }
 
     private static EventDraft Changed(CommandContext c, Message message) => new("message.changed", "message", message.Id,

@@ -8,6 +8,7 @@ using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
+using Assembly.Engine.Providers;
 
 namespace Assembly.Engine.Execution;
 
@@ -117,6 +118,12 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
             WHERE n.state='open' AND n.deadline_ms<=$now ORDER BY n.deadline_ms LIMIT 100
             """, r => new Candidate(r.Text(0), r.Long(1), "", r.Long(2)), new SqlArg("$now", now));
         foreach (var need in needs) Apply(s, need, new ResolveNeed("expired", null));
+        var signIns = s.Query("""
+            SELECT id,version,state FROM engine_sign_in
+            WHERE machine=$machine AND state IN ('starting','waiting_for_person','finishing') AND deadline_ms<=$now
+            ORDER BY deadline_ms,id LIMIT 100
+            """, r => new Candidate(r.Text(0), r.Long(1), r.Text(2), 0), new SqlArg("$machine", machine), new("$now", now));
+        foreach (var signIn in signIns) Apply(s, signIn, new ExpireSignIn());
         var runs = s.Query("""
             SELECT r.id,r.version,se.epoch FROM engine_run r JOIN engine_session se ON se.id=r.owner_session_id
             WHERE r.state NOT IN ('succeeded','failed','cancelled','cancelling') AND se.state='lost'
@@ -137,18 +144,19 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         var deadline = s.QueryFirst("""
             SELECT MIN(deadline) FROM (
                 SELECT MIN(deadline_ms) deadline FROM engine_needs_me WHERE state='open'
+                UNION ALL SELECT MIN(deadline_ms) FROM engine_sign_in WHERE machine=$machine AND state IN ('starting','waiting_for_person','finishing')
                 UNION ALL SELECT MIN(owner_lost_ms+owner_loss_limit_ms) FROM engine_run
                   WHERE state NOT IN ('succeeded','failed','cancelled','cancelling') AND owner_lost_ms IS NOT NULL)
-            """, r => r.IsNull(0) ? (long?)null : r.Long(0));
+            """, r => r.IsNull(0) ? (long?)null : r.Long(0), new SqlArg("$machine", machine));
         if (effects is not null && claim is null)
         {
             var available = AvailableOwners();
-            deadline = Earlier(deadline, s.QueryFirst($"SELECT MIN(next_ms) FROM engine_outbox WHERE state IN ('pending','uncertain') AND {EffectTransitions.NoEarlierUnresolved} {available.Sql}",
+            deadline = Earlier(deadline, s.QueryFirst($"SELECT MIN(next_ms) FROM engine_outbox WHERE kind<>'parent_need' AND state IN ('pending','uncertain') AND {EffectTransitions.NoEarlierUnresolved} {available.Sql}",
                 r => r.IsNull(0) ? (long?)null : r.Long(0), available.Args));
         }
         retention.Apply(s, now);
         _retentionDeadline = retention.NextDeadlineMs(s, now);
-        return (claim, Earlier(Earlier(deadline, MessageExpiry.NextDeadline(s, machine)), _retentionDeadline), expiry.More || needs.Count == 100 || runs.Count == 100);
+        return (claim, Earlier(Earlier(deadline, MessageExpiry.NextDeadline(s, machine)), _retentionDeadline), expiry.More || needs.Count == 100 || runs.Count == 100 || signIns.Count == 100);
     }
 
     private void Complete(Candidate claimed, EffectReceipt receipt)
@@ -174,15 +182,15 @@ public sealed class EngineWorker(IAppDatabase db, EngineCommands commands, strin
         row.Id, row.Version, row.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
     private CommandResult Apply(IWriteScope s, Candidate row, EngineCommand command) => commands.Apply(s, Context(row), command);
     private static List<Candidate> Candidates(IWriteScope s, string predicate, int limit = 100, params SqlArg[] args) => s.Query($"""
-        SELECT id,version,state,COALESCE((SELECT epoch FROM engine_session WHERE id=engine_outbox.session_id),0),COALESCE(session_id,'effect/'||id)
-        FROM engine_outbox WHERE {predicate} ORDER BY event_seq,rowid LIMIT {limit}
+        SELECT id,version,state,COALESCE((SELECT epoch FROM engine_session WHERE id=engine_outbox.session_id),0),order_key
+        FROM engine_outbox WHERE kind<>'parent_need' AND {predicate} ORDER BY event_seq,rowid LIMIT {limit}
         """, r => new Candidate(r.Text(0), r.Long(1), r.Text(2), r.Long(3), r.Text(4)), args);
 
     private (string Sql, SqlArg[] Args) AvailableOwners()
     {
         var args = _active.Keys.Select((owner, i) => new SqlArg("$active" + i, owner)).ToArray();
         return args.Length == 0 ? ("", args) :
-            ($"AND COALESCE(session_id,'effect/'||id) NOT IN ({string.Join(',', args.Select(arg => arg.Name))})", args);
+            ($"AND order_key NOT IN ({string.Join(',', args.Select(arg => arg.Name))})", args);
     }
 
     private async Task<EffectReceipt> ExecuteAsync(Effect effect, bool reconcile, CancellationToken cancellationToken)

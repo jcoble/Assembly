@@ -2,13 +2,36 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.NeedsMe;
 
 namespace Assembly.Engine.Persistence;
 
-/// <summary>Exact generated canonical bytes for the two prepared title/helper string fields.</summary>
+internal delegate void CanonicalVisitor(ReadOnlySpan<byte> bytes);
+
+/// <summary>Exact generated canonical bytes for the prepared title/helper string fields and relay identities.</summary>
 internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, string Sha256, long Utf8Bytes)
 {
     internal static PreparedTextJson Create(EngineCommand emptyCommand, string property, string? value)
+    {
+        using var sink = new CanonicalSink(CancellationToken.None);
+        var kind = VisitCanonical(emptyCommand, property, value, sink.Write);
+        return sink.Finish(kind);
+    }
+
+    internal static PreparedTextJson CreateNeed(NeedCommand command, CancellationToken cancellationToken)
+    {
+        var kind = command switch
+        {
+            OpenNeed => "open_need",
+            ResolveNeed => "resolve_need",
+            _ => throw new ArgumentException("Unsupported prepared need command.", nameof(command))
+        };
+        using var sink = new CanonicalSink(cancellationToken);
+        JsonSerializer.Serialize(sink, (EngineCommand)command, EngineJson.Default.EngineCommand);
+        return sink.Finish(kind);
+    }
+
+    internal static string VisitCanonical(EngineCommand emptyCommand, string property, string? value, CanonicalVisitor visit)
     {
         if (property is not ("title" or "text")) throw new ArgumentOutOfRangeException(nameof(property));
         var empty = JsonSerializer.SerializeToUtf8Bytes(emptyCommand, EngineJson.Default.EngineCommand);
@@ -23,32 +46,57 @@ internal sealed record PreparedTextJson(string Kind, string? SmallCanonical, str
             start = checked((int)reader.TokenStartIndex); end = checked((int)reader.BytesConsumed);
         }
         if (start < 0) throw new InvalidOperationException("Prepared command string field is missing.");
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        using var prefix = new MemoryStream(32 * 1024);
-        long length = 0;
-        void Add(ReadOnlySpan<byte> bytes)
-        {
-            hash.AppendData(bytes); length = checked(length + bytes.Length);
-            if (prefix.Length < 32 * 1024) prefix.Write(bytes[..Math.Min(bytes.Length, 32 * 1024 - checked((int)prefix.Length))]);
-        }
-        Add(empty.AsSpan(0, start));
-        if (value is null) Add("null"u8);
+        visit(empty.AsSpan(0, start));
+        if (value is null) visit("null"u8);
         else
         {
-            Add("\""u8);
+            visit("\""u8);
             for (var at = 0; at < value.Length;)
             {
                 var take = Math.Min(512, value.Length - at);
                 if (at + take < value.Length && char.IsHighSurrogate(value[at + take - 1])) take--;
                 var encoded = JsonSerializer.SerializeToUtf8Bytes(value.Substring(at, take), EngineJson.Default.String);
-                Add(encoded.AsSpan(1, encoded.Length - 2));
-                at += take;
+                visit(encoded.AsSpan(1, encoded.Length - 2)); at += take;
             }
-            Add("\""u8);
+            visit("\""u8);
         }
-        Add(empty.AsSpan(end));
+        visit(empty.AsSpan(end));
         using var shape = JsonDocument.Parse(empty);
-        return new(shape.RootElement.GetProperty("kind").GetString()!, length <= 32 * 1024 ? Encoding.UTF8.GetString(prefix.ToArray()) : null,
-            Convert.ToHexStringLower(hash.GetHashAndReset()), length);
+        return shape.RootElement.GetProperty("kind").GetString()!;
     }
+
+    // The same checked hash/prefix accumulator serves string substitution and generated whole-need JSON.
+    private sealed class CanonicalSink(CancellationToken cancellationToken) : Stream
+    {
+        private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        private readonly MemoryStream _prefix = new(32 * 1024);
+        private long _length;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _length;
+        public override long Position { get => _length; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+        public override void Write(ReadOnlySpan<byte> bytes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _hash.AppendData(bytes);
+            _length = checked(_length + bytes.Length);
+            if (_prefix.Length < 32 * 1024)
+                _prefix.Write(bytes[..Math.Min(bytes.Length, 32 * 1024 - checked((int)_prefix.Length))]);
+        }
+        internal PreparedTextJson Finish(string kind) => new(kind,
+            _length <= 32 * 1024 ? Encoding.UTF8.GetString(_prefix.ToArray()) : null,
+            Convert.ToHexStringLower(_hash.GetHashAndReset()), _length);
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { _hash.Dispose(); _prefix.Dispose(); }
+            base.Dispose(disposing);
+        }
+    }
+
 }

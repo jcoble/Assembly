@@ -27,7 +27,7 @@ public sealed class FeedLifecycleTests
         var events = Channel.CreateUnbounded<EngineEvent>();
         using var subscription = runtime.Publisher.Register(e => events.Writer.TryWrite(e), out _);
         var host = new SessionHost(session.SessionId, hub, store, new(store, launcher, _ => adapter), f.Time, log, work,
-            feed: new EngineFeed(runtime, log));
+            feed: new EngineFeed(runtime, log, f.Time));
         using var live = hub.Subscribe(session.SessionId, 0);
         try
         {
@@ -75,7 +75,7 @@ public sealed class FeedLifecycleTests
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits, cutover: new(f.Db, store, launcher, "checkouts", f.Time));
         f.Db.Writer.Write("test.initial", s => s.Execute("UPDATE engine_session SET state=$state", new Assembly.Application.Common.Database.SqlArg("$state", initial)));
         var host = new SessionHost(session.SessionId, hub, store, new(store, launcher, _ => adapter), f.Time, log, work,
-            feed: new EngineFeed(runtime, log));
+            feed: new EngineFeed(runtime, log, f.Time));
         try
         {
             host.Send("hi"); var agent = await launcher.NextAsync(); await agent.StartAsync(canSteer: true);
