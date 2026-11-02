@@ -48,12 +48,22 @@ public static class ConfigTargetIdentity
     public static void Validate(IAgentLauncher launcher, AgentDescriptor descriptor,
         IReadOnlyDictionary<string, string> effectiveEnvironment)
     {
+        var current = RequireSameConfiguration(launcher, descriptor, effectiveEnvironment);
+        if (current.Invalid() is not null)
+            throw new CallFailed("The selected agent configuration changed. Select it again.");
+    }
+
+    /// <summary>Checks exact captured configuration identity without treating observation as permission to launch.</summary>
+    public static AgentDescriptor RequireSameConfiguration(IAgentLauncher launcher, AgentDescriptor descriptor,
+        IReadOnlyDictionary<string, string> effectiveEnvironment)
+    {
         var current = launcher.Agents.FirstOrDefault(agent => agent.Id == descriptor.Id);
-        if (current is null || current.Invalid() is not null || current.Cli != descriptor.Cli
+        if (current is null || current.Cli != descriptor.Cli
             || current.VendorFamily != descriptor.VendorFamily
             || ConfigTargetIdentity.Of(current, effectiveEnvironment) != ConfigTargetIdentity.Of(descriptor, effectiveEnvironment)
             || current.Env?.Any(pair => !effectiveEnvironment.TryGetValue(pair.Key, out var value) || value != pair.Value) == true)
             throw new CallFailed("The selected agent configuration changed. Select it again.");
+        return current;
     }
 
     public static (AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId) Capture(IAgentLauncher launcher, string agent, string? expected = null)
