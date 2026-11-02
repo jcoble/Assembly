@@ -35,7 +35,7 @@ internal static class WorkflowRunTransitions
             r => r.Long(0), new SqlArg("$id", body.ProjectId), new("$machine", context.Machine), new("$root", body.ProjectRoot)) != 1)
             return Refuse(context, "project_not_found");
         if (!TryTaskUrl(request.Task, out var taskUrl)) return Refuse(context, "bad_args");
-        var steps = body.Snapshot.Definition.Steps.Values.Select(step => new StepDefinition(body.StepIds[step.Id], step.Id,
+        var steps = prepared.StartSteps.Select(step => new StepDefinition(body.StepIds[step.Id], step.Id,
             step.Required, step.MaxAttempts, step.Condition is not null,
             step.Needs.Select(key => new Dependency(body.StepIds[key], false)).ToArray())).ToArray();
         var created = RunTransitions.StartWorkflow(scope, context, new StartRun(request.OwnerSessionId, taskUrl, null, null, 30000, steps),
@@ -57,7 +57,7 @@ internal static class WorkflowRunTransitions
             new("$now", context.NowMs), new("$task", taskUrl), new("$inputs", body.Inputs.Hash), new("$body", prepared.BodyJson),
             new("$history", context.CommandId.ToString("N") + "/created"), new("$sessions", body.Snapshot.Definition.Limits.MaxSessions),
             new("$timeout", body.Snapshot.Definition.Limits.StepTimeoutMilliseconds), new("$rounds", body.Snapshot.Definition.Limits.MaxRounds));
-        foreach (var spec in body.Snapshot.Definition.Steps.Values)
+        foreach (var spec in prepared.StartSteps)
             scope.Execute("""
                 UPDATE engine_step SET definition_key=$key,kind=$kind,result=$result,authority_machine=$machine,
                   dispatch_state='pending' WHERE id=$id
