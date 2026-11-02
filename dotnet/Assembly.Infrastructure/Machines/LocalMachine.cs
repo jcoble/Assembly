@@ -1,4 +1,5 @@
 using Assembly.Application.Features.Chat.Attachments;
+using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Agents;
@@ -14,8 +15,8 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
 {
     public string? Name => null;
 
-    public Task<IReadOnlyList<(string Id, string Name)>> AgentsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult<IReadOnlyList<(string Id, string Name)>>(sessions.Agents.Select(agent => (agent.Id, agent.Name)).ToList());
+    public Task<IReadOnlyList<ConfigTarget>> AgentsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(sessions.ConfigTargets);
 
     public Task<SessionInfo> CreateSessionAsync(string agent, string repoUrl, CancellationToken cancellationToken) =>
         Task.FromResult(sessionStore.Create(agent, repoUrl));
@@ -23,17 +24,38 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Task.FromResult(sessionStore.Helper(parent, agent, title));
 
-    public Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken) =>
-        sessions.For(session.SessionId).SteerAsync(text, clientId, cancellationToken);
+    public async Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken)
+    {
+        var host = sessions.For(session.SessionId);
+        var fromSessionId = Assembly.Application.Features.Chat.Helpers.MessageFrame.SenderOf(text);
+        var sent = await host.SendAsync(text, clientId, null, cancellationToken, fromSessionId);
+        if (sent is SendResult.Busy)
+        {
+            var turn = host.CurrentTurn;
+            SteerResult outcome;
+            try { outcome = await host.SteerAsync(text, clientId, null, cancellationToken, fromSessionId); }
+            catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException) { return null; }
+            if (outcome == SteerResult.Injected) return turn.RunId;
+            if (outcome == SteerResult.PromptRequired && turn.RunId is not null)
+                await turn.Done.WaitAsync(cancellationToken);
+            else if (outcome != SteerResult.NotRunning) return null;
+            sent = await host.SendAsync(text, clientId, null, cancellationToken, fromSessionId);
+        }
+        return sent switch
+        {
+            SendResult.Inserted inserted => inserted.RunId,
+            SendResult.Unknown => host.LegacyRunOfClient(clientId, text, null, fromSessionId),
+            SendResult.AuthRequired => throw new Assembly.Application.Common.Calls.CallFailed("authentication required"),
+            SendResult.Failed failed => throw new Assembly.Application.Common.Calls.CallFailed(failed.Reason),
+            _ => null
+        };
+    }
 
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.Stop(runId));
 
-    // A helper session's row in its parent's session stops by the helper's session id.
     public Task<bool> StopTaskAsync(SessionInfo session, string taskId, CancellationToken cancellationToken) =>
-        sessionStore.Get(taskId) is { Helper: true } helper && helper.ParentSessionId == session.SessionId
-            ? Task.FromResult(sessions.ActiveRun(taskId) is { } run && sessions.Stop(run))
-            : sessions.For(session.SessionId).StopTaskAsync(taskId, cancellationToken);
+        sessions.For(session.SessionId).StopTaskAsync(taskId, cancellationToken);
 
     public string? ActiveRun(SessionInfo session) => sessions.ActiveRun(session.SessionId);
 

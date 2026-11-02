@@ -96,6 +96,32 @@ public sealed class PreferencesSocketTests : IAsyncLifetime
         Assert.Equal("""{"t":"state","sub":3,"items":[]}""", await ReadAsync(socket));
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    [InlineData("\"45\"")]
+    [InlineData("false")]
+    [InlineData("0.5")]
+    [InlineData("0")]
+    [InlineData("-2")]
+    [InlineData("2147483648")]
+    public async Task Invalid_expiry_socket_save_reports_field_error_without_write_or_publication(string value)
+    {
+        using var socket = await OpenAsync();
+        using var observer = await OpenAsync();
+        await SendAsync(observer, """{"t":"sub","id":3,"topic":"preferences"}""");
+        Assert.Equal("""{"t":"state","sub":3,"items":[]}""", await ReadAsync(observer));
+        await SendAsync(socket, "{\"t\":\"call\",\"id\":1,\"feature\":\"preferences\",\"method\":\"set\",\"args\":{\"key\":\"messageExpiryMinutes\",\"value\":" + value + "}}");
+        var answer = await ReadAsync(socket);
+        Assert.Contains("messageExpiryMinutes: enter a positive integer from 1 to 2147483647.", answer);
+        Assert.Equal(0, _db.QueryFirst("SELECT COUNT(*) FROM preferences", r => r.Long(0), default));
+        // A valid change is an ordered publication barrier: a rejected change must not precede it.
+        await SendAsync(socket, """{"t":"call","id":2,"feature":"preferences","method":"set","args":{"key":"theme","value":"dark"}}""");
+        Assert.Equal("""{"t":"result","id":2,"result":null}""", await ReadAsync(socket));
+        Assert.Equal("""{"t":"change","sub":3,"op":"upsert","key":"theme","item":{"key":"theme","value":"dark"}}""", await ReadAsync(observer));
+    }
+
     private async Task StartAsync()
     {
         var topics = new TopicSet();

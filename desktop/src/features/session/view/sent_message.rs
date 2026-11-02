@@ -22,6 +22,7 @@ pub struct SentMessage {
     pub text: String,
     /// The session that sent it, when another one did.
     pub sender: Option<String>,
+    pub sender_label: Option<String>,
     /// The attached images its lines name, as (path, name); a click reads one and opens it full size.
     pub images: Vec<(String, String)>,
     pub open: bool,
@@ -57,19 +58,32 @@ impl RenderOnce for SentMessage {
                 })
                 .child(if self.open { "Show less" } else { "Show more" })
         });
-        let sender = self.sender.clone().map(|session_id| {
-            let on_action = self.on_action.clone();
-            div()
-                .id(SharedString::from(format!("{}:sender", self.key)))
-                .text_xs()
-                .text_color(theme.link)
-                .cursor_pointer()
-                .on_click(move |_, window, cx| {
-                    let session_id = session_id.clone();
-                    on_action(SessionAction::OpenSession { session_id }, window, cx)
-                })
-                .child("From another session")
-        });
+        let sender = self
+            .sender_label
+            .clone()
+            .or_else(|| self.sender.as_ref().map(|_| "From another session".into()))
+            .map(|label| {
+                let node = div()
+                    .debug_selector(|| "sent-message-sender".into())
+                    .id(SharedString::from(format!("{}:sender", self.key)))
+                    .text_xs()
+                    .text_color(theme.link)
+                    .child(label);
+                if let Some(session_id) = self.sender.clone() {
+                    let on_action = self.on_action.clone();
+                    node.cursor_pointer().on_click(move |_, window, cx| {
+                        on_action(
+                            SessionAction::OpenSession {
+                                session_id: session_id.clone(),
+                            },
+                            window,
+                            cx,
+                        )
+                    })
+                } else {
+                    node
+                }
+            });
         let images = self.images.iter().enumerate().map(|(at, (path, name))| {
             let on_action = self.on_action.clone();
             let file = path.rsplit(['/', '\\']).next().unwrap_or(path).to_string();

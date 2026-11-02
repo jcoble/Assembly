@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Assembly.Application.Common.Acp;
+using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Remote.Smoke;
 using Assembly.Infrastructure.Transcript;
@@ -9,177 +10,86 @@ namespace Assembly.Tests.Core.Acp;
 public sealed class AcpClientTests
 {
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(5);
-
     private static AcpClient Connect(FakeAgent agent, IPermissionPolicy? permissions = null) =>
         new(agent.ClientReads, agent.ClientWrites, permissions ?? new AllowOncePolicy(), TranscriptLog.Discard());
 
     [Fact]
-    public async Task Initialize_offers_protocol_1_and_no_client_capabilities()
+    public async Task Initialize_offers_only_v2_and_refuses_a_v1_response()
     {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent);
-
-        var call = client.InitializeAsync(new Implementation("test", "1"), null, CancellationToken.None);
+        var agent = new FakeAgent(); await using var client = Connect(agent);
+        var call = client.InitializeAsync(new("test", "1"), default);
         var request = await agent.ReadAsync();
-
-        Assert.Equal("initialize", request.GetProperty("method").GetString());
-        var p = request.GetProperty("params");
-        Assert.Equal(1, p.GetProperty("protocolVersion").GetInt32());
-        Assert.False(p.GetProperty("clientCapabilities").GetProperty("fs").GetProperty("readTextFile").GetBoolean());
-        Assert.False(p.GetProperty("clientCapabilities").GetProperty("terminal").GetBoolean());
-        Assert.False(p.GetProperty("clientCapabilities").TryGetProperty("_meta", out _));
-        Assert.Equal("{}", p.GetProperty("clientCapabilities").GetProperty("subagents").GetRawText());
-
-        await agent.ReplyAsync(request, """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[],"agentInfo":{"name":"fake","version":"9"}}""");
-
-        var response = await call.WaitAsync(Wait);
-        Assert.Equal(1, response.ProtocolVersion);
-        Assert.Equal("fake", response.AgentInfo?.Name);
+        var parameters = request.GetProperty("params");
+        Assert.Equal(2, parameters.GetProperty("protocolVersion").GetInt32());
+        Assert.False(parameters.GetProperty("capabilities").TryGetProperty("_meta", out _));
+        await agent.ReplyAsync(request, """{"protocolVersion":1,"capabilities":{}}""");
+        Assert.Equal(-32022, (await Assert.ThrowsAsync<JsonRpcException>(() => call.WaitAsync(Wait))).Code);
     }
 
     [Fact]
-    public async Task Initialize_opts_into_the_AIR_extensions_it_is_given()
+    public async Task Resume_drops_replay_and_reopens_at_the_response_before_live_updates()
     {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent);
-
-        var call = client.InitializeAsync(new Implementation("test", "1"), ["sessionIndex"], CancellationToken.None);
+        var agent = new FakeAgent(); await using var client = Connect(agent);
+        var resumed = false; client.SessionResumed += _ => resumed = true;
+        var call = client.ResumeSessionAsync(new("s1", "/tmp", []), default);
         var request = await agent.ReadAsync();
-
-        var air = request.GetProperty("params").GetProperty("clientCapabilities").GetProperty("_meta").GetProperty("jetbrains").GetProperty("air");
-        Assert.Equal(1, air.GetProperty("version").GetInt32());
-        Assert.Equal(["sessionIndex"], air.GetProperty("capabilities").EnumerateArray().Select(capability => capability.GetString()));
-        await agent.ReplyAsync(request, """{"protocolVersion":1,"agentCapabilities":{},"authMethods":[],"_meta":{"jetbrains":{"air":{"version":1,"capabilities":["sessionIndex","sessionRename"]}}}}""");
-        Assert.True((await call.WaitAsync(Wait)).CanRenameSessions);
-    }
-
-    [Fact]
-    public async Task The_resume_answer_is_queued_between_the_updates_sent_before_and_after_it()
-    {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent);
-
-        var resuming = client.ResumeSessionAsync("s1", "/tmp", CancellationToken.None);
-        var request = await agent.ReadAsync();
-        // One write: the client reads the three lines at once, whatever its threads do after.
-        await agent.SendAsync(string.Join('\n',
-            Text("before"),
-            $$$"""{"jsonrpc":"2.0","id":{{{request.GetProperty("id").GetRawText()}}},"result":{}}""",
-            Text("after")));
-        await resuming.WaitAsync(Wait);
-
-        var queued = new List<SessionNotification>();
-        for (var i = 0; i < 3; i++)
-            queued.Add(await client.Updates.ReadAsync().AsTask().WaitAsync(Wait));
-        Assert.Equal(["agent_message_chunk", SessionNotification.ResumedKind, "agent_message_chunk"], queued.Select(update => update.Kind));
-        Assert.All(queued, update => Assert.Equal("s1", update.SessionId));
+        await agent.SendAsync(string.Join('\n', Text("before"),
+            $$$"""{"jsonrpc":"2.0","id":{{{request.GetProperty("id").GetRawText()}}},"result":{}}""", Text("after")));
+        await call.WaitAsync(Wait);
+        var update = await client.Updates.ReadAsync().AsTask().WaitAsync(Wait);
+        Assert.True(resumed);
+        Assert.Equal("after", update.Update.GetProperty("content").GetProperty("text").GetString());
+        Assert.False(client.Updates.TryRead(out _));
     }
 
     private static string Text(string text) =>
-        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":""" + JsonSerializer.Serialize(text) + "}}}}";
+        """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","messageId":"m","content":{"type":"text","text":""" + JsonSerializer.Serialize(text) + "}}}}";
 
     [Fact]
-    public async Task Prompt_answers_a_permission_request_and_streams_updates()
+    public async Task Permission_v2_reaches_policy_and_cancel_settles_it()
     {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent);
-
-        var turn = client.PromptAsync("s1", "hi", CancellationToken.None);
+        var agent = new FakeAgent(); await using var client = Connect(agent, new WaitUntilCancelledPolicy());
+        var run = client.PromptAsync("s1", [TextBlock.Of("hi")], default);
         var prompt = await agent.ReadAsync();
-        Assert.Equal("session/prompt", prompt.GetProperty("method").GetString());
-        Assert.Equal("hi", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-
-        await agent.SendAsync("""{"jsonrpc":"2.0","id":"p1","method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"t1","title":"echo hi"},"options":[{"optionId":"no","name":"Reject","kind":"reject_once"},{"optionId":"yes","name":"Allow","kind":"allow_once"}]}}""");
-        var answer = await agent.ReadAsync();
-        Assert.Equal("p1", answer.GetProperty("id").GetString());
-        var outcome = answer.GetProperty("result").GetProperty("outcome");
-        Assert.Equal("selected", outcome.GetProperty("outcome").GetString());
-        Assert.Equal("yes", outcome.GetProperty("optionId").GetString());
-
-        await agent.SendAsync("""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hi"}}}}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-
-        Assert.Equal("end_turn", (await turn.WaitAsync(Wait)).StopReason);
-        var update = await client.Updates.ReadAsync().AsTask().WaitAsync(Wait);
-        Assert.Equal("agent_message_chunk", update.Kind);
-    }
-
-    [Fact]
-    public async Task Board_reporting_does_not_wait_for_a_permission_answer()
-    {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent, new WaitUntilCancelledPolicy());
-        var turn = client.PromptAsync("s1", "report progress", CancellationToken.None);
-        var prompt = await agent.ReadAsync();
-
-        await agent.SendAsync("""{"jsonrpc":"2.0","id":"board","method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"t1","title":"mcp__assembly__board_update"},"options":[{"optionId":"no","name":"No","kind":"reject_once"},{"optionId":"once","name":"Yes","kind":"allow_once"}]}}""");
-        var answer = await agent.ReadAsync().WaitAsync(Wait);
-        Assert.Equal("once", answer.GetProperty("result").GetProperty("outcome").GetProperty("optionId").GetString());
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
-        await turn.WaitAsync(Wait);
-    }
-
-    [Fact]
-    public async Task Cancel_settles_an_open_permission_request_as_cancelled()
-    {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent, new WaitUntilCancelledPolicy());
-
-        var turn = client.PromptAsync("s1", "hi", CancellationToken.None);
-        var prompt = await agent.ReadAsync();
-        await agent.SendAsync("""{"jsonrpc":"2.0","id":5,"method":"session/request_permission","params":{"sessionId":"s1","toolCall":{"toolCallId":"t1"},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]}}""");
-
-        await client.CancelAsync("s1", CancellationToken.None);
+        await agent.SendAsync("""{"jsonrpc":"2.0","id":5,"method":"session/request_permission","params":{"sessionId":"s1","title":"Run echo","subject":{"type":"tool_call","toolCall":{"toolCallId":"t1"}},"options":[{"optionId":"yes","name":"Allow","kind":"allow_once"}]}}""");
+        var cancelling = client.CancelAsync("s1", default);
         var lines = new[] { await agent.ReadAsync(), await agent.ReadAsync() };
-
         Assert.Contains(lines, l => l.TryGetProperty("method", out var m) && m.GetString() == "session/cancel");
-        var answer = Assert.Single(lines, l => l.TryGetProperty("result", out _));
-        Assert.Equal(5, answer.GetProperty("id").GetInt32());
-        Assert.Equal("cancelled", answer.GetProperty("result").GetProperty("outcome").GetProperty("outcome").GetString());
-
-        await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
-        Assert.Equal("cancelled", (await turn.WaitAsync(Wait)).StopReason);
+        Assert.Equal("cancelled", Assert.Single(lines, l => l.TryGetProperty("result", out _))
+            .GetProperty("result").GetProperty("outcome").GetProperty("outcome").GetString());
+        await agent.SendAsync("""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"user_message","messageId":"m","content":[]}}}""");
+        await agent.ReplyAsync(prompt, """{"messageId":"m"}""");
+        await agent.SendAsync("""{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"state_update","state":"idle","stopReason":"cancelled"}}}""");
+        await cancelling.WaitAsync(Wait);
+        Assert.Equal("cancelled", (await run.Ended.WaitAsync(Wait)).StopReason);
     }
 
     [Fact]
-    public async Task Methods_we_did_not_offer_get_method_not_found()
+    public async Task Unsupported_client_methods_get_method_not_found()
     {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent);
-
+        var agent = new FakeAgent(); await using var client = Connect(agent);
         await agent.SendAsync("""{"jsonrpc":"2.0","id":7,"method":"fs/read_text_file","params":{"sessionId":"s1","path":"/etc/hosts"}}""");
-        var answer = await agent.ReadAsync();
-
-        Assert.Equal(7, answer.GetProperty("id").GetInt32());
-        Assert.Equal(-32601, answer.GetProperty("error").GetProperty("code").GetInt32());
+        Assert.Equal(-32601, (await agent.ReadAsync()).GetProperty("error").GetProperty("code").GetInt32());
     }
 
     [Fact]
     public async Task Agent_closing_fails_pending_requests_and_ends_updates()
     {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent);
-
-        var call = client.NewSessionAsync("/tmp", CancellationToken.None);
-        await agent.ReadAsync();
-        agent.CloseOutput();
-
+        var agent = new FakeAgent(); await using var client = Connect(agent);
+        var call = client.NewSessionAsync(new("/tmp", []), default);
+        await agent.ReadAsync(); agent.CloseOutput();
         await Assert.ThrowsAsync<IOException>(() => call.WaitAsync(Wait));
         await client.Updates.Completion.WaitAsync(Wait);
     }
 
     [Fact]
-    public async Task Agent_errors_come_back_as_JsonRpcException()
+    public async Task Error_details_are_preserved_as_typed_data()
     {
-        var agent = new FakeAgent();
-        await using var client = Connect(agent);
-
-        var call = client.NewSessionAsync("/tmp", CancellationToken.None);
-        var request = await agent.ReadAsync();
-        await agent.ReplyErrorAsync(request, -32000, "Authentication required");
-
-        var error = await Assert.ThrowsAsync<Assembly.Application.Common.Acp.JsonRpc.JsonRpcException>(() => call.WaitAsync(Wait));
-        Assert.Equal(-32000, error.Code);
-        Assert.Equal("Authentication required", error.Message);
+        var agent = new FakeAgent(); await using var client = Connect(agent);
+        var call = client.NewSessionAsync(new("/tmp", []), default); var request = await agent.ReadAsync();
+        await agent.SendAsync(JsonSerializer.Serialize(new { jsonrpc = "2.0", id = request.GetProperty("id").GetInt64(), error = new { code = -32000, message = "Sign in", data = new { details = "required" } } }));
+        var error = await Assert.ThrowsAsync<JsonRpcException>(() => call.WaitAsync(Wait));
+        Assert.True(error.Error.IsAuthRequired);
+        Assert.Equal("required", error.Error.Data!.Value.GetProperty("details").GetString());
     }
 }

@@ -114,3 +114,55 @@ fn a_failed_run_reads_failed_to_run_and_opens() {
     assert_eq!(line_words(&call("edit", "failed"), false).0, "Edited");
     assert!(!failed_run(&call("edit", "failed"), false));
 }
+
+#[test]
+fn cancelled_tool_payload_preserves_the_actual_terminal_state_and_existing_spellings() {
+    use crate::features::session::rows::tool::ToolState;
+    let payload = |state: &str| {
+        serde_json::from_value::<ToolPayload>(json!({
+        "name": "Bash", "state": state, "summary": "sleep 15", "hasDetail": true, "kind": "execute"
+    })).unwrap()
+    };
+    let cancelled = payload("cancelled");
+    assert_eq!(cancelled.state, ToolState::Cancelled);
+    assert!(!failed_run(&cancelled, false));
+    assert_eq!(
+        line_words(&cancelled, false),
+        ("Ran".to_string(), Some("sleep 15".to_string()))
+    );
+    assert_eq!(payload("started").state, ToolState::Started);
+    assert_eq!(payload("completed").state, ToolState::Completed);
+    assert_eq!(payload("failed").state, ToolState::Failed);
+}
+
+#[gpui::test]
+fn cancelled_tool_line_is_neutral_with_and_without_activity_timing(cx: &mut gpui::TestAppContext) {
+    use super::ToolRow;
+    use crate::features::session::model::kept::Kept;
+    use crate::features::session::view::step_row::StepState;
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        for (state, denied, timed, expected) in [
+            ("cancelled", false, false, StepState::Unfinished),
+            ("cancelled", false, true, StepState::Unfinished),
+            ("started", false, false, StepState::Unfinished),
+            ("started", false, true, StepState::Running),
+            ("completed", false, true, StepState::Done),
+            ("failed", false, true, StepState::Failed),
+            ("failed", true, true, StepState::Unfinished),
+        ] {
+            let row = ToolRow {
+                key: "C".into(),
+                tool: serde_json::from_value(
+                    json!({"name":"Bash","state":state,"hasDetail":true,"kind":"execute"}),
+                )
+                .unwrap(),
+                kept: Kept::default(),
+                took_ms: timed.then_some(3000),
+                denied,
+                on_action: std::rc::Rc::new(|_, _, _| {}),
+            };
+            assert_eq!(row.line(None, cx).state, expected);
+        }
+    });
+}

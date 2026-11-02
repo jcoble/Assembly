@@ -61,7 +61,12 @@ impl RenderOnce for ItemRow {
             })
         };
         let body = match self.item.kind {
-            ItemKind::User { text, at, from } => {
+            ItemKind::User {
+                text,
+                at,
+                from,
+                sender_label,
+            } => {
                 let (text, attached) = Attachment::split_lines(&text);
                 let images = attached
                     .into_iter()
@@ -77,6 +82,7 @@ impl RenderOnce for ItemRow {
                         key: key.clone(),
                         text,
                         sender: from,
+                        sender_label,
                         images,
                         open: self.kept.open,
                         on_action: self.on_action.clone(),

@@ -1,10 +1,25 @@
 using System.Text.Json;
+using Assembly.Application.Common.Engine;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Machines;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+[JsonSerializable(typeof(Dictionary<string, JsonElement>))]
+[JsonSerializable(typeof(OwnerPromptRequest))]
+[JsonSerializable(typeof(OwnerPromptAccepted))]
+[JsonSerializable(typeof(SessionTitleReadArgs))]
+[JsonSerializable(typeof(SessionTitleStat))]
+[JsonSerializable(typeof(SessionTitleChunkArgs))]
+[JsonSerializable(typeof(SessionTitleChunk))]
+[JsonSerializable(typeof(OwnerPromptManifest))]
+[JsonSerializable(typeof(OwnerPromptChunkArgs))]
+[JsonSerializable(typeof(OwnerPromptChunk))]
+[JsonSerializable(typeof(OwnerPromptReadArgs))]
+[JsonSerializable(typeof(OwnerPromptPage))]
+[JsonSerializable(typeof(IReadOnlyList<string>))]
+[JsonSerializable(typeof(IReadOnlyDictionary<string, string>))]
 [JsonSerializable(typeof(SessionItem))]
 [JsonSerializable(typeof(SessionsFeature.PageArgs))]
 [JsonSerializable(typeof(SessionsFeature.Page))]

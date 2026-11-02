@@ -106,6 +106,54 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal("no-store", listed.Headers.CacheControl?.ToString());
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("/isolated-profile")]
+    public async Task Agent_discovery_exposes_distinct_frozen_configuration_and_provider_targets_without_launch(string account)
+    {
+        var descriptor = new AgentDescriptor("configured-codex", "Configured Codex", "private-command-canary",
+            ["private-argument-canary"], new Dictionary<string, string>
+            { ["CODEX_HOME"] = account, ["PRIVATE_DISCOVERY_CANARY"] = "private-environment-canary" }, VendorFamily: "codex");
+        _launcher.Agents = [descriptor];
+        var capture = ConfigTargetIdentity.Capture(_launcher, descriptor.Id);
+        var item = (await GetJsonAsync("/agents")).GetProperty("agents").EnumerateArray().Single();
+        Assert.Equal(["accountContext", "id", "name", "providerTargetId", "targetId"], item.EnumerateObject().Select(p => p.Name).Order());
+        Assert.Equal(descriptor.Id, item.GetProperty("id").GetString());
+        Assert.Equal(descriptor.Name, item.GetProperty("name").GetString());
+        Assert.Equal(capture.TargetId, item.GetProperty("targetId").GetString());
+        var identity = account.Length == 0 ? "" : "acct-v1:bba8f0244af078a391d9faaebbd7df99750b21889fda2190393b2863a58c6e5b";
+        Assert.True(identity == item.GetProperty("accountContext").GetString(), "Discovery account identity must be opaque.");
+        Assert.True(descriptor.Id + "/" + identity == item.GetProperty("providerTargetId").GetString(), "Discovery provider target must contain only opaque account identity.");
+        Assert.DoesNotContain("private-", item.GetRawText());
+        Assert.Equal(0, _launcher.Launches);
+        Assert.Empty(_sessionStore.List(null, 10).Sessions);
+
+        _launcher.Agents = [descriptor with { Args = ["replacement-private-argument"] }];
+        var replaced = (await GetJsonAsync("/agents")).GetProperty("agents").EnumerateArray().Single();
+        Assert.NotEqual(item.GetProperty("targetId").GetString(), replaced.GetProperty("targetId").GetString());
+        Assert.Equal(item.GetProperty("providerTargetId").GetString(), replaced.GetProperty("providerTargetId").GetString());
+        Assert.Equal(0, _launcher.Launches);
+    }
+
+    [Fact]
+    public async Task Discovery_keeps_synthetic_home_private_while_retaining_exact_captured_launch_environment()
+    {
+        const string raw = "/synthetic/PRIVATE_ACCOUNT_CANARY_7b9f/配置";
+        const string identity = "acct-v1:affb7550e6419024cafd75d2c3ed3d9f5c29f2dcc486ead8457a9efdac63a2c2";
+        _launcher.Agents = [new("provider/with/slash", "Provider", "adapter", [],
+            new Dictionary<string, string> { ["CODEX_HOME"] = raw }, VendorFamily: "codex")];
+        var reply = await GetJsonAsync("/agents");
+        Assert.True(!reply.GetRawText().Contains("PRIVATE_ACCOUNT_CANARY_7b9f", StringComparison.Ordinal), "Private account material escaped discovery.");
+        var target = reply.GetProperty("agents")[0];
+        Assert.True(identity == target.GetProperty("accountContext").GetString());
+        Assert.True("provider/with/slash/" + identity == target.GetProperty("providerTargetId").GetString());
+        var captured = ConfigTargetIdentity.Capture(_launcher, "provider/with/slash");
+        Assert.True(captured.Environment["CODEX_HOME"] == raw);
+        Assert.Equal(captured.TargetId, target.GetProperty("targetId").GetString());
+        Assert.Equal(0, _launcher.Launches);
+        Assert.Empty(_sessionStore.List(null, 10).Sessions);
+    }
+
     [Fact]
     public async Task A_session_runs_the_agent_it_was_made_with()
     {
@@ -199,7 +247,7 @@ public sealed class ApiTests : IAsyncLifetime
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
 
         var rows = await ReadRowsAsync(socket, 6);
         Assert.Equal([1L, 2L, 3L, 4L, 5L, 6L], rows.Select(row => row.GetProperty("seq").GetInt64()));
@@ -228,7 +276,7 @@ public sealed class ApiTests : IAsyncLifetime
         }
 
         await agent.TextAsync("Hello");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         using var second = await OpenLiveAsync(sessionId, after: 2);
         AssertCaughtUpFrom(2, await ReadUntilTurnEndsAsync(second));
     }
@@ -241,9 +289,9 @@ public sealed class ApiTests : IAsyncLifetime
         var agent = await _launcher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        await agent.UpdateAsync("""{"sessionUpdate":"tool_call","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"}}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","title":"Terminal","kind":"execute","status":"pending","rawInput":{"command":"ls"}}""");
         await agent.UpdateAsync("""{"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","rawOutput":"a.txt"}""");
-        await agent.ReplyAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         using var socket = await OpenLiveAsync(sessionId, after: 0);
         await ReadRowsAsync(socket, 6);
 
@@ -267,7 +315,7 @@ public sealed class ApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, (await _http.PostAsync("/runs/nope/stop", null)).StatusCode);
         Assert.Equal(HttpStatusCode.Accepted, (await _http.PostAsync($"/runs/{runId}/stop", null)).StatusCode);
         await agent.ReadAsync("session/cancel");
-        await agent.ReplyAsync(prompt, """{"stopReason":"cancelled"}""");
+        await agent.FinishAsync(prompt, """{"stopReason":"cancelled"}""");
 
         using var socket = await OpenLiveAsync(sessionId, after: 0);
         var rows = await ReadRowsAsync(socket, 4);

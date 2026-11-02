@@ -23,7 +23,7 @@ public sealed class RemoteConnectionsTests
         var status = new MachineStatus(topics, []);
         var store = new MachineStore(db);
         await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+        await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, TextWriter.Null,
             feature, open: (_, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>(
                 (new("ssh-host", new Uri("http://127.0.0.1:1"), "token"), null)));
         Assert.Null(connections.StartupSnapshot("saved-box"));
@@ -66,7 +66,7 @@ public sealed class RemoteConnectionsTests
         var log = new SharedLog();
         await using var tunnel = new RemoteTunnel("/bin/sh", ["-c", "exit 3"], log);
         await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+        await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, TextWriter.Null,
             feature, open: (profile, _) => Task.FromResult<(RemoteConfig, IAsyncDisposable?)>(
                 (new(profile.Name, stub.Address, "token"), tunnel)));
         store.Import(new("box", "host"));
@@ -104,7 +104,7 @@ public sealed class RemoteConnectionsTests
         var cleaned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+        await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, TextWriter.Null,
             feature, open: async (_, cancel) =>
             {
                 if (started.Task.IsCompleted) throw new InvalidOperationException("replacement offline");
@@ -154,7 +154,7 @@ public sealed class RemoteConnectionsTests
         var receipts = new List<TaskCompletionSource>();
         using var log = new StringWriter();
         await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, log,
+        await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, log,
             feature, open: (profile, _) =>
             {
                 var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -207,7 +207,7 @@ public sealed class RemoteConnectionsTests
         var opens = 0;
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+        await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, TextWriter.Null,
             feature, open: (profile, cancel) =>
             {
                 Interlocked.Increment(ref opens);
@@ -284,7 +284,7 @@ public sealed class RemoteConnectionsTests
             var store = new MachineStore(db);
             var opens = 0;
             await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-            await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+            await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, TextWriter.Null,
                 feature, open: (profile, cancel) =>
                 {
                     cancel.ThrowIfCancellationRequested();
@@ -349,7 +349,7 @@ public sealed class RemoteConnectionsTests
             var status = new MachineStatus(topics, []);
             var attempting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-            await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+            await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, TextWriter.Null,
                 feature, open: async (profile, cancel) =>
                 {
                     attempting.TrySetResult();
@@ -391,7 +391,7 @@ public sealed class RemoteConnectionsTests
         var store = new MachineStore(db);
         var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-        await using var connections = new RemoteConnections(store, machines, status, hub, sessions, topics, TextWriter.Null,
+        await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, TextWriter.Null,
             feature, open: (profile, cancel) =>
                 Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name, stub.Address, "token"), new DisposalReceipt(disposed))));
         store.Import(new("box", "host"));

@@ -179,10 +179,15 @@ impl SessionView {
                 self.stats.insert(run, stats.clone());
                 ItemKind::Stats { stats }
             }
-            RowBody::User { text, from } => ItemKind::User {
+            RowBody::User {
+                text,
+                from,
+                sender_label,
+            } => ItemKind::User {
                 text,
                 at: row.created_at,
                 from,
+                sender_label,
             },
             RowBody::Error { message, code } => ItemKind::Error { message, code },
             RowBody::Other { kind } => ItemKind::Other { kind },

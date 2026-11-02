@@ -17,7 +17,7 @@ here updates this file in the same commit. Every other commit says `Architecture
   `core/commands/`) and one folder per
   feature in `src/features/`; `desktop/scripts/guard.sh` holds it to that. The Terminal tab, `features/terminal/`,
   keeps an `alacritty_terminal` grid fed by the backend's `terminal` topic and draws it with GPUI text.
-- `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine.
+- `dotnet/`: the backend (.NET). The same backend runs on the desktop and, headless, on every remote machine; both hosts start the engine runtime.
 
 ## The backend: a core in layers, the rest by feature
 
@@ -27,13 +27,18 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
   references nothing.
 - `Assembly.Application/`: references Domain only, with no SQLite, ASP.NET Core or process starting.
   - `Common/`: the contracts every feature uses (database, agents, machines) and the ACP protocol code.
-    `Common/Acp/V1/` is the one place that knows ACP's shapes and each provider's quirks.
+    `Common/Acp/V2/` has the session update reader and foreground tracker. ACP v2 acknowledges prompt insertion by message ID; foreground state updates complete the turn. Message upserts distinguish replacement text from appended chunks.
   - `Features/<Feature>/`: everything one feature is: its records, its rules, its tables and its plain SQL. A
-    feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase` and
-    writes through `IAtomicWriter`. Each write is one transaction with its audit row, and the changes it publishes
-    (`IWriteScope.Publish`) go to `ITopics` only after it commits.
-- `Assembly.Infrastructure/`: references Application. SQLite and the one writer, starting agent processes and git,
+    feature never uses another feature's folder. There's no repository: a feature reads through `IAppDatabase`
+    (reads needing one consistent view use `IAppDatabase.OpenSnapshot`) and writes through `IAtomicWriter`.
+    Each write is one transaction with its audit row, and the changes it publishes (`IWriteScope.Publish`) go to `ITopics` only after it commits.
+- `Assembly.Engine/`: references Application database contracts and Domain retained auth proof records. Owns operational commands, transitions,
+  reads, prefixed `engine_` tables, committed-event publishing and durable outbox execution. Writes go through
+  `IAtomicWriter`; the engine has no SQLite, process, filesystem or transport implementation.
+  [Engine design §17.3](https://app.notion.com/p/40a394b0689d81299136fb94fcf3ccf1) and the [auth proof plan](https://app.notion.com/p/40c394b0689d81b0a658ed87ebf4bba3) govern this boundary.
+- `Assembly.Infrastructure/`: references Application and Engine. SQLite and the one writer, starting agent processes and git,
   the local and remote machines, and the files and native calls behind a feature (`Infrastructure/<Feature>/`).
+  `Infrastructure/Engine/` composes the engine runtime with the host topics and owns its window calls and socket transport.
   A session's folder on disk is `SessionStore.Root` (on its `sessions` item as `root`); anything that reads inside it
   turns a relative path into a full one with `Infrastructure/Chat/SessionPaths`, which refuses paths outside it.
   `Infrastructure/Chat/Files/` lists, searches and reads it for the window's Files and Search tabs and its read-only file tabs.
@@ -46,6 +51,26 @@ The core follows Clean Architecture, with each layer pointing inward. `Architect
 A host's `Program.cs` only reads its arguments, registers the layers and maps its endpoints.
 
 ## One socket
+
+The machine-coordinator producer and its staged activation are specified in [Engine plan 4, Task 6](https://app.notion.com/p/40b394b0689d81de88eee91932250b84); that Notion contract is authoritative.
+
+The authenticated `/socket` also carries the engine's six filtered topics and local display-only `mirror` topic through `stream:"engine"`, with cursor fingerprints, client-pulled mirror snapshots, catch-up pages and reader acknowledgements; `engine/machine` reports the local identity and watermark, and omitting `stream` preserves the existing topics.
+Each active remote has one `EngineMirror` on that same socket. Socket-open events restart its identity check and
+subscription; it has no timer. `MirrorApply` copies remote display rows and journal events through the existing
+atomic writer, hiding partial snapshot generations until promotion. Mirror application never transitions local
+entities or queues effects; acknowledgements and page pulls follow committed writes.
+The window can select a machine on an engine subscription or entity read. Local reads keep their existing path;
+foreign reads use only the mirror's current generation and cursor. One lazy publisher per selected mirror shares
+its runtime's existing wake loop, and generation promotion pushes a fresh snapshot to its active subscriptions.
+Publisher drains bind the captured generation and fence publication across resets. Streams tag queued work with the
+reset version, prioritize fresh snapshots and fence replay and cursor updates across promotion.
+Mirror retention uses the same atomic writer, keeps the newest 10,000 events and respects that mirror's window
+acknowledgements. Runtime shutdown cancels the streams and removes its single mirrored-change subscription.
+The window forwards commands and unmirrored tool/usage reads to the owning saved machine over its existing live/bulk
+sockets. Both ends enforce the window command allowlist. Forwarded commands keep their identity, version and epoch,
+use a separate write-order key per machine, and return the owner's receipt without changing local engine state.
+Forwarding requires the existing mirror handshake to verify the current live socket's Engine identity; reconnect
+invalidates that binding. Bulk payloads also require the same Engine identity in their optional welcome field.
 
 `/socket/terminal` is the third socket per machine, carrying only terminal feature calls and the terminal topic.
 For remote sessions, `RoutedTerminals` uses the terminal socket owned by `RemoteMachine` through its existing tunnel;
@@ -63,7 +88,9 @@ the desktop's first is preferences (B7). The socket exists from plan step B4, an
 page still uses `app/src/lib/call.ts` and `Assembly.Infrastructure/Http/`, their HTTP path, until its own switch, and
 the `/live` socket carries the page's rows. A remote session's rows reach the desktop over the machine socket instead
 (the `rows` topic and the bounded `rows/after` read on the remote's `/socket`), reopened on the backend clock when it
-drops. The only other HTTP is `/mcp`, which the agents use.
+drops. The machine socket also carries agent listing, session and helper creation, sends, run control and config
+calls. Its welcome checks the row format before the machine is reachable, and its `sessions` topic pushes titles
+and activity into the desktop's session store and summaries. The only other HTTP is `/mcp`, which the agents use.
 
 ## Where a new feature goes
 

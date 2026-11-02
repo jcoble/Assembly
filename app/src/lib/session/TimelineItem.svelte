@@ -55,7 +55,7 @@
 {#if item.kind === 'user'}
   {@const moved = item.runId ? checkoutLine(stats[item.runId]) : null}
   {#if moved}<div class="mark checkout">{moved}</div>{/if}
-  <Message role="user" sender={item.from ? { label: senders[item.from] ?? 'Another session', open: () => openSession(item.from!) } : null}>{#if plain === 'prompts'}<p>{item.text}</p>{:else}<SentText text={item.text} images={plain !== 'images'} {kept} />{/if}</Message>
+  <Message role="user" sender={item.from ? { label: item.senderLabel ?? senders[item.from] ?? 'Another session', open: () => openSession(item.from!) } : item.senderLabel != null ? { label: item.senderLabel } : null}>{#if plain === 'prompts'}<p>{item.text}</p>{:else}<SentText text={item.text} images={plain !== 'images'} {kept} />{/if}</Message>
 {:else if item.kind === 'stats'}
   <div class="mark turn">{turnLine(item.stats, null, now)}</div>
 {:else if item.kind === 'note'}

@@ -1,13 +1,17 @@
-using System.Threading.Channels;
 using Assembly.Application.Common.Acp.Messages;
+using System.Threading.Channels;
 
 namespace Assembly.Remote.Smoke;
 
-/// <summary>Reads the client's update queue and files each update under the current turn.</summary>
+/// <summary>Owns the update reader and event waits for one adapter connection.</summary>
 public sealed class UpdateWatcher
 {
     private readonly ChannelReader<SessionNotification> _updates;
+    private readonly Lock _gate = new();
+    private readonly List<SessionNotification> _seen = [];
+    private readonly List<(Func<SessionNotification, bool> Match, TaskCompletionSource<SessionNotification> Signal)> _waits = [];
     private TurnLog _current = new();
+    private bool _closed;
 
     public UpdateWatcher(ChannelReader<SessionNotification> updates)
     {
@@ -19,22 +23,57 @@ public sealed class UpdateWatcher
 
     public TurnLog BeginTurn()
     {
-        var turn = new TurnLog();
-        Volatile.Write(ref _current, turn);
-        return turn;
+        lock (_gate) return _current = new TurnLog();
     }
 
-    /// <summary>The prompt answer can overtake the last updates in the queue; wait for the queue to empty.</summary>
-    public async Task DrainAsync()
+    /// <summary>Registers before an action; already received session updates also satisfy the wait.</summary>
+    public async Task<SessionNotification> WaitForAsync(Func<SessionNotification, bool> match, CancellationToken cancellationToken)
     {
-        for (var i = 0; i < 100 && _updates.Count > 0; i++)
-            await Task.Delay(10);
-        await Task.Delay(20);
+        var signal = new TaskCompletionSource<SessionNotification>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_gate)
+        {
+            if (_seen.FirstOrDefault(match) is { } seen) return seen;
+            if (_closed) throw new IOException("The adapter update stream closed before the expected event.");
+            _waits.Add((match, signal));
+        }
+        try { return await signal.Task.WaitAsync(cancellationToken); }
+        finally { lock (_gate) _waits.RemoveAll(wait => wait.Signal == signal); }
+    }
+
+    /// <summary>Processes updates already queued, under the same gate as the owned reader.</summary>
+    public Task DrainAsync()
+    {
+        lock (_gate) Drain();
+        return Task.CompletedTask;
+    }
+
+    private void Drain()
+    {
+        while (_updates.TryRead(out var update))
+        {
+            _current.Add(update);
+            _seen.Add(update);
+            foreach (var wait in _waits)
+                if (wait.Match(update)) wait.Signal.TrySetResult(update);
+        }
     }
 
     private async Task WatchAsync()
     {
-        await foreach (var update in _updates.ReadAllAsync())
-            Volatile.Read(ref _current).Add(update);
+        try
+        {
+            while (await _updates.WaitToReadAsync())
+                lock (_gate) Drain();
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _closed = true;
+                foreach (var wait in _waits)
+                    wait.Signal.TrySetException(new IOException("The adapter update stream closed before the expected event."));
+                _waits.Clear();
+            }
+        }
     }
 }

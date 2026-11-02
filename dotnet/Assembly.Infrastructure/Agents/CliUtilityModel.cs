@@ -1,9 +1,9 @@
+using Assembly.Infrastructure.Common.Processes;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Agents;
-using Assembly.Application.Features.Preferences;
 
 namespace Assembly.Infrastructure.Agents;
 
@@ -23,13 +23,13 @@ internal sealed class CliUtilityModel : IUtilityModel
     private readonly SemaphoreSlim _checking = new(1, 1);
     private bool _checked;
     private Cli? _found;
-    private readonly PreferenceStore _preferences;
+    private readonly Func<string?> _readUtilityModel;
     private readonly TimeProvider _time;
     private readonly TextWriter _log;
 
-    public CliUtilityModel(string claude, string codex, PreferenceStore preferences, TimeProvider time, TextWriter log)
+    public CliUtilityModel(string claude, string codex, Func<string?> readUtilityModel, TimeProvider time, TextWriter log)
     {
-        _preferences = preferences;
+        _readUtilityModel = readUtilityModel;
         _time = time;
         _log = log;
         // Claude Code answers in JSON, its result the answer; Codex prints the answer alone.
@@ -115,7 +115,7 @@ internal sealed class CliUtilityModel : IUtilityModel
 
     private string? Setting()
     {
-        if (_preferences.Read("utilityModel") is not { } saved)
+        if (_readUtilityModel() is not { } saved)
             return null;
         using var json = JsonDocument.Parse(saved);
         return json.RootElement.ValueKind == JsonValueKind.String ? json.RootElement.GetString() : null;

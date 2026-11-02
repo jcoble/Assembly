@@ -2,12 +2,20 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Domain.Rows;
+using Assembly.Domain.Events;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
 /// <summary>Compile-time JSON for the row payloads, camelCase like the UI's types. Optional fields are left out when null.</summary>
 [JsonSerializable(typeof(TurnPayload))]
 [JsonSerializable(typeof(UserPayload))]
+[JsonSerializable(typeof(UserAcknowledgment))]
+[JsonSerializable(typeof(AuthTerminalProof))]
+[JsonSerializable(typeof(AuthTerminalDelivery))]
+[JsonSerializable(typeof(AuthOpenFailureStage))]
+[JsonSerializable(typeof(AuthSendBlocker))]
+[JsonSerializable(typeof(AuthRetryExecution))]
+[JsonSerializable(typeof(AuthRefusalReceipt))]
 [JsonSerializable(typeof(DeltaPayload))]
 [JsonSerializable(typeof(MessagePayload))]
 [JsonSerializable(typeof(ThinkingPayload))]
@@ -26,6 +34,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(IReadOnlyList<FileTouched>))]
 [JsonSerializable(typeof(SessionAttachments))]
 [JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(TerminalExit))]
+[JsonSerializable(typeof(IReadOnlyList<ToolTerminalState>))]
 internal sealed partial class RowJsonContext : JsonSerializerContext
 {
     /// <summary>

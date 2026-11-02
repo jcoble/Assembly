@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { validateVersions, smokeAdapter, archiveBundle } from "./package-adapters.ts";
+import { validateVersions, smokeAdapter, archiveBundle, compareClaudeEntrypoints, validateHistoricalProviderAsset, compareWithLastProviderRelease } from "./package-adapters.ts";
 
 const versions = { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" };
 function fixture(run: (root: string) => unknown) {
@@ -21,26 +21,149 @@ test("only exact stable versions of both supported adapters are accepted", () =>
   assert.throws(() => validateVersions({ "codex-acp": "2.5.0" }), /exact stable/);
   assert.throws(() => validateVersions({ ...versions, other: "1.0.0" }), /supported adapters/);
 });
-test("ACP smoke requires an actual matching initialize response", () => fixture(async root => {
+test("provider selection ignores the designated app latest and chooses the newest complete provider release", () => fixture(root => {
+  const releases = [
+    { tagName: "assembly-app-2026.11", isLatest: true, isDraft: false, isPrerelease: false, publishedAt: "2026-11-05T00:00:00Z", assets: [] },
+    { tagName: "assembly-providers-101-1", isLatest: false, isDraft: false, isPrerelease: false, publishedAt: "2026-11-01T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+    { tagName: "assembly-providers-102-1", isLatest: false, isDraft: false, isPrerelease: false, publishedAt: "2026-11-02T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+    { tagName: "assembly-providers-103-1", isLatest: false, isDraft: false, isPrerelease: false, publishedAt: "2026-11-04T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz"] },
+    { tagName: "assembly-providers-104-1", isLatest: false, isDraft: true, isPrerelease: false, publishedAt: "2026-11-06T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+    { tagName: "assembly-providers-105-1", isLatest: false, isDraft: false, isPrerelease: true, publishedAt: "2026-11-07T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] },
+  ];
+  writeFileSync(join(root, "releases.json"), JSON.stringify(releases));
+  writeFileSync(join(root, "gh"), "#!" + process.execPath + "\n" + String.raw`
+const fs = require("node:fs");
+const [group, action, tag] = process.argv.slice(2);
+const releases = JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8"));
+if (group !== "release") throw Error("unexpected gh operation");
+if (action === "list") console.log(JSON.stringify(releases.map(({tagName,isDraft,isPrerelease,publishedAt}) => ({tagName,isDraft,isPrerelease,publishedAt}))));
+else if (action === "view") console.log(JSON.stringify({assets: releases.find(r => r.tagName === tag)?.assets.map(name => ({name})) ?? []}));
+else throw Error("unexpected gh release operation " + action);
+`, { mode: 0o755 });
+  const run = spawnSync(process.execPath, [fileURLToPath(new URL("./package-adapters.ts", import.meta.url)), "provider-tag", "linux-x64"], {
+    encoding: "utf8", env: { PATH: root + ":" + process.env.PATH, HOME: root, RELEASES: join(root, "releases.json") },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.stdout.trim(), "assembly-providers-102-1");
+}));
+test("stock Claude comparison logs the current upstream diff and the first-publication case", () => fixture(root => {
+  const prior = join(root, "prior-index.js"), current = join(root, "current-index.js"), messages: string[] = [];
+  writeFileSync(prior, "const startup = 'old';\n");
+  writeFileSync(current, "const startup = 'new';\n");
+  compareClaudeEntrypoints(prior, current, "assembly-providers-101-1", line => messages.push(line));
+  assert.match(messages.join("\n"), /Claude upstream dist\/index\.js changes since assembly-providers-101-1/);
+  assert.match(messages.join("\n"), /-const startup = 'old'/);
+  assert.match(messages.join("\n"), /\+const startup = 'new'/);
+  messages.length = 0;
+  compareClaudeEntrypoints(undefined, current, undefined, line => messages.push(line));
+  assert.match(messages[0], /first publication/);
+}));
+test("historical protocol 1 baseline validates its recorded raw entrypoint against a protocol 2 candidate", () => fixture(root => {
+  const archive = join(root, "previous.tar.gz"), manifestPath = join(root, "previous.json");
+  const previous = join(root, "previous-index.js"), current = join(root, "current-index.js"), messages: string[] = [];
+  writeFileSync(archive, "historical archive fixture");
+  const manifest = {
+    schemaVersion: 1, target: "linux-x64", versions: { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" },
+    entrypoints: { "claude-agent-acp": "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js" },
+    archive: { file: "assembly-adapters-linux-x64.tar.gz", sha256: createHash("sha256").update(readFileSync(archive)).digest("hex") },
+    smoke: { "claude-agent-acp": { protocolVersion: 1, agentInfo: { version: "0.99.1" } } },
+  };
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  const baseline = validateHistoricalProviderAsset(manifestPath, archive, "linux-x64");
+  assert.equal(baseline.entrypoints["claude-agent-acp"], "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js");
+  writeFileSync(previous, "const startup = 'protocol-1 baseline';\n");
+  writeFileSync(current, "const startup = 'protocol-2 candidate';\n");
+  compareClaudeEntrypoints(previous, current, "assembly-providers-101-1", line => messages.push(line));
+  assert.match(messages.join("\n"), /protocol-1 baseline/);
+  assert.match(messages.join("\n"), /protocol-2 candidate/);
+  manifest.archive.sha256 = "0".repeat(64);
+  writeFileSync(manifestPath, JSON.stringify(manifest));
+  assert.throws(() => validateHistoricalProviderAsset(manifestPath, archive, "linux-x64"), /Corrupted historical provider archive/);
+}));
+test("daily comparison uses raw Claude vendor entrypoint from a v2 baseline, not its launcher", () => fixture(root => {
+  const releaseDir = join(root, "release"), previousBundle = join(releaseDir, "bundle"), currentBundle = join(root, "current");
+  const vendorPath = "node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js";
+  const previousVendor = join(previousBundle, vendorPath);
+  const currentVendor = join(currentBundle, vendorPath);
+  mkdirSync(join(previousBundle, "node_modules/@agentclientprotocol/claude-agent-acp/dist"), { recursive: true });
+  mkdirSync(join(currentBundle, "node_modules/@agentclientprotocol/claude-agent-acp/dist"), { recursive: true });
+  writeFileSync(join(previousBundle, "claude-launcher.ts"), "// DISTINCT_OLD_LAUNCHER_TEXT\n");
+  writeFileSync(previousVendor, "const vendorSetup = 'previous upstream setup';\n");
+  writeFileSync(currentVendor, "const vendorSetup = 'current upstream setup';\n");
+  const archive = join(releaseDir, "assembly-adapters-linux-x64.tar.gz");
+  execFileSync("tar", ["-czf", archive, "-C", previousBundle, "claude-launcher.ts", "node_modules"]);
+  const manifest = {
+    schemaVersion: 1, target: "linux-x64", versions: { "claude-agent-acp": "0.99.1", "codex-acp": "2.5.0" },
+    entrypoints: { "claude-agent-acp": "claude-launcher.ts", "codex-acp": "node_modules/@agentclientprotocol/codex-acp/dist/index.js" },
+    archive: { file: "assembly-adapters-linux-x64.tar.gz", sha256: createHash("sha256").update(readFileSync(archive)).digest("hex") },
+  };
+  writeFileSync(join(releaseDir, "assembly-adapters-linux-x64.json"), JSON.stringify(manifest));
+  const releases = [{ tagName: "assembly-providers-300-1", isDraft: false, isPrerelease: false, publishedAt: "2026-11-01T00:00:00Z", assets: ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"] }];
+  writeFileSync(join(root, "releases.json"), JSON.stringify(releases));
+  writeFileSync(join(root, "gh"), "#!" + process.execPath + "\n" + String.raw`
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+if (args[0] !== "release") throw Error("unexpected gh command");
+if (args[1] === "list") console.log(JSON.stringify(JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8"))));
+else if (args[1] === "view") console.log(JSON.stringify({assets: JSON.parse(fs.readFileSync(process.env.RELEASES, "utf8"))[0].assets.map(name => ({name}))}));
+else if (args[1] === "download") {
+  const dir = args[args.indexOf("--dir") + 1];
+  for (const name of ["assembly-adapters-linux-x64.tar.gz", "assembly-adapters-linux-x64.json"]) fs.copyFileSync(process.env.RELEASE_DIR + "/" + name, dir + "/" + name);
+} else throw Error("unexpected gh release action " + args[1]);
+`, { mode: 0o755 });
+  const oldPath = process.env.PATH, oldReleases = process.env.RELEASES, oldReleaseDir = process.env.RELEASE_DIR;
+  process.env.PATH = root + ":" + (oldPath ?? "");
+  process.env.RELEASES = join(root, "releases.json");
+  process.env.RELEASE_DIR = releaseDir;
+  try {
+    const output: string[] = [];
+    const scratch = join(root, "smoke");
+    mkdirSync(scratch);
+    compareWithLastProviderRelease("linux-x64", currentBundle, scratch, line => output.push(line));
+    assert.match(output.join("\n"), /Claude upstream dist\/index\.js changes since assembly-providers-300-1/);
+    assert.match(output.join("\n"), /-const vendorSetup = 'previous upstream setup'/);
+    assert.match(output.join("\n"), /\+const vendorSetup = 'current upstream setup'/);
+    assert.doesNotMatch(output.join("\n"), /DISTINCT_OLD_LAUNCHER_TEXT|claude-launcher\.ts/);
+  } finally {
+    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+    if (oldReleases === undefined) delete process.env.RELEASES; else process.env.RELEASES = oldReleases;
+    if (oldReleaseDir === undefined) delete process.env.RELEASE_DIR; else process.env.RELEASE_DIR = oldReleaseDir;
+  }
+}));
+test("smoke requires protocol 2 and steering", () => fixture(async root => {
   const entry = join(root, "adapter.cjs");
-  writeFileSync(entry, String.raw`process.stdin.once("data", data => {
+  writeFileSync(entry, String.raw`const lines = require("node:readline").createInterface({ input: process.stdin });
+lines.on("line", line => {
     require("node:fs").accessSync(process.env.CODEX_HOME);
     require("node:fs").accessSync(process.env.CLAUDE_CONFIG_DIR);
-    const request = JSON.parse(String(data));
-    if (request.method !== "initialize" || request.params.protocolVersion !== 1) process.exit(3);
-    console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 1, agentInfo: { name: "fixture", version: "1" } } }));
+    const request = JSON.parse(line);
+    if (request.method === "initialize" && request.params.protocolVersion === 2) console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { protocolVersion: 2, info: { name: "fixture", version: "1" }, _meta: { steering: { supported: true } } } }));
+    else if (request.method === "_session/steering") console.log(JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32002, data: { sessionId: request.params.sessionId } } }));
+    else process.exit(3);
   });`);
   const result = await smokeAdapter(entry, root);
-  assert.equal(result.protocolVersion, 1);
-  assert.equal(result.agentInfo.name, "fixture");
+  assert.equal(result.protocolVersion, 2);
+  assert.equal(result.info.name, "fixture");
+  assert.equal(result.steeringSessionNotFound, true);
+}));
+test("smoke stops the bundle when the launcher cannot steer", () => fixture(async root => {
+  const entry = join(root, "no-steering.cjs");
+  writeFileSync(entry, String.raw`process.stdin.once("data", data => console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 2, info: { version: "1" } } })));`);
+  await assert.rejects(smokeAdapter(entry, root), /does not advertise ACP v2 steering/);
+}));
+test("smoke notes when dist/index.js already steers", () => fixture(async root => {
+  const entry = join(root, "stock.cjs");
+  writeFileSync(entry, String.raw`process.stdin.once("data", data => console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 2, info: { version: "1" }, _meta: { steering: { supported: true } } } })));`);
+  const result = await smokeAdapter(entry, root, false);
+  assert.equal(result._meta.steering.supported, true);
 }));
 test("stdin stays open while the adapter initializes asynchronously", () => fixture(async root => {
   const entry = join(root, "async.cjs");
   writeFileSync(entry, String.raw`process.stdin.on("end", () => process.exit(0));
 process.stdin.once("data", data => require("node:fs").readFile(__filename, () => {
-  console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 1 } }));
+  console.log(JSON.stringify({ id: JSON.parse(String(data)).id, result: { protocolVersion: 2 } }));
 }));`);
-  assert.equal((await smokeAdapter(entry, root)).protocolVersion, 1);
+  assert.equal((await smokeAdapter(entry, root, false)).protocolVersion, 2);
 }));
 test("invalid ACP response fails instead of treating process startup as proof", () => fixture(async root => {
   const entry = join(root, "broken.cjs");
@@ -52,11 +175,12 @@ test("an adapter that exits before initializing fails with its error", () => fix
   writeFileSync(entry, 'console.error("fixture cannot launch"); process.exit(7);');
   await assert.rejects(smokeAdapter(entry, root), /fixture cannot launch/);
 }));
-test("archive carries the production tree, lockfile, exact versions and matching checksum", () => fixture(root => {
+test("bundle contains the launcher and the manifest names it", () => fixture(root => {
   const bundle = join(root, "bundle"), output = join(root, "out");
   mkdirSync(bundle); mkdirSync(output);
   writeFileSync(join(bundle, "package.json"), JSON.stringify({ private: true }));
   writeFileSync(join(bundle, "package-lock.json"), '{"lockfileVersion":3}');
+  writeFileSync(join(bundle, "claude-launcher.ts"), "// launcher fixture");
   for (const [name, version] of Object.entries(versions)) {
     const dir = join(bundle, "node_modules", "@agentclientprotocol", name);
     mkdirSync(join(dir, "dist"), { recursive: true });
@@ -71,6 +195,9 @@ test("archive carries the production tree, lockfile, exact versions and matching
   mkdirSync(unpack);
   execFileSync("tar", ["-xzf", archive, "-C", unpack]);
   assert.equal(readFileSync(join(unpack, "package-lock.json"), "utf8"), '{"lockfileVersion":3}');
+  assert.equal(readFileSync(join(unpack, "claude-launcher.ts"), "utf8"), "// launcher fixture");
+  assert.equal(manifest.entrypoints["claude-agent-acp"], "claude-launcher.ts");
+  assert.equal(manifest.entrypoints["codex-acp"], "node_modules/@agentclientprotocol/codex-acp/dist/index.js");
   for (const entry of Object.values(manifest.entrypoints)) assert.ok(readFileSync(join(unpack, entry)).length);
   assert.deepEqual(JSON.parse(readFileSync(join(output, "assembly-adapters-darwin-arm64.json"), "utf8")), manifest);
 }));
@@ -89,7 +216,7 @@ function releaseFixture(root: string) {
       schemaVersion: 1, target, versions,
       archive: { file, sha256: createHash("sha256").update(bytes).digest("hex") },
       smoke: Object.fromEntries(Object.entries(versions).map(([name, version]) => [name, {
-        protocolVersion: 1, agentInfo: { version },
+        protocolVersion: 2, info: { version }, canSteer: true,
       }])),
     }));
   }
@@ -144,15 +271,20 @@ test("publisher refuses corrupted archives before writing a release", () => fixt
   assert.match(run.stderr, /Corrupted release archive/);
   assert.deepEqual(f.state().calls, []);
 }));
-test("publisher refuses mismatched adapter proof before writing a release", () => fixture(root => {
-  const f = releaseFixture(root), file = join(f.assets, "assembly-adapters-linux-x64.json");
-  const manifest = JSON.parse(readFileSync(file, "utf8"));
-  manifest.smoke["codex-acp"].agentInfo.version = "0.0.0";
-  writeFileSync(file, JSON.stringify(manifest));
-  const run = f.run();
-  assert.notEqual(run.status, 0);
-  assert.match(run.stderr, /Mismatched initialization proof/);
-  assert.deepEqual(f.state().calls, []);
+test("publish checks protocol 2 and info.version", () => fixture(async root => {
+  for (const bad of [
+    (proof: any) => { proof.protocolVersion = 1; },
+    (proof: any) => { proof.info.version = "0.0.0"; },
+  ]) await fixture(inner => {
+    const f = releaseFixture(inner), file = join(f.assets, "assembly-adapters-linux-x64.json");
+    const manifest = JSON.parse(readFileSync(file, "utf8"));
+    bad(manifest.smoke["codex-acp"]);
+    writeFileSync(file, JSON.stringify(manifest));
+    const run = f.run();
+    assert.notEqual(run.status, 0);
+    assert.match(run.stderr, /Mismatched initialization proof/);
+    assert.deepEqual(f.state().calls, []);
+  });
 }));
 for (const stage of ["create", "upload", "edit"]) {
   test("failed release " + stage + " never publishes incomplete assets", () => fixture(root => {

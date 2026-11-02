@@ -35,3 +35,6 @@ mod test_rows;
 pub mod turn_line;
 #[cfg(test)]
 mod turn_line_tests;
+
+#[cfg(test)]
+mod sender_identity_tests;

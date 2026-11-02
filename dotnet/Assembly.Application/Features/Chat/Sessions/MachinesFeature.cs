@@ -88,7 +88,7 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
         {
             // An empty name is this machine, as GET /agents?machine= takes it.
             var machine = _machines.Named(args.Machine is { Length: > 0 } name ? name : null) ?? throw new CallFailed("unknown machine");
-            return new AgentList([.. (await machine.AgentsAsync(call.Cancellation)).Select(agent => new Agent(agent.Id, agent.Name))]);
+            return new AgentList([.. (await machine.AgentsAsync(call.Cancellation)).Select(agent => new Agent(agent.Id, agent.Name, agent.TargetId, agent.AccountContext, agent.ProviderTargetId))]);
         });
         // A read: it writes nothing here, so its up to 10 seconds hold up none of the socket's writes.
         calls.Read(Feature, "connect", SessionsJson.Default.ConnectArgs, SessionsJson.Default.MachineItem, async (args, call) =>
@@ -225,7 +225,8 @@ internal sealed class MachinesFeature : IFeature, IAsyncDisposable
 
     internal sealed record ConnectArgs(string Machine);
 
-    internal sealed record Agent(string Id, string Name);
+    internal sealed record Agent(string Id, string Name, string? TargetId = null,
+        string? AccountContext = null, string? ProviderTargetId = null);
 
     internal sealed record AgentList(IReadOnlyList<Agent> Agents);
 }

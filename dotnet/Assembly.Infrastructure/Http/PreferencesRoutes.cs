@@ -40,7 +40,8 @@ internal sealed class PreferencesRoutes(PreferenceStore store)
     {
         if (!body.TryGetProperty("values", out var values) || values.ValueKind != JsonValueKind.Object)
             throw new CallFailed("set needs { values: { key: value } }");
-        store.Save(values);
+        try { store.Save(values); }
+        catch (Assembly.Application.Common.Calls.CallFailed error) { throw new CallFailed(error.Message); }
         return Task.FromResult<Action<Utf8JsonWriter>>(json => json.WriteNullValue());
     }
 }

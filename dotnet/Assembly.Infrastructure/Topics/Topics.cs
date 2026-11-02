@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Topics;
+using Assembly.Infrastructure.Socket;
 
 namespace Assembly.Infrastructure.Topics;
 
@@ -41,7 +42,7 @@ public sealed class Topics : ITopics
     {
         lock (_lock)
         {
-            var subscription = new Subscription(topic, key, change);
+            var subscription = new Subscription(topic, key, change, Unsubscribe);
             state(subscription);
             _subscriptions.Add(subscription);
             return subscription;
@@ -55,7 +56,7 @@ public sealed class Topics : ITopics
         bool last;
         lock (_lock)
         {
-            subscription.Open = false;
+            subscription.Close();
             last = _subscriptions.Remove(subscription)
                 && !_subscriptions.Exists(other => other.Topic == subscription.Topic && other.Key == subscription.Key);
         }
@@ -63,19 +64,19 @@ public sealed class Topics : ITopics
             Unsubscribed?.Invoke(subscription.Topic, subscription.Key);
     }
 
-    internal sealed class Subscription(string topic, string? key, Action<string?, string> change)
+    internal sealed class Subscription(string topic, string? key, Action<string?, string> change, Action<Subscription> unsubscribe) : ISocketSubscription
     {
-        private volatile bool _open = true;
+        private readonly CancellationTokenSource _closed = new();
 
         public string Topic { get; } = topic;
         public string? Key { get; } = key;
         public Action<string?, string> Change { get; } = change;
 
         /// <summary>Until it's unsubscribed; its frames still queued then are dropped.</summary>
-        public bool Open
-        {
-            get => _open;
-            set => _open = value;
-        }
+        public bool Open => !Closed.IsCancellationRequested;
+        public CancellationToken Closed => _closed.Token;
+        public Task Completion => Task.CompletedTask;
+        internal void Close() => _closed.Cancel();
+        public void Dispose() => unsubscribe(this);
     }
 }

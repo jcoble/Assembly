@@ -3,27 +3,16 @@ using System.Text.Json.Serialization;
 namespace Assembly.Application.Common.Acp.Messages;
 
 /// <summary>
-/// What we offer the agent: form questions (<c>elicitation/create</c>), subagents as child sessions (the subagents
-/// RFD: <c>subagents: {}</c>), and nothing else of ACP's own: the agent
-/// reads files and runs commands itself, and ACP v2 removes the <c>fs/*</c> and <c>terminal/*</c> client methods
-/// anyway. <c>_meta</c> carries the JetBrains AIR extensions an agent's descriptor opts into, if any.
+/// ACP v2 client capabilities. The adapter owns file access and tool execution.
 /// </summary>
-public sealed record ClientCapabilities(
-    FileSystemCapabilities Fs, bool Terminal, ElicitationCapabilities Elicitation, SubagentCapabilities Subagents,
-    [property: JsonPropertyName("_meta")] ClientMeta? Meta = null)
+public sealed record ClientCapabilities(ElicitationCapabilities Elicitation, AuthCapabilities Auth)
 {
-    public static ClientCapabilities None { get; } =
-        new(new FileSystemCapabilities(false, false), false, new ElicitationCapabilities(new FormElicitation()), new SubagentCapabilities());
+    public static ClientCapabilities Assembly { get; } = new(new(new(), new()), new(null));
 
-    public static ClientCapabilities WithAir(IReadOnlyList<string>? air) =>
-        air is { Count: > 0 } ? None with { Meta = new ClientMeta(new JetBrainsMeta(new AirMeta(1, air))) } : None;
+    public static ClientCapabilities WithTerminalAuthentication(bool enabled) =>
+        new(Assembly.Elicitation, new(enabled ? new TerminalAuth() : null));
 }
 
-/// <summary>Empty: declaring it is the opt-in.</summary>
-public sealed record SubagentCapabilities;
-
-public sealed record ClientMeta(JetBrainsMeta Jetbrains);
-
-public sealed record JetBrainsMeta(AirMeta Air);
-
-public sealed record AirMeta(int Version, IReadOnlyList<string> Capabilities);
+public sealed record AuthCapabilities(
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TerminalAuth? Terminal);
+public sealed record TerminalAuth;
