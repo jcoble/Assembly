@@ -179,6 +179,7 @@ internal static class SignInTransitions
                     facts_json=CASE WHEN facts_json IS NULL THEN NULL ELSE json_set(facts_json,'$.auth','signedIn') END WHERE id=$id
                 """, new("$now", context.NowMs), new("$id", row.Target.Id));
             events.Add(ProviderState.Changed(row.Target.Id, provider.Version + 1, "signed_in"));
+            events.AddRange(AuthNeed.SignedIn(scope, context, row.Id, row.Version + 1, row.Target, effects));
             effects.Add(new($"probe_provider/{row.Target.Id}/{provider.Version + 1}", "probe_provider", null, null,
                 JsonSerializer.SerializeToElement(new ProbeProviderEffect(row.Target.Id, provider.Version + 1, "signed_in"), EngineJson.Default.ProbeProviderEffect), "provider/" + row.Target.Id));
         }
