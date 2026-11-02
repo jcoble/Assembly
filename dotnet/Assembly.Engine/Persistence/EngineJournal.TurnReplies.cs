@@ -19,6 +19,22 @@ public static partial class EngineJournal
         return ExecuteCore(scope, context, key, admission.Canonical, admission.Transition, turnReplyAdmission: admission);
     }
 
+    internal static bool HasPriorAuthReply(IReadScope scope, string machine, FinalizedChatReply source, string parent)
+    {
+        var id = PreparedTurnReply.MessageId(machine, source.SessionId, source.ChatRunId);
+        var key = "turn-reply/v1/" + id["turn-reply/".Length..];
+        var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$id",
+            r => new { Fingerprint = r.Text(0), Result = r.Text(1) }, new SqlArg("$id", key));
+        if (receipt is null || !TurnReplyFingerprint.TryDecode(receipt.Fingerprint, machine, source.SessionId, id, out var carrier) ||
+            carrier!.TerminalSeq != source.TerminalSeq || carrier.ChatRunIdSha256 != RelayHash.Sha(RelayHash.Utf8.GetBytes(source.ChatRunId)) ||
+            System.Text.Json.JsonSerializer.Deserialize(receipt.Result, EngineJson.Default.CommandResult)?.Applied != true) return false;
+        return scope.QueryFirst("""
+            SELECT COUNT(*) FROM engine_message WHERE id=$id AND machine=$machine AND from_session_id=$child AND to_session_id=$parent
+              AND sender_kind='session' AND mode='prompt' AND framed=1 AND CAST(text AS BLOB)=$body
+            """, r => r.Long(0), new SqlArg("$id", id), new("$machine", machine), new("$child", source.SessionId), new("$parent", parent),
+            new("$body", RelayHash.Utf8.GetBytes(source.Text))) == 1;
+    }
+
     private sealed class TurnReplyAdmission(IWriteScope scope, CommandContext context, string key, PreparedTurnReply reply, MessageExpiryPolicy policy)
     {
         internal string Canonical { get; } = reply.Canonical(context.Machine);
