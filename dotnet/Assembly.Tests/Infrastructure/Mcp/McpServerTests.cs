@@ -4,6 +4,8 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Assembly.Engine.Mcp;
+using Assembly.Engine.NeedsMe;
+using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Application.Common;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
@@ -28,7 +30,7 @@ using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Mcp;
 
-public sealed class McpServerTests
+public sealed partial class McpServerTests
 {
     [Theory]
     [InlineData(false)]
@@ -188,6 +190,8 @@ public sealed class McpServerTests
         public string SessionId { get; private set; } = "s";
         public BoardTools? Board { get; private set; }
         public WorkflowQueries? BoardQueries { get; private set; }
+        public NeedAnswers? Needs { get; private set; }
+        public EngineRuntime Runtime => _runtime;
         private SessionRegistry? _sessions;
         private LiveHub? _hub;
         private BackgroundWork? _work;
@@ -197,20 +201,23 @@ public sealed class McpServerTests
         public HttpClient Http { get; private set; } = null!;
         private Host() => Fixture = new(topics: _topics);
 
-        public static async Task<Host> StartAsync(bool unauthenticated = false, bool board = false, bool helper = false)
+        public static async Task<Host> StartAsync(bool unauthenticated = false, bool board = false, bool helper = false, McpServerTool? extraTool = null, Action<Microsoft.AspNetCore.Http.HttpContext>? requestFinished = null, bool needTools = false)
         {
             var h = new Host();
-            if (board)
+            if (board || needTools)
             {
                 WorkflowSchema.Open(h.Fixture.Db);
                 var store = SessionStore.Open(h.Fixture.Db, h.Fixture.Time, "checkouts");
                 h._hub = new LiveHub(RowStore.Open(h.Fixture.Db));
                 h._work = new(h.Fixture.Time, TextWriter.Null);
                 h._sessions = new(h._hub, store, new FakeLauncher(), h.Fixture.Time, TextWriter.Null, h._work);
-                h.BoardQueries = new(h.Fixture.Db);
-                h.Board = new(store, h._sessions, new(h.Fixture.Db, h.Fixture.Time), h.BoardQueries, default);
-                var session = store.Create("codex", "project");
-                h.SessionId = helper ? store.Helper(session, "codex", "Helper").SessionId : session.SessionId;
+                if (board)
+                {
+                    h.BoardQueries = new(h.Fixture.Db);
+                    h.Board = new(store, h._sessions, new(h.Fixture.Db, h.Fixture.Time), h.BoardQueries, default);
+                    var session = store.Create("codex", "project");
+                    h.SessionId = helper ? store.Helper(session, "codex", "Helper").SessionId : session.SessionId;
+                }
             }
             h.Fixture.SeedSession(h.SessionId, epoch: 7);
             h.Fixture.SeedSession("child", parentId: h.SessionId);
@@ -218,6 +225,12 @@ public sealed class McpServerTests
             h._runtime = EngineRuntime.Start(h.Fixture.Db, h._topics, h.Fixture.Time, h.Fixture.Limits, effectsReady: h._endpoint.Ready);
             var gate = new McpGate(h._runtime, h.Fixture.Limits, h.Fixture.Time);
             IReadOnlyList<McpServerTool> tools = h.Board is null ? [new ListSessionsTool(gate)] : [new ListSessionsTool(gate), new BoardUpdateTool(gate, h.Board)];
+            if (needTools)
+            {
+                h.Needs = new(gate, h._runtime, h._sessions!, h.Fixture.Time);
+                tools = [.. tools, .. NeedTools.Create(gate, h.Needs)];
+            }
+            if (extraTool is not null) tools = [.. tools, extraTool];
             var host = new McpServerHost(h.Tokens, new(h._runtime, gate, h.Fixture.Time), tools);
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
@@ -225,6 +238,12 @@ public sealed class McpServerTests
             host.AddServices(builder.Services);
             h._app = builder.Build();
             host.Map(h._app);
+            if (requestFinished is not null)
+                h._app.Use(next => async context =>
+                {
+                    try { await next(context); }
+                    finally { requestFinished(context); }
+                });
             if (unauthenticated)
             {
                 h._app.Use(next => context =>
@@ -277,10 +296,13 @@ public sealed class McpServerTests
         public async ValueTask DisposeAsync()
         {
             Http.Dispose();
+            var needWaits = Needs?.StopWaiting() ?? Task.CompletedTask;
             var stopping = _runtime.DisposeAsync().AsTask();
             _endpoint.Stop();
             await _app.DisposeAsync();
             await stopping;
+            await needWaits;
+            if (Needs is not null) await Needs.DisposeAsync();
             if (Board is not null) await Board.DisposeAsync();
             if (_sessions is not null) await _sessions.DisposeAsync();
             if (_work is not null) await _work.DisposeAsync();

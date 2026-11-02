@@ -25,10 +25,9 @@ public sealed class AnswerNeedTool : McpServerTool
 
     public override ValueTask<CallToolResult> InvokeAsync(RequestContext<CallToolRequestParams> request,
         CancellationToken cancellationToken = default)
-    {
-        var wait = McpInvocation.WaitCancellation(request, cancellationToken);
-        return McpInvocation.InvokeAsync(ProtocolTool.Name, request, (caller, arguments, work) => Call(caller, arguments, work, wait), cancellationToken);
-    }
+        => McpInvocation.InvokeAsync(ProtocolTool.Name, request,
+            (caller, arguments, work) => Call(caller, arguments, work,
+                McpInvocation.RequireOriginalWaitToken(request)), cancellationToken);
 
     private async ValueTask<CallToolResult> Call(McpCaller caller, JsonElement arguments, CancellationToken work, CancellationToken wait)
     {

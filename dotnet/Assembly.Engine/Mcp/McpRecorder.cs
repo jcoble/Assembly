@@ -19,7 +19,7 @@ public sealed class McpRecorder(IEngineRuntime runtime, McpGate gate, TimeProvid
 
     public McpRequestFilter<CallToolRequestParams, CallToolResult> Filter => next => async (context, originalWait) =>
     {
-        McpInvocation.CaptureWait(context, originalWait);
+        using var captured = McpRequestWait.Capture(context, originalWait);
         var session = context.User?.FindFirst("assembly:session")?.Value;
         var epochText = context.User?.FindFirst("assembly:epoch")?.Value;
         var name = context.Params?.Name ?? "";

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Chat.Rows;
 using Assembly.Engine.Mcp;
 using Assembly.Engine.Mcp.Tools;
 using Assembly.Engine.Sessions;
@@ -25,7 +26,7 @@ public sealed class AskOwnerToolTests
     {
         await using var h = new Harness();
         h.Fixture.SeedSession("s"); h.Fixture.SeedRun(); h.Fixture.SeedStep();
-        var response = await h.Call(new AskOwnerTool(h.Gate), "s", """{"question":"Proceed?","runId":"r"}""");
+        var response = await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", """{"question":"Proceed?","runId":"r"}""");
         Assert.False(response.IsError);
         using var json = JsonDocument.Parse(Text(response));
         var id = json.RootElement.GetProperty("needId").GetString()!;
@@ -44,7 +45,7 @@ public sealed class AskOwnerToolTests
     public async Task Child_ask_owner_is_refused()
     {
         await using var h = new Harness(); h.Fixture.SeedSession("parent"); h.Fixture.SeedSession("s", parentId: "parent");
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", """{"question":"Proceed?"}""");
+        var result = await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", """{"question":"Proceed?"}""");
         Assert.True(result.IsError);
         Assert.Equal("Only a top-level session can ask Jesse. Send your question to your starter with send_message.", Text(result));
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Empty(h.Fixture.Events());
@@ -58,7 +59,7 @@ public sealed class AskOwnerToolTests
     public async Task Choice_needs_two_to_eight_options(string options)
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}");
+        var result = await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}");
         Assert.True(result.IsError); Assert.Equal("ask_owner: options needs 2 to 8 distinct entries.", Text(result));
         Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
     }
@@ -74,7 +75,7 @@ public sealed class AskOwnerToolTests
     public async Task Invalid_arguments_mutate_nothing(string args)
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
-        Assert.True((await h.Call(new AskOwnerTool(h.Gate), "s", args)).IsError);
+        Assert.True((await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", args)).IsError);
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Empty(h.Fixture.Events());
     }
 
@@ -82,7 +83,7 @@ public sealed class AskOwnerToolTests
     public async Task Foreign_run_is_refused_through_engine_gate()
     {
         await using var h = new Harness(); h.Fixture.SeedSession("other"); h.Fixture.SeedRun(ownerSessionId: "other"); h.Fixture.SeedSession(runId: "r");
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", """{"question":"Proceed?","runId":"r"}""");
+        var result = await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", """{"question":"Proceed?","runId":"r"}""");
         Assert.True(result.IsError); Assert.Equal("ask_owner: Assembly refused these arguments.", Text(result));
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
     }
@@ -94,7 +95,7 @@ public sealed class AskOwnerToolTests
         f.SeedStep(state: "running", sessionId: "s");
         foreach (var open in new[] { Question() with { Kind = "permission" }, Question() with { RunId = "r", StepId = "step" } })
             Assert.Equal("bad_args", f.Apply(open, "n", actor: new(ActorKind.Session, "s")).Error);
-        Assert.True(f.Apply(Question("provider") with { Kind = "permission" }, "n", actor: Adapter).Applied);
+        Assert.True(OpenProvider(f, "n", "permission").Applied);
     }
 
     [Theory]
@@ -136,11 +137,14 @@ public sealed class AskOwnerToolTests
     public void Other_open_need_holds_reply_until_last_resolution()
     {
         using var f = new EngineFixture(); f.SeedSession();
-        f.Apply(Question(), "a", actor: Adapter); f.Apply(Question("provider"), "b", actor: Adapter);
+        Assert.True(f.Apply(Question(), "a", actor: Adapter).Applied);
+        Assert.True(f.Apply(Question(), "b", actor: Adapter).Applied);
         Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "a", 1).Applied);
         Assert.Equal(1, f.Number("SELECT version FROM engine_message")); Assert.Equal(0, f.Count("engine_outbox"));
         Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "b", 1).Applied);
-        Assert.Equal(1, f.Count("engine_message")); Assert.Equal(2, f.Number("SELECT version FROM engine_message"));
+        Assert.Equal(2, f.Count("engine_message"));
+        Assert.Equal(2, f.Number("SELECT version FROM engine_message WHERE id='need-answer/a'"));
+        Assert.Equal(1, f.Number("SELECT version FROM engine_message WHERE id='need-answer/b'"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
     }
 
@@ -149,9 +153,11 @@ public sealed class AskOwnerToolTests
     [InlineData(true)]
     public void Provider_and_ended_need_create_no_synthetic_reply(bool ended)
     {
-        using var f = new EngineFixture(); f.SeedSession(); f.Apply(Question(ended ? null : "provider"), "n", actor: Adapter);
+        using var f = new EngineFixture(); f.SeedSession();
+        Assert.True((ended ? f.Apply(Question(), "n", actor: Adapter) : OpenProvider(f, "n")).Applied);
         if (ended) Assert.True(f.Apply(new SetSessionState("ended", "done", null), "s", f.Number("SELECT version FROM engine_session"), actor: Adapter).Applied);
-        Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "n", 1).Applied);
+        Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes"), ended ? null : "provider_settled"),
+            "n", 1, actor: ended ? new(ActorKind.Window, "window") : Adapter).Applied);
         Assert.Equal(0, f.Count("engine_message"));
     }
 
@@ -173,7 +179,7 @@ public sealed class AskOwnerToolTests
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
         var options = JsonSerializer.Serialize(Enumerable.Range(0, count).Select(i => i.ToString()).ToArray());
-        Assert.False((await h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}")).IsError);
+        Assert.False((await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", "{\"question\":\"Pick\",\"kind\":\"choice\",\"options\":" + options + "}")).IsError);
         Assert.Equal("choice", h.Fixture.Text("SELECT kind FROM engine_needs_me"));
     }
 
@@ -184,7 +190,7 @@ public sealed class AskOwnerToolTests
     {
         await using var h = new Harness(); h.Fixture.SeedSession();
         var args = "{\"question\":\"" + new string('q', length) + "\"}";
-        Assert.Equal(refused, (await h.Call(new AskOwnerTool(h.Gate), "s", args)).IsError == true);
+        Assert.Equal(refused, (await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", args)).IsError == true);
         Assert.Equal(refused ? 0 : 1, h.Fixture.Count("engine_needs_me"));
     }
 
@@ -195,7 +201,7 @@ public sealed class AskOwnerToolTests
         var published = 0;
         using var subscription = h.Topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => Interlocked.Increment(ref published));
         h.Fixture.Db.Writer.Write("test.fail", s => s.Execute("CREATE TRIGGER fail_need AFTER INSERT ON engine_needs_me BEGIN SELECT RAISE(ABORT,'injected'); END"));
-        await Assert.ThrowsAsync<SqliteException>(() => h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Proceed?\"}"));
+        await Assert.ThrowsAsync<SqliteException>(() => h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", "{\"question\":\"Proceed?\"}"));
         Assert.Equal(0, h.Fixture.Count("engine_needs_me")); Assert.Equal(0, h.Fixture.Count("engine_command_receipt"));
         Assert.Empty(h.Fixture.Events()); Assert.Equal("idle", h.Fixture.State("engine_session", "s")); Assert.Equal(0, published);
     }
@@ -217,7 +223,7 @@ public sealed class AskOwnerToolTests
     public async Task Caller_and_window_answer_use_the_need_sessions_epoch()
     {
         await using var h = new Harness(); h.Fixture.SeedSession(epoch: 7);
-        var result = await h.Call(new AskOwnerTool(h.Gate), "s", "{\"question\":\"Proceed?\"}", epoch: 7);
+        var result = await h.Call(new AskOwnerTool(h.Gate, new UnusedNeeds()), "s", "{\"question\":\"Proceed?\"}", epoch: 7);
         Assert.False(result.IsError);
         var id = h.Fixture.Text("SELECT id FROM engine_needs_me")!;
         var command = new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes"));
@@ -227,7 +233,36 @@ public sealed class AskOwnerToolTests
         Assert.Equal(7, Assert.Single(h.Fixture.Events(), e => e.EntityKind == "message").Data.Epoch);
     }
 
+    private static CommandResult OpenProvider(EngineFixture f, string id, string kind = "question")
+    {
+        var card = JsonSerializer.SerializeToElement(new
+        {
+            kind,
+            state = "open",
+            message = "Proceed?",
+            title = "Question",
+            toolCallId = "tool",
+            options = kind == "permission" ? new[] { new { optionId = "yes", name = "Yes", kind = "allow_once" } } : null,
+            schema = kind == "question" ? JsonSerializer.SerializeToElement(new { type = "object" }) : (JsonElement?)null
+        });
+        var command = Question("provider") with { Kind = kind, Options = kind == "permission" ? ["yes"] : [], ChatRowId = "ask", ProviderQuestion = card };
+        var batch = new RowBatch(); batch.Rows.Add(new NewRow("turn", "ask:ask", "ask", card, 1000));
+        var prepared = EngineCommands.PrepareNeedCommand(command);
+        var commands = new EngineCommands(f.Machine, f.Limits);
+        CommandResult? result = null;
+        RowStore.Open(f.Db).Commit("s", batch, scope => result = commands.ApplyPreparedNeed(scope,
+            new(Guid.NewGuid(), f.Machine, Adapter, id, 0, 0, 1000), prepared));
+        return result!;
+    }
+
     private static string Text(CallToolResult result) => Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+
+    private sealed class UnusedNeeds : INeedAnswers
+    {
+        public Task<CommandResult> ApplyAsync(McpCaller caller, ParentNeedRequest request,
+            CancellationToken workCancellation, CancellationToken waitCancellation) =>
+            throw new InvalidOperationException("An ordinary owner question must not call the routed answer service.");
+    }
 
     private sealed class Harness : IAsyncDisposable
     {
@@ -244,7 +279,7 @@ public sealed class AskOwnerToolTests
             Gate = new(_runtime, limits, Fixture.Time);
         }
 
-        public async Task<CallToolResult> Call(EngineTool tool, string session, string arguments, long epoch = 0)
+        public async Task<CallToolResult> Call(McpServerTool tool, string session, string arguments, long epoch = 0)
         {
             using var input = new MemoryStream();
             using var output = new MemoryStream();
@@ -253,6 +288,7 @@ public sealed class AskOwnerToolTests
             var request = new RequestContext<CallToolRequestParams>(server, new() { Method = "tools/call", Id = new RequestId(1) },
                 new() { Name = tool.ProtocolTool.Name, Arguments = values })
             { User = new ClaimsPrincipal(new ClaimsIdentity([new("assembly:session", session), new("assembly:epoch", epoch.ToString(System.Globalization.CultureInfo.InvariantCulture))], "test")) };
+            using var captured = McpRequestWait.Capture(request, default);
             return await tool.InvokeAsync(request);
         }
 

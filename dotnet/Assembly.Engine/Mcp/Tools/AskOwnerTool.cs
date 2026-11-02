@@ -9,29 +9,37 @@ public sealed record AskOwnerArguments(string? Question = null, string? Kind = n
     IReadOnlyList<string>? Options = null, string? RunId = null, string? ChildNeedId = null);
 public sealed record AskOwnerAnswer(string NeedId, string State);
 
-public sealed class AskOwnerTool(McpGate gate, INeedAnswers? needs = null)
-    : EngineTool("ask_owner", "Ask Jesse a question, choice or confirmation. Only top-level sessions may ask; use childNeedId to escalate a child question already addressed to you. The answer arrives as an Assembly message.", """
+public sealed class AskOwnerTool : McpServerTool
+{
+    private readonly McpGate gate;
+    private readonly INeedAnswers needs;
+
+    public AskOwnerTool(McpGate gate, INeedAnswers needs)
+    {
+        (this.gate, this.needs) = (gate, needs);
+        using var schema = JsonDocument.Parse("""
         {"type":"object","additionalProperties":false,"properties":{
             "question":{"type":"string","minLength":1,"maxLength":1200},
             "kind":{"type":"string","enum":["question","choice","confirmation"]},
             "options":{"type":"array","minItems":2,"maxItems":8,"uniqueItems":true,
                 "items":{"type":"string","minLength":1,"maxLength":120}},
             "runId":{"type":"string","minLength":1},"childNeedId":{"type":"string","minLength":1}}}
-        """)
-{
+        """);
+        ProtocolTool = new() { Name = "ask_owner", Description = "Ask Jesse a question, choice or confirmation. Only top-level sessions may ask; use childNeedId to escalate a child question already addressed to you. The answer arrives as an Assembly message.", InputSchema = schema.RootElement.Clone() };
+    }
+
+    public override Tool ProtocolTool { get; }
+    public override IReadOnlyList<object> Metadata { get; } = [];
+
     public override ValueTask<CallToolResult> InvokeAsync(RequestContext<CallToolRequestParams> request,
         CancellationToken cancellationToken = default)
     {
-        var wait = McpInvocation.WaitCancellation(request, cancellationToken);
         return McpInvocation.InvokeAsync(ProtocolTool.Name, request, async (caller, arguments, work) =>
         {
-            var answer = await CallWithWait(caller, arguments, work, wait).ConfigureAwait(false);
+            var answer = await CallWithWait(caller, arguments, work, McpInvocation.RequireOriginalWaitToken(request)).ConfigureAwait(false);
             return McpInvocation.Text(answer.GetRawText(), false);
         }, cancellationToken);
     }
-
-    protected override ValueTask<JsonElement> CallAsync(McpCaller caller, JsonElement arguments, CancellationToken cancellationToken) =>
-        CallWithWait(caller, arguments, cancellationToken, cancellationToken);
 
     private async ValueTask<JsonElement> CallWithWait(McpCaller caller, JsonElement arguments, CancellationToken cancellationToken, CancellationToken wait)
     {
@@ -55,7 +63,6 @@ public sealed class AskOwnerTool(McpGate gate, INeedAnswers? needs = null)
             if (string.IsNullOrWhiteSpace(args.ChildNeedId) || arguments.EnumerateObject().Count() != 1)
                 throw Bad("childNeedId", "must be used alone and name an addressed child question");
             gate.Read(caller, (_, _) => 0, cancellationToken);
-            if (needs is null) throw new McpRefused(new("other_machine"));
             var result = await needs.ApplyAsync(caller, new(args.ChildNeedId, ParentNeedAction.Escalate, null), cancellationToken, wait).ConfigureAwait(false);
             if (!result.Applied) throw new McpRefused(new(result.Error == "forbidden" ? "not_answerer" : result.Error!));
             return JsonSerializer.SerializeToElement(new AskOwnerAnswer(args.ChildNeedId, "open"), McpJson.Default.AskOwnerAnswer);
