@@ -23,6 +23,7 @@ public static class Refusals
             "unavailable" => "That session has ended.",
             "not_yours" => "No message of yours has that id.",
             "no_step" => "You aren't working a workflow step, so there is nothing to report a result for.",
+            "bad_answer" => "Use an exact optionId supplied by the question, or its original form action and content object.",
             "not_answerer" => "That question isn't yours to answer.",
             "already_resolved" => "That question was already answered.",
             "stale_epoch" => "Your session moved to another machine; this call was not applied.",
