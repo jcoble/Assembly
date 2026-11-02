@@ -72,9 +72,10 @@ public sealed class SessionSummaries
     /// <summary>Uses the remote machine's current state even when its rows aren't being followed here.</summary>
     public void ApplyRemote(Sessions.SessionItem item) =>
         ImmutableInterlocked.AddOrUpdate(ref _current, item.SessionId,
-            new SessionSummary(item.ActiveRunId, item.State == "failed" ? "failed" : null,
-                Get(item.SessionId).EndSeq, item.PendingAsk, item.Background), (_, old) =>
-                new(item.ActiveRunId, item.State == "failed" ? "failed" : null, old.EndSeq, item.PendingAsk, item.Background));
+            ProjectRemote(item, Get(item.SessionId)), (_, old) => ProjectRemote(item, old));
+
+    internal static SessionSummary ProjectRemote(Sessions.SessionItem item, SessionSummary old) =>
+        new(item.ActiveRunId, item.State == "failed" ? "failed" : null, old.EndSeq, item.PendingAsk, item.Background);
 
     // Deltas, messages, tools and the rest never change a summary.
     private static bool Counts(StoredRow row) => row.Kind is RowKind.Turn or RowKind.Ask or RowKind.Task or RowKind.Subagent;

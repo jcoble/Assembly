@@ -16,7 +16,7 @@ public sealed class FeedAtomicTests
         using var f = new EngineFixture(topics: topics); f.SeedSession();
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
         using var hub = new LiveHub(RowStore.Open(f.Db));
-        var feed = new EngineFeed(runtime, TextWriter.Null);
+        var feed = new EngineFeed(runtime, TextWriter.Null, f.Time);
         var observed = Assert.IsType<SessionObservation>(feed.Capture("s"));
         var saved = hub.Publish("s", new RowBatch(), scope => feed.ObserveBatch(scope, observed, "acp", [new TurnStarted(1000, "synthetic-ignored-by-host", "")]));
         Assert.Empty(saved);
@@ -34,7 +34,7 @@ public sealed class FeedAtomicTests
         using var f = new EngineFixture(topics: topics); f.SeedSession();
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
         using var hub = new LiveHub(RowStore.Open(f.Db));
-        var feed = new EngineFeed(runtime, TextWriter.Null);
+        var feed = new EngineFeed(runtime, TextWriter.Null, f.Time);
         var observed = Assert.IsType<SessionObservation>(feed.Capture("s"));
         var batch = new RowConverter().Apply(new TurnStarted(1000, "chat-turn", "hello"));
         batch.Details.Add(new ToolDetail("call", Input: "{}", Output: "not committed"));

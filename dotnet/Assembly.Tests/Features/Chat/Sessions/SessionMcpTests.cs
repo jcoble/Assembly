@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Chat.Sessions.Mcp;
 using System.Text.Json;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Agents;

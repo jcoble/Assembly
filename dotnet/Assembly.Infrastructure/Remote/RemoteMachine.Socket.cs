@@ -25,7 +25,7 @@ internal sealed partial class RemoteMachine
             {
                 await OpenSocketAsync(socket, "/socket", cancellationToken);
                 _sessionsSub = Interlocked.Increment(ref _nextSub);
-                await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{_sessionsSub},\"topic\":\"sessions\"}}", cancellationToken);
+                await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{_sessionsSub},\"topic\":\"sessions\",\"sessionTitleParts\":1}}", cancellationToken);
                 foreach (var (id, sub) in _subscriptions)
                     await SendFrameAsync(socket, SubFrame(id, sub.Session, _hub.LastSeq(sub.Session)), cancellationToken);
                 foreach (var pending in _calls.Values)
@@ -34,6 +34,7 @@ internal sealed partial class RemoteMachine
                 _socketFailure = null;
                 InvalidateEngine();
                 _socket = socket;
+                BeginSessionPublications(socket);
                 SocketOpened?.Invoke();
                 return socket;
             }
@@ -48,22 +49,14 @@ internal sealed partial class RemoteMachine
         finally { _socketSend.Release(); }
     }
 
-    private void ApplySession(JsonElement json)
-    {
-        if (json.ValueKind == JsonValueKind.Object && JsonSerializer.Deserialize(json, SessionsJson.Default.SessionItem) is { } item
-            && _sessionStore.Get(item.SessionId) is { Machine: var machine } && machine == _name)
-        {
-            _sessionStore.ApplyRemote(item);
-            if (item.ActiveRunId is { } runId) _follower.Watch(item.SessionId, runId);
-        }
-    }
-
     private Task<JsonElement> CallAsync(string feature, string method, object args, CancellationToken cancellationToken) =>
         CallAsync(feature, method, JsonSerializer.SerializeToElement(args, args.GetType(), SessionsJson.Default), false, cancellationToken);
 
-    internal async Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken, string? expectedEngineId = null, ClientWebSocket? expectedConnection = null)
+    internal async Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken, string? expectedEngineId = null, ClientWebSocket? expectedConnection = null,
+        OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null,
+        Assembly.Infrastructure.Engine.Relays.FrozenMachineStartIntent? startIntent = null)
     {
-        if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken, expectedEngineId, expectedConnection);
+        if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken, expectedEngineId, expectedConnection, expectedOwner, expectedMirror);
         if (_socket is not { State: WebSocketState.Open })
             throw _socketFailure ?? Unreachable("machine socket closed", $"{_name}: machine socket closed");
         var id = Interlocked.Increment(ref _nextSub);
@@ -77,17 +70,31 @@ internal sealed partial class RemoteMachine
             if (expectedEngineId is not null) RequireEngine(expectedEngineId);
             if (expectedConnection is not null && !ReferenceEquals(socket, expectedConnection))
                 throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed before send");
+            if (expectedOwner is not null)
+            {
+                RequireOwnerBinding(expectedOwner); RequireLiveMirror(expectedOwner, expectedMirror);
+            }
             sentOn = socket;
-            _calls.Add(id, pending);
             var json = args.GetRawText();
+            startIntent?.SendingNormal(this, socket, feature, method, args, id);
+            _calls.Add(id, pending);
             await SendFrameAsync(socket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{json}}}", cancellationToken);
+            startIntent?.FrameOrdered();
         }
         catch (Exception error) when (error is WebSocketException or OperationCanceledException)
         {
+            startIntent?.SendFailed();
             _calls.Remove(id);
             _socket?.Abort();
             if (error is OperationCanceledException) throw;
             throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error);
+        }
+        catch (Exception) when (startIntent is not null)
+        {
+            var sending = startIntent.Phase == Assembly.Infrastructure.Engine.Relays.StartIssuePhase.Sending;
+            startIntent.SendFailed(); _calls.Remove(id);
+            if (sending) _socket?.Abort();
+            throw;
         }
         finally { _socketSend.Release(); }
         try
@@ -106,7 +113,11 @@ internal sealed partial class RemoteMachine
                             throw Unreachable("machine socket changed", $"{_name}: machine socket changed during identity handshake");
                         var identity = result.GetProperty("machine").GetString();
                         if (string.IsNullOrWhiteSpace(identity)) throw new IOException("Invalid remote engine identity");
+                        if (_ownerStopping || _socketStop.IsCancellationRequested) throw new OperationCanceledException();
+                        if (_engineIdentity is not null && _engineIdentity != identity) InvalidateEngine();
                         _engineIdentity = identity;
+                        if (_sessionPublication is null) BeginSessionPublications(sentOn);
+                        _sessionPublication!.Identity.TrySetResult(identity);
                     }
                     finally { _socketSend.Release(); }
                 }
@@ -118,6 +129,10 @@ internal sealed partial class RemoteMachine
                         if (!ReferenceEquals(_socket, sentOn) || sentOn.State != WebSocketState.Open)
                             throw Unreachable("machine socket changed", $"{_name}: machine socket changed during engine read");
                         RequireEngine(expectedEngineId);
+                        if (expectedOwner is not null)
+                        {
+                            RequireOwnerBinding(expectedOwner); RequireLiveMirror(expectedOwner, expectedMirror);
+                        }
                     }
                     finally { _socketSend.Release(); }
                 }
@@ -232,9 +247,7 @@ internal sealed partial class RemoteMachine
                         {
                             if (sub.GetInt64() == _sessionsSub)
                             {
-                                if (frame.TryGetProperty("items", out var items))
-                                    foreach (var entry in items.EnumerateArray()) ApplySession(entry.GetProperty("item"));
-                                else if (frame.TryGetProperty("item", out var item)) ApplySession(item);
+                                ReceiveSessionPublication(frame, socket);
                             }
                             else if (_subscriptions.TryGetValue(sub.GetInt64(), out var target) && !target.Frames.Writer.TryWrite(frame))
                                 throw new IOException("remote rows queue is full");
@@ -252,11 +265,13 @@ internal sealed partial class RemoteMachine
             }
             finally
             {
+                Task titleDrain = Task.CompletedTask;
                 await _socketSend.WaitAsync(CancellationToken.None);
                 try
                 {
                     if (ReferenceEquals(_socket, socket))
                     {
+                        titleDrain = EndSessionPublications();
                         InvalidateEngine();
                         _socket = null;
                         foreach (var pending in _calls.Values)
@@ -266,6 +281,7 @@ internal sealed partial class RemoteMachine
                     socket?.Dispose();
                 }
                 finally { _socketSend.Release(); }
+                await titleDrain;
             }
             if (copied) backoff = TimeSpan.FromSeconds(1);
             try { await Task.Delay(backoff, _time, _socketStop.Token); }
@@ -275,7 +291,7 @@ internal sealed partial class RemoteMachine
     }
 
     internal async IAsyncEnumerable<JsonElement> EngineFramesAsync(Func<(long? After, CursorAt? At)> cursor,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct, OwnerConnectionBinding binding)
     {
         var id = Interlocked.Increment(ref _nextSub);
         // Snapshot pages are pulled. Event pages remain bounded by the socket's existing receive path.
@@ -285,6 +301,7 @@ internal sealed partial class RemoteMachine
         {
             if (_socket is not { State: WebSocketState.Open } socket)
                 throw Unreachable("machine socket closed", $"{_name}: machine socket closed");
+            socket = RequireOwnerBinding(binding);
             _engineSubscriptions.Add(id, frames);
             var (after, at) = cursor();
             var position = after is null ? "" : $",\"after\":{after}";
@@ -303,7 +320,7 @@ internal sealed partial class RemoteMachine
             try
             {
                 _engineSubscriptions.Remove(id);
-                if (_socket is { State: WebSocketState.Open } socket)
+                if (_socket is { State: WebSocketState.Open } socket && binding.Matches(this, socket, _ownerLifecycle))
                     try { await SendFrameAsync(socket, $"{{\"t\":\"unsub\",\"id\":{id}}}", _socketStop.Token); }
                     catch (Exception error) when (error is WebSocketException or OperationCanceledException) { socket.Abort(); }
             }
@@ -311,91 +328,11 @@ internal sealed partial class RemoteMachine
         }
     }
 
-    internal async Task SendAsync(string frame, CancellationToken ct)
-    {
-        await _socketSend.WaitAsync(ct);
-        try
-        {
-            if (_socket is not { State: WebSocketState.Open } socket)
-                throw Unreachable("machine socket closed", $"{_name}: machine socket closed");
-            await SendFrameAsync(socket, frame, ct);
-        }
-        catch (OperationCanceledException error) when (!ct.IsCancellationRequested)
-        { throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error); }
-        finally { _socketSend.Release(); }
-    }
-
     private async Task<IReadOnlyList<StoredRow>> ReadRowsAsync(string session, long after, CancellationToken ct)
     {
         var args = JsonSerializer.Deserialize($"{{\"session\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after},\"limit\":{RowsFeature.PageLimit}}}", EngineJson.Default.JsonElement);
         var result = await CallAsync("rows", "after", args, true, ct);
         return result.GetProperty("rows").EnumerateArray().Select(RowWire.Read).ToArray();
-    }
-
-    private async Task<JsonElement> BulkCallAsync(string feature, string method, JsonElement args, CancellationToken ct, string? expectedEngineId, ClientWebSocket? expectedConnection)
-    {
-        await _bulkCall.WaitAsync(ct);
-        ClientWebSocket? live = null;
-        try
-        {
-            if (expectedEngineId is not null)
-            {
-                await _socketSend.WaitAsync(ct);
-                try
-                {
-                    live = RequireEngine(expectedEngineId);
-                    if (expectedConnection is not null && !ReferenceEquals(live, expectedConnection))
-                        throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed before bulk send");
-                }
-                finally { _socketSend.Release(); }
-            }
-            if (_bulkSocket is not { State: WebSocketState.Open })
-            {
-                _bulkSocket?.Dispose();
-                _bulkSocket = new ClientWebSocket();
-                _bulkEngineIdentity = await OpenSocketAsync(_bulkSocket, "/socket/bulk", ct);
-            }
-            var id = Interlocked.Increment(ref _nextSub);
-            await _socketSend.WaitAsync(ct);
-            try
-            {
-                if (expectedEngineId is not null && (!ReferenceEquals(live, RequireEngine(expectedEngineId)) || _bulkEngineIdentity != expectedEngineId))
-                    throw Unreachable("unverified engine peer", $"{_name}: bulk socket engine identity differs or is unverified");
-                await SendFrameAsync(_bulkSocket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{args.GetRawText()}}}", ct);
-            }
-            finally { _socketSend.Release(); }
-            var frame = await ReadFrameAsync(_bulkSocket, ct);
-            if (frame.GetProperty("id").GetInt64() != id) throw new IOException("remote bulk response id differs");
-            if (frame.GetProperty("t").GetString() != "result") throw new CallFailed(frame.GetProperty("message").GetString()!);
-            if (expectedEngineId is not null)
-            {
-                await _socketSend.WaitAsync(ct);
-                try
-                {
-                    if (!ReferenceEquals(_socket, live) || live is not { State: WebSocketState.Open })
-                        throw Unreachable("machine socket changed", $"{_name}: machine socket changed during bulk read");
-                    RequireEngine(expectedEngineId);
-                    if (_bulkEngineIdentity != expectedEngineId)
-                        throw Unreachable("unverified engine peer", $"{_name}: bulk socket engine identity changed");
-                }
-                finally { _socketSend.Release(); }
-            }
-            return frame.GetProperty("result");
-        }
-        catch (Exception error)
-        {
-            if (!ct.IsCancellationRequested && error is not MachineUnreachable)
-            {
-                await _socketSend.WaitAsync(CancellationToken.None);
-                try { if (expectedEngineId is null || ReferenceEquals(_socket, live)) _socket?.Abort(); }
-                finally { _socketSend.Release(); }
-            }
-            _bulkSocket?.Dispose();
-            _bulkSocket = null;
-            _bulkEngineIdentity = null;
-            throw;
-        }
-        finally { _bulkCall.Release(); }
     }
 
     private async Task<string?> OpenSocketAsync(ClientWebSocket socket, string path, CancellationToken cancellationToken)
@@ -419,11 +356,13 @@ internal sealed partial class RemoteMachine
     }
 
     // Both helpers run only under the existing send gate; the socket reference is the connection epoch.
-    private ClientWebSocket RequireEngine(string machine) => _socket is { State: WebSocketState.Open } socket && _engineIdentity == machine
+    private ClientWebSocket RequireEngine(string machine) => !_ownerStopping && !_socketStop.IsCancellationRequested && _socket is { State: WebSocketState.Open } socket && _engineIdentity == machine
         ? socket : throw Unreachable("unverified engine peer", $"{_name}: socket engine identity differs or is unverified");
 
     private void InvalidateEngine()
     {
+        _ = EndSessionPublications();
+        InvalidateOwnerBinding();
         _engineIdentity = null;
         _bulkEngineIdentity = null;
         _bulkSocket?.Abort();

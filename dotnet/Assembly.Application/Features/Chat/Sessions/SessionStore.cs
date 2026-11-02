@@ -357,11 +357,24 @@ public sealed partial class SessionStore
         });
 
     /// <summary>Applies a remote push and publishes the desktop's item after the metadata write commits.</summary>
-    public void ApplyRemote(SessionItem item)
+    public void ApplyRemote(SessionItem item) => ApplyRemoteCore(item, null);
+
+    /// <summary>Applies only to a row still copied from the expected machine when its writer runs.</summary>
+    public bool ApplyRemote(SessionItem item, string expectedCopiedMachine)
+    {
+        ArgumentNullException.ThrowIfNull(expectedCopiedMachine);
+        return ApplyRemoteCore(item, expectedCopiedMachine);
+    }
+
+    private bool ApplyRemoteCore(SessionItem item, string? expectedCopiedMachine)
     {
         var exactTitle = item.Title is null ? null : TitleUtf8.GetBytes(item.Title);
-        _writer.Write("sessions.remote", scope =>
+        return _writer.Write("sessions.remote", scope =>
         {
+            if (expectedCopiedMachine is not null && scope.QueryFirst(
+                    "SELECT COUNT(*) FROM session_info WHERE session_id=$id AND machine=$machine",
+                    row => row.Long(0), new SqlArg("$id", item.SessionId), new SqlArg("$machine", expectedCopiedMachine)) == 0)
+                return false;
             scope.Execute($"""
                 UPDATE session_info SET
                   title = CASE WHEN COALESCE(title_source, 'prompt') != 'user' AND helper = 0 AND $title IS NOT NULL
@@ -372,9 +385,16 @@ public sealed partial class SessionStore
                 WHERE session_id = $id;
                 """, new SqlArg("$id", item.SessionId), new SqlArg("$title", exactTitle),
                 new SqlArg("$source", item.TitleSource ?? "prompt"), new SqlArg("$at", item.UpdatedAt));
-            _summaries?.ApplyRemote(item);
-            Publish(scope, item.SessionId);
-            return 0;
+            if (Get(scope, item.SessionId) is { } session)
+            {
+                // Capture the publication now, so serialization can still fail before commit. A concurrent local
+                // summary can advance EndSeq; the callback preserves that latest value rather than overwriting it.
+                var summary = _summaries is { } current
+                    ? SessionSummaries.ProjectRemote(item, current.Get(item.SessionId)) : SessionSummary.None;
+                Publish(scope, session, SessionItem.From(session, summary, Root(scope, session)));
+            }
+            if (_summaries is { } summaries) scope.AfterCommit(() => summaries.ApplyRemote(item));
+            return true;
         });
     }
 

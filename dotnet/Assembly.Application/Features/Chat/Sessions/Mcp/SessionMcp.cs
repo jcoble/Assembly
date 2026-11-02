@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Assembly.Application.Features.Chat.Sessions;
+namespace Assembly.Application.Features.Chat.Sessions.Mcp;
 
 /// <summary>Host-owned endpoint readiness and callbacks for the actual provider open lifetime.</summary>
 public sealed record SessionMcp(

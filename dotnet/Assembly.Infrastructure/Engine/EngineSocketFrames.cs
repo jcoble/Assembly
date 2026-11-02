@@ -2,8 +2,10 @@ using System.Text.Json;
 using Assembly.Application.Common.Engine;
 using System.Text.Json.Serialization;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Sessions;
 using Assembly.Engine.Recording;
 using Assembly.Engine.Reading;
+using Assembly.Engine.Relays;
 
 namespace Assembly.Infrastructure.Engine;
 
@@ -22,6 +24,44 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(StartTitleBeginArgs))]
+[JsonSerializable(typeof(StartTitleBeginReply))]
+[JsonSerializable(typeof(StartTitlePartArgs))]
+[JsonSerializable(typeof(StartTitleOffsets))]
+[JsonSerializable(typeof(StartTitleCommitArgs))]
+[JsonSerializable(typeof(MachineStartAckArgs))]
+[JsonSerializable(typeof(MachineStartAck))]
+[JsonSerializable(typeof(ForeignTitleSourceOpenArgs))]
+[JsonSerializable(typeof(ForeignTitleSourceOpened))]
+[JsonSerializable(typeof(ForeignTitleSourceChecked))]
+[JsonSerializable(typeof(ForeignTitlePartArgs))]
+[JsonSerializable(typeof(ForeignTitlePart))]
+[JsonSerializable(typeof(ForeignAncestryProofQuery))]
+[JsonSerializable(typeof(ForeignRegisterReceiptQuery))]
+[JsonSerializable(typeof(ForeignTitleRequest))]
+[JsonSerializable(typeof(ForeignTitleAppendArgs))]
+[JsonSerializable(typeof(ForeignTitleOffsets))]
+[JsonSerializable(typeof(ForeignTitleCommitArgs))]
+[JsonSerializable(typeof(ForeignTitleReply))]
+[JsonSerializable(typeof(RelaySourceReadArgs))]
+[JsonSerializable(typeof(RelaySourceOpened))]
+[JsonSerializable(typeof(RelaySourcePartArgs))]
+[JsonSerializable(typeof(RelaySourcePart))]
+[JsonSerializable(typeof(RelaySourceDescriptor))]
+[JsonSerializable(typeof(RelayHandleArgs))]
+[JsonSerializable(typeof(RelaySendRequest))]
+[JsonSerializable(typeof(RelaySendBeginReply))]
+[JsonSerializable(typeof(RelaySendPartArgs))]
+[JsonSerializable(typeof(RelaySendPartAccepted))]
+[JsonSerializable(typeof(RelaySendCommitArgs))]
+[JsonSerializable(typeof(RelaySendAck))]
+[JsonSerializable(typeof(RelayOutcomeArgs))]
+[JsonSerializable(typeof(LegacySessionTitleRef))]
+[JsonSerializable(typeof(LegacySessionTitleStatArgs))]
+[JsonSerializable(typeof(LegacySessionTitleStat))]
+[JsonSerializable(typeof(LegacySessionTitleChunkArgs))]
+[JsonSerializable(typeof(LegacySessionTitleChunk))]
 [JsonSerializable(typeof(SessionTitleReadArgs))]
 [JsonSerializable(typeof(SessionTitleStat))]
 [JsonSerializable(typeof(SessionTitleChunkArgs))]
@@ -34,6 +74,7 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 [JsonSerializable(typeof(MachineInfo))]
 [JsonSerializable(typeof(WindowCommand))]
 [JsonSerializable(typeof(MachineCommand))]
+[JsonSerializable(typeof(ForeignAncestryArgs))]
 [JsonSerializable(typeof(StartLocationArgs))]
 [JsonSerializable(typeof(StartLocation))]
 [JsonSerializable(typeof(EngineUsageArgs))]

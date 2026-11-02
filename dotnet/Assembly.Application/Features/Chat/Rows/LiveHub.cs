@@ -52,6 +52,16 @@ public sealed class LiveHub : IDisposable
         }
     }
 
+    public IReadOnlyList<StoredRow> PublishRecovered(RecoveredChatTurn recovered, RowBatch batch, Action<IWriteScope>? observe)
+    {
+        lock (_gate)
+        {
+            var saved = _store.CommitRecovered(recovered, batch, observe);
+            if (saved.Count > 0) Push(recovered.SessionId, saved);
+            return saved;
+        }
+    }
+
     /// <summary>Saves a row another machine committed, under its seq, then queues it like a commit. False if it isn't the next one.</summary>
     public bool PublishCopy(StoredRow row)
     {
@@ -115,6 +125,11 @@ public sealed class LiveHub : IDisposable
     {
         lock (_gate)
             return _store.RunRows(sessionId, runId);
+    }
+
+    internal FinalizedChatReply? TerminalReply(string sessionId, string runId)
+    {
+        lock (_gate) return _store.TerminalReply(sessionId, runId);
     }
 
     public long LastSeq(string sessionId)

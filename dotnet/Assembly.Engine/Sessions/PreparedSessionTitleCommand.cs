@@ -13,12 +13,17 @@ public sealed class PreparedSessionTitleCommand
     internal byte[]? TitleUtf8 { get; }
     internal string CanonicalJournal { get; }
     internal bool Oversized { get; }
+    internal PreparedStartEffectPayload? StartEffectPayload { get; }
 
-    internal PreparedSessionTitleCommand(SessionCommand command, byte[]? titleUtf8, string canonicalJournal, bool oversized)
-    { Command = command; TitleUtf8 = titleUtf8; CanonicalJournal = canonicalJournal; Oversized = oversized; }
+    private PreparedSessionTitleCommand(SessionCommand command, byte[]? titleUtf8, string canonicalJournal, bool oversized)
+    {
+        Command = command; TitleUtf8 = titleUtf8; CanonicalJournal = canonicalJournal; Oversized = oversized;
+        StartEffectPayload = command is StartSession start ? PreparedStartEffectPayload.Prepare(start) : null;
+    }
 
     internal static PreparedSessionTitleCommand Prepare(SessionCommand command, ReadOnlyMemory<byte>? exactTitleUtf8 = null)
     {
+        command = command with { };
         var (title, empty) = command switch
         {
             ReportSessionTitle report => (report.Title, (SessionCommand)(report with { Title = "" })),

@@ -73,21 +73,33 @@ public sealed partial class SessionHost
             turn.StartedAt, end.At, status, (end as TurnEnded)?.Usage, cost));
     }
 
-    private void CommitReaderBatch(RowBatch batch, SessionObservation? observed, string acpSessionId,
-        IReadOnlyList<AgentEvent> events, RunningTurn? endedTurn, AgentEvent? end)
+    private sealed record TerminalTurn(RunningTurn Turn, AgentEvent End);
+
+    private void ReplyFeed(IWriteScope scope, RunningTurn turn, OpenSession? session, AgentEvent end)
     {
-        var completed = false;
+        if (_feed is not null && turn.Observation is { } observed)
+            _feed.Replied(scope, observed, new(turn.RunId, session?.AcpSessionId, turn.ProviderMessageId, turn.SelfStarted, end.At));
+    }
+
+    private void CommitReaderBatch(RowBatch batch, SessionObservation? observed, string acpSessionId,
+        IReadOnlyList<AgentEvent> events, IReadOnlyList<TerminalTurn> terminals)
+    {
+        List<RunningTurn> completed = [];
         var retries = _failedStarts.Where(p => p.Key.Acp == acpSessionId
             && events.OfType<ToolCallChanged>().Any(e => e.ToolCallId == p.Key.Tool)).ToArray();
         try
         {
             var hasFacts = events.Any(e => e is TurnStarted or TurnEnded or TurnFailed or AgentLost or ToolCallChanged);
-            _hub.Publish(_sessionId, batch, _feed is null || observed is null || !hasFacts && endedTurn is null ? null : scope =>
+            _hub.Publish(_sessionId, batch, _feed is null || observed is null || !hasFacts && terminals.Count == 0 ? null : scope =>
             {
                 foreach (var retry in retries)
                     _feed.ObserveBatch(scope, retry.Value.Observed, acpSessionId, [retry.Value.Start]);
                 _feed.ObserveBatch(scope, observed, acpSessionId, events);
-                if (endedTurn is not null && end is not null) completed = CompleteFeed(scope, endedTurn, endedTurn.Session, end);
+                foreach (var terminal in terminals)
+                {
+                    if (CompleteFeed(scope, terminal.Turn, terminal.Turn.Session, terminal.End)) completed.Add(terminal.Turn);
+                    ReplyFeed(scope, terminal.Turn, terminal.Turn.Session, terminal.End);
+                }
             });
         }
         catch
@@ -99,6 +111,7 @@ public sealed partial class SessionHost
         }
         // These values cannot be consumed inside the observer: the outer writer can still roll back.
         foreach (var retry in retries) _failedStarts.Remove(retry.Key);
-        if (endedTurn is not null && completed) endedTurn.FeedCompleted = true;
+        foreach (var turn in completed) turn.FeedCompleted = true;
+        foreach (var terminal in terminals) terminal.Turn.Ended?.TrySetResult();
     }
 }

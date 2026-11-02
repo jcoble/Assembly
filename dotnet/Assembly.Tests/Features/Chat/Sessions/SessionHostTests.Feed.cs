@@ -13,7 +13,7 @@ public sealed partial class SessionHostTests
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
             cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
-        var feed = new EngineFeed(runtime, _log);
+        var feed = new EngineFeed(runtime, _log, _time);
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: feed);
         var host = registry.For(_session.SessionId);
         var run = host.Send("hi", "owner-client")!;
@@ -49,7 +49,7 @@ public sealed partial class SessionHostTests
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
             cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
-        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log));
+        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); var run = host.Send("hi")!;
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
         await agent.RequestAsync(7, "session/request_permission", Permission.ReplaceLineEndings(""));
@@ -70,7 +70,7 @@ public sealed partial class SessionHostTests
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
             cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
-        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log));
+        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); host.Send("hi");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
         var member = NativeUpdates("claude").First(e => e.GetProperty("sessionUpdate").GetString() == "subagent_update");
@@ -94,7 +94,7 @@ public sealed partial class SessionHostTests
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
             cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
-        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log));
+        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(_session.SessionId); var run = host.Send("hi");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
         foreach (var child in new[] { "one", "two" })
@@ -142,7 +142,7 @@ public sealed partial class SessionHostTests
         var session = _sessionStore.Create(provider, "https://github.com/o/r");
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
             cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
-        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log));
+        await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: new EngineFeed(runtime, _log, _time));
         var host = registry.For(session.SessionId);
         using var live = _hub.Subscribe(session.SessionId, 0);
         host.Send("fixture");

@@ -120,6 +120,13 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// </summary>
     internal ISocketSubscription? Subscribe(InFrame frame, long id, SocketConnection connection)
     {
+        if (frame.SessionTitleParts is { } titleParts && (titleParts != 1 || connection.Peer is not OwnerPeer ||
+            connection.Bulk || connection.Terminal || frame.Stream is not null || frame.Topic != "sessions"))
+        {
+            connection.Send(Error(id, "bad_args", "sessionTitleParts=1 requires the owner sessions subscription"));
+            return null;
+        }
+        var titlePartsEnabled = frame.SessionTitleParts == 1;
         if (connection.Bulk)
         {
             connection.Send(Error(id, "not_found", "there are no topics on /socket/bulk"));
@@ -172,6 +179,11 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             {
                 self = subscription;
                 (var snapshot, change) = topic.Open(id, frame, context);
+                if (titlePartsEnabled)
+                {
+                    if (snapshot.Count != 1) throw new CallFailed("sessions requires one complete state");
+                    snapshot = [SessionItemWireCodec.Adapt(snapshot[0], connection.EngineMachine ?? "")];
+                }
                 // Thrown inside the lock, so a state that can't go out subscribes nothing.
                 if (snapshot.Any(part => part.Length > SocketConnection.MaxFrame))
                     throw new CallFailed($"{frame.Topic}'s state is over 4 MB");
@@ -180,7 +192,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             }, (key, json) =>
             {
                 if (change!(key, json) is { } changed)
-                    connection.Send(changed, self);
+                    connection.Send(titlePartsEnabled ? SessionItemWireCodec.Adapt(changed, connection.EngineMachine ?? "") : changed, self);
             });
             // Out of the Topics lock: it may take the hub's lock, which comes before Topics, or start work. The sub is
             // registered by now, so one that throws is logged and the sub stays good, as the socket's to unsubscribe.

@@ -41,6 +41,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private (WebSocketCloseStatus Status, string Reason)? _closing;
 
     public CallPeer? Peer { get; private set; }
+    internal string? EngineMachine { get; private set; }
 
     public string Id { get; } = $"socket-{Interlocked.Increment(ref _last)}";
 
@@ -55,6 +56,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
 
     public async Task RunAsync(byte[] token, string machine, CancellationToken stopping, string? engineMachine = null)
     {
+        EngineMachine = engineMachine;
         if (!await HelloAsync(token, machine, stopping, engineMachine))
             return;
         // A drop or the host stopping cancels the reads at once, even one the receive loop is busy with (a sub's state).
