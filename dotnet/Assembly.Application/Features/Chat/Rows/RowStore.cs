@@ -60,12 +60,19 @@ public sealed partial class RowStore
 
     /// <summary>Saves the batch for the session and returns its rows as saved, in seq order.</summary>
     public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch, Action<IWriteScope>? observe = null)
+        => CommitCore(sessionId, batch, observe, null);
+
+    public IReadOnlyList<StoredRow> CommitRecovered(RecoveredChatTurn recovered, RowBatch batch, Action<IWriteScope>? observe) =>
+        CommitCore(recovered.SessionId, batch, observe, recovered);
+
+    private IReadOnlyList<StoredRow> CommitCore(string sessionId, RowBatch batch, Action<IWriteScope>? observe, RecoveredChatTurn? recovered)
     {
         if (batch.IsEmpty && observe is null)
             return [];
 
         return _writer.Write("rows.commit", scope =>
         {
+            if (recovered is not null && !RecoveryCurrent(scope, recovered)) return (IReadOnlyList<StoredRow>)[];
             if (batch.IsEmpty)
             {
                 observe?.Invoke(scope);

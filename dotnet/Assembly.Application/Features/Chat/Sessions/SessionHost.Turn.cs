@@ -149,6 +149,7 @@ public sealed partial class SessionHost
                 {
                     if (session is not null) _feed?.ObserveBatch(scope, observed, session.AcpSessionId, [ended]);
                     completed = CompleteFeed(scope, turn, session, ended);
+                    ReplyFeed(scope, turn, session, ended);
                 });
                 if (completed) turn.FeedCompleted = true;
                 title = _titlePending && ended is TurnEnded { StopReason: not "cancelled" };

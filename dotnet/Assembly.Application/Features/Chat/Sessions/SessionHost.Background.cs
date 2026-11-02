@@ -55,14 +55,14 @@ public sealed partial class SessionHost
     }
 
     // Called with the lock held: the agent says a cycle of its work is over.
-    private void EndCycle(CycleEnded cycle, RowBatch? collector = null)
+    private void EndCycle(CycleEnded cycle, RowBatch? collector = null, List<TerminalTurn>? terminals = null)
     {
         // Claude's tag names no task, so its end ends all the untracked ones.
         if (cycle.EndsUntracked)
             foreach (var task in _tasks.Values.Where(task => !task.Tracked).ToList())
                 Track(task with { At = cycle.At, State = "completed" }, collector);
         if (_turn is { SelfStarted: true })
-            EndSelfRun(new TurnEnded(cycle.At, "end_turn", null), collector);
+            EndSelfRun(new TurnEnded(cycle.At, "end_turn", null), collector, terminals);
     }
 
     // Called with the lock held.
@@ -84,11 +84,16 @@ public sealed partial class SessionHost
     }
 
     // Called with the lock held.
-    private void EndSelfRun(AgentEvent end, RowBatch? collector = null)
+    private void EndSelfRun(AgentEvent end, RowBatch? collector = null, List<TerminalTurn>? terminals = null)
     {
-        _turn?.Ended?.TrySetResult();
-        Apply(end, collector);
+        if (_turn is not { } turn) return;
+        var batch = collector ?? new RowBatch();
+        var ended = terminals ?? [];
+        Apply(end, batch);
+        ended.Add(new(turn, end));
         _turn = null;
+        if (collector is null)
+            CommitReaderBatch(batch, turn.Observation, turn.Session?.AcpSessionId ?? "", [end], ended);
     }
 
     /// <summary>
@@ -201,8 +206,7 @@ public sealed partial class SessionHost
             var batch = new RowBatch();
             var observed = _turn?.Observation;
             var fallback = _kept?.Observation;
-            RunningTurn? endedTurn = null;
-            AgentEvent? terminal = null;
+            List<TerminalTurn> terminals = [];
             foreach (var agentEvent in events)
             {
                 switch (agentEvent)
@@ -212,10 +216,9 @@ public sealed partial class SessionHost
                         observed ??= _turn?.Observation;
                         break;
                     case TurnEnded or TurnFailed:
-                        if (_turn is { SelfStarted: true } selfEnding)
+                        if (_turn is { SelfStarted: true })
                         {
-                            endedTurn = selfEnding; terminal = agentEvent;
-                            EndSelfRun(agentEvent, batch);
+                            EndSelfRun(agentEvent, batch, terminals);
                         }
                         break;
                     case SessionMessage:
@@ -241,7 +244,7 @@ public sealed partial class SessionHost
                         Track(task, batch);
                         break;
                     case CycleEnded cycle:
-                        EndCycle(cycle, batch);
+                        EndCycle(cycle, batch, terminals);
                         break;
                     default:
                         // New work the agent does with no prompt running, on a session kept for background work. A
@@ -261,7 +264,7 @@ public sealed partial class SessionHost
                 prompted.TerminalObserved = true;
                 prompted.TerminalCost = _converter.SessionCost;
             }
-            CommitReaderBatch(batch, observed ?? fallback, update.SessionId, events, endedTurn, terminal);
+            CommitReaderBatch(batch, observed ?? fallback, update.SessionId, events, terminals);
         }
 
         CloseIfDone();

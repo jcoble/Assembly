@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Database;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Features.Chat.Rows.Markdown;
@@ -6,6 +7,8 @@ using Assembly.Domain.Rows;
 using Assembly.Application.Features.Chat;
 
 namespace Assembly.Application.Features.Chat.Rows;
+
+public sealed record RecoveredChatTurn(string SessionId, string ChatRunId, long StartedTurnSeq, long SavedThrough, long EndedAt);
 
 /// <summary>
 /// Closes a run the backend stopped in the middle of, from its saved rows alone, on the next start. It closes what
@@ -22,11 +25,20 @@ public static class RunRecovery
     /// sessions whose agent <paramref name="runsHere"/>: a remote session's turn is the remote machine's to close, and
     /// its rows arrive by copy.
     /// </summary>
-    public static int CloseUnfinished(RowStore store, LiveHub hub, long at, Func<string, bool> runsHere)
+    public static int CloseUnfinished(RowStore store, LiveHub hub, long at, Func<string, bool> runsHere,
+        Action<IWriteScope, RecoveredChatTurn>? terminalCommitted = null)
     {
         var runs = store.UnfinishedRuns().Where(run => runsHere(run.SessionId)).ToList();
+        var closed = 0;
         foreach (var (sessionId, runId) in runs)
-            hub.Publish(sessionId, Close(store.RunRows(sessionId, runId), at));
+        {
+            var rows = store.RunRows(sessionId, runId);
+            var started = rows.LastOrDefault(row => row.Kind == RowKind.Turn);
+            if (started is null || started.Payload.GetProperty("state").GetString() != "started") continue;
+            var recovered = new RecoveredChatTurn(sessionId, runId, started.Seq, rows[^1].Seq, at);
+            var saved = hub.PublishRecovered(recovered, Close(rows, at), terminalCommitted is null ? null : scope => terminalCommitted(scope, recovered));
+            if (saved.Count > 0) closed++;
+        }
         // A session kept open for background work outlives its run, so its tasks are closed on their own.
         foreach (var task in store.RunningItems(RowKind.Task).Where(task => runsHere(task.SessionId)))
         {
@@ -45,7 +57,7 @@ public static class RunRecovery
                 payload with { State = "idle", StopReason = "cancelled", CanStop = false }, RowJsonContext.Rows.SubagentPayload, at);
             hub.Publish(subagent.SessionId, batch);
         }
-        return runs.Count;
+        return closed;
     }
 
     public static RowBatch Close(IReadOnlyList<StoredRow> runRows, long at)
