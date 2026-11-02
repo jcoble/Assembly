@@ -16,7 +16,7 @@ using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Engine.Mcp;
 
-public sealed class ReportToolTests
+public sealed partial class ReportToolTests
 {
     private const string Result = """{"state":"succeeded","summary":"done","proofUrls":["https://drive.google.com/x"]}""";
     private const string WithPr = """{"state":"succeeded","summary":"done","proofUrls":["https://drive.google.com/x"],"pr":{"url":"https://github.com/jcoble/Assembly/pull/131","head":"abcdef0123456789","state":"open"}}""";
@@ -328,7 +328,7 @@ public sealed class ReportToolTests
             _runtime = EngineRuntime.Start(Fixture.Db, Topics, Fixture.Time, limits);
             Gate = new(_runtime, limits, Fixture.Time);
         }
-        public async Task<CallToolResult> Call(EngineTool tool, string session, string arguments, long epoch = 0)
+        public async Task<CallToolResult> Call(EngineTool tool, string session, string arguments, long epoch = 0, bool record = false)
         {
             using var input = new MemoryStream(); using var output = new MemoryStream();
             await using var server = McpServer.Create(new StreamServerTransport(input, output), new());
@@ -336,7 +336,9 @@ public sealed class ReportToolTests
             var request = new RequestContext<CallToolRequestParams>(server, new() { Method = "tools/call", Id = new RequestId(Guid.NewGuid().ToString()) },
                 new() { Name = tool.ProtocolTool.Name, Arguments = values })
             { User = new ClaimsPrincipal(new ClaimsIdentity([new("assembly:session", session), new("assembly:epoch", epoch.ToString(System.Globalization.CultureInfo.InvariantCulture))], "test")) };
-            return await tool.InvokeAsync(request);
+            return record
+                ? await new McpRecorder(_runtime, Gate, Fixture.Time).Filter((r, ct) => tool.InvokeAsync(r, ct))(request, default)
+                : await tool.InvokeAsync(request);
         }
         public async ValueTask DisposeAsync() { await _runtime.DisposeAsync(); Fixture.Dispose(); }
     }

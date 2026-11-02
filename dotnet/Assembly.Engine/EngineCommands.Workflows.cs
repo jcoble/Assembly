@@ -11,8 +11,12 @@ public sealed partial class EngineCommands
 {
     public CommandResult ApplyPreparedWorkflow(IWriteScope scope, CommandContext context, PreparedWorkflowCommand prepared)
     {
+        if (prepared.ReceiptReplay) return ReplayPreparedReceipt(scope, context, prepared);
         var result = EngineJournal.Execute(scope, context, prepared.CanonicalJournal, () =>
         {
+            if (prepared.Receipt is not null)
+                return context.Machine != _machine ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
+                    : Workflows.Receipts.ReceiptTransitions.Submit(scope, context, prepared);
             if (prepared.Workspace is { } workspace)
                 return context.Machine != _machine ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
                     : WorkspaceTransitions.Apply(scope, context, workspace);
@@ -22,7 +26,7 @@ public sealed partial class EngineCommands
                 return new(false, false, "bad_args", context.ExpectedVersion, 0, context.Epoch);
             return WorkflowRunTransitions.Start(scope, context, prepared);
         });
-        if (prepared.Workspace is null && result.Applied && WorkflowStarts.Read(scope, prepared.Start.Request) is null)
+        if (prepared.Receipt is null && prepared.Workspace is null && result.Applied && WorkflowStarts.Read(scope, prepared.Start.Request) is null)
         {
             var start = prepared.Start;
             scope.Execute("""

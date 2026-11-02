@@ -13,7 +13,7 @@ internal sealed record ReceiptObservation(string? Error, string? Head, string? F
     IReadOnlyList<CheckedReceiptFile> Files);
 
 /// <summary>Contextual local checks. Authenticated document/evidence checks remain a required host dependency.</summary>
-internal sealed class ReceiptChecks(IGit? git = null)
+internal sealed partial class ReceiptChecks(IGit? git = null)
 {
     private readonly ReceiptCheckout _checkout = new(git);
 
@@ -96,7 +96,7 @@ internal sealed class ReceiptChecks(IGit? git = null)
         foreach (var finding in body.Findings)
         {
             foreach (var grade in finding.GradesOfEarlier)
-                if (!context.EarlierFindingTexts.Contains(grade.Text.Trim(), StringComparer.Ordinal)) return "grades_of_earlier";
+                if (!context.EarlierFindingTexts.Contains(grade.Text, StringComparer.Ordinal)) return "grades_of_earlier";
             // Canonical Notion findings are checked through the authenticated host evidence producer, not as files.
             if (Uri.TryCreate(finding.PathLine, UriKind.Absolute, out var uri) && uri.Scheme == "https")
                 return "evidence_unverified";
