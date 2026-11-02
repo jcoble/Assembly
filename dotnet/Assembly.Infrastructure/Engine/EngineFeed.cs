@@ -14,7 +14,7 @@ using Assembly.Engine.Sessions;
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Translates owning provider facts inside the chat writer; owns no adapter or background work.</summary>
-public sealed class EngineFeed(EngineRuntime runtime, TextWriter log) : ISessionFeed
+public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, TimeProvider time) : ISessionFeed
 {
     private static readonly JsonElement Empty = JsonSerializer.SerializeToElement(null, global::Assembly.Engine.EngineJson.Default.String);
 

@@ -16,7 +16,7 @@ public sealed class EngineFeedRecordingTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var f = new EngineFixture(topics: topics); f.SeedSession(); f.SeedRun(state: "running"); f.SeedStep(sessionId: "s", state: "running", attempt: 2);
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        var feed = new EngineFeed(runtime, TextWriter.Null); var original = feed.Capture("s")!;
+        var feed = new EngineFeed(runtime, TextWriter.Null, f.Time); var original = feed.Capture("s")!;
         var start = new ToolCallChanged(1000, "tool", true, new(Name: "read", Input: JsonSerializer.SerializeToElement(new { token = "secret" }), AcpSessionId: "acp"));
         f.Db.Writer.Write("test.start", s => { feed.ObserveBatch(s, original, "acp", [start, start]); return 0; });
         Assert.Equal(1, f.Count("engine_tool_call"));
@@ -39,7 +39,7 @@ public sealed class EngineFeedRecordingTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var f = new EngineFixture(topics: topics); f.SeedSession();
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        var log = new StringWriter(); var feed = new EngineFeed(runtime, log); var observed = feed.Capture("s")!;
+        var log = new StringWriter(); var feed = new EngineFeed(runtime, log, f.Time); var observed = feed.Capture("s")!;
         var notification = JsonSerializer.Deserialize("""{"sessionId":"acp","update":{"sessionUpdate":"tool_call_update","toolCallId":"old-unobserved","status":"completed"}}""",
             Assembly.Application.Common.Acp.AcpJsonContext.Default.SessionNotification)!;
         var events = new Assembly.Application.Common.Acp.V2.UpdateReader().Read(notification, 1000);
@@ -58,7 +58,7 @@ public sealed class EngineFeedRecordingTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var f = new EngineFixture(topics: topics); f.SeedSession();
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        var feed = new EngineFeed(runtime, TextWriter.Null); var original = feed.Capture("s")!;
+        var feed = new EngineFeed(runtime, TextWriter.Null, f.Time); var original = feed.Capture("s")!;
         var final = new SessionTurnFinalization("actual-provider-message", 1000, 1100, "completed", new(input, 3, read, write), 0.0000000015m);
         Assert.True(f.Db.Writer.Write("test.complete", s => feed.Complete(s, original, "acp", final)));
         Assert.Equal(total, f.Number("SELECT input_tokens FROM engine_usage"));
@@ -67,7 +67,7 @@ public sealed class EngineFeedRecordingTests
         var receiptCount = f.Count("engine_command_receipt");
         await runtime.DisposeAsync(); f.Reopen();
         await using var reopened = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        var resumed = new EngineFeed(reopened, TextWriter.Null);
+        var resumed = new EngineFeed(reopened, TextWriter.Null, f.Time);
         Assert.True(f.Db.Writer.Write("test.replay", s => resumed.Complete(s, original, "acp", final)));
         Assert.Equal(1, f.Count("engine_usage"));
         Assert.False(f.Db.Writer.Write("test.conflict", s => resumed.Complete(s, original, "acp", final with { CostUsd = 1 })));
@@ -82,7 +82,7 @@ public sealed class EngineFeedRecordingTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var f = new EngineFixture(topics: topics); f.SeedSession();
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        var log = new StringWriter(); var feed = new EngineFeed(runtime, log); var observed = feed.Capture("s")!;
+        var log = new StringWriter(); var feed = new EngineFeed(runtime, log, f.Time); var observed = feed.Capture("s")!;
         f.Db.Writer.Write("test.partial", s => { feed.ObserveBatch(s, observed, "acp", [new UsageReported(1000, 2, null)]); return 0; });
         Assert.Equal(0, f.Count("engine_usage"));
         var final = new SessionTurnFinalization(null, 100, 50, "completed", null, null);
@@ -104,7 +104,7 @@ public sealed class EngineFeedRecordingTests
         var topics = new global::Assembly.Infrastructure.Topics.Topics();
         using var f = new EngineFixture(topics: topics); f.SeedSession(state: "running");
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
-        var feed = new EngineFeed(runtime, TextWriter.Null); var observed = feed.Capture("s")!;
+        var feed = new EngineFeed(runtime, TextWriter.Null, f.Time); var observed = feed.Capture("s")!;
         var request = new JsonRpcRequestContext("connection", JsonSerializer.SerializeToElement("7"));
         var card = new AskPayload("permission", "open", "Run?", null, null, [new("yes", "Yes", "allow_once")], null, null);
         f.Db.Writer.Write("test.ask", s => { feed.Asked(s, observed, "ask", card, request); return 0; });

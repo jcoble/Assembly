@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Chat.Rows;
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common.Acp.JsonRpc;
@@ -22,6 +23,8 @@ public sealed partial class SessionHostTests
         public void PolicyAnswered(IWriteScope s, SessionObservation o, JsonRpcRequestContext request, string method, JsonElement outcome) => inner.PolicyAnswered(s, o, request, method, outcome);
         public void Connected(IWriteScope s, SessionObservation o, string acp, bool canSteer) => inner.Connected(s, o, acp, canSteer);
         public void Lost(IWriteScope s, SessionObservation o, string reason) => inner.Lost(s, o, reason);
+        public void Replied(IWriteScope s, SessionObservation o, SessionTurnReply final) => inner.Replied(s, o, final);
+        public void Recovered(IWriteScope s, RecoveredChatTurn recovered) => inner.Recovered(s, recovered);
         public bool Complete(IWriteScope s, SessionObservation o, string acp, SessionTurnFinalization final)
         {
             var applied = inner.Complete(s, o, acp, final);
@@ -35,7 +38,7 @@ public sealed partial class SessionHostTests
     {
         await using var runtime = EngineRuntime.Start(_database, new Topics(), _time, new(() => 1, () => 5),
             cutover: new(_database, _sessionStore, _launcher, "checkouts", _time));
-        var feed = new MeasuringFeed(new EngineFeed(runtime, _log));
+        var feed = new MeasuringFeed(new EngineFeed(runtime, _log, _time));
         await using var registry = new SessionRegistry(_hub, _sessionStore, _launcher, _time, _log, _work, feed: feed);
         var host = registry.For(_session.SessionId); host.Send("work");
         var agent = await _launcher.NextAsync(); await agent.StartAsync(); var prompt = await agent.ReadAsync("session/prompt");
