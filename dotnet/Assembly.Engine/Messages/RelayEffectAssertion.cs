@@ -16,6 +16,7 @@ internal sealed class RelayEffectAssertion
 
     internal void Validate(IWriteScope scope, CommandContext context, IReadOnlyList<EffectDraft> effects)
     {
+        var sent = false;
         foreach (var effect in effects)
         {
             if (effect.Kind == "stop" && !_outcome && effect.Id == "message-stop/" + _messageId)
@@ -23,10 +24,10 @@ internal sealed class RelayEffectAssertion
                 if (scope.QueryFirst("SELECT COUNT(*) FROM engine_message WHERE id=$id AND state='held' AND to_session_id=$to",
                     r => r.Long(0), new("$id", _messageId), new("$to", effect.SessionId)) == 1) continue;
             }
-            if (effect.Kind == "send")
+            if (effect.Kind == "send" && !sent)
             {
                 var delivery = effect.Payload.Deserialize(EngineJson.Default.DeliverMessage);
-                if (delivery is not null && (_outcome || delivery.MessageId == _messageId))
+                if (delivery is not null)
                 {
                     var message = scope.QueryFirst("""
                         SELECT attempt,to_session_id FROM engine_message
@@ -35,7 +36,11 @@ internal sealed class RelayEffectAssertion
                         """, r => (Attempt: r.Long(0), To: r.Text(1)), new("$id", delivery.MessageId),
                         new("$machine", context.Machine), new("$origin", _messageId));
                     if (message.Attempt > 0 && effect.Id == $"send/{delivery.MessageId}/{message.Attempt}" &&
-                        delivery.ToSessionId == message.To && effect.SessionId == message.To) continue;
+                        delivery.ToSessionId == message.To && effect.SessionId == message.To)
+                    {
+                        sent = true;
+                        continue;
+                    }
                 }
             }
             throw new InvalidOperationException("Typed relay produced an unsupported effect.");
