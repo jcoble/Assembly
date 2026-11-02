@@ -10,6 +10,7 @@ using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Workspaces;
+using Assembly.Engine.Workflows.Execution;
 
 namespace Assembly.Engine.Effects;
 
@@ -84,6 +85,11 @@ public static class EffectTransitions
             default: return Reject("invalid_transition");
         }
         var effect = s.QueryFirst("SELECT id,kind,session_id,run_id,payload_json,attempt,order_key FROM engine_outbox WHERE id=$id", Map, new SqlArg("$id", c.EntityId))!;
+        if (command is CompleteEffect && effect.Kind == "workflow_command")
+        {
+            state = CommandStepTransitions.CompletionState(s, c, effect, receipt!, state);
+            next = null;
+        }
         if (command is EnableEffect && state == "pending" && effect.Kind == "send") state = "dead";
         // Validate receipts before touching the row; the provider can report data, never an injected command.
         if (state == "done" && !ValidConfirmation(s, c, effect, receipt!)) return Reject("bad_receipt");
@@ -118,6 +124,7 @@ public static class EffectTransitions
     {
         try
         {
+            if (effect.Kind == "workflow_command") return CommandStepTransitions.ValidConfirmation(scope, effect, receipt);
             if (effect.Kind is "workflow_setup" or "workflow_workspace") return WorkspaceTransitions.ValidConfirmation(scope, effect, receipt);
             if (AuthEffectBinding.IsAuth(effect.Kind)) return AuthEffectBinding.ValidConfirmation(scope, context, effect, receipt);
             return effect.Kind switch
@@ -137,6 +144,7 @@ public static class EffectTransitions
 
     private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy, MessageOutcome? projected)
     {
+        if (effect.Kind == "workflow_command") { CommandStepTransitions.Confirm(s, c, effect, receipt); return; }
         if (effect.Kind is "workflow_setup" or "workflow_workspace") { WorkspaceTransitions.Confirm(s, c, effect, receipt); return; }
         if (AuthEffectBinding.IsAuth(effect.Kind)) return;
         var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested FROM engine_session WHERE id=$id",
