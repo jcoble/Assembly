@@ -2,6 +2,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
+using Assembly.Engine.Sessions;
 
 namespace Assembly.Engine.Messages;
 
@@ -147,6 +148,9 @@ public static class MessageTransitions
             return Refused(c, "invalid_transition", current.Version);
         if (recipient.State == "ended")
             return Refused(c, "unavailable");
+        if (c.Actor.Kind == ActorKind.Session && !foreignRecipient &&
+            !SessionDirectory.CanReach(s, c.Actor.Id, command.ToSessionId))
+            return Refused(c, "not_reachable");
         if (command.FromSessionId is not null && s.QueryFirst("""
             SELECT COUNT(*) FROM engine_message WHERE from_session_id=$from AND to_session_id=$to
             """, r => r.Long(0), new("$from", command.FromSessionId), new("$to", command.ToSessionId)) >= messageLimit)

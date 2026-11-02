@@ -9,7 +9,7 @@ public sealed class RefusalsTests
     [InlineData("child_limit", "You already have 5 sessions at work (the limit is set by \"Sessions each session may run\" in Settings); wait for one to finish.")]
     [InlineData("owner_reserved", "Only a top-level session can ask Jesse. Send your question to your starter with send_message.")]
     [InlineData("not_reachable", "You can't reach that session. list_sessions shows the ones you can.")]
-    [InlineData("pair_limit", "You've sent 20 messages to that session; that's the limit.")]
+    [InlineData("pair_limit", "You've reached the message limit for that session.")]
     [InlineData("forged_header", "Your text may not contain a line that looks like an Assembly message header.")]
     [InlineData("unavailable", "That session has ended.")]
     [InlineData("not_yours", "No message of yours has that id.")]

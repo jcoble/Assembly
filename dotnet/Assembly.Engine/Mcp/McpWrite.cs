@@ -44,7 +44,7 @@ public sealed class McpWrite
             "invalid_transition" when command is Runs.SetStepState step => new Dictionary<string, string> { ["state"] = step.State },
             _ => null
         };
-        throw new McpRefused(new(result.Error!, values));
+        throw new McpRefused(new(ToolCode(result.Error!), values));
     }
 
     public CommandResult ApplyHelperPrompt(string childId, string messageId, string validatedPrompt)
@@ -53,9 +53,11 @@ public sealed class McpWrite
             messageId, 0, EpochOf(childId), _time.GetUtcNow().ToUnixTimeMilliseconds());
         var prepared = Messages.PreparedHelperPrompt.Prepare(new Messages.SendMessage(Caller.SessionId, childId, validatedPrompt, "prompt"), Caller.Title, Caller.Epoch);
         var result = _runtime.Commands.ApplyPreparedHelperPrompt(Scope, context, prepared);
-        if (!result.Applied) throw new McpRefused(new(result.Error!));
+        if (!result.Applied) throw new McpRefused(new(ToolCode(result.Error!)));
         return result;
     }
+
+    private static string ToolCode(string code) => code == "message_limit" ? "pair_limit" : code;
 
     public long VersionOf(string entityKind, string id)
     {
