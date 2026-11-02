@@ -6,13 +6,14 @@ using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Workflows.Runs;
+using Assembly.Engine.Workflows.Definitions;
 using Assembly.Engine.Workflows.Workspaces;
 using Assembly.Infrastructure.Git;
 
 namespace Assembly.Infrastructure.Engine.Workflows;
 
 /// <summary>The existing effect worker owns both setup preparation and the subsequent workspace I/O.</summary>
-public sealed class WorkspaceEffects(IAppDatabase db, EngineCommands commands, string machine, string managedRoot,
+public sealed class WorkspaceEffects(IAppDatabase db, EngineCommands commands, string machine,
     string proofRoot, IWorkflowWorkspace workspace, TimeProvider time, IGit? git = null) : IEngineEffects
 {
     private readonly IGit _git = git ?? new GitCli();
@@ -37,6 +38,7 @@ public sealed class WorkspaceEffects(IAppDatabase db, EngineCommands commands, s
                 root = scope.QueryFirst("SELECT project_root FROM engine_run WHERE id=$run", r => r.Text(0), new SqlArg("$run", setup.RunId))!;
             }
             using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct); stop.CancelAfter(TimeSpan.FromSeconds(60));
+            var managedRoot = await WorkflowManagedRoot.ResolveAsync(root, _git, stop.Token);
             List<string> values = [];
             await foreach (var value in _git.ReadAsync(root, ["rev-parse", "--verify", "HEAD^{commit}"], null, stop.Token)) values.Add(value);
             var head = string.Concat(values).TrimEnd('\r', '\n');
@@ -63,7 +65,7 @@ public sealed class WorkspaceEffects(IAppDatabase db, EngineCommands commands, s
             return allocation is null ? Unknown() : Setup(new(allocation));
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return Setup(new(null, "workspace_setup_timeout")); }
-        catch (Exception error) when (error is CallFailed or IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception error) when (error is CallFailed or IOException or UnauthorizedAccessException or ArgumentException or WorkflowFieldException)
         { return Setup(new(null, error.Message)); }
     }
 

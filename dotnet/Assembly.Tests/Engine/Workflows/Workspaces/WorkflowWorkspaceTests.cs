@@ -39,8 +39,8 @@ public sealed class WorkflowWorkspaceTests
     {
         using var f = new Fixture();
         // The isolated project directory is deliberately not a Git repository.
-        var host = new WorkspaceEffects(f.Core.Db, f.Commands, f.Core.Machine, f.Managed, f.Proof,
-            new WorkflowWorkspace(f.Managed, f.Proof), f.Core.Time);
+        var host = new WorkspaceEffects(f.Core.Db, f.Commands, f.Core.Machine, f.Proof,
+            new WorkflowWorkspace(f.Proof), f.Core.Time);
         var receipt = await host.ExecuteAsync(f.Setup, default);
         Assert.Equal(EffectDisposition.Confirmed, receipt.Disposition);
         Assert.NotNull(receipt.Data.Deserialize(EngineJson.Default.WorkspaceSetupData)!.Error);
@@ -89,8 +89,8 @@ public sealed class WorkflowWorkspaceTests
         async Task Git(params string[] args) { await foreach (var unused in git.ReadAsync(f.Root, args, null, default)) { } }
         await Git("init"); await Git("config", "user.name", "Workflow Fixture"); await Git("config", "user.email", "workflow@example.invalid");
         await File.WriteAllTextAsync(Path.Combine(f.Root, "base"), "base"); await Git("add", "."); await Git("commit", "-m", "base");
-        WorkspaceEffects Host() => new(f.Core.Db, f.Commands, f.Core.Machine, f.Managed, f.Proof,
-            new WorkflowWorkspace(f.Managed, f.Proof), f.Core.Time);
+        WorkspaceEffects Host() => new(f.Core.Db, f.Commands, f.Core.Machine, f.Proof,
+            new WorkflowWorkspace(f.Proof), f.Core.Time);
         var first = await Host().ExecuteAsync(f.Setup, default);
         var again = await Host().ReconcileAsync(f.Setup, default);
         Assert.Equal(first.Data.GetRawText(), again.Data.GetRawText());
@@ -148,7 +148,7 @@ public sealed class WorkflowWorkspaceTests
         private readonly string _temp = Directory.CreateTempSubdirectory("a40-workspace-engine-").FullName;
         public EngineFixture Core { get; } = new();
         public string Root => Path.Combine(_temp, "repo");
-        public string Managed => Path.Combine(_temp, "managed");
+        public string Managed => Path.Combine(_temp, "worktrees");
         public string Proof => Path.Combine(_temp, "proof");
         public string Run { get; } = Guid.NewGuid().ToString("N");
         public Effect Setup { get; }

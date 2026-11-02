@@ -10,7 +10,7 @@ using Assembly.Infrastructure.Git;
 namespace Assembly.Infrastructure.Engine.Workflows;
 
 /// <summary>Bounded Git allocation. Its only inputs are the already committed exact allocation.</summary>
-public sealed class WorkflowWorkspace(string managedRoot, string proofRoot, IGit? git = null) : IWorkflowWorkspace
+public sealed class WorkflowWorkspace(string proofRoot, IGit? git = null) : IWorkflowWorkspace
 {
     private readonly IGit _git = git ?? new GitCli();
 
@@ -25,7 +25,8 @@ public sealed class WorkflowWorkspace(string managedRoot, string proofRoot, IGit
         WorkspacePrepared result;
         try
         {
-            Validate(intent);
+            var managedRoot = await WorkflowManagedRoot.ResolveAsync(intent.Repository, _git, stop.Token);
+            Validate(intent, managedRoot);
             var actual = await Scalar(intent.Repository, ["rev-parse", "--verify", intent.BaseHead + "^{commit}"], stop.Token);
             if (actual != intent.BaseHead) throw new CallFailed("workspace_base_unavailable");
             await OwnProof(intent, stop.Token);
@@ -71,7 +72,7 @@ public sealed class WorkflowWorkspace(string managedRoot, string proofRoot, IGit
         return new(EffectDisposition.Confirmed, JsonSerializer.SerializeToElement(result, EngineJson.Default.WorkspacePrepared), null);
     }
 
-    private void Validate(WorkspaceIntent i)
+    private void Validate(WorkspaceIntent i, string managedRoot)
     {
         if (!Guid.TryParseExact(i.RunId, "N", out _) || !Guid.TryParseExact(i.AllocationId, "N", out _) ||
             i.StepId is not null && !Guid.TryParseExact(i.StepId, "N", out _) || i.Generation < 0 ||

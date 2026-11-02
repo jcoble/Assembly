@@ -11,19 +11,53 @@ public sealed class WorkflowGitTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("a40-workflow-git-").FullName;
     private string Repo => Path.Combine(_root, "source repo");
-    private string Managed => Path.Combine(_root, "managed");
+    private string Managed => Path.Combine(_root, "worktrees");
     private string Proof => Path.Combine(_root, "proof");
     private readonly string _run = Guid.NewGuid().ToString("N");
     private readonly GitCli _git = new();
 
     [Fact]
+    public async Task One_workspace_host_uses_each_repository_git_common_root()
+    {
+        var firstRoot = Path.Combine(_root, "first", "worktrees");
+        var secondRoot = Path.Combine(_root, "second", "worktrees");
+        var first = await Intent(Path.Combine(_root, "first", "source repo"), firstRoot);
+        var second = await Intent(Path.Combine(_root, "second", "source repo"), secondRoot);
+        var host = new WorkflowWorkspace(Proof);
+        var firstResult = Data(await host.PrepareAsync(Effect(first), false, default));
+        var secondResult = Data(await host.PrepareAsync(Effect(second), false, default));
+        Assert.Null(firstResult.Error);
+        Assert.Null(secondResult.Error);
+        Assert.True(Directory.Exists(first.Path));
+        Assert.True(Directory.Exists(second.Path));
+        Assert.StartsWith(firstRoot + Path.DirectorySeparatorChar, firstResult.Path);
+        Assert.StartsWith(secondRoot + Path.DirectorySeparatorChar, secondResult.Path);
+    }
+
+    [Fact]
+    public async Task Linked_project_worktree_keeps_original_repository_workspace_base()
+    {
+        var managed = Path.Combine(_root, "original", "worktrees");
+        var original = await Intent(Path.Combine(_root, "original", "source repo"), managed);
+        var linked = Path.Combine(_root, "elsewhere", "linked source");
+        Directory.CreateDirectory(Path.GetDirectoryName(linked)!);
+        await Git(original.Repository, "worktree", "add", "--detach", "--", linked, original.BaseHead);
+        var intent = original with { Repository = linked };
+        var result = Data(await new WorkflowWorkspace(Proof).PrepareAsync(Effect(intent), false, default));
+        Assert.Null(result.Error);
+        Assert.True(Directory.Exists(intent.Path));
+        Assert.StartsWith(managed + Path.DirectorySeparatorChar, result.Path);
+        Assert.False(Directory.Exists(Path.Combine(_root, "elsewhere", "worktrees")));
+    }
+
+    [Fact]
     public async Task Crash_after_git_creation_reconciles_one_allocation_and_preserves_proof()
     {
-        var i = await Intent(); var effect = Effect(i); var host = new WorkflowWorkspace(Managed, Proof);
+        var i = await Intent(); var effect = Effect(i); var host = new WorkflowWorkspace(Proof);
         var first = await host.PrepareAsync(effect, false, default);
         Assert.Null(Data(first).Error);
         await File.WriteAllTextAsync(Path.Combine(i.ProofDir, "evidence.txt"), "keep");
-        var replay = await new WorkflowWorkspace(Managed, Proof).PrepareAsync(effect with { Attempt = 2 }, true, default);
+        var replay = await new WorkflowWorkspace(Proof).PrepareAsync(effect with { Attempt = 2 }, true, default);
         Assert.Equal(Data(first), Data(replay));
         Assert.Equal(1, (await Git(Repo, "worktree", "list", "--porcelain")).Split("worktree " + i.Path).Length - 1);
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(i.ProofDir, "evidence.txt")));
@@ -32,7 +66,7 @@ public sealed class WorkflowGitTests : IDisposable
     [Fact]
     public async Task New_steps_get_distinct_paths_on_dependency_head()
     {
-        var anchor = await Intent(); var host = new WorkflowWorkspace(Managed, Proof);
+        var anchor = await Intent(); var host = new WorkflowWorkspace(Proof);
         Assert.Null(Data(await host.PrepareAsync(Effect(anchor), false, default)).Error);
         await File.WriteAllTextAsync(Path.Combine(anchor.Path, "build.txt"), "checked build");
         await Git(anchor.Path, "add", "."); await Git(anchor.Path, "commit", "-m", "build");
@@ -51,7 +85,7 @@ public sealed class WorkflowGitTests : IDisposable
     {
         var i = await Intent(); i = i with { Owned = false, Path = Repo, Branch = "" };
         var before = await Git(Repo, "worktree", "list", "--porcelain");
-        var result = Data(await new WorkflowWorkspace(Managed, Proof).PrepareAsync(Effect(i), false, default));
+        var result = Data(await new WorkflowWorkspace(Proof).PrepareAsync(Effect(i), false, default));
         Assert.Null(result.Error); Assert.Equal(Repo, result.Path);
         Assert.Equal(before, await Git(Repo, "worktree", "list", "--porcelain"));
         Assert.False(Directory.Exists(Managed)); Assert.True(File.Exists(Path.Combine(Repo, "file.txt")));
@@ -64,7 +98,7 @@ public sealed class WorkflowGitTests : IDisposable
     {
         var i = await Intent(); var path = proof ? i.ProofDir : i.Path;
         Directory.CreateDirectory(path); await File.WriteAllTextAsync(Path.Combine(path, "precious"), "keep");
-        var result = Data(await new WorkflowWorkspace(Managed, Proof).PrepareAsync(Effect(i), true, default));
+        var result = Data(await new WorkflowWorkspace(Proof).PrepareAsync(Effect(i), true, default));
         Assert.NotNull(result.Error); Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(path, "precious")));
         Assert.Single((await Git(Repo, "worktree", "list", "--porcelain")).Split("worktree ", StringSplitOptions.RemoveEmptyEntries));
     }
@@ -72,7 +106,7 @@ public sealed class WorkflowGitTests : IDisposable
     [Fact]
     public async Task Invalid_base_is_a_visible_setup_failure_and_caller_cancellation_is_preserved()
     {
-        var i = await Intent(); var host = new WorkflowWorkspace(Managed, Proof);
+        var i = await Intent(); var host = new WorkflowWorkspace(Proof);
         var result = await host.PrepareAsync(Effect(i with { BaseHead = new string('f', 40) }), false, default);
         Assert.Equal(EffectDisposition.Confirmed, result.Disposition); Assert.NotNull(Data(result).Error);
         Assert.False(Directory.Exists(Managed));
@@ -92,16 +126,17 @@ public sealed class WorkflowGitTests : IDisposable
             Branch = anchor.Branch + "-" + step[..8] + "-0"
         };
     }
-    private async Task<WorkspaceIntent> Intent()
+    private Task<WorkspaceIntent> Intent() => Intent(Repo, Managed);
+    private async Task<WorkspaceIntent> Intent(string repository, string managedRoot)
     {
-        Directory.CreateDirectory(Repo);
-        await Git(Repo, "init"); await Git(Repo, "config", "user.name", "Workflow Fixture");
-        await Git(Repo, "config", "user.email", "workflow@example.invalid");
-        await File.WriteAllTextAsync(Path.Combine(Repo, "file.txt"), "base");
-        await Git(Repo, "add", "."); await Git(Repo, "commit", "-m", "base");
-        return new(_run, null, 0, Guid.NewGuid().ToString("N"), Repo,
-            Path.Combine(Managed, "source-repo", "run-" + _run, "anchor"), "run-" + _run[..8],
-            await Git(Repo, "rev-parse", "HEAD"), true, Path.Combine(Proof, Guid.NewGuid().ToString("N")), "definition-hash");
+        Directory.CreateDirectory(repository);
+        await Git(repository, "init"); await Git(repository, "config", "user.name", "Workflow Fixture");
+        await Git(repository, "config", "user.email", "workflow@example.invalid");
+        await File.WriteAllTextAsync(Path.Combine(repository, "file.txt"), "base");
+        await Git(repository, "add", "."); await Git(repository, "commit", "-m", "base");
+        return new(_run, null, 0, Guid.NewGuid().ToString("N"), repository,
+            Path.Combine(managedRoot, "source-repo", "run-" + _run, "anchor"), "run-" + _run[..8],
+            await Git(repository, "rev-parse", "HEAD"), true, Path.Combine(Proof, Guid.NewGuid().ToString("N")), "definition-hash");
     }
     private static Effect Effect(WorkspaceIntent i) => new(Guid.NewGuid().ToString("N"), "workflow_workspace", null, i.RunId,
         JsonSerializer.SerializeToElement(i, EngineJson.Default.WorkspaceIntent), 1);
