@@ -33,6 +33,18 @@ public sealed class SignInMethodsTests
     }
 
     [Fact]
+    public void Nested_known_setup_discriminators_are_excluded_without_filtering_arbitrary_metadata_text()
+    {
+        var init = JsonSerializer.Deserialize("""
+            {"protocolVersion":2,"authMethods":[
+             {"methodId":"one","name":"One","type":"agent","_meta":{"nested":{"mode":"gateway"}}},
+             {"methodId":"two","name":"Two","type":"agent","_meta":{"nested":{"mode":"key"}}},
+             {"methodId":"login","name":"Login","type":"agent","_meta":{"description":"gateway and api-key documentation"}}]}
+            """, AcpJsonContext.Default.InitializeResponse)!;
+        Assert.Equal("login", Assert.Single(SignInMethods.Runnable(init.AuthMethods)).MethodId);
+    }
+
+    [Fact]
     public void Non_device_method_is_chosen_before_device_and_present_strips_private_fields()
     {
         AuthMethod[] methods = [new("device-auth", "Device", "agent", null, [], [], null),

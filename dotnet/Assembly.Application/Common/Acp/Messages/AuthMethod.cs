@@ -40,9 +40,10 @@ internal sealed class AuthMethodsConverter : JsonConverter<IReadOnlyList<AuthMet
                 if (environment.ValueKind != JsonValueKind.Array) continue;
                 env = [];
                 var valid = true;
+                var names = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var value in environment.EnumerateArray())
                 {
-                    if (value.ValueKind != JsonValueKind.Object || !String(value, "name", out var key) || !String(value, "value", out var text)) { valid = false; break; }
+                    if (value.ValueKind != JsonValueKind.Object || !String(value, "name", out var key) || !String(value, "value", out var text) || !names.Add(key)) { valid = false; break; }
                     env.Add(new(key, text));
                 }
                 if (!valid) continue;

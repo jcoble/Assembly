@@ -40,7 +40,7 @@ public sealed partial class AcpAuthTests
         public Harness(TranscriptLog? transcript = null) => Client = new(Agent.ClientReads, Agent.ClientWrites, Policy, transcript ?? TranscriptLog.Discard());
         public async Task<InitializeResponse> Initialize(string? methods = Methods)
         {
-            var call = Client.InitializeAsync(new("fixture", "1"), default);
+            var call = Client.InitializeAsync(new("fixture", "1"), true, default);
             var request = await Agent.ReadAsync();
             var capabilities = request.GetProperty("params").GetProperty("capabilities");
             Assert.Equal(JsonValueKind.Object, capabilities.GetProperty("auth").GetProperty("terminal").ValueKind);

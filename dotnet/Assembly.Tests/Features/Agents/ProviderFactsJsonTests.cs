@@ -1,3 +1,5 @@
+using Assembly.Engine;
+using Assembly.Engine.Providers;
 using System.Text.Json;
 using Assembly.Application.Features.Agents;
 
@@ -13,6 +15,9 @@ public sealed class ProviderFactsJsonTests
         var json = JsonSerializer.SerializeToElement(facts, ProvidersJson.Default.ProviderFacts);
         Assert.Equal(["adapter", "auth", "checkedMs", "installation", "methods", "models", "name", "problem", "provider", "version"],
             json.EnumerateObject().Select(property => property.Name).Order());
+        var prepared = EngineCommands.PrepareProviderCheck(new("not_installed", "needs_sign_in", json,
+            "not_installed", new("codex/", "probe_provider/codex//1", 1, 1)));
+        Assert.Equal(json.GetRawText(), prepared.Command.Facts.GetRawText());
         Assert.Equal("notInstalled", json.GetProperty("installation").GetString());
         Assert.Equal("needsSignIn", json.GetProperty("auth").GetString());
         Assert.Equal("not_installed", json.GetProperty("problem").GetString());

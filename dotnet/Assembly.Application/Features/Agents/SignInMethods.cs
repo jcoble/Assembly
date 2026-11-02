@@ -45,7 +45,18 @@ public static class SignInMethods
     private static bool Excluded(string value) => value.Contains("gateway", StringComparison.OrdinalIgnoreCase)
         || value.Replace('_', '-').Contains("api-key", StringComparison.OrdinalIgnoreCase);
 
-    private static bool ExcludedMeta(JsonElement? meta) => meta is { ValueKind: JsonValueKind.Object } value
-        && value.EnumerateObject().Any(property => Excluded(property.Name)
-            || property.Value.ValueKind == JsonValueKind.String && Excluded(property.Value.GetString()!));
+    private static bool ExcludedMeta(JsonElement? meta)
+    {
+        if (meta is { ValueKind: JsonValueKind.Array } array)
+            return array.EnumerateArray().Any(value => ExcludedMeta(value));
+        if (meta is not { ValueKind: JsonValueKind.Object } value) return false;
+        foreach (var property in value.EnumerateObject())
+        {
+            if (property.Name == "gateway" && property.Value.ValueKind == JsonValueKind.True) return true;
+            if (property.Name is "mode" or "authType" && property.Value.ValueKind == JsonValueKind.String
+                && property.Value.GetString() is "key" or "api-key" or "api_key" or "gateway") return true;
+            if (ExcludedMeta(property.Value)) return true;
+        }
+        return false;
+    }
 }
