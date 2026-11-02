@@ -4,16 +4,44 @@ using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Hosting;
+using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Messages;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Remote;
+using Assembly.Infrastructure.Engine.Needs;
 
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Prepares an owner prompt for the caller's existing writer; performs no provider send.</summary>
 public sealed partial class EngineDoor(EngineRuntime runtime, SessionStore sessions, MachineSet machines,
-    AttachmentStore attachments, TimeProvider time) : IEngineDoor
+    AttachmentStore attachments, TimeProvider time, NeedAnswers needs) : IEngineDoor
 {
+    public async Task<Func<IWriteScope, bool>> PrepareNeedAnswerAsync(
+        NeedAnswerRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var session = sessions.Get(request.Session) ?? throw new KeyNotFoundException("unknown session");
+        request = request with { Answer = request.Answer.Clone() };
+        if (session.Machine is not null)
+        {
+            if (machines.For(session) is not RemoteMachine remote) throw new CallFailed("unknown owning machine");
+            var answered = await remote.AnswerOwnerNeedAsync(session, request.Ask, request.Answer, cancellationToken);
+            return _ => answered;
+        }
+        var target = ((IEngineRuntime)runtime).Read(scope => scope.QueryFirst("""
+            SELECT n.id,n.version,s.epoch FROM engine_needs_me n
+            JOIN engine_session s ON s.id=n.session_id
+            WHERE n.session_id=$session AND n.chat_row_id=$ask AND n.state='open'
+            """, row => new { Id = row.Text(0), Version = row.Long(1), Epoch = row.Long(2) },
+            new SqlArg("$session", request.Session), new SqlArg("$ask", request.Ask)), cancellationToken);
+        if (target is null) return _ => false;
+        var command = new WindowCommand(Guid.NewGuid(), target.Id, target.Version, target.Epoch,
+            new ResolveNeed("answered", request.Answer));
+        var apply = await needs.PrepareOwnerAsync(command, cancellationToken);
+        return scope => apply(scope).Applied;
+    }
+
     public async Task<Func<IWriteScope, OwnerPromptAccepted>> PrepareOwnerPromptAsync(
         OwnerPromptRequest request, CancellationToken cancellationToken)
     {

@@ -55,9 +55,6 @@ public interface IMachine
     /// <summary>Chooses a value for one of the session's config options, and returns its config after.</summary>
     Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken);
 
-    /// <summary>Answers one of the session's open asks (its card row). False if it isn't open or the answer doesn't fit.</summary>
-    Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken);
-
     /// <summary>A webview opened the session: a remote machine brings its rows up to date here. Nothing to do locally.</summary>
     void Watch(SessionInfo session);
 }

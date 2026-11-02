@@ -158,7 +158,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     public async Task<SessionConfig> SetConfigAsync(SessionInfo session, string configId, string value, CancellationToken cancellationToken) =>
         ReadConfig(await CallAsync("config", "set", new ConfigFeature.SetArgs(session.SessionId, configId, value), cancellationToken));
 
-    public async Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
+    internal async Task<bool> AnswerOwnerNeedAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
     {
         try { return (await CallAsync("send", "answer", new SendFeature.AnswerArgs(session.SessionId, askId, answer), cancellationToken)).GetProperty("ok").GetBoolean(); }
         // SendFeature.cs rejects an expired ask with this failed message.
