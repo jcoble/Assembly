@@ -18,6 +18,9 @@ internal sealed class RunningTurn(string runId, StageTimes stages)
     public PromptRun? Prompt { get; set; }
     public string? ProviderMessageId { get; set; }
     public bool FeedCompleted { get; set; }
+    internal Assembly.Domain.Rows.AuthTerminalProof? AuthBinding { get; set; }
+    internal Assembly.Domain.Rows.AuthTerminalProof? AuthFinalProof { get; set; }
+    internal long AuthTerminalSeq { get; set; }
     public bool TerminalObserved { get; set; }
     public decimal? TerminalCost { get; set; }
 

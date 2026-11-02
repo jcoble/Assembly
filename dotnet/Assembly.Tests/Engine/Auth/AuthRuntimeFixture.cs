@@ -61,15 +61,16 @@ internal sealed class AuthRuntimeFixture : IAsyncDisposable
     internal sealed class WriterGate(IAppDatabase inner) : IAppDatabase, IAtomicWriter, IDisposable
     {
         private int _armed;
+        private string _gateWhat = "engine.command";
         private readonly ManualResetEventSlim _release = new();
         internal TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal void Arm() => Interlocked.Exchange(ref _armed, 1);
+        internal void Arm(string what = "engine.command") { _gateWhat = what; Interlocked.Exchange(ref _armed, 1); }
         internal void Release() => _release.Set();
         public void Dispose() => _release.Dispose();
         public IAtomicWriter Writer => this;
         public T Write<T>(string what, Func<IWriteScope, T> body)
         {
-            if (what == "engine.command" && Interlocked.Exchange(ref _armed, 0) != 0)
+            if (what == _gateWhat && Interlocked.Exchange(ref _armed, 0) != 0)
             { Entered.TrySetResult(); if (!_release.Wait(TimeSpan.FromSeconds(8))) throw new TimeoutException("Writer gate was not released."); }
             return inner.Writer.Write(what, body);
         }

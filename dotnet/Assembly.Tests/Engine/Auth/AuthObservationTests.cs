@@ -8,6 +8,8 @@ using Assembly.Domain.Events;
 using Assembly.Domain.Rows;
 using Assembly.Engine;
 using Assembly.Engine.Messages;
+using Assembly.Engine.Sessions;
+using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Engine;
 using Assembly.Tests.Engine.Delivery;
 using Assembly.Tests.Features.Chat.Sessions;
@@ -67,6 +69,66 @@ public sealed class AuthObservationTests
         }
     }
 
+    [Theory]
+    [InlineData(false, "run")]
+    [InlineData(false, "step")]
+    [InlineData(false, "attempt")]
+    [InlineData(true, "run")]
+    [InlineData(true, "step")]
+    [InlineData(true, "attempt")]
+    public async Task Fresh_auth_feed_fact_rejects_a_changed_retained_workflow_tuple(bool failedOpen, string field)
+    {
+        await using var f = new AdapterDeliveryFixture(configured: (provider, account) => provider == "claude" && account == "");
+        var proof = FeedProof(f, failedOpen); var feed = new EngineFeed(f.Runtime, TextWriter.Null, f.Time);
+        var observed = feed.Capture(f.Session.SessionId)!;
+        var changed = field switch { "run" => observed with { RunId = "wrong-run" }, "step" => observed with { StepId = "wrong-step" }, _ => observed with { Attempt = 1 } };
+        Assert.Throws<CallFailed>(() => f.Db.Writer.Write("test.changed-retained-auth-tuple", scope =>
+        {
+            if (failedOpen) feed.BlockFailedOpenSignInNeeded(scope, changed, proof);
+            else feed.BlockSignInNeeded(scope, changed, proof.AcpSessionId!, proof);
+            return 0;
+        }));
+        Assert.Equal(0, f.Db.QueryFirst("SELECT COUNT(*) FROM engine_needs_me", row => row.Long(0), default));
+        Assert.Equal(0, f.Db.QueryFirst("SELECT COUNT(*) FROM engine_provider", row => row.Long(0), default));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Exact_auth_feed_receipt_replays_before_a_later_observation_mismatch(bool failedOpen)
+    {
+        await using var f = new AdapterDeliveryFixture(configured: (provider, account) => provider == "claude" && account == "");
+        var proof = FeedProof(f, failedOpen); var feed = new EngineFeed(f.Runtime, TextWriter.Null, f.Time);
+        var observed = feed.Capture(f.Session.SessionId)!;
+        void Apply(SessionObservation retained) => f.Db.Writer.Write("test.auth-tuple-replay", scope =>
+        {
+            if (failedOpen) feed.BlockFailedOpenSignInNeeded(scope, retained, proof);
+            else feed.BlockSignInNeeded(scope, retained, proof.AcpSessionId!, proof);
+            return 0;
+        });
+        Apply(observed);
+        var version = f.Db.QueryFirst("SELECT version FROM engine_provider", row => row.Long(0), default);
+        Apply(observed with { RunId = "later-run", StepId = "later-step", Attempt = 99 });
+        Apply(observed with { Epoch = observed.Epoch + 1 });
+        Assert.Equal(version, f.Db.QueryFirst("SELECT version FROM engine_provider", row => row.Long(0), default));
+        Assert.Equal(1, f.Db.QueryFirst("SELECT COUNT(*) FROM engine_needs_me", row => row.Long(0), default));
+    }
+
+    private static AuthTerminalProof FeedProof(AdapterDeliveryFixture f, bool failedOpen)
+    {
+        var effect = f.Claim(f.Queue());
+        f.Rows.Commit(f.Session.SessionId, new RowConverter().Apply(new TurnStarted(1000, "actual-chat-run", "exact body", "C")));
+        if (!failedOpen)
+            Assert.True(f.Apply(new SetSessionState("running", "actual-acp", null), f.Session.SessionId,
+                f.Number("SELECT version FROM engine_session WHERE id=$id", f.Session.SessionId)).Applied);
+        using var snapshot = f.Db.OpenSnapshot(default);
+        var user = f.Rows.UserDeliveryOfClient(snapshot, f.Session.SessionId, "C")!;
+        return new(failedOpen ? 2 : 1, Guid.NewGuid(), Guid.NewGuid(), "actual-chat-run", failedOpen ? null : "actual-acp",
+            f.Number("SELECT epoch FROM engine_session WHERE id=$id", f.Session.SessionId), "C", null,
+            new(effect.Payload.GetProperty("messageId").GetString()!, effect.Id, effect.Attempt, "C", user.Seq, user.RunId!),
+            failedOpen ? AuthOpenFailureStage.Initialize : null);
+    }
+
     private sealed class ChangingObservation(ISessionFeed inner, string change) : ISessionFeed
     {
         private int _captures;
@@ -82,6 +144,10 @@ public sealed class AuthObservationTests
         public Action<IWriteScope> PreparePolicyAnswered(SessionObservation o, JsonRpcRequestContext request, string method, JsonElement outcome) => inner.PreparePolicyAnswered(o, request, method, outcome);
         public void Connected(IWriteScope s, SessionObservation o, string acp, bool steer) => inner.Connected(s, o, acp, steer);
         public void Lost(IWriteScope s, SessionObservation o, string reason) => inner.Lost(s, o, reason);
+        public void BlockSignInNeeded(IWriteScope s, SessionObservation o, string acp, AuthTerminalProof p) => inner.BlockSignInNeeded(s, o, acp, p);
+        public void SignInNeeded(IWriteScope s, SessionObservation o, string acp, long seq, AuthTerminalProof p) => inner.SignInNeeded(s, o, acp, seq, p);
+        public void BlockFailedOpenSignInNeeded(IWriteScope s, SessionObservation o, AuthTerminalProof p) => inner.BlockFailedOpenSignInNeeded(s, o, p);
+        public void FailedOpenSignInNeeded(IWriteScope s, SessionObservation o, long seq, AuthTerminalProof p) => inner.FailedOpenSignInNeeded(s, o, seq, p);
         public void Replied(IWriteScope s, SessionObservation o, SessionTurnReply final) => inner.Replied(s, o, final);
         public void Recovered(IWriteScope s, RecoveredChatTurn recovered) => inner.Recovered(s, recovered);
         public bool Complete(IWriteScope s, SessionObservation o, string acp, SessionTurnFinalization final) => inner.Complete(s, o, acp, final);

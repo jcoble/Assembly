@@ -1,10 +1,12 @@
 using System.Text.Json;
 using Assembly.Application.Common.Acp;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Events;
+using Assembly.Domain.Rows;
 
 namespace Assembly.Application.Features.Chat.Sessions;
 
@@ -88,6 +90,16 @@ public sealed partial class SessionHost
         IReadOnlyList<AgentEvent> events, IReadOnlyList<TerminalTurn> terminals)
     {
         List<RunningTurn> completed = [];
+        List<(RunningTurn Turn, AuthTerminalProof Proof)> proofs = [];
+        List<(RunningTurn Turn, long Seq)> savedAuth = [];
+        foreach (var terminal in terminals)
+        {
+            if (FinalAuthTerminal(terminal.Turn, terminal.Turn.Session, terminal.End) is not { } proof) continue;
+            DecorateAuthTerminal(batch, proof);
+            proofs.Add((terminal.Turn, proof));
+        }
+        var foreground = _turn is { SelfStarted: false } current && current.Session?.AcpSessionId == acpSessionId ? current : null;
+        var early = foreground is null ? null : events.Select(e => CaptureAuthTerminal(foreground, acpSessionId, e)).FirstOrDefault(p => p is not null);
         var retries = _failedStarts.Where(p => p.Key.Acp == acpSessionId
             && events.OfType<ToolCallChanged>().Any(e => e.ToolCallId == p.Key.Tool)).ToArray();
         try
@@ -95,6 +107,9 @@ public sealed partial class SessionHost
             var hasFacts = events.Any(e => e is TurnStarted or TurnEnded or TurnFailed or AgentLost or ToolCallChanged);
             _hub.Publish(_sessionId, batch, _feed is null || observed is null || !hasFacts && terminals.Count == 0 ? null : scope =>
             {
+                if (early is not null) BlockAuthTerminal(scope, foreground!, early);
+                foreach (var proof in proofs)
+                    savedAuth.Add((proof.Turn, ReportAuthTerminal(scope, proof.Turn, proof.Proof)));
                 foreach (var retry in retries)
                     _feed.ObserveBatch(scope, retry.Value.Observed, acpSessionId, [retry.Value.Start]);
                 _feed.ObserveBatch(scope, observed, acpSessionId, events);
@@ -115,6 +130,77 @@ public sealed partial class SessionHost
         // These values cannot be consumed inside the observer: the outer writer can still roll back.
         foreach (var retry in retries) _failedStarts.Remove(retry.Key);
         foreach (var turn in completed) turn.FeedCompleted = true;
+        foreach (var saved in savedAuth) saved.Turn.AuthTerminalSeq = saved.Seq;
         foreach (var terminal in terminals) terminal.Turn.Ended?.TrySetResult();
+    }
+    // Only the actual owning execution supplies Engine auth authority. Compatibility sends keep their ordinary terminal path.
+    private AuthTerminalProof? CaptureAuthTerminal(RunningTurn turn, string? acpSessionId, AgentEvent end)
+    {
+        if (end is not TurnFailed { Code: "-32000" } || turn.Observation is not { } observed || observed.SessionId != _sessionId ||
+            turn.Delivery is not { } delivery || turn.UserRow is not { Seq: > 0 } user || user.Epoch != observed.Epoch ||
+            delivery.SessionId != _sessionId || delivery.Epoch != observed.Epoch || delivery.ClientId.Length == 0) return null;
+        if (turn.AuthBinding is { } retained) return retained;
+        int version; AuthOpenFailureStage? stage = null;
+        if (acpSessionId is not null)
+        {
+            if (string.IsNullOrWhiteSpace(acpSessionId) || turn.Session?.AcpSessionId != acpSessionId) return null;
+            version = 1;
+        }
+        else
+        {
+            if (turn.Session is not null || turn.Prompt is not null || turn.ProviderMessageId is not null ||
+                turn.OpenAttempt is not { IdentityAccepted: false, Failure: { } failure } || !Enum.IsDefined(failure) ||
+                !turn.Inserted.Task.IsCompletedSuccessfully || turn.Inserted.Task.Result is not SendResult.AuthRequired required ||
+                required.UserRow != user) return null;
+            version = 2; stage = failure;
+        }
+        return turn.AuthBinding = new(version, Guid.NewGuid(), Guid.NewGuid(), turn.RunId, acpSessionId, observed.Epoch,
+            delivery.ClientId, null, new(delivery.MessageId, delivery.EffectId, delivery.Attempt,
+                delivery.ClientId, user.Seq, user.RunId), stage);
+    }
+
+    private AuthTerminalProof? FinalAuthTerminal(RunningTurn turn, OpenSession? session, AgentEvent end)
+    {
+        if (turn.AuthTerminalSeq != 0) return null;
+        var binding = CaptureAuthTerminal(turn, session?.AcpSessionId, end);
+        if (binding is null) return null;
+        var inserted = turn.ProviderMessageId ?? (turn.Prompt?.Inserted.IsCompletedSuccessfully == true ? turn.Prompt.Inserted.Result : null);
+        return turn.AuthFinalProof ??= binding with { ProviderMessageId = inserted };
+    }
+
+    private static void DecorateAuthTerminal(RowBatch batch, AuthTerminalProof proof)
+    {
+        var index = batch.Rows.FindIndex(row => row.RunId == proof.ChatRunId && row.Kind == "turn" &&
+            row.Payload.Deserialize(RowJsonContext.Rows.TurnPayload) is { State: "failed" });
+        if (index < 0 || !batch.Rows.Any(row => row.RunId == proof.ChatRunId && row.Kind == "error" &&
+            row.Payload.Deserialize(RowJsonContext.Rows.ErrorPayload) is { Code: "-32000" }))
+            throw new CallFailed("provider_auth_terminal_missing");
+        var row = batch.Rows[index];
+        var payload = row.Payload.Deserialize(RowJsonContext.Rows.TurnPayload)!;
+        batch.Rows[index] = row with { Payload = JsonSerializer.SerializeToElement(payload with { AuthFailure = proof }, RowJsonContext.Rows.TurnPayload) };
+    }
+
+    private void BlockAuthTerminal(IWriteScope scope, RunningTurn turn, AuthTerminalProof binding)
+    {
+        if (_feed is null || turn.Observation is not { } observed) return;
+        if (binding.Version == 2) _feed.BlockFailedOpenSignInNeeded(scope, observed, binding);
+        else _feed.BlockSignInNeeded(scope, observed, binding.AcpSessionId!, binding);
+    }
+
+    private long ReportAuthTerminal(IWriteScope scope, RunningTurn turn, AuthTerminalProof proof)
+    {
+        if (_feed is null || turn.Observation is not { } observed) throw new CallFailed("provider_auth_observation_missing");
+        var rows = scope.Query("""
+            SELECT seq,payload FROM rows WHERE session_id=$session AND run_id=$run AND kind='turn'
+              AND json_extract(payload,'$.state')='failed' AND json_extract(payload,'$.authFailure.observationId')=$observation
+            ORDER BY seq DESC LIMIT 2
+            """, row => (Seq: row.Long(0), Payload: row.Text(1)), new SqlArg("$session", _sessionId),
+            new("$run", proof.ChatRunId), new("$observation", proof.ObservationId.ToString()));
+        if (rows.Count != 1 || JsonSerializer.Deserialize(rows[0].Payload, RowJsonContext.Rows.TurnPayload)?.AuthFailure != proof)
+            throw new CallFailed("provider_auth_terminal_missing");
+        var seq = rows[0].Seq;
+        if (proof.Version == 2) _feed.FailedOpenSignInNeeded(scope, observed, seq, proof);
+        else _feed.SignInNeeded(scope, observed, proof.AcpSessionId!, seq, proof);
+        return seq;
     }
 }

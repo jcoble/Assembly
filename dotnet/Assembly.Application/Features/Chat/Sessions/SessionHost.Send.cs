@@ -67,9 +67,8 @@ public sealed partial class SessionHost
         try { return await sending.WaitAsync(ct); }
         finally
         {
-            if (owns && clientId is not null)
-                lock (_gate)
-                    if (_sending.TryGetValue(clientId, out var active) && ReferenceEquals(active.Send, sending)) _sending.Remove(clientId);
+            if (owns && clientId is not null && _sending.TryGetValue(clientId, out var active) && ReferenceEquals(active.Send, sending))
+                _sending.TryRemove(new(clientId, active));
         }
     }
 

@@ -41,7 +41,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     private RunningTurn? _turn;
     // The last turn's work, which goes on past its end rows until its session is closed.
     private Task _lastTurn = Task.CompletedTask;
-    private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SendResult> Send)> _sending = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Text, string? Label, string? FromSessionId, Task<SendResult> Send)> _sending = new();
     private readonly Dictionary<string, (string Text, string? Label, string? FromSessionId, Task<SteerDeliveryResult> Send)> _steering = [];
     // The asks waiting for the user, by id. Guarded by _gate.
     private readonly Dictionary<string, OpenAsk> _asks = [];
@@ -360,9 +360,10 @@ public sealed partial class SessionHost : IPermissionPolicy
             Apply(started);
     }
 
-    private void Apply(AgentEvent agentEvent, RowBatch? collector = null, Action<Assembly.Application.Common.Database.IWriteScope>? observe = null)
+    private void Apply(AgentEvent agentEvent, RowBatch? collector = null, Action<Assembly.Application.Common.Database.IWriteScope>? observe = null, AuthTerminalProof? authProof = null)
     {
         var batch = _converter.Apply(agentEvent);
+        if (authProof is not null) DecorateAuthTerminal(batch, authProof);
         if (collector is null) _hub.Publish(_sessionId, batch, observe);
         else
         {
