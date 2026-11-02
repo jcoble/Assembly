@@ -30,17 +30,19 @@ public static class EngineSchema
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,8,$machine,1,0,0);
+                VALUES(1,9,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version is 6 or 7 or 8)
+        if (meta.Version is 6 or 7 or 8 or 9)
         {
             projectionSchema?.Invoke(scope);
             if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
             if (meta.Version < 8) AuthSchemaUpgrade.Apply(scope);
+            AccountIdentitySchema.Validate(scope, meta.Version < 9);
+            if (meta.Version < 9) scope.Execute("UPDATE engine_meta SET schema_version=9 WHERE singleton=1");
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -59,6 +61,8 @@ public static class EngineSchema
         MessageExpirySchemaUpgrade.Apply(scope, expiryMinutes);
         NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
         AuthSchemaUpgrade.Apply(scope);
+        AccountIdentitySchema.Validate(scope, true);
+        scope.Execute("UPDATE engine_meta SET schema_version=9 WHERE singleton=1");
         return new(meta.Machine, meta.Version);
     }
 
