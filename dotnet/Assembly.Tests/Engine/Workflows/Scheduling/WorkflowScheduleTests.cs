@@ -238,6 +238,163 @@ public sealed class WorkflowScheduleTests
         finally { Directory.Delete(root, true); Directory.Delete(proofRoot, true); }
     }
 
+    [Fact]
+    public void Redo_reviewer_gets_fresh_session_even_with_retained_old_authority()
+    {
+        using var f = new Fixture(yaml: """
+            name: Review
+            steps:
+              target:
+                agent: {provider: codex, model: selected-model}
+                prompt: prompt.md
+                result: build
+              build:
+                needs: [target]
+                review: {of: target, agent: {provider: codex, model: selected-model}, prompt: prompt.md}
+                result: review
+            """);
+        f.Core.Db.Writer.Write("test.accepted-dependency", s => s.Execute("""
+            INSERT INTO engine_workflow_receipt(id,version,machine,created_ms,updated_ms,run_id,step_id,attempt,generation,epoch,hash,kind,body_json,state)
+              SELECT 'dependency-receipt',1,machine,1000,1000,run_id,id,0,0,0,'dependency-hash','build',
+                '{"report":{"receipt":{"kind":"build","summary":"checked target"}}}','accepted'
+              FROM engine_step WHERE run_id=$run AND definition_key='target';
+            UPDATE engine_step SET state='succeeded',receipt_id='dependency-receipt' WHERE run_id=$run AND definition_key='target';
+            """, new SqlArg("$run", f.Run)));
+        var first = f.Apply(f.Prepare()); Assert.True(first.Result.Applied, first.Result.Error);
+        PrepareReleasedRedo(f, first.SessionId!);
+        f.Core.Db.Writer.Write("test.fresh-reviewer", s => s.Execute("UPDATE engine_step SET session_id=NULL WHERE id=$step", new SqlArg("$step", f.Step)));
+        var prepared = f.Prepare(2000); Assert.NotNull(prepared); Assert.Null(prepared.Body.Prepared.Witness.Resume);
+        var second = f.Apply(prepared); Assert.True(second.Result.Applied, second.Result.Error);
+        Assert.NotEqual(first.SessionId, second.SessionId); Assert.Equal(3, f.Core.Count("engine_session"));
+        Assert.Equal("native", f.Core.Text("SELECT provider_session_id FROM engine_session WHERE id=$id", new SqlArg("$id", first.SessionId)));
+        Assert.Null(f.Core.Text("SELECT provider_session_id FROM engine_session WHERE id=$id", new SqlArg("$id", second.SessionId)));
+        Assert.Equal(0, f.Core.Number("SELECT execution_epoch FROM engine_step_attempt WHERE step_id=$step AND attempt=2", new SqlArg("$step", f.Step)));
+        Assert.Equal(2, f.CommittedShells);
+    }
+
+    [Fact]
+    public void Redo_resumes_original_worker_with_new_epoch_and_preserves_archived_attempt()
+    {
+        using var f = new Fixture();
+        f.Core.Db.Writer.Write("test.owner-epoch", s => s.Execute("UPDATE engine_session SET epoch=7 WHERE id='owner'"));
+        var first = f.Apply(f.Prepare()); Assert.True(first.Result.Applied);
+        PrepareReleasedRedo(f, first.SessionId!);
+        var archived = f.Core.Text("SELECT json_object('state',state,'receipt',receipt_id,'epoch',execution_epoch,'prompt',prompt_message_id) FROM engine_step_attempt WHERE attempt=1");
+        var prepared = f.Prepare(2000);
+        Assert.True(f.Core.Apply(new Assembly.Engine.Sessions.ReportSessionTitle("changed display"), first.SessionId!, 2, 0, new(ActorKind.System, "engine.feed")).Applied);
+        var competing = f.Prepare(2009);
+        Assert.NotNull(prepared); Assert.Equal(first.SessionId, prepared.Body.SessionId);
+        Assert.Equal(prepared.Context.CommandId, competing.Context.CommandId);
+        Assert.Equal(prepared.Envelope.Sha256, competing.Envelope.Sha256);
+        Assert.Equal(7, prepared.Context.Epoch);
+        Assert.Equal(0, prepared.Body.Prepared.Witness.Resume!.Epoch);
+        var resumed = f.Apply(prepared); Assert.True(resumed.Result.Applied, resumed.Result.Error);
+        Assert.Equal(resumed, f.Apply(competing));
+        Assert.Equal(first.SessionId, resumed.SessionId);
+        Assert.Equal(2, f.Core.Count("engine_session")); Assert.Equal(2, f.Core.Count("engine_step_attempt"));
+        Assert.Equal("native", f.Core.Text("SELECT provider_session_id FROM engine_session WHERE id=$id", new SqlArg("$id", resumed.SessionId)));
+        Assert.Equal(1, f.Core.Number("SELECT epoch FROM engine_session WHERE id=$id", new SqlArg("$id", resumed.SessionId)));
+        Assert.Equal(1, f.Core.Number("SELECT execution_epoch FROM engine_step_attempt WHERE attempt=2"));
+        Assert.Equal(1, f.Core.Number("SELECT authority_epoch FROM engine_step"));
+        Assert.Equal(1, f.Core.Number("SELECT attempt_in_generation FROM engine_step"));
+        Assert.Equal(0, f.Core.Number("SELECT reminder_sent FROM engine_step"));
+        Assert.Equal(0, f.Core.Number("SELECT report_requested FROM engine_step"));
+        Assert.Equal(1, f.Core.Number("SELECT held_epoch FROM engine_message WHERE id=$id", new SqlArg("$id", resumed.MessageId)));
+        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='start' AND state='pending'"));
+        Assert.Equal(1, f.CommittedShells);
+        Assert.Equal(archived, f.Core.Text("SELECT json_object('state',state,'receipt',receipt_id,'epoch',execution_epoch,'prompt',prompt_message_id) FROM engine_step_attempt WHERE attempt=1"));
+        Assert.Equal("stale_epoch", f.Core.Apply(new Assembly.Engine.Sessions.SetSessionState("idle", "native", null),
+            resumed.SessionId!, 3, 0, new(ActorKind.System, "engine.feed")).Error);
+    }
+
+    [Fact]
+    public void Refused_resumed_prompt_rolls_back_worker_epoch_attempt_effect_and_publications()
+    {
+        using var f = new Fixture(messageLimit: 1); var first = f.Apply(f.Prepare()); Assert.True(first.Result.Applied);
+        PrepareReleasedRedo(f, first.SessionId!); var topics = f.Topics.Count;
+        var refused = f.Apply(f.Prepare(2000)); Assert.False(refused.Result.Applied); Assert.Equal("message_limit", refused.Result.Error);
+        Assert.Equal("ended", f.Core.State("engine_session", first.SessionId!));
+        Assert.Equal(0, f.Core.Number("SELECT epoch FROM engine_session WHERE id=$id", new SqlArg("$id", first.SessionId)));
+        Assert.Equal("native", f.Core.Text("SELECT provider_session_id FROM engine_session WHERE id=$id", new SqlArg("$id", first.SessionId)));
+        Assert.Equal("pending", f.Core.State("engine_step", f.Step)); Assert.Equal(1, f.Core.Count("engine_step_attempt"));
+        Assert.Equal(1, f.Core.Count("engine_message")); Assert.Equal(0, f.Core.Number("SELECT COUNT(*) FROM engine_outbox WHERE state='pending'"));
+        Assert.Equal(topics, f.Topics.Count); Assert.Equal(1, f.CommittedShells);
+        Assert.Equal(1, f.Core.Number("SELECT COUNT(*) FROM engine_workflow_history WHERE kind='dispatch_intent' AND generation=1"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Original_workflow_prompt_cannot_bind_resumed_worker_epoch(bool delivered)
+    {
+        using var f = new Fixture(); var first = f.Apply(f.Prepare()); Assert.True(first.Result.Applied);
+        Assembly.Engine.Effects.Effect? oldEffect = null;
+        if (delivered)
+        {
+            Assert.True(f.Core.Apply(new Assembly.Engine.Sessions.SetSessionState("idle", "native", null), first.SessionId!, 1, 0, new(ActorKind.System, "engine.feed")).Applied);
+            var effectId = f.Core.Text("SELECT id FROM engine_outbox WHERE kind='send'")!;
+            oldEffect = Assembly.Engine.Effects.EffectTransitions.Read(f.Core.Db, effectId, default)!;
+            using (var snapshot = f.Core.Db.OpenSnapshot(default))
+                Assert.NotNull(Assembly.Engine.Messages.MessageDelivery.Read(snapshot, oldEffect));
+            f.Core.Db.Writer.Write("test.original-prompt-completed", s => s.Execute("UPDATE engine_message SET state='delivered_to_turn',in_flight=0 WHERE id=$id", new SqlArg("$id", first.MessageId)));
+        }
+        PrepareReleasedRedo(f, first.SessionId!);
+        var resumed = f.Apply(f.Prepare(2000)); Assert.True(resumed.Result.Applied, resumed.Result.Error);
+        if (oldEffect is not null)
+        {
+            using var snapshot = f.Core.Db.OpenSnapshot(default);
+            Assert.Null(Assembly.Engine.Messages.MessageDelivery.Read(snapshot, oldEffect, allowDone: true));
+        }
+        else
+        {
+            Assert.Equal("failed", f.Core.State("engine_message", first.MessageId!));
+            Assert.Equal("moved", f.Core.Text("SELECT reason FROM engine_message WHERE id=$id", new SqlArg("$id", first.MessageId)));
+        }
+        Assert.Equal(0, f.Core.Number("SELECT target_epoch FROM engine_message WHERE id=$id", new SqlArg("$id", first.MessageId)));
+        Assert.Equal(1, f.Core.Number("SELECT target_epoch FROM engine_message WHERE id=$id", new SqlArg("$id", resumed.MessageId)));
+    }
+
+    [Theory]
+    [InlineData("missing_marker")]
+    [InlineData("native_missing")]
+    [InlineData("wrong_release_epoch")]
+    [InlineData("unsettled_effect")]
+    public void Retained_ended_worker_without_exact_resume_proof_stays_blocked(string missing)
+    {
+        using var f = new Fixture(); var first = f.Apply(f.Prepare()); Assert.True(first.Result.Applied);
+        PrepareReleasedRedo(f, first.SessionId!, missing);
+        using var scope = f.Core.Db.OpenSnapshot(default);
+        var admission = f.Commands.ReadWorkflowAdmission(scope, f.Step)!;
+        Assert.False(admission.Ready); Assert.Equal("workflow_resume_unavailable", admission.Reason);
+        Assert.Null(f.Commands.PrepareWorkflowDispatch(scope, f.Step, 2000, new string('a', 40), new string('b', 64)));
+        Assert.Equal(1, f.Core.Count("engine_step_attempt")); Assert.Equal(2, f.Core.Count("engine_session"));
+    }
+
+    private static void PrepareReleasedRedo(Fixture f, string session, string? missing = null)
+    {
+        f.Core.Db.Writer.Write("test.released-redo", s =>
+        {
+            s.Execute("""
+                UPDATE engine_session SET state='ended',provider_session_id=$native,version=version+1 WHERE id=$session;
+                INSERT INTO engine_workflow_receipt(id,version,machine,created_ms,updated_ms,run_id,step_id,attempt,generation,session_id,epoch,hash,kind,body_json,state)
+                  VALUES('receipt',1,$machine,1000,1000,$run,$step,1,0,$session,0,'hash','build','{}','accepted');
+                UPDATE engine_step_attempt SET state='succeeded',ended_ms=1000,receipt_id='receipt' WHERE step_id=$step;
+                UPDATE engine_step SET generation=1,attempt_in_generation=0,state='pending',dispatch_state='pending',receipt_id=NULL,reminder_sent=1,report_requested=1 WHERE id=$step;
+                UPDATE engine_outbox SET state='done';
+                """, new("$native", missing == "native_missing" ? null : "native"), new("$session", session),
+                new("$machine", f.Core.Machine), new("$run", f.Run), new("$step", f.Step));
+            if (missing != "missing_marker") s.Execute("""
+                INSERT INTO engine_workflow_history(id,version,machine,created_ms,updated_ms,run_id,history_seq,step_id,attempt,generation,kind,at_ms,safe_body_json)
+                  SELECT 'release',1,$machine,1000,1000,$run,MAX(history_seq)+1,$step,1,0,'workflow_worker_released',1000,
+                    json_object('receiptId','receipt','sessionId',$session,'epoch',$epoch,'workspaceId','workspace','head',$head,'providerSessionId','native')
+                  FROM engine_workflow_history WHERE run_id=$run
+                """, new("$machine", f.Core.Machine), new("$run", f.Run), new("$step", f.Step), new("$session", session),
+                new("$epoch", missing == "wrong_release_epoch" ? 99 : 0), new("$head", new string('a', 40)));
+            if (missing == "unsettled_effect") s.Execute("UPDATE engine_outbox SET state='uncertain' WHERE kind='start'");
+            return 0;
+        });
+    }
+
     private sealed class RecordingTopics : ITopics
     {
         public int Count { get; private set; }

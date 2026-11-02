@@ -24,7 +24,11 @@ public static class WorkflowSchedule
               AND run.state IN ('queued','running','needs_me') AND run.paused=0 AND run.setup_state='ready'
               AND owner.machine=$machine AND owner.holder='local' AND owner.parent_id IS NULL
               AND owner.state IN ('idle','running','needs_me') AND owner.cancel_requested=0 AND owner.reserved_epoch IS NULL
-              AND st.state='pending' AND COALESCE(st.dispatch_state,'')<>'redo_pending' AND st.kind IN ('agent','review') AND st.session_id IS NULL
+              AND st.state='pending' AND COALESCE(st.dispatch_state,'')<>'redo_pending' AND st.kind IN ('agent','review')
+              AND (st.session_id IS NULL OR st.kind='agent' AND st.attempt_in_generation=0 AND EXISTS(
+                SELECT 1 FROM engine_step_attempt original JOIN engine_session worker ON worker.id=st.session_id
+                WHERE original.step_id=st.id AND original.attempt=st.attempt AND original.generation<st.generation
+                  AND worker.state='ended' AND worker.provider_session_id IS NOT NULL AND worker.provider_session_id<>''))
               AND workspace.run_id=run.id AND workspace.step_id=st.id AND workspace.state='ready'
               AND workspace.path IS NOT NULL AND workspace.head IS NOT NULL
               AND NOT EXISTS ({UnsettledDependency})
