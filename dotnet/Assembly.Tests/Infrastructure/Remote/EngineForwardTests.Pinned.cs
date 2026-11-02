@@ -205,6 +205,40 @@ public sealed partial class EngineForwardTests
         Assert.Equal(1, h.Remote.Fixture.Count("engine_outbox"));
     }
 
+    [Fact]
+    public async Task Full_new_child_Title_above_frame_limit_uses_same_owned_lease_and_original_typed_payload()
+    {
+        await using var h = new TwoHosts(machineLauncher: new RelayTestLauncher(), checkouts: Path.GetTempPath());
+        await h.Start(); await h.StartMirror(); var live = await ReadyForPinned(h.Mirror);
+        var forward = new MachineForward(_ => h.ConnectedMachine);
+        await using var lease = await h.ConnectedMachine.AcquireRelayBulkAsync(live.OwnerBinding, default, live);
+        var parent = Guid.NewGuid().ToString();
+        Assert.True((await forward.ForeignAncestryTitlesAsync(lease, new(h.Mac.Runtime.Machine, parent,
+            [new(parent, h.Mac.Runtime.Machine, "codex", "Parent", null)]), default)).Result!.Applied);
+        var title = new string('界', 1500000) + "\0AFTER_NEW_CHILD_TITLE😀";
+        var original = new StartSession("codex", null, Path.GetTempPath(), title, parent, null, null, ManagedCheckout: false);
+        var request = new MachineCommand(Guid.NewGuid(), h.Mac.Runtime.Machine, Guid.NewGuid().ToString(), 0, 0, original);
+        var intent = FrozenMachineStartIntent.Create(h.ConnectedMachine, live.OwnerBinding, request, live);
+        var publishedBytes = 0;
+        using var publication = h.Remote.Topics.Subscribe(Assembly.Application.Features.Chat.Sessions.SessionsFeature.Topic, null, _ => { },
+            (_, json) => publishedBytes = System.Text.Encoding.UTF8.GetByteCount(json));
+        MachineStartResolution result;
+        try { result = await forward.SendStartAsync(intent, lease, default); }
+        catch (Assembly.Application.Common.Machines.MachineUnreachable)
+        {
+            Assert.Equal(1, h.Remote.Fixture.Count("engine_outbox"));
+            Assert.True(publishedBytes <= 4 * 1024 * 1024, $"Legacy session publication bytes={publishedBytes} exceed unchanged4194304; owning Start effect already committed; original owner guard correctly rejects changed socket");
+            throw;
+        }
+        Assert.Equal(MachineStartAckState.Accepted, result.Evidence.State); Assert.Equal(request.EntityId, result.Evidence.Child!.Id);
+        Assert.Equal(System.Text.Encoding.UTF8.GetBytes(title), h.Remote.Fixture.Db.QueryFirst(
+            "SELECT CAST(title AS BLOB) FROM engine_session WHERE id=$id", row => row.Blob(0), default, new Assembly.Application.Common.Database.SqlArg("$id", request.EntityId)));
+        Assert.Equal(JsonSerializer.SerializeToUtf8Bytes(original, EngineJson.Default.StartSession), h.Remote.Fixture.Db.QueryFirst(
+            "SELECT CAST(payload_json AS BLOB) FROM engine_outbox WHERE id=$id", row => row.Blob(0), default,
+            new Assembly.Application.Common.Database.SqlArg("$id", request.CommandId.ToString("N") + "-0")));
+        Assert.Equal(1, h.Remote.Fixture.Count("engine_outbox"));
+    }
+
     private static async Task<TwoHosts> PinnedHosts()
     {
         var hosts = new TwoHosts();

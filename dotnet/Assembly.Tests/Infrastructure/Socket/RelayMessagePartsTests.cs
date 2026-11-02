@@ -4,6 +4,8 @@ using Assembly.Application.Common.Calls;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Relays;
 using Assembly.Infrastructure.Engine;
+using Assembly.Engine;
+using Assembly.Engine.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Socket;
 
@@ -113,4 +115,57 @@ public sealed class RelayMessagePartsTests
         await operation.Append(new(handle, RelayPartKind.SenderLabel, 0, Encoding.UTF8.GetBytes(capture.SenderLabel)));
         await Assert.ThrowsAsync<CallFailed>(() => operation.Admit(new(request, handle)));
     }
+
+    private static (StartTitleBeginArgs Request, byte[] Facts, byte[] Title) StartParts()
+    {
+        var start = new StartSession("codex", null, "/folder", "Title\0suffix😀", "parent", null, null);
+        var facts = StartTitlePayload.Facts(start); var title = Encoding.UTF8.GetBytes(start.Title);
+        var query = new MachineStartAckArgs(Guid.NewGuid(), "A", Guid.NewGuid().ToString(), 0, 0,
+            MachineStartCanonical.FromPrepared(EngineCommands.PrepareSessionTitle(start)));
+        return (new(1, "B", query, new(facts.LongLength, RelayHash.Sha(facts)), new(title.LongLength, RelayHash.Sha(title))), facts, title);
+    }
+
+    [Fact]
+    public async Task Start_role_competes_with_both_other_target_families_on_the_same_connection()
+    {
+        await using var parts = new RelayMessageParts(); using var closed = new CancellationTokenSource();
+        using var owner = parts.Enter(Call(closed.Token)); var (start, _, _) = StartParts();
+        var descriptor = RelayDigests.Describe(Capture()); var relay = new RelaySendRequest(descriptor, 0);
+        var probe = new RelaySendBeginReply("parts_required", null, new(descriptor.IdentitySha256, "root", null, "retry", null, false));
+        var registration = EngineCommands.PrepareSessionTitle(new RegisterForeignSession("A", "codex", "Parent"));
+        var foreign = new ForeignTitleRequest(ForeignTitleOperation.RegisterForeign, "B", "A", "parent",
+            new(Guid.NewGuid(), "A", "parent", 0, 0, new(registration.CanonicalJournal, null, null, null)), null, 1,
+            new(0, RelayHash.Sha([])), new(0, RelayHash.Sha([])));
+        var foreignProbe = new ForeignTitleReply(ForeignTitleReplyKind.PartsRequired, null, null, null, null);
+        var handle = owner.PublishStartTarget(start);
+        Assert.Throws<CallFailed>(() => owner.PublishTarget(relay, probe));
+        Assert.Throws<CallFailed>(() => owner.PublishForeignTarget(foreign, foreignProbe));
+        Assert.True(owner.DropStartTarget(handle));
+        var relayHandle = owner.PublishTarget(relay, probe).Transfer!;
+        Assert.Throws<CallFailed>(() => owner.PublishStartTarget(start)); owner.DropTarget(relayHandle);
+        var foreignHandle = owner.PublishForeignTarget(foreign, foreignProbe).Handle!;
+        Assert.Throws<CallFailed>(() => owner.PublishStartTarget(start)); Assert.True(owner.DropForeignTarget(foreignHandle));
+    }
+
+    [Fact]
+    public async Task Start_preparation_detaches_exact_bytes_and_payload_before_close_and_disposal()
+    {
+        var parts = new RelayMessageParts(); using var closed = new CancellationTokenSource();
+        var (request, facts, title) = StartParts(); PreparedSessionTitleCommand prepared;
+        using (var operation = parts.Enter(Call(closed.Token)))
+        {
+            var handle = operation.PublishStartTarget(request);
+            await operation.AppendStartTitle(new(handle, StartTitlePartKind.Facts, 0, facts));
+            await operation.AppendStartTitle(new(handle, StartTitlePartKind.Title, 0, title));
+            using var otherClosed = new CancellationTokenSource(); using var other = parts.Enter(Call(otherClosed.Token, "other"));
+            await Assert.ThrowsAsync<CallFailed>(() => other.AppendStartTitle(new(handle, StartTitlePartKind.Title, 0, title)));
+            prepared = await operation.AdmitStartTitle(new(request, handle), "B");
+            Assert.False(operation.DropStartTarget(handle));
+        }
+        closed.Cancel(); await parts.DisposeAsync();
+        Assert.Equal(title, prepared.TitleUtf8);
+        Assert.Equal("Title\0suffix😀", ((StartSession)prepared.Command).Title);
+        Assert.Contains("suffix", prepared.StartEffectPayload!.ForExact((StartSession)prepared.Command).GetRawText());
+    }
+
 }

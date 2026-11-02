@@ -63,8 +63,8 @@ internal sealed partial class RelayMessageParts : IAsyncDisposable
         foreach (var registration in connection.Registrations) registration.Dispose();
         connection.Source?.Dispose();
         connection.Target?.Dispose();
-        connection.ForeignSource?.Dispose(); connection.ForeignTarget?.Dispose();
-        connection.Source = null; connection.Target = null; connection.ForeignSource = null; connection.ForeignTarget = null; connection.Registrations.Clear();
+        connection.ForeignSource?.Dispose(); connection.ForeignTarget?.Dispose(); connection.StartTarget?.Dispose();
+        connection.Source = null; connection.Target = null; connection.ForeignSource = null; connection.ForeignTarget = null; connection.StartTarget = null; connection.Registrations.Clear();
         connection.Stop.Dispose();
     }
 
@@ -90,6 +90,7 @@ internal sealed partial class RelayMessageParts : IAsyncDisposable
         internal TargetStage? Target;
         internal ForeignSourceStage? ForeignSource;
         internal ForeignTargetStage? ForeignTarget;
+        internal StartTargetStage? StartTarget;
     }
 
     internal sealed partial class Operation : IDisposable

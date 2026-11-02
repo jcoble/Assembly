@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Relays;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -58,6 +59,8 @@ internal sealed partial class RemoteMachine
             if (_failed) throw new CallFailed("relay_connection_changed");
             return (_owner, _binding, _live);
         }
+        internal bool HoldsOriginalBulk(ClientWebSocket socket) => Volatile.Read(ref _disposed) == 0 && !_failed &&
+            ReferenceEquals(_bulk, socket) && ReferenceEquals(_owner._bulkSocket, socket) && socket.State == WebSocketState.Open;
         internal bool BelongsTo(RemoteMachine owner, OwnerConnectionBinding binding) =>
             Volatile.Read(ref _disposed) == 0 && ReferenceEquals(owner, _owner) && ReferenceEquals(binding, _binding);
         internal static async Task<RelayBulkLease> AcquireAsync(RemoteMachine owner, OwnerConnectionBinding binding, CancellationToken ct, EngineMirror.LiveMirrorBinding? live)
@@ -80,7 +83,7 @@ internal sealed partial class RemoteMachine
             catch { lifetime.Complete(); throw; }
         }
 
-        internal async Task<JsonElement> CallAsync(string method, JsonElement args, CancellationToken ct)
+        internal async Task<JsonElement> CallAsync(string method, JsonElement args, CancellationToken ct, FrozenMachineStartIntent? startIntent = null)
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             if (_binding.IsInvalidated) throw new CallFailed("relay_connection_changed");
@@ -104,7 +107,7 @@ internal sealed partial class RemoteMachine
                 // Fixed method names are chosen only by the coordinator; measure the complete existing call frame.
                 var estimate = "{\"t\":\"call\",\"id\":-9223372036854775808,\"feature\":\"engine\",\"method\":\"" + method + "\",\"args\":" + args.GetRawText() + "}";
                 if (Encoding.UTF8.GetByteCount(estimate) > 4 * 1024 * 1024) throw new CallFailed("frame_too_large");
-                var result = await _owner.BulkCallHeldAsync("engine", method, args, ct, _binding.Machine, socket, _binding, _live).ConfigureAwait(false);
+                var result = await _owner.BulkCallHeldAsync("engine", method, args, ct, _binding.Machine, socket, _binding, _live, startIntent).ConfigureAwait(false);
                 await _owner._socketSend.WaitAsync(ct).ConfigureAwait(false);
                 try
                 {

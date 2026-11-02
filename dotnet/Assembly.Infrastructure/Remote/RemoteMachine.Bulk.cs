@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
+using Assembly.Infrastructure.Engine.Relays;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -16,7 +17,7 @@ internal sealed partial class RemoteMachine
 
     // The existing bulk exchange, shared by ordinary calls and the fixed relay lease.
     private async Task<JsonElement> BulkCallHeldAsync(string feature, string method, JsonElement args, CancellationToken ct,
-        string? expectedEngineId, ClientWebSocket? expectedConnection, OwnerConnectionBinding? relayBinding = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? relayMirror = null)
+        string? expectedEngineId, ClientWebSocket? expectedConnection, OwnerConnectionBinding? relayBinding = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? relayMirror = null, FrozenMachineStartIntent? startIntent = null)
     {
         ClientWebSocket? live = null;
         try
@@ -46,7 +47,9 @@ internal sealed partial class RemoteMachine
                 if (expectedEngineId is not null && (!ReferenceEquals(live, RequireEngine(expectedEngineId)) || _bulkEngineIdentity != expectedEngineId))
                     throw Unreachable("unverified engine peer", $"{_name}: bulk socket engine identity differs or is unverified");
                 if (relayBinding is not null) { RequireOwnerBinding(relayBinding); RequireLiveMirror(relayBinding, relayMirror); }
+                startIntent?.SendingBulk(this, _bulkSocket, feature, method, args, id);
                 await SendFrameAsync(_bulkSocket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{args.GetRawText()}}}", ct);
+                startIntent?.FrameOrdered();
             }
             finally { _socketSend.Release(); }
             var frame = await ReadFrameAsync(_bulkSocket, ct);
@@ -70,6 +73,7 @@ internal sealed partial class RemoteMachine
         }
         catch (Exception error)
         {
+            startIntent?.SendFailed();
             if (relayBinding is null && !ct.IsCancellationRequested && error is not MachineUnreachable)
             {
                 await _socketSend.WaitAsync(CancellationToken.None);

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Assembly.Application.Common.Calls;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Relays;
 using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Remote;
 
@@ -19,8 +20,13 @@ internal sealed class FrozenMachineStartIntent
     internal RemoteMachine.OwnerConnectionBinding Binding { get; private set; }
     internal EngineMirror.LiveMirrorBinding? Live { get; private set; }
     internal MachineCommand Command { get; }
-    internal PreparedSessionTitleCommand Prepared { get; }
     internal MachineStartAckArgs Ack { get; }
+    internal StartTitleBeginArgs TitleRequest { get; }
+    private readonly byte[] _facts;
+    private readonly byte[] _title;
+    internal ReadOnlyMemory<byte> FactsBytes => _facts;
+    internal ReadOnlyMemory<byte> TitleBytes => _title;
+    internal bool OriginalBulk { get; private set; }
     internal SemaphoreSlim Operation { get; } = new(1);
     internal StartIssuePhase Phase { get; private set; }
     internal ClientWebSocket? OriginalSocket { get; private set; }
@@ -32,14 +38,16 @@ internal sealed class FrozenMachineStartIntent
     private FrozenMachineStartIntent(RemoteMachine owner, RemoteMachine.OwnerConnectionBinding binding,
         MachineCommand request, PreparedSessionTitleCommand prepared, EngineMirror.LiveMirrorBinding? live)
     {
-        Owner = owner; Binding = binding; Live = live; Prepared = prepared;
+        Owner = owner; Binding = binding; Live = live;
         Command = request with { Command = prepared.Command };
         Ack = new(request.CommandId, request.FromMachine, request.EntityId, request.ExpectedVersion, request.Epoch, MachineStartCanonical.FromPrepared(prepared));
+        _facts = StartTitlePayload.Facts((StartSession)prepared.Command); _title = prepared.TitleUtf8!;
+        TitleRequest = new(1, binding.Machine, Ack, new(_facts.LongLength, RelayHash.Sha(_facts)), new(_title.LongLength, RelayHash.Sha(_title)));
     }
     internal static FrozenMachineStartIntent Create(RemoteMachine owner, RemoteMachine.OwnerConnectionBinding binding,
         MachineCommand command, EngineMirror.LiveMirrorBinding? live = null)
     {
-        if (command.Command is not StartSession start || command.CommandId == Guid.Empty || !Guid.TryParse(command.EntityId, out _) ||
+        if (command.Command is not StartSession start || start.Title is null || command.CommandId == Guid.Empty || !Guid.TryParse(command.EntityId, out _) ||
             command.ExpectedVersion != 0 || command.Epoch != 0 || string.IsNullOrWhiteSpace(command.FromMachine) || command.FromMachine == binding.Machine ||
             live is not null && !ReferenceEquals(live.OwnerBinding, binding)) throw new ArgumentException("bad_args");
         return new(owner, binding, command, EngineCommands.PrepareSessionTitle(start), live);
@@ -58,7 +66,14 @@ internal sealed class FrozenMachineStartIntent
         if (Phase != StartIssuePhase.NotIssued || !ReferenceEquals(owner, Owner) || feature != "engine" || method != "machine_command" ||
             args.GetRawText() != JsonSerializer.Serialize(Command, EngineSocketJson.Default.MachineCommand))
             throw new InvalidOperationException("Start issue binding mismatch.");
-        OriginalSocket = socket; OriginalCallId = callId; Phase = StartIssuePhase.Sending;
+        OriginalSocket = socket; OriginalCallId = callId; OriginalBulk = false; Phase = StartIssuePhase.Sending;
+    }
+    internal void SendingBulk(RemoteMachine owner, ClientWebSocket socket, string feature, string method, JsonElement args, long callId)
+    {
+        if (Phase != StartIssuePhase.NotIssued || !ReferenceEquals(owner, Owner) || feature != "engine" || method != "start_title_commit" ||
+            args.Deserialize(EngineSocketJson.Default.StartTitleCommitArgs)?.Request != TitleRequest)
+            throw new InvalidOperationException("Start issue binding mismatch.");
+        OriginalSocket = socket; OriginalCallId = callId; OriginalBulk = true; Phase = StartIssuePhase.Sending;
     }
     internal void FrameOrdered()
     {

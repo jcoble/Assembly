@@ -25,6 +25,11 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(StartTitleBeginArgs))]
+[JsonSerializable(typeof(StartTitleBeginReply))]
+[JsonSerializable(typeof(StartTitlePartArgs))]
+[JsonSerializable(typeof(StartTitleOffsets))]
+[JsonSerializable(typeof(StartTitleCommitArgs))]
 [JsonSerializable(typeof(MachineStartAckArgs))]
 [JsonSerializable(typeof(MachineStartAck))]
 [JsonSerializable(typeof(ForeignTitleSourceOpenArgs))]
