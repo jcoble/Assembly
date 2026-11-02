@@ -1,10 +1,12 @@
 using Assembly.Remote.Record;
+using Assembly.Remote.Cli;
 using Assembly.Remote.Replay;
 using Assembly.Remote.Serve;
 using Assembly.Remote.Smoke;
 
 return args switch
 {
+    ["cli-read", .. var rest] => await CliReadRun.MainAsync(rest),
     ["smoke", .. var rest] => await SmokeRun.MainAsync(rest),
     ["record", .. var rest] => await RecordRun.MainAsync(rest),
     ["rows", .. var rest] => ReplayRun.Run(rest),
