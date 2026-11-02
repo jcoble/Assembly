@@ -11,9 +11,11 @@ namespace Assembly.Infrastructure.Engine.Workflows;
 public sealed class WorkflowDispatchPreparation(IAppDatabase db, EngineCommands commands, string machine, TimeProvider time, string managedRoot, string proofRoot)
 {
     private readonly ReceiptCheckout _checkout = new();
+    private readonly WorkflowAdvancementPreparation _advancement = new(db, commands, machine, time);
 
     public async Task<IReadOnlyList<PreparedWorkflowDispatch>> PrepareAsync(CancellationToken ct)
     {
+        _advancement.AdvancePending(ct);
         PrepareMissingWorkspaces(ct);
         await PrepareCommandsAsync(ct);
         IReadOnlyList<string> ready;

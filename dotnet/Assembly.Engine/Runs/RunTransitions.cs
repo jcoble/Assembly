@@ -5,16 +5,17 @@ using Assembly.Engine.Persistence;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Runs;
 using Assembly.Engine.Workflows.Execution;
+using Assembly.Engine.Workflows.Receipts;
 
 namespace Assembly.Engine.Runs;
 
 public static class RunTransitions
 {
     // Actual checked release of the current immutable attempt; ended alone is not proof.
-    private const string WorkflowUnreleasedWorker = """
+    private const string WorkflowUnreleasedWorker = $"""
         SELECT 1 FROM engine_step st LEFT JOIN engine_session worker ON worker.id=st.session_id
                     WHERE st.run_id=$id AND st.session_id IS NOT NULL AND (
-                      worker.state IS NULL OR worker.state<>'ended' OR NOT EXISTS(
+                      worker.state IS NULL OR worker.state<>'ended' OR (NOT EXISTS(
                         SELECT 1 FROM engine_step_attempt a JOIN engine_workflow_receipt receipt ON receipt.id=a.receipt_id
                         JOIN engine_workflow_history h ON h.run_id=st.run_id AND h.step_id=st.id
                           AND h.attempt=st.attempt AND h.generation=st.generation AND h.kind='workflow_worker_released'
@@ -29,7 +30,14 @@ public static class RunTransitions
                           AND json_extract(h.safe_body_json,'$.receiptId')=receipt.id
                           AND json_extract(h.safe_body_json,'$.sessionId')=st.session_id
                           AND json_extract(h.safe_body_json,'$.epoch')=a.execution_epoch
-                          AND json_extract(h.safe_body_json,'$.workspaceId')=a.workspace_id))
+                          AND json_extract(h.safe_body_json,'$.workspaceId')=a.workspace_id)
+                        AND NOT ((st.state IN ('failed','cancelled') OR $runCancelling=1) AND EXISTS(
+                          SELECT 1 FROM engine_step_attempt attempt
+                          WHERE attempt.step_id=st.id AND attempt.attempt=st.attempt AND attempt.generation=st.generation
+                            AND attempt.session_id=worker.id AND attempt.execution_epoch=worker.epoch
+                            AND attempt.authority_machine=worker.machine AND st.authority_machine=worker.machine
+                            AND st.authority_session_id=worker.id AND st.authority_epoch=attempt.execution_epoch
+                            AND st.workspace_id=attempt.workspace_id AND {WorkflowExecutionReleases.ExactAttemptPredicate}))))
         """;
 
     private sealed record Run(long Version, string Owner, string State, long Epoch, bool Workflow);
@@ -183,7 +191,8 @@ public static class RunTransitions
               WHEN EXISTS(SELECT 1 FROM engine_needs_me WHERE run_id=$id AND state='open') THEN 'needs_me'
               WHEN EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND attempt>0) THEN 'running'
               ELSE 'queued' END FROM engine_run WHERE id=$id
-            """, r => r.Text(0), new SqlArg("$id", runId), new("$commandsDrained", commandsDrained ? 1 : 0))!;
+            """, r => r.Text(0), new SqlArg("$id", runId), new("$commandsDrained", commandsDrained ? 1 : 0),
+                new("$runCancelling", run.State == "cancelling" ? 1 : 0))!;
         if (next == run.State && !ownerChanged) return events;
         s.Execute("UPDATE engine_run SET state=$state,version=version+1,updated_ms=$now WHERE id=$id",
             new("$state", next), new("$now", c.NowMs), new("$id", runId));
