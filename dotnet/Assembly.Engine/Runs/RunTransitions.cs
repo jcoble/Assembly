@@ -9,6 +9,28 @@ namespace Assembly.Engine.Runs;
 
 public static class RunTransitions
 {
+    // Actual checked release of the current immutable attempt; ended alone is not proof.
+    private const string WorkflowUnreleasedWorker = """
+        SELECT 1 FROM engine_step st LEFT JOIN engine_session worker ON worker.id=st.session_id
+                    WHERE st.run_id=$id AND st.session_id IS NOT NULL AND (
+                      worker.state IS NULL OR worker.state<>'ended' OR NOT EXISTS(
+                        SELECT 1 FROM engine_step_attempt a JOIN engine_workflow_receipt receipt ON receipt.id=a.receipt_id
+                        JOIN engine_workflow_history h ON h.run_id=st.run_id AND h.step_id=st.id
+                          AND h.attempt=st.attempt AND h.generation=st.generation AND h.kind='workflow_worker_released'
+                        WHERE a.step_id=st.id AND a.attempt=st.attempt AND a.generation=st.generation
+                          AND receipt.state='accepted' AND receipt.run_id=st.run_id AND receipt.step_id=st.id
+                          AND receipt.attempt=st.attempt AND receipt.generation=st.generation
+                          AND receipt.session_id=st.session_id AND receipt.epoch=a.execution_epoch
+                          AND a.session_id=st.session_id AND a.execution_epoch=worker.epoch
+                          AND st.authority_session_id=worker.id AND st.authority_epoch=a.execution_epoch
+                          AND st.authority_machine=worker.machine AND a.authority_machine=worker.machine
+                          AND receipt.machine=worker.machine AND h.machine=worker.machine AND st.workspace_id=a.workspace_id
+                          AND json_extract(h.safe_body_json,'$.receiptId')=receipt.id
+                          AND json_extract(h.safe_body_json,'$.sessionId')=st.session_id
+                          AND json_extract(h.safe_body_json,'$.epoch')=a.execution_epoch
+                          AND json_extract(h.safe_body_json,'$.workspaceId')=a.workspace_id))
+        """;
+
     private sealed record Run(long Version, string Owner, string State, long Epoch);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, RunCommand command)
@@ -137,15 +159,24 @@ public static class RunTransitions
                     WHERE st.id=step_id AND st.attempt=engine_step_attempt.attempt AND st.run_id=$id AND st.state='cancelled')
                 """, new("$now", c.NowMs), new("$id", runId));
         }
-        var next = s.QueryFirst("""
+        var next = s.QueryFirst($"""
             SELECT CASE
               WHEN state='cancelling' THEN CASE WHEN
                 NOT EXISTS(SELECT 1 FROM engine_step st JOIN engine_session se ON se.id=st.session_id
                     WHERE st.run_id=$id AND st.attempt>0 AND st.state IN ('running','waiting') AND se.state!='ended')
-                AND NOT EXISTS(SELECT 1 FROM engine_outbox WHERE run_id=$id AND state!='done')
+                AND NOT EXISTS(SELECT 1 FROM engine_outbox WHERE run_id=$id AND state NOT IN ('done','failed','dead'))
+                AND (definition_hash IS NULL OR NOT EXISTS({WorkflowUnreleasedWorker}))
                 THEN 'cancelled' ELSE 'cancelling' END
-              WHEN EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND required=1 AND state='failed' AND attempt>=max_attempts) THEN 'failed'
-              WHEN NOT EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND required=1 AND state NOT IN ('succeeded','skipped')) THEN 'succeeded'
+              WHEN EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND required=1 AND state='failed' AND CASE WHEN definition_hash IS NULL THEN attempt ELSE attempt_in_generation END>=max_attempts) THEN 'failed'
+              WHEN NOT EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND required=1 AND state NOT IN ('succeeded','skipped'))
+                AND (definition_hash IS NULL OR (
+                  NOT EXISTS(SELECT 1 FROM engine_step st WHERE st.run_id=$id AND (
+                    st.state NOT IN ('succeeded','failed','skipped','cancelled')
+                    OR st.required=1 AND st.state='skipped' AND (st.rule_skippable=0 OR st.outcome_reason IS NULL)
+                    OR COALESCE(st.dispatch_state,'')='redo_pending'))
+                  AND NOT EXISTS(SELECT 1 FROM engine_outbox WHERE run_id=$id AND state NOT IN ('done','failed','dead'))
+                  AND NOT EXISTS({WorkflowUnreleasedWorker})
+                )) THEN 'succeeded'
               WHEN EXISTS(SELECT 1 FROM engine_needs_me WHERE run_id=$id AND state='open') THEN 'needs_me'
               WHEN EXISTS(SELECT 1 FROM engine_step WHERE run_id=$id AND attempt>0) THEN 'running'
               ELSE 'queued' END FROM engine_run WHERE id=$id
