@@ -2,13 +2,16 @@ using System.Text.Json;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Topics;
+using Assembly.Infrastructure.Projects;
+using Assembly.Application.Features.Projects;
 
-namespace Assembly.Infrastructure.Chat.SourceControl;
+namespace Assembly.Infrastructure.Git;
 
 public sealed record GitOperationStart(string InstanceId, Guid OperationId, string? Session,
     string Action, JsonElement Args, string? Machine = null);
 public sealed record GitOperationStatus(Guid OperationId, string InstanceId, string Machine,
     long Version, string State, JsonElement? Result, string? Error);
+public sealed record GitOperationHost(string InstanceId, string Machine);
 public sealed record GitOperationHostArgs(string? Session = null, string? Action = null, string? Machine = null);
 public sealed record GitOperationArgs(Guid OperationId, string? Session = null, string? Action = null,
     string? InstanceId = null, string? Machine = null);
@@ -28,6 +31,8 @@ public sealed class GitOperations : IAsyncDisposable
         internal string State = "accepted";
         internal JsonElement? Result;
         internal string? Error;
+        internal ProjectDirectoryClaim? DirectoryClaim;
+        internal RemoteProjectPreparation? RemotePreparation;
         internal bool Initialization, Mutation, Released, CancellationRequested;
         internal bool Terminal => State is "succeeded" or "failed" or "cancelled" or "uncertain";
     }
@@ -43,6 +48,7 @@ public sealed class GitOperations : IAsyncDisposable
     private bool _disposed;
     private Task? _disposing;
     public string InstanceId { get; } = Guid.NewGuid().ToString("N");
+    internal string Machine => _machine;
 
     public GitOperations(BackgroundWork work, ITopics topics, TimeProvider time, string machine)
     {
@@ -102,8 +108,17 @@ public sealed class GitOperations : IAsyncDisposable
 
     public GitOperationStatus Status(Guid operationId)
     {
-        lock (_gate) return _entries.TryGetValue(operationId, out var entry) ? Snapshot(operationId, entry)
-            : new(operationId, InstanceId, _machine, 0, "uncertain", null, "operation_missing");
+        GitOperationStatus status;
+        ProjectDirectoryClaim? claim;
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(operationId, out var entry))
+                return new(operationId, InstanceId, _machine, 0, "uncertain", null, "operation_missing");
+            status = Snapshot(operationId, entry); claim = entry.DirectoryClaim;
+        }
+        // A stale resource refuses this read; the immutable terminal result remains untouched.
+        claim?.RequireCurrent();
+        return status;
     }
     internal GitOperationStatus? Observe(Guid operationId, string connection)
     {
@@ -120,12 +135,56 @@ public sealed class GitOperations : IAsyncDisposable
         lock (_gate)
         {
             if (args.InstanceId is not null && args.InstanceId != InstanceId) throw new CallFailed("stale_instance");
+            if (args.Session is null && (args.InstanceId != InstanceId || args.Action is not ("createProject" or "prepareProjectFolder")))
+                throw new CallFailed("forbidden");
             if (!_entries.TryGetValue(args.OperationId, out var entry)) return;
             if (entry.Request.Session != args.Session ||
                 (args.Action is not null && entry.Request.Action != args.Action) ||
                 (entry.Request.Session is null && (args.InstanceId != InstanceId || args.Action != entry.Request.Action)))
                 throw new CallFailed("forbidden");
         }
+    }
+    internal void RetainDirectoryClaim(Guid operationId, ProjectDirectoryClaim claim)
+    {
+        lock (_gate)
+        {
+            var entry = ProjectEntry(operationId);
+            if (entry.DirectoryClaim is not null || entry.RemotePreparation is not null) throw new CallFailed("operation_id_conflict");
+            entry.DirectoryClaim = claim;
+        }
+    }
+    internal void RequireDirectoryClaim(Guid operationId)
+    {
+        ProjectDirectoryClaim claim;
+        lock (_gate) claim = ProjectEntry(operationId).DirectoryClaim ?? throw new CallFailed("The created folder is unconfirmed.");
+        claim.RequireCurrent();
+    }
+    internal void RetainRemotePreparation(Guid operationId, RemoteProjectPreparation preparation)
+    {
+        lock (_gate)
+        {
+            var entry = ProjectEntry(operationId);
+            if (entry.Request.Action != "createProject" || entry.DirectoryClaim is not null || entry.RemotePreparation is not null)
+                throw new CallFailed("operation_id_conflict");
+            entry.RemotePreparation = preparation;
+        }
+    }
+    internal Task<FolderInspection> PrepareRemoteProjectFolderAsync(ProjectFolderCreate request, Guid operationId, CancellationToken ct)
+    {
+        RemoteProjectPreparation preparation;
+        lock (_gate) preparation = ProjectEntry(operationId).RemotePreparation ?? throw new CallFailed("The execution owner was not captured.");
+        return preparation.CreateAsync(request, operationId, ct);
+    }
+    internal async Task<bool> CancelProjectAsync(Guid operationId, CancellationToken ct)
+    {
+        RemoteProjectPreparation? preparation;
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(operationId, out var entry) || entry.Terminal) return false;
+            preparation = entry.RemotePreparation;
+        }
+        if (preparation is not null && !await preparation.CancelAsync(ct)) return false;
+        return CancelCore(operationId, preparation);
     }
     internal void FolderMutationDispatched(Guid operationId)
     {
@@ -155,12 +214,14 @@ public sealed class GitOperations : IAsyncDisposable
             entry.Request.Action is not ("createProject" or "prepareProjectFolder")) throw new CallFailed("operation_missing");
         return entry;
     }
-    public bool Cancel(Guid operationId)
+    public bool Cancel(Guid operationId) => CancelCore(operationId, null);
+    private bool CancelCore(Guid operationId, RemoteProjectPreparation? preparation)
     {
         TaskCompletionSource ready;
         lock (_gate)
         {
             if (!_entries.TryGetValue(operationId, out var entry) || entry.Terminal) return false;
+            if (!ReferenceEquals(entry.RemotePreparation, preparation)) throw new CallFailed("Cancel through the captured execution owner.");
             if (entry.Initialization) throw new CallFailed("Repository initialization is already running. It will finish or reach its safety deadline.");
             if (!entry.Cancelled.IsCompleted || entry.UserStop.IsCancellationRequested) return true;
             entry.CancellationRequested = true;
@@ -174,15 +235,18 @@ public sealed class GitOperations : IAsyncDisposable
 
     public void Release(Guid operationId)
     {
+        ProjectDirectoryClaim? claim = null;
         lock (_gate)
         {
             if (!_entries.TryGetValue(operationId, out var entry)) return;
             entry.Released = true;
-            if (entry.Terminal) _entries.Remove(operationId);
+            if (entry.Terminal) { _entries.Remove(operationId); claim = entry.DirectoryClaim; }
         }
+        claim?.Dispose();
     }
     internal void Closed(string connection)
     {
+        List<ProjectDirectoryClaim> claims = [];
         lock (_gate)
         {
             foreach (var pair in _watchers.ToArray())
@@ -190,19 +254,27 @@ public sealed class GitOperations : IAsyncDisposable
                 pair.Value.Remove(connection);
                 if (pair.Value.Count != 0) continue;
                 _watchers.Remove(pair.Key);
-                if (_entries.TryGetValue(pair.Key, out var entry) && entry.Terminal) _entries.Remove(pair.Key);
+                if (_entries.TryGetValue(pair.Key, out var entry) && entry.Terminal)
+                {
+                    _entries.Remove(pair.Key);
+                    if (entry.DirectoryClaim is { } claim) claims.Add(claim);
+                }
             }
         }
+        foreach (var claim in claims) claim.Dispose();
     }
     private void Unsubscribed(string topic, string? key)
     {
         if (topic != "gitOperation" || key is null || !key.StartsWith(_machine + "/", StringComparison.Ordinal) ||
             !Guid.TryParseExact(key[(_machine.Length + 1)..], "D", out var id)) return;
+        ProjectDirectoryClaim? claim = null;
         lock (_gate)
         {
             _watchers.Remove(id);
-            if (_entries.TryGetValue(id, out var entry) && entry.Terminal) _entries.Remove(id);
+            if (_entries.TryGetValue(id, out var entry) && entry.Terminal)
+            { _entries.Remove(id); claim = entry.DirectoryClaim; }
         }
+        claim?.Dispose();
     }
     private async Task Run(Guid id, Entry entry, Func<CancellationToken, Task<JsonElement>> execute, CancellationToken stopping)
     {
@@ -229,19 +301,25 @@ public sealed class GitOperations : IAsyncDisposable
         {
             lock (_gate) state = entry.Mutation ? "uncertain" : "cancelled";
             error = state == "uncertain" ? "This may have completed. Refresh before trying again." : "Operation cancelled.";
+            if (entry.DirectoryClaim is { } claim)
+                error += " No project was added. A folder may remain at " + claim.Destination + ". Inspect it before using Add folder.";
         }
+        catch (CallUncertain uncertain) { state = "uncertain"; error = uncertain.Message; }
         catch (CallFailed failed) { state = "failed"; error = failed.Message.Length <= 65536 ? failed.Message : failed.Message[..65536] + "…"; }
         catch (Exception) { state = "failed"; error = "The Git operation failed."; }
         try
         {
             GitOperationStatus finished;
             Task cancellation;
+            ProjectDirectoryClaim? releasedClaim = null;
             lock (_gate)
             {
                 entry.State = state; entry.Result = result; entry.Error = error; entry.Version++;
                 finished = Snapshot(id, entry); cancellation = entry.Cancelled;
-                if (entry.Released || !_watchers.ContainsKey(id)) _entries.Remove(id);
+                if (entry.Released || !_watchers.ContainsKey(id))
+                { _entries.Remove(id); releasedClaim = entry.DirectoryClaim; }
             }
+            releasedClaim?.Dispose();
             await cancellation;
             Publish(finished);
         }
@@ -253,7 +331,7 @@ public sealed class GitOperations : IAsyncDisposable
     private GitOperationStatus Snapshot(Guid id, Entry entry) => new(id, InstanceId, _machine, entry.Version, entry.State, entry.Result, entry.Error);
     internal string Key(Guid id) => _machine + "/" + id.ToString("D");
     private void Publish(GitOperationStatus status) => _topics.Publish("gitOperation", Key(status.OperationId),
-        JsonSerializer.Serialize(status, SourceControlJson.Default.GitOperationStatus));
+        JsonSerializer.Serialize(status, GitOperationsJson.Default.GitOperationStatus));
 
     public ValueTask DisposeAsync()
     {
@@ -277,7 +355,13 @@ public sealed class GitOperations : IAsyncDisposable
         _topics.Unsubscribed -= Unsubscribed;
         await _stop.CancelAsync();
         await Task.WhenAll(completion);
-        lock (_gate) { _entries.Clear(); _watchers.Clear(); }
+        ProjectDirectoryClaim[] claims;
+        lock (_gate)
+        {
+            claims = _entries.Values.Select(entry => entry.DirectoryClaim).OfType<ProjectDirectoryClaim>().ToArray();
+            _entries.Clear(); _watchers.Clear();
+        }
+        foreach (var claim in claims) claim.Dispose();
         _stop.Dispose();
     }
 }

@@ -87,7 +87,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
             var account = Field("accountContext"); var providerTarget = Field("providerTargetId");
             if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(name) || target is null || target.Length != 64
                 || target.Any(c => c is not (>= '0' and <= '9' or >= 'a' and <= 'f'))
-                || account is null || providerTarget != id + "/" + account)
+                || !AccountContext.IsValid(account) || providerTarget != id + "/" + account)
                 throw new CallFailed("incompatible backend");
             agents.Add(new(id, name, target, account, providerTarget));
         }
@@ -296,14 +296,20 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         var relayLeases = StopRelayLeases();
+        Task[] gitLifetimes;
         await _socketSend.WaitAsync();
-        try { _ownerStopping = true; InvalidateEngine(); }
+        try
+        {
+            _ownerStopping = true; InvalidateEngine();
+            gitLifetimes = _gitSubscriptions.Values.Select(subscription => subscription.Closed.Task).Concat(_gitCallDrains).ToArray();
+        }
         finally { _socketSend.Release(); }
         await Terminals.DisposeAsync();
         await _socketStop.CancelAsync();
         await _follower.DisposeAsync();
         if (_socketRun is not null) await _socketRun;
         await Task.WhenAll(relayLeases);
+        await Task.WhenAll(gitLifetimes);
         _bulkSocket?.Dispose();
         await Task.WhenAll(_ownerCancellations);
         _socketStop.Dispose();

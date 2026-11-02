@@ -41,4 +41,17 @@ public sealed partial class SocketTests
 
         Assert.Equal("""{"t":"error","id":1,"code":"failed","message":"the real reason"}""", await ReadAsync(socket));
     }
+    [Fact]
+    public async Task A_dispatched_Git_write_with_no_confirmed_reply_has_the_distinct_uncertain_code()
+    {
+        _calls.Write("git", "start", TestJson.Default.Note, TestJson.Default.Note,
+            (Func<Note, CallContext, Task<Func<IWriteScope, Note>>>)((_, _) => throw new CallUncertain("workbox-test")));
+        var socket = await OpenAsync();
+        await CallAsync(socket, 1, "git", "start", """{"text":"creation"}""");
+        var answer = System.Text.Json.JsonDocument.Parse(await ReadAsync(socket)).RootElement;
+        Assert.Equal("uncertain", answer.GetProperty("code").GetString());
+        Assert.Equal("workbox-test", answer.GetProperty("machine").GetString());
+        Assert.Equal("This may have completed. Refresh before trying again.", answer.GetProperty("message").GetString());
+    }
+
 }

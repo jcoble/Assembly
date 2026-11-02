@@ -1,7 +1,7 @@
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Features.Chat.Sessions;
-using Assembly.Application.Features.Chat.Worktrees;
+using Assembly.Application.Common.Git;
 using Assembly.Infrastructure.Git;
 
 namespace Assembly.Infrastructure.Chat.Worktrees;

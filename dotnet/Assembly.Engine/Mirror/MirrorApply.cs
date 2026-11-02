@@ -54,6 +54,8 @@ public static class MirrorApply
         var cursor = Read(s, machine);
         if (cursor.State != "snapshotting" || through < 0) throw new MirrorGap();
         var generation = checked(cursor.Generation + 1);
+        AuthMirrorIdentity.ValidateGraph(s, machine, generation);
+        AuthMirrorIdentity.ValidateCursor(s, machine, generation, at);
         s.Execute("""
             DELETE FROM engine_mirror_row WHERE machine=$machine AND generation<>$generation;
             UPDATE engine_mirror SET generation=$generation,through=$through,at_json=$at,retained_after=$through,
@@ -86,6 +88,9 @@ public static class MirrorApply
         }
         if (next != through) throw new MirrorGap();
         Rows(s, machine, cursor.Generation, rows);
+        AuthMirrorIdentity.ValidateGraph(s, machine, cursor.Generation);
+        AuthMirrorIdentity.ValidateEvents(s, machine, cursor.Generation, after, through);
+        AuthMirrorIdentity.ValidateCursor(s, machine, cursor.Generation, at);
         s.Execute("UPDATE engine_mirror SET through=$through,at_json=$at,updated_ms=$now WHERE machine=$machine",
             new("$through", through), new("$at", AtJson(at)), new("$now", nowMs), new("$machine", machine));
         s.Publish("__engine_mirrored", machine, new MirrorNotice(through, false), EngineJson.Default.MirrorNotice);
@@ -96,6 +101,7 @@ public static class MirrorApply
     {
         foreach (var row in rows)
         {
+            AuthMirrorIdentity.ValidateRow(row, machine);
             var kind = row.GetProperty("entityKind").GetString();
             if (!DisplayQueries.Kinds("mirror").Contains(kind) || row.GetProperty("machine").GetString() != machine)
                 throw new ArgumentException("Invalid mirror row");

@@ -69,7 +69,7 @@ internal static class SignInTransitions
         Operation? existing, Func<string, string, bool>? configured)
     {
         if (existing is not null || context.ExpectedVersion != 0) return Reject(context, "version_conflict", existing);
-        if (string.IsNullOrWhiteSpace(start.Provider) || start.AccountContext is null ||
+        if (string.IsNullOrWhiteSpace(start.Provider) || !Assembly.Application.Common.Agents.AccountContext.IsValid(start.AccountContext) ||
             start.MethodId is not null && string.IsNullOrWhiteSpace(start.MethodId)) return Reject(context, "bad_args");
         var target = new ConfiguredProviderTarget(start.Provider, start.AccountContext);
         if (configured is null || !configured(target.Provider, target.AccountContext)) return Reject(context, "unavailable");

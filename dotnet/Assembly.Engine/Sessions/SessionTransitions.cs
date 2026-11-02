@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Assembly.Application.Common.Engine;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Persistence;
@@ -10,18 +11,18 @@ namespace Assembly.Engine.Sessions;
 public static class SessionTransitions
 {
     private sealed record Session(long Version, long Epoch, string State, string Activity,
-        string? ParentId, string? RunId, string Machine, bool CancelRequested = false, long? ReservedEpoch = null);
+        string? ParentId, string? RunId, string Machine, bool CancelRequested = false, long? ReservedEpoch = null, string? ProjectId = null);
 
     public static CommandResult Apply(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext = "", MessageExpiryPolicy? expiryPolicy = null) =>
-        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, null, expiryPolicy, null);
+        SessionCommand command, int depthLimit, int childLimit, string accountContext = "", MessageExpiryPolicy? expiryPolicy = null, ISessionProjectProjection? projectProjection = null) =>
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, null, expiryPolicy, null, projectProjection);
 
     internal static CommandResult ApplyPreparedTitle(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy = null, PreparedStartEffectPayload? startEffectPayload = null) =>
-        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, titleUtf8, expiryPolicy, startEffectPayload);
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy = null, PreparedStartEffectPayload? startEffectPayload = null, ISessionProjectProjection? projectProjection = null) =>
+        ApplyCore(scope, context, command, depthLimit, childLimit, accountContext, titleUtf8, expiryPolicy, startEffectPayload, projectProjection);
 
     private static CommandResult ApplyCore(IWriteScope scope, CommandContext context,
-        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy, PreparedStartEffectPayload? startEffectPayload)
+        SessionCommand command, int depthLimit, int childLimit, string accountContext, byte[]? titleUtf8, MessageExpiryPolicy? expiryPolicy, PreparedStartEffectPayload? startEffectPayload, ISessionProjectProjection? projectProjection)
     {
         if (string.IsNullOrWhiteSpace(context.EntityId))
             return Refused(context, "bad_args");
@@ -45,6 +46,7 @@ public static class SessionTransitions
             return Refused(context, "bad_args");
         return command switch
         {
+            AssignProject assignment => Assign(scope, context, current, assignment, projectProjection),
             SetSessionState fact => SetState(scope, context, current, fact, expiryPolicy),
             ReportCapabilities capabilities => Capabilities(scope, context, current, capabilities),
             StopSession => Stop(scope, context, current),
@@ -53,6 +55,22 @@ public static class SessionTransitions
             ReportSessionTitle title => ReportTitle(scope, context, current, title, titleUtf8),
             _ => Refused(context, "unsupported_command", current)
         };
+    }
+
+    private static CommandResult Assign(IWriteScope scope, CommandContext context, Session current, AssignProject command, ISessionProjectProjection? projection)
+    {
+        if (context.Actor.Kind != ActorKind.System) return Refused(context, "forbidden", current);
+        if (string.IsNullOrWhiteSpace(command.ProjectId)) return Refused(context, "bad_args", current);
+        if (current.ProjectId is not null)
+            return current.ProjectId == command.ProjectId ? new(true, false, null, current.Version, 0, current.Epoch)
+                : Refused(context, "project_already_assigned", current);
+        if (projection is null) throw new InvalidOperationException("The session project projection is required.");
+        scope.Execute("UPDATE engine_session SET project_id=$project,version=version+1,updated_ms=$now WHERE id=$id",
+            new("$project", command.ProjectId), new("$id", context.EntityId), new("$now", context.NowMs));
+        projection.Assigned(scope, context.EntityId, command.ProjectId);
+        return EngineJournal.Commit(scope, context, current.Version + 1, current.Epoch,
+            [new("session.changed", "session", context.EntityId, current.Version + 1, false,
+                new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
     }
 
     private static CommandResult RegisterForeign(IWriteScope scope, CommandContext context, RegisterForeignSession command, Session? current, byte[]? titleUtf8)
@@ -78,7 +96,7 @@ public static class SessionTransitions
     {
         var untitledOwnerRoot = command.Title == "" && context.Actor == new EngineActor(ActorKind.Window, "owner") &&
             command.ParentId is null && command.RunId is null;
-        if (string.IsNullOrWhiteSpace(command.Provider) || command.Model is not null && string.IsNullOrWhiteSpace(command.Model) ||
+        if (!Assembly.Application.Common.Agents.AccountContext.IsValid(accountContext) || string.IsNullOrWhiteSpace(command.Provider) || command.Model is not null && string.IsNullOrWhiteSpace(command.Model) ||
             string.IsNullOrWhiteSpace(command.Folder) || string.IsNullOrWhiteSpace(command.Title) && !untitledOwnerRoot)
             return Refused(context, "bad_args");
         var peer = context.Actor.Kind == ActorKind.System && context.Actor.Id.StartsWith("machine:", StringComparison.Ordinal);
@@ -300,9 +318,9 @@ public static class SessionTransitions
     }
 
     private static Session? Find(IWriteScope scope, string id) => scope.QueryFirst("""
-        SELECT version,epoch,state,activity_state,parent_id,run_id,machine,cancel_requested,reserved_epoch FROM engine_session WHERE id=$id
+        SELECT version,epoch,state,activity_state,parent_id,run_id,machine,cancel_requested,reserved_epoch,project_id FROM engine_session WHERE id=$id
         """, r => new Session(r.Long(0), r.Long(1), r.Text(2), r.Text(3),
-            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5), r.Text(6), r.Long(7) != 0, r.IsNull(8) ? null : r.Long(8)), new SqlArg("$id", id));
+            r.IsNull(4) ? null : r.Text(4), r.IsNull(5) ? null : r.Text(5), r.Text(6), r.Long(7) != 0, r.IsNull(8) ? null : r.Long(8), r.IsNull(9) ? null : r.Text(9)), new SqlArg("$id", id));
 
     private static CommandResult Refused(CommandContext context, string error, Session? current = null) =>
         new(false, false, error, current?.Version ?? 0, 0, current?.ReservedEpoch ?? current?.Epoch ?? context.Epoch);

@@ -9,7 +9,7 @@ using Assembly.Application.Features.Chat.Sessions;
 namespace Assembly.Infrastructure.Remote;
 
 /// <summary>Owns each saved machine's connection, copied rows and helper delivery for this backend lifetime.</summary>
-internal sealed class RemoteConnections : IAsyncDisposable
+internal sealed partial class RemoteConnections : IAsyncDisposable
 {
     private readonly Lock _gate = new();
     private readonly MachineStore _store;
@@ -27,7 +27,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
     private readonly Dictionary<string, Task> _pending = [];
     // Includes running work and every waiter, independently of the queue tail.
     private readonly Dictionary<string, HashSet<CancellationTokenSource>> _operations = [];
-    private readonly ConcurrentDictionary<string, (RemoteMachine Machine, RemoteOutbox Outbox, EngineMirror Mirror, IAsyncDisposable? Tunnel, MachineStatus Status, RemoteConfig Config)> _active = new();
+    private readonly ConcurrentDictionary<string, (RemoteMachine Machine, RemoteOutbox Outbox, EngineMirror Mirror, IAsyncDisposable? Tunnel, MachineStatus Status, RemoteConfig Config, SavedMachine Profile)> _active = new();
     private bool _disposed;
 
     public RemoteConnections(MachineStore store, IAtomicWriter writer, MachineSet machines, MachineStatus status, LiveHub hub, SessionStore sessions,
@@ -135,7 +135,7 @@ internal sealed class RemoteConnections : IAsyncDisposable
                         var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded, _topics);
                         var outbox = new RemoteOutbox(remote, _sessions, _hub, _machines.Named(null)!, _log);
                         var mirror = new EngineMirror(remote, _writer, TimeProvider.System, _log);
-                        _active[name] = (remote, outbox, mirror, tunnel, scoped, opened.Config with { Name = name });
+                        _active[name] = (remote, outbox, mirror, tunnel, scoped, opened.Config with { Name = name }, profile);
                         tunnel = null;
                         _machines.Set(remote);
                         remote.WatchRunning(followed.Concat(_store.RunningTurns(name)), _store.RunningHelpers(name));

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Assembly.Application.Common;
 using Assembly.Application.Common.Calls;
-using Assembly.Infrastructure.Chat.SourceControl;
+using Assembly.Infrastructure.Git;
 using Microsoft.Extensions.Time.Testing;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
@@ -22,7 +22,7 @@ public sealed class GitOperationTests
         var versions = new List<long>();
         using var watch = topics.Subscribe("gitOperation", operations.Key(id), _ => operations.Observe(id, "connection"), (_, json) =>
         {
-            var status = JsonSerializer.Deserialize(json, SourceControlJson.Default.GitOperationStatus)!;
+            var status = JsonSerializer.Deserialize(json, GitOperationsJson.Default.GitOperationStatus)!;
             versions.Add(status.Version);
             Assert.Equal(status.Version, operations.Status(id).Version);
             if (status.State == "succeeded") done.TrySetResult(status);
@@ -87,7 +87,7 @@ public sealed class GitOperationTests
         var ended = new TaskCompletionSource<GitOperationStatus>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var watch = topics.Subscribe("gitOperation", operations.Key(id), _ => { }, (_, json) =>
         {
-            var status = JsonSerializer.Deserialize(json, SourceControlJson.Default.GitOperationStatus)!;
+            var status = JsonSerializer.Deserialize(json, GitOperationsJson.Default.GitOperationStatus)!;
             if (status.State == "uncertain") ended.TrySetResult(status);
         });
         var request = new GitOperationStart(operations.InstanceId, id, "session", "push", JsonSerializer.SerializeToElement(new { }));

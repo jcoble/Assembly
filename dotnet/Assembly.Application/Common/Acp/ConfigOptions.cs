@@ -63,6 +63,16 @@ public static class ConfigOptions
         return [];
     }
 
+    /// <summary>The actual model-category select, using the same option parser as ordinary choices.</summary>
+    internal static (string Id, string? Current, IReadOnlyList<string> Values)? Model(JsonElement options)
+    {
+        if (options.ValueKind != JsonValueKind.Array) return null;
+        foreach (var option in options.EnumerateArray())
+            if (Text(option, "category") == "model" && Text(option, "type") == "select" && Text(option, "id") is { } id)
+                return Selects(options).First(select => select.Id == id);
+        return null;
+    }
+
     private static string? Text(JsonElement json, string name) =>
         json.ValueKind == JsonValueKind.Object && json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()

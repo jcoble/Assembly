@@ -1,4 +1,5 @@
 using Assembly.Engine.Effects;
+using Assembly.Application.Common.Engine;
 using Assembly.Engine.Providers;
 using Assembly.Engine.Recording;
 using System.Text.Json;
@@ -17,6 +18,7 @@ namespace Assembly.Engine;
 public sealed partial class EngineCommands
 {
     private readonly string _machine;
+    private readonly ISessionProjectProjection? _projectProjection;
     private readonly Func<string, string, bool>? _isConfiguredProvider;
     private readonly SessionLimits _limits;
     private readonly Func<int> _messageLimit;
@@ -28,9 +30,10 @@ public sealed partial class EngineCommands
     public EngineCommands(string machine, SessionLimits limits, Func<int>? messageLimit = null,
         Action<IWriteScope, CommandContext, StartSession>? projectStart = null, Func<string, string>? accountContext = null,
         Func<IWriteScope, CommandContext, Effect, EffectReceipt, MessageDelivery?, MessageOutcome?>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null,
-        Func<string, string, bool>? isConfiguredProvider = null)
+        Func<string, string, bool>? isConfiguredProvider = null, ISessionProjectProjection? projectProjection = null)
     {
         _machine = machine;
+        _projectProjection = projectProjection;
         _isConfiguredProvider = isConfiguredProvider;
         _projectStart = projectStart;
         _accountContext = accountContext;
@@ -61,6 +64,8 @@ public sealed partial class EngineCommands
                 RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),
                 PrCommand pr => PrTransitions.Apply(scope, context, pr),
                 HandoffCommand handoff => HandoffTransitions.Apply(scope, context, handoff),
+                ReportSignInNeeded report => AuthTransitions.Report(scope, context, report, _isConfiguredProvider, _expiryPolicy),
+                BlockSignInNeeded block => AuthTransitions.Block(scope, context, block, _isConfiguredProvider, _expiryPolicy),
                 MessageCommand message => MessageTransitions.Apply(scope, context, message, _messageLimit(), _expiryPolicy),
                 NeedCommand need => NeedTransitions.Apply(scope, context, need, _expiryPolicy, _isConfiguredProvider),
                 RunCommand run => RunTransitions.Apply(scope, context, run),
@@ -93,7 +98,7 @@ public sealed partial class EngineCommands
         var depth = _limits.ReadDepth();
         var children = _limits.ReadChildren();
         var accountContext = command is StartSession start ? _accountContext?.Invoke(start.Provider) ?? "" : "";
-        var result = SessionTransitions.ApplyPreparedTitle(scope, context, command, depth, children, accountContext, titleUtf8, _expiryPolicy, startEffectPayload);
+        var result = SessionTransitions.ApplyPreparedTitle(scope, context, command, depth, children, accountContext, titleUtf8, _expiryPolicy, startEffectPayload, _projectProjection);
         if (result.Applied && command is StartSession accepted)
             _projectStart?.Invoke(scope, context, accepted);
         return result;

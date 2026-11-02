@@ -18,6 +18,7 @@ public sealed partial class SessionHost
         if (admission is not null && !CurrentAdmission(admission, text, clientId, senderLabel, fromSessionId)) return new SendResult.Unknown();
         Task<SendResult> sending;
         var owns = false;
+        WarmRun? supersededWarm = null;
         lock (_gate)
         {
             if (clientId is not null && _sending.TryGetValue(clientId, out var active))
@@ -46,6 +47,8 @@ public sealed partial class SessionHost
                 var batch = _converter.Apply(started);
                 if (row is not null) batch.Rows.RemoveAll(value => value.Kind == "user");
                 var saved = _hub.Publish(_sessionId, batch);
+                Interlocked.Increment(ref _warmGeneration);
+                supersededWarm = _warm;
                 _turn = turn;
                 var user = saved.FirstOrDefault(value => value.Kind == "user");
                 if (turn.Observation is { } observed)
@@ -56,6 +59,10 @@ public sealed partial class SessionHost
                 _lastTurn = turn.Done = Task.Run(() => RunAsync(turn, text, kept), CancellationToken.None);
                 owns = true;
             }
+        }
+        if (supersededWarm is not null)
+        {
+            try { await supersededWarm.Stop.CancelAsync(); } catch (ObjectDisposedException) { }
         }
         try { return await sending.WaitAsync(ct); }
         finally

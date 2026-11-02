@@ -13,6 +13,10 @@ internal sealed record AuthNeed(string Id, long Version, string SessionId, Confi
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
+    internal static string Copy(string provider, string machine) => provider + " needs you to sign in on " + machine + ".";
+    internal static string InsertionCopy(string provider, string machine) => Copy(provider, machine) +
+        " Your last message reached " + provider + " before sign-in was needed and was not sent again.";
+
     internal static IReadOnlyList<EventDraft> FailDismissedMessages(IWriteScope scope, CommandContext context, string sessionId) =>
         scope.Query($"""
             UPDATE engine_message AS m SET state='failed',reason='sign_in_dismissed',version=version+1,updated_ms=$now
@@ -39,7 +43,7 @@ internal sealed record AuthNeed(string Id, long Version, string SessionId, Confi
                 r.IsNull(6) ? null : r.Text(6), r.IsNull(7) ? null : r.Text(7)),
             Text = Utf8.GetString(r.Blob(8))
         }, new SqlArg("$id", id), new("$machine", machine));
-        if (row is null || row.Text != row.Need.Target.Provider + " needs you to sign in on " + machine + ".") return null;
+        if (row is null || row.Text != Copy(row.Need.Target.Provider, machine) && row.Text != InsertionCopy(row.Need.Target.Provider, machine)) return null;
         var prefix = "sign-in/" + row.Need.SessionId + "/";
         return row.Need.Id.StartsWith(prefix, StringComparison.Ordinal) &&
             long.TryParse(row.Need.Id.AsSpan(prefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out _) ? row.Need : null;

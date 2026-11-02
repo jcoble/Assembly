@@ -29,8 +29,9 @@ internal sealed partial class RemoteMachine
                 foreach (var (id, sub) in _subscriptions)
                     await SendFrameAsync(socket, SubFrame(id, sub.Session, _hub.LastSeq(sub.Session)), cancellationToken);
                 foreach (var pending in _calls.Values)
-                    pending.TrySetException(Unreachable("machine socket closed", $"{_name}: machine socket closed"));
+                    pending.Completion.TrySetException(new MachineUnreachable(_name, $"{_name}: machine socket closed", mayHaveBeenSent: pending.Sent));
                 _calls.Clear();
+                CloseGitSubscriptions(_socket);
                 _socketFailure = null;
                 InvalidateEngine();
                 _socket = socket;
@@ -61,14 +62,42 @@ internal sealed partial class RemoteMachine
     private Task<JsonElement> CallAsync(string feature, string method, object args, CancellationToken cancellationToken) =>
         CallAsync(feature, method, JsonSerializer.SerializeToElement(args, args.GetType(), SessionsJson.Default), false, cancellationToken);
 
-    internal async Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken, string? expectedEngineId = null, ClientWebSocket? expectedConnection = null,
-        OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null)
+    internal Task<JsonElement> CallAsync(string feature, string method, JsonElement args, bool bulk, CancellationToken cancellationToken, string? expectedEngineId = null, ClientWebSocket? expectedConnection = null,
+        OwnerConnectionBinding? expectedOwner = null, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror = null) =>
+        CallCoreAsync(feature, method, args, bulk, cancellationToken, expectedEngineId, expectedConnection, expectedOwner, expectedMirror, false);
+
+    private readonly HashSet<Task> _gitCallDrains = [];
+    internal async Task<JsonElement> CallGitWriteAsync(string method, JsonElement args, string expectedEngineId,
+        ClientWebSocket expectedConnection, CancellationToken ct)
+    {
+        if (method is not ("start" or "cancel" or "release")) throw new CallFailed("forbidden");
+        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _socketSend.WaitAsync(ct);
+        try
+        {
+            if (_ownerStopping) throw Unreachable("machine socket closed", $"{_name}: machine owner is stopping");
+            _gitCallDrains.Add(drained.Task);
+        }
+        finally { _socketSend.Release(); }
+        try { return await CallCoreAsync("git", method, args, false, ct, expectedEngineId, expectedConnection, null, null, true); }
+        finally
+        {
+            await _socketSend.WaitAsync(CancellationToken.None);
+            try { _gitCallDrains.Remove(drained.Task); }
+            finally { _socketSend.Release(); drained.TrySetResult(); }
+        }
+    }
+
+    private async Task<JsonElement> CallCoreAsync(string feature, string method, JsonElement args, bool bulk,
+        CancellationToken cancellationToken, string? expectedEngineId, ClientWebSocket? expectedConnection,
+        OwnerConnectionBinding? expectedOwner, Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? expectedMirror,
+        bool gitWrite)
     {
         if (bulk) return await BulkCallAsync(feature, method, args, cancellationToken, expectedEngineId, expectedConnection);
         if (_socket is not { State: WebSocketState.Open })
             throw _socketFailure ?? Unreachable("machine socket closed", $"{_name}: machine socket closed");
         var id = Interlocked.Increment(ref _nextSub);
-        var pending = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = new PendingCall();
         ClientWebSocket sentOn;
         await _socketSend.WaitAsync(cancellationToken);
         try
@@ -83,21 +112,25 @@ internal sealed partial class RemoteMachine
                 RequireOwnerBinding(expectedOwner); RequireLiveMirror(expectedOwner, expectedMirror);
             }
             sentOn = socket;
-            _calls.Add(id, pending);
             var json = args.GetRawText();
-            await SendFrameAsync(socket, $"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{json}}}", cancellationToken);
+            var bytes = Encoding.UTF8.GetBytes($"{{\"t\":\"call\",\"id\":{id},\"feature\":\"{feature}\",\"method\":\"{method}\",\"args\":{json}}}");
+            cancellationToken.ThrowIfCancellationRequested();
+            _calls.Add(id, pending);
+            pending.Sent = true;
+            await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
         }
-        catch (Exception error) when (error is WebSocketException or OperationCanceledException)
+        catch (Exception error)
         {
             _calls.Remove(id);
+            if (error is not (WebSocketException or OperationCanceledException)) throw;
             _socket?.Abort();
-            if (error is OperationCanceledException) throw;
-            throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error);
+            if (error is OperationCanceledException && (!gitWrite || !pending.Sent)) throw;
+            throw new MachineUnreachable(_name, $"{_name}: machine socket closed", error, pending.Sent);
         }
         finally { _socketSend.Release(); }
         try
         {
-            var frame = await pending.Task.WaitAsync(cancellationToken);
+            var frame = await pending.Completion.Task.WaitAsync(cancellationToken);
             if (frame.GetProperty("t").GetString() == "result")
             {
                 var result = frame.GetProperty("result");
@@ -135,11 +168,27 @@ internal sealed partial class RemoteMachine
                 _status.Reachable(_name);
                 return result;
             }
+            if (gitWrite)
+            {
+                await _socketSend.WaitAsync(cancellationToken);
+                try
+                {
+                    if (!ReferenceEquals(_socket, sentOn) || !ReferenceEquals(RequireEngine(expectedEngineId!), expectedConnection))
+                        throw Unreachable("machine socket changed", $"{_name}: owning engine connection changed");
+                }
+                finally { _socketSend.Release(); }
+            }
             var message = frame.GetProperty("message").GetString()!;
-            if (frame.GetProperty("code").GetString() == "unreachable") throw Unreachable(message, message);
+            if (gitWrite && frame.GetProperty("code").GetString() == "uncertain") throw new CallUncertain(_name);
+            if (frame.GetProperty("code").GetString() == "unreachable")
+                throw new MachineUnreachable(_name, message, mayHaveBeenSent: pending.Sent);
             _status.Reachable(_name);
             throw new CallFailed(message);
         }
+        catch (OperationCanceledException error) when (gitWrite && pending.Sent && cancellationToken.IsCancellationRequested)
+        { throw new MachineUnreachable(_name, $"{_name}: Git operation reply is unconfirmed", error, true); }
+        catch (MachineUnreachable error) when (pending.Sent && !error.MayHaveBeenSent)
+        { throw new MachineUnreachable(error.Machine, error.Message, error, true); }
         finally
         {
             await _socketSend.WaitAsync(CancellationToken.None);
@@ -158,7 +207,12 @@ internal sealed partial class RemoteMachine
     private readonly CancellationTokenSource _socketStop = new();
     private readonly SemaphoreSlim _socketSend = new(1), _bulkCall = new(1);
     private readonly Dictionary<long, (string Session, System.Threading.Channels.Channel<JsonElement> Frames)> _subscriptions = [];
-    private readonly Dictionary<long, TaskCompletionSource<JsonElement>> _calls = [];
+    private sealed class PendingCall
+    {
+        internal readonly TaskCompletionSource<JsonElement> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool Sent;
+    }
+    private readonly Dictionary<long, PendingCall> _calls = [];
     private readonly Dictionary<long, Channel<JsonElement>> _engineSubscriptions = [];
     internal event Action? SocketOpened;
     private ClientWebSocket? _socket, _bulkSocket;
@@ -232,13 +286,18 @@ internal sealed partial class RemoteMachine
                     await _socketSend.WaitAsync(_socketStop.Token);
                     try
                     {
-                        if (frame.TryGetProperty("id", out var engineId) && _engineSubscriptions.TryGetValue(engineId.GetInt64(), out var engineFrames)
+                        if (frame.TryGetProperty("id", out var gitId) && _gitSubscriptions.TryGetValue(gitId.GetInt64(), out var gitError)
+                            && frame.GetProperty("t").GetString() == "error")
+                        {
+                            if (!gitError.Frames.Writer.TryWrite(frame)) throw new IOException("remote Git operation queue is full");
+                        }
+                        else if (frame.TryGetProperty("id", out var engineId) && _engineSubscriptions.TryGetValue(engineId.GetInt64(), out var engineFrames)
                             && frame.GetProperty("t").GetString() is "engine_snapshot" or "engine_events" or "error")
                         {
                             if (!engineFrames.Writer.TryWrite(frame)) throw new IOException("remote engine queue is full");
                         }
                         else if (frame.TryGetProperty("id", out var callId) && _calls.Remove(callId.GetInt64(), out var pending))
-                            pending.TrySetResult(frame);
+                            pending.Completion.TrySetResult(frame);
                         else if (frame.TryGetProperty("sub", out var sub))
                         {
                             if (sub.GetInt64() == _sessionsSub)
@@ -246,6 +305,10 @@ internal sealed partial class RemoteMachine
                                 if (frame.TryGetProperty("items", out var items))
                                     foreach (var entry in items.EnumerateArray()) ApplySession(entry.GetProperty("item"));
                                 else if (frame.TryGetProperty("item", out var item)) ApplySession(item);
+                            }
+                            else if (_gitSubscriptions.TryGetValue(sub.GetInt64(), out var git))
+                            {
+                                if (!git.Frames.Writer.TryWrite(frame)) throw new IOException("remote Git operation queue is full");
                             }
                             else if (_subscriptions.TryGetValue(sub.GetInt64(), out var target) && !target.Frames.Writer.TryWrite(frame))
                                 throw new IOException("remote rows queue is full");
@@ -271,8 +334,9 @@ internal sealed partial class RemoteMachine
                         InvalidateEngine();
                         _socket = null;
                         foreach (var pending in _calls.Values)
-                            pending.TrySetException(Unreachable("machine socket closed", $"{_name}: machine socket closed"));
+                            pending.Completion.TrySetException(new MachineUnreachable(_name, $"{_name}: machine socket closed", mayHaveBeenSent: pending.Sent));
                         _calls.Clear();
+                        CloseGitSubscriptions(socket);
                     }
                     socket?.Dispose();
                 }

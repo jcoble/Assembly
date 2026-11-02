@@ -13,14 +13,14 @@ internal sealed record ConfiguredProviderTarget(string Provider, string AccountC
     {
         if (configured is null) return null;
         if (stored is not null)
-            return stored.Machine == machine && stored.Target.Id == id && configured(stored.Target.Provider, stored.Target.AccountContext)
+            return stored.Machine == machine && stored.Target.Id == id && Assembly.Application.Common.Agents.AccountContext.IsValid(stored.Target.AccountContext) && configured(stored.Target.Provider, stored.Target.AccountContext)
                 ? stored.Target : null;
         ConfiguredProviderTarget? found = null;
         for (var index = 1; index < id.Length; index++)
         {
             if (id[index] != '/') continue;
             var provider = id[..index]; var account = id[(index + 1)..];
-            if (!configured(provider, account)) continue;
+            if (!Assembly.Application.Common.Agents.AccountContext.IsValid(account) || !configured(provider, account)) continue;
             if (found is not null) return null;
             found = new(provider, account);
         }

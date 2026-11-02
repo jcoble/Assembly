@@ -1,4 +1,4 @@
-namespace Assembly.Application.Features.Chat.Worktrees;
+namespace Assembly.Application.Common.Git;
 
 /// <summary>
 /// One worktree as the Worktrees pane shows it (docs/behavior/scm.md). Branch is null when detached, Head when bare or
