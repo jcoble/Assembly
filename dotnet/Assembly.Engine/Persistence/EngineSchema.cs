@@ -1,5 +1,6 @@
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Providers;
+using Assembly.Engine.Workflows.Persistence;
 
 namespace Assembly.Engine.Persistence;
 
@@ -26,24 +27,26 @@ public static class EngineSchema
             scope.Execute(Create);
             scope.Execute(ProviderSchema.Create);
             scope.Execute(CreateMirrors);
+            WorkflowSchema.Upgrade(scope);
             projectionSchema?.Invoke(scope);
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,10,$machine,1,0,0);
+                VALUES(1,11,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version is 6 or 7 or 8 or 9 or 10)
+        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11)
         {
             projectionSchema?.Invoke(scope);
             if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
             if (meta.Version < 8) AuthSchemaUpgrade.Apply(scope);
             AccountIdentitySchema.Validate(scope, meta.Version < 9);
             if (meta.Version < 10) SessionProjectSchemaUpgrade.Apply(scope);
-            if (meta.Version < 10) scope.Execute("UPDATE engine_meta SET schema_version=10 WHERE singleton=1");
+            if (meta.Version < 11) WorkflowSchema.Upgrade(scope);
+            if (meta.Version < 11) scope.Execute("UPDATE engine_meta SET schema_version=11 WHERE singleton=1");
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -64,7 +67,8 @@ public static class EngineSchema
         AuthSchemaUpgrade.Apply(scope);
         AccountIdentitySchema.Validate(scope, true);
         SessionProjectSchemaUpgrade.Apply(scope);
-        scope.Execute("UPDATE engine_meta SET schema_version=10 WHERE singleton=1");
+        WorkflowSchema.Upgrade(scope);
+        scope.Execute("UPDATE engine_meta SET schema_version=11 WHERE singleton=1");
         return new(meta.Machine, meta.Version);
     }
 

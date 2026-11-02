@@ -1,0 +1,27 @@
+using Assembly.Application.Common.Database;
+using Assembly.Engine.Runs;
+using Assembly.Engine.Messages;
+
+namespace Assembly.Tests.Engine.Workflows.Persistence;
+
+// Operational fixture producer, run only against unchanged frozen75e5c7cf before migration edits.
+public sealed class CaptureWorkflowPredecessorTests
+{
+    [Fact]
+    public void Capture_actual_schema_ten()
+    {
+        using var f = new EngineFixture();
+        Assert.Equal(10, f.Number("SELECT schema_version FROM engine_meta"));
+        f.SeedSession("owner");
+        Assert.True(f.Apply(new StartRun("owner", "https://example.com/task", null, null, 30000,
+            [new("old-step", "Preserved", true, 2, false, [])]), "old-run").Applied);
+        Assert.True(f.Apply(new SendMessage(null, "owner", "preserved queued message", "prompt"), "old-message").Applied);
+        f.Db.Writer.Write("test.preserved-need-and-cursors", scope => scope.Execute("""
+            INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,kind,text,options_json,state)
+            SELECT 'old-need',1,machine_id,1000,1000,'owner','approval','Preserved question','[]','open' FROM engine_meta;
+            UPDATE engine_session SET reserved_epoch=2 WHERE id='owner';
+            UPDATE engine_meta SET retained_after=1,snapshot_seq=2;
+            """));
+        f.BackupTo("/tmp/a40-workflow-actual-schema10.db");
+    }
+}

@@ -1,4 +1,5 @@
 using Assembly.Engine.Effects;
+using Assembly.Engine.Workflows;
 using Assembly.Application.Common.Engine;
 using Assembly.Engine.Providers;
 using Assembly.Engine.Recording;
@@ -46,7 +47,7 @@ public sealed partial class EngineCommands
 
     public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command, string? preparedError = null)
     {
-        if (command is SendOwnerPrompt or RecordProviderCheck)
+        if (command is SendOwnerPrompt or RecordProviderCheck or WorkflowCommand)
             return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
         // Raw boundary arguments are transient: even the journal fingerprint and size check use structural previews.
         var canonical = RecordingTransitions.JournalJson(command);

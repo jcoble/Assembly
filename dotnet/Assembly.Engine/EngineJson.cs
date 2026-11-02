@@ -1,4 +1,6 @@
 using Assembly.Engine.Reading;
+using Assembly.Engine.Workflows;
+using Assembly.Engine.Workflows.Runs;
 using Assembly.Domain.Rows;
 using Assembly.Engine.Providers;
 using Assembly.Engine.Mirror;
@@ -56,6 +58,10 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(AuthRetryExecution))]
 [JsonSerializable(typeof(AuthRefusalReceipt))]
 [JsonSerializable(typeof(HandoffEffectData))]
+[JsonSerializable(typeof(WorkflowPreparedEnvelope))]
+[JsonSerializable(typeof(WorkflowStartRequest))]
+[JsonSerializable(typeof(WorkflowStartAck))]
+[JsonSerializable(typeof(WorkflowSetupIntent))]
 [JsonSerializable(typeof(CommandContext))]
 [JsonSerializable(typeof(CommandResult))]
 [JsonSerializable(typeof(EngineCommand))]
