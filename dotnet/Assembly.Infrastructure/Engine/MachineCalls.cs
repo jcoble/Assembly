@@ -9,6 +9,7 @@ using Assembly.Domain.Sessions;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
+using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Engine.Sessions;
 
 namespace Assembly.Infrastructure.Engine;
@@ -19,12 +20,13 @@ public sealed record StartLocationArgs(string ParentSessionId);
 public sealed record StartLocation(string Folder);
 
 /// <summary>The authenticated owner's ordinary machine-coordinator operations. Adoption remains unbound.</summary>
-public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider time, IAgentLauncher launcher, string checkouts) : IFeature
+public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider time, IAgentLauncher launcher, string checkouts, NeedAnswers needs) : IFeature
 {
     public void Register(ICallRegistry calls)
     {
         RegisterForeignAncestry(calls);
         RegisterRelay(calls);
+        RegisterParentNeeds(calls);
         RegisterForeignTitles(calls);
         RegisterMachineStartAck(calls);
         calls.Read("engine", "start_location", EngineSocketJson.Default.StartLocationArgs, EngineSocketJson.Default.StartLocation,

@@ -79,6 +79,42 @@ public sealed partial class NeedAnswers
             r.IsNull(10) ? "" : r.Text(10), r.IsNull(11) ? null : r.Text(11), r.IsNull(8) ? null : r.Text(8),
             r.IsNull(12) ? null : r.Text(12)), new SqlArg("$id", needId), new("$machine", runtime.Machine));
 
+    internal ParentNeedCaptured CaptureParentNeed(ParentNeedSource source, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (source.SourceMachine == runtime.Machine || source.OperationId == Guid.Empty || !Enum.IsDefined(source.Action))
+            throw new RelayRefused("bad_args");
+        var target = ((IEngineRuntime)runtime).Read(scope => ReadLocalTarget(scope, source.NeedId), ct);
+        if (target is null || target.ParentSessionId != source.ParentSessionId || target.ParentOwnerMachine != source.SourceMachine ||
+            target.AddresseeSessionId != source.ParentSessionId || target.ChildOwnerMachine != runtime.Machine)
+            return new(null, null, "bad_args");
+        ProviderAnswerBinding? binding = null;
+        if (source.Action == ParentNeedAction.Answer && target.ProviderBacked)
+        {
+            if (target.ChatRowId is null) return new(null, null, "bad_args");
+            binding = sessions.For(target.ChildSessionId).CaptureProviderAnswerBinding(target.ChatRowId);
+            if (binding is null) return new(null, null, "request_gone");
+        }
+        return new(target, binding, null);
+    }
+
+    internal PreparedForwardedParentNeed PrepareForwardedParentNeed(ParentNeedPrepared payload, CancellationToken ct)
+    {
+        var descriptor = payload.Descriptor;
+        if (descriptor.Target.ChildOwnerMachine != runtime.Machine) throw new RelayRefused("wrong_machine");
+        var prepared = PreparedParentNeed.Receive(descriptor, payload.AnswerUtf8, ct);
+        var error = ParentNeedPreparationError.None;
+        if (descriptor.Source.Action == ParentNeedAction.Answer && descriptor.Target.ProviderBacked)
+        {
+            var host = sessions.For(descriptor.Target.ChildSessionId);
+            if (descriptor.Target.ChatRowId is not { } chat || descriptor.ProviderBinding is not { } binding ||
+                host.CaptureProviderAnswerBinding(chat) != binding) error = ParentNeedPreparationError.RequestGone;
+            else if (prepared.Request.Answer is not { } answer || host.PrepareProviderAnswer(chat, answer) is not { } current ||
+                current.Binding != binding) error = ParentNeedPreparationError.BadAnswer;
+        }
+        return PreparedForwardedParentNeed.Prepare(descriptor.Source, descriptor.Target, prepared, error);
+    }
+
     private async Task<CommandResult> WaitForOutcome(string intentId, PreparedParentNeedIntent source, CancellationToken waitCancellation)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(waitCancellation, _runtimeStopping, _waitStop.Token);

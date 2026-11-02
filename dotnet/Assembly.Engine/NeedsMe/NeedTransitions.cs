@@ -46,11 +46,12 @@ public static class NeedTransitions
         var caller = new McpCaller(prepared.Source.ParentSessionId, prepared.Source.ParentEpoch);
         NeedCommand command = prepared.Source.Action == ParentNeedAction.Escalate ? new EscalateNeed()
             : new ResolveNeed("answered", prepared.Prepared.Request.Answer);
-        return ApplyCore(s, c, command, expiryPolicy, null, prepared.Prepared, caller, prepared.Source);
+        return ApplyCore(s, c, command, expiryPolicy, null, prepared.Prepared, caller, prepared.Source, prepared.PreparationError);
     }
 
     private static CommandResult ApplyCore(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy,
-        PreparedNeedCommand.OwnerPreparation? owner, PreparedParentNeed? parent = null, McpCaller? caller = null, ParentNeedSource? forwarded = null)
+        PreparedNeedCommand.OwnerPreparation? owner, PreparedParentNeed? parent = null, McpCaller? caller = null, ParentNeedSource? forwarded = null,
+        ParentNeedPreparationError parentError = ParentNeedPreparationError.None)
     {
         if (string.IsNullOrWhiteSpace(c.EntityId)) return Refused(c, "bad_args");
         if (command is OpenNeed open) return Open(s, c, open, expiryPolicy);
@@ -99,6 +100,8 @@ public static class NeedTransitions
         }
         else if (need.RequestId is not null && resolve.State == "answered" && c.Actor.Kind == ActorKind.Window)
             return Refused(c, "answer_preparation_required", need);
+        if (forwarded is not null && parentError != ParentNeedPreparationError.None)
+            return Refused(c, parentError == ParentNeedPreparationError.BadAnswer ? "bad_answer" : "answer_preparation_required", need);
         return Resolve(s, c, need, resolve, expiryPolicy, binding, owner, parent, origin);
     }
 

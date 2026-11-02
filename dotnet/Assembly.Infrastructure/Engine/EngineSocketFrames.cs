@@ -6,6 +6,7 @@ using Assembly.Engine.Sessions;
 using Assembly.Engine.Recording;
 using Assembly.Engine.Reading;
 using Assembly.Engine.Relays;
+using Assembly.Engine.NeedsMe;
 
 namespace Assembly.Infrastructure.Engine;
 
@@ -24,6 +25,20 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
+[JsonSerializable(typeof(ParentNeedPendingArgs))]
+[JsonSerializable(typeof(ParentNeedPendingPage))]
+[JsonSerializable(typeof(ParentNeedInputArgs))]
+[JsonSerializable(typeof(ParentNeedInputOpened))]
+[JsonSerializable(typeof(ParentNeedInputPartArgs))]
+[JsonSerializable(typeof(ParentNeedUploadArgs))]
+[JsonSerializable(typeof(ParentNeedUploadOpened))]
+[JsonSerializable(typeof(ParentNeedUploadPartArgs))]
+[JsonSerializable(typeof(ParentNeedUploadOffset))]
+[JsonSerializable(typeof(ParentNeedCaptured))]
+[JsonSerializable(typeof(ParentNeedDispatchArgs))]
+[JsonSerializable(typeof(ParentNeedOutcomeArgs))]
+[JsonSerializable(typeof(NeedAnswerRequestDescriptor))]
+[JsonSerializable(typeof(NeedAnswerAck))]
 [JsonSerializable(typeof(bool))]
 [JsonSerializable(typeof(StartTitleBeginArgs))]
 [JsonSerializable(typeof(StartTitleBeginReply))]

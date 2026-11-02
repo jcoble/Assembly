@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Assembly.Engine.Mcp;
 using Assembly.Engine.Relays;
+using Assembly.Engine.Persistence;
 
 namespace Assembly.Engine.NeedsMe;
 
@@ -29,9 +30,8 @@ public sealed class PreparedParentNeedIntent
             throw new RelayRefused("bad_args");
         input = input with { Answer = input.Answer?.Clone() };
         if (input.Answer is { } answer) PreparedNeedCommand.ValidateAnswer(answer, ct);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(input, EngineJson.Default.ParentNeedRequest);
         var source = new ParentNeedSource(operationId, caller.SessionId, caller.Epoch, machine, input.NeedId, input.Action);
-        var payload = new ParentNeedIntentPayload(1, source, input, RelayHash.Sha(bytes), ParentNeedPhase.Raw, null, null);
+        var payload = new ParentNeedIntentPayload(1, source, input, PreparedTextJson.ParentNeedInputSha(input, ct), ParentNeedPhase.Raw, null, null);
         var raw = JsonSerializer.SerializeToElement(payload, EngineJson.Default.ParentNeedIntentPayload);
         ct.ThrowIfCancellationRequested();
         return new(payload, raw);

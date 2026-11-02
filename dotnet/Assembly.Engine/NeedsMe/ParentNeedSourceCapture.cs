@@ -28,7 +28,7 @@ internal sealed class ParentNeedSourceCapture
             payload.Source.NeedId != payload.Input.NeedId || payload.Source.Action != payload.Input.Action ||
             !Enum.IsDefined(payload.Source.Action) || payload.Source.ParentEpoch < 0 ||
             !Enum.IsDefined(payload.Phase) || !RelayHash.IsSha(payload.InputSha256) ||
-            RelayHash.Sha(JsonSerializer.SerializeToUtf8Bytes(payload.Input, EngineJson.Default.ParentNeedRequest)) != payload.InputSha256 ||
+            Persistence.PreparedTextJson.ParentNeedInputSha(payload.Input, ct) != payload.InputSha256 ||
             intentId != Persistence.RelayReceiptKeys.ContextGuid(ParentNeedCodec.SourceKey(payload.Source)).ToString("N") + "-0" ||
             version < 0 || createdMs < 0 || (payload.Phase switch
             {

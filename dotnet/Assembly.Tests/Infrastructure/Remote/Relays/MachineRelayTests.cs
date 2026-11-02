@@ -75,7 +75,7 @@ public sealed partial class MachineRelayTests
             if (source.Fixture.State("engine_message", "message") == "next_turn") settled.TrySetResult();
         }
         var subscription = source.Topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => Observe());
-        await using var relay = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog);
+        await using var relay = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog, h.Mac.Needs);
         try
         {
             relay.Start(); Observe();

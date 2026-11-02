@@ -35,7 +35,7 @@ public sealed partial class MachineRelayTests
             reading.TrySetResult();
             await release.Task.WaitAsync(call.Cancellation);
         };
-        var relay = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog);
+        var relay = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog, h.Mac.Needs);
         try
         {
             relay.Start();
@@ -54,7 +54,7 @@ public sealed partial class MachineRelayTests
         {
             if (h.Remote.Fixture.State("engine_message", "message") == "next_turn") settled.TrySetResult();
         });
-        await using var recovered = disconnectOwner ? relay : new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog);
+        await using var recovered = disconnectOwner ? relay : new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections, h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog, h.Mac.Needs);
         try
         {
             if (disconnectOwner) await h.ReconnectSaved();

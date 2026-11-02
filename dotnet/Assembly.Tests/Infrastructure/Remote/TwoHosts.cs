@@ -23,6 +23,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Assembly.Infrastructure.Engine.Titles;
+using Assembly.Infrastructure.Engine.Needs;
+using Assembly.Application.Common;
+using Assembly.Engine.Mcp;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Remote;
@@ -57,12 +60,23 @@ internal sealed class TwoHosts : IAsyncDisposable
         public Func<string, CallContext, Task>? MachineWriting { get; set; }
         public Func<string, CallContext, Task>? MachinePrepared { get; set; }
         internal MachineForward? Forwarder { get; set; }
+        public NeedAnswers Needs { get; private set; } = null!;
+        private SessionRegistry? _needHosts;
+        private LiveHub? _needHub;
+        private BackgroundWork? _needWork;
         private EngineRuntime StartRuntime()
         {
             Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, _checkouts ?? Path.GetTempPath());
             var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time);
-            return EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
+            var runtime = EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
                 Fixture.Limits, _effects, cutover: cutover);
+            if (_machineLauncher is not null)
+            {
+                _needHub = new(RowStore.Open(Fixture.Db)); _needWork = new(Fixture.Time, TextWriter.Null);
+                _needHosts = new(_needHub, Sessions, _machineLauncher, Fixture.Time, TextWriter.Null, _needWork);
+                Needs = new(new McpGate(runtime, Fixture.Limits, Fixture.Time), runtime, _needHosts, Fixture.Time);
+            }
+            return runtime;
         }
         private readonly bool _windowCalls;
         private readonly IAgentLauncher? _machineLauncher;
@@ -91,7 +105,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             new SessionTitleCalls(Runtime, Sessions, Forwarder).Register(new IdentityGate(calls, this));
             if (_machineLauncher is not null)
             {
-                _machineCalls = new(Runtime, Fixture.Time, _machineLauncher, _checkouts!);
+                _machineCalls = new(Runtime, Fixture.Time, _machineLauncher, _checkouts!, Needs);
                 _machineCalls.Register(new IdentityGate(calls, this, machineReads: true));
             }
             new SessionsFeature(Sessions, new MachineSet(new FakeMachine(null, Sessions))).Register(calls);
@@ -134,9 +148,14 @@ internal sealed class TwoHosts : IAsyncDisposable
         public async Task Stop()
         {
             if (!_running) return;
+            if (_machineLauncher is not null) await Needs.StopWaiting();
             await App.DisposeAsync();
             if (_machineCalls is not null) await _machineCalls.DisposeAsync();
-            await Runtime.DisposeAsync(); _running = false;
+            if (_machineLauncher is not null) await Needs.DisposeAsync();
+            await Runtime.DisposeAsync();
+            if (_needHosts is not null) await _needHosts.DisposeAsync();
+            if (_needWork is not null) await _needWork.DisposeAsync();
+            _needHub?.Dispose(); _running = false;
         }
         public async Task Restart()
         {

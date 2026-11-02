@@ -61,6 +61,14 @@ public static partial class EngineJournal
         });
         return new(intentId, result);
     }
+    internal static string ParentNeedPhaseFingerprint(PreparedParentNeedPhase prepared)
+    {
+        var source = prepared.Source;
+        var context = new CommandContext(RelayReceiptKeys.ContextGuid(prepared.Key), source.SourceMachine,
+            new(ActorKind.Session, source.ParentSessionId), source.NeedId, 0, source.ParentEpoch, 0);
+        return Fingerprint(context, prepared.Canonical);
+    }
+
     internal static CommandResult ApplyParentNeedPhase(IWriteScope scope, string machine,
         PreparedParentNeedPhase prepared, long nowMs)
     {
@@ -98,22 +106,28 @@ public static partial class EngineJournal
             if (preparing || dispatching)
             {
                 if (ParentNeedParentRefusal(scope, source) is { } error) return Rejected(context, error);
-                var target = prepared.Descriptor!.Target;
-                var child = scope.QueryFirst("SELECT machine,state,parent_id,holder FROM engine_session WHERE id=$id",
-                    r => new { Machine = r.Text(0), State = r.Text(1), Parent = r.IsNull(2) ? null : r.Text(2), Holder = r.Text(3) },
-                    new SqlArg("$id", target.ChildSessionId));
-                if (child is not null && (child.Machine != target.ChildOwnerMachine || child.State != "foreign" ||
-                    child.Parent != source.ParentSessionId || child.Holder != target.ChildOwnerMachine))
-                    return Rejected(context, "forbidden");
+                if (ParentNeedChildRefusal(scope, source, prepared.Descriptor!.Target) is { } childError)
+                    return Rejected(context, childError);
             }
             var outcome = prepared.Outcome;
             if (prepared.Write == ParentNeedPhaseWrite.Outcome)
             {
                 if (outcome!.Origin == "source")
                 {
-                    var error = ParentNeedParentRefusal(scope, source);
+                    var error = ParentNeedParentRefusal(scope, source) ?? (prepared.Descriptor is { } descriptor
+                        ? ParentNeedChildRefusal(scope, source, descriptor.Target) : null);
+                    var refusedPreparation = false;
+                    if (actual.Phase == ParentNeedPhase.Raw && prepared.RejectedPrepareFingerprint is { } expectedFingerprint)
+                    {
+                        var receipt = scope.QueryFirst("SELECT fingerprint,result_json FROM engine_command_receipt WHERE command_id=$key",
+                            row => new { Fingerprint = row.Text(0), Result = row.Text(1) },
+                            new SqlArg("$key", ParentNeedCodec.SourceKey(source) + "/prepare"));
+                        refusedPreparation = receipt is not null && receipt.Fingerprint == expectedFingerprint &&
+                            JsonSerializer.Deserialize(receipt.Result, EngineJson.Default.CommandResult) is { Applied: false, Error: not null } refusal &&
+                            refusal.Error == outcome.Error;
+                    }
                     if (actual.Phase is not (ParentNeedPhase.Raw or ParentNeedPhase.Prepared) ||
-                        (error is null ? outcome.Error != "bad_args" : outcome.Error != error))
+                        !refusedPreparation && (error is null ? outcome.Error != "bad_args" : outcome.Error != error))
                         return Rejected(context, "forbidden");
                 }
                 else if (actual.Phase != ParentNeedPhase.Executing) return Rejected(context, "invalid_transition");
@@ -129,6 +143,15 @@ public static partial class EngineJournal
                 [new("parent_need.changed", "effect", prepared.IntentId, actual.Version + 1, false,
                     new(source.ParentSessionId, null, null, null, state, source.ParentEpoch))], []);
         });
+    }
+
+    private static string? ParentNeedChildRefusal(IReadScope scope, ParentNeedSource source, NeedAnswerTarget target)
+    {
+        var child = scope.QueryFirst("SELECT machine,state,parent_id,holder FROM engine_session WHERE id=$id",
+            row => new { Machine = row.Text(0), State = row.Text(1), Parent = row.IsNull(2) ? null : row.Text(2), Holder = row.Text(3) },
+            new SqlArg("$id", target.ChildSessionId));
+        return child is not null && (child.Machine != target.ChildOwnerMachine || child.State != "foreign" ||
+            child.Parent != source.ParentSessionId || child.Holder != target.ChildOwnerMachine) ? "forbidden" : null;
     }
 
     private static string? ParentNeedParentRefusal(IReadScope scope, ParentNeedSource source)

@@ -28,6 +28,7 @@ internal static class DisplayQueries
         var fields = Columns(kind).Split(',').Select(column =>
             $"'{CamelCase(column)}',t.{column}");
         if (kind == "session") fields = fields.Select(field => field == "'title',t.title" ? "'title',NULL" : field);
+        if (kind == "needs_me") fields = fields.Select(field => field == "'text',t.text" ? "'text',NULL" : field);
         if (kind == "message")
         {
             fields = fields.Select(field => field == "'text',t.text"
@@ -50,6 +51,7 @@ internal static class DisplayQueries
     internal static string PrefixColumns(string kind) => kind switch
     {
         "session" => "COALESCE(substr(CAST(t.title AS BLOB),1,1027),X'') AS prefix,COALESCE(length(CAST(t.title AS BLOB)),0) AS total,NULL AS label_prefix,NULL AS label_total",
+        "needs_me" => "COALESCE(substr(CAST(t.text AS BLOB),1,32771),X'') AS prefix,length(CAST(t.text AS BLOB)) AS total,NULL AS label_prefix,NULL AS label_total",
         "message" => "CASE WHEN t.framed=1 THEN COALESCE(substr(CAST(t.text AS BLOB),1,32771),X'') END AS prefix,CASE WHEN t.framed=1 THEN length(CAST(t.text AS BLOB)) END AS total,CASE WHEN t.framed=1 THEN COALESCE(substr(CAST(t.sender_label AS BLOB),1,1027),X'') END AS label_prefix,CASE WHEN t.framed=1 THEN length(CAST(t.sender_label AS BLOB)) END AS label_total",
         _ => "NULL AS prefix,NULL AS total,NULL AS label_prefix,NULL AS label_total"
     };
@@ -62,13 +64,21 @@ internal static class DisplayQueries
         var prefix = row.Blob(jsonColumn + 1);
         var total = row.Long(jsonColumn + 2);
         var text = Utf8Prefix(prefix, total);
-        var session = item["entityKind"]!.GetValue<string>() == "session";
-        if (session)
+        var kind = item["entityKind"]!.GetValue<string>();
+        if (kind == "session")
         {
             var preview = Scalars(text, 256);
             var complete = prefix.LongLength == total && preview == text;
             item["title"] = preview;
             if (!complete) { item["titleComplete"] = false; item["titleUtf8Bytes"] = total; }
+        }
+        else if (kind == "needs_me")
+        {
+            item["text"] = text;
+            if (prefix.LongLength != total || Encoding.UTF8.GetByteCount(item.ToJsonString(EngineJson.Default.Options)) > 32 * 1024)
+            {
+                item["text"] = Scalars(text, 256); item["textComplete"] = false; item["textUtf8Bytes"] = total;
+            }
         }
         else
         {

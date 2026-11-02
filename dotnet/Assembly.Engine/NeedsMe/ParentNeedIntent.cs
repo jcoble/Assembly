@@ -1,10 +1,12 @@
+using System.Text.Json.Serialization;
 using Assembly.Engine.Contracts;
 
 namespace Assembly.Engine.NeedsMe;
 
 public enum ParentNeedPhase { Raw, Prepared, Executing, Outcome }
 
-public sealed record ParentNeedPrepared(NeedAnswerRequestDescriptor Descriptor, byte[]? AnswerUtf8);
+public sealed record ParentNeedPrepared(NeedAnswerRequestDescriptor Descriptor,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] byte[]? AnswerUtf8 = null);
 
 public sealed record ParentNeedIntentPayload(int Format, ParentNeedSource Source,
     ParentNeedRequest Input, string InputSha256, ParentNeedPhase Phase,

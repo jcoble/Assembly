@@ -27,6 +27,22 @@ public sealed partial class EngineCommands
     internal CommandResult DispatchParentNeedIntent(IWriteScope scope, PreparedParentNeedPhase prepared, long nowMs) =>
         ApplyParentNeedPhase(scope, prepared, ParentNeedPhaseWrite.Dispatch, nowMs);
 
+    internal ParentNeedDispatchAck DispatchParentNeedWithAck(IWriteScope scope, PreparedParentNeedPhase prepared, long nowMs)
+    {
+        var wasPrepared = scope.QueryFirst("""
+            SELECT COUNT(*) FROM engine_outbox WHERE id=$id AND machine=$machine AND kind='parent_need'
+                AND version=$version AND state='pending' AND json_extract(payload_json,'$.phase')=$phase
+            """, row => row.Long(0) == 1, new SqlArg("$id", prepared.IntentId), new("$machine", _machine),
+            new("$version", prepared.ExpectedVersion), new("$phase", (int)ParentNeedPhase.Prepared));
+        var result = DispatchParentNeedIntent(scope, prepared, nowMs);
+        var dispatched = wasPrepared && result.Applied && scope.QueryFirst("""
+            SELECT COUNT(*) FROM engine_outbox WHERE id=$id AND machine=$machine AND kind='parent_need'
+                AND version=$version AND state='uncertain' AND json_extract(payload_json,'$.phase')=$phase
+            """, row => row.Long(0) == 1, new SqlArg("$id", prepared.IntentId), new("$machine", _machine),
+            new("$version", prepared.ExpectedVersion + 1), new("$phase", (int)ParentNeedPhase.Executing));
+        return new(result, dispatched);
+    }
+
     internal CommandResult CompleteParentNeedIntent(IWriteScope scope, PreparedParentNeedPhase prepared, long nowMs) =>
         ApplyParentNeedPhase(scope, prepared, ParentNeedPhaseWrite.Outcome, nowMs);
 

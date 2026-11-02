@@ -22,9 +22,11 @@ internal sealed class PreparedParentNeedPhase
     internal ParentNeedPhaseWrite Write { get; }
     internal NeedAnswerRequestDescriptor? Descriptor { get; }
     internal ParentNeedOutcome? Outcome { get; }
+    internal string? RejectedPrepareFingerprint { get; }
 
     private PreparedParentNeedPhase(ParentNeedSourceCapture capture, ParentNeedIntentPayload original,
-        ParentNeedIntentPayload next, ParentNeedPhaseWrite write, string suffix, CancellationToken ct)
+        ParentNeedIntentPayload next, ParentNeedPhaseWrite write, string suffix, CancellationToken ct,
+        NeedAnswerRequestDescriptor? rejectedPreparation = null)
     {
         IntentId = capture.IntentId; ExpectedVersion = capture.Version; ExpectedState = capture.State;
         ExpectedPhase = original.Phase; Source = original.Source; InputSha256 = original.InputSha256;
@@ -38,6 +40,16 @@ internal sealed class PreparedParentNeedPhase
         hash.String("assembly-parent-need-phase/v1"); hash.String(Key); hash.String(InputSha256);
         hash.NullableString(Descriptor is null ? null : ParentNeedCodec.Identity(Descriptor));
         hash.NullableString(Outcome is null ? null : JsonSerializer.Serialize(Outcome, EngineJson.Default.ParentNeedOutcome));
+        if (rejectedPreparation is not null)
+        {
+            if (original.Phase != ParentNeedPhase.Raw || original.Prepared is not null || Outcome is not { Origin: "source", Status: "refused" })
+                throw new RelayRefused("bad_args");
+            var answer = NormalizeAnswer(original.Input, rejectedPreparation.Target);
+            var bytes = answer is { } value ? JsonSerializer.SerializeToUtf8Bytes(value, EngineJson.Default.JsonElement) : null;
+            var attempted = Prepare(capture, new(rejectedPreparation, bytes), ct);
+            RejectedPrepareFingerprint = Persistence.EngineJournal.ParentNeedPhaseFingerprint(attempted);
+            hash.String("rejected_prepare"); hash.String(ParentNeedCodec.Identity(rejectedPreparation));
+        }
         Canonical = "{\"kind\":\"parent_need_phase\",\"identitySha256\":\"" + hash.Finish() + "\"}";
         ct.ThrowIfCancellationRequested();
     }
@@ -67,13 +79,19 @@ internal sealed class PreparedParentNeedPhase
             return bytes is null && descriptor.Answer is null && descriptor.ProviderBinding is null;
         if (bytes is null || descriptor.Answer is not { } manifest || manifest.Utf8Length != bytes.LongLength ||
             manifest.Sha256 != RelayHash.Sha(bytes)) return false;
-        var expected = original.Input.Answer;
-        if (descriptor.Target.ProviderBacked && descriptor.Target.Kind == "permission" && expected is { ValueKind: JsonValueKind.String })
-            expected = JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement> { ["optionId"] = expected.Value.Clone() },
-                EngineJson.Default.DictionaryStringJsonElement);
+        var expected = NormalizeAnswer(original.Input, descriptor.Target);
         return expected is not null && bytes.AsSpan().SequenceEqual(
                    JsonSerializer.SerializeToUtf8Bytes(expected.Value, EngineJson.Default.JsonElement)) &&
             descriptor.Target.ProviderBacked == (descriptor.ProviderBinding is not null);
+    }
+
+    internal static JsonElement? NormalizeAnswer(ParentNeedRequest input, NeedAnswerTarget target)
+    {
+        var answer = input.Answer;
+        return target.ProviderBacked && target.Kind == "permission" && answer is { ValueKind: JsonValueKind.String }
+            ? JsonSerializer.SerializeToElement(new Dictionary<string, JsonElement> { ["optionId"] = answer.Value.Clone() },
+                EngineJson.Default.DictionaryStringJsonElement)
+            : answer?.Clone();
     }
 
     internal static PreparedParentNeedPhase Dispatch(ParentNeedSourceCapture capture, string expectedH, CancellationToken ct)
@@ -85,13 +103,14 @@ internal sealed class PreparedParentNeedPhase
             ParentNeedPhaseWrite.Dispatch, "/dispatch", ct);
     }
 
-    internal static PreparedParentNeedPhase Complete(ParentNeedSourceCapture capture, ParentNeedOutcome outcome, CancellationToken ct)
+    internal static PreparedParentNeedPhase Complete(ParentNeedSourceCapture capture, ParentNeedOutcome outcome, CancellationToken ct,
+        NeedAnswerRequestDescriptor? rejectedPreparation = null)
     {
         var original = capture.ReadPayload();
         if (!ValidOutcome(original, outcome)) throw new RelayRefused("bad_args");
         var phase = outcome.Status == "unknown" ? ParentNeedPhase.Executing : ParentNeedPhase.Outcome;
         return new(capture, original, original with { Phase = phase, Outcome = outcome }, ParentNeedPhaseWrite.Outcome,
-            outcome.Status == "unknown" ? "/outcome/unknown" : "/outcome/final", ct);
+            outcome.Status == "unknown" ? "/outcome/unknown" : "/outcome/final", ct, rejectedPreparation);
     }
     internal static bool ValidOutcome(ParentNeedIntentPayload original, ParentNeedOutcome outcome) =>
         ValidOutcome(original.Source, original.Phase, original.InputSha256, original.Prepared?.Descriptor, outcome);

@@ -149,6 +149,78 @@ public sealed class ParentNeedPhaseTests
         Assert.Equal(4, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='parent_need'"));
     }
 
+    [Fact]
+    public void Stale_prepared_dispatch_replay_has_original_result_but_never_a_second_execute_admission()
+    {
+        using var f = new EngineFixture();
+        var (commands, reader, id) = Begin(f);
+        var raw = reader.ParentNeedInput(id, default);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(raw.ReadPayload().Input.Answer!.Value, EngineJson.Default.JsonElement);
+        var descriptor = Descriptor(raw, bytes);
+        var prepare = PreparedParentNeedPhase.Prepare(raw, new(descriptor, bytes), default);
+        Assert.True(f.Db.Writer.Write("test.prepare", s => commands.PrepareParentNeedIntent(s, prepare, 1001)).Applied);
+        var original = PreparedParentNeedPhase.Dispatch(reader.ParentNeedInput(id, default), ParentNeedCodec.Identity(descriptor), default);
+        var first = f.Db.Writer.Write("test.dispatch-first", s => commands.DispatchParentNeedWithAck(s, original, 1002));
+        var replay = f.Db.Writer.Write("test.dispatch-stale", s => commands.DispatchParentNeedWithAck(s, original, 1003));
+        Assert.True(first.Dispatched); Assert.False(replay.Dispatched); Assert.Equal(first.Result, replay.Result);
+        Assert.Equal(1, f.Number("SELECT attempt FROM engine_outbox WHERE id=$id", new SqlArg("$id", id)));
+    }
+
+    [Fact]
+    public void Actual_rejected_prepare_proves_Raw_source_refusal_without_persisting_target_preparation()
+    {
+        using var f = new EngineFixture();
+        var (commands, reader, id) = Begin(f);
+        f.SeedSession("child", parentId: "parent");
+        var raw = reader.ParentNeedInput(id, default);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(raw.ReadPayload().Input.Answer!.Value, EngineJson.Default.JsonElement);
+        var descriptor = Descriptor(raw, bytes);
+        var attempted = PreparedParentNeedPhase.Prepare(raw, new(descriptor, bytes), default);
+        var refused = f.Db.Writer.Write("test.prepare-refused", s => commands.PrepareParentNeedIntent(s, attempted, 1001));
+        Assert.Equal("forbidden", refused.Error);
+        var outcome = new ParentNeedOutcome("source", "refused", raw.ReadPayload().InputSha256, null, null, null, refused.Error);
+        var completed = Complete(f, commands, PreparedParentNeedPhase.Complete(raw, outcome, default, descriptor));
+        Assert.True(completed.Applied, completed.Error);
+        var stored = reader.ParentNeedInput(id, default).ReadPayload();
+        Assert.Equal(outcome, stored.Outcome); Assert.Null(stored.Prepared); Assert.Equal("failed", f.State("engine_outbox", id));
+        var changed = descriptor with { Target = descriptor.Target with { ChildEpoch = 8 } };
+        var conflict = Complete(f, commands, PreparedParentNeedPhase.Complete(raw, outcome, default, changed));
+        Assert.Equal("command_id_conflict", conflict.Error);
+        Assert.Equal(0, f.Number("SELECT attempt FROM engine_outbox WHERE id=$id", new SqlArg("$id", id)));
+    }
+
+    [Fact]
+    public void Escalation_preparation_after_source_json_roundtrip_has_no_answer_manifest_or_bytes()
+    {
+        using var f = new EngineFixture(); f.SeedSession("parent", epoch: 3);
+        var commands = new EngineCommands(f.Machine, f.Limits); var caller = new McpCaller("parent", 3);
+        var raw = commands.PrepareParentNeedIntent(Guid.NewGuid(), caller, new("need", ParentNeedAction.Escalate, null), default);
+        var accepted = f.Db.Writer.Write("test.escalation-begin", scope => commands.BeginParentNeedIntent(scope, caller, raw, 1000));
+        var capture = new EngineReader(f.Db, f.Machine).ParentNeedInput(accepted.IntentId, default);
+        var input = capture.ReadPayload(); Assert.Null(input.Input.Answer);
+        var target = new NeedAnswerTarget("need", 1, "child", "target", 7, "local", null, "question", false,
+            "parent", f.Machine, "parent", null, null);
+        var normalized = input.Input with { Answer = PreparedParentNeedPhase.NormalizeAnswer(input.Input, target) };
+        Assert.Null(normalized.Answer);
+        var prepared = EngineCommands.PrepareParentNeed(input.Source.OperationId, normalized, target, null, default);
+        Assert.Null(prepared.Manifest); Assert.Null(prepared.AnswerUtf8);
+        var descriptor = new NeedAnswerRequestDescriptor(input.Source, target, prepared.Manifest, null);
+        var wire = JsonSerializer.SerializeToUtf8Bytes(new ParentNeedPrepared(descriptor, prepared.AnswerUtf8), EngineJson.Default.ParentNeedPrepared);
+        using var wireJson = JsonDocument.Parse(wire);
+        Assert.False(wireJson.RootElement.TryGetProperty("answerUtf8", out _));
+        var received = JsonSerializer.Deserialize(wire, EngineJson.Default.ParentNeedPrepared)!;
+        Assert.Null(received.AnswerUtf8); Assert.Null(received.Descriptor.Answer); Assert.Equal(descriptor, received.Descriptor);
+        var emptyWire = JsonSerializer.SerializeToUtf8Bytes(new ParentNeedPrepared(descriptor, []), EngineJson.Default.ParentNeedPrepared);
+        var empty = JsonSerializer.Deserialize(emptyWire, EngineJson.Default.ParentNeedPrepared)!;
+        Assert.NotNull(empty.AnswerUtf8); Assert.Empty(empty.AnswerUtf8);
+        Assert.Throws<RelayRefused>(() => PreparedParentNeedPhase.Prepare(capture, empty, default));
+        var body = new byte[] { 0, 255, 128, 42 };
+        var bodyWire = JsonSerializer.SerializeToUtf8Bytes(new ParentNeedPrepared(descriptor, body), EngineJson.Default.ParentNeedPrepared);
+        Assert.Equal(body, JsonSerializer.Deserialize(bodyWire, EngineJson.Default.ParentNeedPrepared)!.AnswerUtf8);
+        var phase = PreparedParentNeedPhase.Prepare(capture, received, default);
+        Assert.True(f.Db.Writer.Write("test.escalation-prepare", scope => commands.PrepareParentNeedIntent(scope, phase, 1001)).Applied);
+    }
+
     private static (EngineCommands, EngineReader, string) Begin(EngineFixture f)
     {
         f.SeedSession("parent", epoch: 3);

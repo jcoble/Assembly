@@ -16,6 +16,9 @@ using Assembly.Domain.Sessions;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Sessions;
+using Assembly.Application.Common;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Infrastructure.Agents;
 using Assembly.Infrastructure.Engine;
 using Assembly.Infrastructure.Socket;
@@ -37,6 +40,10 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     private EngineFixture _f = null!;
     private EngineRuntime _runtime = null!;
     private MachineCalls _machineCalls = null!;
+    private NeedAnswers _needs = null!;
+    private SessionRegistry _needHosts = null!;
+    private BackgroundWork _needWork = null!;
+    private LiveHub _needHub = null!;
     private RelayPausedDatabase _relayDatabase = null!;
     private DeadlineTimeProvider _socketTime = null!;
     private readonly TaskCompletionSource _bulkClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -59,7 +66,10 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
         _socketTime = new(_f.Time);
         _runtime = EngineRuntime.Start(_relayDatabase, _topics, _f.Time, _f.Limits, cutover: new(_f.Db, _store, _launcher, _root, _f.Time));
         var dispatcher = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
-        _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root);
+        _needHub = new(RowStore.Open(_f.Db)); _needWork = new(_f.Time, TextWriter.Null);
+        _needHosts = new(_needHub, _store, _launcher, _f.Time, TextWriter.Null, _needWork);
+        _needs = new(new(_runtime, _f.Limits, _f.Time), _runtime, _needHosts, _f.Time);
+        _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root, _needs);
         _machineCalls.Register(new PeerGate(dispatcher, this));
         dispatcher.Closed(_ => _bulkClosed.TrySetResult());
         new EngineCalls(_runtime, _f.Time).Register(dispatcher);
@@ -78,7 +88,9 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
-        await _app.DisposeAsync(); await _machineCalls.DisposeAsync(); await _runtime.DisposeAsync(); _f.Dispose(); Directory.Delete(_root, true);
+        await _needs.StopWaiting(); await _app.DisposeAsync(); await _machineCalls.DisposeAsync(); await _needs.DisposeAsync();
+        await _runtime.DisposeAsync(); await _needHosts.DisposeAsync(); await _needWork.DisposeAsync(); _needHub.Dispose();
+        _f.Dispose(); Directory.Delete(_root, true);
     }
 
     [Fact]

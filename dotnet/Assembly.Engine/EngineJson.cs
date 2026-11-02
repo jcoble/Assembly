@@ -62,6 +62,8 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(ResolveNeed))]
 [JsonSerializable(typeof(EscalateNeed))]
 [JsonSerializable(typeof(NeedAnswer))]
+[JsonSerializable(typeof(ParentNeedDispatchAck))]
+[JsonSerializable(typeof(ParentNeedPrepared))]
 [JsonSerializable(typeof(ParentNeedRequest))]
 [JsonSerializable(typeof(Dictionary<string, System.Text.Json.JsonElement>))]
 [JsonSerializable(typeof(ParentNeedIntentPayload))]
