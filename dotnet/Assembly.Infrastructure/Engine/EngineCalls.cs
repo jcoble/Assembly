@@ -1,6 +1,8 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Engine;
+using Assembly.Infrastructure.Socket;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Handoffs;
@@ -24,6 +26,9 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFea
     internal EngineCalls(EngineRuntime runtime, TimeProvider time, MachineForward forward) : this(runtime, time) => _forward = forward;
     private MachineForward Forward => _forward ?? throw new KeyNotFoundException("Unknown remote engine machine");
     private bool IsRemote(string? machine) => machine is not null && machine != runtime.Machine;
+
+    private static int OwnerPageBytes(long id, OwnerPromptPage page) => SocketDispatcher.Result(id,
+        JsonSerializer.SerializeToElement(page, EngineSocketJson.Default.OwnerPromptPage)).Length;
 
     public void Register(ICallRegistry calls)
     {
@@ -49,6 +54,21 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFea
                     return runtime.Commands.Apply(scope, context, args.Command);
                 };
             }, order: args => IsRemote(args.Machine) ? args.Machine : null);
+        calls.Read("engine", "owner_prompts", EngineSocketJson.Default.OwnerPromptReadArgs, EngineSocketJson.Default.OwnerPromptPage,
+            async (args, call) =>
+            {
+                if (call.ReplyId is not { } replyId) throw new CallFailed("reply metadata unavailable");
+                if (IsRemote(args.Machine))
+                    return await Forward.OwnerPromptsAsync(args.Machine!, args, candidate => OwnerPageBytes(replyId, candidate), call.Cancellation);
+                return runtime.Reader.OwnerPrompts(args, candidate => SocketDispatcher.Result(replyId,
+                    JsonSerializer.SerializeToElement(candidate, EngineSocketJson.Default.OwnerPromptPage)).Length, call.Cancellation);
+            });
+        calls.Read("engine", "owner_prompt_chunk", EngineSocketJson.Default.OwnerPromptChunkArgs, EngineSocketJson.Default.OwnerPromptChunk,
+            async (args, call) => IsRemote(args.Machine)
+                ? (await Forward.CallAsync(args.Machine!, "engine", "owner_prompt_chunk",
+                    JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.OwnerPromptChunkArgs),
+                    true, call.Cancellation)).Deserialize(EngineSocketJson.Default.OwnerPromptChunk)!
+                : runtime.Reader.OwnerPromptContent(args, call.Cancellation), bulk: true);
         calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo,
             (_, call) => Task.FromResult(runtime.Reader.Machine(call.Cancellation)));
         calls.Read("engine", "usage", EngineSocketJson.Default.EngineUsageArgs, EngineSocketJson.Default.UsageTotals,

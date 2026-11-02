@@ -50,16 +50,25 @@ public sealed class OwnerPromptTests
         Assert.Empty(f.Events());
     }
 
-    [Fact]
-    public void Reused_client_changed_payload_conflicts_without_new_effect()
+    [Theory]
+    [InlineData("text")]
+    [InlineData("attachments")]
+    [InlineData("epoch")]
+    public void Reused_client_changed_payload_conflicts_without_new_effect(string changed)
     {
         using var f = new EngineFixture(); f.SeedSession();
-        var command = new SendOwnerPrompt("s", "Original", "C", [], null);
+        var command = new SendOwnerPrompt("s", "Original", "C", ["first", "second"], null);
         var context = Context(f, command);
         var accepted = ApplyPrepared(f, context, command);
         Assert.True(accepted.Applied, accepted.Error);
         var events = f.Count("engine_event"); var effects = f.Count("engine_outbox");
-        Assert.Equal("client_id_conflict", ApplyPrepared(f, context, command with { Text = "Changed" }).Error);
+        var conflicting = changed switch
+        {
+            "attachments" => command with { AttachmentIds = ["second", "first"] },
+            "epoch" => command with { TargetEpoch = 7 },
+            _ => command with { Text = "Changed!" }
+        };
+        Assert.Equal("client_id_conflict", ApplyPrepared(f, context, conflicting).Error);
         Assert.Equal(events, f.Count("engine_event")); Assert.Equal(effects, f.Count("engine_outbox"));
         Assert.Equal(accepted, ApplyPrepared(f, context, command));
     }

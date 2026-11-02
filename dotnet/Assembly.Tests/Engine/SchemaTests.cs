@@ -81,9 +81,9 @@ public sealed class SchemaTests
     public void Version_5_refuses()
     {
         using var f = new EngineFixture();
-        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=5"));
+        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=6"));
         Assert.Throws<InvalidOperationException>(() => EngineSchema.Open(f.Db, 1000));
-        Assert.Equal(5, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(6, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class SchemaTests
 
         Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
 
-        Assert.Equal(4, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(5, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         Assert.Equal(before, StoredRows(db));
         Assert.Equal(new long[] { 1, 2, 3 }, db.Query("SELECT seq FROM engine_event ORDER BY seq", r => r.Long(0), default));
         Assert.Equal(new long[] { 4, 1, 2 }, db.QueryFirst("SELECT next_seq,retained_after,snapshot_seq FROM engine_meta", r => new[] { r.Long(0), r.Long(1), r.Long(2) }, default));
@@ -223,7 +223,7 @@ public sealed class SchemaTests
             var columns = db.Query($"PRAGMA table_info({table})", r => r.Text(1), default)
                 .Where(column => table switch
                 {
-                    "engine_message" => column is not ("delivery" or "attempt" or "in_flight" or "sender_label" or "client_id"),
+                    "engine_message" => column is not ("delivery" or "attempt" or "in_flight" or "sender_label" or "client_id" or "framed" or "attachment_ids_json" or "held_epoch" or "target_epoch" or "owner_content_sha256"),
                     "engine_session" => column is not ("can_steer" or "account_context" or "managed_checkout"),
                     _ => true
                 }).OrderBy(column => column, StringComparer.Ordinal);

@@ -52,6 +52,32 @@ public sealed class EngineDoor(EngineRuntime runtime, SessionStore sessions, Mac
         };
     }
 
+    public async Task<OwnerPromptPage> ReadOwnerPromptsAsync(OwnerPromptReadArgs request, CancellationToken cancellationToken)
+    {
+        var remote = ReadRemote(request.Session);
+        if (remote is null)
+            return runtime.Reader.OwnerPrompts(request, page => Assembly.Infrastructure.Http.JsonReply.Encode(json =>
+                System.Text.Json.JsonSerializer.Serialize(json, page, SessionsJson.Default.OwnerPromptPage)).Length, cancellationToken);
+        return await remote.ReadOwnerPromptPageAsync(request, page => Assembly.Infrastructure.Http.JsonReply.Encode(json =>
+            System.Text.Json.JsonSerializer.Serialize(json, page, SessionsJson.Default.OwnerPromptPage)).Length, request.Machine, cancellationToken);
+    }
+
+    public async Task<OwnerPromptChunk> ReadOwnerPromptChunkAsync(OwnerPromptChunkArgs request, CancellationToken cancellationToken)
+    {
+        var remote = ReadRemote(request.Session);
+        if (remote is null) return runtime.Reader.OwnerPromptContent(request, cancellationToken);
+        var result = await remote.ReadOwnerPromptAsync("owner_prompt_chunk", System.Text.Json.JsonSerializer.SerializeToElement(
+            request with { Machine = null }, SessionsJson.Default.OwnerPromptChunkArgs), true, request.Machine, cancellationToken);
+        return System.Text.Json.JsonSerializer.Deserialize(result, SessionsJson.Default.OwnerPromptChunk)!;
+    }
+
+    private RemoteMachine? ReadRemote(string sessionId)
+    {
+        var session = sessions.Get(sessionId) ?? throw new KeyNotFoundException("unknown session");
+        if (session.Machine is null) return null;
+        return machines.For(session) as RemoteMachine ?? throw new CallFailed("unknown owning machine");
+    }
+
     private void ValidateLocal(OwnerPromptRequest request)
     {
         var session = sessions.Get(request.Session) ?? throw new CallFailed("unknown session");

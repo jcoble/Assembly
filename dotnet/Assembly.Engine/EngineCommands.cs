@@ -70,7 +70,7 @@ public sealed class EngineCommands
                 context.EntityId != OwnerPromptIdentity.MessageId(prepared.ToSessionId, prepared.ClientId) ||
                 context.CommandId != OwnerPromptIdentity.CommandId(_machine, prepared.ToSessionId, prepared.ClientId))
                 return new(false, false, "bad_args", context.ExpectedVersion, 0, context.Epoch);
-            return MessageTransitions.Apply(scope, context, prepared.Request, _messageLimit());
+            return MessageTransitions.ApplyOwnerPrompt(scope, context, prepared);
         });
         return result.Error == "command_id_conflict" ? result with { Error = "client_id_conflict" } : result;
     }

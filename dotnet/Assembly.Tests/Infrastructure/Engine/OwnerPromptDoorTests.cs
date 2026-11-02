@@ -13,7 +13,7 @@ using Topics = Assembly.Infrastructure.Topics.Topics;
 
 namespace Assembly.Tests.Infrastructure.Engine;
 
-public sealed class OwnerPromptDoorTests
+public sealed partial class OwnerPromptDoorTests
 {
     [Theory]
     [InlineData(null)]
@@ -102,14 +102,22 @@ public sealed class OwnerPromptDoorTests
     {
         private readonly Topics _topics = new();
         public EngineFixture Fixture { get; }
-        public SessionStore Sessions { get; }
+        public SessionStore Sessions { get; private set; }
         public AttachmentStore Attachments { get; } = new(Path.Combine(Path.GetTempPath(), $"assembly-attachments-{Guid.NewGuid():N}"));
-        public EngineDoor Door { get; }
-        public FakeMachine Machine { get; }
-        private readonly EngineRuntime _runtime;
+        public EngineDoor Door { get; private set; }
+        public FakeMachine Machine { get; private set; }
+        private EngineRuntime _runtime;
         public Harness()
         {
             Fixture = new(topics: _topics);
+            Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, "isolated-checkouts");
+            Machine = new FakeMachine(null, Sessions);
+            _runtime = EngineRuntime.Start(Fixture.Db, _topics, Fixture.Time, Fixture.Limits);
+            Door = new(_runtime, Sessions, new MachineSet(Machine), Attachments, Fixture.Time);
+        }
+        public async Task Reopen()
+        {
+            await _runtime.DisposeAsync(); Fixture.Reopen();
             Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, "isolated-checkouts");
             Machine = new FakeMachine(null, Sessions);
             _runtime = EngineRuntime.Start(Fixture.Db, _topics, Fixture.Time, Fixture.Limits);

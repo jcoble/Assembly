@@ -27,13 +27,13 @@ public static class EngineSchema
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,4,$machine,1,0,0);
+                VALUES(1,5,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version == 4)
+        if (meta.Version == 5)
         {
             projectionSchema?.Invoke(scope);
             return new(meta.Machine, meta.Version);
@@ -48,7 +48,9 @@ public static class EngineSchema
             scope.Execute(UpgradeDelivery);
             Messages.MessageSchemaUpgrade.Apply(scope, meta.Machine, nowMs);
         }
-        SessionSchemaUpgrade.Apply(scope, projectionSchema);
+        if (meta.Version < 4) SessionSchemaUpgrade.Apply(scope, projectionSchema);
+        else projectionSchema?.Invoke(scope);
+        ComposerSchemaUpgrade.Apply(scope);
         return new(meta.Machine, meta.Version);
     }
 
@@ -124,7 +126,12 @@ public static class EngineSchema
             step_id TEXT REFERENCES engine_step(id), text TEXT NOT NULL, mode TEXT NOT NULL, state TEXT NOT NULL,
             provider_turn_id TEXT, reason TEXT, delivery TEXT NOT NULL DEFAULT 'wait',
             attempt INTEGER NOT NULL DEFAULT 0, in_flight INTEGER NOT NULL DEFAULT 0,
-            sender_label TEXT NOT NULL DEFAULT '', client_id TEXT NULL);
+            sender_label TEXT NOT NULL DEFAULT '', client_id TEXT NULL,
+            framed INTEGER NOT NULL DEFAULT 1 CHECK(framed IN (0,1)),
+            attachment_ids_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(attachment_ids_json) AND json_type(attachment_ids_json)='array'),
+            held_epoch INTEGER NULL, target_epoch INTEGER NULL CHECK(target_epoch IS NULL OR target_epoch>=0),
+            owner_content_sha256 TEXT NULL CHECK(owner_content_sha256 IS NULL OR
+                (length(owner_content_sha256)=64 AND owner_content_sha256 NOT GLOB '*[^0-9a-f]*')));
         CREATE TABLE engine_handoff ({{Shared}}
             session_id TEXT NOT NULL REFERENCES engine_session(id), old_holder TEXT NOT NULL, new_holder TEXT NOT NULL,
             old_epoch INTEGER NOT NULL, next_epoch INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT);

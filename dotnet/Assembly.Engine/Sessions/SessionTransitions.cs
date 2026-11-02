@@ -143,7 +143,7 @@ public static class SessionTransitions
         {
             events.AddRange(MessageTransitions.ChildEnded(scope, context, context.EntityId, effects));
         }
-        if (command.State is "idle" or "running")
+        if (command.State is "idle" or "running" or "ended")
             events.AddRange(MessageRelease.Next(scope, context, context.EntityId, effects));
         return Commit(scope, context, updated, "session.changed", effects, events, command.Reason);
     }

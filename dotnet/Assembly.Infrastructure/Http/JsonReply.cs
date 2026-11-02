@@ -12,14 +12,19 @@ internal static class JsonReply
 {
     public static async Task WriteAsync(HttpContext context, int status, Action<Utf8JsonWriter> body)
     {
-        var buffer = new ArrayBufferWriter<byte>();
-        using (var json = new Utf8JsonWriter(buffer, RowWire.Options))
-            body(json);
+        var buffer = Encode(body);
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
         // A length, not chunks: the app's image upload reads a plain HTTP/1.0 answer.
-        context.Response.ContentLength = buffer.WrittenCount;
-        await context.Response.Body.WriteAsync(buffer.WrittenMemory, context.RequestAborted);
+        context.Response.ContentLength = buffer.Length;
+        await context.Response.Body.WriteAsync(buffer, context.RequestAborted);
+    }
+
+    internal static ReadOnlyMemory<byte> Encode(Action<Utf8JsonWriter> body)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var json = new Utf8JsonWriter(buffer, RowWire.Options)) body(json);
+        return buffer.WrittenMemory;
     }
 
     public static Task ErrorAsync(HttpContext context, int status, string message) =>

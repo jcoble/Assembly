@@ -24,6 +24,17 @@ internal static class DisplayQueries
     {
         var fields = Columns(kind).Split(',').Select(column =>
             $"'{CamelCase(column)}',t.{column}");
+        if (kind == "message")
+        {
+            fields = fields.Select(field => field == "'text',t.text"
+                ? "'text',CASE WHEN t.framed=0 THEN substr(t.text,1,256) ELSE t.text END" : field);
+            return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+                "'framed',t.framed,'clientId',t.client_id,'providerTurnId',t.provider_turn_id," +
+                "'textComplete',CASE WHEN t.framed=1 OR length(CAST(substr(t.text,1,256) AS BLOB))=length(CAST(t.text AS BLOB)) THEN 1 ELSE 0 END," +
+                "'textUtf8Bytes',length(CAST(t.text AS BLOB)),'attachmentJsonUtf8Bytes',length(CAST(t.attachment_ids_json AS BLOB))," +
+                "'attachmentCount',json_array_length(t.attachment_ids_json),'ownerContentSha256',t.owner_content_sha256," +
+                "'targetEpoch',t.target_epoch,'heldEpoch',t.held_epoch)";
+        }
         return $"json_object('entityKind','{kind}',{string.Join(",", fields)})";
     }
 

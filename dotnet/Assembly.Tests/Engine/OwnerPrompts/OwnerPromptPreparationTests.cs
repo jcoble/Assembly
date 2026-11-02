@@ -95,7 +95,8 @@ public sealed class OwnerPromptPreparationTests(Xunit.Abstractions.ITestOutputHe
         Assert.Equal(prepared.ContentSha256, envelope.RootElement.GetProperty("requestSha256").GetString());
         var context = Context(f, prepared);
         var result = Apply(f, context, prepared);
-        Assert.NotEqual("command_too_large", result.Error);
+        Assert.True(result.Applied, result.Error);
+        Assert.Equal(prepared.TextUtf8Bytes, f.Db.QueryFirst("SELECT length(CAST(text AS BLOB)) FROM engine_message", r => r.Long(0), default));
         Assert.Equal(1, f.Count("engine_command_receipt"));
         var events = f.Count("engine_event"); var effects = f.Count("engine_outbox");
         f.Reopen();
@@ -103,7 +104,7 @@ public sealed class OwnerPromptPreparationTests(Xunit.Abstractions.ITestOutputHe
         Assert.Equal(events, f.Count("engine_event")); Assert.Equal(effects, f.Count("engine_outbox"));
         Assert.Equal("client_id_conflict", Apply(f, context, OwnerPromptFingerprint.Prepare(f.Machine, command with { Text = text[..^1] + "x" }, default)).Error);
         Assert.Equal(1, f.Count("engine_command_receipt"));
-        output.WriteLine($"Actual prepared Journal result: applied={result.Applied}, error={result.Error}; storage acceptance remains a separate pending transition.");
+        output.WriteLine($"Actual prepared Journal result: applied={result.Applied}, error={result.Error}; actual full storage acceptance and immutable replay verified.");
     }
 
     [Theory]
@@ -146,7 +147,7 @@ public sealed class OwnerPromptPreparationTests(Xunit.Abstractions.ITestOutputHe
         Assert.True(bytes.Length < 4 * 1024 * 1024);
         var restored = JsonSerializer.Deserialize(bytes, EngineSocketJson.Default.OwnerPromptChunk)!;
         Assert.Equal(chunk.Data, restored.Data); Assert.Equal(chunk.TotalBytes, restored.TotalBytes);
-        output.WriteLine($"Generated DTO sizes only: manifest={json.Length}, 1MiB chunk={bytes.Length}; actual page/chunk routes remain pending schema/read source.");
+        output.WriteLine($"Generated DTO sizes only: manifest={json.Length}, 1MiB chunk={bytes.Length}; actual registered page/chunk framing is covered separately.");
     }
 
     private static CommandContext Context(EngineFixture f, PreparedOwnerPrompt prepared) => new(

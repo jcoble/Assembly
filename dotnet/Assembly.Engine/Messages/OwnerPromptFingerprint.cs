@@ -38,7 +38,9 @@ public static class OwnerPromptFingerprint
         cancellationToken.ThrowIfCancellationRequested();
         var attachmentJson = JsonSerializer.Serialize<IReadOnlyList<string>>(references, EngineJson.Default.IReadOnlyListString);
         var attachmentJsonBytes = Encode(attachmentJson, null, cancellationToken);
-        return new(machine, snapshot, attachmentJson, Convert.ToHexStringLower(hash.GetHashAndReset()), textBytes, attachmentJsonBytes);
+        var storageTextUtf8 = Utf8.GetBytes(snapshot.Text);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new(machine, snapshot, attachmentJson, Convert.ToHexStringLower(hash.GetHashAndReset()), textBytes, attachmentJsonBytes, storageTextUtf8);
     }
 
     private static long AddString(IncrementalHash hash, string text, CancellationToken cancellationToken)

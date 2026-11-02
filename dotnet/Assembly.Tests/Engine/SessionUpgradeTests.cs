@@ -19,11 +19,11 @@ namespace Assembly.Tests.Engine;
 public sealed class SessionUpgradeTests
 {
     [Fact]
-    public void Fresh_v4_allows_unknown_model_and_records_account_context()
+    public void Fresh_v5_allows_unknown_model_and_records_account_context()
     {
         using var file = new TempDatabase(); using var db = TestDatabase.Open(file.Path);
         var machine = EngineSchema.Open(db, 1000);
-        Assert.Equal(4, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(5, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         db.Writer.Write("test.null-model", scope => scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,
                 activity_state,holder,epoch,cancel_requested,account_context)
@@ -39,6 +39,7 @@ public sealed class SessionUpgradeTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(3)]
+    [InlineData(4)]
     public void Frozen_versions_upgrade_with_history_indices_and_references_unchanged(int version)
     {
         using var f = new OldDb(version);
@@ -48,12 +49,13 @@ public sealed class SessionUpgradeTests
         var before = f.History(columns); var indexes = f.Indices(); var keys = f.ForeignKeys();
         var machine = f.Text("SELECT machine_id FROM engine_meta");
         Assert.Equal(machine, EngineSchema.Open(f.Db, 10000));
-        Assert.Equal(4, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(5, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(before, f.History(columns)); Assert.Equal(indexes, f.Indices()); Assert.Equal(keys, f.ForeignKeys());
         Assert.Equal(0, f.Number("SELECT \"notnull\" FROM pragma_table_info('engine_session') WHERE name='model'"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_session') WHERE name='account_context'"));
         Assert.Equal(0, f.Number("SELECT COUNT(*) FROM engine_session WHERE account_context<>''"));
         Assert.Empty(f.Db.Query("PRAGMA foreign_key_check", r => r.Text(0), default));
+        Assert.Equal(0, f.Number("SELECT COUNT(*) FROM engine_message WHERE framed<>1 OR attachment_ids_json<>'[]' OR held_epoch IS NOT NULL OR target_epoch IS NOT NULL OR owner_content_sha256 IS NOT NULL"));
         Assert.Equal(machine, EngineSchema.Open(f.Db, 11000)); Assert.Equal(before, f.History(columns));
     }
 
@@ -70,6 +72,19 @@ public sealed class SessionUpgradeTests
             s => ProjectionSchema(s))));
         Assert.Equal(before, f.Snapshot()); Assert.Equal(3, f.Number("SELECT schema_version FROM engine_meta"));
         Assert.Equal(0, published);
+    }
+
+    [Fact]
+    public void Actual_v4_composer_upgrade_failure_rolls_back_all_added_columns_and_history()
+    {
+        using var f = new OldDb(4);
+        var before = f.Snapshot();
+        Assert.Throws<IOException>(() => f.Db.Writer.Write("test.failed-composer", scope =>
+            Initialize(new FaultScope(scope, "UPDATE engine_meta SET schema_version=5"))));
+        Assert.Equal(before, f.Snapshot()); Assert.Equal(4, f.Number("SELECT schema_version FROM engine_meta"));
+        Assert.Equal(0, f.Number("SELECT COUNT(*) FROM pragma_table_info('engine_message') WHERE name='framed'"));
+        Assert.Equal(f.Text("SELECT machine_id FROM engine_meta"), EngineSchema.Open(f.Db, 10000));
+        Assert.Equal(5, f.Number("SELECT schema_version FROM engine_meta"));
     }
 
     [Theory]
@@ -118,7 +133,7 @@ public sealed class SessionUpgradeTests
             cutover.Initialize(scope, new(schema.Machine, new(() => 1, () => 5)), schema.Machine, 11000, schema.PreviousVersion is 1 or 2 or 3);
             return schema;
         });
-        Assert.Equal(4, next.PreviousVersion); Assert.Equal(first.Machine, next.Machine);
+        Assert.Equal(5, next.PreviousVersion); Assert.Equal(first.Machine, next.Machine);
         Assert.Equal(0, f.Number("SELECT managed_checkout FROM engine_session WHERE id='pending'"));
     }
 

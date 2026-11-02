@@ -45,6 +45,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         public bool OmitBulkIdentity { get; set; }
         public string? BulkIdentity { get; set; }
         public int OwnerReadCalls;
+        public Func<string, CallContext, Task>? OwnerReading { get; set; }
         internal MachineForward? Forwarder { get; set; }
         private EngineRuntime StartRuntime() => EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time, new(() => 1, () => 5), _effects);
         private readonly bool _windowCalls;
@@ -118,7 +119,11 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.MachineCalls);
                         if (host.Identifying is { } identify) await identify().WaitAsync(call.Cancellation);
                     }
-                    if (feature == "engine" && method is "entity" or "usage") Interlocked.Increment(ref host.OwnerReadCalls);
+                    if (feature == "engine" && method is "entity" or "usage" or "owner_prompts" or "owner_prompt_chunk")
+                    {
+                        Interlocked.Increment(ref host.OwnerReadCalls);
+                        if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);
+                    }
                     return await handler(value, call);
                 }, bulk);
             public void Write<TArgs, TResult>(string feature, string method, JsonTypeInfo<TArgs> args, JsonTypeInfo<TResult> result,

@@ -4,7 +4,7 @@ using Assembly.Engine.Contracts;
 
 namespace Assembly.Engine.Reading;
 
-public sealed class EngineReader(IAppDatabase db, string machine)
+public sealed partial class EngineReader(IAppDatabase db, string machine)
 {
     public MachineInfo Machine(CancellationToken cancellationToken)
     {

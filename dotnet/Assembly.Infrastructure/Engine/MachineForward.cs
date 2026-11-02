@@ -2,6 +2,7 @@ using System.IO;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Common.Engine;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Infrastructure.Remote;
@@ -11,6 +12,13 @@ namespace Assembly.Infrastructure.Engine;
 /// <summary>Forwards through the existing owner's sockets without creating local engine state.</summary>
 internal sealed class MachineForward(Func<string, RemoteMachine?> byMachineId)
 {
+    public Task<OwnerPromptPage> OwnerPromptsAsync(string machine, OwnerPromptReadArgs args,
+        Func<OwnerPromptPage, int> encodedBytes, CancellationToken ct)
+    {
+        var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
+        return remote.ReadOwnerPromptPageAsync(args, encodedBytes, machine, ct);
+    }
+
     public async Task<CommandResult> CommandAsync(string machine, WindowCommand command, CancellationToken ct)
     {
         var args = JsonSerializer.SerializeToElement(command with { Machine = null }, EngineSocketJson.Default.WindowCommand);

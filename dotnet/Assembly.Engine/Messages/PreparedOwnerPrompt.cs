@@ -20,11 +20,13 @@ public sealed class PreparedOwnerPrompt
     public long TextUtf8Bytes { get; }
     public long AttachmentJsonUtf8Bytes { get; }
     public long AttachmentCount => AttachmentIds.Count;
+    internal byte[] StorageTextUtf8 { get; }
     internal string CanonicalJournal { get; }
 
     internal PreparedOwnerPrompt(string machine, SendOwnerPrompt request, string attachmentIdsJson,
-        string contentSha256, long textUtf8Bytes, long attachmentJsonUtf8Bytes)
+        string contentSha256, long textUtf8Bytes, long attachmentJsonUtf8Bytes, byte[] storageTextUtf8)
     {
+        StorageTextUtf8 = storageTextUtf8;
         Machine = machine; Request = request; AttachmentIdsJson = attachmentIdsJson;
         ContentSha256 = contentSha256; TextUtf8Bytes = textUtf8Bytes; AttachmentJsonUtf8Bytes = attachmentJsonUtf8Bytes;
         CanonicalJournal = JsonSerializer.Serialize(new OwnerPromptJournalEnvelope("send_owner_prompt", 1,

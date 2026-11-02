@@ -24,6 +24,9 @@ public static class MessageTransitions
         var recipient = FindRecipient(s, current.To)!;
         if (c.Epoch != recipient.Epoch)
             return Refused(c, "stale_epoch", current.Version, recipient.Epoch);
+        if (s.QueryFirst("SELECT held_epoch FROM engine_message WHERE id=$id AND framed=0",
+            r => r.IsNull(0) ? (long?)null : r.Long(0), new SqlArg("$id", current.Id)) is { } held && held != recipient.Epoch)
+            return Refused(c, "stale_epoch", current.Version, recipient.Epoch);
         if (c.ExpectedVersion != current.Version)
             return Refused(c, "version_conflict", current.Version);
         if (command is not MessageOutcome outcome)
@@ -62,6 +65,33 @@ public static class MessageTransitions
         if (outcome.State != "queued" || outcome.Reason == "not_delivered" || recipientVersion != releasedVersion)
             ReleaseNext(s, c, current.To, effects, events);
         return EngineJournal.Commit(s, c, Find(s, current.Id)!.Version, c.Epoch, events, effects);
+    }
+
+    internal static CommandResult ApplyOwnerPrompt(IWriteScope s, CommandContext c, PreparedOwnerPrompt prepared)
+    {
+        if (string.IsNullOrWhiteSpace(prepared.ToSessionId) || prepared.TargetEpoch < 0 ||
+            prepared.ClientId.Length is < 1 or > 64 || prepared.ClientId.Any(ch =>
+                !(ch is >= 'a' and <= 'z' or >= 'A' and <= 'Z' or >= '0' and <= '9' or '-' or '_')))
+            return Refused(c, "bad_args");
+        var recipient = FindRecipient(s, prepared.ToSessionId);
+        if (recipient is null) return Refused(c, "bad_args");
+        if (prepared.TargetEpoch is { } target && target != recipient.Epoch)
+            return Refused(c, "stale_epoch", epoch: recipient.Epoch);
+        if (recipient.State == "ended") return Refused(c, "unavailable", epoch: recipient.Epoch);
+        if (Find(s, c.EntityId) is not null) return Refused(c, "invalid_transition", epoch: recipient.Epoch);
+        var captured = c with { Epoch = recipient.Epoch };
+        var message = new Message(c.EntityId, 1, null, prepared.ToSessionId, prepared.Text, "prompt", "queued");
+        Insert(s, captured, message, "window", null);
+        s.Execute("""
+            UPDATE engine_message SET text=CAST($rawText AS TEXT),framed=0,client_id=$client,attachment_ids_json=$attachments,
+                held_epoch=$held,target_epoch=$target,owner_content_sha256=$digest WHERE id=$id
+            """, new("$rawText", prepared.StorageTextUtf8), new("$client", prepared.ClientId), new("$attachments", prepared.AttachmentIdsJson),
+            new("$held", recipient.Epoch), new("$target", prepared.TargetEpoch),
+            new("$digest", prepared.ContentSha256), new("$id", c.EntityId));
+        List<EventDraft> events = [Changed(captured, message)];
+        List<EffectDraft> effects = [];
+        ReleaseNext(s, captured, message.To, effects, events);
+        return EngineJournal.Commit(s, captured, Find(s, message.Id)!.Version, recipient.Epoch, events, effects);
     }
 
     private static CommandResult Send(IWriteScope s, CommandContext c, SendMessage command, Message? current, int messageLimit)
@@ -147,12 +177,11 @@ public static class MessageTransitions
         var messages = s.Query("""
             UPDATE engine_message SET state=$state,reason=$reason,version=version+1,updated_ms=$now
             WHERE to_session_id=$session AND state='held'
-            RETURNING id,version,from_session_id,to_session_id,text,mode,state
+            RETURNING id,version,from_session_id,to_session_id,CASE WHEN framed=0 THEN '' ELSE text END,mode,state
             """, ReadMessage, new("$state", ended ? "failed" : "queued"), new("$reason", ended ? "recipient_ended" : null),
             new("$now", c.NowMs), new("$session", sessionId));
         List<EventDraft> events = messages.Select(message => Changed(c, message)).ToList();
-        if (!ended)
-            ReleaseNext(s, c, sessionId, effects, events);
+        ReleaseNext(s, c, sessionId, effects, events);
         return events;
     }
 
@@ -187,7 +216,7 @@ public static class MessageTransitions
         "SELECT epoch,state,cancel_requested,run_id FROM engine_session WHERE id=$id",
         r => new Recipient(r.Long(0), r.Text(1), r.Long(2) != 0, r.IsNull(3) ? null : r.Text(3)), new SqlArg("$id", id));
     private static Message? Find(IWriteScope s, string id) => s.QueryFirst(
-        "SELECT id,version,from_session_id,to_session_id,text,mode,state FROM engine_message WHERE id=$id", ReadMessage, new SqlArg("$id", id));
+        "SELECT id,version,from_session_id,to_session_id,CASE WHEN framed=0 THEN '' ELSE text END,mode,state FROM engine_message WHERE id=$id", ReadMessage, new SqlArg("$id", id));
     private static Message ReadMessage(IRow r) => new(r.Text(0), r.Long(1), r.IsNull(2) ? null : r.Text(2), r.Text(3), r.Text(4), r.Text(5), r.Text(6));
     private static CommandResult Refused(CommandContext c, string error, long version = 0, long? epoch = null) =>
         new(false, false, error, version, 0, epoch ?? c.Epoch);

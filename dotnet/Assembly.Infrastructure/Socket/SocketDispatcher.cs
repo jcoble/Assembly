@@ -258,7 +258,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         using var token = call.Writes
             ? CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token)
             : CancellationTokenSource.CreateLinkedTokenSource(cancelled, limit.Token, connection.Closed);
-        var context = new CallContext(token.Token, connection.Id, connection.Closed);
+        var context = new CallContext(token.Token, connection.Id, Closed: connection.Closed, ReplyId: id);
         try
         {
             // A write joins its key's queue, or else its socket's, now, in arrival order; a read runs off the receive
@@ -266,7 +266,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
             var result = call.Writes
                 ? await connection.QueueWriteAsync(call.Order?.Invoke(args), () => call.RunAsync(args, context), token.Token)
                 : await Task.Run(() => call.RunAsync(args, context));
-            var answer = Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
+            var answer = Result(id, result);
             return Bounded(answer, id);
         }
         catch (KeyNotFoundException error)
@@ -301,6 +301,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// pass the 4 MB frame limit. The frames are read as JSON, never put into HTML.
     /// </summary>
     private static readonly JsonWriterOptions Json = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    internal static ReadOnlyMemory<byte> Result(long id, JsonElement result) =>
+        Frame(new ResultFrame(id, result), SocketJson.Default.ResultFrame);
 
     internal static ReadOnlyMemory<byte> Frame<T>(T frame, JsonTypeInfo<T> type)
     {
