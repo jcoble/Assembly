@@ -34,7 +34,7 @@ public sealed class AccountSchemaTests
         });
         var before = LegacyDigest(db); Assert.Equal(0, db.QueryFirst("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='engine_meta'", r => r.Long(0), default));
         EngineSchema.Open(db, 1001);
-        Assert.Equal(9, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default)); Assert.Equal(before, LegacyDigest(db));
+        Assert.Equal(10, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default)); Assert.Equal(before, LegacyDigest(db));
         Assert.Equal(4, db.QueryFirst("PRAGMA user_version", r => r.Long(0), default));
         foreach (var table in new[] { "engine_session", "engine_provider", "engine_sign_in", "engine_outbox", "engine_event" }) Assert.Equal(0, db.QueryFirst($"SELECT COUNT(*) FROM {table}", r => r.Long(0), default));
     }
@@ -43,8 +43,8 @@ public sealed class AccountSchemaTests
     public void Compatible_default_context_history_changes_only_schema_authority_and_keeps_exact_references_and_receipts()
     {
         using var f = new AccountIdentityFixture(); var before = f.Digest(); var result = f.Initialize();
-        Assert.Equal(8, result.PreviousVersion); Assert.Equal(9, f.Core.Number("SELECT schema_version FROM engine_meta")); Assert.Equal(before, f.Digest());
-        Assert.Equal(9, f.Initialize().PreviousVersion); Assert.Equal(before, f.Digest());
+        Assert.Equal(8, result.PreviousVersion); Assert.Equal(10, f.Core.Number("SELECT schema_version FROM engine_meta")); Assert.Equal(before, f.Digest());
+        Assert.Equal(10, f.Initialize().PreviousVersion); Assert.Equal(before, f.Digest());
     }
 
     [Theory]
@@ -95,7 +95,7 @@ public sealed class AccountSchemaTests
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using (var runtime = EngineRuntime.Start(f.Core.Db, f.Topics, f.Core.Time, f.Core.Limits, effectsReady: ready.Task, isConfiguredProvider: configured))
         {
-            Assert.Equal(9, f.Core.Number("SELECT schema_version FROM engine_meta"));
+            Assert.Equal(10, f.Core.Number("SELECT schema_version FROM engine_meta"));
             Assert.Equal(signIn ? "failed" : "could_not_check", f.Core.Text(signIn ? "SELECT state FROM engine_sign_in" : "SELECT auth_state FROM engine_provider"));
         }
         var receipts = f.Core.Count("engine_command_receipt");
@@ -104,10 +104,10 @@ public sealed class AccountSchemaTests
     }
 
     [Fact]
-    public void Future_schema_ten_remains_unsupported_without_mutating_its_authority()
+    public void Future_schema_eleven_remains_unsupported_without_mutating_its_authority()
     {
-        using var f = new AccountIdentityFixture(); f.Version(10); var before = f.Digest();
-        Assert.Throws<InvalidOperationException>(() => f.Initialize()); Assert.Equal(10, f.Core.Number("SELECT schema_version FROM engine_meta")); Assert.Equal(before, f.Digest());
+        using var f = new AccountIdentityFixture(); f.Version(11); var before = f.Digest();
+        Assert.Throws<InvalidOperationException>(() => f.Initialize()); Assert.Equal(11, f.Core.Number("SELECT schema_version FROM engine_meta")); Assert.Equal(before, f.Digest());
     }
 
     private static string LegacyDigest(global::Assembly.Infrastructure.Persistence.AppDatabase db)

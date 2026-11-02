@@ -78,12 +78,12 @@ public sealed class SchemaTests
     }
 
     [Fact]
-    public void Version_10_refuses()
+    public void Version_11_refuses()
     {
         using var f = new EngineFixture();
-        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=10"));
+        f.Db.Writer.Write("test.newer-schema", s => s.Execute("UPDATE engine_meta SET schema_version=11"));
         Assert.Throws<InvalidOperationException>(() => EngineSchema.Open(f.Db, 1000));
-        Assert.Equal(10, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(11, f.Db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
     }
 
     [Fact]
@@ -166,7 +166,7 @@ public sealed class SchemaTests
 
         Assert.Equal("original-machine", EngineSchema.Open(db, 2000));
 
-        Assert.Equal(9, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
+        Assert.Equal(10, db.QueryFirst("SELECT schema_version FROM engine_meta", r => r.Long(0), default));
         Assert.Equal(before, StoredRows(db));
         Assert.Equal("s", db.QueryFirst("SELECT order_key FROM engine_outbox WHERE id='effect'", r => r.Text(0), default));
         Assert.Equal(new long[] { 1, 2, 3 }, db.Query("SELECT seq FROM engine_event ORDER BY seq", r => r.Long(0), default));
@@ -225,7 +225,7 @@ public sealed class SchemaTests
                 .Where(column => table switch
                 {
                     "engine_message" => column is not ("delivery" or "attempt" or "in_flight" or "sender_label" or "client_id" or "framed" or "attachment_ids_json" or "held_epoch" or "target_epoch" or "owner_content_sha256" or "expires_ms"),
-                    "engine_session" => column is not ("can_steer" or "account_context" or "managed_checkout"),
+                    "engine_session" => column is not ("can_steer" or "account_context" or "managed_checkout" or "project_id" or "branch" or "checkout_state" or "checkout_operation_id" or "checkout_intent_json"),
                     "engine_needs_me" => column != "addressee_session_id",
                     "engine_outbox" => column != "order_key",
                     _ => true

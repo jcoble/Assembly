@@ -44,6 +44,7 @@ namespace Assembly.Engine;
 [JsonSerializable(typeof(EnableEffect))]
 [JsonSerializable(typeof(CompleteEffect))]
 [JsonSerializable(typeof(SessionEffectData))]
+[JsonSerializable(typeof(AssignProject))]
 [JsonSerializable(typeof(AnswerEffectData))]
 [JsonSerializable(typeof(MessageEffectData))]
 [JsonSerializable(typeof(TurnPayload))]

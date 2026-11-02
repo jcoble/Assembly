@@ -16,3 +16,5 @@ public sealed record LinkTask(string TaskUrl) : SessionCommand;
 
 public sealed record ReportSessionModel(string? Model) : SessionCommand;
 public sealed record ReportSessionTitle(string Title) : SessionCommand;
+
+public sealed record AssignProject(string ProjectId) : SessionCommand;

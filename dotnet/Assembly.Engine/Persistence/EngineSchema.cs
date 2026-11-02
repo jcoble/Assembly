@@ -30,19 +30,20 @@ public static class EngineSchema
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,9,$machine,1,0,0);
+                VALUES(1,10,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version is 6 or 7 or 8 or 9)
+        if (meta.Version is 6 or 7 or 8 or 9 or 10)
         {
             projectionSchema?.Invoke(scope);
             if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
             if (meta.Version < 8) AuthSchemaUpgrade.Apply(scope);
             AccountIdentitySchema.Validate(scope, meta.Version < 9);
-            if (meta.Version < 9) scope.Execute("UPDATE engine_meta SET schema_version=9 WHERE singleton=1");
+            if (meta.Version < 10) SessionProjectSchemaUpgrade.Apply(scope);
+            if (meta.Version < 10) scope.Execute("UPDATE engine_meta SET schema_version=10 WHERE singleton=1");
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -62,7 +63,8 @@ public static class EngineSchema
         NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
         AuthSchemaUpgrade.Apply(scope);
         AccountIdentitySchema.Validate(scope, true);
-        scope.Execute("UPDATE engine_meta SET schema_version=9 WHERE singleton=1");
+        SessionProjectSchemaUpgrade.Apply(scope);
+        scope.Execute("UPDATE engine_meta SET schema_version=10 WHERE singleton=1");
         return new(meta.Machine, meta.Version);
     }
 
@@ -111,6 +113,10 @@ public static class EngineSchema
         CREATE TABLE engine_session ({{Shared}}
             provider TEXT NOT NULL, model TEXT NULL, folder TEXT NOT NULL, title TEXT NOT NULL,
             account_context TEXT NOT NULL DEFAULT '',
+            project_id TEXT NULL, branch TEXT NULL,
+            checkout_state TEXT NOT NULL DEFAULT 'ready' CHECK(checkout_state IN ('ready','pending','refused')),
+            checkout_operation_id TEXT NULL,
+            checkout_intent_json TEXT NULL CHECK(checkout_intent_json IS NULL OR json_valid(checkout_intent_json)),
             managed_checkout INTEGER NOT NULL DEFAULT 0 CHECK(managed_checkout IN (0,1)),
             state TEXT NOT NULL, activity_state TEXT NOT NULL,
             parent_id TEXT REFERENCES engine_session(id), run_id TEXT REFERENCES engine_run(id),

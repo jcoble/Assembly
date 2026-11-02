@@ -11,7 +11,7 @@ internal static class DisplayQueries
     private const string Common = "id,version,machine,created_ms,updated_ms,task_url";
     private static string Columns(string kind) => Common + "," + (kind switch
     {
-        "session" => "provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,lost_ms",
+        "session" => "provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,lost_ms,project_id,branch,checkout_state,checkout_operation_id",
         "run" => "owner_session_id,worktree,branch,pr_id,state,owner_loss_limit_ms,owner_lost_ms",
         "step" => "run_id,name,session_id,state,attempt,max_attempts,required,rule_skippable,started_ms,ended_ms,outcome_reason",
         "needs_me" => "session_id,run_id,step_id,kind,text,options_json,state,deadline_ms,answered_by,answered_ms,addressee_session_id",
