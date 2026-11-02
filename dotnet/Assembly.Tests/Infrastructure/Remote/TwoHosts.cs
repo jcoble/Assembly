@@ -119,7 +119,7 @@ internal sealed class TwoHosts : IAsyncDisposable
                         Interlocked.Increment(ref host.MachineCalls);
                         if (host.Identifying is { } identify) await identify().WaitAsync(call.Cancellation);
                     }
-                    if (feature == "engine" && method is "entity" or "usage" or "owner_prompts" or "owner_prompt_chunk")
+                    if (feature == "engine" && method is "entity" or "usage" or "owner_prompts" or "owner_prompt_chunk" or "session_title" or "session_title_chunk")
                     {
                         Interlocked.Increment(ref host.OwnerReadCalls);
                         if (host.OwnerReading is { } reading) await reading(method, call).WaitAsync(call.Cancellation);

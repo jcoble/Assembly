@@ -11,7 +11,7 @@ using Assembly.Infrastructure.Remote;
 namespace Assembly.Infrastructure.Engine;
 
 /// <summary>Prepares an owner prompt for the caller's existing writer; performs no provider send.</summary>
-public sealed class EngineDoor(EngineRuntime runtime, SessionStore sessions, MachineSet machines,
+public sealed partial class EngineDoor(EngineRuntime runtime, SessionStore sessions, MachineSet machines,
     AttachmentStore attachments, TimeProvider time) : IEngineDoor
 {
     public async Task<Func<IWriteScope, OwnerPromptAccepted>> PrepareOwnerPromptAsync(

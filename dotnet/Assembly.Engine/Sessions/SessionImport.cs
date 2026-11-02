@@ -40,9 +40,9 @@ public static class SessionImport
             scope.Execute("""
                 INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,
                     account_context,state,activity_state,parent_id,holder,epoch,cancel_requested,managed_checkout)
-                VALUES($id,1,$machine,$now,$now,$provider,$model,$folder,$title,$account,'idle','idle',$parent,'local',0,0,1)
+                VALUES($id,1,$machine,$now,$now,$provider,$model,$folder,CAST($title AS TEXT),$account,'idle','idle',$parent,'local',0,0,1)
                 """, new("$id", session.Id), new("$machine", machine), new("$now", nowMs), new("$provider", session.Provider),
-                new("$model", session.Model), new("$folder", session.Folder), new("$title", session.Title),
+                new("$model", session.Model), new("$folder", session.Folder), new("$title", new System.Text.UTF8Encoding(false, true).GetBytes(session.Title)),
                 new("$account", session.AccountContext), new("$parent", session.ParentId));
             var context = new CommandContext(Guid.NewGuid(), machine, new(ActorKind.System, "session.import"), session.Id, 0, 0, nowMs);
             EngineJournal.Commit(scope, context, 1, 0,

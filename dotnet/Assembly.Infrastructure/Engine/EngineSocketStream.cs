@@ -196,7 +196,9 @@ public sealed class EngineSocketStream(EngineRuntime runtime)
             {
                 Closed.ThrowIfCancellationRequested();
                 if (version != Volatile.Read(ref _snapshotVersion)) return;
-                var page = snapshot.ReadNext();
+                var page = snapshot.ReadNext(candidate => JsonSerializer.SerializeToUtf8Bytes(
+                    new EngineSnapshotFrame(_id, _machine, candidate.Through, candidate.Items, candidate.HasMore, candidate.At),
+                    EngineSocketJson.Default.EngineSnapshotFrame).Length);
                 more = page.HasMore;
                 var frame = JsonSerializer.Serialize(new EngineSnapshotFrame(_id, _machine, page.Through, page.Items, more, page.At),
                     EngineSocketJson.Default.EngineSnapshotFrame);

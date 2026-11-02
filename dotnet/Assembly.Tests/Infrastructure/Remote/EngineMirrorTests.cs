@@ -99,19 +99,27 @@ public sealed class EngineMirrorTests
     {
         await using var h = new TwoHosts();
         await h.Start();
+        var body = new string('x', 20000);
         h.Remote.Fixture.Db.Writer.Write("test.large", s =>
         {
             for (var i = 0; i < 1600; i++)
                 s.Execute("""
-                    INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,provider,model,folder,title,state,activity_state,holder,epoch,cancel_requested)
-                    SELECT $id,0,machine,1000,1000,provider,model,folder,$title,state,activity_state,holder,epoch,cancel_requested
+                    INSERT INTO engine_message(id,version,machine,created_ms,updated_ms,sender_kind,to_session_id,text,mode,state,sender_label,framed)
+                    SELECT $id,0,machine,1000,1000,'system',id,$body,'prompt','failed','Assembly',1
                     FROM engine_session WHERE id='s'
-                    """, new("$id", $"large-{i:D4}"), new("$title", new string('x', 20000)));
+                    """, new("$id", $"large-{i:D4}"), new("$body", body));
             return 0;
         });
         await h.StartMirror();
         Assert.Equal(1601, h.Mac.Fixture.Count("engine_mirror_row"));
         Assert.True(h.Mac.Fixture.Number("SELECT SUM(length(row_json)) FROM engine_mirror_row") > 30 * 1024 * 1024);
+        Assert.Equal(1600, h.Mac.Fixture.Number("""
+            SELECT COUNT(*) FROM engine_mirror_row WHERE entity_kind='message'
+                AND json_extract(row_json,'$.text')=$body AND json_extract(row_json,'$.textComplete')=1
+                AND json_extract(row_json,'$.textUtf8Bytes')=20000 AND json_extract(row_json,'$.framed')=1
+                AND json_extract(row_json,'$.senderLabel')='Assembly' AND json_extract(row_json,'$.toSessionId')='s'
+                AND json_extract(row_json,'$.state')='failed'
+            """, new SqlArg("$body", body)));
     }
 
     [Fact]

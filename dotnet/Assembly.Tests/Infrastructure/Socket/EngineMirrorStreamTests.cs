@@ -49,7 +49,7 @@ public sealed partial class EngineSocketTests
         await MirrorSubscribe(socket, after: 0);
         var page = await Read(socket);
         Assert.Equal("engine_events", page.GetProperty("t").GetString());
-        Assert.Equal(11, page.GetProperty("events").GetArrayLength());
+        Assert.True(page.GetProperty("events").GetArrayLength() == 11, page.GetRawText());
         var rows = page.GetProperty("rows").EnumerateArray().ToArray();
         Assert.Equal(7, rows.Length);
         Assert.DoesNotContain(rows, r => r.GetProperty("entityKind").GetString() is "usage" or "tool_call" or "effect");
@@ -388,7 +388,7 @@ public sealed partial class EngineSocketTests
             INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,kind,text,options_json,state,answer_json)
             VALUES('needs_me',0,$m,1000,1000,'s','question','Question','[]','answered','{"secret":"private-secret"}');
             INSERT INTO engine_message(id,version,machine,created_ms,updated_ms,sender_kind,to_session_id,text,mode,state)
-            VALUES('message',0,$m,1000,1000,'owner','s','Message','normal','queued');
+            VALUES('message',0,$m,1000,1000,'owner','s','Message','normal','failed');
             INSERT INTO engine_handoff(id,version,machine,created_ms,updated_ms,session_id,old_holder,new_holder,old_epoch,next_epoch,state)
             VALUES('handoff',0,$m,1000,1000,'s','local','other',0,1,'requested');
             INSERT INTO engine_pr(id,version,machine,created_ms,updated_ms,run_id,repo,state)

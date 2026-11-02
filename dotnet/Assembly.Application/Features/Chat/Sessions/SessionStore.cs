@@ -27,7 +27,7 @@ public sealed partial class SessionStore
         CREATE INDEX IF NOT EXISTS helper_messages_pair ON helper_messages(from_session, to_session);
         """;
 
-    private const string Columns = "session_id, agent, repo_url, title, acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source";
+    private const string Columns = "session_id, agent, repo_url, CAST(title AS BLOB), acp_session_id, updated_at, machine, session_cost, parent_session_id, helper, read_seq, completed_at, settled_at, title_source";
 
     // A database made before sessions had a machine gets the column; its sessions all ran where it lives.
     private const string HasMachine = "SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name = 'machine';";
@@ -148,9 +148,11 @@ public sealed partial class SessionStore
     /// The session of the parent's subagent with that child session id, made the first time it's asked for. A child
     /// keeps its session for every delegation to it, so each one goes on in the same session.
     /// </summary>
-    public SessionInfo Child(SessionInfo parent, string childSessionId, string title) =>
+    public SessionInfo Child(SessionInfo parent, string childSessionId, string title)
+    {
+        var exactTitle = title is null ? null : TitleUtf8.GetBytes(title);
         // The look-up and the insert are one write, so two asks for the same child can't both make one.
-        _writer.Write("sessions.child", scope =>
+        return _writer.Write("sessions.child", scope =>
         {
             if (scope.QueryFirst($"SELECT {Columns} FROM session_info WHERE parent_session_id = $parent AND acp_session_id = $session;",
                     ReadSession, new SqlArg("$parent", parent.SessionId), new SqlArg("$session", childSessionId)) is { } known)
@@ -159,12 +161,13 @@ public sealed partial class SessionStore
                 parent.Machine, ParentSessionId: parent.SessionId);
             scope.Execute("""
                 INSERT INTO session_info(session_id, agent, repo_url, title, acp_session_id, created_at, updated_at, machine, parent_session_id)
-                VALUES ($id, $agent, $repo, $title, $session, $now, $now, $machine, $parent);
-                """, new SqlArg("$id", child.SessionId), new SqlArg("$agent", child.Agent), new SqlArg("$repo", child.RepoUrl), new SqlArg("$title", title),
+                VALUES ($id, $agent, $repo, CAST($title AS TEXT), $session, $now, $now, $machine, $parent);
+                """, new SqlArg("$id", child.SessionId), new SqlArg("$agent", child.Agent), new SqlArg("$repo", child.RepoUrl), new SqlArg("$title", exactTitle),
                 new SqlArg("$session", childSessionId), new SqlArg("$now", child.UpdatedAt), new SqlArg("$machine", child.Machine), new SqlArg("$parent", parent.SessionId));
             Publish(scope, child.SessionId);
             return child;
         });
+    }
 
     /// <summary>A helper session, which <paramref name="parent"/>'s agent started, on the parent's machine and repo.</summary>
     public SessionInfo Helper(SessionInfo parent, string agent, string title, string? initiatingSessionId = null)
@@ -173,8 +176,8 @@ public sealed partial class SessionStore
             ParentSessionId: parent.SessionId, Helper: true);
         CreateOwned(helper, initiatingSessionId, """
             INSERT INTO session_info(session_id, agent, repo_url, title, created_at, updated_at, machine, parent_session_id, helper)
-            VALUES ($id, $agent, $repo, $title, $now, $now, $machine, $parent, 1);
-            """, ("$id", helper.SessionId), ("$agent", agent), ("$repo", helper.RepoUrl), ("$title", title), ("$now", helper.UpdatedAt),
+            VALUES ($id, $agent, $repo, CAST($title AS TEXT), $now, $now, $machine, $parent, 1);
+            """, ("$id", helper.SessionId), ("$agent", agent), ("$repo", helper.RepoUrl), ("$title", title is null ? null : TitleUtf8.GetBytes(title)), ("$now", helper.UpdatedAt),
             ("$machine", helper.Machine), ("$parent", parent.SessionId));
         return helper;
     }
@@ -305,7 +308,7 @@ public sealed partial class SessionStore
             0 => new SessionsFeature.RailTotals((int)row.Long(8)),
             1 => row.Text(5),
             _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Text(6), row.Text(7),
-                (int)row.Long(8), Text(9)?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [], Text(10), Text(11), row.Long(12),
+                (int)row.Long(8), Text(9)?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [], row.IsNull(10) ? null : TitleUtf8.GetString(row.Blob(10)), Text(11), row.Long(12),
                 Long(13), row.Long(14) == 1, row.Long(15) == 1, row.Long(16) == 1, row.Long(17) == 1,
                 Text(18), Long(19), Text(20), Long(21), ProviderGlyph.Of(row.Text(5)), (int)row.Long(22), (int)row.Long(23),
                 row.Text(24), Text(25)),
@@ -317,17 +320,22 @@ public sealed partial class SessionStore
     /// model) or <c>user</c>. A helper title is kept over a later prompt one, and a user title over both; the check is in
     /// the write, so a title arriving meanwhile can't slip past it.
     /// </summary>
-    public void SetTitle(string sessionId, string title, string source) =>
+    public void SetTitle(string sessionId, string title, string source)
+    {
+        var titleUtf8 = title is null ? null : TitleUtf8.GetBytes(title);
         _writer.Write("sessions", scope =>
         {
             var before = Get(scope, sessionId)?.Title;
-            scope.Execute($"UPDATE session_info SET title = $title, title_source = $source WHERE session_id = $id AND {Rank("$source")} >= {Rank("title_source")};",
-                new SqlArg("$id", sessionId), new SqlArg("$title", title), new SqlArg("$source", source));
+            scope.Execute($"UPDATE session_info SET title = CAST($title AS TEXT), title_source = $source WHERE session_id = $id AND {Rank("$source")} >= {Rank("title_source")};",
+                new SqlArg("$id", sessionId), new SqlArg("$title", titleUtf8), new SqlArg("$source", source));
             var actual = Get(scope, sessionId)?.Title;
-            if (actual is not null && actual != before) _engine?.Titled(scope, sessionId, actual);
+            if (actual is not null && actual != before) _engine?.Titled(scope, sessionId, actual, TitleUtf8.GetBytes(actual));
             Publish(scope, sessionId);
             return 0;
         });
+    }
+
+    private static readonly System.Text.UTF8Encoding TitleUtf8 = new(false, true);
 
     private static string Rank(string source) => $"(CASE {source} WHEN 'user' THEN 2 WHEN 'helper' THEN 1 ELSE 0 END)";
 
@@ -349,23 +357,26 @@ public sealed partial class SessionStore
         });
 
     /// <summary>Applies a remote push and publishes the desktop's item after the metadata write commits.</summary>
-    public void ApplyRemote(SessionItem item) =>
+    public void ApplyRemote(SessionItem item)
+    {
+        var exactTitle = item.Title is null ? null : TitleUtf8.GetBytes(item.Title);
         _writer.Write("sessions.remote", scope =>
         {
             scope.Execute($"""
                 UPDATE session_info SET
                   title = CASE WHEN COALESCE(title_source, 'prompt') != 'user' AND helper = 0 AND $title IS NOT NULL
-                    AND {Rank("$source")} >= {Rank("title_source")} THEN $title ELSE title END,
+                    AND {Rank("$source")} >= {Rank("title_source")} THEN CAST($title AS TEXT) ELSE title END,
                   title_source = CASE WHEN COALESCE(title_source, 'prompt') != 'user' AND helper = 0 AND $title IS NOT NULL
                     AND {Rank("$source")} >= {Rank("title_source")} THEN $source ELSE title_source END,
                   updated_at = $at
                 WHERE session_id = $id;
-                """, new SqlArg("$id", item.SessionId), new SqlArg("$title", item.Title),
+                """, new SqlArg("$id", item.SessionId), new SqlArg("$title", exactTitle),
                 new SqlArg("$source", item.TitleSource ?? "prompt"), new SqlArg("$at", item.UpdatedAt));
             _summaries?.ApplyRemote(item);
             Publish(scope, item.SessionId);
             return 0;
         });
+    }
 
     /// <summary>The session's list item: its stored columns and its summary.</summary>
     public SessionItem Item(SessionInfo session) =>
@@ -489,7 +500,7 @@ public sealed partial class SessionStore
         _db.Query(sql, ReadSession, CancellationToken.None, Args(parameters));
 
     private static SessionInfo ReadSession(IRow row) =>
-        new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : row.Text(3), row.IsNull(4) ? null : row.Text(4), row.Long(5),
+        new(row.Text(0), row.Text(1), row.Text(2), row.IsNull(3) ? null : TitleUtf8.GetString(row.Blob(3)), row.IsNull(4) ? null : row.Text(4), row.Long(5),
             row.IsNull(6) ? null : row.Text(6),
             row.IsNull(7) ? null : decimal.Parse(row.Text(7), System.Globalization.CultureInfo.InvariantCulture),
             row.IsNull(8) ? null : row.Text(8), row.Long(9) == 1, row.Long(10),

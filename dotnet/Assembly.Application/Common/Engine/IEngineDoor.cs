@@ -4,6 +4,9 @@ namespace Assembly.Application.Common.Engine;
 
 public interface IEngineDoor
 {
+    Task<SessionTitleStat> ReadSessionTitleAsync(SessionTitleReadArgs request, CancellationToken cancellationToken);
+    Task<SessionTitleChunk> ReadSessionTitleChunkAsync(SessionTitleChunkArgs request, CancellationToken cancellationToken);
+
     Task<OwnerPromptPage> ReadOwnerPromptsAsync(OwnerPromptReadArgs request, CancellationToken cancellationToken);
     Task<OwnerPromptChunk> ReadOwnerPromptChunkAsync(OwnerPromptChunkArgs request, CancellationToken cancellationToken);
 
