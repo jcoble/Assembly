@@ -47,7 +47,10 @@ public sealed partial class EngineHelperCards(IAppDatabase db, TimeProvider time
     /// <summary>Call after a mirror page establishes its current generation, in that same writer.</summary>
     public void Mirrored(IWriteScope scope, string machine)
     {
-        foreach (var card in Read(scope, source: machine))
+        // A changed remote parent can also expose or retire a child owned by a different machine.
+        // Capture the complete authorized relation on this transaction's current mirror generations.
+        var cards = Read(scope);
+        foreach (var card in cards.Where(card => card.Session.Machine is not null))
         {
             if (card.Session.Machine is not { Length: > 0 } || string.IsNullOrWhiteSpace(card.Session.Agent) ||
                 string.IsNullOrWhiteSpace(card.Session.WorkingFolder))
@@ -59,8 +62,21 @@ public sealed partial class EngineHelperCards(IAppDatabase db, TimeProvider time
             // Materialize only the remote display cache in this mirror transaction, before publishing its card.
             // This overload uses the actual remote folder without resolving a local owning Engine session.
             sessions.ProjectEngineSession(scope, card.Session, null, card.Session.WorkingFolder);
-            scope.AfterCommit(() => Publish(card));
         }
+        scope.AfterCommit(() =>
+        {
+            lock (_gate)
+            {
+                var retained = cards.Select(card => card.Id).ToHashSet(StringComparer.Ordinal);
+                foreach (var id in _current.Keys.Where(id => !retained.Contains(id)).ToArray())
+                {
+                    _current = _current.Remove(id);
+                    _pending.Remove(id);
+                    _shown.Remove(id);
+                }
+                foreach (var card in cards) Publish(card);
+            }
+        });
     }
 
     /// <summary>Copied terminal rows supply display details; current Engine state still decides activity.</summary>

@@ -98,7 +98,7 @@ async fn a_second_click_waits_for_the_first_create(cx: &mut TestAppContext) {
         return;
     };
     let (form, cx) = opened(&backend, cx).await;
-    type_folder(&form, "/repo", cx);
+    type_folder(&form, "https://github.com/owner/repo", cx);
     form.update(cx, |form, cx| {
         form.agent = Some("first".into());
         form.create(cx);

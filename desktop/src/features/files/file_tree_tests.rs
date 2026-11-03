@@ -52,7 +52,7 @@ fn a_new_tree_loads_the_root_first() {
 }
 
 #[test]
-fn opening_a_folder_loads_it_once_and_closing_hides_it() {
+fn collapsing_drops_descendants_and_reopening_reads_them_again() {
     let mut tree = FileTree::default();
     tree.start();
     tree.loaded("", listing(vec![entry("src", true), entry("a.txt", false)]));
@@ -65,7 +65,16 @@ fn opening_a_folder_loads_it_once_and_closing_hides_it() {
     assert_eq!(shape(&tree), ["src/ v", "  lib/", "  main.rs", "a.txt"]);
     assert_eq!(tree.toggle("src"), None);
     assert_eq!(shape(&tree), ["src/", "a.txt"]);
-    assert_eq!(tree.toggle("src"), None, "already loaded");
+    assert_eq!(
+        tree.toggle("src"),
+        Some("src".into()),
+        "collapsed descendants are read fresh"
+    );
+    assert_eq!(shape(&tree), ["src/ v", "  …", "a.txt"]);
+    tree.loaded(
+        "src",
+        listing(vec![entry("src/lib", true), entry("src/main.rs", false)]),
+    );
     assert_eq!(shape(&tree), ["src/ v", "  lib/", "  main.rs", "a.txt"]);
 }
 
@@ -146,4 +155,18 @@ fn subsequent_directory_pages_append_unique_entries_and_keep_the_continuation() 
     );
     assert_eq!(shape(&tree), ["a", "b"]);
     assert_eq!(tree.more(""), None);
+}
+
+#[test]
+fn collapse_refuses_a_late_descendant_answer() {
+    let mut tree = FileTree::default();
+    tree.start();
+    tree.loaded("", listing(vec![entry("src", true)]));
+    tree.toggle("src");
+    tree.loaded("src", listing(vec![entry("src/lib", true)]));
+    tree.toggle("src/lib");
+    tree.toggle("src");
+    tree.loaded("src/lib", listing(vec![entry("src/lib/stale", false)]));
+    assert_eq!(shape(&tree), ["src/"]);
+    assert_eq!(tree.toggle("src"), Some("src".into()));
 }

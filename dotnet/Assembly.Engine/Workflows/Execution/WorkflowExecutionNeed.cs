@@ -41,17 +41,26 @@ public static partial class WorkflowExecutionNeeds
             CommandStepTransitions.History(s, c, i, "command_not_started", JsonSerializer.Serialize(
                 CommandStepTransitions.NotStarted(effect), WorkflowExecutionJson.Default.CommandExecutionReceipt));
         var execution = new WorkflowExecutionNeed(i.OrderKey, i.StepId, i.Generation, i.Attempt, i.CommandIndex, i.ExecutionEpoch, effect.Id, reason);
+        var text = reason == "policy" ? "Allow this workflow command?" : reason == "preparation_stale"
+            ? "Checked command preparation changed before launch; cancel and prepare a new attempt."
+            : "Command execution is uncertain; confirm its executor stopped before retrying.";
+        var options = reason == "policy" ? new[] { "allow_once", "deny" }
+            : reason != "preparation_stale" && i.Repeat ? ["retry", "cancel"] : ["cancel"];
+        var presentation = NeedPresentationInputs.Normalize(new(owner.Id, i.RunId, i.StepId,
+            reason == "policy" ? "permission" : reason, text, options, null, null, null));
+        var displayNumber = NeedPresentationInputs.AllocateNumber(s);
         s.Execute("""
             INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,kind,text,
-              options_json,state,addressee_session_id,source_kind,execution_json)
-            VALUES($id,1,$machine,$now,$now,$owner,$run,$step,$kind,$text,$options,'open',$owner,'workflow',$execution);
+              options_json,state,addressee_session_id,source_kind,execution_json,presentation_json,display_number)
+            VALUES($id,1,$machine,$now,$now,$owner,$run,$step,$kind,$text,$options,'open',$owner,'workflow',$execution,$presentation,$display);
             UPDATE engine_workflow_policy SET need_id=$id WHERE run_id=$run AND step_id=$step AND command_hash=$hash AND decision='ask';
             UPDATE engine_step SET state='waiting',version=version+1,updated_ms=$now,outcome_reason=$reason WHERE id=$step;
             """, new("$id", id), new("$machine", c.Machine), new("$now", c.NowMs), new("$owner", owner.Id), new("$run", i.RunId), new("$step", i.StepId),
-            new("$kind", reason == "policy" ? "permission" : reason), new("$text", reason == "policy" ? "Allow this workflow command?" : reason == "preparation_stale" ? "Checked command preparation changed before launch; cancel and prepare a new attempt." : "Command execution is uncertain; confirm its executor stopped before retrying."),
-            new("$options", reason == "policy" ? "[\"allow_once\",\"deny\"]" : reason != "preparation_stale" && i.Repeat ? "[\"retry\",\"cancel\"]" : "[\"cancel\"]"),
+            new("$kind", reason == "policy" ? "permission" : reason), new("$text", text),
+            new("$options", JsonSerializer.Serialize(options, EngineJson.Default.IReadOnlyListString)),
+            new("$presentation", JsonSerializer.Serialize(presentation, EngineJson.Default.NeedPresentation)), new("$display", displayNumber),
             new("$execution", JsonSerializer.Serialize(execution, WorkflowNeedJson.Default.WorkflowExecutionNeed)), new("$hash", CommandStepTransitions.Digest(effect.Payload.GetRawText())), new("$reason", reason));
-        List<EventDraft> events = [new("needs_me.changed", "need", id, 1, false, new(owner.Id, i.RunId, i.StepId, owner.Id, "open", owner.Epoch))];
+        List<EventDraft> events = [new("needs_me.changed", "needs_me", id, 1, false, new(owner.Id, i.RunId, i.StepId, owner.Id, "open", owner.Epoch))];
         events.AddRange(RunTransitions.Recompute(s, c, i.RunId));
         return EngineJournal.Commit(s, c, 1, owner.Epoch, events, []);
     }
@@ -113,9 +122,9 @@ public static partial class WorkflowExecutionNeeds
         else if (choice == "cancel") Cancel(s, c, i, binding.EffectId, "cancelled");
         else return Refuse(choice == "retry" ? "executor_quiescence_required" : "bad_args");
         s.Execute("""
-            UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answer_json=$answer,answered_by=$actor,answered_ms=$now WHERE id=$id
-            """, new("$now", c.NowMs), new("$answer", answer.Answer?.GetRawText()), new("$actor", c.Actor.Id), new("$id", c.EntityId));
-        List<EventDraft> events = [new("needs_me.answered", "need", c.EntityId, row.Version + 1, false, new(row.Owner, row.Run, row.Step, row.Owner, "answered", row.Epoch))];
+            UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answer_json=$answer,answered_by=$actor,answered_ms=$now,answered_origin_json=$origin WHERE id=$id
+            """, new("$now", c.NowMs), new("$answer", answer.Answer?.GetRawText()), new("$actor", c.Actor.Id), new("$origin", NeedTransitions.OriginJson(c)), new("$id", c.EntityId));
+        List<EventDraft> events = [new("needs_me.answered", "needs_me", c.EntityId, row.Version + 1, false, new(row.Owner, row.Run, row.Step, row.Owner, "answered", row.Epoch))];
         events.AddRange(RunTransitions.Recompute(s, c, row.Run));
         return EngineJournal.Commit(s, c, row.Version + 1, row.Epoch, events, []);
     }

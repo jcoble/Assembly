@@ -1,8 +1,10 @@
 using Assembly.Remote.Record;
+using Assembly.Remote.Cli;
 using Assembly.Remote.Serve;
 
 return args switch
 {
+    ["cli-read", .. var rest] => await CliReadRun.MainAsync(rest),
     ["record", .. var rest] => await RecordRun.MainAsync(rest),
     ["serve", .. var rest] => await ServeRun.MainAsync(rest),
     _ => Usage(),

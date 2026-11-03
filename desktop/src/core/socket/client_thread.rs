@@ -255,6 +255,12 @@ impl ClientThread {
             } => {
                 self.add_engine(id, topic, key, machine, true, updates);
             }
+            Event::ResnapshotEngine { handle } => {
+                if let Some(wire) = self.engines.iter().find_map(|(wire, feed)|
+                    (feed.handle == handle && feed.scoped).then_some(*wire)) {
+                    self.reset_engine(wire);
+                }
+            }
             Event::AcknowledgeEngine {
                 handle,
                 wire,

@@ -5,6 +5,7 @@
 pub mod document_store;
 pub mod editor_surface;
 pub mod entry;
+pub mod file_history;
 pub mod file_save;
 pub mod file_text;
 pub mod file_tree;
@@ -16,3 +17,5 @@ pub mod search_pane;
 mod files_real_tests;
 #[cfg(test)]
 mod search_pane_tests;
+
+mod file_comparison;

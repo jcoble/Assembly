@@ -1,3 +1,5 @@
+using Assembly.Application.Features.Chat.SourceControl;
+
 namespace Assembly.Infrastructure.Chat.Files;
 
 public sealed record FileFault(string Code, string Message);
@@ -7,6 +9,8 @@ public sealed record BegunSave(string Upload);
 public sealed record SaveChunk(string Upload, long Offset, byte[] Data);
 public sealed record CommitSave(string Upload);
 public sealed record DropSave(string Upload);
+public sealed record CompareFile(string Upload);
+public sealed record FileComparison(string? DiskRevision, GitFileDiff Diff);
 
 public sealed record PageCursor(string Generation, string After);
 

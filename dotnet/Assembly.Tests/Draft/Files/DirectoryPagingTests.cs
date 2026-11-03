@@ -39,4 +39,14 @@ public sealed class DirectoryPagingTests
             CancellationToken.None, cursor: first.NextCursor));
         Assert.Contains("cursor_changed", failed.Message);
     }
+    [Fact]
+    public async Task Descending_names_keep_folders_first_and_excluded_toggle_preserves_marking()
+    {
+        using var folder = new GitFolder("folder-a/", "folder-z/", "a", "z", ".gitignore", "bin/out");
+        var page = await DirectoryListing.ListAsync(folder.Root, "", false, CancellationToken.None, descending: true);
+        Assert.Equal(["folder-z", "folder-a", "z", "a", ".gitignore"], page.Entries.Select(entry => entry.Name));
+        var excluded = await DirectoryListing.ListAsync(folder.Root, "", true, CancellationToken.None, descending: true);
+        Assert.Contains(excluded.Entries, entry => entry is { Name: "bin", Excluded: true });
+    }
+
 }

@@ -102,7 +102,7 @@ public static partial class EngineJournal
         new(false, false, error, context.ExpectedVersion, 0, context.Epoch);
 
     private static byte[] FingerprintPrefix(CommandContext context) => Encoding.UTF8.GetBytes(
-        JsonSerializer.Serialize(context with { CommandId = Guid.Empty, NowMs = 0 }, EngineJson.Default.CommandContext) + "\n");
+        JsonSerializer.Serialize(context with { CommandId = Guid.Empty, NowMs = 0, Origin = null }, EngineJson.Default.CommandContext) + "\n");
 
     private static string Fingerprint(CommandContext context, string command)
     {

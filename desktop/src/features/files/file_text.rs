@@ -19,7 +19,7 @@ pub const NEAR_END: usize = 200;
 #[derive(Default)]
 pub struct FileText {
     pub lines: Vec<String>,
-    raw: String,
+    raw: Option<String>,
     /// The longest line's index, which sets how far the view scrolls sideways.
     pub widest: usize,
     /// The longest line's length in characters, not bytes: two-byte "é" is no wider than "a" in the code font.
@@ -53,7 +53,14 @@ impl FileText {
             && self.loading.is_none()
             && !self.binary
             && self.error.is_none())
-        .then_some(self.raw.as_str())
+        .then_some(self.raw.as_deref())
+        .flatten()
+    }
+
+    pub fn release_content(&mut self) {
+        self.raw = None;
+        self.lines.clear();
+        self.lines.shrink_to_fit();
     }
 
     pub fn revision(&self) -> Option<&str> {
@@ -109,7 +116,7 @@ impl FileText {
         self.line_count = chunk.line_count;
         self.binary = chunk.binary;
         self.next = chunk.next_offset;
-        self.raw.push_str(&chunk.content);
+        self.raw.get_or_insert_default().push_str(&chunk.content);
         if chunk.content.is_empty() {
             return None;
         }

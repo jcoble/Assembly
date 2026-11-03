@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{DockAreaState, DockState, PanelInfo, PanelState};
 use gpui_kit::component::input::InputState;
-use gpui_kit::component::{ActiveTheme as _, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
 
 use super::OpenBoard;
@@ -420,15 +421,19 @@ impl Render for BoardPane {
             1 => "1 thing needs you".to_string(),
             n => format!("{n} things need you"),
         };
+        let selected = self
+            .state
+            .filter
+            .as_deref()
+            .and_then(|filter| STATES.iter().position(|(state, _)| *state == filter))
+            .map_or(0, |ix| ix + 1);
         let filters = [("All", None)]
             .into_iter()
             .chain(STATES.iter().map(|(state, label)| (*label, Some(*state))))
             .map(|(label, state)| {
-                Button::new(label)
-                    .ghost()
-                    .small()
+                Tab::new()
                     .label(label)
-                    .selected(self.state.filter.as_deref() == state)
+                    .debug_selector(move || format!("board-filter-{label}"))
                     .on_click(cx.listener(move |pane, _, _, cx| pane.filter(state, cx)))
             });
         let header = v_flex()
@@ -450,7 +455,15 @@ impl Render for BoardPane {
                 );
                 div().text_sm().text_color(muted).child(line)
             }))
-            .child(h_flex().pt_1().gap_1().flex_wrap().children(filters));
+            .child(
+                div().pt_1().min_w_0().child(
+                    TabBar::new("board-filters")
+                        .underline()
+                        .small()
+                        .selected_index(selected)
+                        .children(filters),
+                ),
+            );
         let note = |text: String| div().px_4().py_2().text_sm().text_color(muted).child(text);
         let body = match &self.failed {
             Some(message) => note(message.clone()).text_color(danger).into_any_element(),

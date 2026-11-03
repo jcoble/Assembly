@@ -63,7 +63,7 @@ public sealed partial class EngineSocketTests : IAsyncLifetime
         _needHosts = new(_needHub, _titleSessions, new FakeLauncher(), _f.Time, TextWriter.Null, _needWork);
         _needs = new(new(_runtime, _f.Limits, _f.Time), _runtime, _needHosts, _f.Time);
         var calls = new SocketDispatcher(_f.Db.Writer, _topics, _f.Time, NullLogger.Instance, new EngineSocketStream(_runtime));
-        new EngineCalls(_runtime, _f.Time, _needs, new MachineForward(_ => { Interlocked.Increment(ref _forwardAttempts); return null; })).Register(calls);
+        new EngineCalls(_runtime, _f.Time, _needs, new MachineForward(_ => { Interlocked.Increment(ref _forwardAttempts); return null; })).Register(new TitlePeerGate(calls, this));
         new SessionTitleCalls(_runtime, _titleSessions).Register(new TitlePeerGate(calls, this));
         calls.Topic("sessions", TestJson.Default.Note, n => n.Text, (_, _) => [new Note("legacy")]);
         calls.Read("test", "barrier", TestJson.Default.Note, TestJson.Default.Note, (n, _) =>

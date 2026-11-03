@@ -6,7 +6,7 @@ using ModelContextProtocol.Server;
 namespace Assembly.Engine.Mcp.Tools;
 
 public sealed record AskOwnerArguments(string? Question = null, string? Kind = null,
-    IReadOnlyList<string>? Options = null, string? RunId = null, string? ChildNeedId = null);
+    IReadOnlyList<string>? Options = null, string? RunId = null, string? ChildNeedId = null, string? Title = null, string? Recommendation = null);
 public sealed record AskOwnerAnswer(string NeedId, string State);
 
 public sealed class AskOwnerTool : McpServerTool
@@ -20,6 +20,7 @@ public sealed class AskOwnerTool : McpServerTool
         using var schema = JsonDocument.Parse("""
         {"type":"object","additionalProperties":false,"properties":{
             "question":{"type":"string","minLength":1,"maxLength":1200},
+            "title":{"type":"string","maxLength":120},"recommendation":{"type":"string","maxLength":300},
             "kind":{"type":"string","enum":["question","choice","confirmation"]},
             "options":{"type":"array","minItems":2,"maxItems":8,"uniqueItems":true,
                 "items":{"type":"string","minLength":1,"maxLength":120}},
@@ -51,7 +52,7 @@ public sealed class AskOwnerTool : McpServerTool
         if (arguments.ValueKind != JsonValueKind.Object) throw Bad("arguments", "must be an object");
         foreach (var property in arguments.EnumerateObject())
         {
-            if (property.Name is not ("question" or "kind" or "options" or "runId" or "childNeedId"))
+            if (property.Name is not ("question" or "kind" or "options" or "runId" or "childNeedId" or "title" or "recommendation"))
                 throw Bad(property.Name, "is not a supported argument");
             if (property.Name == "options")
             {
@@ -74,6 +75,8 @@ public sealed class AskOwnerTool : McpServerTool
         }
         if (string.IsNullOrWhiteSpace(args.Question) || args.Question.Length > 1200)
             throw Bad("question", "must contain 1 to 1200 characters");
+        if (args.Title?.Length > 120 || args.Recommendation?.Length > 300)
+            throw Bad("presentation", "title is at most 120 and recommendation at most 300 characters");
         var kind = args.Kind ?? "question";
         if (kind is not ("question" or "choice" or "confirmation"))
             throw Bad("kind", "must be question, choice or confirmation");
@@ -88,7 +91,9 @@ public sealed class AskOwnerTool : McpServerTool
         {
             var id = Guid.NewGuid().ToString();
             write.Apply(id, 0, write.Caller.Epoch, new OpenNeed(write.Caller.SessionId,
-                args.RunId, null, kind, args.Question, args.Options ?? [], null, null, null));
+                args.RunId, null, kind, args.Question, args.Options ?? [], null, null, null, Presentation: new(args.Title, args.Recommendation,
+                    args.Options is { Count: > 0 } ? "choice" : "text", null,
+                    args.Options?.Select(option => new NeedOption(option, option, kind)).ToArray() ?? [], args.Options is null)));
             return new AskOwnerAnswer(id, "open");
         });
         return JsonSerializer.SerializeToElement(answer, McpJson.Default.AskOwnerAnswer);

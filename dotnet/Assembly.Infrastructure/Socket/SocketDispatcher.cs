@@ -293,6 +293,10 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         {
             return Error(id, error.Reason ?? "failed", error.Message);
         }
+        catch (CallUncertain error)
+        {
+            return Bounded(Frame(new ErrorFrame(id, "uncertain", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);
+        }
         catch (MachineUnreachable error)
         {
             return Bounded(Frame(new ErrorFrame(id, "unreachable", error.Message, error.Machine), SocketJson.Default.ErrorFrame), id);

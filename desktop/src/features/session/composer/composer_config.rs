@@ -21,6 +21,7 @@ impl Composer {
         let Some(session) = self.session.clone() else {
             return;
         };
+        let generation = self.target_generation;
         let picks = self.picks;
         let key = format!("config/get:{session}");
         let args = json!({ "session": session });
@@ -29,7 +30,9 @@ impl Composer {
             let answer = call.await;
             composer
                 .update(cx, |composer, cx| {
-                    let current = composer.session == Some(session) && composer.picks == picks;
+                    let current = composer.target_generation == generation
+                        && composer.session == Some(session)
+                        && composer.picks == picks;
                     if let (true, Ok(config)) = (current, parse(answer)) {
                         composer.config = Some(config);
                         cx.notify();
@@ -44,26 +47,45 @@ impl Composer {
         let Some(session) = self.session.clone() else {
             return;
         };
+        if self.offline.is_some() || !self.backend_connected {
+            return;
+        }
+        if self.owner.is_some() && self.advertised_target.is_none() {
+            self.error = Some("Agent settings unavailable: no current advertised target.".into());
+            cx.notify();
+            return;
+        }
         let name = self
             .menus()
             .into_iter()
             .find(|(option, _)| option.id == config_id)
             .map_or(config_id.clone(), |(option, _)| option.name.clone());
+        let generation = self.target_generation;
         self.picks += 1;
         self._config = None;
-        let args = json!({ "session": session, "configId": config_id, "value": value });
+        self._warm = None;
+        let mut args = json!({ "session": session, "configId": config_id, "value": value });
+        if let Some(target) = &self.advertised_target {
+            args["targetId"] = json!(target);
+        }
         let call = self.client.call("config", "set", args, None, cx);
         self._tasks.retain(|task| !task.is_ready());
         self._tasks.push(cx.spawn(async move |composer, cx| {
             let answer = call.await;
             composer
                 .update(cx, |composer, cx| {
-                    composer.picks += 1;
-                    if composer.session != Some(session) {
+                    if composer.target_generation != generation || composer.session != Some(session)
+                    {
                         return;
                     }
+                    composer.picks += 1;
                     match parse(answer) {
-                        Ok(config) => (composer.config, composer.error) = (Some(config), None),
+                        Ok(config) => {
+                            if let Some((agent, _, _)) = &composer.owner {
+                                super::super::draft_config::remember(agent, &config, cx);
+                            }
+                            (composer.config, composer.error) = (Some(config), None);
+                        }
                         Err(error) => {
                             composer.error =
                                 Some(format!("Couldn't change {name}: {}", error.reason()).into())
@@ -80,19 +102,7 @@ impl Composer {
         let Some(config) = &self.config else {
             return Vec::new();
         };
-        config
-            .options
-            .iter()
-            .flatten()
-            .filter(|option| option.kind == "select" && !option.options.is_empty())
-            .map(|option| {
-                let current = config
-                    .choices
-                    .get(&option.id)
-                    .or(option.current_value.as_ref());
-                (option, current.map_or("", String::as_str))
-            })
-            .collect()
+        config.menus()
     }
 
     /// The commands the "/" list shows now: none while it's hidden or the draft isn't a command word.

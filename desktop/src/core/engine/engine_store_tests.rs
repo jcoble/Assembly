@@ -247,3 +247,153 @@ fn hydration_refuses_stale_or_unrequested_rows_without_acknowledging_the_page() 
         assert_eq!(store.items(&scope)[0].version, 1);
     }
 }
+
+#[test]
+fn held_need_index_tracks_source_session_and_addressee_without_another_subscription() {
+    let mut store = EngineStore::default();
+    let scope = scope("owner", "needs_me");
+    let mut need = row("owner", "needs_me", "n", 1);
+    need["sessionId"] = json!("child");
+    need["addresseeSessionId"] = json!("parent");
+    store
+        .snapshot(scope.clone(), cursor(1), vec![need])
+        .unwrap();
+    let parent = super::SessionKey {
+        machine: "owner".into(),
+        id: "parent".into(),
+    };
+    let foreign = super::SessionKey {
+        machine: "another".into(),
+        id: "parent".into(),
+    };
+    assert_eq!(store.needs_for(&parent).len(), 1);
+    assert!(store.needs_for(&foreign).is_empty());
+    store.snapshot(scope, cursor(2), vec![]).unwrap();
+    assert!(store.needs_for(&parent).is_empty());
+}
+
+#[test]
+fn child_relations_require_a_cached_parent_on_the_same_actual_source() {
+    let mut store = EngineStore::default();
+    for machine in ["owner-a", "owner-b"] {
+        let mut child = row(machine, "session", "child", 1);
+        child["parentId"] = json!("parent");
+        child["parentMachine"] = json!(machine);
+        store
+            .snapshot(
+                scope(machine, "sessions"),
+                cursor(1),
+                vec![row(machine, "session", "parent", 1), child],
+            )
+            .unwrap();
+    }
+    let a = super::SessionKey {
+        machine: "owner-a".into(),
+        id: "parent".into(),
+    };
+    let b = super::SessionKey {
+        machine: "owner-b".into(),
+        id: "parent".into(),
+    };
+    assert_eq!(store.children_of(&a).len(), 1);
+    assert_eq!(store.children_of(&a)[0].key.machine, "owner-a");
+    assert_eq!(store.children_of(&b)[0].key.machine, "owner-b");
+    let child = super::SessionKey {
+        machine: "owner-a".into(),
+        id: "child".into(),
+    };
+    assert_eq!(store.parent_of(&child), Some(a.clone()));
+    store
+        .snapshot(scope("owner-a", "sessions"), cursor(2), vec![])
+        .unwrap();
+    assert!(store.children_of(&a).is_empty());
+    assert_eq!(store.children_of(&b).len(), 1);
+}
+
+#[test]
+fn a_cross_source_bare_parent_id_never_creates_a_parent_or_child_relation() {
+    let mut store = EngineStore::default();
+    store
+        .snapshot(
+            scope("parent-owner", "sessions"),
+            cursor(1),
+            vec![row("parent-owner", "session", "parent", 1)],
+        )
+        .unwrap();
+    let mut child = row("child-owner", "session", "child", 1);
+    child["parentId"] = json!("parent");
+    store
+        .snapshot(scope("child-owner", "sessions"), cursor(1), vec![child])
+        .unwrap();
+    let parent = super::SessionKey {
+        machine: "parent-owner".into(),
+        id: "parent".into(),
+    };
+    let child = super::SessionKey {
+        machine: "child-owner".into(),
+        id: "child".into(),
+    };
+    assert!(store.children_of(&parent).is_empty());
+    assert_eq!(store.parent_of(&child), None);
+}
+
+#[test]
+fn explicit_foreign_parent_owner_wins_over_a_colliding_same_source_parent_id() {
+    let mut store = EngineStore::default();
+    store
+        .snapshot(
+            scope("parent-owner", "sessions"),
+            cursor(1),
+            vec![row("parent-owner", "session", "parent", 1)],
+        )
+        .unwrap();
+    let mut child = row("child-owner", "session", "child", 1);
+    child["parentId"] = json!("parent");
+    child["parentMachine"] = json!("parent-owner");
+    store
+        .snapshot(
+            scope("child-owner", "sessions"),
+            cursor(1),
+            vec![row("child-owner", "session", "parent", 1), child],
+        )
+        .unwrap();
+    let actual = super::SessionKey {
+        machine: "parent-owner".into(),
+        id: "parent".into(),
+    };
+    let colliding = super::SessionKey {
+        machine: "child-owner".into(),
+        id: "parent".into(),
+    };
+    let child = super::SessionKey {
+        machine: "child-owner".into(),
+        id: "child".into(),
+    };
+    assert_eq!(store.parent_of(&child), Some(actual.clone()));
+    assert_eq!(store.children_of(&actual).len(), 1);
+    assert!(store.children_of(&colliding).is_empty());
+}
+
+#[test]
+fn missing_parent_owner_is_unknown_even_if_a_same_source_id_happens_to_exist() {
+    let mut store = EngineStore::default();
+    let mut child = row("owner", "session", "child", 1);
+    child["parentId"] = json!("parent");
+    store
+        .snapshot(
+            scope("owner", "sessions"),
+            cursor(1),
+            vec![row("owner", "session", "parent", 1), child],
+        )
+        .unwrap();
+    let parent = super::SessionKey {
+        machine: "owner".into(),
+        id: "parent".into(),
+    };
+    let child = super::SessionKey {
+        machine: "owner".into(),
+        id: "child".into(),
+    };
+    assert!(store.children_of(&parent).is_empty());
+    assert_eq!(store.parent_of(&child), None);
+}

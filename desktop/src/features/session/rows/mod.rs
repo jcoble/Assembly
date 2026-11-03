@@ -1,7 +1,6 @@
 //! A session's rows as the backend sends them (the `rows` topic and `rows/page`; RowWire.cs). Plain serde types:
 //! the backend already parsed the markdown and worked out each tool's summary, so nothing here reads text.
 
-pub mod markdown;
 pub mod plan;
 pub mod row;
 pub mod row_page;

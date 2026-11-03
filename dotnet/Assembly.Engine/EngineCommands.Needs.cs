@@ -61,9 +61,9 @@ public sealed partial class EngineCommands
             : NeedTransitions.Apply(scope, context, prepared.Command, _expiryPolicy, _isConfiguredProvider));
     public static PreparedNeedCommand PrepareOwnerNeedCommand(Guid originalCommandId, string owningMachine, string needId,
         long originalExpectedVersion, long originalEpoch, ResolveNeed originalCommand, PreparedProviderAnswer? captured,
-        string? preparationError, CancellationToken cancellationToken) =>
+        string? preparationError, CancellationToken cancellationToken, CommandOrigin? origin = null) =>
         PreparedNeedCommand.PrepareOwner(originalCommandId, owningMachine, needId, originalExpectedVersion, originalEpoch,
-            originalCommand, captured, preparationError, cancellationToken);
+            originalCommand, captured, preparationError, cancellationToken, origin);
 
     public CommandResult ApplyPreparedOwnerNeed(IWriteScope scope, PreparedNeedCommand prepared, long nowMs) =>
         EngineJournal.ExecuteOwnerNeed(scope, prepared, nowMs, _expiryPolicy, _isConfiguredProvider);
@@ -84,7 +84,7 @@ public sealed partial class EngineCommands
     public CommandResult ApplyLocalParentNeed(IWriteScope scope, McpCaller caller, PreparedParentNeed prepared, long nowMs)
     {
         var context = new CommandContext(prepared.OperationId, _machine, new(ActorKind.Session, caller.SessionId),
-            prepared.Request.NeedId, prepared.Target.NeedVersion, prepared.Target.ChildEpoch, nowMs);
+            prepared.Request.NeedId, prepared.Target.NeedVersion, prepared.Target.ChildEpoch, nowMs, new("mcp", null, null));
         return EngineJournal.Execute(scope, context, prepared.LocalCanonical(caller, _machine),
             () => NeedTransitions.ApplyLocalParent(scope, context, caller, prepared, _expiryPolicy, _isConfiguredProvider));
     }

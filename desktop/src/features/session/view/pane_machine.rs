@@ -18,24 +18,47 @@ impl SessionPane {
     /// The machine comes from the sessions list, which has it the moment a session opens (the header's own item
     /// arrives later); from the header for a session the list hasn't loaded.
     pub(super) fn tell_offline(&mut self, cx: &mut Context<Self>) {
-        let listed = (self.session.as_ref())
+        let listed = self
+            .session
+            .as_ref()
             .zip(Sessions::try_global(cx))
             .and_then(|(id, sessions)| {
-                let items = sessions.read(cx).items();
-                items
+                sessions
+                    .read(cx)
+                    .items()
                     .iter()
                     .find(|item| &item.session_id == id)
-                    .map(|item| item.machine.clone())
+                    .map(|item| (Some(item.agent.clone()), item.machine.clone()))
             });
-        let machine = listed
-            .unwrap_or_else(|| self.header.read(cx).machine().map(String::from))
-            .filter(|machine| !machine.is_empty());
+        let (agent, machine) = listed.unwrap_or_else(|| {
+            let header = self.header.read(cx);
+            (
+                header.agent().map(String::from),
+                header.machine().map(String::from),
+            )
+        });
+        let machine = machine.filter(|machine| !machine.is_empty());
+        let route = Machines::try_global(cx)
+            .and_then(|machines| {
+                machines
+                    .read(cx)
+                    .machines()
+                    .find(|item| item.name == machine)
+                    .map(|item| {
+                        format!(
+                            "{:?}",
+                            (&item.ssh, item.port, &item.token_file, item.reachable)
+                        )
+                    })
+            })
+            .unwrap_or_default();
         let offline = machine
             .clone()
             .filter(|name| Machines::offline(Some(name), cx));
         self.composer.update(cx, |composer, cx| {
-            composer.set_machine(machine, cx);
+            composer.set_machine(machine.clone(), cx);
             composer.set_offline(offline, cx);
+            composer.set_owner(agent, machine, route, cx);
         });
     }
 }

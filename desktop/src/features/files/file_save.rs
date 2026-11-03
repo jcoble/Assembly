@@ -54,6 +54,8 @@ impl FileSaveController {
         }
         docs.saved(&self.captured.key, self.captured.version, revision.clone());
         self.completed = true;
+        self.captured.text.clear();
+        self.captured.text.shrink_to_fit();
         self.state = SaveState::Saved;
         Some(ConfirmedFileSave {
             key: self.captured.key.clone(),

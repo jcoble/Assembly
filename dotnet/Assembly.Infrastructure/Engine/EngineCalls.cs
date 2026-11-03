@@ -18,7 +18,8 @@ namespace Assembly.Infrastructure.Engine;
 
 public sealed record WindowCommand(Guid CommandId, string EntityId, long ExpectedVersion,
     long Epoch, EngineCommand Command,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Surface = null);
 public sealed record EngineUsageArgs(string EntityKind, string EntityId, string? Machine = null);
 public sealed record EngineEntityArgs(string EntityKind, string EntityId, string? Machine = null);
 public sealed record EngineEntitiesArgs(IReadOnlyList<EngineEntityRef> Refs, string? After = null, string? Machine = null);
@@ -43,6 +44,17 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
         calls.Write("engine", "command", EngineSocketJson.Default.WindowCommand, EngineJson.Default.CommandResult,
             async (args, call) =>
             {
+                if (args.Surface is not (null or "rail" or "board") || call.Peer is PhonePeer && args.Surface is not null)
+                    return _ => new(false, false, "bad_args", args.ExpectedVersion, 0, args.Epoch);
+                if (call.Peer is PhonePeer && args.Machine is not null)
+                    return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
+                var origin = call.Peer switch
+                {
+                    PhonePeer phone when !string.IsNullOrWhiteSpace(phone.DeviceId) => new CommandOrigin("phone", phone.DeviceId, null),
+                    OwnerPeer => new CommandOrigin("desktop", null, args.Surface),
+                    _ => null
+                };
+                if (origin is null) return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
                 if (args.Command is not (StartSession or StopSession or StartRun or CancelRun or
                     ResolveNeed { State: "answered" or "dismissed" } or SendMessage or RequestHandoff or CheckProvider or StartSignIn or CancelSignIn))
                     return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
@@ -57,7 +69,7 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                     if (_starts is not null && args.Command is StartSession { ParentId: { } parent } remoteStart && _starts.OwnsParent(parent, call.Cancellation))
                     {
                         var context = new CommandContext(args.CommandId, runtime.Machine, new(ActorKind.Window, "owner"),
-                            args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+                            args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds(), origin);
                         var started = await _starts.StartAsync(context, remoteStart, args.Machine!, call.Cancellation);
                         return _ => started;
                     }
@@ -65,12 +77,12 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                     return _ => result;
                 }
                 if (args.Command is ResolveNeed { State: "answered" })
-                    return await needs.PrepareOwnerAsync(args, call.Cancellation);
+                    return await needs.PrepareOwnerAsync(args, call.Cancellation, origin);
                 var title = args.Command is StartSession start ? EngineCommands.PrepareSessionTitle(start) : null;
                 return scope =>
                 {
                     var context = new CommandContext(args.CommandId, runtime.Machine, new(ActorKind.Window, "owner"),
-                        args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds());
+                        args.EntityId, args.ExpectedVersion, args.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds(), origin);
                     return title is null ? runtime.Commands.Apply(scope, context, args.Command) : runtime.Commands.ApplyPreparedSessionTitle(scope, context, title);
                 };
             }, order: args => IsRemote(args.Machine) ? args.Machine : null);

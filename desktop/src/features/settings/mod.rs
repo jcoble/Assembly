@@ -6,10 +6,12 @@ mod connections;
 mod fonts;
 mod machine_edits;
 mod page_content;
+pub mod preview;
 mod row;
 mod search;
 mod section;
 mod settings_page;
+pub mod sign_in_panel;
 
 use gpui_kit::*;
 

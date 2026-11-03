@@ -38,11 +38,11 @@ public static class DirectoryListing
         if (lease.Generation != generation) throw new CallFailed("cursor_changed: refresh this folder");
         var sorted = candidates.UnorderedItems.Select(item => item.Element).Order(comparer).ToList();
         var entries = new List<FileEntry>(Limit);
-        var bytes = 256;
+        var bytes = 4096;
         foreach (var entry in sorted.Take(Limit))
         {
             var size = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(entry, FilesJson.Default.FileEntry).Length + 1;
-            if (size > PageBytes - 256) throw new CallFailed("a directory entry is too large to display");
+            if (size > PageBytes - 4096) throw new CallFailed("a directory entry is too large to display");
             if (bytes + size > PageBytes) break;
             entries.Add(entry); bytes += size;
         }

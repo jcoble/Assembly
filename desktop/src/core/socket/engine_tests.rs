@@ -543,3 +543,36 @@ fn bulk_connection_generation_changes_even_when_the_same_engine_reconnects() {
         Some("same-engine")
     );
 }
+
+#[test]
+fn an_owned_scope_refresh_keeps_its_handle_and_cannot_revive_after_drop() {
+    let backend = FakeBackend::start(|frame| {
+        if let Some(welcome) = hello(frame) { return welcome; }
+        match frame["t"].as_str() {
+            Some("sub") => vec![Reply::Frame(json!({"t":"engine_snapshot","id":frame["id"],"machine":"owner","through":0,"items":[],"more":false}))],
+            Some("call") => vec![Reply::Frame(json!({"t":"result","id":frame["id"],"result":null}))],
+            _ => vec![],
+        }
+    });
+    let client = TestClient::start(backend.port);
+    let id = client.id();
+    let (updates, received) = unbounded();
+    client.events.send(Event::SubscribeEngineScope { id, topic: "providers".into(), key: None,
+        machine: Some("owner".into()), updates }).unwrap();
+    let subscription = super::topic_subscription::TopicSubscription::new(id, client.events.clone(), received);
+    let refresh = subscription.resnapshot_request();
+    assert_eq!(backend.next()["t"], "hello");
+    assert_eq!(backend.next()["id"], id);
+    refresh();
+    assert_eq!(backend.next(), json!({"t":"unsub","id":id}));
+    let replacement = backend.next();
+    assert_eq!(replacement["topic"], "providers");
+    assert_ne!(replacement["id"], id);
+    assert!(replacement.get("after").is_none());
+    drop(subscription);
+    refresh();
+    let (_, barrier) = client.call("barrier", None);
+    assert_eq!(backend.next(), json!({"t":"unsub","id":replacement["id"]}));
+    assert_eq!(backend.next()["t"], "call", "a dropped handle must not recreate a scope");
+    assert!(matches!(super::test_client::outcome(barrier), super::outcome::Outcome::Ok(_)));
+}

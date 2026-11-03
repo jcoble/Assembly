@@ -39,7 +39,8 @@ public static class WorkflowFormat
         workspace: new|parent, default new
         required: boolean=true
         max_attempts: positive integer=1; review redo is separately bounded by max_rounds
-        display: {label?: string, stage?: string}; labels do not set runtime state
+        display: {present?: string (120), past?: string (120), stage?: string (40), detail?: string (300)}
+        display.label remains a legacy label input; display fields do not set runtime state
 
         Templates use ${{ ... }}:
         inputs.<name>, task.key/title/body, steps.<id>.<receiptField>, steps.<id>.files,

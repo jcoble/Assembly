@@ -24,6 +24,48 @@ public sealed class WorkflowLoaderTests : IDisposable
         var json = JsonSerializer.Serialize(a, WorkflowJson.Default.WorkflowSnapshot);
         Assert.Equal(a.Hash, JsonSerializer.Deserialize(json, WorkflowJson.Default.WorkflowSnapshot)!.Hash);
     }
+    [Fact]
+    public void Legacy_display_bytes_and_hash_inputs_remain_compatible_when_new_fields_are_absent()
+    {
+        var legacy = Load("name: A\nsteps: {g: {gate: {}, display: {label: Approved, stage: approval}}}");
+        var reordered = Load("steps: {g: {display: {stage: approval, label: Approved}, gate: {}}}\nname: A");
+        var json = JsonSerializer.SerializeToElement(legacy.Definition, WorkflowJson.Default.WorkflowDefinition);
+        Assert.Equal("{\"label\":\"Approved\",\"stage\":\"approval\"}", json.GetProperty("steps").GetProperty("g").GetProperty("display").GetRawText());
+        Assert.Equal(legacy.Hash, reordered.Hash);
+        var empty = Load("name: A\nsteps: {g: {gate: {}, display: {}}}");
+        var emptyJson = JsonSerializer.SerializeToElement(empty.Definition, WorkflowJson.Default.WorkflowDefinition);
+        Assert.Equal("{\"label\":null,\"stage\":null}", emptyJson.GetProperty("steps").GetProperty("g").GetProperty("display").GetRawText());
+        var restored = JsonSerializer.Deserialize(JsonSerializer.Serialize(legacy, WorkflowJson.Default.WorkflowSnapshot), WorkflowJson.Default.WorkflowSnapshot)!;
+        Assert.Equal(legacy.Definition.Steps["g"].Display, restored.Definition.Steps["g"].Display);
+        Assert.Equal(legacy.Hash, WorkflowParser.Parse(new(restored.Yaml, restored.Prompts)).Hash);
+    }
+    [Fact]
+    public void Static_display_metadata_round_trips_and_changes_the_immutable_hash()
+    {
+        const string yaml = "name: A\nsteps: {g: {gate: {}, display: {label: Legacy, present: Checking, past: Checked, stage: verify, detail: Actual detail}}}";
+        var snapshot = Load(yaml);
+        Assert.Equal(new WorkflowDisplay("Legacy", "verify", "Checking", "Checked", "Actual detail"), snapshot.Definition.Steps["g"].Display);
+        var serialized = JsonSerializer.Serialize(snapshot, WorkflowJson.Default.WorkflowSnapshot);
+        var restored = JsonSerializer.Deserialize(serialized, WorkflowJson.Default.WorkflowSnapshot)!;
+        Assert.Equal(snapshot.Definition.Steps["g"].Display, restored.Definition.Steps["g"].Display);
+        Assert.Equal(snapshot.Hash, Load(yaml.Replace("present: Checking, past: Checked", "past: Checked, present: Checking")).Hash);
+        foreach (var text in new[] { "Checking", "Checked", "verify", "Actual detail" })
+            Assert.NotEqual(snapshot.Hash, Load(yaml.Replace(text, text + " changed")).Hash);
+    }
+    [Theory]
+    [InlineData("present", 120)]
+    [InlineData("past", 120)]
+    [InlineData("stage", 40)]
+    [InlineData("detail", 300)]
+    public void Static_display_limits_accept_the_boundary_and_refuse_oversized_or_nontext_values(string field, int maximum)
+    {
+        string Yaml(string value) => "name: A\nsteps: {g: {gate: {}, display: {" + field + ": " + value + "}}}";
+        var text = string.Concat(Enumerable.Repeat("🌱", maximum));
+        var snapshot = Load(Yaml("\"" + text + "\""));
+        Assert.NotNull(snapshot.Definition.Steps["g"].Display);
+        Assert.Equal("steps.g.display." + field, Assert.Throws<WorkflowFieldException>(() => Load(Yaml("\"" + text + "x\""))).Field);
+        Assert.Equal("steps.g.display." + field, Assert.Throws<WorkflowFieldException>(() => Load(Yaml("false"))).Field);
+    }
     [Theory]
     [InlineData("name: A\nname: B\nsteps: {}", "name")]
     [InlineData("name: A\nsteps: {}\n---\nname: B", "yaml")]

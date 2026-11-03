@@ -32,13 +32,14 @@ public static class EngineSchema
             var machine = Guid.NewGuid().ToString("N");
             scope.Execute("""
                 INSERT INTO engine_meta(singleton,schema_version,machine_id,next_seq,retained_after,snapshot_seq)
-                VALUES(1,11,$machine,1,0,0);
+                VALUES(1,12,$machine,1,0,0);
                 """, new SqlArg("$machine", machine));
+            UpgradeNeedPresentation(scope);
             return new(machine, null);
         }
-        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11))
+        if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12))
             throw new InvalidOperationException($"Unsupported engine schema version {meta.Version}.");
-        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11)
+        if (meta.Version is 6 or 7 or 8 or 9 or 10 or 11 or 12)
         {
             projectionSchema?.Invoke(scope);
             if (meta.Version == 6) NeedsMe.RoutedNeedSchemaUpgrade.Apply(scope);
@@ -47,6 +48,7 @@ public static class EngineSchema
             if (meta.Version < 10) SessionProjectSchemaUpgrade.Apply(scope);
             if (meta.Version < 11) WorkflowSchema.Upgrade(scope);
             if (meta.Version < 11) scope.Execute("UPDATE engine_meta SET schema_version=11 WHERE singleton=1");
+            if (meta.Version < 12) UpgradeNeedPresentation(scope);
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -68,9 +70,42 @@ public static class EngineSchema
         AccountIdentitySchema.Validate(scope, true);
         SessionProjectSchemaUpgrade.Apply(scope);
         WorkflowSchema.Upgrade(scope);
-        scope.Execute("UPDATE engine_meta SET schema_version=11 WHERE singleton=1");
+        UpgradeNeedPresentation(scope);
         return new(meta.Machine, meta.Version);
     }
+
+    private static void UpgradeNeedPresentation(IWriteScope scope)
+    {
+        scope.Execute("""
+        ALTER TABLE engine_meta ADD COLUMN next_need_number INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE engine_needs_me ADD COLUMN presentation_json TEXT CHECK(presentation_json IS NULL OR json_valid(presentation_json));
+        ALTER TABLE engine_needs_me ADD COLUMN display_number INTEGER;
+        ALTER TABLE engine_needs_me ADD COLUMN answered_origin_json TEXT CHECK(answered_origin_json IS NULL OR json_valid(answered_origin_json));
+        WITH numbered AS (SELECT id,row_number() OVER (PARTITION BY machine ORDER BY created_ms,id) AS number FROM engine_needs_me)
+        UPDATE engine_needs_me SET display_number=(SELECT number FROM numbered WHERE numbered.id=engine_needs_me.id);
+        CREATE UNIQUE INDEX engine_need_display_number ON engine_needs_me(machine,display_number);
+        UPDATE engine_meta SET next_need_number=(SELECT COALESCE(MAX(display_number),0)+1 FROM engine_needs_me WHERE machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)),schema_version=12 WHERE singleton=1;
+        """);
+        scope.Execute("""
+            UPDATE engine_needs_me SET presentation_json=json_object(
+                'title',substr(text,1,CASE WHEN instr(text,char(10))>0 THEN min(120,instr(text,char(10))-1) ELSE 120 END),
+                'recommendation',NULL,'inputMode',NULL,'schema',NULL,'options',NULL,'freeText',NULL)
+            WHERE provider_request_id IS NULL;
+            """);
+        if (scope.QueryFirst("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rows'", row => row.Long(0)) == 0) return;
+        scope.Execute("""
+            WITH cards AS (SELECT n.id,(SELECT payload FROM rows WHERE session_id=n.session_id AND item_id='ask:'||n.chat_row_id
+                AND kind='ask' ORDER BY seq DESC LIMIT 1) AS card FROM engine_needs_me n WHERE provider_request_id IS NOT NULL)
+            UPDATE engine_needs_me SET presentation_json=(SELECT json_object(
+                'title',COALESCE(json_extract(card,'$.title'),substr(text,1,CASE WHEN instr(text,char(10))>0 THEN min(120,instr(text,char(10))-1) ELSE 120 END)),
+                'recommendation',NULL,'inputMode',CASE WHEN kind='permission' THEN 'permission' ELSE 'form' END,
+                'schema',json_extract(card,'$.schema'),'options',json((SELECT json_group_array(json_object(
+                    'id',json_extract(value,'$.optionId'),'label',json_extract(value,'$.name'),'kind',json_extract(value,'$.kind')))
+                    FROM json_each(card,'$.options'))),'freeText',json('false')) FROM cards WHERE cards.id=engine_needs_me.id AND card IS NOT NULL)
+            WHERE provider_request_id IS NOT NULL;
+            """);
+    }
+
 
     private const string UpgradeDelivery = """
         ALTER TABLE engine_message ADD COLUMN delivery TEXT NOT NULL DEFAULT 'wait';

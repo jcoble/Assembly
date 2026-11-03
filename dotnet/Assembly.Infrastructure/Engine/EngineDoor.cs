@@ -38,7 +38,7 @@ public sealed partial class EngineDoor(EngineRuntime runtime, SessionStore sessi
         if (target is null) return _ => false;
         var command = new WindowCommand(Guid.NewGuid(), target.Id, target.Version, target.Epoch,
             new ResolveNeed("answered", request.Answer));
-        var apply = await needs.PrepareOwnerAsync(command, cancellationToken);
+        var apply = await needs.PrepareOwnerAsync(command, cancellationToken, new("chat", null, null));
         return scope => apply(scope).Applied;
     }
 

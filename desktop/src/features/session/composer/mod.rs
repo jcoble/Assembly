@@ -12,6 +12,7 @@ pub mod context_meter;
 #[cfg(test)]
 mod context_meter_tests;
 pub mod context_ring;
+pub mod draft_config;
 pub mod slash_list;
 pub mod slash_menu;
 #[cfg(test)]

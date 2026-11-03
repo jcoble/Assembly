@@ -29,7 +29,7 @@ public static partial class EngineJournal
 
     private static CommandContext OwnerContext(PreparedNeedCommand.OwnerIdentity identity, long nowMs) =>
         new(identity.CommandId, identity.Machine, new(ActorKind.Window, "owner"), identity.NeedId,
-            identity.Version, identity.Epoch, nowMs);
+            identity.Version, identity.Epoch, nowMs, identity.Origin);
 
     private sealed class OwnerNeedAdmission(PreparedNeedCommand prepared)
     {
@@ -39,7 +39,7 @@ public static partial class EngineJournal
             var identity = prepared.Owner!.Identity;
             if (prepared.Command is not ResolveNeed || context.CommandId != identity.CommandId ||
                 context.Machine != identity.Machine || context.EntityId != identity.NeedId ||
-                context.ExpectedVersion != identity.Version || context.Epoch != identity.Epoch ||
+                context.ExpectedVersion != identity.Version || context.Epoch != identity.Epoch || context.Origin != identity.Origin ||
                 context.Actor is not { Kind: ActorKind.Window, Id: "owner" } ||
                 key != identity.CommandId.ToString("N") || canonical != prepared.CanonicalJournal)
                 throw new ArgumentException("Owner need admission does not match its preparation.");

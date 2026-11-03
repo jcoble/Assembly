@@ -1,5 +1,5 @@
 use super::{LinkTarget, Marks, Runs};
-use crate::features::session::rows::markdown::Inline;
+use crate::core::ui::markdown::payload::Inline;
 
 fn text(value: &str) -> Inline {
     Inline::Text {
@@ -93,4 +93,23 @@ fn an_empty_link_is_not_clickable() {
         parts: vec![],
     }];
     assert_eq!(Runs::of(&parts), Runs::default());
+}
+
+#[test]
+fn file_links_require_an_actual_session_context_while_external_urls_do_not() {
+    use crate::core::intents::{open_file::OpenFile, open_url::OpenUrl};
+    let file = LinkTarget::File("src/main.rs".into());
+    assert!(file.action(None).is_none());
+    let action = file.action(Some("actual-session")).unwrap();
+    assert!(action.partial_eq(&OpenFile {
+        session_id: "actual-session".into(),
+        path: "src/main.rs".into(),
+        line: None,
+        column: None,
+        pinned: true
+    }));
+    let url = LinkTarget::Url("https://example.com/review".into());
+    assert!(url.action(None).unwrap().partial_eq(&OpenUrl {
+        url: "https://example.com/review".into()
+    }));
 }

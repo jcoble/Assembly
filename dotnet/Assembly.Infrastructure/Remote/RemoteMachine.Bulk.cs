@@ -79,7 +79,8 @@ internal sealed partial class RemoteMachine
             }
             if (frame.GetProperty("id").GetInt64() != id) throw new IOException("remote bulk response id differs");
             var succeeded = frame.GetProperty("t").GetString() == "result";
-            if (!succeeded && relayBinding is null) throw new CallFailed(frame.GetProperty("message").GetString()!);
+            if (!succeeded && relayBinding is null && !(feature == "engine" && method == "entities"))
+                throw new CallFailed(frame.GetProperty("message").GetString()!);
             if (expectedEngineId is not null)
             {
                 await _socketSend.WaitAsync(ct);
@@ -94,7 +95,10 @@ internal sealed partial class RemoteMachine
                 }
                 finally { _socketSend.Release(); }
             }
-            if (!succeeded) throw new CallFailed(frame.GetProperty("message").GetString()!);
+            if (!succeeded)
+                throw new CallFailed(frame.GetProperty("message").GetString()!,
+                    feature == "engine" && method == "entities" && frame.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String
+                        ? code.GetString() : null);
             return frame.GetProperty("result");
         }
         // A refused call is a completed exchange, so both machine connections remain usable.

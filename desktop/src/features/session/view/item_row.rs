@@ -11,12 +11,12 @@ use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::TextRole;
 
 use super::grow::chevron;
-use super::markdown_view::MarkdownView;
 use super::message_meta::MessageMeta;
 use super::sent_message::SentMessage;
 use super::session_action::OnAction;
 use super::subagent_card::SubagentCard;
 use super::task_card::TaskCard;
+use crate::core::ui::markdown::view::MarkdownView;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::kept::Kept;
@@ -103,7 +103,7 @@ impl RenderOnce for ItemRow {
                 .child(div().text_color(rgb(0xe2e2e2)).child(MarkdownView {
                     id: key.clone().into(),
                     blocks,
-                    session: self.session.clone(),
+                    session: Some(self.session.clone()),
                 }))
                 .children(meta(at, self.copy.clone(), self.turn.clone(), true))
                 .into_any_element(),

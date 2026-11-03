@@ -6,6 +6,34 @@ namespace Assembly.Engine.Reading;
 
 public sealed partial class EngineReader(IAppDatabase db, string machine)
 {
+    public JsonElement WorkflowRuns(JsonElement filters, CancellationToken cancellationToken)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        ReadMeta(read, machine);
+        return Workflows.Reading.WorkflowQueries.Runs(read, filters, machine);
+    }
+
+    public JsonElement WorkflowRun(string runId, string? after, CancellationToken cancellationToken)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        ReadMeta(read, machine);
+        return Workflows.Reading.WorkflowQueries.Run(read, runId, after, machine, cancellationToken);
+    }
+
+    public JsonElement WorkflowHistory(string runId, string? after, int limit, CancellationToken cancellationToken)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        ReadMeta(read, machine);
+        return Workflows.Reading.WorkflowQueries.History(read, runId, after, limit);
+    }
+
+    public JsonElement WorkflowReceipt(string receiptId, string? after, int limit, CancellationToken cancellationToken)
+    {
+        using var read = db.OpenSnapshot(cancellationToken);
+        ReadMeta(read, machine);
+        return Workflows.Reading.WorkflowQueries.Receipt(read, receiptId, after, limit);
+    }
+
     public MachineInfo Machine(CancellationToken cancellationToken)
     {
         using var read = db.OpenSnapshot(cancellationToken);

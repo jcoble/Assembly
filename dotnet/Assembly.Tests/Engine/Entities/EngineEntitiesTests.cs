@@ -104,7 +104,7 @@ public sealed class EngineEntitiesTests
     public void Escaped_prefix_projection_keeps_existing_preview_semantics_and_checks_the_final_item()
     {
         using var f = new EngineFixture(); f.SeedSession();
-        Assert.True(f.Apply(new OpenNeed("s", null, null, "permission", new string('<', 10_000), ["allow"], null, null, null),
+        Assert.True(f.Apply(new OpenNeed("s", null, null, "permission", new string('<', 5_000), ["allow"], null, null, null),
             "need", actor: new(Assembly.Engine.Contracts.ActorKind.System, "adapter")).Applied);
         var reader = new EngineReader(f.Db, f.Machine);
         var item = Assert.Single(reader.Entities([new("needs_me", "need")], null, default).Items);
@@ -171,9 +171,17 @@ public sealed class EngineEntitiesTests
         private sealed class Snapshot(ObservedDatabase owner, IReadSnapshot inner) : IReadSnapshot
         {
             public List<T> Query<T>(string sql, Func<IRow, T> map, params SqlArg[] args)
-            { owner.BeforeQuery?.Invoke(++owner.Queries); return inner.Query(sql, map, args); }
+            {
+                owner.Queries++;
+                owner.BeforeQuery?.Invoke(owner.Queries);
+                return inner.Query(sql, map, args);
+            }
             public T? QueryFirst<T>(string sql, Func<IRow, T> map, params SqlArg[] args)
-            { owner.BeforeQuery?.Invoke(++owner.Queries); return inner.QueryFirst(sql, map, args); }
+            {
+                owner.Queries++;
+                owner.BeforeQuery?.Invoke(owner.Queries);
+                return inner.QueryFirst(sql, map, args);
+            }
             public void Dispose() { inner.Dispose(); owner.Active--; }
         }
     }

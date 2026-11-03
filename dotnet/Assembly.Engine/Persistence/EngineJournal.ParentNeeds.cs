@@ -16,7 +16,7 @@ public static partial class EngineJournal
         var key = ParentNeedCodec.Key(descriptor.Source, descriptor.Target);
         var context = new CommandContext(RelayReceiptKeys.ContextGuid(key), machine,
             new(ActorKind.Session, descriptor.Source.ParentSessionId), descriptor.Target.NeedId,
-            descriptor.Target.NeedVersion, descriptor.Target.ChildEpoch, nowMs);
+            descriptor.Target.NeedVersion, descriptor.Target.ChildEpoch, nowMs, new("mcp", null, null));
         return ExecuteCore(scope, context, key, prepared.Canonical, () => machine != descriptor.Target.ChildOwnerMachine
             ? Rejected(context, "wrong_machine") : NeedTransitions.ApplyForwardedParent(scope, context, prepared, expiryPolicy));
     }

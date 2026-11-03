@@ -29,7 +29,7 @@ public sealed class OwnerNeedPreparationTests
             new("$result", JsonSerializer.Serialize(old, EngineJson.Default.CommandResult))));
         var captured = new PreparedProviderAnswer(new("s", "need", "connection:7", new("s", null, null, null, 2), "acp"),
             JsonSerializer.SerializeToElement(new { optionId = "once" }));
-        var prepared = EngineCommands.PrepareOwnerNeedCommand(id, "machine", "need", 1, 2, original, captured, "answer_preparation_required", default);
+        var prepared = EngineCommands.PrepareOwnerNeedCommand(id, "machine", "need", 1, 2, original, captured, "answer_preparation_required", default, new("desktop", null, "rail"));
         Assert.Equal(old, Apply(f, prepared, 9000));
         Assert.Equal(0, f.Count("engine_outbox")); Assert.Equal(1, f.Count("engine_command_receipt"));
         var changed = EngineCommands.PrepareOwnerNeedCommand(id, "machine", "need", 1, 2,

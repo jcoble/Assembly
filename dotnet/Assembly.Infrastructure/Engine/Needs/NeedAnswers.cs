@@ -13,7 +13,7 @@ namespace Assembly.Infrastructure.Engine.Needs;
 public sealed partial class NeedAnswers(McpGate gate, EngineRuntime runtime, SessionRegistry sessions, TimeProvider time)
     : INeedAnswers, IAsyncDisposable
 {
-    internal Task<Func<IWriteScope, CommandResult>> PrepareOwnerAsync(WindowCommand request, CancellationToken cancellationToken)
+    internal Task<Func<IWriteScope, CommandResult>> PrepareOwnerAsync(WindowCommand request, CancellationToken cancellationToken, CommandOrigin? origin = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (request.Command is not ResolveNeed { State: "answered" } original)
@@ -42,7 +42,7 @@ public sealed partial class NeedAnswers(McpGate gate, EngineRuntime runtime, Ses
             if (captured is null) error = "answer_preparation_required";
         }
         var prepared = EngineCommands.PrepareOwnerNeedCommand(request.CommandId, runtime.Machine, request.EntityId,
-            request.ExpectedVersion, request.Epoch, original, captured, error, cancellationToken);
+            request.ExpectedVersion, request.Epoch, original, captured, error, cancellationToken, origin);
         return Task.FromResult<Func<IWriteScope, CommandResult>>(scope =>
         {
             cancellationToken.ThrowIfCancellationRequested();

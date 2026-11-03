@@ -1,6 +1,6 @@
 //! Complete snapshots replace only their source and scope. Sparse event data is
 //! an invalidation, not permission to fabricate current display fields.
-use super::{EngineCursor, EngineItem, EngineKey, EngineRefusal, EngineScope};
+use super::{EngineCursor, EngineItem, EngineKey, EngineRefusal, EngineScope, SessionKey};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -9,6 +9,8 @@ pub struct EngineStore {
     items: HashMap<EngineKey, EngineItem>,
     scopes: HashMap<EngineScope, HashSet<EngineKey>>,
     cursors: HashMap<EngineScope, EngineCursor>,
+    needs_by_session: HashMap<SessionKey, HashSet<EngineKey>>,
+    children_by_parent: HashMap<SessionKey, HashSet<EngineKey>>,
 }
 
 impl EngineStore {
@@ -22,6 +24,47 @@ impl EngineStore {
             .flatten()
             .filter_map(|key| self.items.get(key).cloned())
             .collect()
+    }
+    /// Index references only: display facts remain solely in items.
+    pub fn needs_for(&self, session: &SessionKey) -> Vec<&EngineItem> {
+        self.needs_by_session
+            .get(session)
+            .into_iter()
+            .flatten()
+            .filter_map(|key| self.items.get(key))
+            .collect()
+    }
+    /// Parentage uses the owning child's exported parentMachine/parentId pair.
+    /// Missing legacy ownership remains unknown; no ID or saved-name fallback exists.
+    pub fn children_of(&self, parent: &SessionKey) -> Vec<&EngineItem> {
+        let parent_key = EngineKey {
+            machine: parent.machine.clone(),
+            kind: "session".into(),
+            id: parent.id.clone(),
+        };
+        if !self.items.contains_key(&parent_key) {
+            return Vec::new();
+        }
+        self.children_by_parent
+            .get(parent)
+            .into_iter()
+            .flatten()
+            .filter_map(|key| self.items.get(key))
+            .collect()
+    }
+    pub fn parent_of(&self, child: &SessionKey) -> Option<SessionKey> {
+        let child_key = EngineKey {
+            machine: child.machine.clone(),
+            kind: "session".into(),
+            id: child.id.clone(),
+        };
+        let parent = self.session_parent(&child_key)?;
+        let key = EngineKey {
+            machine: parent.machine.clone(),
+            kind: "session".into(),
+            id: parent.id.clone(),
+        };
+        self.items.contains_key(&key).then_some(parent)
     }
     pub fn cursor(&self, scope: &EngineScope) -> Option<&EngineCursor> {
         self.cursors.get(scope)
@@ -57,11 +100,10 @@ impl EngineStore {
                 .get(&key)
                 .is_none_or(|held| held.version <= row.version)
             {
-                self.items.insert(key, row);
+                self.install(row);
             }
         }
-        self.items
-            .retain(|key, _| self.scopes.values().any(|keys| keys.contains(key)));
+        self.prune_items();
         self.cursors.insert(scope, cursor);
         Ok(changed.into_iter().collect())
     }
@@ -127,13 +169,95 @@ impl EngineStore {
                 .get(&row.key)
                 .is_none_or(|held| held.version <= row.version)
             {
-                self.items.insert(row.key.clone(), row);
+                self.install(row);
             }
         }
-        self.items
-            .retain(|key, _| self.scopes.values().any(|keys| keys.contains(key)));
+        self.prune_items();
         self.cursors.insert(scope.clone(), cursor);
         Ok(changes.into_keys().collect())
+    }
+
+    fn need_sessions(&self, key: &EngineKey) -> Vec<SessionKey> {
+        if key.kind != "needs_me" {
+            return Vec::new();
+        }
+        let Some(row) = self.items.get(key) else {
+            return Vec::new();
+        };
+        let mut sessions = Vec::new();
+        for field in ["sessionId", "addresseeSessionId"] {
+            if let Some(id) = row.value[field].as_str().filter(|id| !id.is_empty()) {
+                let session = SessionKey {
+                    machine: key.machine.clone(),
+                    id: id.into(),
+                };
+                if !sessions.contains(&session) {
+                    sessions.push(session);
+                }
+            }
+        }
+        sessions
+    }
+    fn session_parent(&self, key: &EngineKey) -> Option<SessionKey> {
+        if key.kind != "session" {
+            return None;
+        }
+        let row = self.items.get(key)?;
+        let id = row.value["parentId"].as_str().filter(|id| !id.is_empty())?;
+        let machine = row.value["parentMachine"]
+            .as_str()
+            .filter(|machine| !machine.is_empty())?;
+        Some(SessionKey {
+            machine: machine.into(),
+            id: id.into(),
+        })
+    }
+    fn unindex(&mut self, key: &EngineKey) {
+        if let Some(parent) = self.session_parent(key) {
+            if let Some(keys) = self.children_by_parent.get_mut(&parent) {
+                keys.remove(key);
+                if keys.is_empty() {
+                    self.children_by_parent.remove(&parent);
+                }
+            }
+        }
+        for session in self.need_sessions(key) {
+            if let Some(keys) = self.needs_by_session.get_mut(&session) {
+                keys.remove(key);
+                if keys.is_empty() {
+                    self.needs_by_session.remove(&session);
+                }
+            }
+        }
+    }
+    fn install(&mut self, row: EngineItem) {
+        let key = row.key.clone();
+        self.unindex(&key);
+        self.items.insert(key.clone(), row);
+        for session in self.need_sessions(&key) {
+            self.needs_by_session
+                .entry(session)
+                .or_default()
+                .insert(key.clone());
+        }
+        if let Some(parent) = self.session_parent(&key) {
+            self.children_by_parent
+                .entry(parent)
+                .or_default()
+                .insert(key);
+        }
+    }
+    fn prune_items(&mut self) {
+        let removed: Vec<_> = self
+            .items
+            .keys()
+            .filter(|key| !self.scopes.values().any(|keys| keys.contains(*key)))
+            .cloned()
+            .collect();
+        for key in removed {
+            self.unindex(&key);
+            self.items.remove(&key);
+        }
     }
 
     fn event_changes(

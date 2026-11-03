@@ -2,7 +2,7 @@
 //! the final message share one item; a tool's, an ask's, a task's or a subagent's rows update its one item.
 
 use crate::core::ui::ask::payload::AskPayload;
-use crate::features::session::rows::markdown::Block;
+use crate::core::ui::markdown::payload::Block;
 use crate::features::session::rows::subagent::SubagentPayload;
 use crate::features::session::rows::task::TaskPayload;
 use crate::features::session::rows::tool::ToolPayload;

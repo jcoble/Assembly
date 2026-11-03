@@ -5,7 +5,7 @@ use serde_json::Value;
 mod engine_feed;
 mod engine_store;
 mod entity_batch;
-pub use engine_feed::EngineFeed;
+pub use engine_feed::{EngineFeed, EngineWatch, EngineChanged};
 pub use engine_store::EngineStore;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -47,3 +47,11 @@ mod engine_store_tests;
 
 #[cfg(test)]
 mod engine_feed_tests;
+
+pub mod engine_items;
+#[cfg(test)]
+mod engine_items_tests;
+
+pub mod commands;
+#[cfg(test)]
+mod commands_tests;

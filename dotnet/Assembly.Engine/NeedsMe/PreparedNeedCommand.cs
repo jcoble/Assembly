@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using Assembly.Engine.Persistence;
+using Assembly.Engine.Contracts;
 using Assembly.Engine.Messages;
 using Assembly.Application.Common.Engine;
 
@@ -44,7 +45,7 @@ public sealed class PreparedNeedCommand
     }
 
     internal static PreparedNeedCommand PrepareOwner(Guid commandId, string machine, string needId, long version, long epoch,
-        ResolveNeed original, PreparedProviderAnswer? captured, string? preparationError, CancellationToken ct)
+        ResolveNeed original, PreparedProviderAnswer? captured, string? preparationError, CancellationToken ct, CommandOrigin? origin = null)
     {
         if (preparationError is not (null or "answer_preparation_required" or "bad_args"))
             throw new ArgumentException("Unsupported owner answer preparation refusal.", nameof(preparationError));
@@ -55,7 +56,7 @@ public sealed class PreparedNeedCommand
             captured = captured with { Answer = captured.Answer.Clone() };
             Json(captured.Answer, ct);
         }
-        var identity = OwnerIdentity.Create(commandId, machine, needId, version, epoch);
+        var identity = OwnerIdentity.Create(commandId, machine, needId, version, epoch, origin);
         var canonical = EngineJournal.PrepareOwnerNeedCanonical(identity, frozen, ct);
         JsonElement? payload = captured is null ? null : JsonSerializer.SerializeToElement(
             new NeedAnswer(needId, captured.Binding.ProviderRequestId, captured.Answer, Binding: captured.Binding), EngineJson.Default.NeedAnswer);
@@ -71,10 +72,11 @@ public sealed class PreparedNeedCommand
         internal string NeedId { get; }
         internal long Version { get; }
         internal long Epoch { get; }
-        private OwnerIdentity(Guid commandId, string machine, string needId, long version, long epoch) =>
-            (CommandId, Machine, NeedId, Version, Epoch) = (commandId, machine, needId, version, epoch);
-        internal static OwnerIdentity Create(Guid commandId, string machine, string needId, long version, long epoch) =>
-            new(commandId, machine, needId, version, epoch);
+        internal CommandOrigin? Origin { get; }
+        private OwnerIdentity(Guid commandId, string machine, string needId, long version, long epoch, CommandOrigin? origin) =>
+            (CommandId, Machine, NeedId, Version, Epoch, Origin) = (commandId, machine, needId, version, epoch, origin);
+        internal static OwnerIdentity Create(Guid commandId, string machine, string needId, long version, long epoch, CommandOrigin? origin) =>
+            new(commandId, machine, needId, version, epoch, origin);
     }
 
     internal sealed record OwnerPreparation(OwnerIdentity Identity, PreparedProviderAnswer? Captured,
@@ -95,7 +97,9 @@ public sealed class PreparedNeedCommand
             OpenNeed open => open with
             {
                 Options = open.Options is null ? null! : Array.AsReadOnly(open.Options.ToArray()),
-                ProviderQuestion = open.ProviderQuestion?.Clone()
+                ProviderQuestion = open.ProviderQuestion?.Clone(),
+                Presentation = open.Presentation is null ? null : open.Presentation with
+                { Schema = open.Presentation.Schema?.Clone(), Options = Array.AsReadOnly(open.Presentation.Options.ToArray()) }
             },
             ResolveNeed resolve => (NeedCommand)(resolve with { Answer = resolve.Answer?.Clone() }),
             _ => throw new ArgumentException("Unsupported prepared need command.", nameof(command))

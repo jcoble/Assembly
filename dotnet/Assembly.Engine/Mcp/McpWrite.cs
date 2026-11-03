@@ -27,7 +27,7 @@ public sealed partial class McpWrite
     public CommandResult Apply(string entityId, long expectedVersion, long epoch, EngineCommand command)
     {
         var context = new CommandContext(Guid.NewGuid(), _runtime.Machine, new(ActorKind.Session, Caller.SessionId),
-            entityId, expectedVersion, epoch, _time.GetUtcNow().ToUnixTimeMilliseconds());
+            entityId, expectedVersion, epoch, _time.GetUtcNow().ToUnixTimeMilliseconds(), new("mcp", null, null));
         var result = _runtime.Commands.Apply(Scope, context, command);
         if (result.Applied) return result;
         IReadOnlyDictionary<string, string>? values = result.Error switch

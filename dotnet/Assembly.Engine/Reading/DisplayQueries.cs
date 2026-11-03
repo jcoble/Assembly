@@ -12,8 +12,8 @@ internal static class DisplayQueries
     private static string Columns(string kind) => Common + "," + (kind switch
     {
         "session" => "provider,model,folder,title,state,activity_state,parent_id,run_id,holder,epoch,cancel_requested,lost_ms,project_id,branch,checkout_state,checkout_operation_id",
-        "run" => "owner_session_id,worktree,branch,pr_id,state,owner_loss_limit_ms,owner_lost_ms",
-        "step" => "run_id,name,session_id,state,attempt,max_attempts,required,rule_skippable,started_ms,ended_ms,outcome_reason",
+        "run" => "owner_session_id,worktree,branch,pr_id,state,owner_loss_limit_ms,owner_lost_ms," + Workflows.Reading.WorkflowReadModels.RunColumns,
+        "step" => "run_id,name,session_id,state,attempt,max_attempts,required,rule_skippable,started_ms,ended_ms,outcome_reason," + Workflows.Reading.WorkflowReadModels.StepColumns,
         "needs_me" => "session_id,run_id,step_id,kind,text,options_json,state,deadline_ms,answered_by,answered_ms,addressee_session_id",
         "message" => "from_session_id,sender_kind,to_session_id,run_id,step_id,text,mode,state,reason,expires_ms",
         "handoff" => "session_id,old_holder,new_holder,old_epoch,next_epoch,state,reason",
@@ -27,10 +27,36 @@ internal static class DisplayQueries
 
     internal static string Json(string kind)
     {
+        if (kind == "needs_me") return """
+            json_object('entityKind','needs_me','id',t.id,'version',t.version,'machine',t.machine,
+                'sessionId',t.session_id,'runId',t.run_id,'stepId',t.step_id,'addresseeSessionId',t.addressee_session_id,
+                'chatRowId',t.chat_row_id,'kind',t.kind,'text',NULL,
+                'optionsJson',CASE WHEN length(CAST(t.options_json AS BLOB))<=32768 THEN t.options_json END,
+                'title',json_extract(t.presentation_json,'$.title'),'recommendation',json_extract(t.presentation_json,'$.recommendation'),
+                'displayNumber',t.display_number,'inputMode',json_extract(t.presentation_json,'$.inputMode'),
+                'schema',json_extract(t.presentation_json,'$.schema'),'options',json_extract(t.presentation_json,'$.options'),
+                'freeText',json(CASE json_extract(t.presentation_json,'$.freeText') WHEN 1 THEN 'true' WHEN 0 THEN 'false' ELSE 'null' END),'state',t.state,'answer',json(CASE WHEN length(CAST(t.answer_json AS BLOB))<=32768 THEN t.answer_json END),
+                'answerComplete',json(CASE WHEN t.answer_json IS NULL THEN 'null' WHEN length(CAST(t.answer_json AS BLOB))<=32768 THEN 'true' ELSE 'false' END),
+                'answerUtf8Bytes',length(CAST(t.answer_json AS BLOB)),
+                'answerText',CASE WHEN length(CAST(t.answer_json AS BLOB))<=32768 AND json_type(t.answer_json)='text' THEN json_extract(t.answer_json,'$') END,
+                'answeredBy',t.answered_by,'answeredMs',t.answered_ms,'answeredOrigin',json(t.answered_origin_json))
+            """.Replace("t.presentation_json", "CASE WHEN length(CAST(t.presentation_json AS BLOB))<=32768 THEN t.presentation_json END", StringComparison.Ordinal);
         var fields = Columns(kind).Split(',').Select(column =>
             $"'{CamelCase(column)}',t.{column}");
+        if (kind is "run" or "step")
+        {
+            fields = fields.Select(field => field == "'detail',t.detail" ? """
+                'detail',COALESCE(t.detail,(SELECT json_extract(spec.value,'$.display.detail') FROM engine_workflow_snapshot snap,
+                  json_each(snap.snapshot_json,'$.snapshot.definition.steps') spec WHERE snap.run_id=t.run_id AND spec.key=t.definition_key))
+                """ : field);
+            fields = fields.Select(field => field is "'paused',t.paused" or "'scopeGranted',t.scope_granted" or "'closed',t.closed"
+                ? field[..(field.IndexOf(',') + 1)] + "json(CASE WHEN " + field[(field.IndexOf(',') + 1)..] + "=1 THEN 'true' ELSE 'false' END)" : field);
+            return Workflows.Reading.WorkflowReadModels.Extend(kind, $"json_object('entityKind','{kind}',{string.Join(",", fields)})");
+        }
         if (kind == "session") fields = fields.Select(field => field == "'title',t.title" ? "'title',NULL" : field);
         if (kind == "needs_me") fields = fields.Select(field => field == "'text',t.text" ? "'text',NULL" : field);
+        if (kind == "session") return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
+            "'parentMachine',(SELECT parent.machine FROM engine_session parent WHERE parent.id=t.parent_id))";
         if (kind == "message")
         {
             fields = fields.Select(field => field == "'text',t.text"
@@ -77,10 +103,16 @@ internal static class DisplayQueries
         else if (kind == "needs_me")
         {
             item["text"] = text;
+            if (Encoding.UTF8.GetByteCount(item.ToJsonString(EngineJson.Default.Options)) > 32 * 1024 && item["answer"] is not null)
+            {
+                item["answer"] = null; item["answerText"] = null; item["answerComplete"] = false;
+            }
             if (prefix.LongLength != total || Encoding.UTF8.GetByteCount(item.ToJsonString(EngineJson.Default.Options)) > 32 * 1024)
             {
                 item["text"] = Scalars(text, 256); item["textComplete"] = false; item["textUtf8Bytes"] = total;
             }
+            if (Encoding.UTF8.GetByteCount(item.ToJsonString(EngineJson.Default.Options)) > 32 * 1024)
+                foreach (var field in new[] { "title", "recommendation", "inputMode", "schema", "options", "freeText", "optionsJson" }) item[field] = null;
         }
         else
         {

@@ -65,6 +65,14 @@ internal sealed class FilesFeature(SessionStore sessions, FileOwner owners) : IF
             });
             return _ => result;
         }, order: args => uploads.OrderKey(args.Upload), failed: (args, call) => uploads.Drop(args.Upload, call.Connection), bulk: true);
+        calls.Read(Feature, "compare", FilesJson.Default.CompareFile, FilesJson.Default.FileComparison, async (args, call) =>
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(call.Cancellation, call.Closed);
+            return await uploads.CompareAsync(args.Upload, call.Connection, linked.Token, (session, root) =>
+            {
+                if (LocalRoot(session, linked.Token) != root) throw new CallFailed("the session's checkout changed; the draft is preserved");
+            });
+        }, bulk: true);
         calls.Write(Feature, "dropSave", FilesJson.Default.DropSave, FilesJson.Default.UploadAccepted, (args, call) =>
         {
             uploads.Drop(args.Upload, call.Connection);
@@ -111,6 +119,8 @@ internal sealed class FilesFeature(SessionStore sessions, FileOwner owners) : IF
 [JsonSerializable(typeof(SaveChunk))]
 [JsonSerializable(typeof(CommitSave))]
 [JsonSerializable(typeof(DropSave))]
+[JsonSerializable(typeof(CompareFile))]
+[JsonSerializable(typeof(FileComparison))]
 [JsonSerializable(typeof(SaveResult))]
 [JsonSerializable(typeof(FilesFeature.UploadAccepted))]
 [JsonSerializable(typeof(FileChunk))]

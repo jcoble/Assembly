@@ -188,3 +188,14 @@ fn editing_content_preserves_crlf_trailing_newlines_and_unicode_across_chunks() 
     text.loaded(3, chunk("\nlast\r\n\r\n", "r1", None));
     assert_eq!(text.content(), Some("é\r\nlast\r\n\r\n"));
 }
+
+#[test]
+fn installing_a_document_releases_transport_text_without_losing_its_revision() {
+    let mut text = FileText::default();
+    text.start();
+    text.loaded(0, chunk("é\r\n", "r1", None));
+    text.release_content();
+    assert_eq!(text.content(), None);
+    assert!(text.lines.is_empty());
+    assert_eq!(text.revision(), Some("r1"));
+}

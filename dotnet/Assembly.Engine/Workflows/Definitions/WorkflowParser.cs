@@ -83,8 +83,10 @@ public static class WorkflowParser
             WorkflowDisplay? display = null;
             if (step.TryGetProperty("display", out var labels))
             {
-                Fields(labels, field + ".display", "label", "stage");
-                display = new(OptionalText(labels, "label", field + ".display.label"), OptionalText(labels, "stage", field + ".display.stage"));
+                Fields(labels, field + ".display", "label", "stage", "present", "past", "detail");
+                display = new(OptionalText(labels, "label", field + ".display.label"),
+                    DisplayText(labels, "stage", field, 40), DisplayText(labels, "present", field, 120),
+                    DisplayText(labels, "past", field, 120), DisplayText(labels, "detail", field, 300));
             }
             steps.Add(id, new(id, kind == "run" ? "command" : kind, Strings(step, "needs", field), provider, model, permission, prompt, result,
                 commands, Boolean(step, "repeat", field, false), target ?? OptionalText(step, "on_fail", field + ".on_fail"), files,
@@ -203,6 +205,13 @@ public static class WorkflowParser
         if (!value.TryGetProperty(key, out var property)) return null;
         if (property.ValueKind != JsonValueKind.String) throw Error(field, "expected string");
         return property.GetString();
+    }
+    private static string? DisplayText(JsonElement value, string key, string stepField, int maximum)
+    {
+        var field = stepField + ".display." + key;
+        var text = OptionalText(value, key, field);
+        if (text is not null && text.EnumerateRunes().Count() > maximum) throw Error(field, $"must be at most {maximum} characters");
+        return text;
     }
     private static bool Boolean(JsonElement value, string key, string field, bool fallback)
     {

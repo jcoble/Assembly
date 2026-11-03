@@ -3,6 +3,9 @@
 
 mod core;
 mod features;
+#[allow(dead_code)]
+#[path = "components/inline_field/mod.rs"]
+mod inline_field;
 
 use std::cell::{Cell, OnceCell};
 use std::path::PathBuf;
@@ -36,6 +39,8 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
+            inline_field::init(cx);
+            features::shell::workspace_preview::register(cx);
             features::shell::placeholder_pane::PlaceholderPane::register_all(cx);
             SelectedSession::init(cx);
             Preferences::init(cx);

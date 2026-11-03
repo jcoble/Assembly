@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::fold::Fold;
 use super::item::{Item, ItemKind};
-use crate::features::session::rows::markdown::{Block, Inline};
+use crate::core::ui::markdown::payload::{Block, Inline};
 use crate::features::session::rows::turn_stats::TurnStats;
 
 fn item(key: &str, kind: ItemKind) -> Item {

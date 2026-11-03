@@ -1,20 +1,22 @@
 //! One source editor per opened file, backed by the bounded shared draft store and owning-host bulk file calls.
 
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
-    BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
+    PanelId, PanelInfo, panel_handle, register_panel,
 };
-use gpui_kit::component::input::{Editor, InputEvent};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::input::InputEvent;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use super::document_store::{DocumentKey, DocumentStore, DocumentView};
+use super::document_store::{DocumentKey, DocumentSnapshot, DocumentStore, DocumentView};
 use super::editor_surface::EditorSurface;
 use super::entry::{FileChunk, FileOwnership};
-use super::file_save::{ConfirmedFileSave, FileSaveController, SaveState};
+use super::file_history::FileHistory;
+use super::file_save::{ConfirmedFileSave, FileSaveController};
 
+#[path = "file_view_presentation.rs"]
+mod presentation;
+#[path = "file_view_conflict.rs"]
+mod conflict;
 #[path = "file_view_save.rs"]
 mod saving;
 use super::file_text::FileText;
@@ -51,6 +53,11 @@ pub struct FileView {
     saving: Option<Task<()>>,
     upload: Option<String>,
     last_save: Option<ConfirmedFileSave>,
+    history: Option<Entity<FileHistory>>,
+    comparison: Option<Entity<super::file_comparison::FileComparison>>,
+    history_shown: bool,
+    prompting: Option<Task<()>>,
+    reload_version: Option<u64>,
     /// Redraws in the editor's face, size and line height when Settings changes them.
     _preferences: Option<Subscription>,
 }
@@ -109,6 +116,11 @@ impl FileView {
             saving: None,
             upload: None,
             last_save: None,
+            history: None,
+            comparison: None,
+            history_shown: false,
+            prompting: None,
+            reload_version: None,
             _preferences: Preferences::try_global(cx)
                 .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
         }
@@ -168,6 +180,19 @@ impl FileView {
                 }
                 match answer {
                     Outcome::Ok(owner) => {
+                        if view.reload_version.is_some()
+                            && view.document.as_ref().is_some_and(|key| {
+                                key.machine != owner.machine
+                                    || key.checkout_root != owner.checkout_root
+                            })
+                        {
+                            view.text.failed(
+                                "The owning checkout changed. The current draft is preserved."
+                                    .into(),
+                            );
+                            cx.notify();
+                            return;
+                        }
                         view.owner = Some(owner);
                         view.text.start();
                         view.load_part(0, cx);
@@ -184,6 +209,21 @@ impl FileView {
 
     fn bind_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.editor.is_some() || !self.active {
+            return;
+        }
+        if self.reload_version.is_none()
+            && let Some(key) = &self.document
+            && let Ok(snapshot) = cx.global::<DocumentStore>().snapshot(key)
+        {
+            self.install_editor(snapshot, window, cx);
+            return;
+        }
+        if self.text.error.is_some()
+            && self.reload_version.take().is_some()
+            && let Some(key) = &self.document
+            && let Ok(snapshot) = cx.global::<DocumentStore>().snapshot(key)
+        {
+            self.install_editor(snapshot, window, cx);
             return;
         }
         let (Some(owner), Some(text), Some(revision)) =
@@ -207,6 +247,18 @@ impl FileView {
                 "This file cannot be edited: {error:?}. Existing drafts are preserved."
             ));
             return;
+        }
+        if let Some(version) = self.reload_version.take() {
+            if let Err(error) = cx.global_mut::<DocumentStore>().reload(
+                &key,
+                version,
+                revision.to_owned(),
+                text.to_owned(),
+            ) {
+                self.editor_error = Some(format!(
+                    "Reload was refused: {error:?}. Your current draft is preserved."
+                ));
+            }
         }
         let snapshot = cx
             .global::<DocumentStore>()
@@ -254,6 +306,33 @@ impl FileView {
             return;
         }
         self.document = Some(key);
+        self.install_editor(snapshot, window, cx);
+        if !self.pinned {
+            if let Some(old) = CenterPanes::file_preview(cx).filter(|id| *id != current)
+                && let Some(previous) = Self::panel(old, cx)
+            {
+                let handle = window.window_handle();
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |_, window, cx| {
+                        if previous.read(cx).replaceable(cx)
+                            && let Some(dock) = CenterPanes::dock(cx)
+                        {
+                            dock.update(cx, |dock, cx| dock.remove_panel(previous, window, cx));
+                        }
+                    });
+                });
+            }
+            CenterPanes::set_file_preview(current, cx);
+        }
+    }
+
+    fn install_editor(
+        &mut self,
+        snapshot: DocumentSnapshot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.document = Some(snapshot.key.clone());
         let mut editor = EditorSurface::new(&self.path, &snapshot.text, window, cx);
         if let Some((line, column)) = self.jump.take() {
             editor.jump(line, column, cx);
@@ -276,23 +355,7 @@ impl FileView {
             },
         ));
         self.editor = Some(editor);
-        if !self.pinned {
-            if let Some(old) = CenterPanes::file_preview(cx).filter(|id| *id != current)
-                && let Some(previous) = Self::panel(old, cx)
-            {
-                let handle = window.window_handle();
-                cx.defer(move |cx| {
-                    let _ = handle.update(cx, |_, window, cx| {
-                        if previous.read(cx).replaceable(cx)
-                            && let Some(dock) = CenterPanes::dock(cx)
-                        {
-                            dock.update(cx, |dock, cx| dock.remove_panel(previous, window, cx));
-                        }
-                    });
-                });
-            }
-            CenterPanes::set_file_preview(current, cx);
-        }
+        self.text.release_content();
     }
 
     fn editor_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -359,6 +422,20 @@ impl FileView {
         }
     }
 
+    fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        self.history_shown = !self.history_shown;
+        if self.history.is_none() {
+            self.history =
+                Some(cx.new(|_| FileHistory::new(self.session.clone(), self.path.clone())));
+        }
+        if let Some(history) = &self.history {
+            history.update(cx, |history, cx| {
+                history.set_active(self.active && self.history_shown, cx)
+            });
+        }
+        cx.notify();
+    }
+
     fn stash_editor_view(&self, cx: &mut App) {
         if let (Some(key), Some(editor)) = (&self.document, &self.editor) {
             let state = editor.state.read(cx);
@@ -389,6 +466,12 @@ impl FileView {
         }
     }
 
+    pub(super) fn document_snapshot(&self, cx: &App) -> Option<DocumentSnapshot> {
+        cx.try_global::<DocumentStore>()?
+            .snapshot(self.document.as_ref()?)
+            .ok()
+    }
+
     fn panel(id: PanelId, cx: &App) -> Option<Entity<Self>> {
         let dock = CenterPanes::dock(cx)?;
         let panel = dock.read(cx).panel(id)?.clone();
@@ -414,145 +497,4 @@ fn key(session: &str, path: &str) -> String {
         "file:{}",
         serde_json::to_string(&(session, path)).expect("file alias")
     )
-}
-
-impl EventEmitter<PanelEvent> for FileView {}
-
-impl Focusable for FileView {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-
-impl BasePanel for FileView {
-    fn panel_name(&self) -> &'static str {
-        FILE
-    }
-
-    fn closable(&self, cx: &App) -> bool {
-        self.saving.is_none()
-            && !self.document.as_ref().is_some_and(|key| {
-                cx.try_global::<DocumentStore>()
-                    .is_some_and(|docs| docs.is_dirty(key))
-            })
-    }
-
-    /// Reads a complete coherent buffer only when shown.
-    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
-        self.active = active;
-        if active && !self.started {
-            self.started = true;
-            self.load_owner(cx);
-        }
-        if !active {
-            self.stash_editor_view(cx);
-            self.loading = None;
-            self.release_read(cx);
-            self.editor_events = None;
-            self.editor = None;
-            if self.document.is_none() {
-                self.started = false;
-            }
-        }
-        cx.notify();
-    }
-
-    fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.stash_editor_view(cx);
-        if let Some(key) = &self.document {
-            cx.global_mut::<DocumentStore>().release_clean(key);
-        }
-        self.active = false;
-        self.loading = None;
-        self.saving = None;
-        self.drop_upload(cx);
-        self.release_read(cx);
-    }
-
-    fn dump(&self, _: &App) -> PanelState {
-        PanelState {
-            panel_name: FILE.into(),
-            children: Vec::new(),
-            info: PanelInfo::panel(json!({ "session": self.session, "path": self.path })),
-        }
-    }
-}
-
-impl Panel for FileView {
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        SharedString::from(
-            self.path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&self.path)
-                .to_string(),
-        )
-    }
-}
-
-impl Render for FileView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.bind_editor(window, cx);
-        let muted = cx.theme().muted_foreground;
-        let dirty = self.document.as_ref().is_some_and(|key| {
-            cx.try_global::<DocumentStore>()
-                .is_some_and(|docs| docs.is_dirty(key))
-        });
-        let status = self
-            .editor_error
-            .clone()
-            .or_else(|| self.text.error.clone())
-            .or_else(|| {
-                if self.text.binary {
-                    Some("This file isn't UTF-8 text.".into())
-                } else if self.editor.is_none() {
-                    Some("Loading…".into())
-                } else {
-                    None
-                }
-            });
-        v_flex()
-            .track_focus(&self.focus)
-            .key_context("FileEditor")
-            .on_action(cx.listener(|view, _: &SaveDocument, _, cx| view.save_document(cx)))
-            .size_full()
-            .child(
-                h_flex()
-                    .px_3()
-                    .py_1()
-                    .gap_2()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(self.path.clone())
-                    .when(dirty, |row| row.child("Unsaved"))
-                    .child(
-                        Button::new("file-save")
-                            .label(
-                                if self
-                                    .save
-                                    .as_ref()
-                                    .is_some_and(|s| s.state == SaveState::Unknown)
-                                {
-                                    "Check save"
-                                } else {
-                                    "Save"
-                                },
-                            )
-                            .ghost()
-                            .disabled(self.saving.is_some() || self.document.is_none())
-                            .on_click(cx.listener(|view, _, _, cx| view.save_document(cx))),
-                    ),
-            )
-            .children(
-                status.map(|text| div().px_3().py_2().text_sm().text_color(muted).child(text)),
-            )
-            .when_some(self.editor.as_ref(), |view, editor| {
-                view.child(
-                    Editor::new(&editor.state)
-                        .font_family(Preferences::editor_text(cx).0)
-                        .text_size(Preferences::editor_text(cx).1)
-                        .size_full(),
-                )
-            })
-    }
 }

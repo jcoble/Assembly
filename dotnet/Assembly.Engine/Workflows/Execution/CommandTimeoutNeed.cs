@@ -4,6 +4,7 @@ using Assembly.Engine.Contracts;
 using Assembly.Engine.Effects;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
+using Assembly.Engine.NeedsMe;
 
 namespace Assembly.Engine.Workflows.Execution;
 
@@ -14,17 +15,21 @@ public static partial class WorkflowExecutionNeeds
         var owner = s.QueryFirst("SELECT owner_session_id FROM engine_run WHERE id=$run", r => r.Text(0), new SqlArg("$run", i.RunId));
         var id = effect.Id + "/timed_out";
         var binding = new WorkflowExecutionNeed(i.OrderKey, i.StepId, i.Generation, i.Attempt, i.CommandIndex, i.ExecutionEpoch, effect.Id, "timed_out");
+        var presentation = NeedPresentationInputs.Normalize(new(owner!, i.RunId, i.StepId, "command_timeout",
+            "Step timed out and its executor stopped; waiting for owner.", ["retry", "cancel"], null, null, null));
+        var displayNumber = NeedPresentationInputs.AllocateNumber(s);
         s.Execute("""
             UPDATE engine_needs_me SET state='cancelled',version=version+1,updated_ms=$now WHERE source_kind='workflow'
               AND run_id=$run AND step_id=$step AND state='open';
             INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,kind,text,options_json,state,
-              addressee_session_id,source_kind,execution_json)
+              addressee_session_id,source_kind,execution_json,presentation_json,display_number)
             VALUES($id,1,$machine,$now,$now,$owner,$run,$step,'command_timeout','Step timed out and its executor stopped; waiting for owner.',
-              '["retry","cancel"]','open',$owner,'workflow',$binding);
+              '["retry","cancel"]','open',$owner,'workflow',$binding,$presentation,$display);
             """, new("$now", c.NowMs), new("$run", i.RunId), new("$step", i.StepId), new("$id", id), new("$machine", c.Machine),
-            new("$owner", owner), new("$binding", JsonSerializer.Serialize(binding, WorkflowNeedJson.Default.WorkflowExecutionNeed)));
+            new("$owner", owner), new("$presentation", JsonSerializer.Serialize(presentation, EngineJson.Default.NeedPresentation)),
+            new("$display", displayNumber), new("$binding", JsonSerializer.Serialize(binding, WorkflowNeedJson.Default.WorkflowExecutionNeed)));
         EngineJournal.Commit(s, c, c.ExpectedVersion, c.Epoch,
-            [new("needs_me.opened", "need", id, 1, false, new(owner, i.RunId, i.StepId, owner, "open", c.Epoch))], []);
+            [new("needs_me.opened", "needs_me", id, 1, false, new(owner, i.RunId, i.StepId, owner, "open", c.Epoch))], []);
     }
 }
 
@@ -72,11 +77,11 @@ public static partial class CommandStepTransitions
                     new("$generation", row.Generation), new("$attempt", row.Attempt), new("$epoch", row.Epoch)) != 1)
             return Refuse("executor_quiescence_required");
         s.Execute("""
-            UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answer_json='"retry"',answered_by=$actor,answered_ms=$now WHERE id=$need;
+            UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,answer_json='"retry"',answered_by=$actor,answered_ms=$now,answered_origin_json=$origin WHERE id=$need;
             UPDATE engine_step SET state='pending',dispatch_state='pending',outcome_reason=NULL,ended_ms=NULL,deadline_ms=NULL,
               version=version+1,updated_ms=$now WHERE id=$step;
-            """, new("$now", c.NowMs), new("$actor", c.Actor.Id), new("$need", needId), new("$step", c.EntityId));
-        List<EventDraft> events = [new("needs_me.answered", "need", needId, row.NeedVersion + 1, false, new(row.Owner, row.Run, c.EntityId, row.Owner, "answered", c.Epoch)),
+            """, new("$now", c.NowMs), new("$actor", c.Actor.Id), new("$origin", NeedTransitions.OriginJson(c)), new("$need", needId), new("$step", c.EntityId));
+        List<EventDraft> events = [new("needs_me.answered", "needs_me", needId, row.NeedVersion + 1, false, new(row.Owner, row.Run, c.EntityId, row.Owner, "answered", c.Epoch)),
             new("step.changed", "step", c.EntityId, row.Version + 1, false, new(null, row.Run, c.EntityId, null, "pending", row.Epoch))];
         events.AddRange(RunTransitions.Recompute(s, c, row.Run));
         return EngineJournal.Commit(s, c, row.Version + 1, c.Epoch, events, []);

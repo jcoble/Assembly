@@ -274,10 +274,15 @@ async fn a_file_reads_a_complete_coherent_buffer_and_closing_drops_the_read(
         BasePanel::set_active(view, true, window, cx)
     });
     settled(&view, cx, |view| view.loading.is_none()).await;
-    view.read_with(cx, |view, _| {
+    view.read_with(cx, |view, cx| {
         assert_eq!(view.text.line_count, 20_000);
-        assert_eq!(view.text.content(), Some((big.join("\n") + "\n").as_str()));
-        assert_eq!(view.text.lines, big);
+        let expected = big.join("\n") + "\n";
+        let actual = view
+            .document_snapshot(cx)
+            .map(|snapshot| snapshot.text)
+            .or_else(|| view.text.content().map(String::from))
+            .expect("complete coherent source");
+        assert_eq!(actual, expected);
     });
     view.update(cx, |view, cx| {
         let offset = view.text.start();

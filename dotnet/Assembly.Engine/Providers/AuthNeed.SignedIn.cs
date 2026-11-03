@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
@@ -47,9 +48,10 @@ internal sealed partial record AuthNeed
             IReadOnlyList<string> ids = valid.Keys.ToArray();
             var changed = scope.Query("""
                 UPDATE engine_needs_me SET state='answered',version=version+1,updated_ms=$now,
-                    answer_json='"signed_in"',answered_by=$actor,answered_ms=$now
+                    answer_json='"signed_in"',answered_by=$actor,answered_ms=$now,answered_origin_json=$origin
                 WHERE state='open' AND id IN (SELECT value FROM json_each($ids)) RETURNING id,version
                 """, r => (Id: r.Text(0), Version: r.Long(1)), new SqlArg("$now", context.NowMs), new("$actor", "sign-in/" + operationId),
+                new("$origin", NeedTransitions.OriginJson(context)),
                 new("$ids", JsonSerializer.Serialize(ids, EngineJson.Default.IReadOnlyListString)));
             if (changed.Count != valid.Count) throw new InvalidOperationException("The matching auth needs changed.");
             foreach (var closed in changed)

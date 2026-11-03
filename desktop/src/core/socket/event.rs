@@ -48,6 +48,7 @@ pub(super) enum Event {
         machine: Option<String>,
         updates: UnboundedSender<super::engine_update::EngineUpdate>,
     },
+    ResnapshotEngine { handle: u64 },
     AcknowledgeEngine {
         handle: u64,
         wire: u64,

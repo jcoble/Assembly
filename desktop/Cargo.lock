@@ -303,6 +303,7 @@ name = "assembly-desktop"
 version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
+ "async-process",
  "base64 0.22.1",
  "chrono",
  "futures-channel",
@@ -310,6 +311,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "libc",
+ "open",
  "serde",
  "serde_json",
  "tungstenite",

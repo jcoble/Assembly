@@ -19,16 +19,31 @@ public sealed partial class EngineHelperCards
     }
 
     private static IReadOnlyList<Card> Read(IReadScope scope, string? childId = null, string? source = null) => scope.Query("""
-        WITH children AS (
+        WITH parents AS (
+            SELECT p.id,p.machine,pi.repo_url
+            FROM engine_session p JOIN session_info pi ON pi.session_id=p.id AND pi.machine IS NULL
+            WHERE p.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
+                AND p.holder='local' AND p.state<>'foreign'
+            UNION ALL
+            SELECT p.entity_id,p.machine,pi.repo_url
+            FROM engine_mirror_row p JOIN engine_mirror m
+                ON m.machine=p.machine AND m.generation=p.generation AND m.state='live'
+            JOIN session_info pi ON pi.session_id=p.entity_id AND pi.machine=m.name
+            WHERE p.entity_kind='session' AND json_extract(p.row_json,'$.id')=p.entity_id
+                AND json_extract(p.row_json,'$.machine')=p.machine
+                AND json_extract(p.row_json,'$.holder')='local' AND json_extract(p.row_json,'$.state')<>'foreign'
+        ), children AS (
             SELECT c.id,c.parent_id,c.provider,CAST(c.title AS BLOB) title,c.state,c.activity_state,
                 c.epoch,c.version,0 generation,c.machine,
                 EXISTS(SELECT 1 FROM engine_message m WHERE m.to_session_id=c.id
                     AND m.state='queued' AND m.in_flight=1) prompt_in_flight,
-                c.folder,c.updated_ms,NULL display_machine,pi.repo_url
-            FROM engine_session c JOIN engine_session p ON p.id=c.parent_id
-            JOIN session_info pi ON pi.session_id=p.id AND pi.machine IS NULL
+                c.folder,c.updated_ms,NULL display_machine,p.repo_url
+            FROM engine_session c JOIN parents p ON p.id=c.parent_id
+            JOIN engine_session ancestry ON ancestry.id=c.parent_id AND ancestry.machine=p.machine
             WHERE c.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND c.holder='local'
-                AND c.state<>'foreign' AND p.machine=c.machine AND p.holder='local' AND p.state<>'foreign'
+                AND c.state<>'foreign'
+                AND ((p.machine=c.machine AND ancestry.holder='local' AND ancestry.state<>'foreign')
+                    OR (p.machine<>c.machine AND ancestry.holder=p.machine AND ancestry.state='foreign'))
                 AND ($id IS NULL OR c.id=$id) AND ($source IS NULL OR c.machine=$source)
             UNION ALL
             SELECT r.entity_id,json_extract(r.row_json,'$.parentId'),json_extract(r.row_json,'$.provider'),
@@ -41,11 +56,20 @@ public sealed partial class EngineHelperCards
                         AND json_extract(message.row_json,'$.toSessionId')=r.entity_id
                         AND json_extract(message.row_json,'$.state')='queued'
                         AND json_extract(message.row_json,'$.inFlight')=1),
-                json_extract(r.row_json,'$.folder'),json_extract(r.row_json,'$.updatedMs'),m.name,pi.repo_url
+                json_extract(r.row_json,'$.folder'),json_extract(r.row_json,'$.updatedMs'),m.name,p.repo_url
             FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation AND m.state='live'
-            JOIN engine_session p ON p.id=json_extract(r.row_json,'$.parentId')
-                AND p.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND p.holder='local' AND p.state<>'foreign'
-            JOIN session_info pi ON pi.session_id=p.id AND pi.machine IS NULL
+            JOIN parents p ON p.id=json_extract(r.row_json,'$.parentId')
+                AND ((json_type(r.row_json,'$.parentMachine')='text'
+                        AND json_extract(r.row_json,'$.parentMachine')=p.machine)
+                    OR ((json_type(r.row_json,'$.parentMachine') IS NULL
+                            OR json_type(r.row_json,'$.parentMachine')='null')
+                        AND (p.machine=r.machine OR EXISTS(
+                            SELECT 1 FROM engine_session child JOIN engine_session parent ON parent.id=child.parent_id
+                            WHERE child.id=r.entity_id AND child.parent_id=p.id AND child.machine=r.machine
+                                AND child.state='foreign' AND child.holder=r.machine AND parent.machine=p.machine
+                                AND ((parent.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
+                                    AND parent.holder='local' AND parent.state<>'foreign')
+                                    OR (parent.state='foreign' AND parent.holder=p.machine))))))
             LEFT JOIN session_info si ON si.session_id=r.entity_id AND si.machine=m.name
             WHERE r.entity_kind='session' AND json_extract(r.row_json,'$.holder')='local'
                 AND json_extract(r.row_json,'$.machine')=r.machine AND json_extract(r.row_json,'$.id')=r.entity_id

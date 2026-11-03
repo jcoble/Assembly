@@ -171,6 +171,175 @@ public sealed class EngineHelperCardsTests
         Assert.Equal(payload, Card(Assert.Single(f.Rows.RowsAfter("remote-parent", 0))));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_mirrored_parent_exposes_its_current_helpers_without_writing_its_transcript(bool separateOwner)
+    {
+        await using var f = new Fixture();
+        f.Store.Add("remote-parent", "codex", "parent-repository", "parent-box");
+        var parent = MirrorSession("parent-owner", "remote-parent", null, "idle");
+        var owner = separateOwner ? "child-owner" : "parent-owner";
+        var name = separateOwner ? "child-box" : "parent-box";
+        var child = MirrorSession(owner, "mirrored-child", "remote-parent", "running");
+        if (separateOwner)
+        {
+            f.Snapshot("parent-owner", "parent-box", parent);
+            f.ProveChild("parent-owner", "remote-parent", owner, "mirrored-child");
+            f.Snapshot(owner, name, child);
+        }
+        else f.Snapshot(owner, name, parent, child);
+
+        Assert.True(f.Cards.Working("remote-parent"));
+        var display = Assert.IsType<SessionInfo>(f.Store.Get("mirrored-child"));
+        Assert.Equal(name, display.Machine); Assert.Equal("remote-parent", display.ParentSessionId);
+        Assert.Equal("parent-repository", display.RepoUrl);
+        Assert.True(display.Helper);
+        Assert.Equal(0, f.Engine.Number("SELECT COUNT(*) FROM engine_session WHERE id='mirrored-child' AND state<>'foreign'"));
+        Assert.Empty(f.Rows.RowsAfter("remote-parent", 0));
+
+        var idle = MirrorSession(owner, "mirrored-child", "remote-parent", "idle", version: 2);
+        f.Snapshot(owner, name, separateOwner ? [idle] : [parent, idle]);
+        Assert.False(f.Cards.Working("remote-parent"));
+        Assert.Empty(f.Rows.RowsAfter("remote-parent", 0));
+    }
+
+    [Fact]
+    public async Task An_accepted_local_child_of_a_proven_remote_parent_is_visible_without_local_parent_admission()
+    {
+        await using var f = new Fixture();
+        f.Store.Add("remote-parent", "codex", "remote-repository", "parent-box");
+        f.Snapshot("parent-owner", "parent-box", MirrorSession("parent-owner", "remote-parent", null, "idle"));
+        var ancestry = f.Runtime.Commands.PrepareForeignAncestry(new("parent-owner", "remote-parent",
+            [new("remote-parent", "parent-owner", "codex", "Remote parent", null)]));
+        f.Engine.Db.Writer.Write("test.peer-start", scope =>
+        {
+            Assert.True(f.Runtime.Commands.ApplyForeignAncestryBatch(scope, ancestry).Applied);
+            var result = f.Runtime.Commands.Apply(scope,
+                new(Guid.NewGuid(), f.Runtime.Machine, new(ActorKind.System, "machine:parent-owner"), "local-child", 0, 0, 1000),
+                new StartSession("codex", null, "/local-work", "Local child", "remote-parent", null, null));
+            Assert.True(result.Applied, result.Error);
+            return 0;
+        });
+        Assert.True(f.Cards.Working("remote-parent"));
+        Assert.Equal("foreign", f.Engine.State("engine_session", "remote-parent"));
+        Assert.Null(f.Store.Get("local-child")!.Machine);
+        Assert.Empty(f.Rows.RowsAfter("remote-parent", 0));
+        Assert.Equal(0, f.Launcher.ProviderCalls);
+    }
+
+    [Fact]
+    public async Task Missing_or_retired_parent_authority_removes_visibility_and_a_new_snapshot_restores_it()
+    {
+        await using var f = new Fixture();
+        f.Store.Add("remote-parent", "codex", "repo", "parent-box");
+        var child = MirrorSession("child-owner", "mirrored-child", "remote-parent", "running");
+        f.ProveChild("parent-owner", "remote-parent", "child-owner", "mirrored-child");
+        f.Snapshot("child-owner", "child-box", child);
+        Assert.False(f.Cards.Working("remote-parent")); Assert.Null(f.Store.Get("mirrored-child"));
+        var parent = MirrorSession("parent-owner", "remote-parent", null, "idle");
+        f.Snapshot("parent-owner", "parent-box", parent);
+        Assert.True(f.Cards.Working("remote-parent")); Assert.NotNull(f.Store.Get("mirrored-child"));
+        f.Snapshot("parent-owner", "parent-box");
+        Assert.False(f.Cards.Working("remote-parent"));
+        f.Snapshot("parent-owner", "parent-box", parent);
+        Assert.True(f.Cards.Working("remote-parent"));
+        // A replacement machine under the saved name retires the old source, not its historical rows.
+        f.Snapshot("replacement-owner", "parent-box");
+        Assert.False(f.Cards.Working("remote-parent"));
+        Assert.Empty(f.Rows.RowsAfter("remote-parent", 0));
+    }
+
+    [Theory]
+    [InlineData("wrong-facade")]
+    [InlineData("foreign")]
+    [InlineData("wrong-owner")]
+    public async Task A_saved_name_or_foreign_parent_copy_is_not_parent_authority(string invalid)
+    {
+        await using var f = new Fixture();
+        f.Store.Add("remote-parent", "codex", "repo", invalid == "wrong-facade" ? "other-box" : "parent-box");
+        f.ProveChild("parent-owner", "remote-parent", "child-owner", "mirrored-child");
+        var parent = MirrorSession(invalid == "wrong-owner" ? "forged-owner" : "parent-owner",
+            "remote-parent", null, invalid == "foreign" ? "foreign" : "idle");
+        if (invalid == "wrong-owner")
+        {
+            var error = Assert.Throws<ArgumentException>(() => f.Snapshot("parent-owner", "parent-box", parent));
+            Assert.Equal("Invalid mirror row", error.Message);
+            Assert.Equal(0, f.Engine.Number("SELECT COUNT(*) FROM engine_mirror WHERE machine='parent-owner'"));
+        }
+        else f.Snapshot("parent-owner", "parent-box", parent);
+        f.Snapshot("child-owner", "child-box", MirrorSession("child-owner", "mirrored-child", "remote-parent", "running"));
+        Assert.False(f.Cards.Working("remote-parent")); Assert.Null(f.Store.Get("mirrored-child"));
+        Assert.Empty(f.Rows.RowsAfter("remote-parent", 0));
+    }
+
+    [Fact]
+    public async Task A_mixed_owner_child_cannot_infer_its_parent_owner_from_a_bare_or_colliding_id()
+    {
+        await using var f = new Fixture();
+        f.Store.Add("same-parent-id", "codex", "repo", "parent-box");
+        f.Snapshot("parent-owner", "parent-box", MirrorSession("parent-owner", "same-parent-id", null, "idle"));
+        var child = MirrorSession("child-owner", "mirrored-child", "same-parent-id", "running");
+        f.Snapshot("child-owner", "child-box", child);
+        Assert.False(f.Cards.Working("same-parent-id")); Assert.Null(f.Store.Get("mirrored-child"));
+        f.Snapshot("child-owner", "child-box", MirrorSession("child-owner", "same-parent-id", null, "idle"), child);
+        Assert.False(f.Cards.Working("same-parent-id")); Assert.Null(f.Store.Get("mirrored-child"));
+        Assert.Empty(f.Rows.RowsAfter("same-parent-id", 0));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task An_explicit_parent_owner_is_used_without_guessing_and_cannot_be_overridden_by_legacy_proof(bool contradictsProof)
+    {
+        await using var f = new Fixture();
+        f.Store.Add("remote-parent", "codex", "repo", "parent-box");
+        f.Snapshot("parent-owner", "parent-box", MirrorSession("parent-owner", "remote-parent", null, "idle"));
+        if (contradictsProof) f.ProveChild("parent-owner", "remote-parent", "child-owner", "mirrored-child");
+        f.Snapshot("child-owner", "child-box", MirrorSession("child-owner", "mirrored-child", "remote-parent", "running",
+            parentMachine: contradictsProof ? "different-owner" : "parent-owner"));
+        Assert.Equal(!contradictsProof, f.Cards.Working("remote-parent"));
+        Assert.Equal(!contradictsProof, f.Store.Get("mirrored-child") is not null);
+        Assert.Equal(0, f.Engine.Number("SELECT COUNT(*) FROM engine_session WHERE id='mirrored-child' AND state<>'foreign'"));
+        Assert.Empty(f.Rows.RowsAfter("remote-parent", 0));
+    }
+
+    [Fact]
+    public async Task A_conflicting_child_facade_refuses_and_rolled_back_mirror_never_publishes_visibility()
+    {
+        await using var f = new Fixture();
+        f.Store.Add("remote-parent", "codex", "repo", "parent-box");
+        f.Store.Add("mirrored-child", "codex", "repo", "other-box", "remote-parent", helper: true);
+        f.ProveChild("parent-owner", "remote-parent", "child-owner", "mirrored-child");
+        f.Snapshot("parent-owner", "parent-box", MirrorSession("parent-owner", "remote-parent", null, "idle"));
+        Assert.Throws<InvalidOperationException>(() => f.Snapshot("child-owner", "child-box",
+            MirrorSession("child-owner", "mirrored-child", "remote-parent", "running")));
+        Assert.False(f.Cards.Working("remote-parent"));
+        Assert.Equal("other-box", f.Store.Get("mirrored-child")!.Machine);
+        Assert.Equal(0, f.Engine.Number("SELECT COUNT(*) FROM engine_mirror WHERE machine='child-owner'"));
+    }
+
+    // SOURCE-DERIVED display DTOs, passed through the actual mirror writer; no provider capture or Engine admission.
+    private static JsonElement MirrorSession(string machine, string id, string? parentId, string state, long version = 1,
+        string? parentMachine = null) =>
+        JsonSerializer.SerializeToElement(new
+        {
+            entityKind = "session",
+            machine,
+            id,
+            parentId,
+            parentMachine,
+            state,
+            version,
+            provider = "codex",
+            folder = "/remote-work",
+            updatedMs = 1000,
+            title = "Remote title",
+            holder = "local",
+            activityState = state,
+            epoch = 0
+        });
+
     private static SubagentPayload Card(StoredRow row) => row.Payload.Deserialize(RowJsonContext.Rows.SubagentPayload)!;
     private static async Task<StoredRow> NextCard(LiveSubscription live)
     {
@@ -262,6 +431,10 @@ public sealed class EngineHelperCardsTests
 
         public void Mirror(string state, long version) => Engine.Db.Writer.Write("test.remote-snapshot", scope =>
         {
+            var ancestry = Runtime.Commands.PrepareForeignAncestry(new("remote-owner", "remote-child",
+                [new(Parent.SessionId, Runtime.Machine, Parent.Agent, Parent.Title ?? "", Parent.ParentSessionId),
+                    new("remote-child", "remote-owner", "codex", "Remote title", Parent.SessionId)]));
+            Assert.True(Runtime.Commands.ApplyForeignAncestryBatch(scope, ancestry).Applied);
             MirrorApply.Open(scope, "remote-owner", "workbox-test", 1000);
             MirrorApply.BeginSnapshot(scope, "remote-owner", 1000);
             var row = JsonSerializer.SerializeToElement(new
@@ -284,6 +457,25 @@ public sealed class EngineHelperCardsTests
             MirrorApply.SnapshotPage(scope, "remote-owner", [row]);
             MirrorApply.EndSnapshot(scope, "remote-owner", 0, null, 1000);
             Cards.Mirrored(scope, "remote-owner");
+            return 0;
+        });
+
+        public void ProveChild(string parentOwner, string parent, string childOwner, string child)
+        {
+            var ancestry = Runtime.Commands.PrepareForeignAncestry(new(childOwner, child,
+                [new(parent, parentOwner, "codex", "Remote title", null),
+                    new(child, childOwner, "codex", "Remote title", parent)]));
+            Assert.True(Engine.Db.Writer.Write("test.proven-child", scope =>
+                Runtime.Commands.ApplyForeignAncestryBatch(scope, ancestry)).Applied);
+        }
+
+        public void Snapshot(string machine, string name, params JsonElement[] rows) => Engine.Db.Writer.Write("test.helper-snapshot", scope =>
+        {
+            MirrorApply.Open(scope, machine, name, 1000);
+            MirrorApply.BeginSnapshot(scope, machine, 1000);
+            MirrorApply.SnapshotPage(scope, machine, rows);
+            MirrorApply.EndSnapshot(scope, machine, 0, null, 1000);
+            Cards.Mirrored(scope, machine);
             return 0;
         });
 

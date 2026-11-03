@@ -8,7 +8,6 @@ pub mod grow;
 pub mod header;
 pub mod item_row;
 pub mod lightbox;
-pub mod markdown_view;
 pub mod message_meta;
 pub mod plan_card;
 pub mod sent_message;

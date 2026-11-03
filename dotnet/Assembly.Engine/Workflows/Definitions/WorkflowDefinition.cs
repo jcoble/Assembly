@@ -16,7 +16,10 @@ public sealed record WorkflowLimits(long MaxSessions = 3, long StepTimeoutMinute
 {
     public long StepTimeoutMilliseconds => checked(StepTimeoutMinutes * 60_000);
 }
-public sealed record WorkflowDisplay(string? Label = null, string? Stage = null);
+public sealed record WorkflowDisplay(string? Label = null, string? Stage = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Present = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Past = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Detail = null);
 public sealed record WorkflowStepSpec(string Id, string Kind, ImmutableArray<string> Needs,
     string? Provider, string? Model, string? Permission, string? Prompt, string? Result,
     ImmutableArray<string> Commands, bool Repeat, string? RedoTarget, ImmutableArray<string> ExpectFiles,

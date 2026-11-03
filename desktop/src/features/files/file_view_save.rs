@@ -1,6 +1,6 @@
 //! FileView's one sequential bulk save. Lost commit replies are reconciled, never replayed.
 use super::FileView;
-use crate::core::socket::{client::SocketClient, outcome::Outcome};
+use crate::core::socket::{client::SocketClient, outcome::Outcome, pending_call::PendingCall};
 use crate::features::files::{
     document_store::DocumentStore,
     file_save::{FileSaveController, SaveState},
@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Deserialize)]
-struct Begun {
+pub(super) struct Begun {
     upload: String,
 }
 #[derive(Deserialize)]
@@ -27,13 +27,18 @@ struct Fault {
 
 impl FileView {
     pub(super) fn save_document(&mut self, cx: &mut Context<Self>) {
+        self.save_document_at(None, cx);
+    }
+
+    pub(super) fn save_document_at(&mut self, revision: Option<String>, cx: &mut Context<Self>) {
         if self.saving.is_some() {
             return;
         }
-        if self
-            .save
-            .as_ref()
-            .is_some_and(|save| save.state == SaveState::Unknown)
+        if revision.is_none()
+            && self
+                .save
+                .as_ref()
+                .is_some_and(|save| save.state == SaveState::Unknown)
         {
             self.reconcile_save(cx);
             return;
@@ -41,9 +46,12 @@ impl FileView {
         let (Some(key), Some(socket)) = (&self.document, SocketClient::try_bulk(cx)) else {
             return;
         };
-        let Ok(snapshot) = cx.global::<DocumentStore>().snapshot(key) else {
+        let Ok(mut snapshot) = cx.global::<DocumentStore>().snapshot(key) else {
             return;
         };
+        if let Some(revision) = revision {
+            snapshot.base_revision = revision;
+        }
         let args = json!({ "session": self.session, "path": self.path,
             "expectedRevision": snapshot.base_revision, "size": snapshot.text.len() });
         let bytes = snapshot.text.clone().into_bytes();
@@ -52,50 +60,16 @@ impl FileView {
             .read(cx)
             .call::<Begun>("files", "beginSave", args, None);
         self.saving = Some(cx.spawn(async move |view, cx| {
-            let upload = match begin.await {
-                Outcome::Ok(begun) => begun.upload,
-                Outcome::Failed(error) => {
-                    let _ = view.update(cx, |view, cx| view.save_failed(error.message, false, cx));
-                    return;
-                }
-                Outcome::Aborted => {
+            let upload = match upload_draft(&view, cx, &socket, begin, &bytes).await {
+                Ok(upload) => upload,
+                Err(message) => {
                     let _ = view.update(cx, |view, cx| {
-                        view.save_failed("The upload could not be started.".into(), false, cx)
+                        view.drop_upload(cx);
+                        view.save_failed(message, false, cx);
                     });
                     return;
                 }
             };
-            if view
-                .update(cx, |view, _| view.upload = Some(upload.clone()))
-                .is_err()
-            {
-                return;
-            }
-            for (part, chunk) in bytes.chunks(512 * 1024).enumerate() {
-                let data = base64::engine::general_purpose::STANDARD.encode(chunk);
-                let args = json!({ "upload": upload, "offset": part * 512 * 1024, "data": data });
-                let Ok(call) = view.update(cx, |_, cx| {
-                    socket
-                        .read(cx)
-                        .call::<Value>("files", "saveChunk", args, None)
-                }) else {
-                    return;
-                };
-                match call.await {
-                    Outcome::Ok(_) => {}
-                    outcome => {
-                        let message = match outcome {
-                            Outcome::Failed(failure) => failure.message,
-                            _ => "The upload was interrupted.".into(),
-                        };
-                        let _ = view.update(cx, |view, cx| {
-                            view.drop_upload(cx);
-                            view.save_failed(message, false, cx);
-                        });
-                        return;
-                    }
-                }
-            }
             let Ok(call) = view.update(cx, |_, cx| {
                 socket.read(cx).call::<Reply>(
                     "files",
@@ -127,6 +101,8 @@ impl FileView {
                             } else {
                                 SaveState::Failed
                             };
+                            save.captured.text.clear();
+                            save.captured.text.shrink_to_fit();
                         }
                         view.editor_error = Some(reply.error.map_or_else(
                             || "The file was not saved; the draft is preserved.".into(),
@@ -153,6 +129,8 @@ impl FileView {
                 save.unknown();
             } else {
                 save.state = SaveState::Failed;
+                save.captured.text.clear();
+                save.captured.text.shrink_to_fit();
             }
         }
         self.editor_error = Some(message);
@@ -204,4 +182,48 @@ impl FileView {
             });
         }));
     }
+}
+
+/// Save and Compare use the same sequential bounded transfer and the view owns its returned upload.
+pub(super) async fn upload_draft(
+    view: &WeakEntity<FileView>,
+    cx: &mut AsyncApp,
+    socket: &Entity<SocketClient>,
+    begin: PendingCall<Begun>,
+    bytes: &[u8],
+) -> Result<String, String> {
+    let upload = match begin.await {
+        Outcome::Ok(begun) => begun.upload,
+        Outcome::Failed(error) => return Err(error.message),
+        Outcome::Aborted => return Err("The upload could not be started.".into()),
+    };
+    if view
+        .update(cx, |view, _| view.upload = Some(upload.clone()))
+        .is_err()
+    {
+        let _ = cx.update(|cx| {
+            socket
+                .read(cx)
+                .call::<Value>("files", "dropSave", json!({ "upload": upload }), None)
+                .ignore_reply()
+        });
+        return Err("The file view was closed.".into());
+    }
+    for (part, chunk) in bytes.chunks(512 * 1024).enumerate() {
+        let args = json!({ "upload": upload, "offset": part * 512 * 1024,
+            "data": base64::engine::general_purpose::STANDARD.encode(chunk) });
+        let call = view
+            .update(cx, |_, cx| {
+                socket
+                    .read(cx)
+                    .call::<Value>("files", "saveChunk", args, None)
+            })
+            .map_err(|_| "The file view was closed.".to_string())?;
+        match call.await {
+            Outcome::Ok(_) => {}
+            Outcome::Failed(error) => return Err(error.message),
+            Outcome::Aborted => return Err("The upload was interrupted.".into()),
+        }
+    }
+    Ok(upload)
 }

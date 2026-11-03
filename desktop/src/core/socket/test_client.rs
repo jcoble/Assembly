@@ -23,7 +23,7 @@ use super::row_update::RowUpdate;
 use super::update::Update;
 
 /// How long a test waits for an event it expects.
-pub(super) const DEADLINE: Duration = Duration::from_secs(5);
+pub(crate) const DEADLINE: Duration = Duration::from_secs(5);
 
 pub(super) struct TestClient {
     pub events: Sender<Event>,

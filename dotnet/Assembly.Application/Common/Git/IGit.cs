@@ -7,5 +7,10 @@ namespace Assembly.Application.Common.Git;
 /// </summary>
 public interface IGit
 {
+    /// <summary>Runs a write with exact stdin and all exit codes; output/error each retain at most 64 KiB plus a cut marker.</summary>
+    Task<GitRun> RunAsync(string folder, IReadOnlyList<string> arguments, string? stdin, TimeSpan? limit, CancellationToken cancellationToken);
+
     IAsyncEnumerable<string> ReadAsync(string folder, IReadOnlyList<string> arguments, IReadOnlyList<string>? input, CancellationToken cancellationToken);
 }
+
+public sealed record GitRun(int ExitCode, string Output, string Error);

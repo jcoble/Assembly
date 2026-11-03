@@ -49,7 +49,14 @@ impl FileTree {
     /// its load, so the pane drops its call.
     pub fn toggle(&mut self, dir: &str) -> Option<String> {
         if self.open.remove(dir) {
-            self.loading.remove(dir);
+            let prefix = dir.to_owned() + "/";
+            self.loading
+                .retain(|path| path != dir && !path.starts_with(&prefix));
+            self.open.retain(|path| !path.starts_with(&prefix));
+            self.loaded
+                .retain(|path, _| path != dir && !path.starts_with(&prefix));
+            self.failed
+                .retain(|path, _| path != dir && !path.starts_with(&prefix));
             return None;
         }
         self.open.insert(dir.to_string());
@@ -66,6 +73,7 @@ impl FileTree {
             return None;
         }
         let cursor = self.loaded.get(dir)?.next_cursor.clone()?;
+        self.failed.remove(dir);
         self.loading.insert(dir.to_owned());
         Some(cursor)
     }
@@ -111,11 +119,7 @@ impl FileTree {
     }
 
     fn push<'a>(&'a self, rows: &mut Vec<Row<'a>>, dir: &'a str, depth: usize) {
-        if self.loading.contains(dir) {
-            rows.push(Row::Loading { depth });
-        } else if let Some(message) = self.failed.get(dir) {
-            rows.push(Row::Failed { depth, message });
-        } else if let Some(listing) = self.loaded.get(dir) {
+        if let Some(listing) = self.loaded.get(dir) {
             for entry in &listing.entries {
                 let open = entry.is_directory && self.open.contains(&entry.path);
                 rows.push(Row::Entry { entry, depth, open });
@@ -123,9 +127,20 @@ impl FileTree {
                     self.push(rows, &entry.path, depth + 1);
                 }
             }
-            if listing.truncated {
-                rows.push(Row::Truncated { depth, dir });
+            if self.loading.contains(dir) {
+                rows.push(Row::Loading { depth });
+            } else {
+                if let Some(message) = self.failed.get(dir) {
+                    rows.push(Row::Failed { depth, message });
+                }
+                if listing.truncated {
+                    rows.push(Row::Truncated { depth, dir });
+                }
             }
+        } else if self.loading.contains(dir) {
+            rows.push(Row::Loading { depth });
+        } else if let Some(message) = self.failed.get(dir) {
+            rows.push(Row::Failed { depth, message });
         }
     }
 }

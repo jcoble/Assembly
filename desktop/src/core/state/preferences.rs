@@ -80,6 +80,17 @@ impl Preferences {
         }
     }
 
+    /// A page-owned preference, including its optimistic save until confirmed or rolled back.
+    pub fn value(key: &str, cx: &App) -> Option<Value> {
+        let preferences = Self::try_global(cx)?;
+        let preferences = preferences.read(cx);
+        preferences
+            .pending
+            .get(key)
+            .or_else(|| preferences.confirmed.get(key))
+            .cloned()
+    }
+
     /// Why the last edit wasn't saved, while it's the last one.
     pub fn failure(cx: &App) -> Option<SharedString> {
         Self::try_global(cx).and_then(|preferences| preferences.read(cx).failure.clone())

@@ -296,7 +296,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (boardMirror is not null)
                 boardMirror.AnswerDelivered += (sessionId, runId) =>
                     connections.StartupSnapshot(boardMirror.Name)?.Machine.WatchRun(sessionId, runId);
-            var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
+            var workflowCalls = new Assembly.Infrastructure.Workflows.WorkflowCalls(boardQueries, board.AnswerAsync, boardMirror);
             clock.Ticked += machinesFeature.Tick;
             boardMachines = boardMirror is null ? null : topics.Subscribe("machines", null, _ =>
             {
@@ -323,10 +323,11 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                [new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db)),
+                    new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),
                     new SourceControlFeature(sessionStore)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });

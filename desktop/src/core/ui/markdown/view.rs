@@ -10,22 +10,22 @@ use gpui_kit::*;
 
 use crate::core::intents::open_file::OpenFile;
 use crate::core::intents::open_url::OpenUrl;
-use crate::features::session::rows::markdown::{Block, Inline};
+use crate::core::ui::markdown::payload::{Block, Inline};
 
 #[derive(IntoElement)]
 pub struct MarkdownView {
     /// The item's key: its links' element ids start with it.
     pub id: SharedString,
     pub blocks: Vec<Block>,
-    /// The session a file link's path is in.
-    pub session: SharedString,
+    /// Actual session context for file links; absent for untrusted global content.
+    pub session: Option<SharedString>,
 }
 
 impl RenderOnce for MarkdownView {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let mut draw = Draw {
             id: &self.id,
-            session: &self.session,
+            session: self.session.as_deref(),
             next: 0,
             cx,
         };
@@ -48,6 +48,21 @@ pub struct Marks {
 pub enum LinkTarget {
     Url(String),
     File(String),
+}
+
+impl LinkTarget {
+    fn action(&self, session: Option<&str>) -> Option<Box<dyn Action>> {
+        match self {
+            Self::Url(url) => Some(Box::new(OpenUrl { url: url.clone() })),
+            Self::File(path) => Some(Box::new(OpenFile {
+                session_id: session?.to_string(),
+                path: path.clone(),
+                line: None,
+                column: None,
+                pinned: true,
+            })),
+        }
+    }
 }
 
 /// One paragraph's parts as one string, the marked ranges in it, and each link's range and target.
@@ -133,7 +148,7 @@ impl Runs {
 /// One reply's drawing: `next` numbers its clickable paragraphs, so each has its own element id.
 struct Draw<'a> {
     id: &'a str,
-    session: &'a str,
+    session: Option<&'a str>,
     next: usize,
     cx: &'a App,
 }
@@ -267,10 +282,18 @@ impl Draw<'_> {
             marked,
             links,
         } = Runs::of(parts);
+        let links: Vec<_> = links
+            .into_iter()
+            .filter(|(_, target)| self.session.is_some() || !matches!(target, LinkTarget::File(_)))
+            .collect();
         let theme = self.cx.theme();
         let highlights = marked
             .into_iter()
             .map(|(range, marks)| {
+                let clickable = marks.link
+                    && links
+                        .iter()
+                        .any(|(link, _)| link.start <= range.start && link.end >= range.end);
                 let style = HighlightStyle {
                     font_weight: marks.bold.then_some(FontWeight::BOLD),
                     font_style: marks.italic.then_some(FontStyle::Italic),
@@ -280,7 +303,7 @@ impl Draw<'_> {
                     }),
                     // The mock's inline code chip (#1a1a1c); a highlight can't change the face or draw an edge.
                     background_color: marks.code.then_some(theme.muted.opacity(0.7)),
-                    color: marks.link.then_some(theme.link),
+                    color: clickable.then_some(theme.link),
                     ..HighlightStyle::default()
                 };
                 (range, style)
@@ -292,26 +315,18 @@ impl Draw<'_> {
         }
         self.next += 1;
         let (ranges, targets): (Vec<_>, Vec<_>) = links.into_iter().unzip();
-        let session = self.session.to_string();
+        let session = self.session.map(str::to_owned);
         let id = ElementId::Name(format!("{}:{}", self.id, self.next).into());
         InteractiveText::new(id, styled)
             .on_click(ranges, move |at, window, cx| {
-                let action: Box<dyn Action> = match &targets[at] {
-                    LinkTarget::Url(url) => Box::new(OpenUrl { url: url.clone() }),
-                    LinkTarget::File(path) => Box::new(OpenFile {
-                        session_id: session.clone(),
-                        path: path.clone(),
-                        line: None,
-                        column: None,
-                        pinned: true,
-                    }),
-                };
-                window.dispatch_action(action, cx);
+                if let Some(action) = targets[at].action(session.as_deref()) {
+                    window.dispatch_action(action, cx);
+                }
             })
             .into_any_element()
     }
 }
 
 #[cfg(test)]
-#[path = "tests/markdown_view_tests.rs"]
+#[path = "view_tests.rs"]
 mod tests;

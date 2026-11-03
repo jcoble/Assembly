@@ -115,3 +115,24 @@ fn renderer_view_state_survives_while_a_dirty_draft_cannot_be_released() {
     assert!(docs.release_clean(&key));
     assert_eq!(docs.snapshot(&key).unwrap_err(), DraftFailure::NotLoaded);
 }
+
+#[test]
+fn reloading_disk_is_atomic_and_cannot_discard_a_newer_draft() {
+    let mut docs = DocumentStore::default();
+    let key = key("m", "a");
+    docs.open(key.clone(), "old-revision".into(), "old".into())
+        .unwrap();
+    let requested = docs.replace(&key, 0, "draft".into()).unwrap();
+    docs.replace(&key, requested, "newer".into()).unwrap();
+    assert_eq!(
+        docs.reload(&key, requested, "disk-revision".into(), "disk".into()),
+        Err(DraftFailure::Stale)
+    );
+    assert_eq!(docs.snapshot(&key).unwrap().text, "newer");
+    assert!(docs.is_dirty(&key));
+    let version = docs.snapshot(&key).unwrap().version;
+    docs.reload(&key, version, "disk-revision".into(), "disk\r\n".into())
+        .unwrap();
+    assert_eq!(docs.snapshot(&key).unwrap().text, "disk\r\n");
+    assert!(!docs.is_dirty(&key));
+}

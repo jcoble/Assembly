@@ -103,8 +103,8 @@ pub fn message(view: &SessionView, key: &str) -> (Vec<&'static str>, bool) {
     (kinds, *done)
 }
 
-pub fn block_kind(block: &crate::features::session::rows::markdown::Block) -> &'static str {
-    use crate::features::session::rows::markdown::Block;
+pub fn block_kind(block: &crate::core::ui::markdown::payload::Block) -> &'static str {
+    use crate::core::ui::markdown::payload::Block;
     match block {
         Block::Paragraph { .. } => "paragraph",
         Block::Heading { .. } => "heading",

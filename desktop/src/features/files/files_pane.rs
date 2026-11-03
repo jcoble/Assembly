@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -35,6 +37,8 @@ pub struct FilesPane {
     started: bool,
     shown: bool,
     generation: u64,
+    include_excluded: bool,
+    descending: bool,
     lease: Option<String>,
     observing: Option<Task<()>>,
     pub(super) selected: Option<String>,
@@ -58,6 +62,8 @@ impl FilesPane {
             started: false,
             shown: false,
             generation: 0,
+            include_excluded: true,
+            descending: false,
             lease: None,
             observing: None,
             selected: None,
@@ -144,6 +150,16 @@ impl FilesPane {
         }
     }
 
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.generation = self.generation.wrapping_add(1);
+        self.loads.clear();
+        self.observing = None;
+        self.tree = FileTree::default();
+        self.started = false;
+        self.start(cx);
+        cx.notify();
+    }
+
     pub(super) fn is_loading(&self) -> bool {
         self.observing.is_some() || !self.loads.is_empty()
     }
@@ -172,8 +188,7 @@ impl FilesPane {
             return;
         }
         let generation = self.generation;
-        let args =
-            json!({ "session": session, "dir": dir, "includeExcluded": true, "cursor": cursor });
+        let args = json!({ "session": session, "dir": dir, "includeExcluded": self.include_excluded, "descending": self.descending, "cursor": cursor });
         let call = socket
             .read(cx)
             .call::<FileListing>("files", "list", args, None);
@@ -211,7 +226,9 @@ impl FilesPane {
             match self.tree.toggle(&path) {
                 Some(dir) => self.load(dir, None, cx),
                 None => {
-                    self.loads.remove(&path);
+                    let prefix = path.clone() + "/";
+                    self.loads
+                        .retain(|dir, _| dir != &path && !dir.starts_with(&prefix));
                 }
             }
         }
@@ -237,6 +254,7 @@ impl FilesPane {
             Row::Entry { entry, depth, open } => {
                 let picked = self.selected.as_deref() == Some(entry.path.as_str());
                 let (path, folder) = (entry.path.clone(), entry.is_directory);
+                let full_path = path.clone();
                 let (accent, secondary, foreground) =
                     (theme.accent, theme.secondary, theme.foreground);
                 let glyph = match (folder, open) {
@@ -270,10 +288,19 @@ impl FilesPane {
                             .text_ellipsis()
                             .child(entry.name.clone()),
                     )
-                    .on_click(cx.listener(move |pane, _, window, cx| {
+                    .tooltip(move |window, cx| Tooltip::new(full_path.clone()).build(window, cx))
+                    .on_click(cx.listener(move |pane, event, window, cx| {
                         pane.clicked(path.clone(), folder, cx);
                         if let (false, Some(session)) = (folder, pane.session.clone()) {
-                            FileView::open(session, path.clone(), window, cx);
+                            FileView::open_at(
+                                session,
+                                path.clone(),
+                                None,
+                                None,
+                                event.click_count() > 1,
+                                window,
+                                cx,
+                            );
                         }
                     }))
                     .into_any_element()
@@ -364,6 +391,40 @@ impl Render for FilesPane {
         }
         let count = self.tree.rows().len();
         pane.child(
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_1()
+                .child(
+                    Button::new("files-excluded")
+                        .ghost()
+                        .label(if self.include_excluded {
+                            "Hide excluded"
+                        } else {
+                            "Show excluded"
+                        })
+                        .on_click(cx.listener(|pane, _, _, cx| {
+                            pane.include_excluded = !pane.include_excluded;
+                            pane.refresh(cx);
+                        })),
+                )
+                .child(
+                    Button::new("files-sort")
+                        .ghost()
+                        .label(if self.descending { "Z–A" } else { "A–Z" })
+                        .on_click(cx.listener(|pane, _, _, cx| {
+                            pane.descending = !pane.descending;
+                            pane.refresh(cx);
+                        })),
+                )
+                .child(
+                    Button::new("files-refresh")
+                        .ghost()
+                        .label("Refresh")
+                        .on_click(cx.listener(|pane, _, _, cx| pane.refresh(cx))),
+                ),
+        )
+        .child(
             uniform_list(
                 "files",
                 count,

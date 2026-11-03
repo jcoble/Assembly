@@ -18,7 +18,7 @@ public static class NeedTransitions
 {
     private enum AnswerOrigin { Raw, Owner, LocalParent, ForwardedParent, ProviderFact }
     private sealed record Need(string Id, long Version, string SessionId, string? RunId, string? StepId,
-        string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline, string? AddresseeSessionId);
+        string Kind, string Text, string Options, string? RequestId, string? ChatId, string State, long? Deadline, string? AddresseeSessionId, string? Presentation = null);
     private sealed record Session(long Epoch, string State, string? RunId, string? ParentId, string Machine, string Holder, long? ReservedEpoch);
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, NeedCommand command, MessageExpiryPolicy? expiryPolicy = null,
@@ -104,8 +104,8 @@ public static class NeedTransitions
             {
                 s.Execute("""
                     UPDATE engine_needs_me SET state='dismissed',version=version+1,updated_ms=$now,
-                        answer_json=NULL,answered_by=$actor,answered_ms=$now WHERE id=$id
-                    """, new("$now", c.NowMs), new("$actor", c.Actor.Id), new("$id", need.Id));
+                        answer_json=NULL,answered_by=$actor,answered_ms=$now,answered_origin_json=$origin WHERE id=$id
+                    """, new("$now", c.NowMs), new("$actor", c.Actor.Id), new("$origin", OriginJson(c)), new("$id", need.Id));
                 var closed = need with { Version = need.Version + 1, State = "dismissed" };
                 List<EventDraft> events = [Changed(c, closed, "needs_me.answered")];
                 events.AddRange(AuthNeed.FailDismissedMessages(s, c, need.SessionId));
@@ -236,6 +236,12 @@ public static class NeedTransitions
                     new SqlArg("$id", command.RunId)) != command.SessionId)
                 return Refused(c, "bad_args");
         }
+        NeedPresentation? presentation;
+        try { presentation = command.Presentation is not null || providerQuestion ? NeedPresentationInputs.Normalize(command) : null; }
+        catch (Exception error) when (error is InvalidOperationException or KeyNotFoundException or JsonException)
+        { return Refused(c, "bad_args"); }
+        if (presentation is not null && !NeedPresentationInputs.Valid(presentation, command)) return Refused(c, "bad_args");
+        var presentationJson = presentation is null ? null : JsonSerializer.Serialize(presentation, EngineJson.Default.NeedPresentation);
         var options = JsonSerializer.Serialize(command.Options, EngineJson.Default.IReadOnlyListString);
         var current = command.ProviderRequestId is null ? null : s.QueryFirst(
             "SELECT id FROM engine_needs_me WHERE session_id=$session AND provider_request_id=$request",
@@ -247,6 +253,7 @@ public static class NeedTransitions
                 existing.StepId == command.StepId && existing.Kind == command.Kind && existing.Text == command.Text &&
                 existing.Options == options && existing.RequestId == command.ProviderRequestId &&
                 existing.ChatId == command.ChatRowId && existing.Deadline == command.DeadlineMs &&
+                (existing.Presentation is null || SamePresentation(existing.Presentation, presentationJson)) &&
                 (!providerQuestion || ProviderQuestionMatches(s, c, command, requireOpen: false));
             return same ? new(true, false, null, existing.Version, 0, session.Epoch)
                 : Refused(c, "provider_request_conflict", existing);
@@ -260,16 +267,21 @@ public static class NeedTransitions
         if (c.ExpectedVersion != 0) return Refused(c, "version_conflict");
         if (session.State is not ("idle" or "running" or "needs_me")) return Refused(c, "invalid_transition");
         if (!ValidLinks(s, command, session)) return Refused(c, "bad_args");
+        var number = s.QueryFirst("SELECT next_need_number FROM engine_meta WHERE singleton=1", row => row.Long(0));
+        if (number < 1 || number == long.MaxValue || command.Presentation is not null &&
+            !NeedPresentationInputs.FitsDisplay(command, c, presentation!, number, session.ParentId))
+            return Refused(c, "bad_args");
+        number = NeedPresentationInputs.AllocateNumber(s);
         s.Execute("""
             INSERT INTO engine_needs_me(id,version,machine,created_ms,updated_ms,session_id,run_id,step_id,
-                kind,text,options_json,provider_request_id,chat_row_id,state,deadline_ms,addressee_session_id)
-            VALUES($id,1,$machine,$now,$now,$session,$run,$step,$kind,CAST($text AS TEXT),$options,$request,$chat,'open',$deadline,$addressee)
+                kind,text,options_json,provider_request_id,chat_row_id,state,deadline_ms,addressee_session_id,presentation_json,display_number)
+            VALUES($id,1,$machine,$now,$now,$session,$run,$step,$kind,CAST($text AS TEXT),$options,$request,$chat,'open',$deadline,$addressee,$presentation,$number)
             """, new("$id", c.EntityId), new("$machine", c.Machine), new("$now", c.NowMs), new("$session", command.SessionId),
             new("$run", command.RunId), new("$step", command.StepId), new("$kind", command.Kind), new("$text", new UTF8Encoding(false, true).GetBytes(command.Text)),
             new("$options", options), new("$request", command.ProviderRequestId), new("$chat", command.ChatRowId),
-            new("$deadline", command.DeadlineMs), new("$addressee", session.ParentId));
+            new("$deadline", command.DeadlineMs), new("$addressee", session.ParentId), new("$presentation", presentationJson), new("$number", number));
         var need = new Need(c.EntityId, 1, command.SessionId, command.RunId, command.StepId,
-            command.Kind, command.Text, options, command.ProviderRequestId, command.ChatRowId, "open", command.DeadlineMs, session.ParentId);
+            command.Kind, command.Text, options, command.ProviderRequestId, command.ChatRowId, "open", command.DeadlineMs, session.ParentId, presentationJson);
         List<EventDraft> events = [Changed(c, need, "needs_me.opened")];
         if (command.StepId is not null)
         {
@@ -366,11 +378,19 @@ public static class NeedTransitions
         if (command.State == "answered" && (command.Answer is null || command.Answer.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) ||
             command.State != "answered" && command.Answer is not null) return Refused(c, "bad_args", need);
         var answer = command.State == "answered" ? command.Answer : null;
+        if (need.RequestId is null && answer is { } supplied && need.Presentation is { } metadata)
+        {
+            var presentation = JsonSerializer.Deserialize(metadata, EngineJson.Default.NeedPresentation)!;
+            if (presentation.InputMode is not null && !NeedPresentationInputs.AcceptsMcp(presentation, supplied))
+                return Refused(c, "bad_args", need);
+        }
+        var originJson = OriginJson(c);
+
         s.Execute("""
-            UPDATE engine_needs_me SET state=$state,version=version+1,updated_ms=$now,answer_json=$answer,answered_by=$actor,answered_ms=$now
+            UPDATE engine_needs_me SET state=$state,version=version+1,updated_ms=$now,answer_json=$answer,answered_by=$actor,answered_ms=$now,answered_origin_json=$origin
             WHERE id=$id
             """, new("$state", command.State), new("$now", c.NowMs), new("$answer", answer?.GetRawText()),
-            new("$actor", c.Actor.Id), new("$id", need.Id));
+            new("$actor", c.Actor.Id), new("$origin", originJson), new("$id", need.Id));
         var updated = need with { Version = need.Version + 1, State = command.State };
         List<EffectDraft> effects = [];
         var alreadySettled = c.Actor.Kind == ActorKind.System && (command.State == "answered" ||
@@ -396,6 +416,17 @@ public static class NeedTransitions
             events.AddRange(MessageTransitions.NeedResolved(s, c, need.Id, need.SessionId, command.State, command.Answer, expiryPolicy, owner?.Note ?? parent?.Note));
         return Commit(s, c, updated, events, effects);
     }
+
+    private static bool SamePresentation(string stored, string? incoming)
+    {
+        if (incoming is null) return false;
+        using var first = JsonDocument.Parse(stored);
+        using var second = JsonDocument.Parse(incoming);
+        return JsonElement.DeepEquals(first.RootElement, second.RootElement);
+    }
+
+    internal static string? OriginJson(CommandContext context) => context.Origin is null ? null :
+        JsonSerializer.Serialize(context.Origin, EngineJson.Default.CommandOrigin);
 
     private static bool MatchesProviderBinding(IWriteScope s, Need need, Session session, ProviderAnswerBinding binding)
     {
@@ -431,11 +462,11 @@ public static class NeedTransitions
         r => new Session(r.Long(0), r.Text(1), r.IsNull(2) ? null : r.Text(2), r.IsNull(3) ? null : r.Text(3),
             r.Text(4), r.Text(5), r.IsNull(6) ? null : r.Long(6)), new SqlArg("$id", id));
     private static Need? Find(IWriteScope s, string id) => s.QueryFirst("""
-        SELECT id,version,session_id,run_id,step_id,kind,CAST(text AS BLOB),options_json,provider_request_id,chat_row_id,state,deadline_ms,addressee_session_id
+        SELECT id,version,session_id,run_id,step_id,kind,CAST(text AS BLOB),options_json,provider_request_id,chat_row_id,state,deadline_ms,addressee_session_id,presentation_json
         FROM engine_needs_me WHERE id=$id
         """, r => new Need(r.Text(0), r.Long(1), r.Text(2), r.IsNull(3) ? null : r.Text(3), r.IsNull(4) ? null : r.Text(4),
             r.Text(5), new UTF8Encoding(false, true).GetString(r.Blob(6)), r.Text(7), r.IsNull(8) ? null : r.Text(8), r.IsNull(9) ? null : r.Text(9),
-            r.Text(10), r.IsNull(11) ? null : r.Long(11), r.IsNull(12) ? null : r.Text(12)), new SqlArg("$id", id));
+            r.Text(10), r.IsNull(11) ? null : r.Long(11), r.IsNull(12) ? null : r.Text(12), r.IsNull(13) ? null : r.Text(13)), new SqlArg("$id", id));
     private static CommandResult Refused(CommandContext c, string error, Need? need = null, long? epoch = null) =>
         new(false, false, error, need?.Version ?? 0, 0, epoch ?? c.Epoch);
 }

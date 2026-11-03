@@ -177,7 +177,7 @@ public static class ServeRun
             var attachments = new AttachmentStore(options.Attachments);
             var machines = new MachineSet(new LocalMachine(hub, sessionStore, registry, attachments));
             board = new BoardTools(sessionStore, registry, boardTransitions, boardQueries, hostStop.Token);
-            var workflowCalls = new WorkflowCalls(boardQueries, board.AnswerAsync);
+            var workflowCalls = new Assembly.Infrastructure.Workflows.WorkflowCalls(boardQueries, board.AnswerAsync);
             machinesFeature = new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System);
             ownerMachineCalls = new MachineCalls(engine, TimeProvider.System, launcher, options.Checkouts, answers);
             var mcp = new McpServerHost(tokens, new McpRecorder(engine, gate, TimeProvider.System),
@@ -188,7 +188,7 @@ public static class ServeRun
                     new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, answers), new SessionTitleCalls(engine, sessionStore), ownerMachineCalls,
+                [new EngineCalls(engine, TimeProvider.System, answers), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine), new SessionTitleCalls(engine, sessionStore), ownerMachineCalls,
                     new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(terminals), workflowCalls,
                     new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,

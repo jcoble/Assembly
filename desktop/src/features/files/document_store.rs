@@ -234,6 +234,27 @@ impl DocumentStore {
         Ok(())
     }
 
+    pub fn reload(
+        &mut self,
+        key: &DocumentKey,
+        expected_version: u64,
+        revision: String,
+        text: String,
+    ) -> Result<(), DraftFailure> {
+        let document = self.documents.get_mut(key).ok_or(DraftFailure::NotLoaded)?;
+        if document.snapshot.version != expected_version {
+            return Err(DraftFailure::Stale);
+        }
+        if text.len() > MAX_TEXT || document.snapshot.version == u64::MAX {
+            return Err(DraftFailure::OverLimit);
+        }
+        document.snapshot.version += 1;
+        document.saved_version = document.snapshot.version;
+        document.snapshot.text = text;
+        document.snapshot.base_revision = revision;
+        Ok(())
+    }
+
     pub fn saved(&mut self, key: &DocumentKey, sent_version: u64, revision: String) {
         if let Some(document) = self.documents.get_mut(key)
             && sent_version >= document.saved_version

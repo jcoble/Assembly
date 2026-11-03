@@ -6,10 +6,10 @@ use std::time::Instant;
 use gpui_kit::*;
 
 use super::SessionPane;
+use crate::core::ui::markdown::payload::Block;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::model::reveal::Reveal;
-use crate::features::session::rows::markdown::Block;
 
 impl SessionPane {
     /// Starts the reveal on a reply that's streaming, or whose final row brought more text, from what it showed

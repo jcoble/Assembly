@@ -206,9 +206,56 @@ public sealed partial class SessionHost : IPermissionPolicy
                             && card.Options!.Any(o => o.OptionId == option.GetString()),
             "question" => answer.TryGetProperty("action", out var action) && action.ValueKind == JsonValueKind.String
                           && action.GetString() is "accept" or "decline" or "cancel"
-                          && (!answer.TryGetProperty("content", out var content) || content.ValueKind == JsonValueKind.Object),
+                          && (!answer.TryGetProperty("content", out var content) || content.ValueKind == JsonValueKind.Object)
+                          && (action.GetString() != "accept" || FitsForm(card.Schema, answer)),
             _ => false,
         };
+    }
+
+    private static bool FitsForm(JsonElement? requested, JsonElement answer)
+    {
+        if (requested is null || requested.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined) return true;
+        var schema = requested.Value;
+        if (schema.ValueKind != JsonValueKind.Object) return false;
+        if (schema.TryGetProperty("type", out var type) && (type.ValueKind != JsonValueKind.String || type.GetString() != "object")) return false;
+        var hasContent = answer.TryGetProperty("content", out var content);
+        if (schema.TryGetProperty("required", out var required))
+        {
+            if (required.ValueKind != JsonValueKind.Array || required.EnumerateArray().Any(name =>
+                name.ValueKind != JsonValueKind.String || !hasContent || !content.TryGetProperty(name.GetString()!, out _))) return false;
+        }
+        if (!hasContent) return true;
+        var hasProperties = schema.TryGetProperty("properties", out var properties);
+        if (hasProperties && properties.ValueKind != JsonValueKind.Object) return false;
+        foreach (var property in content.EnumerateObject())
+        {
+            if (!hasProperties || !properties.TryGetProperty(property.Name, out var field))
+            {
+                if (schema.TryGetProperty("additionalProperties", out var extra) && extra.ValueKind == JsonValueKind.False) return false;
+                continue;
+            }
+            if (field.ValueKind != JsonValueKind.Object) return false;
+            if (field.TryGetProperty("type", out var fieldType) && fieldType.ValueKind != JsonValueKind.String) return false;
+            if (fieldType.ValueKind == JsonValueKind.String && fieldType.GetString() == "array")
+            {
+                if (property.Value.ValueKind != JsonValueKind.Array || !field.TryGetProperty("items", out var items) ||
+                    items.ValueKind != JsonValueKind.Object || !property.Value.EnumerateArray().All(value => FitsChoice(items, value))) return false;
+            }
+            else if (!FitsChoice(field, property.Value)) return false;
+        }
+        return true;
+    }
+
+    private static bool FitsChoice(JsonElement field, JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.String) return false;
+        if (field.TryGetProperty("type", out var type) && (type.ValueKind != JsonValueKind.String || type.GetString() != "string")) return false;
+        if (field.TryGetProperty("enum", out var options))
+            return options.ValueKind == JsonValueKind.Array && options.EnumerateArray().Any(option => JsonElement.DeepEquals(option, value));
+        if (field.TryGetProperty("oneOf", out var choices) || field.TryGetProperty("anyOf", out choices))
+            return choices.ValueKind == JsonValueKind.Array && choices.EnumerateArray().Any(option => option.ValueKind == JsonValueKind.Object &&
+                option.TryGetProperty("const", out var id) && JsonElement.DeepEquals(id, value));
+        return true;
     }
 
     // Shows the card and waits for its answer; a cancel settles the card as cancelled and goes on up.

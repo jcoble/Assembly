@@ -18,3 +18,8 @@ pub mod view_options;
 
 #[cfg(test)]
 mod text_size_tests;
+
+pub mod drop_down;
+pub mod row_words;
+#[cfg(test)]
+mod row_words_tests;

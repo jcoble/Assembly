@@ -131,7 +131,7 @@ public sealed partial class EngineFeed(EngineRuntime runtime, TextWriter log, Ti
         if (current != observed) throw new CallFailed("provider_request_changed");
         var result = runtime.Commands.ApplyPreparedNeed(scope,
             new(factId, runtime.Machine, new(ActorKind.System, "adapter"), askId, opening ? 0 : need!.Version,
-                observed.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds()), command);
+                observed.Epoch, time.GetUtcNow().ToUnixTimeMilliseconds(), new("adapter", null, null)), command);
         if (!result.Applied) throw new CallFailed(result.Error ?? "provider_fact_refused", result.Error);
     }
 

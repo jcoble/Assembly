@@ -1,6 +1,10 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Engine;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Domain.Events;
+using Assembly.Domain.Rows;
 using Assembly.Engine.Mcp;
 using Assembly.Engine.Mcp.Tools;
 using Assembly.Engine.Sessions;
@@ -19,6 +23,23 @@ public sealed class AskOwnerToolTests
 {
     private static readonly EngineActor Adapter = new(ActorKind.System, "adapter");
     private static OpenNeed Question(string? request = null) => new("s", null, null, "question", "Proceed?", [], request, null, 2000);
+
+    [Fact]
+    public async Task Explicit_presentation_metadata_is_retained_and_over_limit_metadata_opens_nothing()
+    {
+        await using var h = new Harness(); h.Fixture.SeedSession();
+        var tool = new AskOwnerTool(h.Gate, h.Needs);
+        var response = await h.Call(tool, "s", """{"question":"First line is not a recommendation","title":"Actual title","recommendation":"Actual recommendation"}""");
+        Assert.False(response.IsError);
+        using var presentation = JsonDocument.Parse(h.Fixture.Text("SELECT presentation_json FROM engine_needs_me")!);
+        Assert.Equal("Actual title", presentation.RootElement.GetProperty("title").GetString());
+        Assert.Equal("Actual recommendation", presentation.RootElement.GetProperty("recommendation").GetString());
+        Assert.Equal("text", presentation.RootElement.GetProperty("inputMode").GetString());
+        Assert.True(presentation.RootElement.GetProperty("freeText").GetBoolean());
+        var invalid = JsonSerializer.Serialize(new { question = "Other", recommendation = new string('x', 301) });
+        Assert.True((await h.Call(tool, "s", invalid)).IsError);
+        Assert.Equal(1, h.Fixture.Count("engine_needs_me"));
+    }
 
     [Fact]
     public async Task Top_level_question_opens_one_need_and_owned_run()
@@ -94,7 +115,7 @@ public sealed class AskOwnerToolTests
         f.SeedStep(state: "running", sessionId: "s");
         foreach (var open in new[] { Question() with { Kind = "permission" }, Question() with { RunId = "r", StepId = "step" } })
             Assert.Equal("bad_args", f.Apply(open, "n", actor: new(ActorKind.Session, "s")).Error);
-        Assert.True(f.Apply(Question("provider") with { Kind = "permission" }, "n", actor: Adapter).Applied);
+        Assert.True(OpenProvider(f, "n", "permission").Applied);
     }
 
     [Theory]
@@ -136,10 +157,11 @@ public sealed class AskOwnerToolTests
     public void Other_open_need_holds_reply_until_last_resolution()
     {
         using var f = new EngineFixture(); f.SeedSession();
-        f.Apply(Question(), "a", actor: Adapter); f.Apply(Question("provider"), "b", actor: Adapter);
+        Assert.True(f.Apply(Question(), "a", actor: Adapter).Applied);
+        Assert.True(OpenProvider(f, "b").Applied);
         Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "a", 1).Applied);
         Assert.Equal(1, f.Number("SELECT version FROM engine_message")); Assert.Equal(0, f.Count("engine_outbox"));
-        Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "b", 1).Applied);
+        Assert.True(AnswerProvider(f, "b").Applied);
         Assert.Equal(1, f.Count("engine_message")); Assert.Equal(2, f.Number("SELECT version FROM engine_message"));
         Assert.Equal(1, f.Number("SELECT COUNT(*) FROM engine_outbox WHERE kind='send'"));
     }
@@ -149,9 +171,11 @@ public sealed class AskOwnerToolTests
     [InlineData(true)]
     public void Provider_and_ended_need_create_no_synthetic_reply(bool ended)
     {
-        using var f = new EngineFixture(); f.SeedSession(); f.Apply(Question(ended ? null : "provider"), "n", actor: Adapter);
+        using var f = new EngineFixture(); f.SeedSession();
+        Assert.True((ended ? f.Apply(Question(), "n", actor: Adapter) : OpenProvider(f, "n")).Applied);
         if (ended) Assert.True(f.Apply(new SetSessionState("ended", "done", null), "s", f.Number("SELECT version FROM engine_session"), actor: Adapter).Applied);
-        Assert.True(f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "n", 1).Applied);
+        Assert.True((ended ? f.Apply(new ResolveNeed("answered", JsonSerializer.SerializeToElement("yes")), "n", 1)
+            : AnswerProvider(f, "n")).Applied);
         Assert.Equal(0, f.Count("engine_message"));
     }
 
@@ -225,6 +249,33 @@ public sealed class AskOwnerToolTests
         Assert.Equal(0, h.Fixture.Count("engine_message"));
         Assert.True(h.Fixture.Apply(command, id, 1, epoch: 7).Applied);
         Assert.Equal(7, Assert.Single(h.Fixture.Events(), e => e.EntityKind == "message").Data.Epoch);
+    }
+
+    private static CommandResult OpenProvider(EngineFixture f, string id, string kind = "question")
+    {
+        var options = kind == "permission" ? new[] { new AskOption("allow", "Allow", "allow_once") } : [];
+        var card = new AskPayload(kind, "open", null, "Proceed?", null, options,
+            kind == "question" ? JsonSerializer.SerializeToElement(new { type = "object" }) : null, null);
+        var prepared = EngineCommands.PrepareNeedCommand(new OpenNeed("s", null, null, kind, "Proceed?",
+            options.Select(option => option.OptionId).ToArray(), "provider", id, 2000,
+            JsonSerializer.SerializeToElement(card, RowJsonContext.Rows.AskPayload)));
+        CommandResult result = null!;
+        RowStore.Open(f.Db).Commit("s", new RowConverter().Apply(new AskChanged(1000, id, card)), scope =>
+        {
+            result = new EngineCommands(f.Machine, f.Limits).ApplyPreparedNeed(scope,
+                new(Guid.NewGuid(), f.Machine, Adapter, id, 0, 0, 1000), prepared);
+        });
+        return result;
+    }
+
+    private static CommandResult AnswerProvider(EngineFixture f, string id)
+    {
+        var answer = JsonSerializer.SerializeToElement(new { action = "accept", content = new { } });
+        var captured = new PreparedProviderAnswer(new("s", id, "provider", new("s", null, null, null, 0), "acp"), answer);
+        var prepared = EngineCommands.PrepareOwnerNeedCommand(Guid.NewGuid(), f.Machine, id, 1, 0,
+            new ResolveNeed("answered", answer), captured, null, default);
+        return f.Db.Writer.Write("test.owner-answer", scope => new EngineCommands(f.Machine, f.Limits)
+            .ApplyPreparedOwnerNeed(scope, prepared, f.Time.GetUtcNow().ToUnixTimeMilliseconds()));
     }
 
     private static string Text(CallToolResult result) => Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
