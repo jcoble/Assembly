@@ -1,5 +1,5 @@
-//! `SubagentPayload` is a subagent the agent runs as a child session with its own session id, nested under the tool
-//! call that started it when known. Opening it is the "open session" intent (lane g0-host).
+//! Persisted subagent display payload. For native cards SessionId is the recorded parent correlation;
+//! the immutable owner row item supplies the provider-child Stop target. History identity is resolved by the owner.
 
 use serde::Deserialize;
 

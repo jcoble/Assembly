@@ -62,7 +62,7 @@ impl Render for Composer {
         let empty = self.draft.read(cx).value().trim().is_empty() && self.attachments.is_empty();
         let waiting = !self.all_saved();
         let running = self.running.is_some();
-        let offline = self.offline.is_some();
+        let offline = self.offline.is_some() || !self.operational();
         let settings_disabled =
             offline || !self.backend_connected || self.advertised_target.is_none();
         let composer = cx.weak_entity();

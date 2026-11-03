@@ -28,7 +28,7 @@ pub(super) fn open(
         cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
             seen.borrow_mut().push(match event {
                 ComposerEvent::Sending => "sending".to_string(),
-                ComposerEvent::Accepted(receipt) => format!("queued {}", receipt.session_id),
+                ComposerEvent::Accepted{receipt,..} => format!("queued {}", receipt.session_id),
                 ComposerEvent::PendingChanged => "pending".into(),
             })
         })
@@ -98,7 +98,7 @@ fn failed_prompt_retry_preserves_original_epoch_and_new_typing(cx: &mut TestAppC
     composer.update_in(cx, |composer, window, cx| {
         composer.set_session(Some("s1".into()), window, cx);
         composer.retry_ids.insert(
-            "s1".into(),
+            crate::core::engine::SessionKey{machine:"owner".into(),id:"s1".into()},
             super::PromptRequest {
                 text: "original".into(),
                 client_id: "stable".into(),

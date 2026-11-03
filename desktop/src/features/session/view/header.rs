@@ -11,7 +11,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use crate::core::intents::open_session::OpenSession;
+use crate::core::{engine::SessionKey,intents::session_open::{SessionOpenRequest,SessionOpenTarget}};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::update::Update;
 use crate::core::state::session_item::SessionItem;
@@ -28,11 +28,14 @@ pub fn project(repo_url: &str) -> &str {
 pub struct Header {
     /// The open session, once the topic has sent it.
     item: Option<SessionItem>,
+    parent_key: Option<SessionKey>,
     /// Owns the keyed `sessions` subscription; dropping it unsubscribes.
     _feed: Option<Task<()>>,
 }
 
 impl Header {
+    pub(super) fn set_parent(&mut self,parent:Option<SessionKey>,cx:&mut Context<Self>){self.parent_key=parent;cx.notify();}
+
     /// The open session's machine, once the topic has sent it; `None` for this one.
     pub fn machine(&self) -> Option<&str> {
         (self.item.as_ref()?.machine.as_deref()).filter(|machine| !machine.is_empty())
@@ -117,7 +120,7 @@ impl Render for Header {
         let Some(item) = &self.item else {
             return div().child(row);
         };
-        let parent = item.parent_session_id.clone();
+        let parent = self.parent_key.clone();
         div().child(
             row.child(div().flex_none().w_px().h(px(16.)).bg(theme.border))
                 .child(
@@ -152,8 +155,7 @@ impl Render for Header {
                                     .cursor_pointer()
                                     .child("Parent session")
                                     .on_click(move |_, window, cx| {
-                                        let id = parent.clone();
-                                        window.dispatch_action(Box::new(OpenSession { id }), cx)
+                                        window.dispatch_action(Box::new(SessionOpenRequest{key:parent.clone(),request_id:uuid::Uuid::new_v4().to_string(),target:SessionOpenTarget::Engine}),cx)
                                     }),
                             )
                         }),

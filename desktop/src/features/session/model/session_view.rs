@@ -10,11 +10,20 @@ use crate::features::session::rows::plan::PlanItem;
 use crate::features::session::rows::row::{Row, RowBody, TurnState};
 use crate::features::session::rows::turn_stats::TurnStats;
 
+/// The persisted owner row behind a subagent card, never a provider-native ID synthesized as a row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowReference {
+    pub session_id: String,
+    pub item_id: Option<String>,
+    pub seq: i64,
+}
+
 #[derive(Default)]
 pub struct SessionView {
     pub items: Vec<Item>,
     /// Each item's index, by key.
     index: HashMap<String, usize>,
+    row_refs: HashMap<String, RowReference>,
     /// Each run's stats, for the line under its turn and its fold.
     pub stats: HashMap<String, TurnStats>,
     /// The newest plan row's seq and items.
@@ -44,7 +53,16 @@ pub struct Turn {
 
 impl SessionView {
     /// Applies a row newer than every row applied so far: it updates its item in place, or adds one at the end.
+    pub fn row_reference(&self, item_key: &str) -> Option<&RowReference> {
+        self.row_refs.get(item_key)
+    }
+
     pub fn apply(&mut self, row: &Row) -> Change {
+        if row.kind == "subagent" {
+            let reference = RowReference { session_id: row.session_id.clone(), item_id: row.item_id.clone(), seq: row.seq };
+            let saved = self.row_refs.entry(key_of(row)).or_insert_with(|| reference.clone());
+            if saved.seq < reference.seq { *saved = reference; }
+        }
         if row.kind == "user"
             && row.payload["from"].is_null()
             && let Some(client) = row.payload["clientId"].as_str()
@@ -234,6 +252,10 @@ impl SessionView {
         let mut page = SessionView::default();
         for row in &rows {
             page.apply(row);
+        }
+        for (key, reference) in page.row_refs {
+            let saved = self.row_refs.entry(key).or_insert_with(|| reference.clone());
+            if saved.seq < reference.seq { *saved = reference; }
         }
         self.user_clients.extend(page.user_clients.iter().cloned());
         for (client, key) in &page.user_items {

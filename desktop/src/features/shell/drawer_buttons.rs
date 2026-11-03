@@ -95,6 +95,7 @@ impl RenderOnce for DrawerButtons {
             .map(|(id, name, shown)| {
                 let dock = self.dock.clone();
                 button(name, icon(name), open && shown).on_click(move |_, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                     dock.update(cx, |dock, cx| match press(open, shown) {
                         Press::Open => {
                             dock.select_panel(id, window, cx);
@@ -124,6 +125,7 @@ impl RenderOnce for DrawerButtons {
                                     .icon(icon(name))
                                     .checked(open && shown)
                                     .on_click(move |_, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                                         dock.update(cx, |dock, cx| {
                                             dock.select_panel(id, window, cx)
                                         });
@@ -136,6 +138,7 @@ impl RenderOnce for DrawerButtons {
                         .icon(IconName::SquareTerminal)
                         .checked(terminal_open)
                         .on_click(move |_, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                             dock.update(cx, |dock, cx| {
                                 dock.toggle_dock(DockPlacement::Bottom, window, cx)
                             });
@@ -144,6 +147,7 @@ impl RenderOnce for DrawerButtons {
             });
         let dock = self.dock.clone();
         let close = button("Close tools", IconName::X, false).on_click(move |_, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
             dock.update(cx, |dock, cx| {
                 dock.toggle_dock(DockPlacement::Right, window, cx)
             })
@@ -197,6 +201,7 @@ pub fn toggle(dock: Entity<DockArea>, cx: &App) -> impl IntoElement {
         .tooltip(|window, cx| Tooltip::new("Toggle tools drawer").build(window, cx))
         .child(Icon::new(IconName::PanelRight).size(px(17.)))
         .on_click(move |_, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
             dock.update(cx, |dock, cx| {
                 dock.toggle_dock(DockPlacement::Right, window, cx)
             })

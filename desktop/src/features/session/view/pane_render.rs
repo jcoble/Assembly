@@ -31,51 +31,37 @@ impl SessionPane {
             panel_handle(pane)
         });
         cx.on_action(|intent: &OpenSession, cx| {
-            let id = Some(intent.id.clone());
-            SelectedSession::global(cx).update(cx, |selected, cx| selected.select(id, cx));
-            if let Some(window) = cx
-                .active_window()
-                .or_else(|| cx.windows().into_iter().next())
-            {
-                cx.defer(move |cx| {
-                    _ = window.update(cx, |_, window, cx| {
-                        CenterPanes::open("Chat", window, cx, |window, cx| {
-                            cx.new(|cx| SessionPane::chat(Rc::new(SocketSessionClient), window, cx))
-                        })
-                    });
-                });
-            }
+            let request=intent.clone();
+            let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
+            cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
+                if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
+                    pane.update(cx,|pane,cx|pane.request_current_route(request.route_machine,request.id,request.request_id,
+                        if request.historical {crate::core::intents::session_open::SessionOpenTarget::Historical} else {crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx));
+                } else {
+                    SelectedSession::global(cx).update(cx,|_,cx|cx.emit(crate::core::intents::session_open::SessionOpenResult {
+                        request_id:request.request_id,key:None,result:Err(super::opening::refused("chat_unavailable","The registered Chat pane is unavailable.")),
+                    }));
+                }
+            });});
+        });
+        cx.on_action(|request:&crate::core::intents::session_open::SessionOpenRequest,cx| {
+            let request=request.clone();
+            let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
+            cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
+                if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
+                    pane.update(cx,|pane,cx|pane.request_open(request,window,cx));
+                } else {
+                    SelectedSession::global(cx).update(cx,|_,cx|cx.emit(crate::core::intents::session_open::SessionOpenResult {
+                        request_id:request.request_id,key:Some(request.key),result:Err(super::opening::refused("chat_unavailable","The registered Chat pane is unavailable.")),
+                    }));
+                }
+            });});
         });
     }
 
-    /// The Chat pane: shows the selected session, the one already selected when it's made included, and each one
-    /// selected after.
-    pub(super) fn chat(
-        client: Rc<dyn SessionClient>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let mut pane = SessionPane::new(client, window, cx);
-        let selected = SelectedSession::global(cx);
-        pane._selected = Some(
-            cx.observe_in(&selected, window, |pane, selected, window, cx| {
-                pane.show_selected(selected, window, cx)
-            }),
-        );
-        pane.show_selected(selected, window, cx);
-        pane
-    }
-
-    /// Opens the selected session, or shows none.
-    fn show_selected(
-        &mut self,
-        selected: Entity<SelectedSession>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(session) = selected.read(cx).session_id().map(String::from) {
-            self.open(session, window, cx);
-        }
+    /// Only the navigator commits prepared rows; selection notifications never start another open.
+    pub(super) fn chat(client:Rc<dyn SessionClient>,window:&mut Window,cx:&mut Context<Self>)->Self {
+        SessionPane::new(client,window,cx)
     }
 }
 
@@ -164,6 +150,6 @@ impl Render for SessionPane {
                         }),
                 )
             })
-            .child(self.composer.clone())
+            .when(!self.read_only, |pane| pane.child(self.composer.clone()))
     }
 }

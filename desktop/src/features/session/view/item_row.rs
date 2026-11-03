@@ -136,6 +136,7 @@ impl RenderOnce for ItemRow {
             }
             .into_any_element(),
             ItemKind::Subagent { subagent, .. } => SubagentCard {
+                key: key.clone(),
                 subagent,
                 on_action: self.on_action.clone(),
             }

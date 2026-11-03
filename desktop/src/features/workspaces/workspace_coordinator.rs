@@ -30,6 +30,8 @@ impl WorkspaceTarget {
     }
 }
 #[derive(Clone, Debug)]
+pub struct WorkspaceSaved { pub key:WorkspaceKey,pub revision:u64 }
+#[derive(Clone,Debug)]
 pub struct WorkspaceActivated {
     pub generation: u64,
     pub target: WorkspaceTarget,
@@ -61,6 +63,7 @@ pub type WorkspaceCommit =
 struct Current(Entity<WorkspaceCoordinator>);
 impl Global for Current {}
 pub struct WorkspaceCoordinator {
+    owner_window:Option<AnyWindowHandle>,
     current: Option<Open>,
     pending: Option<WorkspaceTarget>,
     commit: Option<WorkspaceCommit>,
@@ -75,6 +78,7 @@ pub struct WorkspaceCoordinator {
     watching: Option<Task<()>>,
     pub status: Option<String>,
 }
+impl EventEmitter<WorkspaceSaved> for WorkspaceCoordinator {}
 impl EventEmitter<WorkspaceActivated> for WorkspaceCoordinator {}
 impl EventEmitter<WorkspaceRefused> for WorkspaceCoordinator {}
 impl WorkspaceCoordinator {
@@ -83,6 +87,7 @@ impl WorkspaceCoordinator {
             return current.0.clone();
         }
         let view = cx.new(|_| Self {
+            owner_window:None,
             current: None,
             pending: None,
             commit: None,
@@ -109,6 +114,18 @@ impl WorkspaceCoordinator {
     pub fn current_key(&self) -> Option<&WorkspaceKey> {
         self.current.as_ref().map(|current| &current.key)
     }
+    pub fn layout_to_save(&self,state:&gpui_kit::component::dock::DockAreaState,window:&Window,cx:&App)
+        ->Result<Option<gpui_kit::component::dock::DockAreaState>,String> {
+        if self.current_target().is_none() {return Ok(Some(state.clone()));}
+        let views=crate::core::ui::center_panes::CenterPanes::file_views(cx);
+        if views.is_empty() {return super::legacy_layout::prune_refs(state,&[]).map(Some);}
+        let Some(current)=&self.current else{return Ok(None);};
+        if !current.writable||current.revision==0 {return Ok(None);}
+        let snapshot=WorkspacePanes::capture(window,cx)?;
+        if current.safe_to_leave.as_ref()!=Some(&snapshot) {return Ok(None);}
+        let refs:Vec<_>=views.iter().map(|view|view.read(cx).layout_ref()).collect();
+        super::legacy_layout::prune_refs(state,&refs).map(Some)
+    }
     /// Key authority belongs to the source-qualified navigator. This method never derives a root from display metadata.
     pub fn request(
         &mut self,
@@ -117,6 +134,7 @@ impl WorkspaceCoordinator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> u64 {
+        self.owner_window=Some(window.window_handle());
         self.refuse(
             "This workspace open was superseded by a newer request.".into(),
             cx,
@@ -195,98 +213,21 @@ impl WorkspaceCoordinator {
         cx.notify();
     }
     /// Pane owners call this only for a person changing view/draft state, never while restoring.
-    pub fn changed(cx: &mut App) {
-        if WorkspacePanes::is_restoring(cx) {
-            return;
-        }
-        let Some(key) = WorkspacePanes::key(cx).cloned() else {
-            return;
-        };
-        let Some(view) = Self::try_global(cx) else {
-            return;
-        };
-        cx.defer(move |cx| {
-            view.update(cx, |view, cx| {
-                if let Some(current) = &mut view.current
-                    && current.key == key
-                {
-                    current.writable = true;
-                    cx.notify();
-                }
-            })
-        });
-    }
-    fn begin_transition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.active_request {
-            return;
-        }
-        if self.current.is_none() && !self.migrate_legacy(window, cx) {
-            return;
-        }
-        let Some(current) = &self.current else {
-            self.read_target(window, cx);
-            return;
-        };
-        // A failed/corrupt hydration is never saved over merely because another session was selected.
-        if !current.writable {
-            self.read_target(window, cx);
-            return;
-        }
-        let snapshot = match WorkspacePanes::capture(window, cx) {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                self.status = Some(format!("Not saved: {error}"));
-                self.guard_outgoing(window, cx);
-                return;
+    pub fn changed(cx:&mut App) {
+        if WorkspacePanes::is_restoring(cx) {return;}
+        let Some(key)=WorkspacePanes::key(cx).cloned() else{return;};
+        let Some(view)=Self::try_global(cx) else{return;};
+        let Some(window)=view.read(cx).owner_window else{return;};
+        cx.defer(move|cx| {let _=window.update(cx,|_,window,cx|view.update(cx,|view,cx| {
+            if let Some(current)=&mut view.current && current.key==key {
+                current.writable=true;view.save_current(window,cx);cx.notify();
             }
-        };
-        if current.safe_to_leave.as_ref() == Some(&snapshot) {
-            self.read_target(window, cx);
-            return;
-        }
-        let (key, expected) = (current.key.clone(), current.revision);
-        let Some(socket) = SocketClient::try_bulk(cx) else {
-            self.refuse("Not saved: the bulk connection is unavailable.".into(), cx);
-            return;
-        };
-        let call = socket.read(cx).call::<Saved>(
-            "workspaces",
-            "save",
-            json!({"machine":key.machine,"sessionId":key.session_id,
-            "checkoutRoot":key.checkout_root,"expectedRevision":expected,"snapshot":snapshot}),
-            None,
-        );
-        let handle = window.window_handle();
-        self.saving = Some(cx.spawn(async move |view, cx| {
-            let outcome = call.await;
-            let saved = match outcome {
-                Outcome::Ok(saved) if saved.revision == expected + 1 => Ok(saved.revision),
-                failed => {
-                    // A lost save result is reconciled by exact revision and captured view JSON, never blindly replayed.
-                    let message = match failed { Outcome::Failed(error) => error.message, _ => "The workspace save result is unknown.".into() };
-                    let read = view.update(cx, |_, cx| socket.read(cx).call::<Read>("workspaces", "read", json!({
-                        "machine":key.machine,"sessionId":key.session_id,"checkoutRoot":key.checkout_root}), None));
-                    match read { Ok(read) => match read.await {
-                        Outcome::Ok(read) if read.revision == expected + 1 && read.snapshot.as_ref() == Some(&snapshot) => Ok(read.revision),
-                        _ => Err(message),
-                    }, Err(_) => return }
-                }
-            };
-            let _ = handle.update(cx, |_, window, cx| view.update(cx, |view, cx| {
-                view.saving = None;
-                if view.current_key() != Some(&key) { return; }
-                match saved {
-                    Ok(revision) => {
-                        let current = view.current.as_mut().expect("same outgoing workspace");
-                        current.revision = revision; current.safe_to_leave = Some(snapshot);
-                        // Edits made while the save awaited its receipt must be saved before releasing their panes.
-                        view.begin_transition(window, cx);
-                    }
-                    Err(error) => { view.refuse(format!("Not saved: {error}"), cx); }
-                }
-                cx.notify();
-            }));
-        }));
+        }));});
+    }
+    fn begin_transition(&mut self,window:&mut Window,cx:&mut Context<Self>) {
+        if !self.active_request {return;}
+        if self.current.is_none()&&!self.migrate_legacy(window,cx) {return;}
+        self.save_current(window,cx);
     }
     fn guard_outgoing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(current) = &self.current else {
@@ -385,6 +326,7 @@ impl WorkspaceCoordinator {
                 if let Err(error) = WorkspacePanes::validate_snapshot(snapshot, &key, cx) {
                     view.refuse(format!("Couldn't restore this workspace: {error}. The stored snapshot and current view were left untouched."), cx); return;
                 }
+                if let Err(error)=view.admit_legacy_cutover(cx) {view.refuse(error,cx);return;}
                 let previous = WorkspacePanes::key(cx).cloned();
                 let Some(commit) = view.commit.take() else { view.refuse("Open the session again to prepare its navigation.".into(), cx); return; };
                 WorkspacePanes::set_key(key.clone(), cx);
@@ -399,7 +341,7 @@ impl WorkspaceCoordinator {
                         false
                     }
                 };
-                view.current = Some(Open { key: key.clone(), revision: read.revision, writable: restored, safe_to_leave: None });
+                view.current = Some(Open { key: key.clone(), revision: read.revision, writable: restored, safe_to_leave: (restored&&read.revision>0).then(||snapshot.clone()) });
                 view.watch(key.clone(), cx);
                 view.activated(target, restored, cx);
             }));
@@ -411,6 +353,8 @@ impl WorkspaceCoordinator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Err(error)=WorkspacePanes::validate_deactivate(cx) {self.refuse(error,cx);return;}
+        if let Err(error)=self.admit_legacy_cutover(cx) {self.refuse(error,cx);return;}
         let previous = WorkspacePanes::key(cx).cloned();
         let Some(commit) = self.commit.take() else {
             self.refuse("Prepare this transcript open again.".into(), cx);
@@ -465,3 +409,13 @@ mod migration;
 #[cfg(test)]
 #[path = "workspace_restore_tests.rs"]
 mod restore_tests;
+
+#[path="workspace_saving.rs"]
+mod saving;
+#[cfg(test)]
+#[path="workspace_save_tests.rs"]
+mod save_tests;
+
+#[cfg(test)]
+#[path="workspace_layout_tests.rs"]
+mod layout_tests;

@@ -7,11 +7,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::session_action::{OnAction, SessionAction};
-use super::task_card::{card, stop_button};
+use super::task_card::{card, stop_button,stop_action_button};
 use crate::features::session::rows::subagent::SubagentPayload;
 
 #[derive(IntoElement)]
 pub struct SubagentCard {
+    pub key: String,
     pub subagent: SubagentPayload,
     pub on_action: OnAction,
 }
@@ -46,15 +47,18 @@ impl RenderOnce for SubagentCard {
         let muted = cx.theme().muted_foreground;
         let running = subagent.state != "idle";
         let (session_id, on_action) = (subagent.session_id.clone(), self.on_action.clone());
+        let key=self.key.clone();let helper=subagent.helper;
         card(cx)
             .id(SharedString::from(format!(
                 "subagent:{}",
-                subagent.session_id
+                self.key
             )))
             .cursor_pointer()
             .on_click(move |_, window, cx| {
                 let session_id = session_id.clone();
-                on_action(SessionAction::OpenSession { session_id }, window, cx)
+                let action=if helper {SessionAction::OpenEngineChild{session_id}}
+                    else {SessionAction::OpenNative{key:key.clone(),payload_session_id:session_id}};
+                on_action(action, window, cx)
             })
             .child(
                 h_flex()
@@ -86,12 +90,12 @@ impl RenderOnce for SubagentCard {
                             .child(state_label(subagent)),
                     )
                     .when(running && subagent.can_stop, |line| {
-                        let id = format!("subagent:{}:stop", subagent.session_id);
-                        line.child(stop_button(
-                            id,
-                            subagent.session_id.clone(),
-                            self.on_action.clone(),
-                        ))
+                        let id = format!("subagent:{}:stop", self.key);
+                        if subagent.helper {
+                            line.child(stop_button(id,subagent.session_id.clone(),self.on_action.clone()))
+                        } else {
+                            line.child(stop_action_button(id,SessionAction::StopNative{key:self.key.clone(),payload_session_id:subagent.session_id.clone()},self.on_action.clone()))
+                        }
                     }),
             )
     }

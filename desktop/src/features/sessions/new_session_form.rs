@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 use std::rc::Rc;
 
 use crate::core::state::machines::Machines;
-use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::client::session_client::{CallError, SessionClient};
 use crate::features::session::client::socket_session_client::SocketSessionClient;
 use crate::features::session::composer::agent_config::{AgentList, AgentTarget};
@@ -540,6 +539,7 @@ impl NewSessionForm {
             args["workingFolder"] = json!(folder.trim());
             args["initialConfig"] = json!({"targetId":target,"choices":config.config.choices});
         }
+        let created_route=self.machine.clone();
         let call = self.client.call("sessions", "create", args, None, cx);
         (self.starting, self.error) = (true, SharedString::default());
         cx.notify();
@@ -558,8 +558,8 @@ impl NewSessionForm {
                                 return;
                             }
                         };
-                        SelectedSession::global(cx).update(cx, |selected, cx| {
-                            selected.select(Some(made.session_id), cx)
+                        cx.dispatch_action(&crate::core::intents::open_session::OpenSession {
+                            id:made.session_id,route_machine:created_route,request_id:uuid::Uuid::new_v4().to_string(),historical:false,
                         });
                         cx.emit(Created);
                     }

@@ -5,6 +5,8 @@ use gpui_kit::*;
 
 pub struct SelectedSession {
     session_id: Option<String>,
+    key: Option<crate::core::engine::SessionKey>,
+    read_only: bool,
 }
 
 struct GlobalSelected(Entity<SelectedSession>);
@@ -23,17 +25,32 @@ impl SelectedSession {
     }
 
     pub fn new() -> Self {
-        Self { session_id: None }
+        Self { session_id: None, key: None, read_only: false }
     }
 
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
 
+    pub fn key(&self) -> Option<&crate::core::engine::SessionKey> { self.key.as_ref() }
+    pub fn read_only(&self) -> bool { self.read_only }
+    /// Only the navigator's already prepared workspace commit changes qualified selection.
+    pub(crate) fn commit_open(&mut self, key: crate::core::engine::SessionKey, read_only: bool, cx: &mut Context<Self>) {
+        let changed = self.key.as_ref() != Some(&key) || self.read_only != read_only;
+        self.session_id = Some(key.id.clone()); self.key = Some(key); self.read_only = read_only;
+        if changed { cx.notify(); }
+    }
+
+    /// Fixture setup only; production selection is committed by the source-qualified navigator.
+    #[cfg(test)]
     pub fn select(&mut self, session_id: Option<String>, cx: &mut Context<Self>) {
         if self.session_id != session_id {
             self.session_id = session_id;
+            self.key = None;
+            self.read_only = false;
             cx.notify();
         }
     }
 }
+
+impl EventEmitter<crate::core::intents::session_open::SessionOpenResult> for SelectedSession {}

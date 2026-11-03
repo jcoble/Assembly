@@ -18,11 +18,13 @@ use super::status::Status;
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::TextRole;
 use crate::core::ui::spinner::RingSpinner;
+use crate::core::state::preferences::Preferences;
+use crate::core::theme::text::TextRole;
 
 /// Moves a session to a group: the pane's `mark`.
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;
 /// Opens the row's session.
-pub type OnSession = Rc<dyn Fn(String, &mut Window, &mut App)>;
+pub type OnSession = Rc<dyn Fn(String, Option<String>, &mut Window, &mut App)>;
 
 /// What a row needs from the pane besides its entry: its place, and what its clicks do.
 #[derive(Clone)]
@@ -110,6 +112,7 @@ impl RenderOnce for SessionRow {
             theme.muted_foreground.opacity(0.65),
         );
         let id = entry.session_id.clone();
+        let route = entry.machine.clone();
         // The mock's steps above the card: hover a little, the selected row a little more.
         let (hover, picked) = (theme.secondary.opacity(0.4), theme.secondary.opacity(0.7));
         let mark = match running {
@@ -232,7 +235,7 @@ impl RenderOnce for SessionRow {
                 )
             })
             .when(!selected, |row| row.hover(|row| row.bg(hover)))
-            .on_click(move |_, window, cx| on_open(opened.clone(), window, cx))
+            .on_click(move |_, window, cx| on_open(opened.clone(), route.clone(), window, cx))
             .children(unread)
             .child(first)
             .child(second)

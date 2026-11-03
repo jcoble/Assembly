@@ -46,6 +46,7 @@ impl EngineWatch {
 pub struct EngineFeed {
     pub(super) store: EngineStore,
     watches: HashMap<EngineScope, Weak<ScopeWatch>>,
+    pub(super) native_watches: HashMap<SessionKey, Weak<super::native_activity::NativeScope>>,
     error: Option<EngineRefusal>,
 }
 struct GlobalEngine(Entity<EngineFeed>);

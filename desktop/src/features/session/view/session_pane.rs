@@ -13,15 +13,18 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+
+use crate::core::ui::ask::form::AskForm;
 use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
 use super::timeline::{RenderRow, Timeline, TimelineEvent};
 use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
-use crate::core::ui::ask::form::AskForm;
 use crate::core::ui::expand_row::ExpandRow;
-use crate::features::session::client::session_client::{RowUpdate, RowsSink, SessionClient};
+use crate::features::session::client::session_client::{
+    RowUpdate, RowsSink, SessionClient,
+};
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::{Entry, entry_key};
@@ -37,6 +40,13 @@ use crate::features::session::rows::tool::ToolState;
 
 pub struct SessionPane {
     client: Rc<dyn SessionClient>,
+    open_serial: u64,
+    pending_open: Option<opening::PendingOpen>,
+    active_open_serial: Option<u64>,
+    read_only: bool,
+    active_provider:Option<String>,
+    _source_connections: Vec<Subscription>,
+    active_source_cut: Option<opening::ConnectionCut>,
     focus: FocusHandle,
     session: Option<String>,
     row_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
@@ -175,12 +185,12 @@ impl SessionPane {
                 }
                 // Acceptance is queued, even when newer delivered rows already arrived. Only real
                 // pushed turns and the page's activeRunId establish a running turn.
-                ComposerEvent::Accepted(receipt)
-                    if pane.session.as_ref() == Some(&receipt.session_id) =>
+                ComposerEvent::Accepted{key,receipt}
+                    if pane.session.as_ref() == Some(&receipt.session_id) && pane.row_source.as_ref().is_some_and(|source|source.machine==key.machine) =>
                 {
                     pane.refresh(Change::Nothing, cx)
                 }
-                ComposerEvent::Accepted(_) => {}
+                ComposerEvent::Accepted{..} => {}
                 ComposerEvent::PendingChanged => pane.refresh(Change::Nothing, cx),
             }),
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
@@ -194,6 +204,12 @@ impl SessionPane {
         let machines = cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_machines(cx));
         let mut pane = SessionPane {
             client,
+            open_serial: 0,
+            pending_open: None,
+            active_open_serial: None,
+            read_only: false,active_provider:None,
+            _source_connections: Vec::new(),
+            active_source_cut: None,
             focus: cx.focus_handle(),
             session: None,
             row_source: None,
@@ -242,7 +258,8 @@ impl SessionPane {
     /// Shows a session: subscribes to its rows first, then, on the `Jump` that says its seq, loads the page below
     /// `seq + 1`, so the page and the live rows never overlap. A session with no rows yet (a new one) is ready at
     /// once, empty, so its first message sends.
-    pub fn open(&mut self, session: String, window: &mut Window, cx: &mut Context<Self>) {
+    #[cfg(test)]
+    pub(super) fn open(&mut self, session: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.session.as_ref() == Some(&session) {
             return;
         }
@@ -299,16 +316,18 @@ impl SessionPane {
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
         match event {
             RowUpdate::Refused { code: _, message } => {
+                self.composer.update(cx,|composer,cx|composer.invalidate_source(cx));
                 self._page = None;
                 self._rows = None;
                 self.held = None;
+                self._loads.clear();
                 self.loading = false;
                 self.status = message.into();
                 cx.notify();
             }
             RowUpdate::Jump { seq } => {
-                self.composer
-                    .update(cx, |composer, cx| composer.recover_pending(cx));
+                if !self.read_only { self.composer
+                    .update(cx, |composer, cx| composer.recover_pending(cx)); }
                 self._page = None;
                 self.view = SessionView::default();
                 self.read_to = 0;
@@ -529,3 +548,27 @@ mod tests;
 #[cfg(test)]
 #[path = "tests/session_pane_write_tests.rs"]
 mod write_tests;
+
+#[path="navigation/pane_open.rs"]
+mod opening;
+#[cfg(test)]
+#[path="tests/session_open_tests.rs"]
+mod open_tests;
+
+#[path="navigation/pane_workspace.rs"]
+mod workspace;
+
+#[path="pane_pages.rs"]
+mod pages;
+
+#[path="navigation/pane_discovery.rs"]
+mod discovery;
+#[cfg(test)]
+#[path="tests/session_route_tests.rs"]
+mod route_tests;
+
+#[path="navigation/chat_codec.rs"]
+pub(super) mod chat_codec;
+#[cfg(test)]
+#[path="navigation/chat_codec_tests.rs"]
+mod chat_codec_tests;

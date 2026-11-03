@@ -5,7 +5,6 @@ use gpui_kit::*;
 
 use super::SessionPane;
 use crate::core::state::machines::Machines;
-use crate::core::state::sessions::Sessions;
 
 impl SessionPane {
     /// Follows the machines list, once the socket client has started it.
@@ -18,26 +17,10 @@ impl SessionPane {
     /// The machine comes from the sessions list, which has it the moment a session opens (the header's own item
     /// arrives later); from the header for a session the list hasn't loaded.
     pub(super) fn tell_offline(&mut self, cx: &mut Context<Self>) {
-        let listed = self
-            .session
-            .as_ref()
-            .zip(Sessions::try_global(cx))
-            .and_then(|(id, sessions)| {
-                sessions
-                    .read(cx)
-                    .items()
-                    .iter()
-                    .find(|item| &item.session_id == id)
-                    .map(|item| (Some(item.agent.clone()), item.machine.clone()))
-            });
-        let (agent, machine) = listed.unwrap_or_else(|| {
-            let header = self.header.read(cx);
-            (
-                header.agent().map(String::from),
-                header.machine().map(String::from),
-            )
-        });
-        let machine = machine.filter(|machine| !machine.is_empty());
+        if self.read_only { return; }
+        let Some(source)=self.row_source.as_ref()else{return;};
+        let agent=self.active_provider.clone();
+        let machine=source.route_machine.clone();
         let route = Machines::try_global(cx)
             .and_then(|machines| {
                 machines
@@ -56,7 +39,6 @@ impl SessionPane {
             .clone()
             .filter(|name| Machines::offline(Some(name), cx));
         self.composer.update(cx, |composer, cx| {
-            composer.set_machine(machine.clone(), cx);
             composer.set_offline(offline, cx);
             composer.set_owner(agent, machine, route, cx);
         });

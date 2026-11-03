@@ -46,7 +46,7 @@ public sealed partial class ProviderRuntimeForwardTests
 
             var displayName = selection with { Machine = "workbox-test" };
             var refused = await Call(socket, 3, "runtimeRead", JsonSerializer.SerializeToElement(displayName, ProviderRuntimeJson.Default.ProviderRuntimeReadArgs));
-            Assert.Equal("unreachable", refused.GetProperty("code").GetString());
+            Assert.Equal("not_found", refused.GetProperty("code").GetString());
             Assert.Equal(originalLocal, File.ReadAllBytes(local.Path));
         }
         finally { Directory.Delete(home, recursive: true); }

@@ -16,7 +16,9 @@ use crate::features::session::composer::upload::{UploadSource, size_of, upload_i
 impl Composer {
     /// Asks for images with the system's file picker.
     pub(super) fn pick_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let session = self.session.clone();
+        if !self.operational(){return;}
+        let generation=self.source_serial;
+        let session = self.session_key.clone();
         let picked = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -32,7 +34,7 @@ impl Composer {
                 // Not if another session was picked meanwhile.
                 composer
                     .update(cx, |composer, cx| {
-                        if composer.session == session {
+                        if composer.session_key == session && composer.source_serial==generation && composer.operational() {
                             composer.attach_paths(&paths, cx)
                         }
                     })
@@ -125,6 +127,8 @@ impl Composer {
         source: UploadSource,
         cx: &mut Context<Self>,
     ) {
+        if !self.operational(){return;}
+        let generation=self.source_serial;
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -149,6 +153,7 @@ impl Composer {
                 let saved = upload.await;
                 composer
                     .update(cx, |composer, cx| {
+                        if composer.source_serial!=generation||!composer.operational(){return;}
                         let attachment = composer
                             .attachments
                             .iter_mut()

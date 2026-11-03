@@ -7,13 +7,12 @@ use gpui_kit::*;
 use serde_json::{Value, json};
 
 use super::SessionPane;
-use crate::core::intents::open_session::OpenSession;
 use crate::core::theme::grow::GROW;
-use crate::core::ui::ask::form::AskForm;
 use crate::features::session::client::session_client::CallError;
 use crate::features::session::model::change::Change;
 use crate::features::session::model::item::ItemKind;
 use crate::features::session::rows::tool::ToolDetail;
+use crate::core::ui::ask::form::AskForm;
 use crate::features::session::view::grow::toggled;
 use crate::features::session::view::lightbox::{open_lightbox, read_image};
 use crate::features::session::view::session_action::SessionAction;
@@ -26,6 +25,18 @@ impl SessionPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.active_source_cut.as_ref().is_some_and(|cut|!cut.current(cx)) {
+            self.composer.update(cx,|composer,cx|composer.invalidate_source(cx));
+            self.status="The captured session connection changed. Open the session again.".into();cx.notify();return;
+        }
+        if self.row_source.is_some() && self._rows.is_none() {
+            self.status = "The captured session source is unavailable. Open the session again.".into(); cx.notify(); return;
+        }
+        if self.read_only && matches!(&action,
+            SessionAction::RetryPrompt { .. } | SessionAction::Pick { .. }
+            | SessionAction::SubmitAsk { .. } | SessionAction::Answer { .. } | SessionAction::StopTask { .. } | SessionAction::StopNative { .. }) {
+            self.status = "This recorded transcript is read-only.".into(); cx.notify(); return;
+        }
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -120,13 +131,39 @@ impl SessionPane {
                 let args = json!({ "session": session, "ask": ask_id, "answer": answer });
                 self.send(task, "answer", args, cx);
             }
+            SessionAction::StopNative { key, payload_session_id } => {
+                match self.native_stop_task(&key,&payload_session_id) {
+                    Ok(task)=>{
+                        self.status=SharedString::default();
+                        self.send(format!("stop:{task}"),"stopTask",json!({"session":session,"task":task}),cx);
+                    }
+                    Err(error)=>{self.status=error.message.into();cx.notify();}
+                }
+            }
             SessionAction::StopTask { task } => {
                 self.status = SharedString::default();
                 let args = json!({ "session": session, "task": task });
                 self.send(format!("stop:{task}"), "stopTask", args, cx);
             }
-            SessionAction::OpenSession { session_id } => {
-                window.dispatch_action(Box::new(OpenSession { id: session_id }), cx);
+            SessionAction::OpenNative { key, payload_session_id } => {
+                match self.native_open_request(&key,&payload_session_id) {
+                    Ok(request)=>self.request_open(request,window,cx),
+                    Err(error)=>{self.status=error.message.into();cx.notify();}
+                }
+            }
+            SessionAction::OpenEngineChild { session_id } => {
+                let parent=self.row_source.as_ref().map(|source|crate::core::engine::SessionKey{machine:source.machine.clone(),id:session.clone()});
+                let feed=crate::core::engine::EngineFeed::global(cx);
+                let children=parent.map(|parent|feed.read(cx).children_of(&parent)).unwrap_or_default();
+                let mut matches=children.into_iter().filter(|child|child.key.id==session_id);
+                let key=matches.next().map(|child|child.session_key());
+                if let Some(key)=key.filter(|_|matches.next().is_none()) {
+                    self.request_open(crate::core::intents::session_open::SessionOpenRequest{key,request_id:uuid::Uuid::new_v4().to_string(),target:crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx);
+                }else{self.status="The helper's source-qualified session is unavailable.".into();cx.notify();}
+            }
+            SessionAction::OpenSession { session_id: _ } => {
+                // A legacy sender label carries no owning Engine ID; its bare ID cannot authorize navigation.
+                self.status="The sender's source-qualified session reference is unavailable.".into();cx.notify();
             }
             SessionAction::ShowImage { name } => {
                 self.status = SharedString::default();

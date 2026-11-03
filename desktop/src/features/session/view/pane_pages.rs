@@ -10,6 +10,7 @@ use crate::features::session::rows::row_page::RowPage;
 impl SessionPane {
     /// Loads the page above what's loaded, when the timeline nears its top and one isn't already loading.
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
+        if self.row_source.is_some() && self._rows.is_none() { return; }
         let Some(before) = self.view.oldest.filter(|_| {
             self.view.has_before && !self.loading && self.failed_before != self.view.oldest
         }) else {

@@ -35,8 +35,13 @@ pub enum SessionAction {
     Answer { ask_id: String, answer: Value },
     /// `send/stopTask`: a task, or a subagent by its session id.
     StopTask { task: String },
+    StopNative { key: String, payload_session_id: String },
     /// Opens another session: a subagent's, a parent, or the one that sent a prompt (lane g0-host's intent).
     OpenSession { session_id: String },
+    /// A persisted card reference. Payload identity is correlation, never the resolved child identity.
+    OpenNative { key: String, payload_session_id: String },
+    /// Engine helper cards resolve only through the source-qualified canonical parent/child edge.
+    OpenEngineChild { session_id: String },
     /// Reads an attached image (`attachments/read`) and opens it full size.
     ShowImage { name: String },
 }

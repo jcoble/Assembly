@@ -7,13 +7,12 @@ pub(super) fn prune(
     state: &DockAreaState,
     captures: &[LegacyFileCapture],
 ) -> Result<DockAreaState, String> {
-    let confirmed: HashSet<_> = captures
-        .iter()
-        .map(|capture| (capture.legacy_session.as_str(), capture.path.as_str()))
-        .collect();
-    if confirmed.len() != captures.len() {
-        return Err("Duplicate old file captures prevent layout migration.".into());
-    }
+    let refs:Vec<_>=captures.iter().map(|capture|(capture.legacy_session.as_str(),capture.path.as_str())).collect();
+    prune_refs(state,&refs)
+}
+pub(super) fn prune_refs(state:&DockAreaState,refs:&[(&str,&str)])->Result<DockAreaState,String> {
+    let confirmed:HashSet<_>=refs.iter().copied().collect();
+    if confirmed.len()!=refs.len() {return Err("Duplicate file references prevent layout migration.".into());}
     let mut seen = HashSet::new();
     let mut panel = |state: &PanelState| {
         prune_panel(state, &confirmed, &mut seen)?.ok_or_else(|| {

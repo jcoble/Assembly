@@ -55,3 +55,8 @@ mod engine_items_tests;
 pub mod commands;
 #[cfg(test)]
 mod commands_tests;
+
+mod native_activity;
+pub use native_activity::{NativeWatch,SubagentItem};
+#[cfg(test)]
+mod native_activity_tests;

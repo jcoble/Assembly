@@ -41,7 +41,8 @@ public sealed partial class PullRequestReaderTests
             if (args[0] == "pr") return Answer(View);
             if (args[^1].Contains("/files?")) return Answer("""[{"filename":"binary","status":"added"}]""");
             if (args[^1].Contains("/comments?")) return Answer("[]");
-            return new GhRun(0, "lossy replacement", "") { OutputBytes = raw ? new ReadOnlyMemory<byte>(new byte[] { 255 }) : null };
+            if (!raw) return new GhRun(0, "lossy replacement", "");
+            return new GhRun(0, "lossy replacement", "") { OutputBytes = new byte[] { 255 } };
         }
         var binary = await new PullRequestReader(repo.Git, new RawFakeGh(args => Respond(args, true)), repo.Root, new GitTextPatch(repo.Git)).FileAsync(repo.Root, 7, "binary", new string('b', 40), new string('a', 40), default);
         Assert.True(binary.Binary); Assert.Empty(binary.Patch);

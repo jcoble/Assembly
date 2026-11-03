@@ -29,10 +29,10 @@ use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::update::Update;
 use crate::core::state::machines::{GlobalMachines, Machines};
-use crate::core::state::preferences::Preferences;
 use crate::core::state::selected_session::SelectedSession;
-use crate::core::state::sessions::GlobalSessions;
+use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::TextRole;
+use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
 const RAIL_TOPIC: &str = "sessionRail";
@@ -360,9 +360,8 @@ impl SessionsPane {
     }
 
     /// Opens a row's session, and clears the filter, as picking a result did in the old rail.
-    pub(super) fn open(&mut self, session_id: String, window: &mut Window, cx: &mut Context<Self>) {
-        SelectedSession::global(cx)
-            .update(cx, |selected, cx| selected.select(Some(session_id), cx));
+    pub(super) fn open(&mut self, session_id: String, route_machine: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        window.dispatch_action(Box::new(crate::core::intents::open_session::OpenSession{id:session_id,route_machine,request_id:uuid::Uuid::new_v4().to_string(),historical:false}),cx);
         self.clear_filter(window, cx);
     }
 

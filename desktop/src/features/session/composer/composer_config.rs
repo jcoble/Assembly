@@ -18,6 +18,7 @@ impl Composer {
     /// Reads the session's config; a newer read takes the place of one still going. One a pick started or answered
     /// during is let go: it may answer the value from before the pick, and the pick's own answer is newer.
     pub(super) fn read_config(&mut self, cx: &mut Context<Self>) {
+        if !self.operational(){return;}
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -44,6 +45,7 @@ impl Composer {
 
     /// Sets one of the agent's menus to `value`.
     pub(super) fn choose(&mut self, config_id: String, value: String, cx: &mut Context<Self>) {
+        if !self.operational(){return;}
         let Some(session) = self.session.clone() else {
             return;
         };

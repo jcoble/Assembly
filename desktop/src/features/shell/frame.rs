@@ -18,6 +18,7 @@ use super::motion_skin::MotionSkin;
 use super::top_bar::TopBar;
 use super::utility_strip::UtilityStrip;
 use crate::core::native_views::views::NativeViews;
+use crate::features::workspaces::workspace_coordinator::{WorkspaceCoordinator,WorkspaceSaved,WorkspaceActivated};
 use crate::core::ui::center_panes::CenterPanes;
 
 /// The work panel's distance from the window's edges (the design system's `panel-gap`).
@@ -77,6 +78,12 @@ impl Frame {
             NativeViews::layout_changed(window, cx);
             cx.notify();
         });
+        let mut subscriptions=vec![docked];
+        if let Some(coordinator)=WorkspaceCoordinator::try_global(cx) {
+            subscriptions.push(cx.observe_in(&coordinator,window,|_,_,_,cx|cx.notify()));
+            subscriptions.push(cx.subscribe_in(&coordinator,window,|frame,_,_:&WorkspaceSaved,window,cx|frame.layout.save_soon(window,cx)));
+            subscriptions.push(cx.subscribe_in(&coordinator,window,|frame,_,_:&WorkspaceActivated,window,cx|frame.layout.save_soon(window,cx)));
+        }
         let _load = cx.spawn_in(window, async move |this, cx| {
             let state = LayoutStore::layout_to_open(read.await);
             _ = this.update_in(cx, |frame, window, cx| {
@@ -87,14 +94,14 @@ impl Frame {
                     hold_to_limits(dock, window, cx);
                 });
                 let changes =
-                    cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent, _, cx| {
+                    cx.subscribe_in(&frame.dock, window, |frame, _, event: &DockEvent,window,cx| {
                         if !matches!(event, DockEvent::LayoutChanged) {
                             return;
                         }
                         if frame.held > 0 {
                             frame.held -= 1;
                         } else {
-                            frame.layout.save_soon(cx);
+                            frame.layout.save_soon(window,cx);
                         }
                     });
                 // After the subscription, so every hold's layout event reaches it and clears `held`. A drag moves
@@ -112,7 +119,7 @@ impl Frame {
             held: 0,
             bottom_shut,
             _load,
-            _subscriptions: vec![docked],
+            _subscriptions:subscriptions,
         }
     }
 
@@ -145,6 +152,7 @@ impl Render for Frame {
             .flatten();
         self.bottom_shut
             .set(!dock.is_dock_open(DockPlacement::Bottom));
+        let status=WorkspaceCoordinator::try_global(cx).and_then(|view|view.read(cx).status.clone());
         let theme = cx.theme();
         // The panel's box: from the sessions column's edge to `PANEL_GAP` short of the window's.
         let panel = || {
@@ -160,6 +168,7 @@ impl Render for Frame {
             .size_full()
             .bg(rgb(GROUND))
             .child(self.top_bar.clone())
+            .children(status.map(|text|div().px_3().py_1().text_xs().text_color(theme.danger).child(text)))
             .child(
                 div()
                     .flex_1()

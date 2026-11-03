@@ -21,6 +21,10 @@ use crate::features::session::client::session_client::{CallError, SessionClient}
 pub struct Composer {
     client: Rc<dyn SessionClient>,
     session: Option<String>,
+    session_key: Option<crate::core::engine::SessionKey>,
+    expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+    source_valid: bool,
+    source_serial:u64,
     /// Identifies this visit, including leaving and returning to the same session.
     target_generation: u64,
     owner: Option<(String, Option<String>, String)>,
@@ -31,7 +35,7 @@ pub struct Composer {
     _connection: Option<Subscription>,
     draft: Entity<TextareaState>,
     /// The other sessions' unsent drafts, by session id.
-    drafts: HashMap<String, String>,
+    drafts: HashMap<crate::core::engine::SessionKey, (String,Vec<Attachment>)>,
     attachments: Vec<Attachment>,
     /// Each attachment's upload while it goes, by its id; a chip removed drops its upload.
     uploads: HashMap<u64, Task<()>>,
@@ -62,13 +66,13 @@ pub struct Composer {
     /// The draft's hint as last set (`placeholder`).
     hint: &'static str,
     /// A failed send's immutable request: a retry reuses its original receipt identity.
-    retry_ids: HashMap<String, PromptRequest>,
-    pending: HashMap<(Option<String>, String), Vec<PendingPrompt>>,
+    retry_ids: HashMap<crate::core::engine::SessionKey, PromptRequest>,
+    pending: HashMap<crate::core::engine::SessionKey, Vec<PendingPrompt>>,
     _pending_read: Option<Task<()>>,
     message_subscriptions: HashMap<String, Subscription>,
     machine: Option<String>,
-    failed_drafts: HashMap<String, (String, Vec<Attachment>)>,
-    delivered: HashMap<(Option<String>, String), std::collections::HashSet<String>>,
+    failed_drafts: HashMap<crate::core::engine::SessionKey, (String, Vec<Attachment>)>,
+    delivered: HashMap<crate::core::engine::SessionKey, std::collections::HashSet<String>>,
     /// How many sends this composer has named, for the next clientId.
     named: u64,
     /// Counts each pick's start and answer; a config read that saw it change answers what came before.
@@ -85,7 +89,7 @@ pub enum ComposerEvent {
     /// A local pending prompt was captured before the call.
     Sending,
     /// The owner committed the prompt. Its provider turn arrives later through rows.
-    Accepted(OwnerPromptAccepted),
+    Accepted { key:crate::core::engine::SessionKey,receipt:OwnerPromptAccepted },
     PendingChanged,
 }
 #[path = "owner_prompt.rs"]
@@ -141,6 +145,7 @@ impl Composer {
         Composer {
             client,
             session: None,
+            session_key:None,expected_source:None,source_valid:false,source_serial:0,
             target_generation: 0,
             owner: None,
             advertised_target: None,
@@ -178,56 +183,6 @@ impl Composer {
             _config: None,
             _tasks: Vec::new(),
         }
-    }
-
-    /// Points the composer at a session: keeps the draft it leaves and puts back the one it left there.
-    pub fn set_session(
-        &mut self,
-        session: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.session == session {
-            return;
-        }
-        self.target_generation += 1;
-        self.owner = None;
-        self.advertised_target = None;
-        self._target = None;
-        self._warm = None;
-        if let Some(left) = self.session.take() {
-            let text = self.draft.read(cx).value().to_string();
-            if !text.is_empty() {
-                self.drafts.insert(left, text);
-            }
-        }
-        let text = session
-            .as_ref()
-            .and_then(|session| self.drafts.remove(session))
-            .unwrap_or_default();
-        let restored = session.as_ref().and_then(|session| {
-            if self
-                .failed_drafts
-                .get(session)
-                .is_some_and(|(typed, _)| typed == &text)
-            {
-                self.failed_drafts
-                    .remove(session)
-                    .map(|(_, attachments)| attachments)
-            } else {
-                None
-            }
-        });
-        self.draft
-            .update(cx, |draft, cx| draft.set_value(text, window, cx));
-        self.session = session;
-        self.attachments = restored.unwrap_or_default();
-        self.uploads.clear();
-        self.slash_selected = None;
-        (self.config, self.error, self._config) = (None, None, None);
-        self.read_config(cx);
-        self.read_pending(cx);
-        cx.notify();
     }
 
     /// The run going now; when one ends, the agent's menus are read again.
@@ -314,6 +269,7 @@ impl Composer {
 
     /// Stops the run going now. It goes on if the call fails, so Stop stays to be pressed again.
     fn stop(&mut self, cx: &mut Context<Self>) {
+        if !self.operational(){return;}
         let Some(run) = self.running.clone().filter(|_| self.offline.is_none()) else {
             return;
         };
@@ -324,238 +280,7 @@ impl Composer {
         self._tasks.push(cx.spawn(async move |_, _| _ = call.await));
     }
 
-    /// Sends the draft once every attachment has uploaded; one whose upload failed is removed first.
-    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone() else {
-            return;
-        };
-        let typed = self.draft.read(cx).value().trim().to_string();
-        if self.offline.is_some()
-            || !self.all_saved()
-            || (typed.is_empty() && self.attachments.is_empty())
-        {
-            return;
-        }
-        let text = Attachment::with_lines(&typed, &self.attachments);
-        let attached = std::mem::take(&mut self.attachments);
-        self.uploads.clear();
-        (self.slash_selected, self.error) = (None, None);
-        self.draft
-            .update(cx, |draft, cx| draft.set_value("", window, cx));
-        let attachment_ids: Vec<String> = attached
-            .iter()
-            .filter_map(|attachment| match &attachment.state {
-                AttachmentState::Saved { path } => Some(path.clone()),
-                _ => None,
-            })
-            .collect();
-        let request = match self.retry_ids.remove(&session) {
-            Some(request) if request.text == text && request.attachment_ids == attachment_ids => {
-                request
-            }
-            _ => {
-                self.named += 1;
-                let ms = chrono::Utc::now().timestamp_millis();
-                PromptRequest {
-                    text: text.clone(),
-                    client_id: format!("{ms}-{}-{}", std::process::id(), self.named),
-                    attachment_ids,
-                    epoch: None,
-                }
-            }
-        };
-        self.submit(session, request, typed, attached, window, cx);
-    }
 
-    /// Retries a failed prompt's captured payload while preserving any new draft.
-    pub fn retry_pending(&mut self, client_id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone().filter(|_| self.offline.is_none()) else {
-            return;
-        };
-        let Some(pending) = self
-            .pending(&session)
-            .iter()
-            .find(|pending| {
-                pending.client_id() == client_id && pending.state.starts_with("Failed:")
-            })
-            .cloned()
-        else {
-            return;
-        };
-        let (typed, references) = Attachment::split_lines(pending.text());
-        let mut attached = references
-            .into_iter()
-            .map(|(path, name, _)| {
-                self.attached += 1;
-                Attachment {
-                    id: self.attached,
-                    name: name.into(),
-                    size: 0,
-                    state: AttachmentState::Saved { path },
-                }
-            })
-            .collect();
-        if self.draft.read(cx).value().to_string() == typed
-            && self
-                .attachments
-                .iter()
-                .filter_map(|a| match &a.state {
-                    AttachmentState::Saved { path } => Some(path),
-                    _ => None,
-                })
-                .eq(pending.request.attachment_ids.iter())
-        {
-            self.draft
-                .update(cx, |draft, cx| draft.set_value("", window, cx));
-            attached = std::mem::take(&mut self.attachments);
-        } else if self
-            .failed_drafts
-            .get(&session)
-            .is_some_and(|(text, _)| text == &typed)
-        {
-            attached = self.failed_drafts.remove(&session).unwrap().1;
-        }
-        self.error = None;
-        self.retry_ids.remove(&session);
-        self.submit(session, pending.request, typed, attached, window, cx);
-    }
-
-    pub fn recover_pending(&mut self, cx: &mut Context<Self>) {
-        self.read_pending(cx);
-    }
-
-    fn submit(
-        &mut self,
-        session: String,
-        request: PromptRequest,
-        typed: String,
-        attached: Vec<Attachment>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let args = json!({ "session": session, "text": request.text,
-            "clientId": request.client_id, "attachmentIds": request.attachment_ids,
-            "epoch": request.epoch });
-        let prompt_key = (self.machine.clone(), session.clone());
-        let pending = self.pending.entry(prompt_key.clone()).or_default();
-        if !pending
-            .iter()
-            .any(|p| p.request.client_id == request.client_id)
-        {
-            pending.push(PendingPrompt::sending(request.clone()));
-        } else if let Some(pending) = pending
-            .iter_mut()
-            .find(|p| p.request.client_id == request.client_id)
-        {
-            pending.state = "sending".into();
-        }
-        cx.emit(ComposerEvent::Sending);
-        let call = self.client.call("send", "send", args, None, cx);
-        self._tasks.retain(|task| !task.is_ready());
-        self._tasks
-            .push(cx.spawn_in(window, async move |composer, cx| {
-                let answer = call.await.and_then(|answer| {
-                    let accepted: OwnerPromptAccepted = serde_json::from_value(answer)
-                        .map_err(|_| CallError::Failed("Invalid prompt acceptance".into()))?;
-                    if accepted.session_id != session
-                        || accepted.client_id != request.client_id
-                        || accepted.message_id != format!("prompt/{session}/{}", request.client_id)
-                        || accepted.state != "queued"
-                        || accepted.run_id.is_some()
-                        || request.epoch.is_some_and(|epoch| epoch != accepted.epoch)
-                        || accepted.message_version < 0
-                        || accepted.seq < 0
-                        || accepted.epoch < 0
-                    {
-                        return Err(CallError::Failed("Invalid prompt acceptance".into()));
-                    }
-                    Ok(accepted)
-                });
-                composer
-                    .update_in(cx, |composer, window, cx| match answer {
-                        Ok(accepted) => {
-                            if let Some(pending) =
-                                composer.pending.get_mut(&prompt_key).and_then(|items| {
-                                    items
-                                        .iter_mut()
-                                        .find(|p| p.request.client_id == accepted.client_id)
-                                })
-                            {
-                                if pending.version <= accepted.message_version {
-                                    pending.state = accepted.state.clone();
-                                    pending.version = accepted.message_version;
-                                }
-                                pending.receipt = Some(accepted.clone());
-                            }
-                            if composer.session.as_ref() == Some(&session)
-                                && composer.machine == prompt_key.0
-                            {
-                                composer.watch_pending(cx);
-                            }
-                            cx.emit(ComposerEvent::Accepted(accepted));
-                        }
-                        // It didn't go out, or the socket closed before it answered (`Aborted`: a send has no key,
-                        // so nothing else takes its place): it comes back to its session's draft with its images,
-                        // unless something new was typed there, and a resend keeps its clientId in case the first
-                        // did land. Images don't follow a draft to another session.
-                        Err(error) => {
-                            let selected = composer.session.as_ref() == Some(&session)
-                                && composer.machine == prompt_key.0;
-                            if composer
-                                .delivered
-                                .get(&prompt_key)
-                                .is_some_and(|ids| ids.contains(&request.client_id))
-                            {
-                                return;
-                            }
-                            if let Some(pending) =
-                                composer.pending.get_mut(&prompt_key).and_then(|items| {
-                                    items
-                                        .iter_mut()
-                                        .find(|p| p.request.client_id == request.client_id)
-                                })
-                            {
-                                pending.state = format!("Failed: {}", error.reason());
-                            }
-                            cx.emit(ComposerEvent::PendingChanged);
-                            if selected {
-                                let hint = if matches!(error, CallError::Unreachable { .. }) {
-                                    " Check Settings > Connections."
-                                } else {
-                                    ""
-                                };
-                                composer.error = Some(
-                                    format!(
-                                        "Couldn't send: {}.{hint}",
-                                        error.reason().trim_end_matches('.')
-                                    )
-                                    .into(),
-                                );
-                                cx.notify();
-                            }
-                            composer.retry_ids.insert(session.clone(), request);
-                            if !selected {
-                                composer
-                                    .drafts
-                                    .entry(session.clone())
-                                    .or_insert(typed.clone());
-                                composer.failed_drafts.insert(session, (typed, attached));
-                            } else if composer.draft.read(cx).value().is_empty()
-                                && composer.attachments.is_empty()
-                            {
-                                composer
-                                    .draft
-                                    .update(cx, |draft, cx| draft.set_value(typed, window, cx));
-                                composer.attachments = attached;
-                                cx.notify();
-                            } else {
-                                composer.failed_drafts.insert(session, (typed, attached));
-                            }
-                        }
-                    })
-                    .ok();
-            }));
-    }
 }
 
 /// The most lines the draft grows to before it scrolls.
@@ -575,3 +300,11 @@ mod target;
 #[cfg(test)]
 #[path = "composer_view_tests.rs"]
 mod tests;
+
+#[path="composer_selection.rs"]
+mod selection;
+#[path="composer_send.rs"]
+mod send;
+#[cfg(test)]
+#[path="qualified_tests.rs"]
+mod qualified_tests;

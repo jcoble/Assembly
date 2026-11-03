@@ -38,3 +38,10 @@ mod turn_line_tests;
 
 #[cfg(test)]
 mod sender_identity_tests;
+
+pub(in crate::features::session) mod open_stage;
+#[cfg(test)]
+mod open_stage_tests;
+
+#[cfg(test)]
+mod row_reference_tests;

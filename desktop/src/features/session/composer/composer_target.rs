@@ -20,6 +20,7 @@ impl Composer {
         self.refresh_config_target(cx);
     }
     pub(super) fn connection_changed(&mut self, connected: bool, cx: &mut Context<Self>) {
+        if !connected {self.invalidate_source(cx);}
         if self.backend_connected == connected {
             return;
         }
@@ -27,6 +28,7 @@ impl Composer {
         self.refresh_config_target(cx);
     }
     pub(super) fn refresh_config_target(&mut self, cx: &mut Context<Self>) {
+        if !self.operational(){return;}
         self.target_generation += 1;
         self._target = None;
         self._warm = None;

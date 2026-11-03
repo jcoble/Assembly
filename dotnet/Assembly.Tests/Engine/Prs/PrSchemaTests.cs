@@ -50,11 +50,11 @@ public sealed class PrSchemaTests
         CREATE TABLE engine_session(id TEXT PRIMARY KEY);
         INSERT INTO engine_session VALUES('owner');
         CREATE TABLE engine_run(id TEXT PRIMARY KEY,pr_id TEXT REFERENCES engine_pr(id));
-        INSERT INTO engine_run VALUES('r',NULL);
         CREATE TABLE engine_pr(id TEXT PRIMARY KEY,version INTEGER NOT NULL,machine TEXT NOT NULL,
             created_ms INTEGER NOT NULL,updated_ms INTEGER NOT NULL,task_url TEXT,
             run_id TEXT NOT NULL REFERENCES engine_run(id),repo TEXT NOT NULL,number INTEGER,head TEXT,
             state TEXT NOT NULL,reported_by TEXT,reported_state TEXT,observed_head TEXT,observed_ms INTEGER,url TEXT);
+        INSERT INTO engine_run VALUES('r',NULL);
         INSERT INTO engine_pr VALUES('p',7,'machine',1,2,'task','r','org/repo',42,'head','merged','agent','claimed','observed',3,'url');
         UPDATE engine_run SET pr_id='p' WHERE id='r';
         """));

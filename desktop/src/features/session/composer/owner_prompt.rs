@@ -134,36 +134,30 @@ fn invalid() -> CallError {
 }
 
 impl Composer {
-    pub fn pending(&self, session: &str) -> &[PendingPrompt] {
-        self.pending
-            .get(&(self.machine.clone(), session.to_string()))
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+    pub fn pending(&self,session:&str)->&[PendingPrompt] {
+        self.session_key.as_ref().filter(|key|key.id==session).and_then(|key|self.pending.get(key)).map(Vec::as_slice).unwrap_or_default()
     }
-
-    /// Positive provider acknowledgment wins over a queued receipt, including late recovery.
-    pub fn delivered(&mut self, session: &str, client_id: &str) {
-        let key = (self.machine.clone(), session.to_string());
-        self.message_subscriptions
-            .remove(&format!("prompt/{session}/{client_id}"));
-        self.delivered
-            .entry(key.clone())
-            .or_default()
-            .insert(client_id.to_string());
-        if let Some(items) = self.pending.get_mut(&key) {
-            items.retain(|item| item.client_id() != client_id);
-        }
+    /// A row acknowledgment applies only to the currently source-qualified owner.
+    pub fn delivered(&mut self,session:&str,client_id:&str) {
+        let Some(key)=self.session_key.clone().filter(|key|key.id==session)else{return;};
+        self.message_subscriptions.remove(&format!("prompt/{session}/{client_id}"));
+        self.delivered.entry(key.clone()).or_default().insert(client_id.into());
+        if let Some(items)=self.pending.get_mut(&key){items.retain(|item|item.client_id()!=client_id);}
     }
-
-    pub fn set_machine(&mut self, machine: Option<String>, cx: &mut Context<Self>) {
-        if self.machine != machine {
-            self.machine = machine;
+    #[cfg(test)]
+    pub fn set_machine(&mut self,machine:Option<String>,cx:&mut Context<Self>) {
+        if self.machine!=machine {
+            self.machine=machine;
+            if let Some(key)=self.session_key.as_mut(){key.machine=self.machine.clone().unwrap_or_else(||"owner".into());}
             self.read_pending(cx);
         }
     }
 
     /// Each selected owner's pending message owns one keyed subscription, released on switch/delivery.
     pub(super) fn watch_pending(&mut self, cx: &mut Context<Self>) {
+        if !self.operational(){return;}
+        let key=self.session_key.clone().expect("operational owner");
+        let generation=self.source_serial;
         let Some(session) = self.session.clone() else {
             return;
         };
@@ -181,16 +175,16 @@ impl Composer {
             }
             let weak = cx.entity().downgrade();
             let (selected, owner, expected) = (session.clone(), machine.clone(), message.clone());
+            let key=key.clone();
             let subscription = self.client.subscribe_message(
                 &message,
                 machine.as_deref(),
                 Box::new(move |item, cx| {
                     _ = weak.update(cx, |composer, cx| {
-                        if composer.session.as_ref() != Some(&selected) || composer.machine != owner
+                        if !composer.operational() || composer.source_serial!=generation || composer.session_key.as_ref()!=Some(&key) || composer.session.as_ref() != Some(&selected) || composer.machine != owner
                         {
                             return;
                         }
-                        let key = (owner.clone(), selected.clone());
                         let mut delivered = false;
                         if let Some(pending) = composer
                             .pending
@@ -225,12 +219,15 @@ impl Composer {
         self._pending_read = None;
         self.message_subscriptions.clear();
         self.watch_pending(cx);
+        if !self.operational(){return;}
+        let generation=self.source_serial;
         let Some(session) = self.session.clone() else {
             return;
         };
         let client = self.client.clone();
         let mut machine = self.machine.clone();
-        let key = (machine.clone(), session.clone());
+        let key = self.session_key.clone().expect("operational owner");
+        let expected_machine=key.machine.clone();
         self._pending_read = Some(cx.spawn(async move |composer, cx| {
             let mut after_created = None;
             let mut after_client: Option<String> = None;
@@ -243,6 +240,7 @@ impl Composer {
                             "afterClientId":after_client,"limit":50}), None, cx)
                     });
                     let page: Page = serde_json::from_value(call.await?).map_err(|_| invalid())?;
+                    if page.engine_machine!=expected_machine{return Err(invalid());}
                     machine = Some(page.engine_machine);
                     for manifest in page.items {
                         let text = if manifest.text_complete {
@@ -302,7 +300,9 @@ impl Composer {
                 Ok(prompts)
             }
             .await;
-            _ = composer.update(cx, |composer, cx| match result {
+            _ = composer.update(cx, |composer, cx| {
+                if !composer.operational()||composer.source_serial!=generation||composer.session_key.as_ref()!=Some(&key){return;}
+                match result {
                 Ok(prompts) => {
                     let items = composer.pending.entry(key.clone()).or_default();
                     for prompt in prompts {
@@ -330,6 +330,7 @@ impl Composer {
                         format!("Couldn't recover pending prompts: {}", error.reason()).into(),
                     );
                     cx.notify();
+                }
                 }
             });
         }));

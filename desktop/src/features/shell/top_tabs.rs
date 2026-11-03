@@ -69,6 +69,7 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
                 .prefix(Icon::new(icon(name)).size(px(16.)))
                 .child(title)
                 .on_click(move |_, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                     select.update(cx, |dock, cx| dock.select_panel(id, window, cx));
                 })
                 .when(tab.panel.closable(cx), |chip| {
@@ -84,6 +85,7 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
                             .hover(|close| close.bg(hover))
                             .child(Icon::new(IconName::X).size(px(13.)))
                             .on_click(move |_, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                                 cx.stop_propagation();
                                 close.update(cx, |dock, cx| dock.select_panel(id, window, cx));
                                 panel.focus_handle(cx).focus(window, cx);
@@ -102,6 +104,7 @@ pub(super) fn tabs(dock: Entity<DockArea>, window: &mut Window, cx: &mut App) ->
             });
             chip.drag_over::<DragPanel>(move |chip, _, _, _| chip.bg(target))
                 .on_drop(move |drag: &DragPanel, window, cx| {
+                    cx.defer(crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed);
                     drop.update(cx, |dock, cx| {
                         if !dock.is_locked() && !dock.is_zoomed() {
                             dock.move_panel(

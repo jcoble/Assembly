@@ -327,7 +327,9 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
     /// <summary>Runs one <c>call</c> frame to its answer. <paramref name="cancelled"/> is its <c>cancel</c>.</summary>
     internal async Task<ReadOnlyMemory<byte>> AnswerAsync(InFrame frame, long id, SocketConnection connection, CancellationToken cancelled)
     {
-        if (frame.ExpectedSource is not null && (frame.Feature != "rows" || frame.Method is not ("page" or "subagents")))
+        if (frame.ExpectedSource is not null &&
+            !(frame.Feature == "rows" && frame.Method is ("page" or "subagents") ||
+                frame.Feature == "sessions" && frame.Method == "read"))
             return Error(id, "bad_args", "expectedSource requires a supported rows read.");
         var name = $"{frame.Feature}/{frame.Method}";
         if ((frame.Feature == "terminal") != connection.Terminal)

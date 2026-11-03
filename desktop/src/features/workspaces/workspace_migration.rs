@@ -74,6 +74,11 @@ impl Completed {
     }
 }
 impl WorkspaceCoordinator {
+    pub(super) fn admit_legacy_cutover(&self,cx:&App)->Result<(),String> {
+        let Some(completed)=&self.migrated else{return Ok(());};
+        let dock=CenterPanes::dock(cx).ok_or("The old file layout is unavailable.")?;
+        completed.pruned_layout(&dock.read(cx).dump(cx),cx).map(|_|())
+    }
     pub(super) fn migrate_legacy(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let views = CenterPanes::file_views(cx);
         if views.is_empty() {

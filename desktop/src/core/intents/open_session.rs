@@ -6,4 +6,8 @@ use gpui_kit::*;
 #[action(namespace = intents, no_json)]
 pub struct OpenSession {
     pub id: String,
+    /// Explicit current route metadata, resolved before selection.
+    pub route_machine: Option<String>,
+    pub request_id: String,
+    pub historical: bool,
 }

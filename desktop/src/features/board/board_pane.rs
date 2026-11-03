@@ -304,27 +304,22 @@ impl BoardPane {
     }
 
     pub(super) fn open_session(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let selected = SelectedSession::global(cx);
-        let requested = id.to_string();
-        self.opening = Some(cx.observe(&selected, move |pane, selected, cx| {
-            if selected.read(cx).session_id() == Some(requested.as_str()) {
-                pane.opening = None;
-                cx.emit(DismissEvent);
+        let Some(task)=self.state.items.iter().map(|item|&item.task).find(|task|task.creator_session_id==id && self.state.selected.as_ref()==Some(&(task.machine_id.clone(),task.task_key.clone()))) else {
+            self.detail_failed=Some("The session's current Board source is unavailable.".into());self.redraw(cx);return;
+        };
+        // Board's persisted machine_id contract uses `local` only for the owning backend route.
+        let route_machine=(task.machine_id!="local").then(||task.machine_id.clone());
+        let request_id=uuid::Uuid::new_v4().to_string();
+        let expected=request_id.clone();
+        self.opening=Some(cx.subscribe(&SelectedSession::global(cx),move|pane,_,event:&crate::core::intents::session_open::SessionOpenResult,cx| {
+            if event.request_id!=expected {return;}
+            pane.opening=None;
+            match &event.result {
+                Ok(())=>cx.emit(DismissEvent),
+                Err(error)=>{pane.detail_failed=Some(error.message.clone().into());pane.redraw(cx);},
             }
         }));
-        window.dispatch_action(Box::new(OpenSession { id: id.into() }), cx);
-        let requested = id.to_string();
-        cx.defer_in(window, move |pane, _, cx| {
-            // OpenSession commits SelectedSession in its action handler; an already selected target is accepted too.
-            // This confirms navigation's selection only, never that the backend loaded the session successfully.
-            pane.opening = None;
-            if selected.read(cx).session_id() == Some(requested.as_str()) {
-                cx.emit(DismissEvent);
-            } else {
-                pane.detail_failed = Some("Could not open the session.".into());
-                pane.redraw(cx);
-            }
-        });
+        window.dispatch_action(Box::new(OpenSession{id:id.into(),route_machine,request_id,historical:false}),cx);
     }
 
     pub(super) fn filter(&mut self, filter: Option<&str>, cx: &mut Context<Self>) {

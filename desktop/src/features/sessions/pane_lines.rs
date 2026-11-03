@@ -87,8 +87,8 @@ impl SessionsPane {
         };
         let on_open: OnSession = {
             let pane = pane.clone();
-            Rc::new(move |session_id, window, cx| {
-                pane.update(cx, |pane, cx| pane.open(session_id, window, cx))
+            Rc::new(move |session_id, route, window, cx| {
+                pane.update(cx, |pane, cx| pane.open(session_id, route, window, cx))
                     .ok();
             })
         };

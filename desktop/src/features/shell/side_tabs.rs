@@ -36,7 +36,10 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
     Tab::new()
         .label(name)
         .debug_selector(move || format!("side-tab-{name}"))
-        .on_click(move |_, window, cx| select.select_tab(ix, window, cx))
+        .on_click(move |_, window, cx| {
+            select.select_tab(ix,window,cx);
+            crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+        })
         .when_some(drag, |tab, drag| {
             tab.on_drag(drag, move |drag, offset, _, cx| {
                 cx.stop_propagation();
@@ -49,6 +52,7 @@ fn tab(group: &TabGroupContext, ix: usize, name: &'static str, cx: &App) -> Tab 
             tab.drag_over::<DragPanel>(move |tab, _, _, _| tab.bg(drop_target))
                 .on_drop(move |drag: &DragPanel, window, cx| {
                     drop.drop_panel(drag.clone(), Some(ix), true, window, cx);
+                    crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
                 })
         })
 }
@@ -68,6 +72,7 @@ fn end(group: &TabGroupContext, cx: &App) -> Stateful<Div> {
                 .on_drop(move |drag: &DragPanel, window, cx| {
                     let ix = (drag.source() == group.node()).then_some(last);
                     group.drop_panel(drag.clone(), ix, false, window, cx);
+                    crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
                 })
         })
 }

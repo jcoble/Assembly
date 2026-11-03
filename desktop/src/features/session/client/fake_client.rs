@@ -48,6 +48,7 @@ struct FakeState {
     config_calls: Vec<(String, Value)>,
     /// Every `sessions/read`'s args.
     reads: Vec<Value>,
+    read_answers: VecDeque<Result<Value, CallError>>,
 }
 
 enum FakeAnswer {
@@ -151,6 +152,8 @@ impl FakeClient {
         self.state.borrow().config_calls.clone()
     }
 
+    pub fn queue_read_answer(&self, answer: Result<Value, CallError>) { self.state.borrow_mut().read_answers.push_back(answer); }
+
     pub fn reads(&self) -> Vec<Value> {
         self.state.borrow().reads.clone()
     }
@@ -227,12 +230,12 @@ impl SessionClient for FakeClient {
         }
         if (feature, method) == ("sessions", "read") {
             state.reads.push(args);
-            return Task::ready(Ok(Value::Null));
+            return Task::ready(state.read_answers.pop_front().unwrap_or(Ok(Value::Null)));
         }
         if feature == "engine" {
-            state.engine_calls.push((method.to_string(), args));
+            state.engine_calls.push((method.to_string(), args.clone()));
             return Task::ready(state.engine_answers.pop_front().unwrap_or_else(|| {
-                Ok(serde_json::json!({"engineMachine":"local","items":[],"nextCreatedMs":null,"nextClientId":null}))
+                Ok(serde_json::json!({"engineMachine":args["machine"].as_str().unwrap_or("owner"),"items":[],"nextCreatedMs":null,"nextClientId":null}))
             }));
         }
         state

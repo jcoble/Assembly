@@ -130,6 +130,9 @@ impl FileView {
             }
             CenterPanes::set_file_preview(current, cx);
         }
+        if self.expected_workspace.is_none() {
+            crate::features::workspaces::workspace_coordinator::WorkspaceCoordinator::changed(cx);
+        }
     }
 
     pub(super) fn install_editor(

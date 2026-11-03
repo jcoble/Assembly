@@ -24,6 +24,10 @@ pub(crate) struct WorkspaceTab {
 struct Activity(u64);
 impl Global for Activity {}
 impl FileView {
+    pub(crate) fn layout_ref(&self)->(&str,&str) {(&self.session,&self.path)}
+    pub(crate) fn restored_workspace_path(&self,key:&WorkspaceKey)->Option<&str> {
+        (self.owning_workspace().as_ref()==Some(key)||self.expected_workspace.as_ref()==Some(key)).then_some(self.path.as_str())
+    }
     pub(crate) fn workspace_path(&self, key: &WorkspaceKey) -> Result<&str, String> {
         if !self.rename_ready() {
             return Err(
