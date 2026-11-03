@@ -139,9 +139,24 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         catch (CallFailed error) when (error.Message == "unknown tool") { return null; }
     }
 
-    public async Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
+    public Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
+        SaveAttachmentAsync(session, type, bytes, cancellationToken, null);
+
+    internal async Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken,
+        Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? live)
     {
-        var owner = await CaptureOwnerReadAsync(null, cancellationToken);
+        (string Identity, ClientWebSocket Socket) owner;
+        if (live is null) owner = await CaptureOwnerReadAsync(null, cancellationToken);
+        else
+        {
+            await _socketSend.WaitAsync(cancellationToken);
+            try
+            {
+                RequireLiveMirror(live.OwnerBinding, live);
+                owner = (live.Machine, RequireOwnerBinding(live.OwnerBinding));
+            }
+            finally { _socketSend.Release(); }
+        }
         await _bulkCall.WaitAsync(cancellationToken);
         ClientWebSocket? original = null;
         string? upload = null;
@@ -149,8 +164,8 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         try
         {
             var begun = await BulkCallHeldAsync("attachments", "begin", JsonSerializer.SerializeToElement(
-                new AttachmentsFeature.BeginArgs(session.SessionId, type.ContentType, bytes.Length), AttachmentsJson.Default.BeginArgs),
-                cancellationToken, owner.Identity, owner.Socket);
+                new AttachmentsFeature.BeginArgs(session.SessionId, type.ContentType, bytes.Length, live is null ? null : new(live.Machine, 0, null)), AttachmentsJson.Default.BeginArgs),
+                cancellationToken, owner.Identity, owner.Socket, live?.OwnerBinding, live);
             original = _bulkSocket;
             upload = begun.GetProperty("upload").GetString()!;
             for (var offset = 0; offset < bytes.Length; offset += AttachmentsFeature.ChunkBytes)
@@ -159,12 +174,12 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
                 RequireOriginal();
                 await BulkCallHeldAsync("attachments", "chunk", JsonSerializer.SerializeToElement(
                     new AttachmentsFeature.ChunkArgs(upload, offset, chunk), AttachmentsJson.Default.ChunkArgs),
-                    cancellationToken, owner.Identity, owner.Socket);
+                    cancellationToken, owner.Identity, owner.Socket, live?.OwnerBinding, live);
             }
             RequireOriginal();
             var saved = await BulkCallHeldAsync("attachments", "commit", JsonSerializer.SerializeToElement(
                 new AttachmentsFeature.CommitArgs(upload), AttachmentsJson.Default.CommitArgs),
-                cancellationToken, owner.Identity, owner.Socket);
+                cancellationToken, owner.Identity, owner.Socket, live?.OwnerBinding, live);
             var path = saved.GetProperty("path").GetString()!;
             completed = true;
             return path;
@@ -181,7 +196,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
                         using var cleanup = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _socketStop.Token);
                         await BulkCallHeldAsync("attachments", "drop", JsonSerializer.SerializeToElement(
                             new AttachmentsFeature.DropArgs(upload), AttachmentsJson.Default.DropArgs),
-                            cleanup.Token, owner.Identity, owner.Socket);
+                            cleanup.Token, owner.Identity, owner.Socket, live?.OwnerBinding, live);
                     }
                     catch (Exception)
                     {
@@ -201,15 +216,19 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         }
     }
 
-    public async Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken)
+    public Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken) =>
+        ReadAttachmentAsync(session, name, offset, cancellationToken, null);
+
+    internal async Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken,
+        Assembly.Infrastructure.Engine.EngineMirror.LiveMirrorBinding? live)
     {
         var type = string.IsNullOrEmpty(name) ? null : AttachmentStore.TypeOfName(name);
         if (type is null) throw new CallFailed("not an attachment name");
         if (offset < 0) throw new CallFailed("the offset is outside the attachment");
-        var args = JsonSerializer.SerializeToElement(new AttachmentsFeature.ReadArgs(session.SessionId, name, offset),
+        var args = JsonSerializer.SerializeToElement(new AttachmentsFeature.ReadArgs(session.SessionId, name, offset, live is null ? null : new(live.Machine, 0, null)),
             AttachmentsJson.Default.ReadArgs);
         JsonElement value;
-        try { value = await CallAsync("attachments", "read", args, bulk: true, cancellationToken); }
+        try { value = await CallAsync("attachments", "read", args, bulk: true, cancellationToken, live?.Machine, expectedOwner: live?.OwnerBinding, expectedMirror: live); }
         catch (Exception error) when (error is WebSocketException or IOException)
         {
             throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error);

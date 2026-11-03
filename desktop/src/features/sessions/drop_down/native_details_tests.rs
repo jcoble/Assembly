@@ -7,7 +7,7 @@ use serde_json::{Value,json};
 use crate::core::{engine::SessionKey,socket::{client::SocketClient,endpoint::Endpoint,fake_backend::{FakeBackend,Reply},outcome::Outcome,test_wait::until}};
 use super::NativeDetails;
 #[derive(Default)]
-struct Seen {held:Option<Value>,calls:Vec<Value>,subs:usize,row_sub:Option<Value>}
+struct Seen {held:Option<Reply>,calls:Vec<Value>,subs:usize,row_sub:Option<Value>}
 #[gpui::test]
 async fn native_watch_waits_for_the_checked_parent_descriptor_and_stale_card_actions_never_dispatch(cx:&mut TestAppContext) {
     let seen=Arc::new(Mutex::new(Seen::default()));let record=seen.clone();let(changed,mut changes)=unbounded();let tell=changed.clone();

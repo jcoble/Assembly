@@ -64,7 +64,7 @@ public sealed partial class EngineCommands
                 return new(false, false, preparedError, context.ExpectedVersion, 0, context.Epoch);
             return command switch
             {
-                EffectCommand effect => EffectTransitions.Apply(scope, context, effect, _projectCompletion, _expiryPolicy),
+                EffectCommand effect => EffectTransitions.Apply(scope, context, effect, _projectCompletion, _expiryPolicy, _projectProjection),
                 SignInCommand signIn => SignInTransitions.Apply(scope, context, signIn, _isConfiguredProvider),
                 ProviderCommand provider => ProviderTransitions.Apply(scope, context, provider, _isConfiguredProvider),
                 RecordingCommand recording => RecordingTransitions.Apply(scope, context, recording),

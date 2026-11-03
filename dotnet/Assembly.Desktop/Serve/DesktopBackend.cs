@@ -243,6 +243,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             hostStop = new CancellationTokenSource();
             helperCards = new EngineHelperCards(db, TimeProvider.System, log, sessionStore);
             var cutover = new SessionCutover(db, sessionStore, launcher, checkouts, TimeProvider.System, helperCards: helperCards);
+            var checkoutWrites = new CheckoutWrites();
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
                 cutover: cutover,
                 effectsFactory: runtime =>
@@ -266,6 +267,8 @@ public sealed class DesktopBackend : IAsyncDisposable
                     var commands = new CommandStepEffects(db, runtime.Commands, runtime.Machine, proofRoot, TimeProvider.System,
                         async (folder, ct) => (await new ReceiptCheckout().Capture(folder, ct)).Fingerprint);
                     return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
+                        .Add("checkout", new Assembly.Infrastructure.Engine.Checkouts.CheckoutEffects(db, new GitCli(), checkoutWrites, sessions,
+                            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "dev", "work", "worktrees")))
                         .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
                         .Add("begin_sign_in", signIn)
                         .Add("cancel_sign_in", signIn)
@@ -342,7 +345,6 @@ public sealed class DesktopBackend : IAsyncDisposable
                 (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
             var git = new GitCli();
             var gh = new GhCli();
-            var checkoutWrites = new CheckoutWrites();
             gitOperations = new GitOperations(work, topics, TimeProvider.System, engine.Machine);
             var patches = new GitTextPatch(git);
             var prReader = new PullRequestReader(git, gh, home, patches);
@@ -358,7 +360,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
                 [cliUpdates, new ProviderRuntimeCalls(engine.Machine, agentsFile, machineForward, providerRuntimeSubscriptions), new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts, door), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward, project => Assembly.Infrastructure.Engine.Workflows.WorkflowCalls.DefinitionRoot(new ProjectRoots(projectStore), project), projects: projectStore, connections: connections), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
-                    new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments")),
+                    new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, fileOwners, work, new FileRemoteRoutes(db, fileOwners, connections, work), sessionSources),
                     new Assembly.Application.Features.Workspaces.WorkspacesFeature(new Assembly.Application.Features.Workspaces.WorkspaceStore(db, TimeProvider.System)),
                     new WorktreesFeature(sessionStore),

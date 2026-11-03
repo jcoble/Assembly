@@ -49,6 +49,8 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
         var captured = ConfigTargetIdentity.Capture(launcher, session.Agent, targetId ?? config.ConfigTarget);
         var pendingInitial = session.AcpSessionId is null && config.ConfigTarget is not null;
         var location = sessionStore.Location(session) ?? throw new CallFailed($"This session has no working folder: {sessionId}");
+        if (!location.Ready)
+            throw new CallFailed("The checkout and session start are not ready.", "checkout_not_ready");
         string folder;
         if (location.ManagedCheckout && !configWarm)
         {

@@ -30,7 +30,8 @@ public static class MessageRelease
         }
         var session = s.QueryFirst("""
             SELECT version,epoch,state,can_steer,run_id FROM engine_session
-            WHERE id=$id AND machine=$machine AND state IN ('idle','running') AND cancel_requested=0
+            WHERE id=$id AND machine=$machine AND state IN ('idle','running') AND cancel_requested=0 AND checkout_state<>'pending'
+             AND NOT EXISTS(SELECT 1 FROM engine_session peer WHERE peer.folder=engine_session.folder AND peer.checkout_state='pending')
              AND NOT EXISTS(SELECT 1 FROM engine_message WHERE to_session_id=$id AND in_flight=1)
              AND NOT EXISTS(SELECT 1 FROM engine_needs_me WHERE session_id=$id AND state='open')
             """, r => new { Version = r.Long(0), Epoch = r.Long(1), State = r.Text(2), CanSteer = r.Long(3) != 0, Run = r.IsNull(4) ? null : r.Text(4) }, new SqlArg("$id", sessionId), new("$machine", c.Machine));

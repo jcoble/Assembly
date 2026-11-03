@@ -21,6 +21,8 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
     private EngineCommands? _commands;
     private string? _machine;
 
+    internal ISessionProjectProjection ProjectProjection => sessions;
+
     public void EnsureSchema(IWriteScope scope) => SessionStore.EnsureEngineProjectionSchema(scope);
 
     public string AccountContext(string configuredAgentId) =>
@@ -154,8 +156,14 @@ public sealed class SessionCutover(IAppDatabase db, SessionStore sessions, IAgen
     }
 
     public SessionLocation? Location(IReadScope scope, string sessionId) => scope.QueryFirst(
-        "SELECT folder,managed_checkout FROM engine_session WHERE id=$id AND machine=$machine AND holder='local'",
-        r => new SessionLocation(r.Text(0), r.Long(1) == 1), new("$id", sessionId), new("$machine", _machine));
+        """
+        SELECT s.folder,s.managed_checkout,s.state,s.checkout_state,
+            EXISTS(SELECT 1 FROM engine_session peer WHERE peer.machine=s.machine AND peer.holder='local'
+                AND peer.folder=s.folder AND peer.checkout_state='pending')
+        FROM engine_session s WHERE s.id=$id AND s.machine=$machine AND s.holder='local'
+        """,
+        r => new SessionLocation(r.Text(0), r.Long(1) == 1,
+            r.Text(2) != "starting" && (r.IsNull(3) || r.Text(3) is not ("pending" or "refused")) && r.Long(4) == 0), new("$id", sessionId), new("$machine", _machine));
 
     public string? Folder(string sessionId) => Location(sessionId)?.Folder;
     public string? Folder(IReadScope scope, string sessionId) => Location(scope, sessionId)?.Folder;

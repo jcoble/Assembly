@@ -36,6 +36,7 @@ public static class EngineSchema
                 """, new SqlArg("$machine", machine));
             UpgradeNeedPresentation(scope);
             PrSchemaUpgrade.Apply(scope);
+            CheckoutIndex(scope);
             return new(machine, null);
         }
         if (meta.Version is not (1 or 2 or 3 or 4 or 5 or 6 or 7 or 8 or 9 or 10 or 11 or 12 or 13))
@@ -51,6 +52,7 @@ public static class EngineSchema
             if (meta.Version < 11) scope.Execute("UPDATE engine_meta SET schema_version=11 WHERE singleton=1");
             if (meta.Version < 12) UpgradeNeedPresentation(scope);
             if (meta.Version < 13) PrSchemaUpgrade.Apply(scope);
+            CheckoutIndex(scope);
             return new(meta.Machine, meta.Version);
         }
         if (meta.Version == 1)
@@ -74,8 +76,14 @@ public static class EngineSchema
         WorkflowSchema.Upgrade(scope);
         UpgradeNeedPresentation(scope);
         PrSchemaUpgrade.Apply(scope);
+        CheckoutIndex(scope);
         return new(meta.Machine, meta.Version);
     }
+
+    private static void CheckoutIndex(IWriteScope scope) => scope.Execute("""
+        CREATE INDEX IF NOT EXISTS engine_session_pending_checkout_folder ON engine_session(machine,folder)
+        WHERE holder='local' AND checkout_state='pending';
+        """);
 
     private static void UpgradeNeedPresentation(IWriteScope scope)
     {

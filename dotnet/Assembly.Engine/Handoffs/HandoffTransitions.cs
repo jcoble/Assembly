@@ -47,6 +47,8 @@ public static class HandoffTransitions
         if (session.State is "ended" or "moved" || Find(s, c.EntityId) is not null)
             return Refused(c, "invalid_transition", session.Version, epoch);
         if (session.State != "idle") return Refused(c, "busy", session.Version, epoch);
+        if (s.QueryFirst("SELECT checkout_state FROM engine_session WHERE id=$id", r => r.Text(0),
+                new SqlArg("$id", command.SessionId)) == "pending") return Refused(c, "checkout_pending", session.Version, epoch);
         if (session.ParentId is not null) return Refused(c, "has_parent", session.Version, epoch);
         if (s.QueryFirst("SELECT EXISTS(SELECT 1 FROM engine_needs_me WHERE session_id=$id AND state='open')",
             row => row.Long(0), new SqlArg("$id", command.SessionId)) != 0)

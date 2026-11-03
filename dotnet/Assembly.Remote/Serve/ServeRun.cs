@@ -136,6 +136,7 @@ public static class ServeRun
                 catch (CallFailed) { return false; }
             }
             var cutover = new SessionCutover(db, sessionStore, launcher, options.Checkouts, TimeProvider.System, helperCards: helperCards);
+            var checkoutWrites = new CheckoutWrites();
             engine = EngineRuntime.Start(db, topics, TimeProvider.System, sessionLimits,
                 cutover: cutover,
                 effectsFactory: runtime =>
@@ -159,6 +160,8 @@ public static class ServeRun
                     var commands = new CommandStepEffects(db, runtime.Commands, runtime.Machine, proofRoot, TimeProvider.System,
                         async (folder, ct) => (await new ReceiptCheckout().Capture(folder, ct)).Fingerprint);
                     return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
+                        .Add("checkout", new Assembly.Infrastructure.Engine.Checkouts.CheckoutEffects(db, new GitCli(), checkoutWrites, sessions,
+                            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "dev", "work", "worktrees")))
                         .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
                         .Add("begin_sign_in", signIn)
                         .Add("cancel_sign_in", signIn)
@@ -197,7 +200,6 @@ public static class ServeRun
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers, hub, sessionSources);
             var git = new GitCli();
             var gh = new GhCli();
-            var checkoutWrites = new CheckoutWrites();
             gitOperations = new GitOperations(work, topics, TimeProvider.System, engine.Machine);
             var patches = new GitTextPatch(git);
             var prReader = new PullRequestReader(git, gh, options.Home, patches);
@@ -211,7 +213,7 @@ public static class ServeRun
                     new ProvidersFeature(challenges, engine.Machine), new ProviderRuntimeCalls(engine.Machine, agents), new TerminalFeature(terminals), workflowCalls,
                     new RowsFeature(hub, store, sessionStore, machines, sessionSources), new SessionsFeature(sessionStore, machines, sessionSources),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines, door), machinesFeature,
-                    new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments")),
+                    new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"), sessionSources),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db), work, sources: sessionSources),
                     gitRoutes, new SourceControlWrites(sessionStore, git, checkoutWrites, TimeProvider.System, gitRoutes),
                     new PullRequestsFeature(sessionStore, prReader, gitRoutes), new FoldersFeature(localFolders),

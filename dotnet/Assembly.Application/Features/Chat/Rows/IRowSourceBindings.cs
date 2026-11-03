@@ -26,5 +26,9 @@ public abstract class RowSourceBinding : IExpectedSourceGuard
     public abstract Task<JsonElement> PageAsync(long before, int limit, CancellationToken ct);
     public abstract Task<SubagentPage> SubagentsAsync(string? after, int limit, CancellationToken ct);
     public abstract IAsyncEnumerable<JsonElement> WatchAsync(long? after, CancellationToken ct);
+    public virtual Task<IReadOnlyList<FileTouched>> FilesAsync(CancellationToken ct) =>
+        throw new CallFailed("Source-bound file context is unavailable.", "source_changed");
+    public virtual Task<SessionAttachments> AttachmentsAsync(CancellationToken ct) =>
+        throw new CallFailed("Source-bound attachment context is unavailable.", "source_changed");
     public abstract void Dispose();
 }
