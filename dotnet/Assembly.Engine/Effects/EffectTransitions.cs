@@ -1,3 +1,4 @@
+using Assembly.Application.Common.Engine;
 using System.Text.Json;
 using System.Text;
 using Assembly.Application.Common.Database;
@@ -40,7 +41,7 @@ public static class EffectTransitions
     }
 
     public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command,
-        Func<IWriteScope, CommandContext, Effect, EffectReceipt, MessageDelivery?, MessageOutcome?>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
+        Func<IWriteScope, CommandContext, Effect, EffectReceipt, MessageDelivery?, MessageOutcome?>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null, ISessionProjectProjection? projectProjection = null)
     {
         var row = s.QueryFirst("SELECT version,state,attempt,next_ms,kind,session_id FROM engine_outbox WHERE id=$id",
             r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3), Kind = r.Text(4), Session = r.IsNull(5) ? null : r.Text(5) }, new SqlArg("$id", c.EntityId));
@@ -135,7 +136,7 @@ public static class EffectTransitions
                 receipt_json=COALESCE($receipt,receipt_json),last_error=CASE WHEN $receipt IS NULL THEN last_error ELSE $error END WHERE id=$id
             """, new("$state", state), new("$now", c.NowMs), new("$next", next), new("$id", c.EntityId),
             new("$receipt", receipt is null ? null : JsonSerializer.Serialize(receipt, EngineJson.Default.EffectReceipt)), new("$error", receipt?.Error));
-        if (state == "done") Confirm(s, c, effect, receipt!, expiryPolicy, projected);
+        if (state == "done") Confirm(s, c, effect, receipt!, expiryPolicy, projected, projectProjection);
         if (refusalAttempt is { } originalAttempt)
         {
             receipt = AuthTransitions.RetainRefusalReceipt(s, c, effect, delivery!, receipt!, originalAttempt);
@@ -156,6 +157,7 @@ public static class EffectTransitions
             if (effect.Kind == "workflow_receipt") return ReceiptTransitions.ValidConfirmation(scope, effect, receipt);
             if (effect.Kind is "workflow_setup" or "workflow_workspace") return WorkspaceTransitions.ValidConfirmation(scope, effect, receipt);
             if (AuthEffectBinding.IsAuth(effect.Kind)) return AuthEffectBinding.ValidConfirmation(scope, context, effect, receipt);
+            if (effect.Kind == "checkout") return SessionTransitions.ValidCheckoutOutcome(scope, effect, receipt);
             return effect.Kind switch
             {
                 "release" => EngineJournal.ValidHandoffReleaseConfirmation(scope, context, effect, receipt),
@@ -170,8 +172,9 @@ public static class EffectTransitions
         catch (JsonException) { return false; }
     }
 
-    private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy, MessageOutcome? projected)
+    private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy, MessageOutcome? projected, ISessionProjectProjection? projectProjection)
     {
+        if (effect.Kind == "checkout") { SessionTransitions.CompleteCheckout(s, c, effect, receipt, projectProjection); return; }
         if (effect.Kind == "workflow_command") { CommandStepTransitions.Confirm(s, c, effect, receipt); return; }
         if (effect.Kind == "workflow_receipt") { ReceiptTransitions.Confirm(s, c, effect, receipt, StepTransitions.CompleteCheckedReceipt, ReviewTransitions.Finished, expiryPolicy); return; }
         if (effect.Kind is "workflow_setup" or "workflow_workspace") { WorkspaceTransitions.Confirm(s, c, effect, receipt); return; }

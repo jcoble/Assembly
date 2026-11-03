@@ -6,7 +6,7 @@ use futures_channel::mpsc::unbounded;
 use serde_json::{Value,json};
 use crate::core::{engine::{EngineFeed,EngineKey,EngineScope,commands::NeedAnswer},socket::{client::SocketClient,endpoint::Endpoint,fake_backend::{FakeBackend,Reply},outcome::Outcome,test_wait::until}};
 use super::{NeedRow,NeedRowState};
-struct Server {need:Value,commands:Vec<Value>,held:Option<Value>,subscription:Option<Value>}
+struct Server {need:Value,commands:Vec<Value>,held:Option<Reply>,subscription:Option<Value>}
 #[gpui::test]
 async fn conflict_uncertainty_and_source_refusal_keep_the_draft_and_never_replay_a_command(cx:&mut TestAppContext) {
     let need=json!({"entityKind":"needs_me","id":"question","machine":"owner","version":3,"sessionId":"parent","kind":"question","state":"open","text":"Actual supplied question","inputMode":"text","options":[],"freeText":true,"displayNumber":1});

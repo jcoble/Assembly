@@ -45,8 +45,12 @@ public static partial class SessionTransitions
             return current is null ? Start(scope, context, start, depthLimit, childLimit, accountContext, titleUtf8, startEffectPayload) : Refused(context, "invalid_transition", current);
         if (current is null)
             return Refused(context, "bad_args");
+        if (scope.QueryFirst("SELECT checkout_state FROM engine_session WHERE id=$id", row => row.Text(0),
+                new SqlArg("$id", context.EntityId)) == "pending" && command is not (ReportSessionTitle or ReportSessionModel))
+            return Refused(context, "checkout_pending", current);
         return command switch
         {
+            ChangeCheckout checkout => Change(scope, context, current, checkout),
             AssignProject assignment => Assign(scope, context, current, assignment, projectProjection),
             SetSessionState fact => SetState(scope, context, current, fact, expiryPolicy),
             ReportCapabilities capabilities => Capabilities(scope, context, current, capabilities),

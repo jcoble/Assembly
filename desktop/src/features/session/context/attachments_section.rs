@@ -1,6 +1,6 @@
 //! The Context tab's Attachments section: the images the session's prompts carried, newest prompt first, each by the
 //! name it was attached with. A click opens one full size, as Chat's chips do. A remote session's images stay on its
-//! machine (`attachments/read` serves only this one's store), so its rows say so and don't open.
+//! machine; only a captured, validated source permits opening those bytes.
 
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -9,8 +9,8 @@ use gpui_kit::*;
 use serde_json::Value;
 
 use super::ContextPane;
+use crate::features::session::client::session_client::CallError;
 use super::listing::Listing;
-use crate::core::state::selected_session::SelectedSession;
 use crate::features::session::composer::attachment::Attachment;
 use crate::features::session::view::lightbox::{open_lightbox, read_image};
 
@@ -51,8 +51,8 @@ impl ContextPane {
                         .px_2()
                         .child(div().min_w_0().truncate().child(name.clone()));
                     match remote {
-                        Some(_) => row.text_color(muted),
-                        None => {
+                        Some(_) if self.context_scope.as_ref().is_none_or(|scope|!scope.valid||scope.source.is_none()) => row.text_color(muted),
+                        _ => {
                             let (path, name) = (path.clone(), name.clone());
                             row.cursor_pointer()
                                 .hover(|row| row.bg(hover))
@@ -78,7 +78,7 @@ impl ContextPane {
                     }),
             )
             .child(body)
-            .when_some(remote.filter(|_| count.is_some()), |section, machine| {
+            .when_some(remote.filter(|_| count.is_some()&&self.context_scope.as_ref().is_none_or(|scope|!scope.valid||scope.source.is_none())), |section, machine| {
                 section.child(note(
                     "attachments-note-remote",
                     format!("These images are on {machine} and can't be opened here yet.").into(),
@@ -102,14 +102,11 @@ impl ContextPane {
     }
 
     /// Reads an attached image by its file name in the store (the end of its path) and opens it full size.
-    fn open(&mut self, path: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(session) = SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(String::from)
-        else {
-            return;
+    pub(super) fn open(&mut self, path: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(scope)=self.context_scope.clone().filter(|scope|scope.valid)else{
+            self.open_failed=Some("The displayed attachment source is no longer valid.".into());cx.notify();return;
         };
+        let serial=self.read_serial;
         let file = path
             .rsplit(['/', '\\'])
             .next()
@@ -119,12 +116,18 @@ impl ContextPane {
         self.open_failed = None;
         cx.notify();
         self._open = Some(cx.spawn_in(window, async move |pane, cx| {
-            let image = read_image(client, session, file, cx).await;
-            pane.update_in(cx, |pane, window, cx| match image {
-                Ok(image) => open_lightbox(image, name.into(), window, cx),
-                Err(error) => {
-                    pane.open_failed = Some(error.reason());
-                    cx.notify();
+            let image = read_image(client, scope.session.clone(), file, scope.source.clone(), cx).await;
+            pane.update_in(cx, |pane, window, cx| {
+                if pane.read_serial!=serial||pane.context_scope.as_ref()!=Some(&scope)||!pane.active{return;}
+                match image {
+                    Ok(image)=>open_lightbox(image,name.into(),window,cx),
+                    Err(error)=>{
+                        if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
+                            if let Some(held)=pane.context_scope.as_mut(){held.valid=false;}
+                            if let Some(source)=&scope.source{crate::features::session::view::session_pane::SessionPane::refuse_image_source(&scope.session,source,error.reason(),cx);}
+                        }
+                        pane.open_failed=Some(error.reason());cx.notify();
+                    }
                 }
             })
             .ok();

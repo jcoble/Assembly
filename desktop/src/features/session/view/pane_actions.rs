@@ -18,6 +18,17 @@ use crate::features::session::view::lightbox::{open_lightbox, read_image};
 use crate::features::session::view::session_action::SessionAction;
 
 impl SessionPane {
+    /// A qualified read refusal invalidates only the matching visible source, never another selection.
+    pub(crate) fn refuse_image_source(session:&str,source:&crate::core::socket::row_source::ExpectedRowSource,reason:String,cx:&mut App) {
+        if let Some(pane)=crate::core::ui::center_panes::CenterPanes::find::<SessionPane>("Chat",cx) {
+            pane.update(cx,|pane,cx| {
+                if pane.session.as_deref()==Some(session)&&pane.row_source.as_ref()==Some(source) {
+                    pane.on_rows(crate::features::session::client::session_client::RowUpdate::Refused{code:"source_changed".into(),message:reason},cx);
+                }
+            });
+        }
+    }
+
     /// A row's button or link: the call it makes, or the intent it opens (lane g0-host).
     pub(super) fn on_action(
         &mut self,
@@ -324,15 +335,25 @@ impl SessionPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.session.as_ref()!=Some(&session){return;}
+        let source=self.row_source.clone();let serial=self.active_open_serial;
         let client = self.client.clone();
         let task = format!("image:{name}");
         self._loads.insert(
             task,
             cx.spawn_in(window, async move |pane, cx| {
-                let image = read_image(client, session, name.clone(), cx).await;
-                pane.update_in(cx, |pane, window, cx| match image {
-                    Ok(image) => open_lightbox(image, name.into(), window, cx),
-                    Err(error) => pane.say_failed("Couldn't open the image", error, cx),
+                let image = read_image(client, session.clone(), name.clone(), source.clone(), cx).await;
+                pane.update_in(cx, |pane, window, cx| {
+                    if pane.session.as_ref()!=Some(&session)||pane.row_source!=source||pane.active_open_serial!=serial{return;}
+                    match image {
+                        Ok(image)=>open_lightbox(image,name.into(),window,cx),
+                        Err(error)=>{
+                            if matches!(&error,CallError::Refused{code,..} if code=="source_changed") {
+                                pane.on_rows(crate::features::session::client::session_client::RowUpdate::Refused{code:"source_changed".into(),message:error.reason()},cx);
+                            }
+                            pane.say_failed("Couldn't open the image",error,cx);
+                        }
+                    }
                 })
                 .ok();
             }),

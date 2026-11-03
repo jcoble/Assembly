@@ -146,19 +146,33 @@ internal sealed class RowsFeature : IFeature
             return new ToolDetail(tool.Summary, tool.Input, output, diff, tool.Path, tool.OutputTruncated || outputBytes != Encoding.UTF8.GetByteCount(output ?? "") || diffBytes != Encoding.UTF8.GetByteCount(diff ?? ""),
                 outputBytes, diffBytes, tool.Terminals);
         }, bulk: true);
-        // The drawer's Context tab: what the session's tool calls changed, from this machine's copy of its rows.
-        calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, (args, call) =>
-            Task.FromResult(_sessions.Get(args.Session) is null
-                ? throw new CallFailed("unknown session")
-                : _store.FilesTouched(args.Session, call.Cancellation)));
-        // The Context tab's attachments: the prompts that name images, from this machine's copy of the session's rows,
-        // and the machine that has the images.
-        calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionAttachments, (args, call) =>
+        // Explicit remote context comes from the captured owner, never an unqualified copied-row cache.
+        calls.Read(Topic, "files", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.IReadOnlyListFileTouched, async (args, call) =>
         {
+            call.Cancellation.ThrowIfCancellationRequested();
+            var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
+            if (bound?.Remote == true)
+            {
+                var files = await bound.FilesAsync(call.Cancellation);
+                bound.EnsureCurrent(); return files;
+            }
+            if (_sessions.Get(args.Session) is null) throw new CallFailed("unknown session");
+            var result = _store.FilesTouched(args.Session, call.Cancellation);
+            bound?.EnsureCurrent(); return result;
+        });
+        calls.Read(Topic, "attachments", RowJsonContext.Rows.SessionArgs, RowJsonContext.Rows.SessionAttachments, async (args, call) =>
+        {
+            call.Cancellation.ThrowIfCancellationRequested();
+            var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
+            if (bound?.Remote == true)
+            {
+                var attachments = await bound.AttachmentsAsync(call.Cancellation);
+                bound.EnsureCurrent(); return attachments;
+            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var prompts = _store.Attachments(args.Session, AttachmentPrompts + 1, AttachmentTail, call.Cancellation);
-            return Task.FromResult(new SessionAttachments(session.Machine, [.. prompts.Take(AttachmentPrompts)],
-                prompts.Count > AttachmentPrompts));
+            bound?.EnsureCurrent();
+            return new SessionAttachments(session.Machine, [.. prompts.Take(AttachmentPrompts)], prompts.Count > AttachmentPrompts);
         });
     }
 
@@ -234,7 +248,8 @@ internal sealed class RowsFeature : IFeature
         }
     }
 
-    internal sealed record SessionArgs([property: JsonRequired] string Session);
+    internal sealed record SessionArgs([property: JsonRequired] string Session,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
     /// <summary>
     /// An opened tool row's detail. Its output and diff are cut at <see cref="ToolCap"/> bytes each, with

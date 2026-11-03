@@ -60,7 +60,7 @@ public sealed class EngineRuntime : IAsyncDisposable, IEngineRuntime
         var initialized = db.Writer.Write("engine.initialize", scope =>
         {
             var schema = EngineSchema.Initialize(scope, now, projectionSchema, readExpiryMinutes?.Invoke(scope) ?? 30);
-            var commands = new EngineCommands(schema.Machine, limits, messageLimit, projectStart, accountContext, ProjectCompletion, expiryPolicy, isConfiguredProvider);
+            var commands = new EngineCommands(schema.Machine, limits, messageLimit, projectStart, accountContext, ProjectCompletion, expiryPolicy, isConfiguredProvider, projectProjection: cutover?.ProjectProjection);
             cutover?.Initialize(scope, commands, schema.Machine, now, schema.PreviousVersion is 1 or 2 or 3);
             AuthInitialization.Interrupt(scope, commands, schema.Machine, now);
             return (Machine: schema.Machine, Commands: commands);

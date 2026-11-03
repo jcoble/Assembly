@@ -18,11 +18,13 @@ pub async fn read_image(
     client: Rc<dyn SessionClient>,
     session: String,
     file: String,
+    expected_source:Option<crate::core::socket::row_source::ExpectedRowSource>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Arc<Image>, CallError> {
     let mut bytes: Vec<u8> = Vec::new();
     let mime = loop {
-        let args = json!({ "session": session, "name": file, "offset": bytes.len() });
+        let mut args = json!({ "session": session, "name": file, "offset": bytes.len() });
+        if let Some(source)=&expected_source{args["expectedSource"]=json!(source);}
         let call = cx
             .update(|_, cx| client.call("attachments", "read", args, None, cx))
             .map_err(|_| CallError::Aborted)?;

@@ -45,6 +45,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(StartSession), "start_session")]
 [JsonDerivedType(typeof(AdoptSession), "adopt_session")]
 [JsonDerivedType(typeof(AssignProject), "assign_project")]
+[JsonDerivedType(typeof(ChangeCheckout), "change_checkout")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]
 [JsonDerivedType(typeof(ReportCapabilities), "report_capabilities")]
 [JsonDerivedType(typeof(StopSession), "stop_session")]

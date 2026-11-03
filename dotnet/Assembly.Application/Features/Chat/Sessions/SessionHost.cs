@@ -538,4 +538,34 @@ public sealed partial class SessionHost : IPermissionPolicy
         }
         finally { _session.Release(); }
     }
+    internal SessionMaintenanceAttempt TryAcquireMaintenance()
+    {
+        if (!_session.Wait(0)) return new(null, "busy");
+        lock (_gate)
+        {
+            if (_shuttingDown || _turn is not null || _kept is not null || _asks.Count != 0 ||
+                _tasks.Values.Any(task => task.Running) || _subagents.AnyRunning || _startedWorking())
+            {
+                _session.Release();
+                return new(null, "busy");
+            }
+            return new(new MaintenanceLease(_session), null);
+        }
+    }
+
+    private sealed class MaintenanceLease(SemaphoreSlim session) : ISessionMaintenanceLease
+    {
+        private int _disposed;
+        public Task<bool> ProbeResumeAsync(string providerSessionId, string folder, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            // The current public ACP id is not a verified native resume witness. Never create a replacement conversation.
+            return Task.FromResult(false);
+        }
+        public ValueTask DisposeAsync()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0) session.Release();
+            return ValueTask.CompletedTask;
+        }
+    }
 }

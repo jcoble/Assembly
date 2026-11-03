@@ -31,7 +31,7 @@ public sealed class EffectRouter : IEngineEffects, IAsyncDisposable
         lock (_gate)
         {
             if (_sealed || _dispose is not null) throw new InvalidOperationException("Effect owners are frozen.");
-            if (kind is not ("probe_provider" or "begin_sign_in" or "cancel_sign_in" or "workflow_setup" or "workflow_workspace" or "workflow_command" or "workflow_receipt")) throw new ArgumentException("Unsupported effect registration.", nameof(kind));
+            if (kind is not ("checkout" or "probe_provider" or "begin_sign_in" or "cancel_sign_in" or "workflow_setup" or "workflow_workspace" or "workflow_command" or "workflow_receipt")) throw new ArgumentException("Unsupported effect registration.", nameof(kind));
             if (!_handlers.TryAdd(kind, handler)) throw new InvalidOperationException("Effect already has an owner.");
         }
         return this;

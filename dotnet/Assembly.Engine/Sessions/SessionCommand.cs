@@ -22,3 +22,7 @@ public sealed record AssignProject(string ProjectId) : SessionCommand;
 public sealed record AdoptSession(string Provider, string? Model, string Folder, string Title,
     string ProviderSessionId, string FromMachine, string FromSessionId, long Epoch,
     string? RepoUrl = null) : SessionCommand;
+
+/// <summary>A versioned owning-machine checkout operation; it performs no Git work in the writer.</summary>
+public sealed record ChangeCheckout(string CheckoutKind, string? Branch, string? Base,
+    string? Folder, bool CreateBranch = false, string? ExpectedHead = null) : SessionCommand;

@@ -13,7 +13,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 /// The session host of each session that has been sent to, and each agent's one shared adapter. A host holds no
 /// agent between turns: each turn opens its session on its agent's shared adapter and closes it at the end.
 /// </summary>
-public sealed partial class SessionRegistry : IAsyncDisposable
+public sealed partial class SessionRegistry : IAsyncDisposable, Assembly.Application.Common.Engine.ISessionMaintenance
 {
     private readonly ConcurrentDictionary<string, SessionHost> _hosts = new();
     private readonly LiveHub _hub;
@@ -122,6 +122,13 @@ public sealed partial class SessionRegistry : IAsyncDisposable
 
     /// <summary>The sessions whose ACP sessions are open here now.</summary>
     public IEnumerable<string> OpenSessions => _hosts.Where(pair => pair.Value.IsOpen).Select(pair => pair.Key);
+
+    public Assembly.Application.Common.Engine.SessionMaintenanceAttempt TryAcquire(string sessionId)
+    {
+        var info = _sessionStore.Get(sessionId);
+        if (info is null || info.Machine is not null) return new(null, "unknown_session");
+        return For(sessionId).TryAcquireMaintenance();
+    }
 
     /// <summary>The session's running turn, or null when it's idle.</summary>
     public string? ActiveRun(string sessionId) => _hosts.TryGetValue(sessionId, out var host) ? host.ActiveRunId : null;

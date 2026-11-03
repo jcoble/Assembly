@@ -3,7 +3,7 @@ use std::rc::Rc;
 use gpui_kit::*;
 use gpui_kit::component::{ActiveTheme as _,h_flex,v_flex};
 use gpui_kit::component::button::{Button,ButtonVariants as _};
-use gpui_kit::component::input::{Input,InputState};
+use gpui_kit::component::input::{Textarea,TextareaState};
 use serde_json::{Value,json};
 use crate::core::{engine::{EngineFeed,EngineKey,EngineScope,EngineChanged,EngineRefusal,SessionKey,engine_items::NeedItem,commands::NeedAnswer},ui::ask::{form::AskForm,controls::{self,ControlAction}}};
 pub(super) fn need_relation(need:&NeedItem,viewed:&SessionKey)->Option<(&'static str,SessionKey)> {
@@ -46,7 +46,7 @@ pub(super) fn validate_scope(key:&EngineKey,scope:&EngineScope)->Result<(),Engin
 }
 pub struct NeedRow {
     key:EngineKey,scope:EngineScope,feed:Entity<EngineFeed>,viewed:Option<SessionKey>,need:NeedItem,state:NeedRowState,available:bool,
-    text:Entity<InputState>,form:Option<AskForm>,serial:u64,accepted_here:bool,reconciled:bool,
+    text:Entity<TextareaState>,form:Option<AskForm>,serial:u64,accepted_here:bool,reconciled:bool,
     _changed:Subscription,_send:Option<Task<()>>,_read:Option<Task<()>>,
 }
 impl NeedRow {
@@ -65,7 +65,7 @@ impl NeedRow {
         let changed=cx.subscribe(&feed,|row,_,event:&EngineChanged,cx| {
             if event.keys.contains(&row.key)||event.sessions.contains(&row.need.session)||event.scopes.contains(&row.scope){row.refresh(cx);}
         });
-        let text=cx.new(|cx|InputState::new(window,cx).placeholder("Your answer"));
+        let text=cx.new(|cx|TextareaState::new(window,cx).auto_grow(1,6).submit_on_enter(true).placeholder("Your answer"));
         let state=if need.state=="open"{NeedRowState::Idle}else{settled_state(&need,false)};
         Self{key,scope,feed,viewed:None,need,state,available:true,text,form:None,serial:0,accepted_here:false,reconciled:true,_changed:changed,_send:None,_read:None}
     }
@@ -204,7 +204,7 @@ impl Render for NeedRow {
                     if event.keystroke.key=="enter"&&!event.keystroke.modifiers.shift&&!event.is_held {
                         row.answer(NeedAnswer::Answer(json!(row.text.read(cx).value().to_string())),cx);cx.stop_propagation();
                     }else if event.keystroke.key=="escape" {row.state=NeedRowState::Idle;cx.notify();cx.stop_propagation();}
-                })).child(Input::new(&self.text))).child(Button::new("answer-text").primary().label("Send").on_click(cx.listener(|row,_,_,cx|row.answer(NeedAnswer::Answer(json!(row.text.read(cx).value().to_string())),cx))));
+                })).child(Textarea::new(&self.text))).child(Button::new("answer-text").primary().label("Send").on_click(cx.listener(|row,_,_,cx|row.answer(NeedAnswer::Answer(json!(row.text.read(cx).value().to_string())),cx))));
             } else if presentation.input_mode=="choice" {
                 let mut choices=h_flex().gap_2().flex_wrap();
                 for(index,option)in presentation.options.iter().enumerate() {

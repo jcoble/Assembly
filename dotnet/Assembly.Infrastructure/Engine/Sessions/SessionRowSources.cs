@@ -205,6 +205,28 @@ internal sealed class SessionRowSources(IAppDatabase db, SessionStore sessions, 
             var page = value.Deserialize(RowJsonContext.Rows.SubagentPage) ?? throw new CallFailed("Invalid subagent page.");
             return page with { Next = SubagentCursor.Rebind(page.Next, _session, OwnerSource, source) };
         }
+        public override async Task<IReadOnlyList<FileTouched>> FilesAsync(CancellationToken ct)
+        {
+            EnsureCurrent();
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, Changed);
+            var args = new RowsFeature.SessionArgs(_session, OwnerSource);
+            var value = await _machine.CallAsync("rows", "files", JsonSerializer.SerializeToElement(args, RowJsonContext.Rows.SessionArgs),
+                false, stop.Token, _live.Machine, expectedOwner: _live.OwnerBinding, expectedMirror: _live);
+            EnsureCurrent();
+            return value.Deserialize(RowJsonContext.Rows.IReadOnlyListFileTouched) ?? throw new CallFailed("Invalid file context reply.");
+        }
+        public override async Task<SessionAttachments> AttachmentsAsync(CancellationToken ct)
+        {
+            EnsureCurrent();
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, Changed);
+            var args = new RowsFeature.SessionArgs(_session, OwnerSource);
+            var value = await _machine.CallAsync("rows", "attachments", JsonSerializer.SerializeToElement(args, RowJsonContext.Rows.SessionArgs),
+                false, stop.Token, _live.Machine, expectedOwner: _live.OwnerBinding, expectedMirror: _live);
+            EnsureCurrent();
+            var result = value.Deserialize(RowJsonContext.Rows.SessionAttachments) ?? throw new CallFailed("Invalid attachment context reply.");
+            if (result.Machine is not null || _source is null) throw SessionRowSources.Changed();
+            return result with { Machine = _source.RouteMachine };
+        }
         public override async IAsyncEnumerable<JsonElement> WatchAsync(long? after, [EnumeratorCancellation] CancellationToken ct)
         {
             EnsureCurrent();

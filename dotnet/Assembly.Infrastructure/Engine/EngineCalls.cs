@@ -56,7 +56,7 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                     _ => null
                 };
                 if (origin is null) return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
-                if (args.Command is not (StartSession or StopSession or StartRun or CancelRun or
+                if (args.Command is not (StartSession or StopSession or ChangeCheckout or StartRun or CancelRun or
                     ResolveNeed { State: "answered" or "dismissed" } or SendMessage or RequestHandoff or CheckProvider or StartSignIn or CancelSignIn))
                     return _ => new(false, false, "forbidden", args.ExpectedVersion, 0, args.Epoch);
                 if (args.Command is CheckProvider or StartSignIn or CancelSignIn && string.IsNullOrWhiteSpace(args.Machine))

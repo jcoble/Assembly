@@ -82,7 +82,8 @@ public static partial class EngineJournal
         for (var index = 0; index < effects.Count; index++)
         {
             var effect = effects[index];
-            var id = handoffAdmission is not null ? $"start/{handoffAdmission.Identity.HandoffId}/1" : (effect.Kind is "answer" or "send" or "probe_provider" or "begin_sign_in" or "cancel_sign_in" ||
+            var id = handoffAdmission is not null ? $"start/{handoffAdmission.Identity.HandoffId}/1" : (effect.Kind is "checkout" or "answer" or "send" or "probe_provider" or "begin_sign_in" or "cancel_sign_in" ||
+                effect.Kind == "start" && effect.Id.StartsWith("start/checkout/", StringComparison.Ordinal) ||
                 effect.Kind == "stop" && effect.Id.StartsWith("message-stop/", StringComparison.Ordinal))
                 ? effect.Id : $"{context.CommandId:N}-{index}";
             scope.Execute("""
