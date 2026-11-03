@@ -64,6 +64,10 @@ fn actual_open_target_refusals_remain_definitive_and_keep_their_exact_codes() {
         "unknown_engine_session",
         "unknown_session",
         "nonresumable",
+        "operation_id_conflict",
+        "install_busy",
+        "operation_capacity",
+        "operation_unknown",
     ] {
         assert_eq!(
             ErrorCode::from_wire(code, None),

@@ -63,6 +63,7 @@ fn main() {
             let (read_layout, write_layout) = start_backend(cx);
             PaletteView::init(cx);
             features::settings::init(cx);
+            features::remote_install::init(cx);
             features::meter::start_if_on(cx);
             // The window opens once the theme files have loaded, already in its theme. The kit calls this once, so
             // the layout's read and write are taken out on that call.
