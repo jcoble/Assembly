@@ -8,7 +8,6 @@ use crate::features::source_control::commit_box::{
 };
 use crate::features::source_control::git_status::GitStatus;
 use crate::features::source_control::result_line::result_line;
-use crate::features::source_control::section_heading::heading_label;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -182,7 +181,6 @@ impl SourceControlPane {
                                     .map(|line| div().text_sm().text_color(muted).child(line)),
                             )
                             .children(sections)
-                            .child(heading_label("Commits", None, cx))
                             .children(timeline)
                             .children(pull_requests),
                     ),
