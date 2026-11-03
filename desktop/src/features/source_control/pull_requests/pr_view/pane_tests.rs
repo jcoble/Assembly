@@ -1,4 +1,4 @@
-use super::PrPane;
+use super::{PrMerged, PrPane};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
@@ -116,15 +116,25 @@ fn calls(seen: &Arc<Mutex<Vec<Value>>>, method: &str) -> Vec<Value> {
     of_method.map(|frame| frame["args"].clone()).collect()
 }
 
-/// A backend holding these projects. With `hold_first`, the first source question is answered only when the next one
-/// arrives, and first: a machine answering after the person moved on.
-fn fake(cx: &mut TestAppContext, projects: Value, hold_first: bool) -> Fake {
+/// How the first source question goes.
+#[derive(PartialEq)]
+enum Source {
+    Answers,
+    /// Answered only when the next one arrives, and first: a machine answering after the person moved on.
+    HoldsFirst,
+    /// Refused, as a machine that isn't there.
+    RefusesFirst,
+}
+
+/// A backend holding these projects, listing one pull request.
+fn fake(cx: &mut TestAppContext, projects: Value, first: Source) -> Fake {
     let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
     let observed = seen.clone();
     let (changed, changes) = unbounded();
     let heard = changed.clone();
     let mut held: Option<Value> = None;
-    let mut holding = hold_first;
+    let mut holding = first == Source::HoldsFirst;
+    let mut refusing = first == Source::RefusesFirst;
     let backend = FakeBackend::start(move |frame| {
         if frame["t"] == "hello" {
             return vec![Reply::Frame(
@@ -144,6 +154,11 @@ fn fake(cx: &mut TestAppContext, projects: Value, hold_first: bool) -> Fake {
         let result = match frame["method"].as_str() {
             Some("list") => json!({"projects":projects.clone(),"next":null}),
             Some("resolve_source") => {
+                if std::mem::take(&mut refusing) {
+                    return vec![Reply::Frame(json!({
+                        "t":"error","id":frame["id"],"code":"bad_args","message":"The machine isn't there.",
+                    }))];
+                }
                 let route = frame["args"]["routeMachine"].clone();
                 let source = if route.is_null() {
                     json!({"machine":"box","generation":0,"routeMachine":null})
@@ -158,7 +173,9 @@ fn fake(cx: &mut TestAppContext, projects: Value, hold_first: bool) -> Fake {
                 let late = held.take().map(Reply::Frame);
                 return late.into_iter().chain([Reply::Frame(reply)]).collect();
             }
-            Some("prs") => json!({"items":[],"cursor":null,"total":0}),
+            Some("prs") => {
+                json!({"items":[{"repository":"o/r","number":7,"title":"Seven"}],"cursor":null,"total":1})
+            }
             _ => return vec![],
         };
         vec![Reply::Frame(
@@ -196,7 +213,7 @@ async fn pane_with_projects(
 
 #[gpui::test]
 async fn a_repository_on_two_machines_waits_for_the_person_to_say_which(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), false);
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
     let window = cx.add_empty_window();
     let pane = pane_with_projects(&mut fake, window).await;
     window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
@@ -224,7 +241,7 @@ async fn a_repository_on_two_machines_waits_for_the_person_to_say_which(cx: &mut
 
 #[gpui::test]
 async fn cancelling_forgets_the_question_and_a_late_answer_opens_nothing(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), true);
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::HoldsFirst);
     let window = cx.add_empty_window();
     let pane = pane_with_projects(&mut fake, window).await;
     window.update(|_, cx| {
@@ -263,7 +280,7 @@ async fn cancelling_forgets_the_question_and_a_late_answer_opens_nothing(cx: &mu
 async fn a_row_under_all_local_projects_opens_this_computers_copy_without_asking(
     cx: &mut TestAppContext,
 ) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(HERE, "local")]), false);
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(HERE, "local")]), Source::Answers);
     let window = cx.add_empty_window();
     let pane = pane_with_projects(&mut fake, window).await;
     let row = serde_json::from_value(json!({"repository":"o/r","number":7,"title":"The row"})).unwrap();
@@ -298,7 +315,7 @@ async fn the_all_list_searches_local_projects_and_a_picked_remote_searches_only_
         "id":FAR,"machine":"far","rootPath":"/far/x","title":"x",
         "repoKey":"github.com/o/far","createdAt":1,
     });
-    let mut fake = fake(cx, json!([holder(HERE, "local"), far]), false);
+    let mut fake = fake(cx, json!([holder(HERE, "local"), far]), Source::Answers);
     let window = cx.add_empty_window();
     let pane = pane_with_projects(&mut fake, window).await;
     window.update(|_, cx| pane.update(cx, |pane, cx| pane.sync_scope(cx)));
@@ -309,7 +326,7 @@ async fn the_all_list_searches_local_projects_and_a_picked_remote_searches_only_
 
 #[gpui::test]
 async fn moving_along_a_stack_stays_with_the_project_already_answering(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), false);
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
     let window = cx.add_empty_window();
     let pane = pane_with_projects(&mut fake, window).await;
     window.update(|_, cx| {
@@ -344,7 +361,7 @@ async fn moving_along_a_stack_stays_with_the_project_already_answering(cx: &mut 
 
 #[gpui::test]
 async fn going_back_from_a_page_still_opening_returns_to_the_list(cx: &mut TestAppContext) {
-    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), false);
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
     let window = cx.add_empty_window();
     let pane = pane_with_projects(&mut fake, window).await;
     window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
@@ -359,4 +376,104 @@ async fn going_back_from_a_page_still_opening_returns_to_the_list(cx: &mut TestA
         assert!(pane.selected.is_none() && pane.choosing.is_none() && pane.opening.is_none());
     });
     assert!(calls(&fake.seen, "resolve_source").is_empty());
+}
+
+#[gpui::test]
+async fn a_machine_that_does_not_answer_keeps_the_page_and_refresh_asks_again(
+    cx: &mut TestAppContext,
+) {
+    let mut fake = fake(cx, json!([holder(LANE, "lane")]), Source::RefusesFirst);
+    let window = cx.add_empty_window();
+    let pane = pane_with_projects(&mut fake, window).await;
+    let woke = fake.changed.clone();
+    let _observe = window.update(|_, cx| {
+        cx.observe(&pane, move |_, _| {
+            let _ = woke.unbounded_send(());
+        })
+    });
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
+    until("the refusal", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        window.update(|_, cx| pane.read(cx).failure.is_some())
+    })
+    .await;
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert_eq!(pane.failure.as_deref(), Some("The machine isn't there."));
+        assert_eq!(pane.selected.as_ref().map(|wanted| wanted.number), Some(7));
+        assert!(pane.opening.is_none() && pane.detail.is_none());
+    });
+    assert!(calls(&fake.seen, "pr").is_empty());
+
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.retry_open(cx)));
+    window.update(|_, cx| assert!(pane.read(cx).failure.is_none()));
+    until("the second read", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        !calls(&fake.seen, "pr").is_empty()
+    })
+    .await;
+    assert_eq!(calls(&fake.seen, "resolve_source").len(), 2);
+    assert_eq!(calls(&fake.seen, "pr")[0]["projectId"], LANE);
+}
+
+#[gpui::test]
+async fn the_tab_picked_while_opening_is_the_tab_the_page_opens_on(cx: &mut TestAppContext) {
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), Source::Answers);
+    let window = cx.add_empty_window();
+    let pane = pane_with_projects(&mut fake, window).await;
+    window.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.select_pr(Some("o/r".into()), 7, cx);
+            pane.show_tab(true, cx);
+            pane.choose_project(FAR, cx);
+        })
+    });
+    until("the read", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        !calls(&fake.seen, "pr").is_empty()
+    })
+    .await;
+    window.update(|_, cx| {
+        assert!(pane.read(cx).detail.as_ref().expect("the page").read(cx).on_changes());
+    });
+}
+
+#[gpui::test]
+async fn merging_on_the_page_takes_the_row_off_the_list_behind_it(cx: &mut TestAppContext) {
+    let mut fake = fake(cx, json!([holder(LANE, "lane")]), Source::Answers);
+    let window = cx.add_empty_window();
+    let pane = pane_with_projects(&mut fake, window).await;
+    window.update(|_, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.active = true;
+            pane.select_project(Some(LANE.into()), cx);
+        })
+    });
+    // Picking a project makes the list this page came from.
+    let queue = window.update(|_, cx| pane.read(cx).queue.clone());
+    let woke = fake.changed.clone();
+    let _observe = window.update(|_, cx| {
+        cx.observe(&queue, move |_, _| {
+            let _ = woke.unbounded_send(());
+        })
+    });
+    until("the row", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        window.update(|_, cx| queue.read(cx).page.items.len() == 1)
+    })
+    .await;
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
+    until("the page", &mut fake.changes, &fake.changed, || {
+        window.run_until_parked();
+        !calls(&fake.seen, "pr").is_empty()
+    })
+    .await;
+    window.update(|_, cx| {
+        let detail = pane.read(cx).detail.clone().expect("the page");
+        detail.update(cx, |_, cx| {
+            cx.emit(PrMerged { repository: "O/R".into(), number: 7 })
+        });
+    });
+    window.run_until_parked();
+    window.update(|_, cx| assert!(queue.read(cx).page.items.is_empty()));
 }

@@ -35,11 +35,28 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
     private static TaskCompletionSource<ClientWebSocket> NewReady() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     internal string Qualify(string id) => $"assembly-remote-terminal://{Uri.EscapeDataString(name)}/{Uri.EscapeDataString(id)}";
 
-    internal async Task<string> RegisterAsync(string originalEngine, string hostTerminalId, CancellationToken ct)
+    internal Task<string> RegisterAsync(string originalEngine, string hostTerminalId, CancellationToken ct) =>
+        RegisterCoreAsync(originalEngine, hostTerminalId, null, ct);
+
+    internal Task<string> RegisterAsync(string originalEngine, string hostTerminalId,
+        RemoteMachine.OwnerConnectionBinding originalOwner, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(originalEngine) || string.IsNullOrWhiteSpace(hostTerminalId)) throw SourceChanged();
-        await CaptureBeforeAsync(originalEngine, ct);
-        _known[hostTerminalId] = originalEngine;
+        if (originalOwner is null) throw SourceChanged();
+        return RegisterCoreAsync(originalEngine, hostTerminalId, originalOwner, ct);
+    }
+
+    private async Task<string> RegisterCoreAsync(string originalEngine, string hostTerminalId,
+        RemoteMachine.OwnerConnectionBinding? originalOwner, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(originalEngine) || string.IsNullOrWhiteSpace(hostTerminalId) ||
+            originalOwner is not null && (originalOwner.Machine != originalEngine || originalOwner.IsInvalidated)) throw SourceChanged();
+        await CaptureBeforeAsync(originalEngine, ct, originalOwner);
+        lock (_gate)
+        {
+            if (originalOwner?.IsInvalidated == true) throw SourceChanged();
+            _known[hostTerminalId] = originalEngine;
+        }
         return Qualify(hostTerminalId);
     }
     private string RequireKnown(string id)
@@ -48,12 +65,15 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
         if (_missing.ContainsKey(id)) throw new CallFailed("The original terminal is no longer present on its owner.", "terminal_missing");
         return engine;
     }
-    private async Task CaptureBeforeAsync(string? expected, CancellationToken ct)
+    private async Task CaptureBeforeAsync(string? expected, CancellationToken ct,
+        RemoteMachine.OwnerConnectionBinding? originalOwner = null)
     {
+        if (originalOwner is not null && (originalOwner.IsInvalidated || originalOwner.Machine != expected)) throw SourceChanged();
         string? original;
         lock (_gate) original = _engine;
         if (original is not null && expected is not null && original != expected) throw SourceChanged();
         var owner = await captureOwner(original ?? expected, ct); // Never while holding terminal send/Topics locks.
+        if (originalOwner is not null && (!ReferenceEquals(originalOwner, owner) || originalOwner.IsInvalidated)) throw SourceChanged();
         lock (_gate)
         {
             if (_engine is not null && _engine != owner.Machine || expected is not null && expected != owner.Machine) throw SourceChanged();

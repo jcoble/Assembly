@@ -100,6 +100,8 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         using var socket = await Open();
         var input = new Input();
         var old = _board.Post("op", null, null, null, true, "terminal", input);
+        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = 0, code = "not delivered" }), "stale_challenge");
+        Assert.Empty(input.Values);
         var current = _board.Post("op", null, null, null, true, "terminal", input);
         AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = old.Generation, code = "old" }), "stale_challenge");
         Assert.Empty(input.Values);

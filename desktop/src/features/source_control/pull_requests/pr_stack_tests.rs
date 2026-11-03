@@ -96,3 +96,15 @@ fn the_tree_lists_folders_first_and_merges_single_folder_chains() {
     );
     assert_eq!(rows[2].path.as_deref(), Some("a/b/d/e.rs"));
 }
+
+// Pins: a file's comments gather under the last line the patch shows, on whichever side that line is.
+#[test]
+fn the_end_of_a_patch_is_its_last_shown_line_on_that_lines_side() {
+    let ends_in_context = "--- a/a.rs\n+++ b/a.rs\n@@ -1,3 +1,3 @@\n keep\n-old\n+new\n tail";
+    assert_eq!(patch_end(ends_in_context), Some((DiffSide::Modified, 3)));
+    let ends_in_deletion = "@@ -8,2 +8 @@\n keep\n-gone\n\\ No newline at end of file";
+    assert_eq!(patch_end(ends_in_deletion), Some((DiffSide::Original, 9)));
+    let second_hunk = "@@ -1 +1 @@\n-a\n+b\n@@ -40,2 +40,3 @@\n keep\n+one\n+two";
+    assert_eq!(patch_end(second_hunk), Some((DiffSide::Modified, 42)));
+    assert_eq!(patch_end(""), None);
+}

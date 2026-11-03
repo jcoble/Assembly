@@ -14,34 +14,49 @@ public sealed class SignInRelay
 
     public async Task<JsonElement?> ChallengeAsync(string machine, string operationId, CancellationToken ct)
     {
-        Validate(machine, operationId, ct);
-        var args = JsonSerializer.SerializeToElement(new ChallengeArgs(operationId), ProvidersJson.Default.ChallengeArgs);
+        var call = new CallContext(ct, "");
         try
         {
-            var challenge = await _forward.CallAsync(machine, "providers", "challenge", args, false, ct);
-            return challenge.ValueKind == JsonValueKind.Null ? null : challenge;
+            var reply = await ReadChallengeAsync(machine, operationId, call);
+            return reply is null ? null : JsonSerializer.SerializeToElement(reply, ProvidersJson.Default.ChallengeReply);
         }
+        finally { call.SourceGuard?.Dispose(); }
+    }
+
+    internal async Task<ChallengeReply?> ReadChallengeAsync(string machine, string operationId, CallContext call)
+    {
+        Validate(machine, operationId, call.Cancellation);
+        try { return await _forward.SignInChallengeAsync(machine, operationId, call); }
         catch (CallFailed error) { throw SafeRefusal(error); }
     }
 
     public async Task SubmitCodeAsync(string machine, string operationId, long expectedGeneration, string code, CancellationToken ct)
     {
-        Validate(machine, operationId, ct);
-        if (expectedGeneration <= 0 || code is null) throw Refusal();
-        // Machine is consumed by the existing connection resolver, never supplied as owner-route authority.
-        var args = JsonSerializer.SerializeToElement(new SubmitCodeArgs(operationId, expectedGeneration, code),
-            ProvidersJson.Default.SubmitCodeArgs);
-        try { await _forward.CallAsync(machine, "providers", "submitCode", args, false, ct); }
+        var call = new CallContext(ct, "");
+        try { await SubmitCodeAsync(new(operationId, expectedGeneration, code, machine), call); }
+        finally { call.SourceGuard?.Dispose(); }
+    }
+
+    internal async Task<ProviderInputReply> SubmitCodeAsync(SubmitCodeArgs args, CallContext call)
+    {
+        Validate(args.Machine!, args.OperationId, call.Cancellation);
+        if (args.ExpectedGeneration <= 0 || args.Code is null) throw Refusal();
+        try { return await _forward.SignInCodeAsync(args, call); }
         catch (CallFailed error) { throw SafeRefusal(error); }
     }
 
     public async Task AcknowledgeUrlAsync(string machine, string operationId, long expectedGeneration, string originalUrl, CancellationToken ct)
     {
-        Validate(machine, operationId, ct);
-        if (expectedGeneration <= 0 || originalUrl is null) throw Refusal();
-        var args = JsonSerializer.SerializeToElement(new AcknowledgeUrlArgs(operationId, expectedGeneration, originalUrl),
-            ProvidersJson.Default.AcknowledgeUrlArgs);
-        try { await _forward.CallAsync(machine, "providers", "acknowledgeUrl", args, false, ct); }
+        var call = new CallContext(ct, "");
+        try { await AcknowledgeUrlAsync(new(operationId, expectedGeneration, originalUrl, machine), call); }
+        finally { call.SourceGuard?.Dispose(); }
+    }
+
+    internal async Task<ProviderInputReply> AcknowledgeUrlAsync(AcknowledgeUrlArgs args, CallContext call)
+    {
+        Validate(args.Machine!, args.OperationId, call.Cancellation);
+        if (args.ExpectedGeneration <= 0 || args.OriginalUrl is null) throw Refusal();
+        try { return await _forward.SignInUrlAsync(args, call); }
         catch (CallFailed error) { throw SafeRefusal(error); }
     }
 
@@ -56,7 +71,7 @@ public sealed class SignInRelay
     private static CallFailed SafeRefusal(CallFailed error) => error.Reason switch
     {
         "stale_challenge" or "challenge_consumed" => new("The sign-in challenge is no longer available.", error.Reason),
-        "forbidden" or "not_found" or "cancelled" or "timeout" or "bad_args" or "wrong_machine" or "failed" or "signin_input_failed"
+        "source_changed" or "forbidden" or "not_found" or "cancelled" or "timeout" or "bad_args" or "wrong_machine" or "failed" or "signin_input_failed"
             => new("Provider sign-in is unavailable.", error.Reason),
         _ => Refusal()
     };

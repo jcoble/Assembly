@@ -35,6 +35,8 @@ struct Selected {
     /// Listed under "All local projects", so only this computer's copy can answer for it.
     listed_local: bool,
     row: Option<PullRequestSummary>,
+    /// The tab the person is on; the page keeps it once it can read.
+    on_changes: bool,
 }
 struct OpenPane(Option<WeakEntity<PrPane>>);
 impl Global for OpenPane {}
@@ -50,6 +52,8 @@ pub struct PrPane {
     detail: Option<Entity<PrDetail>>,
     /// The pull request on screen before anyone can read it, while its owner is unknown.
     selected: Option<Selected>,
+    /// "Link copied" on that page, until this ends.
+    copied: Option<Task<()>>,
     /// Asking who owns a project's machine. Dropping the task forgets the answer.
     opening: Option<Task<()>>,
     /// A repository more than one project holds, waiting for the person to say which.
@@ -195,6 +199,7 @@ impl PrPane {
             queue,
             detail: None,
             selected: None,
+            copied: None,
             opening: None,
             choosing: None,
             search,
@@ -239,6 +244,7 @@ impl PrPane {
     fn cancel_open(&mut self, cx: &mut Context<Self>) {
         self.opening = None;
         self.choosing = None;
+        self.copied = None;
         if self.selected.take().is_some() {
             self.failure = None;
         }
@@ -372,7 +378,8 @@ impl PrPane {
         cx.notify();
     }
     fn select_pr(&mut self, repository: Option<String>, number: u64, cx: &mut Context<Self>) {
-        let wanted = Selected { repository, number, listed_local: false, row: None };
+        let wanted =
+            Selected { repository, number, listed_local: false, row: None, on_changes: false };
         self.open_pr(wanted, cx);
     }
     fn select_row(&mut self, row: PullRequestSummary, cx: &mut Context<Self>) {
@@ -381,6 +388,7 @@ impl PrPane {
             number: row.number,
             listed_local: self.project.is_none(),
             row: Some(row),
+            on_changes: false,
         };
         self.open_pr(wanted, cx);
     }
@@ -392,15 +400,16 @@ impl PrPane {
     }
     fn open_pr(&mut self, wanted: Selected, cx: &mut Context<Self>) {
         self.cancel_open(cx);
-        let Selected { repository, number, listed_local, row } = wanted.clone();
+        let Selected { repository, number, listed_local, row, on_changes } = wanted.clone();
         self.failure = None;
         if let Some(id) = self.session.clone() {
             let source = selected_source(Some(&id), cx);
-            self.open_detail(PrOwner::Session { id, source }, repository, number, row, cx);
+            let owner = PrOwner::Session { id, source };
+            self.open_detail(owner, repository, number, row, on_changes, cx);
             return;
         }
         if let Some(owner) = self.same_project(repository.as_deref(), cx) {
-            self.open_detail(owner, repository, number, row, cx);
+            self.open_detail(owner, repository, number, row, on_changes, cx);
             return;
         }
         self.close_detail(cx);
@@ -452,8 +461,10 @@ impl PrPane {
                 pane.opening = None;
                 match owner {
                     Ok(owner) => {
-                        let row = pane.selected.take().and_then(|selected| selected.row);
-                        pane.open_detail(owner, repository, number, row, cx)
+                        let shown = pane.selected.take();
+                        let on_changes = shown.as_ref().is_some_and(|shown| shown.on_changes);
+                        let row = shown.and_then(|shown| shown.row);
+                        pane.open_detail(owner, repository, number, row, on_changes, cx)
                     }
                     Err(error) => {
                         pane.failure = Some(error);
@@ -481,12 +492,13 @@ impl PrPane {
         repository: Option<String>,
         number: u64,
         row: Option<PullRequestSummary>,
+        on_changes: bool,
         cx: &mut Context<Self>,
     ) {
         let active = self.active;
         let detail = cx.new(|cx| {
             let mut detail = PrDetail::new(owner, repository, number, active, cx);
-            detail.show_row(row);
+            detail.show_row(row, on_changes);
             detail
         });
         self._detail = Some([
