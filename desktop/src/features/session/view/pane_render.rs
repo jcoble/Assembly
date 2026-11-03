@@ -12,6 +12,7 @@ use gpui_kit::*;
 use std::rc::Rc;
 
 use super::SessionPane;
+use crate::core::engine::SessionKey;
 use crate::core::intents::open_session::OpenSession;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::ui::center_panes::CenterPanes;
@@ -39,7 +40,7 @@ impl SessionPane {
             let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
             cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
                 if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
-                    pane.update(cx,|pane,_|pane.uncover(&request.id));
+                    pane.update(cx,|pane,_|pane.uncover_route(request.route_machine.as_deref(),&request.id));
                     pane.update(cx,|pane,cx|pane.request_current_route(request.route_machine,request.id,request.request_id,
                         if request.historical {crate::core::intents::session_open::SessionOpenTarget::Historical} else {crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx));
                 } else {
@@ -54,7 +55,7 @@ impl SessionPane {
             let Some(handle)=cx.active_window().or_else(||cx.windows().into_iter().next()) else {return;};
             cx.defer(move|cx|{let _=handle.update(cx,|_,window,cx| {
                 if let Some(pane)=CenterPanes::find::<SessionPane>("Chat",cx) {
-                    pane.update(cx,|pane,_|pane.uncover(&request.key.id));
+                    pane.update(cx,|pane,_|pane.uncover(&request.key));
                     pane.update(cx,|pane,cx|pane.request_open(request,window,cx));
                 } else {
                     SelectedSession::global(cx).update(cx,|_,cx|cx.emit(crate::core::intents::session_open::SessionOpenResult {
@@ -130,9 +131,24 @@ impl SessionPane {
         }
     }
 
+    /// This exact session is on screen. An id alone doesn't say so: another Engine can hold the same one.
+    pub(in crate::features::session::view) fn shows(&self, key: &SessionKey) -> bool {
+        self.session.as_deref() == Some(key.id.as_str())
+            && self.row_source.as_ref().is_some_and(|source| source.machine == key.machine)
+    }
+
     /// Going to the session already under the draft uncovers it; it opens no differently, so nothing else would.
-    fn uncover(&mut self, session: &str) {
-        if self.session.as_deref() == Some(session) {
+    fn uncover(&mut self, key: &SessionKey) {
+        if self.shows(key) {
+            self.draft = None;
+        }
+    }
+
+    /// The same for a request that names the route to the session, not its Engine.
+    fn uncover_route(&mut self, route: Option<&str>, session: &str) {
+        if self.session.as_deref() == Some(session)
+            && self.row_source.as_ref().is_some_and(|source| source.route_machine.as_deref() == route)
+        {
             self.draft = None;
         }
     }
