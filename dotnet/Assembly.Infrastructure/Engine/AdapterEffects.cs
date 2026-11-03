@@ -1,3 +1,7 @@
+using Assembly.Application.Common.Acp.JsonRpc;
+using Assembly.Engine.Sessions;
+using Assembly.Engine.Handoffs;
+using Assembly.Engine.Persistence;
 using Assembly.Application.Common.Engine;
 using Assembly.Infrastructure.Engine.Auth;
 using System.Text.Json;
@@ -25,6 +29,8 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
     public async Task<EffectReceipt> ExecuteAsync(Effect effect, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (effect.Kind == "release") return await ExecuteHandoffReleaseAsync(effect, ct);
+        if (effect.Kind == "start" && HandoffStartGate(effect, ct) is { } startGate) return startGate;
         if (effect.Kind == "handoff") return Receipt(EffectDisposition.Unavailable, "handoff_not_available");
         try
         {
@@ -71,6 +77,8 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
     public Task<EffectReceipt> ReconcileAsync(Effect effect, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (effect.Kind == "release") return Task.FromResult(ReconcileHandoffRelease(effect, ct));
+        if (effect.Kind == "start" && HandoffStartGate(effect, ct) is { } startGate) return Task.FromResult(startGate);
         if (effect.Kind == "handoff") return Task.FromResult(Receipt(EffectDisposition.Unavailable, "handoff_not_available"));
         try
         {
@@ -184,4 +192,113 @@ public sealed partial class AdapterEffects(IAppDatabase db, SessionRegistry host
     private static EffectReceipt ReconcileAnswer(IReadScope scope, Effect effect) =>
         Answer(scope, effect) is { } answer ? PositiveAnswer(scope, effect, answer) ?? Receipt(EffectDisposition.Unknown)
             : Receipt(EffectDisposition.Unknown);
+
+    /// <summary>Only known typed refusals are classified; native absence requires the actual native producer.</summary>
+    internal static string? ResumeFailureReason(Exception error) => error switch
+    {
+        JsonRpcException { Code: JsonRpcException.MethodNotFound } => ResumeReason.Unsupported,
+        JsonRpcException { Code: -32000 } => ResumeReason.Denied,
+        IOException or TimeoutException => ResumeReason.Transient,
+        _ => null
+    };
+
+    private async Task<EffectReceipt> ExecuteHandoffReleaseAsync(Effect effect, CancellationToken ct)
+    {
+        try
+        {
+            var intent = effect.Payload.Deserialize(global::Assembly.Engine.EngineJson.Default.HandoffReleaseEffect);
+            if (intent is null || effect.Attempt != 1) return Receipt(EffectDisposition.Unknown, "handoff_release_unconfirmed");
+            using (var read = db.OpenSnapshot(ct))
+                if (!CurrentRelease(read, effect, intent)) return Receipt(EffectDisposition.Unknown, "handoff_release_changed");
+            var host = hosts.For(intent.Identity.SourceSessionId);
+            var capture = host.CaptureHandoffRelease(intent.Identity.OldEpoch, intent.ProviderSessionId!);
+            if (capture is null) return Receipt(EffectDisposition.Unknown, "handoff_execution_unavailable");
+            await host.ReleaseForHandoffAsync(capture, ct);
+            ct.ThrowIfCancellationRequested();
+            using (var read = db.OpenSnapshot(ct))
+                if (!CurrentRelease(read, effect, intent)) return Receipt(EffectDisposition.Unknown, "handoff_release_changed");
+            // Physical disposal only. ProviderSessionId here is the public ACP binding, never a native-file claim.
+            var data = new HandoffReleaseEffectData(intent.Identity, capture.SessionId, capture.Epoch,
+                capture.AcpSessionId, capture.OperationId, effect.Id, effect.Attempt);
+            return new(EffectDisposition.Confirmed,
+                JsonSerializer.SerializeToElement(data, global::Assembly.Engine.EngineJson.Default.HandoffReleaseEffectData), null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        { return Receipt(EffectDisposition.Unknown, "handoff_release_unconfirmed"); }
+    }
+
+    private EffectReceipt ReconcileHandoffRelease(Effect effect, CancellationToken ct)
+    {
+        try
+        {
+            var intent = effect.Payload.Deserialize(global::Assembly.Engine.EngineJson.Default.HandoffReleaseEffect);
+            if (intent is null) return Receipt(EffectDisposition.Unknown, "handoff_release_unconfirmed");
+            using var read = db.OpenSnapshot(ct);
+            var machine = read.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0));
+            var data = machine is null ? null : EngineJournal.ReadHandoffRelease(read, machine, intent.Identity);
+            var exact = read.QueryFirst("""
+                SELECT COUNT(*) FROM engine_outbox WHERE id=$id AND kind='release' AND machine=$machine
+                    AND session_id=$session AND state='done' AND attempt=$attempt AND payload_json=$payload
+                """, row => row.Long(0), new("$id", effect.Id), new("$machine", machine), new("$session", effect.SessionId),
+                new("$attempt", effect.Attempt), new("$payload", effect.Payload.GetRawText())) == 1;
+            if (!exact || data is null || data.ReleaseEffectId != effect.Id || data.ReleaseAttempt != effect.Attempt ||
+                data.ProviderSessionId != intent.ProviderSessionId || effect.SessionId != data.SessionId)
+                return Receipt(EffectDisposition.Unknown, "handoff_release_unconfirmed");
+            return new(EffectDisposition.Confirmed,
+                JsonSerializer.SerializeToElement(data, global::Assembly.Engine.EngineJson.Default.HandoffReleaseEffectData), null);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        { return Receipt(EffectDisposition.Unknown, "handoff_release_unconfirmed"); }
+    }
+
+    private bool CurrentRelease(IReadScope read, Effect effect, HandoffReleaseEffect intent)
+    {
+        var identity = intent.Identity;
+        if (effect.Kind != "release" || effect.SessionId != identity.SourceSessionId ||
+            string.IsNullOrWhiteSpace(effect.Id) || effect.Attempt < 1 ||
+            identity.SourceMachine == identity.TargetMachine || identity.OldEpoch < 0 || identity.OldEpoch == long.MaxValue ||
+            identity.NextEpoch != identity.OldEpoch + 1 || string.IsNullOrWhiteSpace(intent.ProviderSessionId)) return false;
+        var chat = sessions.Get(read, identity.SourceSessionId);
+        if (chat is null || !string.IsNullOrEmpty(chat.Machine) || chat.Agent != intent.Provider ||
+            chat.AcpSessionId != intent.ProviderSessionId) return false;
+        return read.QueryFirst("""
+            SELECT COUNT(*) FROM engine_outbox o
+            JOIN engine_session s ON s.id=o.session_id
+            JOIN engine_handoff h ON h.id=$handoff AND h.session_id=s.id
+            JOIN engine_meta m ON m.singleton=1 AND m.machine_id=s.machine AND m.machine_id=o.machine AND m.machine_id=h.machine
+            WHERE o.id=$effect AND o.kind='release' AND o.state='inflight' AND o.attempt=$attempt AND o.payload_json=$payload
+                AND s.id=$session AND s.machine=$source AND s.provider=$provider AND s.account_context=$account
+                AND s.provider_session_id=$acp AND s.epoch=$old AND s.reserved_epoch=$next AND s.state='handing_off'
+                AND s.holder IN ('local',$source) AND h.old_holder IN ('local',$source) AND h.new_holder=$target
+                AND h.old_epoch=$old AND h.next_epoch=$next AND h.state='requested'
+            """, row => row.Long(0), new("$handoff", identity.HandoffId), new("$effect", effect.Id),
+            new("$attempt", effect.Attempt), new("$payload", effect.Payload.GetRawText()), new("$session", identity.SourceSessionId),
+            new("$source", identity.SourceMachine), new("$provider", intent.Provider), new("$account", intent.AccountContext),
+            new("$acp", intent.ProviderSessionId), new("$old", identity.OldEpoch), new("$next", identity.NextEpoch),
+            new("$target", identity.TargetMachine)) == 1;
+    }
+
+    // Both execute and reconcile must honor a closed/malformed durable carrier. No native admission is invented here.
+    private EffectReceipt? HandoffStartGate(Effect effect, CancellationToken ct)
+    {
+        try
+        {
+            if (effect.SessionId is null) return Receipt(EffectDisposition.Unknown, "handoff_binding_invalid");
+            using var read = db.OpenSnapshot(ct);
+            var machine = read.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0));
+            if (machine is null) return Receipt(EffectDisposition.Unknown, "handoff_binding_invalid");
+            var fence = EngineJournal.ReadTargetHandoffFence(read, machine, effect.SessionId);
+            var payload = effect.Payload.Deserialize(global::Assembly.Engine.EngineJson.Default.SessionStartEffect);
+            if (fence.State == HandoffFenceState.Ordinary && payload?.Handoff is null) return null;
+            if (fence.State == HandoffFenceState.Closed) return Receipt(EffectDisposition.Unknown, "handoff_target_closed");
+            if (fence.State != HandoffFenceState.Adopted || payload?.Handoff is null || payload.Handoff != fence.Binding)
+                return Receipt(EffectDisposition.Unknown, "handoff_binding_invalid");
+            return Receipt(EffectDisposition.Unavailable, "native_start_admission_required");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        { return Receipt(EffectDisposition.Unknown, "handoff_binding_invalid"); }
+    }
 }

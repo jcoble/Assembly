@@ -3,6 +3,27 @@ namespace Assembly.Tests.Features.Chat.Sessions;
 public sealed partial class SessionHostTests
 {
     [Fact]
+    public async Task Original_user_insertion_allocates_one_durable_item_identity_and_copies_ordered_attachment_ids()
+    {
+        string[] attachments = ["image-b", "image-a"];
+        var sending = _host.SendAsync("prompt", "client", null, default, attachmentIds: attachments);
+        attachments[0] = "mutated-after-send";
+        var user = Assert.Single(_store.RowsAfter(_session.SessionId, 0), row => row.Kind == "user");
+        Assert.Null(user.ItemId);
+        var item = user.Payload.GetProperty("itemId").GetString();
+        Assert.True(Guid.TryParse(item, out _)); Assert.NotEqual(user.RunId, item); Assert.NotEqual("client", item);
+        Assert.Equal(["image-b", "image-a"], user.Payload.GetProperty("attachmentIds").EnumerateArray().Select(value => value.GetString()));
+        var agent = await _launcher.NextAsync(); await agent.StartAsync();
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.InsertAsync(prompt, "actual-provider-message");
+        await sending.WaitAsync(Wait);
+        await _host.SendAsync("prompt", "client", null, default, attachmentIds: ["image-b", "image-a"]);
+        var replay = Assert.Single(_store.RowsAfter(_session.SessionId, 0), row => row.Kind == "user");
+        Assert.Equal(item, replay.Payload.GetProperty("itemId").GetString());
+        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}"""); await agent.CloseAsync();
+    }
+
+    [Fact]
     public async Task SendAfterTurnWaitsForTheRunningTurn()
     {
         var first = _host.Send("held");

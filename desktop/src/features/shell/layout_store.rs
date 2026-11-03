@@ -97,7 +97,10 @@ impl LayoutStore {
             return default_state();
         };
         match serde_json::from_value::<DockAreaState>(value) {
-            Ok(state) if state.version == Some(LAYOUT_VERSION) => state,
+            Ok(mut state) if state.version == Some(LAYOUT_VERSION) => {
+                crate::features::board::board_pane::remove_saved_panel(&mut state);
+                state
+            }
             Ok(state) => {
                 eprintln!(
                     "shell: the saved layout is version {:?}, not {LAYOUT_VERSION}, so the default opens",

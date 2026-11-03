@@ -232,7 +232,7 @@ impl ClientThread {
                 let machine = machine.or_else(|| {
                     self.connection
                         .as_ref()
-                        .map(|connection| connection.machine.clone())
+                        .and_then(|connection| connection.engine_machine.clone())
                 });
                 self.engines.insert(
                     id,

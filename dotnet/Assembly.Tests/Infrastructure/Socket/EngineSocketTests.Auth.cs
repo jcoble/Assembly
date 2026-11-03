@@ -14,13 +14,10 @@ public sealed partial class EngineSocketTests
     [Theory]
     [InlineData("check", null)]
     [InlineData("check", "")]
-    [InlineData("check", "other-machine")]
     [InlineData("start", null)]
     [InlineData("start", "")]
-    [InlineData("start", "other-machine")]
     [InlineData("cancel", null)]
     [InlineData("cancel", "")]
-    [InlineData("cancel", "other-machine")]
     public async Task Local_auth_commands_require_the_captured_owner_machine_before_apply_or_forward(string kind, string? machine)
     {
         EngineCommand command = kind switch
@@ -38,6 +35,32 @@ public sealed partial class EngineSocketTests
         Assert.False(result.Applied);
         Assert.Equal("wrong_machine", result.Error);
         Assert.Equal(0, _forwardAttempts);
+        Assert.Equal(0, _f.Count("engine_command_receipt"));
+        Assert.Equal(0, _f.Count("engine_provider"));
+        Assert.Equal(0, _f.Count("engine_sign_in"));
+        Assert.Equal(0, _f.Count("engine_outbox"));
+    }
+
+    [Theory]
+    [InlineData("check")]
+    [InlineData("start")]
+    [InlineData("cancel")]
+    public async Task Auth_commands_with_an_unresolved_engine_target_are_refused_without_local_writes(string kind)
+    {
+        EngineCommand command = kind switch
+        {
+            "check" => new CheckProvider(),
+            "start" => new StartSignIn("codex", "", null, null),
+            _ => new CancelSignIn()
+        };
+        using var socket = await Open();
+        var args = JsonSerializer.SerializeToElement(new WindowCommand(Guid.NewGuid(), "codex/", 0, 0, command, "other-machine"),
+            EngineSocketJson.Default.WindowCommand);
+        await Send(socket, $$"""{"t":"call","id":10,"feature":"engine","method":"command","args":{{args.GetRawText()}}}""");
+        var frame = await Read(socket);
+        Assert.Equal("error", frame.GetProperty("t").GetString());
+        Assert.Equal("unreachable", frame.GetProperty("code").GetString());
+        Assert.Equal(1, _forwardAttempts); // One owner lookup, no resolved remote connection.
         Assert.Equal(0, _f.Count("engine_command_receipt"));
         Assert.Equal(0, _f.Count("engine_provider"));
         Assert.Equal(0, _f.Count("engine_sign_in"));

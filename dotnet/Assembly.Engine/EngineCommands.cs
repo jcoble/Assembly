@@ -47,6 +47,8 @@ public sealed partial class EngineCommands
 
     public CommandResult Apply(IWriteScope scope, CommandContext context, EngineCommand command, string? preparedError = null)
     {
+        if (command is CompleteEffect { Receipt.WorkflowReceiptConfirmation: not null } completion)
+            return ApplyPreparedReceiptCompletion(scope, context, completion);
         if (command is SendOwnerPrompt or RecordProviderCheck or WorkflowCommand)
             return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
         // Raw boundary arguments are transient: even the journal fingerprint and size check use structural previews.
@@ -55,6 +57,9 @@ public sealed partial class EngineCommands
         {
             if (context.Machine != _machine)
                 return new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch);
+            // New operation phases require a scope-bound admission. Existing ordinary GUID receipts replay above.
+            if (command is HandoffOutcome or AdoptSession)
+                return new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch);
             if (preparedError is not null)
                 return new(false, false, preparedError, context.ExpectedVersion, 0, context.Epoch);
             return command switch

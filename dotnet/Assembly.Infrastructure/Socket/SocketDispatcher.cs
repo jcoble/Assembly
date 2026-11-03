@@ -291,7 +291,7 @@ internal sealed class SocketDispatcher(IAtomicWriter writer, TopicSet topics, Ti
         }
         catch (CallFailed error)
         {
-            return Error(id, "failed", error.Message);
+            return Error(id, error.Reason ?? "failed", error.Message);
         }
         catch (MachineUnreachable error)
         {

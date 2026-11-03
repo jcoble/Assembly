@@ -40,6 +40,7 @@ namespace Assembly.Engine.Contracts;
 [JsonDerivedType(typeof(EstablishForeignParent), "establish_foreign_parent")]
 [JsonDerivedType(typeof(RegisterForeignSession), "register_foreign_session")]
 [JsonDerivedType(typeof(StartSession), "start_session")]
+[JsonDerivedType(typeof(AdoptSession), "adopt_session")]
 [JsonDerivedType(typeof(AssignProject), "assign_project")]
 [JsonDerivedType(typeof(SetSessionState), "set_session_state")]
 [JsonDerivedType(typeof(ReportCapabilities), "report_capabilities")]

@@ -9,7 +9,7 @@ namespace Assembly.Engine.Handoffs;
 public static class HandoffTransitions
 {
     private sealed record Session(long Version, long Epoch, long? ReservedEpoch, string State,
-        string Holder, string? RunId, string? ParentId);
+        string Holder, string? RunId, string? ParentId, string Machine, string Provider, string AccountContext, string? ProviderSessionId);
     private sealed record Handoff(long Version, string SessionId, string OldHolder, string NewHolder,
         long OldEpoch, long NextEpoch, string State);
 
@@ -20,7 +20,15 @@ public static class HandoffTransitions
         var handoff = Find(s, c.EntityId);
         if (handoff is null) return Refused(c, "bad_args");
         if (command is not HandoffOutcome outcome) return Refused(c, "unsupported_command", handoff.Version, handoff.NextEpoch);
-        return Outcome(s, c, handoff, outcome);
+        return Refused(c, "forbidden", handoff.Version, handoff.NextEpoch);
+    }
+
+    internal static CommandResult ApplyAdmitted(IWriteScope scope, HandoffAdmission admission)
+    {
+        admission.ValidateBindings(scope, admission.Context, admission.Key, admission.Canonical);
+        var handoff = Find(scope, admission.Identity.HandoffId);
+        if (handoff is null || admission.Outcome is null) return Refused(admission.Context, "bad_args");
+        return Outcome(scope, admission.Context, handoff, admission.Outcome);
     }
 
     private static CommandResult Request(IWriteScope s, CommandContext c, RequestHandoff command)
@@ -32,10 +40,20 @@ public static class HandoffTransitions
         if (c.Epoch != session.Epoch) return Refused(c, "stale_epoch", session.Version, epoch);
         if (c.ExpectedVersion != session.Version) return Refused(c, "version_conflict", session.Version, epoch);
         if (c.Actor.Kind != ActorKind.Window) return Refused(c, "forbidden", session.Version, epoch);
-        if (string.IsNullOrWhiteSpace(command.NewHolder) || command.NewHolder == session.Holder)
+        if (session.Machine != c.Machine || session.Holder != "local" && session.Holder != c.Machine)
+            return Refused(c, "writer_elsewhere", session.Version, epoch);
+        if (string.IsNullOrWhiteSpace(command.NewHolder) || command.NewHolder == session.Holder || command.NewHolder == c.Machine)
             return Refused(c, "bad_args", session.Version, epoch);
         if (session.State is "ended" or "moved" || Find(s, c.EntityId) is not null)
             return Refused(c, "invalid_transition", session.Version, epoch);
+        if (session.State != "idle") return Refused(c, "busy", session.Version, epoch);
+        if (session.ParentId is not null) return Refused(c, "has_parent", session.Version, epoch);
+        if (s.QueryFirst("SELECT EXISTS(SELECT 1 FROM engine_needs_me WHERE session_id=$id AND state='open')",
+            row => row.Long(0), new SqlArg("$id", command.SessionId)) != 0)
+            return Refused(c, "needs_attention", session.Version, epoch);
+        if (s.QueryFirst("SELECT EXISTS(SELECT 1 FROM engine_session WHERE parent_id=$id AND state NOT IN ('ended','moved'))",
+            row => row.Long(0), new SqlArg("$id", command.SessionId)) != 0)
+            return Refused(c, "children_running", session.Version, epoch);
         var nextEpoch = checked(session.Epoch + 1);
         s.Execute("""
             INSERT INTO engine_handoff(id,version,machine,created_ms,updated_ms,session_id,old_holder,new_holder,old_epoch,next_epoch,state)
@@ -49,27 +67,25 @@ public static class HandoffTransitions
         var handoff = new Handoff(1, command.SessionId, session.Holder, command.NewHolder, session.Epoch, nextEpoch, "requested");
         return Commit(s, c, handoff, session with { Version = session.Version + 1, State = "handing_off", ReservedEpoch = nextEpoch },
             session.RunId,
-            [new("", "handoff", command.SessionId, session.RunId,
-                JsonSerializer.SerializeToElement(new HandoffTransfer(c.EntityId, command.SessionId, command.NewHolder, nextEpoch),
-                    EngineJson.Default.HandoffTransfer))]);
+            [new("", "release", command.SessionId, session.RunId,
+                JsonSerializer.SerializeToElement(new HandoffReleaseEffect(
+                    new(c.EntityId, c.Machine, command.SessionId, command.NewHolder, session.Epoch, nextEpoch),
+                    session.Provider, session.AccountContext, session.ProviderSessionId), EngineJson.Default.HandoffReleaseEffect))]);
     }
 
     private static CommandResult Outcome(IWriteScope s, CommandContext c, Handoff handoff, HandoffOutcome command)
     {
         CommandResult Reject(string error) => Refused(c, error, handoff.Version, handoff.NextEpoch);
-        if (c.Actor.Kind != ActorKind.System || c.Actor.Id != handoff.NewHolder &&
-            !(c.Actor.Id == handoff.OldHolder && handoff.State == "requested" && command.State == "failed"))
+        if (c.Actor != new EngineActor(ActorKind.System, "machine:" + handoff.NewHolder))
             return Reject("forbidden");
         if (c.Epoch != handoff.NextEpoch || command.NextEpoch != handoff.NextEpoch) return Reject("stale_epoch");
         if (c.ExpectedVersion != handoff.Version) return Reject("version_conflict");
         if ((handoff.State, command.State) is not (("requested", "accepted" or "failed") or ("accepted", "resumed" or "failed")))
             return Reject("invalid_transition");
-        // The deferred handoff effect may itself be executing when its target acknowledges acceptance.
-        if (command.State == "accepted" && s.QueryFirst("""
-                SELECT COUNT(*) FROM engine_outbox WHERE session_id=$session AND state='inflight'
-                  AND NOT (kind='handoff' AND COALESCE(json_extract(payload_json,'$.handoffId'),'')=$handoff)
-                """, r => r.Long(0), new("$session", handoff.SessionId), new("$handoff", c.EntityId)) > 0)
-            return Reject("unavailable");
+        var readiness = EngineJournal.CheckHandoffSourceReady(s, c.Machine,
+            new(c.EntityId, c.Machine, handoff.SessionId, handoff.NewHolder, handoff.OldEpoch, handoff.NextEpoch),
+            command.State == "accepted");
+        if (readiness is not null) return Reject(readiness.Reason ?? "unavailable");
         s.Execute("UPDATE engine_handoff SET version=version+1,updated_ms=$now,state=$state,reason=$reason WHERE id=$id",
             new("$now", c.NowMs), new("$state", command.State), new("$reason", command.Reason), new("$id", c.EntityId));
         var session = FindSession(s, handoff.SessionId)!;
@@ -112,9 +128,9 @@ public static class HandoffTransitions
     }
 
     private static Session? FindSession(IWriteScope s, string id) => s.QueryFirst("""
-        SELECT version,epoch,reserved_epoch,state,holder,run_id,parent_id FROM engine_session WHERE id=$id
+        SELECT version,epoch,reserved_epoch,state,holder,run_id,parent_id,machine,provider,account_context,provider_session_id FROM engine_session WHERE id=$id
         """, r => new Session(r.Long(0), r.Long(1), r.IsNull(2) ? null : r.Long(2), r.Text(3), r.Text(4),
-            r.IsNull(5) ? null : r.Text(5), r.IsNull(6) ? null : r.Text(6)), new SqlArg("$id", id));
+            r.IsNull(5) ? null : r.Text(5), r.IsNull(6) ? null : r.Text(6), r.Text(7), r.Text(8), r.Text(9), r.IsNull(10) ? null : r.Text(10)), new SqlArg("$id", id));
 
     private static Handoff? Find(IWriteScope s, string id) => s.QueryFirst("""
         SELECT version,session_id,old_holder,new_holder,old_epoch,next_epoch,state FROM engine_handoff WHERE id=$id

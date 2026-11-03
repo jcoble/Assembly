@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using System.Text.Json;
 using Assembly.Engine.Effects;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Agents;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Execution;
@@ -45,7 +46,7 @@ public sealed class AuthWorkerLifecycleTests
     public async Task Due_sign_ins_continue_bounded_pages_until_all_205_expire_without_provider_io()
     {
         var topics = new Topics(); using var f = new EngineFixture(topics: topics); var commands = Commands(f);
-        for (var i = 0; i < 205; i++) Start(f, commands, "op" + i, i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        for (var i = 0; i < 205; i++) Start(f, commands, "op" + i, Account(i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         f.Time.Advance(TimeSpan.FromSeconds(300)); using var passes = new Passes(topics); using var stop = new CancellationTokenSource();
         var worker = new EngineWorker(f.Db, commands, f.Machine, f.Time, null, passes); var run = worker.RunAsync(stop.Token);
         try
@@ -62,7 +63,7 @@ public sealed class AuthWorkerLifecycleTests
     public async Task Runtime_initialization_interrupts_check_and_active_sign_in_before_any_effect_factory()
     {
         var topics = new Topics(); using var f = new EngineFixture(topics: topics); var commands = Commands(f);
-        Check(f, commands); Start(f, commands, "operation", "other"); var factoryCalled = false;
+        Check(f, commands); Start(f, commands, "operation", Account("other")); var factoryCalled = false;
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits, effectsFactory: _ =>
         {
             factoryCalled = true;
@@ -79,7 +80,7 @@ public sealed class AuthWorkerLifecycleTests
     public async Task Runtime_initialization_interrupts_more_than_one_page_with_no_automatic_login()
     {
         var topics = new Topics(); using var f = new EngineFixture(topics: topics); var commands = Commands(f);
-        for (var i = 0; i < 205; i++) Start(f, commands, "op" + i, i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        for (var i = 0; i < 205; i++) Start(f, commands, "op" + i, Account(i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
         var before = f.Count("engine_outbox");
         await using var runtime = EngineRuntime.Start(f.Db, topics, f.Time, f.Limits);
         Assert.Equal(205, f.Number("SELECT COUNT(*) FROM engine_sign_in WHERE state='failed' AND reason='interrupted'"));
@@ -105,7 +106,7 @@ public sealed class AuthWorkerLifecycleTests
     [Fact]
     public async Task Initialization_fault_rolls_back_all_interruptions_before_effects_and_worker_exist()
     {
-        var topics = new Topics(); using var f = new EngineFixture(topics: topics); var commands = Commands(f); Check(f, commands); Start(f, commands, "operation", "other");
+        var topics = new Topics(); using var f = new EngineFixture(topics: topics); var commands = Commands(f); Check(f, commands); Start(f, commands, "operation", Account("other"));
         f.Db.Writer.Write("test.auth.initialize-fault", s => s.Execute("CREATE TRIGGER reject_interrupt BEFORE UPDATE ON engine_sign_in WHEN NEW.reason='interrupted' BEGIN SELECT RAISE(ABORT,'interrupt fault'); END"));
         var events = f.Count("engine_event"); var receipts = f.Count("engine_command_receipt"); var factoryCalled = false;
         EngineRuntime? attempted = null;
@@ -117,6 +118,8 @@ public sealed class AuthWorkerLifecycleTests
     }
 
     private static EngineCommands Commands(EngineFixture f) => new(f.Machine, f.Limits, isConfiguredProvider: (p, _) => p == "codex");
+    private static string Account(string home) => AccountContext.Of(
+        new("codex", "Codex", "unused", [], new Dictionary<string, string> { ["CODEX_HOME"] = home }, VendorFamily: "codex"), _ => null);
     private static void Start(EngineFixture f, EngineCommands commands, string id, string account) => Assert.True(f.Db.Writer.Write("test.auth.start", s => commands.Apply(s,
         new(Guid.NewGuid(), f.Machine, new(ActorKind.Window, "owner"), id, 0, 0, f.Time.GetUtcNow().ToUnixTimeMilliseconds()), new StartSignIn("codex", account, null, null))).Applied);
     private static void Check(EngineFixture f, EngineCommands commands) => Assert.True(f.Db.Writer.Write("test.auth.check", s => commands.Apply(s,

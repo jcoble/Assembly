@@ -18,3 +18,7 @@ public sealed record ReportSessionModel(string? Model) : SessionCommand;
 public sealed record ReportSessionTitle(string Title) : SessionCommand;
 
 public sealed record AssignProject(string ProjectId) : SessionCommand;
+
+public sealed record AdoptSession(string Provider, string? Model, string Folder, string Title,
+    string ProviderSessionId, string FromMachine, string FromSessionId, long Epoch,
+    string? RepoUrl = null) : SessionCommand;

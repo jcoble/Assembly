@@ -29,6 +29,7 @@ public sealed class PreparedSessionTitleCommand
             ReportSessionTitle report => (report.Title, (SessionCommand)(report with { Title = "" })),
             RegisterForeignSession foreign => (foreign.Title, (SessionCommand)(foreign with { Title = "" })),
             StartSession start => (start.Title, (SessionCommand)(start with { Title = "" })),
+            AdoptSession adopt => (adopt.Title, (SessionCommand)(adopt with { Title = "" })),
             _ => throw new ArgumentException("Unsupported title command.", nameof(command))
         };
         var bytes = title is null ? null : exactTitleUtf8?.ToArray() ?? Utf8.GetBytes(title);

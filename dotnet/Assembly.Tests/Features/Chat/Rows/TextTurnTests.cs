@@ -3,6 +3,7 @@ using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Domain.Rows;
+using Assembly.Domain.Events;
 using Assembly.Tests.Fixtures;
 using static Assembly.Tests.Features.Chat.Rows.Converted;
 
@@ -61,7 +62,46 @@ public sealed class TextTurnTests
     {
         var answer = string.Concat(FixtureReplay.Events("acp/text.jsonl").OfType<Assembly.Domain.Events.TextChunk>().Select(chunk => chunk.Text));
         Assert.Equal(1590, answer.Length);
+        Assert.Equal(answer, Text(Turn.Last(RowKind.Message), "text"));
         AssertSameJson(SafeMarkdown.ToJson(SafeMarkdown.Parse(answer)), Get(Turn.Last(RowKind.Message), "blocks").GetRawText());
+    }
+
+    [Fact]
+    public void Supplied_user_item_identity_and_ordered_attachment_ids_survive_event_replay_without_changing_delivery_keys()
+    {
+        AgentEvent[] events = [new TurnStarted(0, "run", "prompt", "client", UserItemId: "actual-user-item", AttachmentIds: ["second", "first"]),
+            new TurnSteered(1, "run", "more", "steer-client", UserItemId: "actual-steer-item", AttachmentIds: ["third", "second"])];
+        var users = From(events).OfKind(RowKind.User);
+        Assert.All(users, row => Assert.Null(row.ItemId));
+        Assert.Equal(["actual-user-item", "actual-steer-item"], users.Select(row => Text(row, "itemId")));
+        Assert.Equal(["second", "first"], Get(users[0], "attachmentIds").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal(["third", "second"], Get(users[1], "attachmentIds").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal(users.Select(Json), From(events).OfKind(RowKind.User).Select(Json));
+        var legacy = JsonSerializer.Deserialize("""{"text":"old"}""", RowJsonContext.Rows.UserPayload)!;
+        Assert.Null(legacy.ItemId); Assert.Null(legacy.AttachmentIds);
+        Assert.Null(JsonSerializer.Deserialize("""{"blocks":[]}""", RowJsonContext.Rows.MessagePayload)!.Text);
+    }
+
+    [Fact]
+    public void Direct_message_replacement_preserves_its_exact_markdown_and_clears_obsolete_segment_text()
+    {
+        const string markdown = "## Exact source\n\n[link](https://example.invalid/path) & `code`\n";
+        var rows = From([new TurnStarted(0, "run", "prompt"), new TextChunk(1, "message", "old"),
+            new ToolCallChanged(2, "tool", true, new ToolCallFields(Name: "tool")),
+            new TextChunk(3, "message", "second segment"), new TextChunk(4, "message", markdown, Replace: true)])
+            .OfKind(RowKind.Message);
+        Assert.Equal(markdown, Text(rows[^1], "text"));
+        Assert.Equal("", Text(rows[^2], "text"));
+        AssertSameJson(SafeMarkdown.ToJson(SafeMarkdown.Parse(markdown)), Get(rows[^1], "blocks").GetRawText());
+    }
+
+    [Fact]
+    public void Finished_message_preserves_exact_original_markdown_with_unchanged_blocks()
+    {
+        const string markdown = "## Exact source\n\n[link](https://example.invalid/path) & `code`\n";
+        var row = From([new TurnStarted(0, "run", "prompt"), new TextChunk(1, "message", markdown), new TurnEnded(2, "end_turn", null)]).Last(RowKind.Message);
+        Assert.Equal(markdown, Text(row, "text"));
+        AssertSameJson(SafeMarkdown.ToJson(SafeMarkdown.Parse(markdown)), Get(row, "blocks").GetRawText());
     }
 
     [Fact]

@@ -54,6 +54,7 @@ public sealed partial class EngineDoor(EngineRuntime runtime, SessionStore sessi
         var session = sessions.Get(request.Session) ?? throw new CallFailed("unknown session");
         if (session.Machine is not null)
         {
+            if (request.LocalOnly) throw new CallFailed("session moved");
             if (machines.For(session) is not RemoteMachine remote) throw new CallFailed("unknown owning machine");
             var accepted = await remote.SendOwnerPromptAsync(request, cancellationToken);
             return _ => accepted;

@@ -1,20 +1,17 @@
-//! `BoardPane` is the Build Board tab beside Chat (board#5, board#8). It subscribes to the `board` topic before it
+//! `BoardPane` is the Build Board dropdown body (board#5, board#8). It subscribes to the `board` topic before it
 //! reads, and reads the cards once the topic's state comes, at open and after each reconnect, so no change between the
 //! two is missed. Each change reads the cards again (`BoardState`) and keeps the reader's top card where it was. The
-//! tab holds its topic, its reads, its answers on their way and the backend clock (only while a shown card is still
-//! going), so closing it drops them all; the backend keeps mirroring. The top bar's Board button and the palette's
-//! "Build Board" open it. Replaces the old app's Board popover.
+//! body holds its topic, its reads, its answers on their way and the backend clock (only while a shown card is still
+//! going), so dismissing it drops them all; the backend keeps mirroring. The top bar's existing popover owns its
+//! lifetime, and the palette's "Build Board" opens that same dropdown.
 
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::dock::{
-    BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
-};
+use gpui_kit::component::dock::{DockAreaState, DockState, PanelInfo, PanelState};
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::{ActiveTheme as _, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::*;
-use serde_json::Value;
 
 use super::OpenBoard;
 use super::board_card::{self, STATES};
@@ -26,13 +23,79 @@ use super::board_state::{BoardState, PageRead, QuestionId, question_id};
 use crate::core::clock::backend_clock::BackendClock;
 use crate::core::clock::tick::Tick;
 use crate::core::commands::command_registry::CommandRegistry;
+use crate::core::intents::open_session::OpenSession;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 use crate::core::state::machines::Machines;
-use crate::core::ui::center_panes::CenterPanes;
+use crate::core::state::selected_session::SelectedSession;
 
-/// The pane's name in the saved layout, its one key in the center, and its palette label.
+/// The retired saved pane name and the palette's label.
 pub const BOARD: &str = "Build Board";
+
+/// Removes only the retired Board tabs from an otherwise compatible saved layout.
+pub fn remove_saved_panel(state: &mut DockAreaState) {
+    fn prune(mut panel: PanelState) -> Option<PanelState> {
+        if panel.panel_name == BOARD {
+            return None;
+        }
+        let old_len = panel.children.len();
+        let mut kept = Vec::new();
+        panel.children = panel
+            .children
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, child)| {
+                prune(child).map(|child| {
+                    kept.push(index);
+                    child
+                })
+            })
+            .collect();
+        if kept.len() != old_len {
+            match &mut panel.info {
+                PanelInfo::Tabs { active_index } => {
+                    *active_index = kept
+                        .iter()
+                        .position(|index| *index == *active_index)
+                        .unwrap_or_else(|| {
+                            kept.iter()
+                                .take_while(|index| **index < *active_index)
+                                .count()
+                                .min(kept.len().saturating_sub(1))
+                        });
+                }
+                PanelInfo::Stack { sizes, .. } => {
+                    *sizes = kept
+                        .iter()
+                        .filter_map(|index| sizes.get(*index).copied())
+                        .collect();
+                }
+                PanelInfo::Panel(_) => {}
+            }
+            if kept.is_empty()
+                && matches!(panel.info, PanelInfo::Tabs { .. } | PanelInfo::Stack { .. })
+            {
+                return None;
+            }
+        }
+        Some(panel)
+    }
+    state.center = prune(std::mem::take(&mut state.center)).unwrap_or_else(|| PanelState {
+        panel_name: "TabPanel".into(),
+        children: Vec::new(),
+        info: PanelInfo::tabs(0),
+    });
+    for dock in [
+        &mut state.left_dock,
+        &mut state.right_dock,
+        &mut state.bottom_dock,
+    ] {
+        *dock = dock.take().and_then(|saved| {
+            prune(saved.panel().clone())
+                .map(|panel| DockState::new(panel, saved.placement(), saved.size(), saved.open()))
+        });
+    }
+}
 
 pub struct BoardPane {
     focus: FocusHandle,
@@ -51,30 +114,14 @@ pub struct BoardPane {
     clock: Option<(Entity<BackendClock>, Subscription)>,
     /// Redraws the offline labels when a machine goes up or down.
     _machines: Option<Subscription>,
+    /// Held only until the existing navigation action accepts or refuses the requested selection.
+    opening: Option<Subscription>,
 }
 
 impl BoardPane {
-    /// Restores the tab from the saved layout, adds "Build Board" to the palette, and owns `OpenBoard`.
+    /// Adds the existing dropdown intent to the palette. The top bar owns its anchored popover.
     pub fn register(cx: &mut App) {
-        register_panel(cx, BOARD, |_, _, cx| {
-            let pane = cx.new(BoardPane::new);
-            CenterPanes::remember(BOARD, PanelId::from(pane.entity_id()), cx);
-            panel_handle(pane)
-        });
         CommandRegistry::add(BOARD, Box::new(OpenBoard), cx);
-        cx.on_action(|_: &OpenBoard, cx| {
-            // As the open diff intent: the window is updated once the click that dispatched this is done.
-            if let Some(window) = cx
-                .active_window()
-                .or_else(|| cx.windows().into_iter().next())
-            {
-                cx.defer(move |cx| {
-                    _ = window.update(cx, |_, window, cx| {
-                        CenterPanes::open(BOARD, window, cx, |_, cx| cx.new(BoardPane::new))
-                    })
-                });
-            }
-        });
     }
 
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -105,6 +152,7 @@ impl BoardPane {
             answers: HashMap::new(),
             clock: None,
             _machines,
+            opening: None,
         };
         if let Some(machines) = Machines::try_global(cx) {
             pane.state.machines_changed(
@@ -254,6 +302,30 @@ impl BoardPane {
         self.read_detail(read, cx);
     }
 
+    pub(super) fn open_session(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = SelectedSession::global(cx);
+        let requested = id.to_string();
+        self.opening = Some(cx.observe(&selected, move |pane, selected, cx| {
+            if selected.read(cx).session_id() == Some(requested.as_str()) {
+                pane.opening = None;
+                cx.emit(DismissEvent);
+            }
+        }));
+        window.dispatch_action(Box::new(OpenSession { id: id.into() }), cx);
+        let requested = id.to_string();
+        cx.defer_in(window, move |pane, _, cx| {
+            // OpenSession commits SelectedSession in its action handler; an already selected target is accepted too.
+            // This confirms navigation's selection only, never that the backend loaded the session successfully.
+            pane.opening = None;
+            if selected.read(cx).session_id() == Some(requested.as_str()) {
+                cx.emit(DismissEvent);
+            } else {
+                pane.detail_failed = Some("Could not open the session.".into());
+                pane.redraw(cx);
+            }
+        });
+    }
+
     pub(super) fn filter(&mut self, filter: Option<&str>, cx: &mut Context<Self>) {
         let read = self.state.set_filter(filter.map(String::from));
         self.list.reset(0);
@@ -330,33 +402,13 @@ impl BoardPane {
     }
 }
 
-impl EventEmitter<PanelEvent> for BoardPane {}
-
 impl Focusable for BoardPane {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
 }
 
-impl BasePanel for BoardPane {
-    fn panel_name(&self) -> &'static str {
-        BOARD
-    }
-
-    fn dump(&self, _: &App) -> PanelState {
-        PanelState {
-            panel_name: BOARD.into(),
-            children: Vec::new(),
-            info: PanelInfo::panel(Value::Null),
-        }
-    }
-}
-
-impl Panel for BoardPane {
-    fn title(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        BOARD
-    }
-}
+impl EventEmitter<DismissEvent> for BoardPane {}
 
 impl Render for BoardPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -410,6 +462,7 @@ impl Render for BoardPane {
             .into_any_element(),
             None => list(self.list.clone(), cx.processor(board_card::card))
                 .flex_1()
+                .min_h_0()
                 .px_3()
                 .into_any_element(),
         };
@@ -434,6 +487,7 @@ impl Render for BoardPane {
         v_flex()
             .track_focus(&self.focus)
             .size_full()
+            .min_h_0()
             .child(header)
             .child(body)
             .children(more)

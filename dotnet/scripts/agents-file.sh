@@ -206,7 +206,12 @@ ASSEMBLY_NODE=$(command -v node) ASSEMBLY_CLAUDE=$(command -v claude || true) AS
 import json, os, tomllib
 codex = {"model": "gpt-5.6-luna", "tools": {"update_plan": {"enabled": True}}}
 if os.environ["ASSEMBLY_USER_MCP"] == "off":
-    path = os.path.expanduser("~/.codex/config.toml")
+    codex_home = os.environ.get("CODEX_HOME")
+    if codex_home is None:
+        codex_home = os.path.expanduser("~/.codex")
+    elif codex_home == "":
+        raise ValueError("CODEX_HOME must not be empty when configured")
+    path = os.path.join(codex_home, "config.toml")
     config = tomllib.load(open(path, "rb")) if os.path.exists(path) else {}
     codex["mcp_servers"] = {name: {"enabled": False} for name in sorted(config.get("mcp_servers", {}))}
 claude_env = {"CLAUDE_CODE_ENABLE_TODO_TOOLS": "1"}

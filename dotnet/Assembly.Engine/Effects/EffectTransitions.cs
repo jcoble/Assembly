@@ -10,6 +10,9 @@ using Assembly.Engine.Persistence;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Workflows.Workspaces;
+using Assembly.Engine.Workflows.Receipts;
+using Assembly.Engine.Workflows.Reviews;
+using Assembly.Engine.Workflows.Execution;
 
 namespace Assembly.Engine.Effects;
 
@@ -39,8 +42,8 @@ public static class EffectTransitions
     public static CommandResult Apply(IWriteScope s, CommandContext c, EffectCommand command,
         Func<IWriteScope, CommandContext, Effect, EffectReceipt, MessageDelivery?, MessageOutcome?>? projectCompletion = null, MessageExpiryPolicy? expiryPolicy = null)
     {
-        var row = s.QueryFirst("SELECT version,state,attempt,next_ms,kind FROM engine_outbox WHERE id=$id",
-            r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3), Kind = r.Text(4) }, new SqlArg("$id", c.EntityId));
+        var row = s.QueryFirst("SELECT version,state,attempt,next_ms,kind,session_id FROM engine_outbox WHERE id=$id",
+            r => new { Version = r.Long(0), State = r.Text(1), Attempt = r.Long(2), Next = r.IsNull(3) ? (long?)null : r.Long(3), Kind = r.Text(4), Session = r.IsNull(5) ? null : r.Text(5) }, new SqlArg("$id", c.EntityId));
         CommandResult Reject(string reason) => new(false, false, reason, row?.Version ?? 0, 0, c.Epoch);
         if (c.Actor.Kind != ActorKind.System) return Reject("forbidden");
         if (row is null) return Reject("bad_args");
@@ -53,6 +56,25 @@ public static class EffectTransitions
         {
             case ClaimEffect:
                 if (row.State is not ("pending" or "uncertain") || row.Next > c.NowMs) return Reject("not_due");
+                if (row.Session is not null && row.Kind is "start" or "send" or "answer" or "release" or "stop")
+                {
+                    var fence = EngineJournal.ReadTargetHandoffFence(s, c.Machine, row.Session);
+                    if (fence.State is HandoffFenceState.Closed or HandoffFenceState.Unknown) return Reject("writer_elsewhere");
+                    if (row.Kind == "start" && fence.State == HandoffFenceState.Adopted)
+                    {
+                        var payload = s.QueryFirst("SELECT payload_json FROM engine_outbox WHERE id=$id", r => r.Text(0), new SqlArg("$id", c.EntityId));
+                        try
+                        {
+                            var start = JsonSerializer.Deserialize(payload!, EngineJson.Default.SessionStartEffect);
+                            var prefix = $"start/{row.Session}/";
+                            if (start?.Handoff != fence.Binding || !c.EntityId.StartsWith(prefix, StringComparison.Ordinal)
+                                || !long.TryParse(c.EntityId.AsSpan(prefix.Length), System.Globalization.NumberStyles.None,
+                                    System.Globalization.CultureInfo.InvariantCulture, out var attempt) || attempt < 1)
+                                return Reject("writer_elsewhere");
+                        }
+                        catch (JsonException) { return Reject("writer_elsewhere"); }
+                    }
+                }
                 if (s.Execute($"""
                     UPDATE engine_outbox SET state='inflight',attempt=attempt+1,version=version+1,updated_ms=$now,next_ms=NULL
                     WHERE id=$id AND version=$version AND state IN ('pending','uncertain')
@@ -84,6 +106,11 @@ public static class EffectTransitions
             default: return Reject("invalid_transition");
         }
         var effect = s.QueryFirst("SELECT id,kind,session_id,run_id,payload_json,attempt,order_key FROM engine_outbox WHERE id=$id", Map, new SqlArg("$id", c.EntityId))!;
+        if (command is CompleteEffect && effect.Kind == "workflow_command")
+        {
+            state = CommandStepTransitions.CompletionState(s, c, effect, receipt!, state);
+            next = null;
+        }
         if (command is EnableEffect && state == "pending" && effect.Kind == "send") state = "dead";
         // Validate receipts before touching the row; the provider can report data, never an injected command.
         if (state == "done" && !ValidConfirmation(s, c, effect, receipt!)) return Reject("bad_receipt");
@@ -125,17 +152,18 @@ public static class EffectTransitions
     {
         try
         {
+            if (effect.Kind == "workflow_command") return CommandStepTransitions.ValidConfirmation(scope, effect, receipt);
+            if (effect.Kind == "workflow_receipt") return ReceiptTransitions.ValidConfirmation(scope, effect, receipt);
             if (effect.Kind is "workflow_setup" or "workflow_workspace") return WorkspaceTransitions.ValidConfirmation(scope, effect, receipt);
             if (AuthEffectBinding.IsAuth(effect.Kind)) return AuthEffectBinding.ValidConfirmation(scope, context, effect, receipt);
             return effect.Kind switch
             {
+                "release" => EngineJournal.ValidHandoffReleaseConfirmation(scope, context, effect, receipt),
                 "answer" => receipt.Data.Deserialize(EngineJson.Default.AnswerEffectData)?.ProviderRequestId ==
                     effect.Payload.Deserialize(EngineJson.Default.NeedAnswer)?.ProviderRequestId,
                 "start" => receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)?.State is "idle" or "lost" or "ended",
                 "stop" => receipt.Data.Deserialize(EngineJson.Default.SessionEffectData)?.State is "idle" or "ended",
                 "send" => receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)?.State is "queued" or "delivered_to_turn" or "next_turn" or "unsupported" or "failed",
-                "handoff" => receipt.Data.Deserialize(EngineJson.Default.HandoffEffectData) is { State: "accepted" or "resumed" or "failed" } handoff &&
-                    handoff.NextEpoch == effect.Payload.Deserialize(EngineJson.Default.HandoffTransfer)!.NextEpoch,
                 _ => false
             };
         }
@@ -144,8 +172,10 @@ public static class EffectTransitions
 
     private static void Confirm(IWriteScope s, CommandContext c, Effect effect, EffectReceipt receipt, MessageExpiryPolicy? expiryPolicy, MessageOutcome? projected)
     {
+        if (effect.Kind == "workflow_command") { CommandStepTransitions.Confirm(s, c, effect, receipt); return; }
+        if (effect.Kind == "workflow_receipt") { ReceiptTransitions.Confirm(s, c, effect, receipt, StepTransitions.CompleteCheckedReceipt, ReviewTransitions.Finished, expiryPolicy); return; }
         if (effect.Kind is "workflow_setup" or "workflow_workspace") { WorkspaceTransitions.Confirm(s, c, effect, receipt); return; }
-        if (AuthEffectBinding.IsAuth(effect.Kind)) return;
+        if (AuthEffectBinding.IsAuth(effect.Kind) || effect.Kind == "release") return;
         var session = s.QueryFirst("SELECT version,epoch,state,cancel_requested FROM engine_session WHERE id=$id",
             r => (Version: r.Long(0), Epoch: r.Long(1), State: r.Text(2), CancelRequested: r.Long(3) != 0), new SqlArg("$id", effect.SessionId));
         var target = c with { EntityId = effect.SessionId!, ExpectedVersion = session.Version, Epoch = session.Epoch };
@@ -162,19 +192,6 @@ public static class EffectTransitions
         {
             var data = receipt.Data.Deserialize(EngineJson.Default.MessageEffectData)!;
             SetMessageOutcome(s, c, effect, projected ?? new(data.State, data.ProviderTurnId, data.Reason));
-        }
-        if (effect.Kind == "handoff")
-        {
-            var intent = effect.Payload.Deserialize(EngineJson.Default.HandoffTransfer)!;
-            var data = receipt.Data.Deserialize(EngineJson.Default.HandoffEffectData)!;
-            var version = s.QueryFirst("SELECT version FROM engine_handoff WHERE id=$id", r => r.Long(0), new SqlArg("$id", intent.HandoffId));
-            result = HandoffTransitions.Apply(s, target with
-            {
-                EntityId = intent.HandoffId,
-                ExpectedVersion = version,
-                Epoch = intent.NextEpoch,
-                Actor = new(ActorKind.System, intent.NewHolder)
-            }, new HandoffOutcome(data.State, data.NextEpoch, data.Reason));
         }
         if (result is { Applied: false }) throw new InvalidOperationException($"Effect {effect.Id} confirmation rejected: {result.Error}");
         if (effect.RunId is not null)

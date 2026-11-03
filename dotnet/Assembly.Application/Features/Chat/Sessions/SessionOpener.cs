@@ -36,11 +36,13 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
 
     internal async Task<OpenSession> OpenAsync(string sessionId, string firstText, StageTimes stages, CancellationToken cancellationToken,
         SessionObservation? observation = null, AuthOpenAttempt? authAttempt = null, bool configWarm = false,
-        string? targetId = null, KeyValuePair<string, string>? pick = null, Action? validate = null)
+        string? targetId = null, KeyValuePair<string, string>? pick = null, Action? validate = null, string? strictResumeId = null)
     {
         if (!configWarm && mcp is not null) await mcp.WaitReady(cancellationToken);
         var session = sessionStore.Get(sessionId) ?? throw new InvalidOperationException($"Session {sessionId} no longer exists.");
         validate?.Invoke();
+        if (strictResumeId is not null && (strictResumeId.Length == 0 || session.AcpSessionId != strictResumeId))
+            throw new CallFailed("The accepted public session identity changed.", "handoff_execution_changed");
         var config = sessionStore.Config(sessionId);
         if (targetId is not null && (targetId.Length == 0 || config.ConfigTarget is { } stored && stored != targetId))
             throw new CallFailed("Select the agent configuration again.");
@@ -81,13 +83,37 @@ public sealed class SessionOpener(SessionStore sessionStore, IAgentLauncher laun
             if (!configWarm) mcp?.Revoke(sessionId);
             if (configWarm || pendingInitial) await adapter.ReleaseWarmAsync(running, acceptedNativeId);
             else await adapter.ReleaseAsync(running);
-            if (configWarm && error is JsonRpcException rpc)
+            if (configWarm && strictResumeId is null && error is JsonRpcException rpc)
                 throw rpc.Error.IsAuthRequired
                     ? new CallFailed("Sign in to this provider to read its settings.", "authentication_required")
                     : new CallFailed("The agent could not restore this session's settings.", "settings_unavailable");
-            if (configWarm && error is IOException or ObjectDisposedException)
+            if (configWarm && strictResumeId is null && error is IOException or ObjectDisposedException)
                 throw new CallFailed("The agent ended before its settings were available.", "settings_unavailable");
             throw;
+        }
+    }
+
+    /// <summary>Restores exactly the accepted public ACP session, with no fallback, prompt or replay request.</summary>
+    internal async Task<string> ResumeForHandoffAsync(string sessionId, string expectedAcpSessionId, StageTimes stages,
+        CancellationToken ct, Action validate)
+    {
+        if (string.IsNullOrEmpty(expectedAcpSessionId)) throw new CallFailed("The accepted public session identity is missing.");
+        OpenSession? opened = null;
+        try
+        {
+            // The existing detached warm-open path never falls back from resume to new and installs no MCP servers.
+            opened = await OpenAsync(sessionId, "", stages, ct, configWarm: true, validate: validate, strictResumeId: expectedAcpSessionId);
+            validate();
+            return opened.AcpSessionId;
+        }
+        finally
+        {
+            if (opened is not null)
+            {
+                await opened.Pool.ReleaseWarmAsync(opened.Adapter, opened.AcpSessionId);
+                await opened.Adapter.Link.Exited.WaitAsync(ct);
+                await opened.Adapter.Updates.Completion.WaitAsync(ct);
+            }
         }
     }
 

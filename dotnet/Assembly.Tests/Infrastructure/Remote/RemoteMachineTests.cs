@@ -445,8 +445,17 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     private static async Task<JsonElement> ToolResultAsync(DesktopBackend backend, string sessionToken, string tool, object arguments)
     {
         using var http = Client(backend, sessionToken);
+        http.DefaultRequestHeaders.Accept.ParseAdd("application/json, text/event-stream");
         var call = JsonSerializer.Serialize(new { jsonrpc = "2.0", id = 1, method = "tools/call", @params = new { name = tool, arguments } });
-        return JsonDocument.Parse(await (await http.PostAsync("/mcp", Json(call))).Content.ReadAsStringAsync()).RootElement.GetProperty("result").Clone();
+        using var response = await http.PostAsync("/mcp", Json(call));
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.True(response.IsSuccessStatusCode, $"HTTP {(int)response.StatusCode}: {body}");
+        if (response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+            body = body.Split('\n').Single(line => line.StartsWith("data: ", StringComparison.Ordinal))[6..];
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement;
+        Assert.True(root.TryGetProperty("result", out var result), body);
+        return result.Clone();
     }
 
     private static string? DeliveredRun(string database, string messageId)
@@ -542,14 +551,6 @@ public sealed partial class RemoteMachineTests : IAsyncLifetime
     {
         using var owner = await ApiTests.OpenOwnerSocketAsync(_desktop!.Address, DesktopToken);
         return await ApiTests.QueueSocketTurnAsync(owner, sessionId);
-    }
-
-    private static async Task<JsonElement> GetJsonAsync(DesktopBackend backend, string token, string path)
-    {
-        using var http = Client(backend, token);
-        var answer = await http.GetAsync(path);
-        Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
-        return JsonDocument.Parse(await answer.Content.ReadAsStringAsync()).RootElement.Clone();
     }
 
     private static HttpClient Client(DesktopBackend backend, string token)

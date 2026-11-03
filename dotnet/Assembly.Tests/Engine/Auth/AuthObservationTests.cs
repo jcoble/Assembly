@@ -151,6 +151,7 @@ public sealed class AuthObservationTests
         public void RetryStarted(IWriteScope s, SessionObservation o, AuthRetryExecution e) => inner.RetryStarted(s, o, e);
         public void Replied(IWriteScope s, SessionObservation o, SessionTurnReply final) => inner.Replied(s, o, final);
         public void Recovered(IWriteScope s, RecoveredChatTurn recovered) => inner.Recovered(s, recovered);
+        public void Released(SessionObservation observed, string chatRunId) => inner.Released(observed, chatRunId);
         public bool Complete(IWriteScope s, SessionObservation o, string acp, SessionTurnFinalization final) => inner.Complete(s, o, acp, final);
     }
 }

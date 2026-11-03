@@ -1,7 +1,7 @@
 namespace Assembly.Application.Common.Engine;
 
 public sealed record OwnerPromptRequest(string Session, string Text, string ClientId,
-    IReadOnlyList<string> AttachmentIds, long? Epoch);
+    IReadOnlyList<string> AttachmentIds, long? Epoch, bool LocalOnly = false);
 public sealed record OwnerPromptAccepted(string SessionId, string MessageId, string ClientId,
     string State, long MessageVersion, long Seq, long Epoch, string? RunId);
 public sealed record OwnerPromptManifest(string ClientId, string ContentSha256,

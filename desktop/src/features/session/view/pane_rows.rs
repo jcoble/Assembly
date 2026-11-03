@@ -109,9 +109,9 @@ impl SessionPane {
                             .child(line(state.clone(), muted))
                             .when(state.starts_with("Failed:"), |column| {
                                 let on_action = self.on_action.clone();
-                                let client_id = item
-                                    .key
-                                    .strip_prefix("pending:")
+                                let client_id = self
+                                    .view
+                                    .pending_client(&item.key)
                                     .unwrap_or_default()
                                     .to_string();
                                 column.child(

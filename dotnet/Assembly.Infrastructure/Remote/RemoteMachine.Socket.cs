@@ -141,7 +141,7 @@ internal sealed partial class RemoteMachine
             var message = frame.GetProperty("message").GetString()!;
             if (frame.GetProperty("code").GetString() == "unreachable") throw Unreachable(message, message);
             _status.Reachable(_name);
-            throw new CallFailed(message);
+            throw new CallFailed(message, frame.GetProperty("code").GetString());
         }
         finally
         {

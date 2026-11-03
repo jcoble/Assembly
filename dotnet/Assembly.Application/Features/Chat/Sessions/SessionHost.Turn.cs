@@ -18,7 +18,7 @@ namespace Assembly.Application.Features.Chat.Sessions;
 // The existing owning turn/open/close lifecycle.
 public sealed partial class SessionHost
 {
-    private async Task RunAsync(RunningTurn turn, string text, KeptSession? kept)
+    private async Task<bool> RunAsync(RunningTurn turn, string text, KeptSession? kept)
     {
         // The ticker and the update pump last as long as the session: a kept session hands its own on.
         var ticking = kept?.Ticking ?? new CancellationTokenSource();
@@ -50,6 +50,7 @@ public sealed partial class SessionHost
                         _readerSessionId = session.AcpSessionId;
                     }
                     turn.Session = session;
+                    RememberHandoffExecution(turn);
                     _titlePending |= session.Titled;
                     turn.Opened.TrySetResult();
                     turn.Cost.AgentStarted(session.Resumed, session.SavedCost);
@@ -60,7 +61,11 @@ public sealed partial class SessionHost
 
                 pump = PumpAsync(updates);
             }
-            if (kept is not null) BindPolicy(session, turn);
+            if (kept is not null)
+            {
+                BindPolicy(session, turn);
+                lock (_gate) RememberHandoffExecution(turn);
+            }
             if (turn.Delivery is { } delivery && !CurrentAdmission(delivery, text, delivery.ClientId, delivery.SenderLabel, delivery.FromSessionId))
             {
                 turn.Inserted.TrySetResult(new SendResult.Unknown());
@@ -188,7 +193,7 @@ public sealed partial class SessionHost
                 var working = _tasks.Count > 0 || _subagents.AnyRunning || _startedWorking();
                 keep = session is not null && updates is not null && !lost && !_shuttingDown && (working || toolsOpen);
                 if (keep)
-                    _kept = new KeptSession(session!, updates!, pump, ticking, ticks, TasksDueBy: working ? 0 : Now() + TaskGraceMs, turn.Observation);
+                    _kept = new KeptSession(session!, updates!, pump, ticking, ticks, TasksDueBy: working ? 0 : Now() + TaskGraceMs, turn.Observation, turn);
             }
         }
 
@@ -199,7 +204,7 @@ public sealed partial class SessionHost
         {
             _log.WriteLine($"session {_sessionId} run {turn.RunId}: {turn.Stages}");
             _log.WriteLine($"session {_sessionId}: session kept open for background work");
-            return;
+            return false;
         }
 
         if (session is not null)
@@ -210,6 +215,8 @@ public sealed partial class SessionHost
         await ticking.CancelAsync();
         await ticks;
         ticking.Dispose();
+        MarkHandoffExecutionCompleted(turn, clean: !lost);
+        return true;
     }
 
 }

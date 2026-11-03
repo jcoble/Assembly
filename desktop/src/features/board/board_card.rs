@@ -11,7 +11,6 @@ use gpui_kit::*;
 
 use super::board_pane::BoardPane;
 use super::{board_feed, board_question};
-use crate::core::intents::open_session::OpenSession;
 use crate::core::intents::open_url::OpenUrl;
 use crate::core::state::machines::Machines;
 
@@ -177,14 +176,7 @@ fn detail(
         .ghost()
         .xsmall()
         .label("Open session")
-        .on_click(move |_, window, cx| {
-            window.dispatch_action(
-                Box::new(OpenSession {
-                    id: session.clone(),
-                }),
-                cx,
-            )
-        });
+        .on_click(cx.listener(move |pane, _, window, cx| pane.open_session(&session, window, cx)));
     let body = v_flex().gap_2().pt_1();
     // The session link shows whether or not the detail could be read: it's the way back when it can't.
     let link = h_flex().child(open_session);

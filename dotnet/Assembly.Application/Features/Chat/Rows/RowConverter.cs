@@ -115,7 +115,8 @@ public sealed class RowConverter
                     CloseMessage(batch, steered.At);
                 }
                 batch.Rows.Add(new NewRow(steered.RunId, null, RowKind.User, JsonSerializer.SerializeToElement(
-                    new UserPayload(steered.Text, steered.FromSessionId, steered.ClientId, SenderLabel: steered.SenderLabel), RowJsonContext.Rows.UserPayload), steered.At));
+                    new UserPayload(steered.Text, steered.FromSessionId, steered.ClientId, SenderLabel: steered.SenderLabel,
+                        ItemId: steered.UserItemId, AttachmentIds: steered.AttachmentIds), RowJsonContext.Rows.UserPayload), steered.At));
                 break;
             case TextChunk chunk:
                 AddText(batch, chunk);
@@ -175,7 +176,8 @@ public sealed class RowConverter
     private void StartTurn(RowBatch batch, TurnStarted started)
     {
         _turn = new OpenTurn(started.RunId, started.At, _sessionCost);
-        Add(batch, null, RowKind.User, new UserPayload(started.Text, started.FromSessionId, started.ClientId, SenderLabel: started.SenderLabel), RowJsonContext.Rows.UserPayload, started.At);
+        Add(batch, null, RowKind.User, new UserPayload(started.Text, started.FromSessionId, started.ClientId, SenderLabel: started.SenderLabel,
+            ItemId: started.UserItemId, AttachmentIds: started.AttachmentIds), RowJsonContext.Rows.UserPayload, started.At);
         Add(batch, null, RowKind.Turn, new TurnPayload("started"), RowJsonContext.Rows.TurnPayload, started.At);
     }
 
@@ -194,11 +196,11 @@ public sealed class RowConverter
             if (chunk.Replace)
                 foreach (var prior in items.SkipLast(1))
                     batch.Rows.Add(new NewRow(prior.Run, prior.Item, RowKind.Message,
-                        JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse("")), RowJsonContext.Rows.MessagePayload), chunk.At));
+                        JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse(""), ""), RowJsonContext.Rows.MessagePayload), chunk.At));
             var item = items[^1];
             if (_messageAgentId == native) _message = null;
             batch.Rows.Add(new NewRow(item.Run, item.Item, RowKind.Message,
-                JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse(text)), RowJsonContext.Rows.MessagePayload), chunk.At));
+                JsonSerializer.SerializeToElement(new MessagePayload(SafeMarkdown.Parse(text), text), RowJsonContext.Rows.MessagePayload), chunk.At));
             return;
         }
         if (_message is not null && chunk.MessageId is not null && chunk.MessageId != _messageAgentId)
@@ -336,8 +338,9 @@ public sealed class RowConverter
     {
         if (_message is null)
             return;
-        var blocks = SafeMarkdown.Parse(_message.Text);
-        Add(batch, _message.ItemId, RowKind.Message, new MessagePayload(blocks), RowJsonContext.Rows.MessagePayload, at);
+        var text = _message.Text;
+        var blocks = SafeMarkdown.Parse(text);
+        Add(batch, _message.ItemId, RowKind.Message, new MessagePayload(blocks, text), RowJsonContext.Rows.MessagePayload, at);
         _message = null;
     }
 

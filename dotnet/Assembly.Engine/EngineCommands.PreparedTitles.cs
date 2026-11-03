@@ -16,6 +16,7 @@ public sealed partial class EngineCommands
     internal CommandResult ApplyPreparedSessionTitle(IWriteScope scope, CommandContext context, PreparedSessionTitleCommand prepared, string? preparedError) =>
         EngineJournal.Execute(scope, context, prepared.CanonicalJournal, () => context.Machine != _machine
             ? new(false, false, "wrong_machine", context.ExpectedVersion, 0, context.Epoch)
+            : prepared.Command is AdoptSession ? new(false, false, "forbidden", context.ExpectedVersion, 0, context.Epoch)
             : preparedError is not null ? new(false, false, preparedError, context.ExpectedVersion, 0, context.Epoch)
             : ApplySession(scope, context, prepared.Command, prepared.TitleUtf8, prepared.Command is StartSession
                 ? prepared.StartEffectPayload ?? throw new InvalidOperationException("Prepared Start payload missing.") : null));

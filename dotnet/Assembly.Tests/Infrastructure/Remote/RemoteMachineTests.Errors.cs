@@ -1,5 +1,6 @@
-using System.Net;
+using Assembly.Tests.Infrastructure.Http;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Agents;
 using Assembly.Tests.Draft.Base;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
@@ -10,75 +11,103 @@ namespace Assembly.Tests.Infrastructure.Remote;
 public sealed partial class RemoteMachineTests
 {
     [Fact]
-    public async Task A_route_that_gets_a_socket_call_error_answers_502_not_500()
+    public async Task A_registered_socket_call_reports_the_remote_error_without_an_internal_failure()
     {
-        await using var remote = new MachinesSocketTests.StubRemote { Reply = (feature, _) => feature == "machines" ? throw new CallFailed("boom") : null };
+        await using var remote = new MachinesSocketTests.StubRemote
+        {
+            SocketBackend = _box.Address,
+            SocketFailure = frame => frame.GetProperty("feature").GetString() == "machines" ? "boom" : null
+        };
         await remote.StartAsync();
         await using var desktop = await DesktopOnAsync(remote, Directory.CreateTempSubdirectory("assembly-desktop-").FullName);
 
-        using var http = Client(desktop, DesktopToken);
-        var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
+        using var socket = await ApiTests.OpenOwnerSocketAsync(desktop.Address, DesktopToken);
+        var created = await ApiTests.SocketRequestAsync(socket, 1, "sessions", "create",
+            JsonSerializer.Serialize(new { agent = "claude", repoUrl = "https://github.com/o/r", machine = Box }));
 
-        Assert.Equal(HttpStatusCode.BadGateway, created.StatusCode);
-        Assert.Contains("boom", await created.Content.ReadAsStringAsync());
+        Assert.Equal("error", created.GetProperty("t").GetString());
+        Assert.Equal("failed", created.GetProperty("code").GetString());
+        Assert.Contains("boom", created.GetProperty("message").GetString());
     }
 
     [Fact]
     public async Task The_helper_tools_report_remote_call_errors_and_the_outbox_logs_HTTP_errors()
     {
-        var creates = 0;
+        var startFailures = 0;
+        var outboxRequests = 0;
         await using var remote = new MachinesSocketTests.StubRemote
         {
-            Reply = (feature, _) => feature switch
-            {
-                "sessions" => Interlocked.Increment(ref creates) == 1 ? throw new CallFailed("boom") : """{"sessionId":"s1"}""",
-                "send" => throw new CallFailed("boom"),
-                _ => null
-            }
+            SocketBackend = _box.Address,
+            SocketFailure = frame => frame.GetProperty("feature").GetString() == "engine"
+                && frame.GetProperty("method").GetString() == "foreign_title_begin"
+                && Interlocked.Increment(ref startFailures) <= 2 ? "boom" : null
         };
-        await remote.StartAsync(app => app.MapGet("/outbox", () => Results.Text("outbox down", statusCode: 500)));
+        await remote.StartAsync(app => app.MapGet("/outbox", () =>
+        {
+            Interlocked.Increment(ref outboxRequests);
+            return Results.Text("outbox down", statusCode: 500);
+        }));
         var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
         await using var desktop = await DesktopOnAsync(remote, home);
-        using var http = Client(desktop, DesktopToken);
-        var created = await http.PostAsync("/sessions", Json("""{"agent":"claude","repoUrl":"https://github.com/o/r"}"""));
-        var parent = JsonDocument.Parse(await created.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
-        Assert.Equal(HttpStatusCode.OK, (await http.PostAsync($"/sessions/{parent}/send", Json("""{"text":"hi"}"""))).StatusCode);
+        var parent = (await RestartCallAsync(desktop, DesktopToken, "sessions", "create",
+            new { agent = "claude", repoUrl = "https://github.com/o/r" })).GetProperty("sessionId").GetString()!;
+        await RestartSendAsync(desktop, DesktopToken, parent, "hi", "errors-parent");
         var agent = await _desktopLauncher.NextAsync();
         var parentToken = SessionToken(await agent.StartAsync(acpSessionId: "acp-parent"));
-        await agent.ReadAsync("session/prompt");
-        var start = new { prompt = "Count the lines.", agent = "codex", machine = Box };
+        var prompt = await agent.ReadAsync("session/prompt");
+        await agent.InsertAsync(prompt, "errors-parent-provider");
+        await ProviderInsertionAsync(desktop, DesktopToken, parent, "errors-parent", "errors-parent-provider");
+        var engineMachine = (await RestartCallAsync(_box, BoxToken, "engine", "machine", new { })).GetProperty("machine").GetString()!;
+        var start = new { prompt = "Count the lines.", title = "Count the lines.", provider = "codex", folder = _boxHome, machine = engineMachine };
 
         Assert.Contains("boom", await ToolErrorAsync(desktop, parentToken, "start_session", start));
+        Assert.Equal(1, Volatile.Read(ref startFailures));
         Assert.Contains("boom", await ToolErrorAsync(desktop, parentToken, "start_session", start));
-        Assert.Contains("boom", MessageError(Path.Combine(home, "assembly.db"), "s1"));
-        Assert.Contains("boom", await ToolErrorAsync(desktop, parentToken, "send_message", new { sessionId = "s1", text = "Which file?" }));
+        Assert.Equal(2, Volatile.Read(ref startFailures));
 
-        // s1 is a helper on the remote, so the outbox looks there, and logs the 500 instead of dying.
-        await Until(() => _log.ToString().Contains($"{Box} outbox: {Box} answered 500: outbox down"), TimeSpan.FromSeconds(20));
+        // The real remote owns the accepted child, failed provider operation and message outcomes.
+        _boxLauncher.Launch = _ => Task.FromException<IAgentLink>(new CallFailed("boom"));
+        var child = await ToolAsync(desktop, parentToken, "start_session", start);
+        var helperId = child.GetProperty("sessionId").GetString()!;
+        await FailedMessageAsync(desktop, parentToken, child.GetProperty("messageId").GetString()!);
+        var sent = await ToolAsync(desktop, parentToken, "send_message", new { sessionId = helperId, text = "Which file?" });
+        Assert.Equal("queued", sent.GetProperty("state").GetString());
+        await FailedMessageAsync(desktop, parentToken, sent.GetProperty("messageId").GetString()!);
+        Assert.Equal(0, Volatile.Read(ref outboxRequests));
+    }
+
+    private async Task FailedMessageAsync(Assembly.Desktop.Serve.DesktopBackend desktop, string token, string messageId)
+    {
+        JsonElement status = default;
+        await Until(async () =>
+        {
+            status = await ToolAsync(desktop, token, "message_status", new { messageId });
+            return status.GetProperty("state").GetString() == "failed";
+        });
+        Assert.Equal(messageId, status.GetProperty("messageId").GetString());
+        Assert.Contains("boom", status.GetProperty("reason").GetString());
     }
 
     [Fact]
     public async Task A_remote_that_drops_its_welcome_does_not_fault_the_follower()
     {
-        await using var remote = new MachinesSocketTests.StubRemote
-        {
-            Reply = (feature, _) =>
-            feature == "sessions" ? """{"sessionId":"s1"}""" : null
-        };
+        await using var remote = new MachinesSocketTests.StubRemote { SocketBackend = _box.Address };
         await remote.StartAsync();
         var home = Directory.CreateTempSubdirectory("assembly-desktop-").FullName;
+        string sessionId;
         await using (var first = await DesktopOnAsync(remote, home))
         {
-            using var http = Client(first, DesktopToken);
-            var created = await http.PostAsync("/sessions", Json($$"""{"agent":"claude","repoUrl":"https://github.com/o/r","machine":"{{Box}}"}"""));
-            Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+            var created = await RestartCallAsync(first, DesktopToken, "sessions", "create",
+                new { agent = "claude", repoUrl = "https://github.com/o/r", machine = Box });
+            sessionId = created.GetProperty("sessionId").GetString()!;
+            Assert.Equal("claude", (await SessionAsync(_box, BoxToken, sessionId)).GetProperty("agent").GetString());
         }
 
-        // A new desktop checks the format again, when opening s1 starts following it.
+        // A new desktop checks the format again when opening the same owning session.
         remote.DropVersion = true;
         await using var desktop = await DesktopOnAsync(remote, home);
-        await GetJsonAsync(desktop, DesktopToken, "/sessions/s1/rows");
+        await RowsPageAsync(desktop, DesktopToken, sessionId);
 
-        await Until(() => _log.ToString().Contains($"remote session s1: {Box} didn't answer"));
+        await Until(() => _log.ToString().Contains($"remote session {sessionId}: {Box} didn't answer"));
     }
 }

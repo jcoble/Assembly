@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Handoffs;
 
 namespace Assembly.Engine.Persistence;
 
@@ -19,10 +20,11 @@ public static partial class EngineJournal
         => ExecuteCore(scope, context, context.CommandId.ToString("N"), canonicalCommandJson, transition);
 
     private static CommandResult ExecuteCore(IWriteScope scope, CommandContext context, string receiptKey,
-        string canonicalCommandJson, Func<CommandResult> transition, RelaySendAdmission? relayAdmission = null, TurnReplyAdmission? turnReplyAdmission = null, OwnerNeedAdmission? ownerNeedAdmission = null)
+        string canonicalCommandJson, Func<CommandResult> transition, RelaySendAdmission? relayAdmission = null, TurnReplyAdmission? turnReplyAdmission = null, OwnerNeedAdmission? ownerNeedAdmission = null, HandoffAdmission? handoffAdmission = null)
     {
-        if ((relayAdmission is null ? 0 : 1) + (turnReplyAdmission is null ? 0 : 1) + (ownerNeedAdmission is null ? 0 : 1) > 1)
+        if ((relayAdmission is null ? 0 : 1) + (turnReplyAdmission is null ? 0 : 1) + (ownerNeedAdmission is null ? 0 : 1) + (handoffAdmission is null ? 0 : 1) > 1)
             throw new ArgumentException("Conflicting journal admissions.");
+        handoffAdmission?.ValidateBindings(scope, context, receiptKey, canonicalCommandJson);
         relayAdmission?.ValidateBindings(scope, context, receiptKey, canonicalCommandJson);
         turnReplyAdmission?.ValidateBindings(scope, context, receiptKey, canonicalCommandJson);
         ownerNeedAdmission?.Validate(context, receiptKey, canonicalCommandJson);
@@ -51,6 +53,11 @@ public static partial class EngineJournal
     public static CommandResult Commit(IWriteScope scope, CommandContext context,
         long version, long epoch, IReadOnlyList<EventDraft> events,
         IReadOnlyList<EffectDraft> effects, bool late = false)
+        => CommitCore(scope, context, version, epoch, events, effects, late);
+
+    private static CommandResult CommitCore(IWriteScope scope, CommandContext context,
+        long version, long epoch, IReadOnlyList<EventDraft> events,
+        IReadOnlyList<EffectDraft> effects, bool late, HandoffAdmission? handoffAdmission = null)
     {
         var next = scope.QueryFirst("SELECT next_seq FROM engine_meta WHERE singleton=1", r => r.Long(0));
         long last = 0;
@@ -75,7 +82,7 @@ public static partial class EngineJournal
         for (var index = 0; index < effects.Count; index++)
         {
             var effect = effects[index];
-            var id = (effect.Kind is "answer" or "send" or "probe_provider" or "begin_sign_in" or "cancel_sign_in" ||
+            var id = handoffAdmission is not null ? $"start/{handoffAdmission.Identity.HandoffId}/1" : (effect.Kind is "answer" or "send" or "probe_provider" or "begin_sign_in" or "cancel_sign_in" ||
                 effect.Kind == "stop" && effect.Id.StartsWith("message-stop/", StringComparison.Ordinal))
                 ? effect.Id : $"{context.CommandId:N}-{index}";
             scope.Execute("""

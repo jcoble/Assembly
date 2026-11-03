@@ -28,7 +28,9 @@ pub struct SessionView {
     /// The newest seq applied: the rows subscription's `after` on a reopen.
     pub newest: i64,
     pub pending: HashMap<String, String>,
+    /// Owner clients with positive provider acknowledgment, never merely a reserved user row.
     pub user_clients: HashSet<String>,
+    user_items: HashMap<String, String>,
 }
 
 /// The newest turn row: its seq, run, state and when it was written.
@@ -47,12 +49,12 @@ impl SessionView {
             && row.payload["from"].is_null()
             && let Some(client) = row.payload["clientId"].as_str()
         {
-            self.user_clients.insert(client.to_string());
-            let key = format!("pending:{client}");
-            if self.pending.remove(&key).is_some() {
-                self.items.retain(|item| item.key != key);
-                self.reindex();
+            let key = key_of(row);
+            self.user_items.insert(client.to_string(), key.clone());
+            if positive_acknowledgment(&row.payload["acknowledgment"]) {
+                self.user_clients.insert(client.to_string());
             }
+            self.reconcile_pending_row(client, &key);
         }
         self.newest = self.newest.max(row.seq);
         let key = key_of(row);
@@ -234,17 +236,13 @@ impl SessionView {
             page.apply(row);
         }
         self.user_clients.extend(page.user_clients.iter().cloned());
-        self.items.retain(|item| {
-            !item
-                .key
-                .strip_prefix("pending:")
-                .is_some_and(|client| self.user_clients.contains(client))
-        });
-        self.pending.retain(|key, _| {
-            !key.strip_prefix("pending:")
-                .is_some_and(|client| self.user_clients.contains(client))
-        });
-        self.reindex();
+        for (client, key) in &page.user_items {
+            self.user_items
+                .entry(client.clone())
+                .or_insert_with(|| key.clone());
+            let selected = self.user_items[client].clone();
+            self.reconcile_pending_row(client, &selected);
+        }
         let mut top: Vec<Item> = page
             .items
             .into_iter()
@@ -287,7 +285,8 @@ impl SessionView {
             .pending
             .keys()
             .filter(|key| {
-                !key.strip_prefix("pending:")
+                !self
+                    .pending_client(key)
                     .is_some_and(|client| clients.contains(client))
             })
             .cloned()
@@ -296,8 +295,32 @@ impl SessionView {
             return;
         }
         self.pending.retain(|key, _| !removed.contains(key));
-        self.items.retain(|item| !removed.contains(&item.key));
+        self.items
+            .retain(|item| !item.key.starts_with("pending:") || !removed.contains(&item.key));
         self.reindex();
+    }
+
+    pub fn pending_client<'a>(&'a self, key: &'a str) -> Option<&'a str> {
+        key.strip_prefix("pending:").or_else(|| {
+            self.user_items
+                .iter()
+                .find_map(|(client, item)| (item == key).then_some(client.as_str()))
+        })
+    }
+
+    /// A pre-provider row replaces the optimistic text but keeps its Engine delivery status.
+    fn reconcile_pending_row(&mut self, client: &str, key: &str) {
+        let optimistic = format!("pending:{client}");
+        if let Some(state) = self.pending.remove(&optimistic) {
+            self.pending.insert(key.to_string(), state);
+        }
+        if self.index.contains_key(&optimistic) {
+            self.items.retain(|item| item.key != optimistic);
+            self.reindex();
+        }
+        if self.user_clients.contains(client) {
+            self.pending.remove(key);
+        }
     }
 
     /// Local presentation only: no seq, provider row or run is invented.
@@ -305,7 +328,11 @@ impl SessionView {
         if self.user_clients.contains(client) {
             return;
         }
-        let key = format!("pending:{client}");
+        let key = self
+            .user_items
+            .get(client)
+            .cloned()
+            .unwrap_or_else(|| format!("pending:{client}"));
         self.pending.insert(key.clone(), state.to_string());
         if self.index.contains_key(&key) {
             return;
@@ -354,6 +381,17 @@ impl SessionView {
         let turn = self.turn.as_ref()?;
         (turn.run_id.as_deref() == Some(run_id) && turn.state == TurnState::Started)
             .then_some(turn.at)
+    }
+}
+
+/// Same positive evidence shapes as the owning RowStore; absent/malformed evidence stays unknown.
+fn positive_acknowledgment(ack: &serde_json::Value) -> bool {
+    match ack["kind"].as_str() {
+        Some("prompt_inserted") => ack["providerMessageId"]
+            .as_str()
+            .is_some_and(|id| !id.trim().is_empty()),
+        Some("steer_injected") => ack["providerMessageId"].is_null(),
+        _ => false,
     }
 }
 

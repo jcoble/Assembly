@@ -4,6 +4,7 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Hosting;
 
 namespace Assembly.Infrastructure.Engine;
 
@@ -34,6 +35,20 @@ public sealed partial class EngineFeed
         RequireReply(runtime.Commands.ApplyRecoveredTurnReply(scope, prepared, time.GetUtcNow().ToUnixTimeMilliseconds()));
         helperCards?.Observe(scope, recovered.SessionId);
     }
+    public void Released(SessionObservation observed, string chatRunId)
+    {
+        if (observed.StepId is null) return;
+        ((IEngineRuntime)runtime).Write(scope =>
+        {
+            var terminal = RowStore.TerminalReply(scope, observed.SessionId, chatRunId);
+            if (terminal is null) return 0; // The terminal writer did not commit: no positive release fact.
+            var prepared = EngineCommands.PrepareWorkflowRelease(scope, observed, terminal);
+            if (prepared is not null)
+                RequireReply(runtime.Commands.ApplyWorkflowRelease(scope, prepared, time.GetUtcNow().ToUnixTimeMilliseconds()));
+            return 0;
+        });
+    }
+
     private static void RequireReply(CommandResult result)
     {
         if (!result.Applied) throw new CallFailed(result.Error ?? "turn_reply_refused", result.Error);

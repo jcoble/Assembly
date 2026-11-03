@@ -1,3 +1,4 @@
+using Assembly.Application.Features.Projects;
 using Assembly.Application.Common.Database;
 using Assembly.Infrastructure.Engine.Workflows;
 using Assembly.Engine.Mcp;
@@ -144,6 +145,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         EngineRuntime? engine = null;
         WebApplication? app = null;
         SessionRegistry? sessions = null;
+        WorkflowReceiptServices? workflowReceipts = null;
         BackgroundWork? work = null;
         LiveHub? hub = null;
         RemoteConnections? connections = null;
@@ -192,6 +194,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             // Filled before recovery, whose closing rows go through the hub and so update it.
             var summaries = SessionSummaries.Load(store);
             var sessionStore = SessionStore.Open(db, TimeProvider.System, checkouts, summaries);
+            _ = new ProjectStore(db, TimeProvider.System);
             // App Nap is held while any session has a run open, here or on a remote.
             hub = new LiveHub(store, topics: topics, summaries: summaries, summaryChanged: session =>
             {
@@ -238,6 +241,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                         feed: new EngineFeed(runtime, log, TimeProvider.System, helperCards),
                         mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
+                    workflowReceipts = WorkflowReceipts.Create(db, runtime.Machine, sessions);
                     if (engineEffects is not null) return engineEffects;
                     var catalogue = new AgentCatalogue(sessions, probeFolder, TimeProvider.System);
                     var runner = new SignInRunner(challenges, terminals, launcher, probeFolder, TimeProvider.System, log);
@@ -245,15 +249,21 @@ public sealed class DesktopBackend : IAsyncDisposable
                     var proofRoot = Path.Combine(home, "workflow-proof");
                     var workspace = new WorkspaceEffects(db, runtime.Commands, runtime.Machine, proofRoot,
                         new WorkflowWorkspace(proofRoot), TimeProvider.System);
+                    var commands = new CommandStepEffects(db, runtime.Commands, runtime.Machine, proofRoot, TimeProvider.System,
+                        async (folder, ct) => (await new ReceiptCheckout().Capture(folder, ct)).Fingerprint);
                     return new EffectRouter(new AdapterEffects(db, sessions, sessionStore, store))
                         .Add("probe_provider", new ProviderEffects(db, catalogue, launcher, runtime, TimeProvider.System))
                         .Add("begin_sign_in", signIn)
                         .Add("cancel_sign_in", signIn)
                         .Add("workflow_setup", workspace)
-                        .Add("workflow_workspace", workspace);
+                        .Add("workflow_workspace", workspace)
+                        .Add("workflow_command", commands)
+                        .Add("workflow_receipt", workflowReceipts.Effects);
                 },
                 readExpiryMinutes: MessageExpiryPreferences.ReadMinutes, effectsReady: endpoint.Ready,
                 isConfiguredProvider: IsConfiguredProvider,
+                workflowDispatchFactory: runtime => new WorkflowDispatchPreparation(db, runtime.Commands, runtime.Machine,
+                    TimeProvider.System, Path.Combine(home, "workflow-proof")).PrepareAsync,
                 effectCompleted: (scope, effectId) =>
                 {
                     var childId = scope.QueryFirst("SELECT session_id FROM engine_outbox WHERE id=$id",
@@ -308,7 +318,8 @@ public sealed class DesktopBackend : IAsyncDisposable
             var mcp = new McpServerHost(tokens, new McpRecorder(engine, gate, TimeProvider.System),
                 [new StartSessionTool(gate, () => launcher.Agents.Select(agent => agent.Id).ToArray(), Directory.Exists, new McpMachineStarts(starts)),
                     new ListSessionsTool(gate), new SendMessageTool(gate, foreignStubs.EnsureAsync), new MessageStatusTool(gate),
-                    new AskOwnerTool(gate, answers), new AnswerNeedTool(gate, answers), new ReportTool(gate),
+                    new AskOwnerTool(gate, answers), new AnswerNeedTool(gate, answers), new ReportTool(gate, workflowReceipts!.Capture),
+                    new WorkflowFormatTool(gate), new CheckWorkflowTool(gate, WorkflowLoader.Load), new StartWorkflowTool(gate, WorkflowLoader.Load),
                     new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,

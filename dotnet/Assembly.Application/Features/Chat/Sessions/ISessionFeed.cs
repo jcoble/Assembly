@@ -28,6 +28,8 @@ public interface ISessionFeed
     void RetryStarted(IWriteScope scope, SessionObservation observed, AuthRetryExecution execution);
     void Replied(IWriteScope scope, SessionObservation observed, SessionTurnReply final);
     void Recovered(IWriteScope scope, RecoveredChatTurn recovered);
+    /// Positive owning-execution completion after its original task and adapter ownership release.
+    void Released(SessionObservation observed, string chatRunId);
     bool Complete(IWriteScope scope, SessionObservation observed, string acpSessionId, SessionTurnFinalization final);
 }
 

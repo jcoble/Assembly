@@ -7,6 +7,7 @@ using Assembly.Engine.Recording;
 using Assembly.Engine.Reading;
 using Assembly.Engine.Relays;
 using Assembly.Engine.NeedsMe;
+using Assembly.Engine.Handoffs;
 
 namespace Assembly.Infrastructure.Engine;
 
@@ -26,6 +27,11 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow, RespectRequiredConstructorParameters = true)]
 [JsonSerializable(typeof(ParentNeedPendingArgs))]
+[JsonSerializable(typeof(HandoffIdentity))]
+[JsonSerializable(typeof(HandoffPhaseArgs))]
+[JsonSerializable(typeof(HandoffAdoptArgs))]
+[JsonSerializable(typeof(HandoffSealArgs))]
+[JsonSerializable(typeof(HandoffAck))]
 [JsonSerializable(typeof(ParentNeedPendingPage))]
 [JsonSerializable(typeof(ParentNeedInputArgs))]
 [JsonSerializable(typeof(ParentNeedInputOpened))]

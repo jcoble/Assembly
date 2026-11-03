@@ -80,7 +80,7 @@ public static class RunRecovery
         foreach (var streaming in items.Where(row => row.Kind == RowKind.Delta && !finished.Contains(row.ItemId)).GroupBy(row => row.ItemId))
         {
             var text = string.Concat(streaming.Select(delta => delta.Payload.GetProperty("text").GetString()));
-            Add(batch, runId, streaming.Key, RowKind.Message, new MessagePayload(SafeMarkdown.Parse(text)), RowJsonContext.Rows.MessagePayload, at);
+            Add(batch, runId, streaming.Key, RowKind.Message, new MessagePayload(SafeMarkdown.Parse(text), text), RowJsonContext.Rows.MessagePayload, at);
         }
 
         foreach (var tool in Newest(items, RowKind.Tool))

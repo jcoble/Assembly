@@ -20,6 +20,7 @@ public sealed partial class SessionHost
     /// <summary>Closes a session that was kept for background work, once that work and any run on it are done.</summary>
     private async Task CloseKeptAsync(KeptSession kept, bool lost)
     {
+        await kept.ReleaseTurn.Done;
         decimal? sessionCost;
         lock (_gate)
             sessionCost = _converter.SessionCost;
@@ -28,6 +29,8 @@ public sealed partial class SessionHost
         await kept.Ticking.CancelAsync();
         await kept.Ticks;
         kept.Ticking.Dispose();
+        MarkHandoffExecutionCompleted(kept.ReleaseTurn, clean: !lost);
+        PublishReleased(kept.ReleaseTurn);
         _log.WriteLine($"session {_sessionId}: kept session closed");
     }
 
@@ -78,6 +81,7 @@ public sealed partial class SessionHost
             Done = ended.Task,
         };
         PrepareObservation(_turn, at);
+        _kept = _kept! with { ReleaseTurn = _turn };
         if (_kept is { } kept) BindPolicy(kept.Session, _turn);
         Apply(new RunStarted(at, _turn.RunId, "Continued after a background task finished"), collector);
         _log.WriteLine($"session {_sessionId} run {_turn.RunId}: started by the agent");

@@ -47,6 +47,7 @@ internal sealed class TwoHosts : IAsyncDisposable
         public int MachineCalls;
         public event Action? RetentionCommitted;
         private readonly IEngineEffects? _effects;
+        private readonly Func<string, string, bool>? _isConfiguredProvider;
         public Action<ICallRegistry>? AdditionalFeatures { get; set; }
         public Action? CommandCommitted { get; set; }
         public Action<string>? WriteCommitted { get; set; }
@@ -65,14 +66,20 @@ internal sealed class TwoHosts : IAsyncDisposable
         private SessionRegistry? _needHosts;
         private LiveHub? _needHub;
         private BackgroundWork? _needWork;
+        private IAgentLauncher _needLauncher = null!;
+        internal SessionRegistry NeedHosts => _needHosts!;
+        internal LiveHub NeedHub => _needHub!;
+        internal IAgentLauncher NeedLauncher => _needLauncher;
         private EngineRuntime StartRuntime()
         {
             Sessions = SessionStore.Open(Fixture.Db, Fixture.Time, _checkouts ?? Path.GetTempPath());
             var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time);
             var runtime = EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
-                Fixture.Limits, _effects, cutover: cutover);
+                Fixture.Limits, _effects, cutover: cutover, isConfiguredProvider: _isConfiguredProvider);
             _needHub = new(RowStore.Open(Fixture.Db)); _needWork = new(Fixture.Time, TextWriter.Null);
-            _needHosts = new(_needHub, Sessions, _machineLauncher ?? new Assembly.Tests.Features.Chat.Sessions.FakeLauncher(), Fixture.Time, TextWriter.Null, _needWork);
+            _needLauncher = _machineLauncher ?? new Assembly.Tests.Features.Chat.Sessions.FakeLauncher();
+            _needHosts = new(_needHub, Sessions, _needLauncher, Fixture.Time, TextWriter.Null, _needWork,
+                feed: new EngineFeed(runtime, TextWriter.Null, Fixture.Time));
             Needs = new(new McpGate(runtime, Fixture.Limits, Fixture.Time), runtime, _needHosts, Fixture.Time);
             return runtime;
         }
@@ -80,9 +87,10 @@ internal sealed class TwoHosts : IAsyncDisposable
         private readonly IAgentLauncher? _machineLauncher;
         private readonly string? _checkouts;
         private MachineCalls? _machineCalls;
-        public Host(bool windowCalls = false, IEngineEffects? effects = null, IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? limits = null)
+        public Host(bool windowCalls = false, IEngineEffects? effects = null, IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? limits = null,
+            Func<string, string, bool>? isConfiguredProvider = null)
         {
-            _windowCalls = windowCalls; _effects = effects; _machineLauncher = machineLauncher; _checkouts = checkouts;
+            _windowCalls = windowCalls; _effects = effects; _machineLauncher = machineLauncher; _checkouts = checkouts; _isConfiguredProvider = isConfiguredProvider;
             if (machineLauncher is not null && checkouts is null) throw new ArgumentException("Isolated checkouts required", nameof(checkouts));
             Fixture = new(topics: Topics, limits: limits); Runtime = StartRuntime();
         }
@@ -151,9 +159,9 @@ internal sealed class TwoHosts : IAsyncDisposable
             await App.DisposeAsync();
             if (_machineCalls is not null) await _machineCalls.DisposeAsync();
             await Needs.DisposeAsync();
-            await Runtime.DisposeAsync();
             if (_needHosts is not null) await _needHosts.DisposeAsync();
             if (_needWork is not null) await _needWork.DisposeAsync();
+            await Runtime.DisposeAsync();
             _needHub?.Dispose(); _running = false;
         }
         public async Task Restart()
@@ -241,11 +249,13 @@ internal sealed class TwoHosts : IAsyncDisposable
     private MachineStore? _profiles;
     private readonly Dictionary<string, Host> _additionalHosts = new(StringComparer.Ordinal);
     public TwoHosts(bool windowCalls = false, bool forwardCommands = false, IEngineEffects? effects = null,
-        IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null, TextWriter? remoteLog = null)
+        IAgentLauncher? machineLauncher = null, string? checkouts = null, SessionLimits? macLimits = null, SessionLimits? remoteLimits = null, IEngineEffects? macEffects = null, TextWriter? remoteLog = null,
+        Func<string, string, bool>? isConfiguredProvider = null)
     {
         _forwardCommands = forwardCommands; _remoteLog = remoteLog;
-        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits);
-        Mac = new(windowCalls, effects: macEffects, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits);
+        Remote = new(forwardCommands, effects, machineLauncher, checkouts is null ? null : Path.Combine(checkouts, "remote"), remoteLimits, isConfiguredProvider);
+        Mac = new(windowCalls, effects: macEffects, machineLauncher: machineLauncher, checkouts: checkouts is null ? null : Path.Combine(checkouts, "mac"), limits: macLimits,
+            isConfiguredProvider: isConfiguredProvider);
         if (forwardCommands) Mac.Forwarder = new(machine => _connections!.ByEngineMachine(Mac.Fixture.Db, machine));
     }
     public EngineMirror Mirror { get; private set; } = null!;

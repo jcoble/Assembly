@@ -28,6 +28,7 @@ pub(super) enum InFrame {
     Welcome {
         protocol: u32,
         machine: String,
+        engine: Option<String>,
     },
     Result {
         id: u64,

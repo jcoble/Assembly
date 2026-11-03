@@ -7,4 +7,6 @@ namespace Assembly.Domain.Events;
 /// the sender's id for it.
 /// </summary>
 public sealed record TurnSteered(long At, string RunId, string Text, string? ClientId = null, string? SenderLabel = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FromSessionId = null) : AgentEvent(At);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FromSessionId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? UserItemId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null) : AgentEvent(At);

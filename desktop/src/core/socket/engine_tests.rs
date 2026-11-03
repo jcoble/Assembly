@@ -184,3 +184,110 @@ fn engine_snapshot_finishes_before_ack_and_reconnect_replays_its_fingerprint() {
         json!({"t":"ack","id":id,"stream":"engine","after":5})
     );
 }
+
+#[test]
+fn local_engine_subscription_uses_welcome_engine_identity_and_receives_current_outcome() {
+    welcome_engine_subscription(Some("durable-engine"), None, Some("durable-engine"));
+}
+
+#[test]
+fn explicit_remote_owner_is_preserved_when_welcome_names_a_different_engine() {
+    welcome_engine_subscription(
+        Some("durable-engine"),
+        Some("remote-owner"),
+        Some("remote-owner"),
+    );
+}
+
+#[test]
+fn missing_welcome_engine_omits_machine_and_receives_the_server_local_snapshot() {
+    welcome_engine_subscription(None, None, None);
+}
+
+fn welcome_engine_subscription(engine: Option<&str>, owner: Option<&str>, expected: Option<&str>) {
+    let (engine, expected) = (engine.map(str::to_string), expected.map(str::to_string));
+    let expected_wire = expected.clone();
+    let backend = FakeBackend::start(move |frame| match frame["t"].as_str() {
+        Some("hello") => {
+            let mut welcome = json!({"t":"welcome", "protocol":1, "machine":"display-host"});
+            if let Some(engine) = &engine {
+                welcome["engine"] = json!(engine);
+            }
+            vec![Reply::Frame(welcome)]
+        }
+        Some("sub") => {
+            if frame["machine"].as_str() != expected_wire.as_deref() {
+                return vec![Reply::Frame(
+                    json!({"t":"error","id":frame["id"],"code":"not_found","message":"Unknown mirror machine"}),
+                )];
+            }
+            let machine = expected_wire.as_deref().unwrap_or("durable-engine");
+            vec![
+                Reply::Frame(
+                    json!({"t":"engine_snapshot", "id":frame["id"], "machine":machine, "through":1,
+                    "items":[{"id":"prompt/s/c", "entityKind":"message", "machine":machine,"toSessionId":"s","clientId":"c","state":"queued","reason":"auth_required","version":2}],
+                    "more":false,"at":{"kind":"message.changed","entityId":"prompt/s/c","version":2}}),
+                ),
+                Reply::Frame(
+                    json!({"t":"engine_events","id":frame["id"],"machine":machine,"after":1,"through":2,
+                    "events":[{"machine":machine,"seq":2,"entityKind":"message","entityId":"prompt/s/c","version":3,"data":{"sessionId":"s","state":"held","reason":"needs_me"}}],
+                    "more":false,"at":{"kind":"message.changed","entityId":"prompt/s/c","version":3}}),
+                ),
+            ]
+        }
+        _ => vec![],
+    });
+    let mut client = TestClient::start(backend.port);
+    assert_eq!(
+        client.state(),
+        super::connection_state::ConnectionState::Connecting
+    );
+    assert_eq!(
+        client.state(),
+        super::connection_state::ConnectionState::Connected {
+            machine: "display-host".into()
+        }
+    );
+    let id = client.id();
+    let (updates, mut received) = unbounded();
+    let (send, received_sync) = mpsc::channel();
+    thread::spawn(move || {
+        while let Ok(update) = block_on(received.recv()) {
+            if send.send(update).is_err() {
+                return;
+            }
+        }
+    });
+    client
+        .events
+        .send(Event::SubscribeEngine {
+            id,
+            message: "prompt/s/c".into(),
+            machine: owner.map(str::to_string),
+            updates,
+        })
+        .unwrap();
+    assert_eq!(backend.next()["t"], "hello");
+    let subscribed = backend.next();
+    assert_eq!(subscribed["t"], "sub");
+    assert_eq!(subscribed["stream"], "engine");
+    assert_eq!(subscribed["machine"].as_str(), expected.as_deref());
+    assert!(subscribed.get("after").is_none());
+    if expected.is_none() {
+        assert!(subscribed.get("machine").is_none());
+    }
+    assert!(
+        matches!(received_sync.recv_timeout(DEADLINE).unwrap(), EngineUpdate::Snapshot(items) if items[0]["state"] == "queued" && items[0]["reason"] == "auth_required")
+    );
+    assert!(
+        matches!(received_sync.recv_timeout(DEADLINE).unwrap(), EngineUpdate::Events(items) if items[0]["data"]["state"] == "held")
+    );
+    assert_eq!(
+        backend.next(),
+        json!({"t":"ack","id":id,"stream":"engine","after":1})
+    );
+    assert_eq!(
+        backend.next(),
+        json!({"t":"ack","id":id,"stream":"engine","after":2})
+    );
+}

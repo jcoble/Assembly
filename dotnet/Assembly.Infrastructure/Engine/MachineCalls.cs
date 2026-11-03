@@ -1,3 +1,4 @@
+using Assembly.Engine.Handoffs;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
 using Assembly.Engine.Hosting;
@@ -29,6 +30,7 @@ public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider tim
         RegisterParentNeeds(calls);
         RegisterForeignTitles(calls);
         RegisterMachineStartAck(calls);
+        RegisterHandoffs(calls);
         calls.Read("engine", "start_location", EngineSocketJson.Default.StartLocationArgs, EngineSocketJson.Default.StartLocation,
             (args, call) =>
             {
@@ -185,4 +187,50 @@ public sealed partial class MachineCalls(EngineRuntime runtime, TimeProvider tim
         catch (Exception error) when (error is ArgumentException or JsonException) { throw new CallFailed("bad_parts"); }
     });
 
+    private void RegisterHandoffs(ICallRegistry calls)
+    {
+        calls.Read("engine", "handoff_ack", EngineSocketJson.Default.HandoffIdentity, EngineSocketJson.Default.HandoffAck,
+            (args, call) => Relay(call, operation => Task.FromResult(operation.Return(Bounded(call,
+                ((IEngineRuntime)runtime).Read(scope =>
+                {
+                    RequireHandoffReceiver(scope, args.SourceMachine, args.TargetMachine);
+                    return runtime.Commands.ReadHandoffAck(scope, args);
+                }, operation.Token), EngineSocketJson.Default.HandoffAck)))));
+
+        calls.Write("engine", "handoff_phase", EngineSocketJson.Default.HandoffPhaseArgs, EngineSocketJson.Default.HandoffAck,
+            (args, call) => Relay<Func<IWriteScope, HandoffAck>>(call, operation =>
+                Task.FromResult(operation.Return<Func<IWriteScope, HandoffAck>>(scope =>
+                {
+                    RequireHandoffReceiver(scope, args.Identity.SourceMachine);
+                    return Bounded(call, runtime.Commands.ApplyHandoffPhase(scope, args, time.GetUtcNow().ToUnixTimeMilliseconds()),
+                        EngineSocketJson.Default.HandoffAck);
+                }))), order: args => args.Identity.HandoffId);
+
+        calls.Write("engine", "handoff_adopt", EngineSocketJson.Default.HandoffAdoptArgs, EngineSocketJson.Default.HandoffAck,
+            (args, call) => Relay<Func<IWriteScope, HandoffAck>>(call, operation =>
+                Task.FromResult(operation.Return<Func<IWriteScope, HandoffAck>>(scope =>
+                {
+                    RequireHandoffReceiver(scope, args.Identity.TargetMachine);
+                    return Bounded(call, runtime.Commands.ApplyHandoffAdopt(scope, args, time.GetUtcNow().ToUnixTimeMilliseconds()),
+                        EngineSocketJson.Default.HandoffAck);
+                }))), order: args => args.Identity.HandoffId);
+
+        calls.Write("engine", "handoff_seal", EngineSocketJson.Default.HandoffSealArgs, EngineSocketJson.Default.HandoffAck,
+            (args, call) => Relay<Func<IWriteScope, HandoffAck>>(call, operation =>
+                Task.FromResult(operation.Return<Func<IWriteScope, HandoffAck>>(scope =>
+                {
+                    RequireHandoffReceiver(scope, args.Identity.TargetMachine);
+                    return Bounded(call, runtime.Commands.SealHandoffTarget(scope, args, time.GetUtcNow().ToUnixTimeMilliseconds()),
+                        EngineSocketJson.Default.HandoffAck);
+                }))), order: args => args.Identity.HandoffId);
+    }
+
+    // Routing and the current physical receiver are checked in the supplied snapshot/writer. The Engine owns
+    // identity, epoch, readiness and immutable receipt admission; this door grants no additional authority.
+    private void RequireHandoffReceiver(IReadScope scope, string machine, string? alternative = null)
+    {
+        if (runtime.Machine != machine && runtime.Machine != alternative ||
+            scope.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0)) != runtime.Machine)
+            throw new CallFailed("wrong_machine");
+    }
 }

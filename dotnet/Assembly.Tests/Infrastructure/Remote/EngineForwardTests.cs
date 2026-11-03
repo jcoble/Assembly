@@ -3,6 +3,8 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Effects;
@@ -10,6 +12,7 @@ using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Recording;
 using Assembly.Engine.Sessions;
 using Assembly.Infrastructure.Engine;
+using Assembly.Tests.Features.Chat.Sessions;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
@@ -25,13 +28,14 @@ public sealed partial class EngineForwardTests
         await using var h = await Started(effects);
         var before = LocalState(h);
         using var socket = await Open(h.Mac);
-        var request = Command(1, h.Remote.Fixture.Machine, Guid.NewGuid(), new ResolveNeed("answered", Json("allow")), 1);
+        var request = Command(1, h.Remote.Fixture.Machine, Guid.NewGuid(), new ResolveNeed("answered", Json("allow")), 1, entity: effects.NeedId);
         await Send(socket, request);
         var result = Result(await Read(socket));
         Assert.True(result.Applied);
         await h.Reached(result.Seq);
-        Assert.Equal("answered", h.Mac.Runtime.Reader.Entity("needs_me", "n", default, h.Remote.Fixture.Machine)!.Value.GetProperty("state").GetString());
-        Assert.Equal("request-7", await effects.Answered.Task.WaitAsync(Wait));
+        Assert.Equal("answered", h.Mac.Runtime.Reader.Entity("needs_me", effects.NeedId, default, h.Remote.Fixture.Machine)!.Value.GetProperty("state").GetString());
+        Assert.Equal(effects.RequestId, await effects.Answered.Task.WaitAsync(Wait));
+        Assert.Equal("allow", (await effects.Response.WaitAsync(Wait)).GetProperty("outcome").GetProperty("optionId").GetString());
         await Send(socket, request);
         Assert.Equal(result, Result(await Read(socket)));
         Assert.Single(effects.Requests);
@@ -46,7 +50,7 @@ public sealed partial class EngineForwardTests
         await using var h = await Started(effects);
         var before = LocalState(h);
         var id = Guid.NewGuid();
-        var request = Command(1, h.Remote.Fixture.Machine, id, new ResolveNeed("answered", Json("allow")), 1);
+        var request = Command(1, h.Remote.Fixture.Machine, id, new ResolveNeed("answered", Json("allow")), 1, entity: effects.NeedId);
         var dropped = 0;
         h.Remote.CommandCommitted = () => { if (Interlocked.Exchange(ref dropped, 1) == 0) h.Remote.Endpoint.DropAll(); };
         using var socket = await Open(h.Mac);
@@ -60,9 +64,10 @@ public sealed partial class EngineForwardTests
         await h.Reached(h.Remote.Through);
         await Send(socket, request);
         Assert.Equal(committed, Result(await Read(socket)));
-        await Send(socket, Command(2, h.Remote.Fixture.Machine, id, new ResolveNeed("dismissed", null), 1));
+        await Send(socket, Command(2, h.Remote.Fixture.Machine, id, new ResolveNeed("dismissed", null), 1, entity: effects.NeedId));
         Assert.Equal("command_id_conflict", Result(await Read(socket)).Error);
-        Assert.Equal("request-7", await effects.Answered.Task.WaitAsync(Wait));
+        Assert.Equal(effects.RequestId, await effects.Answered.Task.WaitAsync(Wait));
+        Assert.Equal("allow", (await effects.Response.WaitAsync(Wait)).GetProperty("outcome").GetProperty("optionId").GetString());
         Assert.Single(effects.Requests);
         Assert.Equal(1, h.Remote.Fixture.Number("SELECT COUNT(*) FROM engine_event WHERE kind='needs_me.answered'"));
         Assert.Equal(before, LocalState(h));
@@ -215,7 +220,49 @@ public sealed partial class EngineForwardTests
         try
         {
             await h.Start();
-            Assert.True(h.Remote.Fixture.Apply(new OpenNeed("s", null, null, "permission", "Allow?", [], "request-7", null, null), "n", actor: Adapter).Applied);
+            if (effects is Answers answers)
+            {
+                var remote = h.Remote;
+                var rows = RowStore.Open(remote.Fixture.Db);
+                remote.Sessions.Add("s", "codex", "repo", null!);
+                answers.Inner = new AdapterEffects(remote.Fixture.Db, remote.NeedHosts, remote.Sessions, rows);
+                var host = remote.NeedHosts.For("s");
+                var sending = host.SendAsync("Fixture question", null, null, default);
+                var agent = await Assert.IsType<FakeLauncher>(remote.NeedLauncher).NextAsync();
+                await agent.StartAsync();
+                var prompt = await agent.ReadAsync("session/prompt");
+                await agent.InsertAsync(prompt, "fixture-provider-turn");
+                Assert.IsType<SendResult.Inserted>(await sending.WaitAsync(Wait));
+                using var live = remote.NeedHub.Subscribe("s", rows.LastSeq("s"));
+                await agent.RequestAsync(7, "session/request_permission", """
+                    {"sessionId":"acp-1","title":"Allow?","subject":{"type":"tool_call","toolCall":{"toolCallId":"t1","title":"Allow?"}},
+                     "options":[{"optionId":"allow","name":"Allow","kind":"allow_once"}]}
+                    """.ReplaceLineEndings(""));
+                var responseTask = agent.NextMessageAsync();
+                async Task<JsonElement> PermissionResult()
+                {
+                    var message = await responseTask;
+                    Assert.False(message.TryGetProperty("method", out _), $"expected a result, got {message}");
+                    return message.GetProperty("result");
+                }
+                using var deadline = new CancellationTokenSource(Wait);
+                while (true)
+                {
+                    var rowTask = live.Rows.ReadAsync(deadline.Token).AsTask();
+                    if (await Task.WhenAny(rowTask, responseTask).WaitAsync(deadline.Token) == responseTask)
+                        Assert.Fail($"Provider responded before an open ask was published: {await responseTask}");
+                    var row = await rowTask;
+                    if (row.Kind != "ask" || row.Payload.GetProperty("state").GetString() != "open") continue;
+                    answers.NeedId = row.ItemId![4..];
+                    answers.RequestId = host.CaptureProviderAnswerBinding(answers.NeedId)!.ProviderRequestId;
+                    answers.Response = PermissionResult();
+                    break;
+                }
+                Assert.Equal(answers.RequestId, remote.Fixture.Text("SELECT provider_request_id FROM engine_needs_me WHERE id=$id",
+                    new SqlArg("$id", answers.NeedId)));
+            }
+            else
+                Assert.True(h.Remote.Fixture.Apply(new OpenNeed("s", null, null, "permission", "Allow?", [], null, null, null), "n", actor: Adapter).Applied);
             await h.StartMirror();
             return h;
         }
@@ -258,15 +305,20 @@ public sealed partial class EngineForwardTests
     }
     private sealed class Answers : IEngineEffects
     {
+        public IEngineEffects Inner { get; set; } = null!;
+        public string NeedId { get; set; } = null!;
+        public string RequestId { get; set; } = null!;
+        public Task<JsonElement> Response { get; set; } = null!;
         public ConcurrentQueue<string> Requests { get; } = new();
         public TaskCompletionSource<string> Answered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public Task<EffectReceipt> ExecuteAsync(Effect effect, CancellationToken ct)
+        public async Task<EffectReceipt> ExecuteAsync(Effect effect, CancellationToken ct)
         {
             var request = effect.Payload.Deserialize(EngineJson.Default.NeedAnswer)!.ProviderRequestId;
+            var receipt = await Inner.ExecuteAsync(effect, ct);
+            Assert.Equal(EffectDisposition.Confirmed, receipt.Disposition);
             Requests.Enqueue(request); Answered.TrySetResult(request);
-            return Task.FromResult(new EffectReceipt(EffectDisposition.Confirmed,
-                JsonSerializer.SerializeToElement(new AnswerEffectData(request), EngineJson.Default.AnswerEffectData), null));
+            return receipt;
         }
-        public Task<EffectReceipt> ReconcileAsync(Effect effect, CancellationToken ct) => ExecuteAsync(effect, ct);
+        public Task<EffectReceipt> ReconcileAsync(Effect effect, CancellationToken ct) => Inner.ReconcileAsync(effect, ct);
     }
 }

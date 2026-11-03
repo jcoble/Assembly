@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace Assembly.Engine.Workflows.Runs;
 
-internal static class WorkflowPreparation
+internal static partial class WorkflowPreparation
 {
     internal static PreparedWorkflowCommand Freeze(WorkflowStartBody body, CancellationToken ct)
     {

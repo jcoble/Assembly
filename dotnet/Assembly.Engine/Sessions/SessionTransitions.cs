@@ -9,7 +9,7 @@ using Assembly.Engine.Recording;
 
 namespace Assembly.Engine.Sessions;
 
-public static class SessionTransitions
+public static partial class SessionTransitions
 {
     private sealed record Session(long Version, long Epoch, string State, string Activity,
         string? ParentId, string? RunId, string Machine, bool CancelRequested = false, long? ReservedEpoch = null, string? ProjectId = null);
@@ -145,7 +145,7 @@ public static class SessionTransitions
             return Refused(context, "child_limit");
         if (context.Epoch != 0)
             return new(false, false, "stale_epoch", 0, 0, 0);
-        var startPayload = startEffectPayload is null ? JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession)
+        var startPayload = startEffectPayload is null ? JsonSerializer.SerializeToElement(SessionStartEffect.From(command), EngineJson.Default.SessionStartEffect)
             : startEffectPayload.ForExact(command);
         scope.Execute("""
             INSERT INTO engine_session(id,version,machine,created_ms,updated_ms,task_url,
@@ -204,7 +204,7 @@ public static class SessionTransitions
                     new(context.EntityId, current.RunId, null, current.ParentId, current.State, current.Epoch))], []);
     }
 
-    private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command, MessageExpiryPolicy? expiryPolicy)
+    private static CommandResult SetState(IWriteScope scope, CommandContext context, Session current, SetSessionState command, MessageExpiryPolicy? expiryPolicy, bool checkedWorkflowRelease = false)
     {
         if (context.Actor.Kind != ActorKind.System)
             return Refused(context, "forbidden", current);
@@ -214,7 +214,8 @@ public static class SessionTransitions
         var stopAcknowledged = current.CancelRequested && command.State is "idle" or "ended";
         var allowed = (from, command.State) is ("starting", "idle") or ("idle", "running") or ("running", "idle")
             or ("starting" or "idle" or "running", "lost" or "ended") or ("lost", "idle")
-            || from == "idle" && command.State == "idle" && stopAcknowledged;
+            || from == "idle" && command.State == "idle" && stopAcknowledged
+            || checkedWorkflowRelease && from == "lost" && command.State == "ended";
         if (!allowed)
             return Refused(context, "invalid_transition", current);
         var activity = command.State is "idle" or "running" ? command.State : current.Activity;
@@ -234,6 +235,7 @@ public static class SessionTransitions
             new("$ack", stopAcknowledged ? 1 : 0));
         List<EffectDraft> effects = [];
         List<EventDraft> events = [];
+        if (command.State == "lost") events.AddRange(WaitForLostWorkflowWorker(scope, context));
         if (stopAcknowledged)
             events.AddRange(MessageTransitions.ReleaseHeld(scope, context, context.EntityId, command.State == "ended", effects));
         if (command.State == "ended")

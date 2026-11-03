@@ -133,7 +133,7 @@ public sealed partial class SharedAdapter(IAgentLauncher launcher, string agentI
         return stopping;
     }
 
-    internal async Task RetireAsync(RunningAdapter expected, string? nativeId)
+    internal async Task<bool> RetireAsync(RunningAdapter expected, string? nativeId)
     {
         Task? stopping;
         Task? idle;
@@ -148,6 +148,7 @@ public sealed partial class SharedAdapter(IAgentLauncher launcher, string agentI
         finally { _gate.Release(); }
         if (idle is not null) await idle;
         if (stopping is not null) await stopping;
+        return stopping is not null;
     }
 
     internal async Task ReleaseWarmAsync(RunningAdapter expected, string? nativeId)

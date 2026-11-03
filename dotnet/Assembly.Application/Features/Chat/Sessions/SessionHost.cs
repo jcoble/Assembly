@@ -76,7 +76,7 @@ public sealed partial class SessionHost : IPermissionPolicy
     public const long TaskGraceMs = 2_000;
 
     private sealed record KeptSession(OpenSession Session, ChannelReader<SessionNotification> Updates, Task Pump,
-        CancellationTokenSource Ticking, Task Ticks, long TasksDueBy, SessionObservation? Observation);
+        CancellationTokenSource Ticking, Task Ticks, long TasksDueBy, SessionObservation? Observation, RunningTurn ReleaseTurn);
 
     public SessionHost(string sessionId, LiveHub hub, SessionStore sessionStore, SessionOpener opener, TimeProvider time, TextWriter log,
         BackgroundWork work, Func<bool>? startedWorking = null, Action<string>? turnEnded = null, Action<string>? sessionClosed = null,
@@ -400,5 +400,95 @@ public sealed partial class SessionHost : IPermissionPolicy
         {
             // The agent is gone, so the turn is ending anyway.
         }
+    }
+
+    private RunningTurn? _handoffExecution;
+    private RunningTurn? _handoffCompleted;
+
+    /// <summary>In-process physical ownership only. Public ACP identity is not a provider-native file witness.</summary>
+    internal sealed class HandoffReleaseCapture(SessionHost owner, RunningTurn turn, OpenSession session, long generation)
+    {
+        internal SessionHost Owner { get; } = owner;
+        internal RunningTurn Turn { get; } = turn;
+        internal OpenSession Session { get; } = session;
+        internal long Generation { get; } = generation;
+        public SessionObservation Observation { get; } = turn.Observation!;
+        public string SessionId => Observation.SessionId;
+        public long Epoch => Observation.Epoch;
+        public string AcpSessionId => Session.AcpSessionId;
+        public string OperationId => Turn.RunId;
+    }
+
+    // Called under the host gate at the actual successful open, before the turn's open is published.
+    private void RememberHandoffExecution(RunningTurn turn)
+    {
+        _handoffExecution = turn;
+        _handoffCompleted = null;
+    }
+
+    // A lost execution or a failed cleanup must never become positive disposal evidence.
+    private void MarkHandoffExecutionCompleted(RunningTurn turn, bool clean)
+    {
+        lock (_gate)
+            if (clean && ReferenceEquals(_handoffExecution, turn)) _handoffCompleted = turn;
+    }
+
+    internal HandoffReleaseCapture? CaptureHandoffRelease(long expectedEpoch, string expectedAcpSessionId)
+    {
+        lock (_gate)
+        {
+            if (!HandoffIdle() || _handoffExecution is not { Session: { } session, Observation: { } observed } turn ||
+                !ReferenceEquals(_handoffCompleted, turn) || observed.SessionId != _sessionId || observed.Epoch != expectedEpoch ||
+                session.AcpSessionId != expectedAcpSessionId) return null;
+            return new(this, turn, session, _warmGeneration);
+        }
+    }
+
+    internal async Task ReleaseForHandoffAsync(HandoffReleaseCapture capture, CancellationToken ct)
+    {
+        lock (_gate) RequireHandoffCapture(capture);
+        await capture.Turn.Done.WaitAsync(ct);
+        lock (_gate) RequireHandoffCapture(capture);
+        // Retire accepts the exact instance; a newer adapter is neither selected nor stopped by this capture.
+        var disposed = await capture.Session.Pool.RetireAsync(capture.Session.Adapter, capture.AcpSessionId);
+        if (!disposed) throw new CallFailed("Exact adapter disposal is unconfirmed.", "handoff_disposal_unconfirmed");
+        // Retirement must never dispose a shared adapter that another execution still owns.
+        await capture.Session.Adapter.Link.Exited.WaitAsync(ct);
+        await capture.Session.Adapter.Updates.Completion.WaitAsync(ct);
+        lock (_gate) RequireHandoffCapture(capture);
+    }
+
+    private bool HandoffIdle() => !_shuttingDown && _turn is null && _kept is null && _warm is null &&
+        _asks.Count == 0 && _tasks.Count == 0 && !_subagents.AnyRunning && !_startedWorking();
+
+    private void RequireHandoffCapture(HandoffReleaseCapture capture)
+    {
+        if (!ReferenceEquals(capture.Owner, this) || !ReferenceEquals(_handoffExecution, capture.Turn) ||
+            !ReferenceEquals(_handoffCompleted, capture.Turn) || !ReferenceEquals(capture.Turn.Session, capture.Session) ||
+            capture.Generation != _warmGeneration || !HandoffIdle())
+            throw new CallFailed("The captured handoff execution changed.", "handoff_execution_changed");
+    }
+
+    internal async Task<string> ResumeForHandoffAsync(string expectedAcpSessionId, Action validate, CancellationToken ct)
+    {
+        lock (_gate)
+            if (!HandoffIdle()) throw new CallFailed("The session has another execution.", "handoff_execution_changed");
+        await _session.WaitAsync(ct);
+        try
+        {
+            long generation;
+            lock (_gate)
+            {
+                if (!HandoffIdle()) throw new CallFailed("The session has another execution.", "handoff_execution_changed");
+                generation = Interlocked.Increment(ref _warmGeneration);
+            }
+            validate();
+            var publicId = await _opener.ResumeForHandoffAsync(_sessionId, expectedAcpSessionId, new StageTimes(_time), ct, validate);
+            lock (_gate)
+                if (!HandoffIdle() || generation != _warmGeneration)
+                    throw new CallFailed("The session execution changed during resume.", "handoff_execution_changed");
+            return publicId;
+        }
+        finally { _session.Release(); }
     }
 }

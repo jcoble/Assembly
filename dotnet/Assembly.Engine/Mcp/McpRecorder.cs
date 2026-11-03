@@ -36,7 +36,12 @@ public sealed class McpRecorder(IEngineRuntime runtime, McpGate gate, TimeProvid
             runtime.Write(scope =>
             {
                 CallerRow? row = null;
-                try { row = gate.Resolve(scope, new(session, epoch)); }
+                try
+                {
+                    var caller = new McpCaller(session, epoch);
+                    row = gate.Resolve(scope, caller);
+                    if (row is null && name == "report") row = gate.ResolveReportReplay(scope, caller, arguments);
+                }
                 catch (McpRefused error) { refusal = error.Refusal; }
                 if (row is null)
                 {

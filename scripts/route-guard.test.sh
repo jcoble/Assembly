@@ -37,6 +37,21 @@ if ! output=$(bash scripts/lint.d/40-routes.sh 2>&1); then
 fi
 printf 'ok exact retained route owners pass\n'
 
+# Only these exact adapters may retain the versioned phone HTTP API, including the live endpoint.
+phone_owners=(PhoneChatRoutes PhoneNeedsRoutes PhonePairRoutes PhoneDeviceRoutes PhoneLiveRoutes)
+for name in "${phone_owners[@]}"; do
+  file="dotnet/Assembly.Infrastructure/Phone/$name.cs"
+  mkdir -p "$(dirname "$file")"
+  printf 'app.MapPost("/phone/v1/sessions/{id}/chat", handler);\n' > "$file"
+done
+printf 'app.Map("/phone/v1/live", handler);\n' > dotnet/Assembly.Infrastructure/Phone/PhoneLiveRoutes.cs
+git add -A
+if ! output=$(bash scripts/lint.d/40-routes.sh 2>&1); then
+  printf 'expected exact versioned phone adapters to pass, got:\n%s\n' "$output" >&2
+  exit 1
+fi
+printf 'ok exact versioned phone adapters pass\n'
+
 rejected=0
 expect_rejected() {
   local expected="$1"
@@ -51,6 +66,21 @@ expect_rejected() {
   rejected=$((rejected + 1))
   printf 'ok guard rejected %s\n' "$expected"
 }
+
+# An exception cannot map owner HTTP, a dynamic path, an MCP endpoint, or hide a second owner mapping.
+file=dotnet/Assembly.Infrastructure/Phone/PhoneChatRoutes.cs
+for statement in \
+  'app.MapPost("/sessions/{id}/chat", handler);' \
+  'app.MapPost(path, handler);' \
+  'app.MapPost("/phone/v1/" + path, handler);' \
+  'app.MapMcp("/phone/v1/mcp");' \
+  'app.MapPost("/phone/v1/chat", handler); app.MapGet("/owner", handler);'; do
+  printf '%s\n' "$statement" > "$file"
+  git add -A
+  expect_rejected "$file:1"
+done
+printf 'app.MapPost("/phone/v1/sessions/{id}/chat", handler);\n' > "$file"
+git add -A
 
 # Feature route mapping must fail regardless of whether it is named like the retired adapter.
 printf 'app.Map("/feature", handler);\n' > dotnet/Assembly.Domain/FeatureRoute.cs
@@ -69,6 +99,7 @@ for file in \
   dotnet/Assembly.Infrastructure/Http/ApiServerExtra.cs \
   dotnet/Assembly.Infrastructure/Mcp/OtherMcpRoutes.cs \
   dotnet/Assembly.Infrastructure/Socket/PhoneRoutes.cs \
+  dotnet/Assembly.Infrastructure/Phone/OtherPhoneRoutes.cs \
   dotnet/Assembly.Application/Features/Preferences/PreferencesRoutes.cs \
   dotnet/Assembly.Desktop/Serve/FeatureRoutes.cs \
   dotnet/Assembly.Remote/Serve/FeatureRoutes.cs; do

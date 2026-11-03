@@ -544,3 +544,6 @@ fn a_streaming_turn_sends_no_read_until_it_ends(cx: &mut TestAppContext) {
     );
     assert_eq!(client.reads(), [json!({ "session": "s1", "seq": 7 })]);
 }
+
+#[path = "session_pane_recovery_tests.rs"]
+mod recovery_tests;

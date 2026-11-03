@@ -4,7 +4,7 @@ using Assembly.Engine.Sessions;
 
 namespace Assembly.Engine.Mcp;
 
-public sealed class McpGate(IEngineRuntime runtime, SessionLimits limits, TimeProvider time)
+public sealed partial class McpGate(IEngineRuntime runtime, SessionLimits limits, TimeProvider time)
 {
     public string Machine => runtime.Machine;
 
@@ -17,7 +17,9 @@ public sealed class McpGate(IEngineRuntime runtime, SessionLimits limits, TimePr
     private CallerRow Require(IReadScope scope, McpCaller caller) =>
         Resolve(scope, caller) ?? throw new McpRefused(new("session_gone"));
 
-    public CallerRow? Resolve(IReadScope scope, McpCaller caller)
+    public CallerRow? Resolve(IReadScope scope, McpCaller caller) => ResolveCore(scope, caller, false);
+
+    private CallerRow? ResolveCore(IReadScope scope, McpCaller caller, bool receiptReplay)
     {
         var row = scope.QueryFirst("""
             SELECT s.id,s.epoch,s.state,s.parent_id,0,
@@ -31,7 +33,7 @@ public sealed class McpGate(IEngineRuntime runtime, SessionLimits limits, TimePr
                 r.Long(4), r.IsNull(5) ? null : r.Text(5), r.IsNull(6) ? null : r.Text(6),
                 r.IsNull(7) ? null : checked((int)r.Long(7)), r.Text(8), r.IsNull(9) ? null : r.Text(9), r.Text(10), new System.Text.UTF8Encoding(false, true).GetString(r.Blob(11)), r.Long(12) == 1),
             new("$id", caller.SessionId), new("$machine", runtime.Machine));
-        if (row is null || row.State is "ended" or "lost") return null;
+        if (row is null || row.State == "lost" || row.State == "ended" && !receiptReplay) return null;
         if (row.Epoch != caller.Epoch) throw new McpRefused(new("stale_epoch"));
         if (row.State == "handing_off") throw new McpRefused(new("handing_off"));
         var ancestry = SessionAncestry.Read(scope, runtime.Machine, row.SessionId);

@@ -141,7 +141,7 @@ impl Composer {
             .unwrap_or_default()
     }
 
-    /// A real own user row wins over a queued receipt, including a late response or recovery page.
+    /// Positive provider acknowledgment wins over a queued receipt, including late recovery.
     pub fn delivered(&mut self, session: &str, client_id: &str) {
         let key = (self.machine.clone(), session.to_string());
         self.message_subscriptions
@@ -191,6 +191,7 @@ impl Composer {
                             return;
                         }
                         let key = (owner.clone(), selected.clone());
+                        let mut delivered = false;
                         if let Some(pending) = composer
                             .pending
                             .get_mut(&key)
@@ -200,9 +201,17 @@ impl Composer {
                             {
                                 cx.emit(ComposerEvent::PendingChanged);
                             }
+                            delivered = matches!(
+                                pending.state.split(':').next(),
+                                Some("next_turn" | "delivered_to_turn")
+                            );
                             if pending.terminal() {
                                 composer.message_subscriptions.remove(&expected);
                             }
+                        }
+                        if delivered {
+                            composer.delivered(&selected, &client_id);
+                            cx.emit(ComposerEvent::PendingChanged);
                         }
                     });
                 }),

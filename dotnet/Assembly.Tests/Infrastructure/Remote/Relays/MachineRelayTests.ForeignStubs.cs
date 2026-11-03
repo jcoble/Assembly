@@ -24,7 +24,8 @@ public sealed partial class MachineRelayTests
         await using var h = new TwoHosts(forwardCommands: true, effects: delivery,
             machineLauncher: new RelayTestLauncher(), checkouts: Path.GetTempPath());
         await h.Start();
-        const string sender = "mac-sender", recipient = "remote-recipient";
+        var sender = Guid.NewGuid().ToString("N");
+        var recipient = Guid.NewGuid().ToString("N");
         h.Mac.Fixture.SeedSession(sender); h.Remote.Fixture.SeedSession(recipient);
         var title = new string('é', 40000) + "\0ACTUAL_TITLE😀";
         Assert.True(h.Remote.Fixture.Db.Writer.Write("test.title", scope => h.Remote.Runtime.Commands.ApplyPreparedSessionTitle(scope,
@@ -68,8 +69,33 @@ public sealed partial class MachineRelayTests
         using var committed = h.Mac.Topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => Observe());
         await using var relay = new MachineRelay(h.Mac.Runtime, h.Mac.Forwarder!, h.Connections,
             h.Mac.Topics, h.Mac.Fixture.Time, h.MirrorLog, h.Mac.Needs);
+        var stages = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        var stageCount = 0;
+        void Stage(string value) { if (Interlocked.Increment(ref stageCount) <= 16) stages.Enqueue(value); }
+        h.Remote.MachineReading = (method, _) => { Stage("read:" + method); return Task.CompletedTask; };
+        h.Remote.MachineWriting = (method, _) => { Stage("write:" + method); return Task.CompletedTask; };
+        h.Remote.WriteCommitted = what => Stage("commit:" + what);
+        var owner = h.Connections.CaptureMirrorOwners().Single();
+        var liveBefore = await owner.Mirror.CaptureLiveBindingAsync(default);
         relay.Start(); Observe();
-        await settled.Task.WaitAsync(TimeSpan.FromSeconds(20));
+        try { await settled.Task.WaitAsync(TimeSpan.FromSeconds(20)); }
+        catch (TimeoutException error)
+        {
+            var log = h.MirrorLog.ToString() ?? "";
+            var remoteMessage = h.Remote.Fixture.Text("SELECT json_object('state',state,'reason',substr(reason,1,256),'inFlight',in_flight) FROM engine_message WHERE id=$id", new SqlArg("$id", id));
+            var effects = h.Remote.Fixture.Text("SELECT group_concat(state||':'||coalesce(substr(last_error,1,256),'')) FROM (SELECT state,last_error FROM engine_outbox WHERE session_id=$id ORDER BY created_ms LIMIT 3)", new SqlArg("$id", recipient));
+            var fence = h.Mac.Fixture.Text("SELECT json_object('state',m.state,'machine',m.machine,'framed',m.framed,'inFlight',m.in_flight,'kind',m.sender_kind,'client',m.client_id,'heldEpoch',m.held_epoch,'targetEpoch',m.target_epoch,'senderHolder',f.holder,'senderReserved',f.reserved_epoch,'stubHolder',t.holder,'stubMachine',t.machine,'stubState',t.state) FROM engine_message m JOIN engine_session f ON f.id=m.from_session_id JOIN engine_session t ON t.id=m.to_session_id WHERE m.id=$id", new SqlArg("$id", id));
+            var mirror = h.Mac.Fixture.Text("SELECT json_group_array(json_object('machine',machine,'generation',generation,'state',state,'rowMachine',json_extract(row_json,'$.machine'),'rowState',json_extract(row_json,'$.state'))) FROM (SELECT m.machine,m.generation,m.state,r.row_json FROM engine_mirror m LEFT JOIN engine_mirror_row r ON r.machine=m.machine AND r.generation=m.generation AND r.entity_kind='session' AND r.entity_id=$id LIMIT 3)", new SqlArg("$id", recipient));
+            var liveAfter = await owner.Mirror.CaptureLiveBindingAsync(default);
+            string sourceGate;
+            try
+            {
+                var captured = h.Mac.Runtime.Reader.RelaySource(new(id, h.Remote.Runtime.Machine), default);
+                sourceGate = $"CanSend={(global::Assembly.Engine.Relays.RelayDigests.CanSend(global::Assembly.Engine.Relays.RelayDigests.Describe(captured)))}";
+            }
+            catch (Exception gateError) { sourceGate = $"{gateError.GetType().Name}:{gateError.Message}"; }
+            throw new InvalidOperationException($"source={fence}; mirror={mirror}; liveBefore={liveBefore?.Machine}/{liveBefore?.Generation}/{liveBefore?.IsInvalidated}; liveAfter={liveAfter?.Machine}/{liveAfter?.Generation}; sourceGate={sourceGate}; stages={string.Join(',', stages)}; target={remoteMessage}; sender={h.Remote.Fixture.State("engine_session", sender)}; recipient={h.Remote.Fixture.State("engine_session", recipient)}; effects={effects}; sent={delivery.Sent.Count}; log={(log.Length > 4096 ? log[^4096..] : log)}", error);
+        }
         Assert.Equal(1, h.Remote.Fixture.Count("engine_message"));
         Assert.Equal(1, h.Mac.Fixture.Count("engine_message"));
         Assert.Single(delivery.Sent);

@@ -10,7 +10,7 @@ internal sealed class PreparedStartEffectPayload
     private PreparedStartEffectPayload(StartSession command)
     {
         _command = command;
-        _payload = JsonSerializer.SerializeToElement(command, EngineJson.Default.StartSession);
+        _payload = JsonSerializer.SerializeToElement(SessionStartEffect.From(command), EngineJson.Default.SessionStartEffect);
     }
     internal static PreparedStartEffectPayload Prepare(StartSession frozen) => new(frozen);
     internal JsonElement ForExact(StartSession frozen) => ReferenceEquals(_command, frozen)

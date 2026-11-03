@@ -1,3 +1,5 @@
+using Assembly.Application.Common.Calls;
+using Assembly.Engine.Handoffs;
 using System.IO;
 using System.Net.WebSockets;
 using System.Text.Json;
@@ -6,6 +8,7 @@ using Assembly.Application.Common.Engine;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Sessions;
+using Assembly.Engine.Providers;
 using Assembly.Infrastructure.Remote;
 
 namespace Assembly.Infrastructure.Engine;
@@ -22,7 +25,8 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
 
     public async Task<CommandResult> CommandAsync(string machine, WindowCommand command, CancellationToken ct)
     {
-        var args = JsonSerializer.SerializeToElement(command with { Machine = null }, EngineSocketJson.Default.WindowCommand);
+        var auth = command.Command is CheckProvider or StartSignIn or CancelSignIn;
+        var args = JsonSerializer.SerializeToElement(command with { Machine = auth ? machine : null }, EngineSocketJson.Default.WindowCommand);
         var result = await CallAsync(machine, "engine", "command", args, false, ct);
         return result.Deserialize(EngineJson.Default.CommandResult) ?? throw new IOException("Invalid engine command result");
     }
@@ -64,5 +68,70 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         {
             throw new MachineUnreachable(remote.Name!, $"{remote.Name}: machine socket closed", error);
         }
+    }
+    internal Task<HandoffAck> HandoffAckAsync(EngineMirror.LiveMirrorBinding live, HandoffIdentity identity, CancellationToken ct) =>
+        HandoffAckAsync(HandoffOwner(live, ct), live.OwnerBinding, identity, ct, live);
+
+    internal Task<HandoffAck> HandoffPhaseAsync(EngineMirror.LiveMirrorBinding live, HandoffPhaseArgs args, CancellationToken ct) =>
+        HandoffPhaseAsync(HandoffOwner(live, ct), live.OwnerBinding, args, ct, live);
+
+    internal Task<HandoffAck> HandoffAdoptAsync(EngineMirror.LiveMirrorBinding live, HandoffAdoptArgs args, CancellationToken ct) =>
+        HandoffAdoptAsync(HandoffOwner(live, ct), live.OwnerBinding, args, ct, live);
+
+    internal Task<HandoffAck> HandoffSealAsync(EngineMirror.LiveMirrorBinding live, HandoffSealArgs args, CancellationToken ct) =>
+        HandoffSealAsync(HandoffOwner(live, ct), live.OwnerBinding, args, ct, live);
+
+    private RemoteMachine HandoffOwner(EngineMirror.LiveMirrorBinding live, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (live is null || live.IsInvalidated) throw new CallFailed("mirror_changed");
+        return byMachineId(live.Machine) ?? throw new MachineUnreachable(live.Machine, "Remote engine machine is disconnected");
+    }
+
+    internal async Task<HandoffAck> HandoffAckAsync(RemoteMachine remote, RemoteMachine.OwnerConnectionBinding binding,
+        HandoffIdentity identity, CancellationToken ct, EngineMirror.LiveMirrorBinding live)
+    {
+        RequireHandoffBinding(binding, identity.SourceMachine, identity.TargetMachine);
+        var result = await remote.CallOwnerBindingAsync(binding, "handoff_ack",
+            JsonSerializer.SerializeToElement(identity, EngineSocketJson.Default.HandoffIdentity), ct, live).ConfigureAwait(false);
+        return HandoffReply(result, identity);
+    }
+
+    internal async Task<HandoffAck> HandoffPhaseAsync(RemoteMachine remote, RemoteMachine.OwnerConnectionBinding binding,
+        HandoffPhaseArgs args, CancellationToken ct, EngineMirror.LiveMirrorBinding live)
+    {
+        RequireHandoffBinding(binding, args.Identity.SourceMachine);
+        var result = await remote.CallOwnerBindingAsync(binding, "handoff_phase",
+            JsonSerializer.SerializeToElement(args, EngineSocketJson.Default.HandoffPhaseArgs), ct, live).ConfigureAwait(false);
+        return HandoffReply(result, args.Identity);
+    }
+
+    internal async Task<HandoffAck> HandoffAdoptAsync(RemoteMachine remote, RemoteMachine.OwnerConnectionBinding binding,
+        HandoffAdoptArgs args, CancellationToken ct, EngineMirror.LiveMirrorBinding live)
+    {
+        RequireHandoffBinding(binding, args.Identity.TargetMachine);
+        var result = await remote.CallOwnerBindingAsync(binding, "handoff_adopt",
+            JsonSerializer.SerializeToElement(args, EngineSocketJson.Default.HandoffAdoptArgs), ct, live).ConfigureAwait(false);
+        return HandoffReply(result, args.Identity);
+    }
+
+    internal async Task<HandoffAck> HandoffSealAsync(RemoteMachine remote, RemoteMachine.OwnerConnectionBinding binding,
+        HandoffSealArgs args, CancellationToken ct, EngineMirror.LiveMirrorBinding live)
+    {
+        RequireHandoffBinding(binding, args.Identity.TargetMachine);
+        var result = await remote.CallOwnerBindingAsync(binding, "handoff_seal",
+            JsonSerializer.SerializeToElement(args, EngineSocketJson.Default.HandoffSealArgs), ct, live).ConfigureAwait(false);
+        return HandoffReply(result, args.Identity);
+    }
+
+    private static void RequireHandoffBinding(RemoteMachine.OwnerConnectionBinding binding, string machine, string? alternative = null)
+    {
+        if (binding.Machine != machine && binding.Machine != alternative) throw new CallFailed("wrong_machine");
+    }
+
+    private static HandoffAck HandoffReply(JsonElement result, HandoffIdentity identity)
+    {
+        var ack = result.Deserialize(EngineSocketJson.Default.HandoffAck) ?? throw new IOException("Invalid handoff acknowledgment");
+        return ack.Identity == identity ? ack : throw new IOException("Handoff acknowledgment identity changed");
     }
 }

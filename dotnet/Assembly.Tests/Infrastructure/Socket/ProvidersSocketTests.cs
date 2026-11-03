@@ -82,13 +82,13 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         var generation = _board.Current("op")!.Generation;
         try
         {
-            AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = generation, originalUrl = url.Replace("%2F", "%2f") }));
+            AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = generation, originalUrl = url.Replace("%2F", "%2f") }), "stale_challenge");
             Assert.False(consent.IsCompleted);
-            AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = generation - 1, originalUrl = url }));
+            AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = generation - 1, originalUrl = url }), "stale_challenge");
             var result = await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = generation, originalUrl = url, machine = "local-machine" });
             Assert.Equal("result", result.GetProperty("t").GetString());
             Assert.True(await consent.WaitAsync(Wait));
-            AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = generation, originalUrl = url }));
+            AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = generation, originalUrl = url }), "challenge_consumed");
             Assert.Null(_board.Current("op"));
         }
         finally { _board.Clear("op"); }
@@ -101,10 +101,10 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         var input = new Input();
         var old = _board.Post("op", null, null, null, true, "terminal", input);
         var current = _board.Post("op", null, null, null, true, "terminal", input);
-        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = old.Generation, code = "old" }));
+        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = old.Generation, code = "old" }), "stale_challenge");
         Assert.Empty(input.Values);
         Assert.Equal("result", (await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = current.Generation, code = "CODE_CANARY" })).GetProperty("t").GetString());
-        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = current.Generation, code = "again" }));
+        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = current.Generation, code = "again" }), "challenge_consumed");
         Assert.Equal(["CODE_CANARY"], input.Values);
         Assert.DoesNotContain(_log.Entries, entry => entry.Message.Contains("CODE_CANARY", StringComparison.Ordinal));
         _board.Clear("op");
@@ -120,9 +120,9 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         var input = new Input();
         var challenge = _board.Post("op", null, null, null, true, null, input);
         using var socket = await Open();
-        AssertError(await Call(socket, "challenge", new { operationId = "op" }));
-        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = challenge.Generation, code = "secret" }));
-        AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = challenge.Generation, originalUrl = "secret" }));
+        AssertError(await Call(socket, "challenge", new { operationId = "op" }), "forbidden");
+        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = challenge.Generation, code = "secret" }), "forbidden");
+        AssertError(await Call(socket, "acknowledgeUrl", new { operationId = "op", expectedGeneration = challenge.Generation, originalUrl = "secret" }), "forbidden");
         Assert.Empty(input.Values);
         Assert.Equal(challenge, _board.Current("op"));
         _board.Clear("op");
@@ -134,7 +134,7 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         var input = new Input();
         var challenge = _board.Post("op", null, null, null, true, null, input);
         using var socket = await Open();
-        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = challenge.Generation, code = "secret", machine = "other-machine" }));
+        AssertError(await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = challenge.Generation, code = "secret", machine = "other-machine" }), "wrong_machine");
         Assert.Empty(input.Values);
         Assert.Equal(challenge, _board.Current("op"));
         _board.Clear("op");
@@ -146,17 +146,17 @@ public sealed class ProvidersSocketTests : IAsyncLifetime
         var challenge = _board.Post("op", null, null, null, true, null, new Input { Fail = true });
         using var socket = await Open();
         var result = await Call(socket, "submitCode", new { operationId = "op", expectedGeneration = challenge.Generation, code = "CODE_CANARY" });
-        AssertError(result);
+        AssertError(result, "stale_challenge");
         Assert.DoesNotContain("CODE_CANARY", result.GetRawText());
         Assert.DoesNotContain("EXCEPTION_CANARY", result.GetRawText());
         Assert.DoesNotContain(_log.Entries, entry => entry.Message.Contains("CANARY", StringComparison.Ordinal));
         _board.Clear("op");
     }
 
-    private static void AssertError(JsonElement frame)
+    private static void AssertError(JsonElement frame, string expectedCode)
     {
         Assert.Equal("error", frame.GetProperty("t").GetString());
-        Assert.Equal("failed", frame.GetProperty("code").GetString());
+        Assert.Equal(expectedCode, frame.GetProperty("code").GetString());
     }
 
     private async Task<ClientWebSocket> Open()

@@ -91,7 +91,7 @@ JS
 chmod +x "$tmp/bin/gh"
 
 run_agents() {
-  env HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" \
+  env -u CODEX_HOME HOME="$tmp/home" PATH="$tmp/bin:/usr/bin:/bin" FAKE_RELEASES_FILE="$tmp/releases.json" \
     FAKE_ASSET_ROOT="$tmp/releases" FAKE_GH_CALLS="$tmp/gh-calls.jsonl" "$@" \
     bash "$here/../dotnet/scripts/agents-file.sh" "$tmp/adapters" "$tmp/agents.json"
 }
@@ -109,6 +109,8 @@ checks = {
  "claude_connectors_off": claude_env.get("ENABLE_CLAUDEAI_MCP_SERVERS") == "false",
  "codex_plugins_default": "plugins" not in codex,
  "user_mcp_off": codex.get("mcp_servers") == {"alpha": {"enabled": False}},
+ "private_user_mcp_off": codex.get("mcp_servers") == {"private_only": {"enabled": False}},
+ "missing_private_user_mcp": codex.get("mcp_servers") == {},
  "claude_connectors_on": "ENABLE_CLAUDEAI_MCP_SERVERS" not in claude_env,
  "user_mcp_on": "mcp_servers" not in codex and "plugins" not in codex,
  "cli_paths": agents["claude"].get("cli", "").endswith("/claude") and "cli" not in agents["codex"],
@@ -121,6 +123,17 @@ PY
 }
 
 # The app release is designated latest, but only the newest complete provider-tagged release is eligible.
+mkdir -p "$tmp/private-codex"
+printf '[mcp_servers.private_only]\ncommand = "private-fixture"\n' >"$tmp/private-codex/config.toml"
+expect_config "explicit CODEX_HOME selects only its private MCP config" private_user_mcp_off CODEX_HOME="$tmp/private-codex"
+expect_config "missing private config does not fall back to default home" missing_private_user_mcp CODEX_HOME="$tmp/absent-private-codex"
+private_descriptor=$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)
+if run_agents CODEX_HOME= 2>"$tmp/empty-codex-home.err"; then
+  echo "FAIL explicitly empty CODEX_HOME was accepted"; exit 1
+fi
+rg -q 'CODEX_HOME must not be empty when configured' "$tmp/empty-codex-home.err"
+[[ "$(sha256sum "$tmp/agents.json" | cut -d' ' -f1)" == "$private_descriptor" ]]
+echo "ok   explicitly empty CODEX_HOME refuses config lookup and preserves the descriptor"
 expect_config "selects newest complete provider release, not app latest or incomplete/draft releases" entries
 expect_config "records explicit adapter vendor families" vendor_families
 python3 - "$tmp/gh-calls.jsonl" <<'PY'

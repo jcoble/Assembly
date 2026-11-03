@@ -58,7 +58,8 @@ public sealed partial class SessionHost
                     turn.RetryExecution = new(turn.RunId, admission!.MessageId, admission.EffectId, admission.Attempt,
                         admission.PriorEffectId!, admission.ClientId, admission.Epoch, row.Seq, row.RunId!);
                 var kept = _kept;
-                var started = new TurnStarted(Now(), turn.RunId, text, clientId, senderLabel, fromSessionId);
+                var started = new TurnStarted(Now(), turn.RunId, text, clientId, senderLabel, fromSessionId,
+                    UserItemId: row is null ? Guid.NewGuid().ToString() : null, AttachmentIds: attachmentIds.ToArray());
                 var committed = false;
                 try
                 {
@@ -85,7 +86,8 @@ public sealed partial class SessionHost
                 _turn = turn;
                 sending = turn.Inserted.Task;
                 if (clientId is not null) _sending[clientId] = (text, senderLabel, fromSessionId, sending, admission?.EffectId, turn.RunId, attachmentIds.ToArray());
-                _lastTurn = turn.Done = Task.Run(() => RunAsync(turn, text, kept), CancellationToken.None);
+                var execution = Task.Run(() => RunAsync(turn, text, kept), CancellationToken.None);
+                _lastTurn = turn.Done = PublishReleasedAsync(turn, execution);
                 if (admission is not null) _lastDelivery = (admission, turn.UserRow, turn.Done);
                 owns = true;
             }
@@ -104,6 +106,23 @@ public sealed partial class SessionHost
         {
             if (owns && clientId is not null && _sending.TryGetValue(clientId, out var active) && ReferenceEquals(active.Send, sending))
                 _sending.TryRemove(new(clientId, active));
+        }
+    }
+
+    // The task is captured before a later turn can replace it. This owned completion joins on shutdown.
+    private async Task PublishReleasedAsync(RunningTurn original, Task<bool> execution)
+    {
+        if (await execution) PublishReleased(original);
+    }
+
+    private void PublishReleased(RunningTurn original)
+    {
+        if (_feed is null || original.Observation is not { } observed) return;
+        try { _feed.Released(observed, original.RunId); }
+        catch (Exception error)
+        {
+            // A failed terminal/release write cannot manufacture positive release or change auth retry completion.
+            _log.WriteLine($"session {_sessionId} run {original.RunId}: execution release wasn't saved: {error.Message}");
         }
     }
 
@@ -187,7 +206,8 @@ public sealed partial class SessionHost
         Assembly.Application.Common.Engine.UserRowReference? userRow = null;
         lock (_gate)
         {
-            var batch = _converter.Apply(new TurnSteered(Now(), turn.RunId, text, clientId, label, fromSessionId));
+            var batch = _converter.Apply(new TurnSteered(Now(), turn.RunId, text, clientId, label, fromSessionId,
+                UserItemId: Guid.NewGuid().ToString(), AttachmentIds: admission?.AttachmentIds.ToArray()));
             var saved = _hub.Publish(_sessionId, batch);
             var user = saved.Single(value => value.Kind == "user");
             if (turn.Observation is { } observed) userRow = new(user.Seq, turn.RunId, observed.Epoch);

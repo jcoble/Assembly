@@ -17,7 +17,7 @@ fn a_pending_prompt_has_no_run_and_its_own_user_row_replaces_it_once() {
     assert_eq!(view.items[0].run_id, None);
     assert_eq!(view.active_run(None), None);
     let own: Row = serde_json::from_value(json!({"sessionId":"s","seq":5,"runId":"real",
-        "itemId":"u","kind":"user","createdAt":2,"payload":{"text":"hello","clientId":"c"}}))
+        "itemId":"u","kind":"user","createdAt":2,"payload":{"text":"hello","clientId":"c","acknowledgment":{"kind":"prompt_inserted","providerMessageId":"provider-real"}}}))
     .unwrap();
     view.apply(&own);
     view.apply(&own);
@@ -32,7 +32,7 @@ fn a_reopen_page_reconciles_pending_by_client_not_text() {
     let mut view = SessionView::default();
     view.pending_prompt("ours", "same text", "queued", 1);
     let mut user: Row = serde_json::from_value(json!({"sessionId":"s","seq":5,"runId":"real",
-        "itemId":"u","kind":"user","createdAt":2,"payload":{"text":"same text","clientId":"other"}})).unwrap();
+        "itemId":"u","kind":"user","createdAt":2,"payload":{"text":"same text","clientId":"other","acknowledgment":{"kind":"steer_injected","providerMessageId":null}}})).unwrap();
     view.prepend_page(vec![user.clone()], false);
     assert_eq!(view.items.len(), 2);
     user.seq = 6;
@@ -100,4 +100,81 @@ fn the_newest_seq_is_the_highest_applied_live_or_paged() {
             .collect::<Vec<_>>(),
     );
     assert_eq!(view.newest, all.iter().map(|r| r.seq).max().unwrap());
+}
+
+#[test]
+fn auth_refusal_row_keeps_one_prompt_with_the_recovered_engine_hold() {
+    let own: Row = serde_json::from_value(json!({"sessionId":"s","seq":6,"runId":"real",
+        "itemId":null,"kind":"user","createdAt":2,
+        "payload":{"text":"exact body","clientId":"c","authBlocker":{"messageId":"prompt/s/c"}}}))
+    .unwrap();
+    for reopened in [false, true] {
+        let mut view = SessionView::default();
+        if !reopened {
+            view.pending_prompt("c", "exact body", "sending", 1);
+        }
+        view.prepend_page(vec![own.clone()], false);
+        view.pending_prompt("c", "exact body", "queued: auth_required", 3);
+        assert_eq!(view.items.len(), 1);
+        assert_eq!(view.items[0].key, "seq:6");
+        assert_eq!(view.items[0].run_id.as_deref(), Some("real"));
+        assert_eq!(view.pending["seq:6"], "queued: auth_required");
+        assert_eq!(view.pending_client("seq:6"), Some("c"));
+        assert!(!view.user_clients.contains("c"));
+        view.retain_pending(&Default::default());
+        assert!(view.pending.is_empty());
+        assert_eq!(
+            view.items.len(),
+            1,
+            "delivery removes only the status, never the transcript row"
+        );
+    }
+}
+
+#[test]
+fn only_positive_own_provider_evidence_suppresses_pending_recovery() {
+    let cases = [
+        (json!(null), false),
+        (
+            json!({"kind":"prompt_inserted","providerMessageId":""}),
+            false,
+        ),
+        (
+            json!({"kind":"prompt_inserted","providerMessageId":"  "}),
+            false,
+        ),
+        (
+            json!({"kind":"prompt_inserted","providerMessageId":null}),
+            false,
+        ),
+        (
+            json!({"kind":"steer_injected","providerMessageId":"invented"}),
+            false,
+        ),
+        (json!({"kind":"steer_injected"}), true),
+        (json!({"kind":"unknown","providerMessageId":"p"}), false),
+        (
+            json!({"kind":"prompt_inserted","providerMessageId":"provider-real"}),
+            true,
+        ),
+        (
+            json!({"kind":"steer_injected","providerMessageId":null}),
+            true,
+        ),
+    ];
+    for (ack, positive) in cases {
+        for foreign in [false, true] {
+            let own: Row = serde_json::from_value(json!({"sessionId":"s","seq":6,"runId":"real",
+                "itemId":null,"kind":"user","createdAt":2,"payload":{"text":"body","clientId":"c",
+                "from":foreign.then_some("peer"),"acknowledgment":ack}}))
+            .unwrap();
+            let mut view = SessionView::default();
+            view.pending_prompt("c", "body", "sending", 1);
+            view.apply(&own);
+            view.pending_prompt("c", "body", "queued: auth_required", 3);
+            assert_eq!(view.user_clients.contains("c"), positive && !foreign);
+            assert_eq!(view.pending.is_empty(), positive && !foreign);
+            assert_eq!(view.items.len(), if foreign { 2 } else { 1 });
+        }
+    }
 }

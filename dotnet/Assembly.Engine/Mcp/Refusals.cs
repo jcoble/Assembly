@@ -16,6 +16,7 @@ public static class Refusals
         {
             "depth_limit" => $"Sessions {Value("depth")} levels down can't start sessions (the limit is {Value("limit")}, set by \"Session depth limit\" in Settings); ask your starter to start it.",
             "child_limit" => $"You already have {Value("limit")} sessions at work (the limit is set by \"Sessions each session may run\" in Settings); wait for one to finish.",
+            "owner_reserved" when tool == "start_workflow" => "Only a top-level session can start a workflow; ask your starter to start it.",
             "owner_reserved" => "Only a top-level session can ask Jesse. Send your question to your starter with send_message.",
             "not_reachable" => "You can't reach that session. list_sessions shows the ones you can.",
             "pair_limit" => "You've reached the message limit for that session.",
