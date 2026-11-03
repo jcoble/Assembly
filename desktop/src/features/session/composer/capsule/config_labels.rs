@@ -33,11 +33,11 @@ pub fn approval_description(choice: &ConfigChoice) -> Option<String> {
         .or_else(|| choice.description.clone())
 }
 
-/// A model's name: the provider's label first, else its id in title case.
+/// A model's name: the provider's label, else its id exactly as the provider sent it.
 pub fn model_label(option: &ConfigOption, value: &str) -> String {
     match option.options.iter().find(|choice| choice.value == value) {
         Some(choice) if !choice.name.is_empty() => choice.name.clone(),
-        _ => tidy_model(value),
+        _ => value.to_string(),
     }
 }
 
@@ -105,35 +105,6 @@ fn approval_words(value: &str) -> Option<(&'static str, &'static str)> {
         ),
         _ => return None,
     })
-}
-
-fn tidy_model(value: &str) -> String {
-    let words: Vec<&str> = value.split(['-', '_', ' ']).filter(|word| !word.is_empty()).collect();
-    let mut out: Vec<String> = Vec::new();
-    let mut at = 0;
-    while at < words.len() {
-        let word = words[at];
-        // GPT and its version read as one word.
-        if word.eq_ignore_ascii_case("gpt") {
-            match words.get(at + 1) {
-                Some(version) => {
-                    out.push(format!("GPT-{version}"));
-                    at += 2;
-                }
-                None => {
-                    out.push("GPT".into());
-                    at += 1;
-                }
-            }
-            continue;
-        }
-        let mut letters = word.chars();
-        out.push(letters.next().map_or_else(String::new, |first| {
-            first.to_uppercase().chain(letters).collect()
-        }));
-        at += 1;
-    }
-    out.join(" ")
 }
 
 #[cfg(test)]

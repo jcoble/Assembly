@@ -11,7 +11,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::Composer;
-use crate::features::session::composer::config_menu::OnSelect;
+use crate::features::session::composer::config_pills::OnSelect;
 use crate::features::session::composer::config_pills::ConfigPills;
 use crate::features::session::composer::context_gauge::ContextGauge;
 use crate::features::session::composer::shape::{Slot, slot};

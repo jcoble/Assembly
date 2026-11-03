@@ -141,7 +141,6 @@ impl SessionPane {
                 return div().into_any_element();
             };
             let (row, fresh, fold, space) = pane.update(cx, |pane, cx| {
-                pane.make_form(entry, window, cx);
                 (
                     pane.row(entry, cx),
                     pane.fresh_key(entry),

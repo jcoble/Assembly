@@ -183,16 +183,22 @@ impl AskRow {
 
     /// The message and what answers it, under the title; a settled one's message and fields, with nothing to answer.
     pub fn controls(&self,cx:&App)->Div {
-        use crate::core::ui::ask::controls::{self,ControlAction};
+        use crate::core::ui::ask::controls;
         let choices=permission_choices(&self.ask.options).into_iter().map(|(id,label)|{let solid=label=="Allow";(id,label,solid)}).collect::<Vec<_>>();
+        controls::render(&self.ask_id,&self.ask,self.form.as_ref(),&choices,self.on_control(),cx)
+    }
+
+    /// What this ask's controls call, whichever surface draws them.
+    pub fn on_control(&self)->crate::core::ui::ask::controls::OnControl {
+        use crate::core::ui::ask::controls::ControlAction;
         let ask_id=self.ask_id.clone();let on_action=self.on_action.clone();
-        controls::render(&self.ask_id,&self.ask,self.form.as_ref(),&choices,Rc::new(move|action,window,cx| {
+        Rc::new(move|action,window,cx| {
             let action=match action {
                 ControlAction::Answer(answer)=>SessionAction::Answer{ask_id:ask_id.clone(),answer},
                 ControlAction::Pick{field,value,many}=>SessionAction::Pick{ask_id:ask_id.clone(),field,value,many},
                 ControlAction::Submit=>SessionAction::SubmitAsk{ask_id:ask_id.clone()},
             };on_action(action,window,cx);
-        }),cx)
+        })
     }
 }
 #[cfg(test)]

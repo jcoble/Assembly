@@ -17,6 +17,10 @@ use crate::core::state::selected_session::SelectedSession;
 use crate::core::ui::center_panes::CenterPanes;
 use crate::features::session::client::session_client::SessionClient;
 use crate::features::session::client::socket_session_client::SocketSessionClient;
+use crate::core::ui::ask::form::AskForm;
+use crate::features::session::composer::answer_panel::AnswerPanel;
+use crate::features::session::composer::shape::next_answer;
+use crate::features::session::view::ask_row::AskRow;
 use crate::features::session::view::plan_card::PlanCard;
 use crate::features::session::view::session_action::SessionAction;
 
@@ -96,6 +100,28 @@ impl Panel for SessionPane {
     }
 }
 
+impl SessionPane {
+    /// The ask the box answers next, its form made the first time it's drawn: text fields need the window.
+    fn answer_panel(&mut self, window: &mut Window, cx: &mut App) -> Option<AnswerPanel> {
+        let (ask_id, ask, count) = next_answer(&self.view.items)
+            .map(|(ask_id, ask, count)| (ask_id.to_string(), ask.clone(), count))?;
+        if !self.forms.contains_key(&ask_id)
+            && let Some(form) = AskForm::of(&ask, window, cx)
+        {
+            self.forms.insert(ask_id.clone(), form);
+        }
+        let form = self.forms.get(&ask_id).cloned();
+        let on_action = AskRow {
+            ask_id: ask_id.clone(),
+            ask: ask.clone(),
+            form: None,
+            on_action: self.on_action.clone(),
+        }
+        .on_control();
+        Some(AnswerPanel { ask_id, ask, form, count, on_action })
+    }
+}
+
 impl Render for SessionPane {
     /// The header, the timeline, the plan card, the status (why the last call failed, or "Offline, showing the saved
     /// session") and the composer, top to bottom.
@@ -108,6 +134,8 @@ impl Render for SessionPane {
             self.grow_asked = true;
             cx.on_next_frame(window, |pane, window, cx| pane.grow_frame(window, cx));
         }
+        let answer = self.answer_panel(window, cx);
+        self.composer.update(cx, |composer, _| composer.set_answer(answer));
         div()
             .size_full()
             .flex()

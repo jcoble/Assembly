@@ -14,6 +14,7 @@ use gpui_kit::*;
 use serde_json::json;
 
 use super::agent_config::AgentConfig;
+use super::answer_panel::AnswerPanel;
 use super::attachment::{Attachment, AttachmentState};
 use super::context_meter::ContextMeter;
 use super::shape::{Lock, hint};
@@ -85,6 +86,8 @@ pub struct Composer {
     agent_name: Option<SharedString>,
     /// The agent is waiting on an answer elsewhere, so the draft and its controls hold.
     locked: Option<Lock>,
+    /// What the agent is waiting on, answered inside the box. The session pane sets it as it draws.
+    answer: Option<AnswerPanel>,
     /// Settings picks still being written.
     picking: u32,
     /// A new session's own controls (composer_start.rs).
@@ -203,6 +206,7 @@ impl Composer {
             _engine: engine,
             agent_name: None,
             locked: None,
+            answer: None,
             picking: 0,
             start_slots: None,
             previews: HashMap::new(),
@@ -252,6 +256,16 @@ impl Composer {
     }
 
     /// The agent is waiting on an answer elsewhere; the draft and its controls hold until it has one.
+    /// Drawn with the pane that owns the box, so it needs no notify of its own.
+    pub fn set_answer(&mut self, answer: Option<AnswerPanel>) {
+        self.answer = answer;
+    }
+
+    #[cfg(test)]
+    pub fn answer(&self) -> Option<&AnswerPanel> {
+        self.answer.as_ref()
+    }
+
     pub fn set_locked(&mut self, lock: Option<Lock>, cx: &mut Context<Self>) {
         if self.locked != lock {
             self.locked = lock;

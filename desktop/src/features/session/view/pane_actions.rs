@@ -103,6 +103,7 @@ impl SessionPane {
                 };
                 form.pick(field,value,many);
                 self.refresh_ask(&ask_id, cx);
+                cx.notify();
             }
             SessionAction::SubmitAsk { ask_id } => {
                 let Some(form) = self.forms.get(&ask_id) else {
@@ -112,7 +113,16 @@ impl SessionPane {
                     .texts
                     .iter()
                     .map(|(name, input)| (name.clone(), input.read(cx).value().to_string()))
-                    .collect();
+                    .collect::<Vec<_>>();
+                let asked = self.view.items.iter().find_map(|item| match &item.kind {
+                    ItemKind::Ask { ask_id: id, ask } if *id == ask_id => Some(ask),
+                    _ => None,
+                });
+                if let Some(label) = asked.and_then(|ask| AskForm::missing(ask, &form.picked, &texts)) {
+                    self.status = format!("{label} is required.").into();
+                    cx.notify();
+                    return;
+                }
                 let answer = AskForm::content(&form.picked, texts);
                 self.on_action(SessionAction::Answer { ask_id, answer }, window, cx);
             }

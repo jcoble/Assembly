@@ -394,9 +394,6 @@ fn a_questions_form_sends_the_choices_picked(cx: &mut TestAppContext) {
         json!({ "kind": "question", "state": "open", "schema": schema }),
     );
     let (pane, client, cx) = opened(vec![user(1, "go"), ask], cx);
-    pane.update_in(cx, |pane, window, cx| {
-        pane.make_form(&Entry::Item(1), window, cx)
-    });
     let pick = |field: &str, value: &str, many: bool| SessionAction::Pick {
         ask_id: "a1".into(),
         field: field.into(),
