@@ -71,6 +71,11 @@ impl ConfigOption {
         matches!(self.category.as_deref(), Some("thought_level" | "effort"))
             || matches!(self.id.as_str(), "effort" | "reasoning_effort")
     }
+    /// How much the agent may do without asking: its mode, or an approval policy by name.
+    pub fn approval(&self) -> bool {
+        self.category.as_deref() == Some("mode")
+            || matches!(self.id.as_str(), "mode" | "approval_policy" | "approvalPolicy")
+    }
     pub fn offered(&self, value: &str) -> bool {
         self.options.iter().any(|choice| choice.value == value)
     }

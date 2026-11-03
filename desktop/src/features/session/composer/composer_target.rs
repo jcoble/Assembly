@@ -34,6 +34,7 @@ impl Composer {
         self._warm = None;
         self._config = None;
         self.advertised_target = None;
+        self.picking = 0;
         self.read_config(cx);
         let (Some(session), Some(owner)) = (self.session.clone(), self.owner.clone()) else {
             return;
@@ -66,9 +67,10 @@ impl Composer {
                     .map_err(|e| e.reason())
                     .and_then(|v| serde_json::from_value::<AgentList>(v).map_err(|e| e.to_string()))
                     .and_then(|list| {
-                        list.agents
-                            .into_iter()
-                            .find(|a| a.id == owner.0)
+                        let agent = list.agents.into_iter().find(|a| a.id == owner.0);
+                        composer.agent_name =
+                            agent.as_ref().map(|a| a.name.clone().into());
+                        agent
                             .and_then(|a| a.target_id)
                             .filter(|id| !id.is_empty())
                             .ok_or_else(|| {

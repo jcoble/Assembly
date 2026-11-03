@@ -24,14 +24,15 @@ impl Composer {
         self.session_key=key;self.expected_source=source;self.source_valid=self.session_key.is_some();
         self.draft.update(cx,|draft,cx|draft.set_value(text,window,cx));
         self.attachments=attachments;self.slash_selected=None;self.owner=None;self.advertised_target=None;
-        self.config=None;self.error=None;self.running=None;self.meter=None;self.branch=None;
-        self.read_config(cx);self.read_pending(cx);cx.notify();
+        self.config=None;self.error=None;self.running=None;self.meter=None;self.branch=None;self.picking=0;
+        self.has_opened=false;self.turn_settled=false;self._settle=None;self.locked=None;self.agent_name=None;
+        self.read_can_steer(cx);self.read_config(cx);self.read_pending(cx);cx.notify();
     }
     pub fn invalidate_source(&mut self,cx:&mut Context<Self>) {
         if self.start_draft.is_some(){cx.notify();return;}
         self.source_valid=false;self.source_serial+=1;self.target_generation+=1;
         self._target=None;self._warm=None;self._config=None;self._pending_read=None;
-        self.message_subscriptions.clear();self.uploads.clear();self.config=None;
+        self.message_subscriptions.clear();self.uploads.clear();self.config=None;self.picking=0;
         for attachment in &mut self.attachments {
             if matches!(attachment.state,AttachmentState::Uploading) {
                 attachment.state=AttachmentState::Failed("Upload cancelled when the session source changed.".into());

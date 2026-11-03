@@ -28,7 +28,7 @@ impl Composer {
                 };
                 let attachment=composer.update(cx,|composer,_| {
                     composer.initial_current(&key,serial)?;composer.attached+=1;
-                    Ok::<_,String>(Attachment{id:composer.attached,name:image.name().clone(),size:image.size(),state:AttachmentState::Saved{path}})
+                    Ok::<_,String>(Attachment{id:composer.attached,name:image.name().clone(),size:image.size(),state:AttachmentState::Saved{path},preview:Some(image.image().clone())})
                 }).map_err(|_|"The composer closed.".to_string())??;
                 attached.push(attachment);
             }

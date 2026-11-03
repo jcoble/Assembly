@@ -1,7 +1,7 @@
 use crate::core::engine::{EngineKey,SessionKey,engine_items::SessionItem};
 use super::helper_stop::command;
 fn child(machine:&str)->SessionItem {
-    SessionItem{key:EngineKey{machine:machine.into(),kind:"session".into(),id:"child".into()},version:8,parent_id:Some("parent".into()),parent_machine:Some("parent-owner".into()),run_id:None,title:None,provider:"provider".into(),model:None,folder:"/recorded-display".into(),state:"running".into(),activity_state:"working".into(),epoch:12}
+    SessionItem{key:EngineKey{machine:machine.into(),kind:"session".into(),id:"child".into()},version:8,parent_id:Some("parent".into()),parent_machine:Some("parent-owner".into()),run_id:None,title:None,provider:"provider".into(),model:None,folder:"/recorded-display".into(),state:"running".into(),activity_state:"working".into(),epoch:12,can_steer:false}
 }
 #[test]
 fn helper_stop_uses_the_existing_engine_command_with_actual_child_owner_version_and_epoch() {
