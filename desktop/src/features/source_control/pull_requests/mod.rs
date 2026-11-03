@@ -1,11 +1,13 @@
 pub mod create_pr_dialog;
 pub mod merge_dialog;
-mod post_composer;
 pub mod post_confirm;
+pub mod pr_activity;
 pub mod pr_detail;
 pub mod pr_files;
 pub mod pr_pane;
+mod pr_parts;
 pub mod pr_queue;
+pub mod pr_search;
 pub mod pr_section;
 pub mod pull_request;
 pub mod review_draft;

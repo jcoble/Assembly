@@ -1,4 +1,4 @@
-use super::{PrQueue, QueueState};
+use super::{PrQueue, PrScope};
 use crate::core::socket::{
     client::SocketClient,
     endpoint::Endpoint,
@@ -72,13 +72,17 @@ async fn the_queue_reads_only_when_open_pages_by_cursor_and_changes_scope_once(
     .await;
     assert_eq!(seen.lock().unwrap().len(), 2);
     assert_eq!(seen.lock().unwrap()[1]["args"]["cursor"], "next");
-    queue.update(cx, |q, cx| q.select_state(QueueState::Review, cx));
+    queue.update(cx, |q, cx| q.select_scope(PrScope::NeedsReview, cx));
     until("review scope", &mut changes, &changed, || {
         cx.run_until_parked();
         seen.lock().unwrap().len() == 3
     })
     .await;
-    assert_eq!(seen.lock().unwrap()[2]["args"]["state"], "review");
+    assert_eq!(seen.lock().unwrap()[2]["args"]["state"], "open");
+    assert_eq!(
+        seen.lock().unwrap()[2]["args"]["search"],
+        "review-requested:@me sort:updated-desc"
+    );
     queue.update(cx, |q, cx| q.set_active(false, cx));
     cx.run_until_parked();
     assert_eq!(seen.lock().unwrap().len(), 3);

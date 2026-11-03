@@ -1,5 +1,5 @@
 use gpui_kit::component::diff::{DiffLinePosition, DiffSide};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReviewIdentity {
@@ -8,7 +8,7 @@ pub struct ReviewIdentity {
     pub head: String,
     pub base: String,
 }
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LineComment {
     pub path: String,
     pub line: usize,
