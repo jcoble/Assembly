@@ -6,4 +6,5 @@ namespace Assembly.Domain.Events;
 public sealed record TurnStarted(long At, string RunId, string Text, string? ClientId = null, string? SenderLabel = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FromSessionId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? UserItemId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null) : AgentEvent(At);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FromMachine = null) : AgentEvent(At);

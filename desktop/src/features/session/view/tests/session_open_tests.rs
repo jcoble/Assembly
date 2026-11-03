@@ -42,8 +42,8 @@ fn qualified_selection_changes_even_when_two_owners_use_the_same_session_id(cx:&
     cx.update(|cx| {
         SelectedSession::init(cx);
         let selected=SelectedSession::global(cx);
-        selected.update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"first".into(),id:"same".into()},false,cx));
-        selected.update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"second".into(),id:"same".into()},true,cx));
+        selected.update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"first".into(),id:"same".into()},crate::core::socket::row_source::ExpectedRowSource{machine:"first".into(),generation:3,route_machine:Some("first route".into())},false,cx));
+        selected.update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"second".into(),id:"same".into()},crate::core::socket::row_source::ExpectedRowSource{machine:"second".into(),generation:7,route_machine:Some("second route".into())},true,cx));
         assert_eq!(selected.read(cx).key().unwrap().machine,"second");
         assert!(selected.read(cx).read_only());
     });
@@ -350,4 +350,17 @@ fn a_mark_read_source_refusal_is_visible_and_never_retried_without_its_source(cx
     cx.run_until_parked();
     pane.update_in(cx,|pane,_,cx|{assert!(pane.status.contains("captured owner replaced"));assert_eq!(pane.session.as_deref(),Some("history"));pane.tell_read(false,cx);});
     cx.run_until_parked();assert_eq!(client.reads().len(),1);assert!(client.reads()[0].get("expectedSource").is_some());
+}
+
+#[gpui::test]
+fn selected_source_is_only_the_prepared_descriptor_tuple_and_fixture_selection_clears_it(cx:&mut TestAppContext) {
+    use crate::core::socket::row_source::ExpectedRowSource;
+    cx.update(|cx| {
+        SelectedSession::init(cx);let selected=SelectedSession::global(cx);
+        let source=ExpectedRowSource{machine:"actual-owner".into(),generation:29,route_machine:Some("captured-route".into())};
+        selected.update(cx,|selected,cx|selected.commit_open(SessionKey{machine:"actual-owner".into(),id:"session".into()},source.clone(),true,cx));
+        assert_eq!(selected.read(cx).source(),Some(&source));assert!(selected.read(cx).read_only());
+        selected.update(cx,|selected,cx|selected.select(Some("session".into()),cx));
+        assert!(selected.read(cx).source().is_none());assert!(selected.read(cx).key().is_none());
+    });
 }

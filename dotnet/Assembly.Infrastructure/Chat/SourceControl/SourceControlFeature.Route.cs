@@ -47,9 +47,13 @@ internal sealed partial class SourceControlFeature
         {
             throw new CallUncertain(target.Owner.Engine);
         }
+        var result = answer.Deserialize(resultType) ?? throw new CallFailed("The owning machine returned an invalid Git result.");
+        if (result is GitOperationStatus status && status.Machine == target.Owner.Engine &&
+            json.TryGetProperty("operationId", out var expectedId) && expectedId.TryGetGuid(out var expected) && expected == status.OperationId)
+            result = (TResult)(object)operations.RecordRemoteStatus(status);
         try { target.EnsureCurrent(); }
         catch (Exception) when (kind == CallKind.Write) { throw new CallUncertain(target.Owner.Engine); }
-        return answer.Deserialize(resultType) ?? throw new CallFailed("The owning machine returned an invalid Git result.");
+        return result;
     }
 
     private sealed record GitTarget(RemoteConnections.ProjectOwner Owner, EngineMirror.LiveMirrorBinding Live, Action EnsureCurrent);

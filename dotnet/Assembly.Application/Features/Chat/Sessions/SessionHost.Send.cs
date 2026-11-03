@@ -59,7 +59,7 @@ public sealed partial class SessionHost
                         admission.PriorEffectId!, admission.ClientId, admission.Epoch, row.Seq, row.RunId!);
                 var kept = _kept;
                 var started = new TurnStarted(Now(), turn.RunId, text, clientId, senderLabel, fromSessionId,
-                    UserItemId: row is null ? Guid.NewGuid().ToString() : null, AttachmentIds: attachmentIds.ToArray());
+                    UserItemId: row is null ? Guid.NewGuid().ToString() : null, AttachmentIds: attachmentIds.ToArray(), FromMachine: admission?.FromMachine);
                 var committed = false;
                 try
                 {
@@ -207,7 +207,7 @@ public sealed partial class SessionHost
         lock (_gate)
         {
             var batch = _converter.Apply(new TurnSteered(Now(), turn.RunId, text, clientId, label, fromSessionId,
-                UserItemId: Guid.NewGuid().ToString(), AttachmentIds: admission?.AttachmentIds.ToArray()));
+                UserItemId: Guid.NewGuid().ToString(), AttachmentIds: admission?.AttachmentIds.ToArray(), FromMachine: admission?.FromMachine));
             var saved = _hub.Publish(_sessionId, batch);
             var user = saved.Single(value => value.Kind == "user");
             if (turn.Observation is { } observed) userRow = new(user.Seq, turn.RunId, observed.Epoch);

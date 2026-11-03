@@ -174,7 +174,7 @@ impl FileView {
         self.text.release_content();
     }
 
-    fn editor_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn editor_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(editor), Some(key)) = (&self.editor, &self.document) else {
             return;
         };

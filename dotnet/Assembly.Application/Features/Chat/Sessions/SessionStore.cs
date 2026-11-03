@@ -114,6 +114,9 @@ public sealed partial class SessionStore
                 scope.Execute("ALTER TABLE session_info ADD COLUMN working_folder TEXT NULL;");
             if (Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='config_target'"))
                 scope.Execute("ALTER TABLE session_config ADD COLUMN config_target TEXT NULL;");
+            foreach (var column in new[] { "pinned_at", "orchestrator_at", "position" })
+                if (Missing($"SELECT COUNT(*) FROM pragma_table_info('session_info') WHERE name='{column}'"))
+                    scope.Execute($"ALTER TABLE session_info ADD COLUMN {column} INTEGER NULL;");
             EnsureProjectProjectionSchema(scope);
             return !Missing("SELECT COUNT(*) FROM pragma_table_info('session_config') WHERE name='pending_model'");
         });
@@ -326,9 +329,11 @@ public sealed partial class SessionStore
             1 => row.Text(5),
             _ => new SessionsFeature.RailEntry(row.Text(2), row.Text(3), row.Text(4), row.Text(5), row.Text(6), row.Text(7),
                 (int)row.Long(8), Text(9)?.Split(',', StringSplitOptions.RemoveEmptyEntries) ?? [], row.IsNull(10) ? null : TitleUtf8.GetString(row.Blob(10)), Text(11), row.Long(12),
-                Long(13), row.Long(14) == 1, row.Long(15) == 1, row.Long(16) == 1, row.Long(17) == 1,
-                Text(18), Long(19), Text(20), Long(21), ProviderGlyph.Of(row.Text(5)), (int)row.Long(22), (int)row.Long(23),
-                row.Text(24), Text(25)),
+                Long(13), row.Long(14) == 1, row.Long(15) == 1, row.Long(16) == 1,
+                Text(17), Long(18), ProviderGlyph.Of(row.Text(5)), (int)row.Long(19), (int)row.Long(20),
+                row.Text(21), Text(22), Text(26), (int)row.Long(35), Long(27), Long(28), Long(29),
+                Text(30), Text(31), Text(32), Text(33), Long(34),
+                Text(23) is { } machine ? new(machine, row.Long(24), Text(25)) : null),
         };
     }
 

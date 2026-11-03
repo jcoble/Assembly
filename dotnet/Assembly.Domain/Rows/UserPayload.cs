@@ -12,4 +12,5 @@ public sealed record UserPayload(string Text, string? From = null, string? Clien
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] AuthSendBlocker? AuthBlocker = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] AuthRetryExecution? RetryExecution = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ItemId = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AttachmentIds = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? FromMachine = null);

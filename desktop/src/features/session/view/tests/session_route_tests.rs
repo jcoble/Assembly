@@ -56,7 +56,7 @@ async fn a_late_held_discovery_cannot_overwrite_a_new_route_discovery(cx:&mut Te
 
 #[test]
 fn only_recorded_nonresumable_engine_states_are_classified_as_historical() {
-    use crate::features::session::view::opening::online_historical;
+    use super::opening::online_historical;
     for state in ["ended","lost","moved","handing_off"] { assert!(online_historical(state)); }
     for state in ["running","idle","starting","", "unknown"] { assert!(!online_historical(state)); }
 }

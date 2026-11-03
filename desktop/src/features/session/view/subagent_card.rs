@@ -7,7 +7,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::session_action::{OnAction, SessionAction};
-use super::task_card::{card, stop_button,stop_action_button};
+use super::task_card::{card, stop_action_button};
 use crate::features::session::rows::subagent::SubagentPayload;
 
 #[derive(IntoElement)]
@@ -92,7 +92,7 @@ impl RenderOnce for SubagentCard {
                     .when(running && subagent.can_stop, |line| {
                         let id = format!("subagent:{}:stop", self.key);
                         if subagent.helper {
-                            line.child(stop_button(id,subagent.session_id.clone(),self.on_action.clone()))
+                            line.child(stop_action_button(id,SessionAction::StopEngineChild{key:self.key.clone(),session_id:subagent.session_id.clone()},self.on_action.clone()))
                         } else {
                             line.child(stop_action_button(id,SessionAction::StopNative{key:self.key.clone(),payload_session_id:subagent.session_id.clone()},self.on_action.clone()))
                         }

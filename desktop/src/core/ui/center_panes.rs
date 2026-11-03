@@ -56,6 +56,15 @@ impl CenterPanes {
         Some(id)
     }
 
+    /// Read an existing dock-owned pane without selecting or constructing it.
+    pub fn find<P: Panel>(key: &str, cx: &App) -> Option<Entity<P>> {
+        let panes = cx.try_global::<Self>()?;
+        let dock = panes.dock.upgrade()?;
+        let id = panes.open.get(key)?;
+        let panel = dock.read(cx).panel(*id)?;
+        gpui_kit::component::dock::PanelHandle::of(panel)?.view().downcast::<P>().ok()
+    }
+
     /// Files claims its real machine/checkout/path key after the owning backend answers.
     /// Session aliases then bring that document forward through the existing open path.
     pub fn claim_file(

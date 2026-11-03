@@ -3,6 +3,7 @@ using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Rows;
+using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Persistence;
 using Microsoft.Extensions.Time.Testing;
 using static Assembly.Application.Features.Chat.Sessions.SessionsFeature;
@@ -14,7 +15,7 @@ namespace Assembly.Tests.Draft.SessionsList;
 /// totals and paging, project groups in a fixed order, started sessions ordered like any other session, and the invalidations that make a
 /// window read it again.
 /// </summary>
-public sealed class SessionRailTests : IDisposable
+public sealed partial class SessionRailTests : IDisposable
 {
     private readonly TempDatabase _file = new();
     private readonly FakeTimeProvider _time = new(DateTimeOffset.FromUnixTimeMilliseconds(1_000_000));
@@ -22,11 +23,13 @@ public sealed class SessionRailTests : IDisposable
     private readonly AppDatabase _database;
     private readonly SessionStore _sessions;
     private readonly LiveHub _hub;
+    private readonly string _engineMachine;
 
     public SessionRailTests()
     {
         _database = AppDatabase.Open(_file.Path, _time, _topics);
         var rows = RowStore.Open(_database);
+        _engineMachine = EngineSchema.Open(_database, _time.GetUtcNow().ToUnixTimeMilliseconds());
         _sessions = SessionStore.Open(_database, _time, "checkouts");
         _hub = new LiveHub(rows, topics: _topics);
     }
@@ -45,9 +48,7 @@ public sealed class SessionRailTests : IDisposable
         Assert.Equal([started, other, starter], Collect(next => Read(after: next, limit: 1)));
         Assert.Equal(new RailTotals(1), Read().Totals);
         Assert.False(Entry(Read(), starter).Running);
-        Assert.False(Entry(Read(), starter).NeedsYou);
         Assert.True(Entry(Read(), started).Running);
-        Assert.True(Entry(Read(), started).NeedsYou);
     }
 
     // Pins: sessions-list#1, sessions-list#6
@@ -265,14 +266,13 @@ public sealed class SessionRailTests : IDisposable
         var rail = Read();
         Assert.Equal(new RailTotals(0), rail.Totals);
         Assert.True(Entry(rail, answered).Unread);
-        Assert.False(Entry(rail, answered).NeedsYou);
-        Assert.False(Entry(Read(), answered).NeedsYou);
+        Assert.Equal(rail.Totals, Read().Totals);
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void AskTargetRefreshesWhileAnotherAskRemainsOpen(bool remote)
+    public void Chat_ask_changes_invalidate_rail_without_creating_engine_needs(bool remote)
     {
         var session = Parent(machine: remote ? "workbox-test" : null);
         var seq = 0L;
@@ -286,14 +286,14 @@ public sealed class SessionRailTests : IDisposable
         Add(null, RowKind.Turn, new { state = "started" });
         Add("a", RowKind.Ask, new { state = "open" });
         Add("b", RowKind.Ask, new { state = "open" });
-        Assert.Equal((session, 2L), (Entry(Read(), session).AskSession, Entry(Read(), session).AskSeq));
+        Assert.Equal(new RailTotals(0), Read().Totals);
 
         _topics.Published.Clear();
         Add("a", RowKind.Ask, new { state = "answered" });
 
         Assert.Contains((RailTopic, (string?)session, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
-        var after = Entry(Read(), session);
-        Assert.Equal((session, 3L), (after.AskSession, after.AskSeq));
+        Assert.Equal(new RailTotals(0), Read().Totals);
+        Assert.True(Entry(Read(), session).Running);
     }
 
     [Fact]
@@ -310,7 +310,7 @@ public sealed class SessionRailTests : IDisposable
         Assert.Contains((RailTopic, (string?)helper, false), _topics.Published.Select(p => (p.Topic, p.Key, p.KeyedOnly)));
         var rail = Read();
         Assert.Equal(new RailTotals(1), rail.Totals);
-        Assert.Equal(helper, Entry(rail, helper).AskSession);
+        Assert.Equal(helper, Entry(rail, helper).SessionId);
     }
 
     [Theory]
@@ -388,18 +388,26 @@ public sealed class SessionRailTests : IDisposable
             : _sessions.Add(Guid.NewGuid().ToString(), agent, repo, machine).SessionId;
         if (title is not null)
             _sessions.SetTitle(id, title, "user");
+        RecordEngineSession(id);
         return id;
     }
 
     private string Helper(string parent, string agent = "claude")
     {
         _time.Advance(TimeSpan.FromSeconds(1));
-        return _sessions.Helper(_sessions.Get(parent)!, agent, "helper").SessionId;
+        var id = _sessions.Helper(_sessions.Get(parent)!, agent, "helper").SessionId;
+        RecordEngineSession(id, parent);
+        return id;
     }
 
     private void Running(string session) => Rows(session, (null, RowKind.Turn, new { state = "started" }));
 
-    private void Asking(string session) => Rows(session, ("q1", RowKind.Ask, new { state = "open" }));
+    private void Asking(string session)
+    {
+        Rows(session, ("q1", RowKind.Ask, new { state = "open" }));
+        var facade = _sessions.Get(session)!;
+        if (facade.ParentSessionId is null || facade.Helper) OpenEngineNeed(session, "need:" + session);
+    }
 
     private void Rows(string session, params (string? Item, string Kind, object Payload)[] rows) => _hub.Publish(session, Batch(rows));
 

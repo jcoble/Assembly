@@ -47,7 +47,7 @@ impl PaneCodec for ChatCodec {
 impl SessionPane {
     pub fn register_workspace(cx:&mut App)->Result<(),String> {WorkspacePanes::register(Box::new(ChatCodec),cx)}
 }
-impl super::timeline::Timeline {
+impl crate::features::session::view::timeline::Timeline {
     pub(super) fn capture_place(&self,cx:&App)->ChatPlace {
         self.workspace_place(cx)
     }

@@ -4,8 +4,6 @@
 
 use std::rc::Rc;
 
-use crate::core::state::preferences::Preferences;
-use crate::core::theme::text::TextRole;
 use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
 use gpui_kit::*;
 use crate::core::state::preferences::Preferences;

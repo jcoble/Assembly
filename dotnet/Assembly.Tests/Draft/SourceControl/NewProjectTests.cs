@@ -169,6 +169,7 @@ public sealed partial class NewProjectTests
             await Send(socket, JsonSerializer.Serialize(new { t = "sub", id = 100, topic = "gitOperation", key = machine is null ? LocalOperations.Key(id) : machine + "/" + id.ToString("D") }));
             Assert.Equal("state", (await Read(socket)).GetProperty("t").GetString());
         }
+        internal Task Unsubscribe(ClientWebSocket socket) => Send(socket, "{\"t\":\"unsub\",\"id\":100}");
         internal async Task<JsonElement> Call(ClientWebSocket socket, int id, string method, object args)
         {
             var payload = args switch
@@ -182,6 +183,16 @@ public sealed partial class NewProjectTests
             {
                 var frame = await Read(socket);
                 if (frame.TryGetProperty("id", out var reply) && reply.GetInt32() == id) return frame;
+                if (frame.GetProperty("t").GetString() == "change") _changes.Add(frame.GetProperty("item").Clone());
+            }
+        }
+        internal async Task<JsonElement> Running(ClientWebSocket socket)
+        {
+            while (true)
+            {
+                var running = _changes.FirstOrDefault(item => item.GetProperty("state").GetString() == "running");
+                if (running.ValueKind != JsonValueKind.Undefined) return running;
+                var frame = await Read(socket);
                 if (frame.GetProperty("t").GetString() == "change") _changes.Add(frame.GetProperty("item").Clone());
             }
         }

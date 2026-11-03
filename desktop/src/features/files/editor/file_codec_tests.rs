@@ -1,3 +1,4 @@
+use crate::core::state::workspace_panes::PaneCodec;
 use super::{parse, select, retained_clean, document_key, FilesCodec, Candidate, Entry, DocumentStore, WorkspaceKey};
 use gpui_kit::{AppContext as _, Context, IntoElement, Render, Window, div};
 use std::collections::HashSet;

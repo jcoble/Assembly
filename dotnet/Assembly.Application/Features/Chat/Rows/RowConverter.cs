@@ -116,7 +116,7 @@ public sealed class RowConverter
                 }
                 batch.Rows.Add(new NewRow(steered.RunId, null, RowKind.User, JsonSerializer.SerializeToElement(
                     new UserPayload(steered.Text, steered.FromSessionId, steered.ClientId, SenderLabel: steered.SenderLabel,
-                        ItemId: steered.UserItemId, AttachmentIds: steered.AttachmentIds), RowJsonContext.Rows.UserPayload), steered.At));
+                        ItemId: steered.UserItemId, AttachmentIds: steered.AttachmentIds, FromMachine: steered.FromMachine), RowJsonContext.Rows.UserPayload), steered.At));
                 break;
             case TextChunk chunk:
                 AddText(batch, chunk);
@@ -177,7 +177,7 @@ public sealed class RowConverter
     {
         _turn = new OpenTurn(started.RunId, started.At, _sessionCost);
         Add(batch, null, RowKind.User, new UserPayload(started.Text, started.FromSessionId, started.ClientId, SenderLabel: started.SenderLabel,
-            ItemId: started.UserItemId, AttachmentIds: started.AttachmentIds), RowJsonContext.Rows.UserPayload, started.At);
+            ItemId: started.UserItemId, AttachmentIds: started.AttachmentIds, FromMachine: started.FromMachine), RowJsonContext.Rows.UserPayload, started.At);
         Add(batch, null, RowKind.Turn, new TurnPayload("started"), RowJsonContext.Rows.TurnPayload, started.At);
     }
 

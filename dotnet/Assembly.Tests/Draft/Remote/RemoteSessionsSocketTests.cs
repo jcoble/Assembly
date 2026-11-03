@@ -71,15 +71,19 @@ public sealed partial class RemoteRowsSocketTests
     [Fact]
     public async Task A_remote_turn_without_an_open_chat_updates_the_session_rail()
     {
+        global::Assembly.Engine.Persistence.EngineSchema.Open(_localDb, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
         var working = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var ended = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         SessionsFeature.RailEntry Entry() => _localSessions.Rail(new SessionsFeature.RailArgs(GroupBy: new(false, false)))
             .Sessions.Single(entry => entry.SessionId == "s");
         var subscription = _localTopics.Subscribe(SessionsFeature.RailTopic, "s", _ => { }, (_, _) =>
         {
-            var entry = Entry();
-            if (entry.Running && entry.NeedsYou) working.TrySetResult();
-            if (!entry.Running && !entry.NeedsYou && entry.Failed && entry.Unread) ended.TrySetResult();
+            var page = _localSessions.Rail(new SessionsFeature.RailArgs(GroupBy: new(false, false)));
+            var entry = page.Sessions.Single(entry => entry.SessionId == "s");
+            // Native chat asks are not canonical Engine needs.
+            Assert.Equal(0, page.Totals.Needs);
+            if (entry.Running) working.TrySetResult();
+            if (!entry.Running && entry.Failed && entry.Unread) ended.TrySetResult();
         });
         try
         {

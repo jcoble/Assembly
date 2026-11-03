@@ -60,7 +60,7 @@ public sealed partial class AdapterEffects
         }
         return new(effect.Id, intent.MessageId, effect.Attempt, intent.ToSessionId, intent.ClientId, intent.Text,
             delivery.Label, delivery.Epoch, reference, intent.AttachmentIds ?? [], priorId, delivery.FromSessionId,
-            scope.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.IsNull(0) ? (long?)null : r.Long(0), new SqlArg("$id", intent.MessageId)));
+            scope.QueryFirst("SELECT expires_ms FROM engine_message WHERE id=$id", r => r.IsNull(0) ? (long?)null : r.Long(0), new SqlArg("$id", intent.MessageId)), FromMachine: delivery.FromMachine);
     }
 
     public MessageOutcome? ProjectCompletion(IWriteScope scope, CommandContext context, Effect effect, EffectReceipt receipt, MessageDelivery delivery)

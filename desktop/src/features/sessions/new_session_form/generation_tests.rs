@@ -14,7 +14,7 @@ fn a_missing_generation_clears_the_current_agent_and_auth_owner_even_if_state_sa
     folder(&form, "/kept-draft", cx);
     form.update(cx, |form, cx| form.observe_connection(true, None, cx));
     cx.run_until_parked();
-    form.read_with(cx, |form, _| {
+    form.read_with(cx, |form, cx| {
         assert!(!form.backend_connected);
         assert_eq!(form.backend_generation, None);
         assert!(form.agent.is_none());
@@ -38,7 +38,7 @@ fn an_absent_backend_has_no_generation_and_does_not_load_a_fake_ready_agent(
     let (form, cx) = cx
         .add_window_view(move |window, cx| NewSessionForm::with_client(Rc::new(held), window, cx));
     cx.run_until_parked();
-    form.read_with(cx, |form, _| {
+    form.read_with(cx, |form, cx| {
         assert!(!form.backend_connected);
         assert_eq!(form.backend_generation, None);
         assert!(form.agent.is_none());

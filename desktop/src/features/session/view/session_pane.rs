@@ -558,8 +558,7 @@ mod open_tests;
 #[path="navigation/pane_workspace.rs"]
 mod workspace;
 
-#[path="pane_pages.rs"]
-mod pages;
+
 
 #[path="navigation/pane_discovery.rs"]
 mod discovery;
@@ -572,3 +571,9 @@ pub(super) mod chat_codec;
 #[cfg(test)]
 #[path="navigation/chat_codec_tests.rs"]
 mod chat_codec_tests;
+
+#[path="navigation/helper_stop.rs"]
+mod helper_stop;
+#[cfg(test)]
+#[path="tests/helper_stop_tests.rs"]
+mod helper_stop_tests;

@@ -14,10 +14,12 @@ fn diff(staged: &str, unstaged: &str, binary: bool, truncated: bool) -> FileDiff
 // Pins: scm#14
 #[test]
 fn staged_and_working_patches_keep_their_identity() {
-    let one = diff("", EDIT, false, false).parts();
+    let one_diff = diff("", EDIT, false, false);
+    let one = one_diff.parts();
     assert_eq!(one.len(), 1);
     assert_eq!(one[0].0, "Working tree");
-    let both = diff(EDIT, EDIT, false, false).parts();
+    let both_diff = diff(EDIT, EDIT, false, false);
+    let both = both_diff.parts();
     assert_eq!(
         both.iter().map(|part| part.0).collect::<Vec<_>>(),
         ["Staged", "Working tree"]

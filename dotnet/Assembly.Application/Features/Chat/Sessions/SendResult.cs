@@ -15,6 +15,6 @@ public abstract record SendResult
 
 internal sealed record OwningSendAdmission(string EffectId, string MessageId, int Attempt,
     string SessionId, string ClientId, string Text, string? SenderLabel, long Epoch,
-    UserRowReference? UserRow, IReadOnlyList<string> AttachmentIds, string? PriorEffectId, string? FromSessionId = null, long? ExpiresMs = null);
+    UserRowReference? UserRow, IReadOnlyList<string> AttachmentIds, string? PriorEffectId, string? FromSessionId = null, long? ExpiresMs = null, string? FromMachine = null);
 
 internal sealed record SteerDeliveryResult(SteerResult Outcome, UserRowReference? UserRow = null);

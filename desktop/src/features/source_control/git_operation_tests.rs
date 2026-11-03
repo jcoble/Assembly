@@ -218,6 +218,7 @@ async fn a_definite_start_refusal_stops_watching_but_dispatched_uncertainty_neve
         cx.update(|cx| unknown.read(cx).unconfirmed)
     })
     .await;
+    cx.update(|cx| assert!(!unknown.read(cx).busy, "Unknown completion retains reconciliation without claiming active observation."));
     unknown.update(cx, |operation, cx| {
         operation.start(
             "push",

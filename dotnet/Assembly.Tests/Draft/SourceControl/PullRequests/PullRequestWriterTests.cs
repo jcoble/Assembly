@@ -99,6 +99,23 @@ public sealed class PullRequestWriterTests
         await Assert.ThrowsAsync<GhUnconfirmed>(() => f.Writer.CommentAsync(f.Repo.Root, 7, Head, "Body", default));
         Assert.Equal(1, f.Gh.Writes);
     }
+    [Fact]
+    public async Task A_comment_posts_the_exact_trimmed_body_once_to_the_issue_endpoint()
+    {
+        using var f = await Fixture.Create();
+        const string text = "A \"quoted\" comment — café\nsecond line";
+        f.Gh.Create = (args, input) =>
+        {
+            Assert.Equal(new[] { "api", "--method", "POST", "repos/owner/repo/issues/7/comments", "--input", "-" }, args);
+            using var payload = JsonDocument.Parse(input!);
+            Assert.Equal(text, payload.RootElement.GetProperty("body").GetString());
+            Assert.Single(payload.RootElement.EnumerateObject());
+            return f.Gh.WriteResult;
+        };
+        var url = await f.Writer.CommentAsync(f.Repo.Root, 7, Head, "  " + text + "  ", default);
+        Assert.Equal("https://github.com/owner/repo/pull/7#issuecomment-1", url);
+        Assert.Equal(1, f.Gh.Writes);
+    }
     private sealed class Fixture : IDisposable
     {
         public GitHistoryTestRepository Repo { get; } = new();

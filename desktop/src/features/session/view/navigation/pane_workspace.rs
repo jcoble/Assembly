@@ -79,7 +79,7 @@ impl SessionPane {
         self.header.update(cx,|header,cx|{header.show(Some(key.id.clone()),cx);header.set_parent(parent,cx);});
         self.timeline.update(cx,|timeline,cx|timeline.set_session(Some(key.id.clone()),Vec::new(),cx));
         self.composer.update(cx,|composer,cx|composer.set_target((!read_only).then(||key.clone()),(!read_only).then(||source.clone()),window,cx));
-        SelectedSession::global(cx).update(cx,|selected,cx|selected.commit_open(key,read_only,cx));
+        SelectedSession::global(cx).update(cx,|selected,cx|selected.commit_open(key,source,read_only,cx));
         self.tell_offline(cx);self.refresh(Change::Nothing,cx);
         Ok(())
     }

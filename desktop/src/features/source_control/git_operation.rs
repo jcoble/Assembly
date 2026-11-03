@@ -108,10 +108,10 @@ impl GitOperation {
                 Outcome::Ok(status)=>{if Self::accept(&operation,&owner,status,cx){return;}},
                 Outcome::Failed(error)=>{
                     let unknown=matches!(error.code,ErrorCode::Uncertain{..}|ErrorCode::Timeout|ErrorCode::Unreachable{..});
-                    Self::fail(&operation,error.message,unknown,unknown,cx);
+                    Self::fail(&operation,error.message,false,unknown,cx);
                     if !unknown{return;}
                 },
-                Outcome::Aborted=>Self::fail(&operation,"This may have completed. Reconcile this operation before trying again.".into(),true,true,cx),
+                Outcome::Aborted=>Self::fail(&operation,"This may have completed. Reconcile this operation before trying again.".into(),false,true,cx),
             }
             while let Ok(update)=subscription.updates.recv().await {
                 let values=match update {

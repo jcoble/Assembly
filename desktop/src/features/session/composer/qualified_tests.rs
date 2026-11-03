@@ -1,7 +1,7 @@
 //! Actual source keys isolate draft ownership; fixtures never contact providers or owner data.
 use gpui::TestAppContext;
 use crate::core::{engine::SessionKey,socket::row_source::ExpectedRowSource};
-use super::{Composer,Attachment,AttachmentState,owner_prompt::{PendingPrompt,PromptRequest}};
+use super::{Attachment,AttachmentState,owner_prompt::{PendingPrompt,PromptRequest}};
 fn key(owner:&str)->SessionKey {SessionKey{machine:owner.into(),id:"same".into()}}
 fn source(owner:&str)->ExpectedRowSource {ExpectedRowSource{machine:owner.into(),generation:7,route_machine:Some(format!("route-{owner}"))}}
 #[gpui::test]

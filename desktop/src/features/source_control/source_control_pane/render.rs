@@ -217,7 +217,7 @@ impl Render for SourceControlPane {
                     .disabled(busy || commit_status.is_none())
                     .on_click(cx.listener(|pane, _, window, cx| {
                         if let Some(session) = pane.read.read(cx).session().map(String::from) {
-                            super::remote_dialogs::add(session, pane.action.clone(), window, cx);
+                            super::super::remote_dialogs::add(session, pane.action.clone(), window, cx);
                         }
                     })),
             )
@@ -229,7 +229,7 @@ impl Render for SourceControlPane {
                     .disabled(busy || commit_status.is_none())
                     .on_click(cx.listener(|pane, _, window, cx| {
                         if let Some(session) = pane.read.read(cx).session().map(String::from) {
-                            super::stash_dialogs::create(session, pane.action.clone(), window, cx);
+                            super::super::stash_dialogs::create(session, pane.action.clone(), window, cx);
                         }
                     })),
             )
@@ -241,7 +241,7 @@ impl Render for SourceControlPane {
                     .disabled(busy || commit_status.is_none())
                     .on_click(cx.listener(|pane, _, window, cx| {
                         if let Some(session) = pane.read.read(cx).session().map(String::from) {
-                            super::stash_dialogs::list(session, pane.action.clone(), window, cx);
+                            super::super::stash_dialogs::list(session, pane.action.clone(), window, cx);
                         }
                     })),
             );

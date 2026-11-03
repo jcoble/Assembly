@@ -34,7 +34,7 @@ impl SessionPane {
         }
         if self.read_only && matches!(&action,
             SessionAction::RetryPrompt { .. } | SessionAction::Pick { .. }
-            | SessionAction::SubmitAsk { .. } | SessionAction::Answer { .. } | SessionAction::StopTask { .. } | SessionAction::StopNative { .. }) {
+            | SessionAction::SubmitAsk { .. } | SessionAction::Answer { .. } | SessionAction::StopTask { .. } | SessionAction::StopNative { .. } | SessionAction::StopEngineChild { .. }) {
             self.status = "This recorded transcript is read-only.".into(); cx.notify(); return;
         }
         let Some(session) = self.session.clone() else {
@@ -145,6 +145,7 @@ impl SessionPane {
                 let args = json!({ "session": session, "task": task });
                 self.send(format!("stop:{task}"), "stopTask", args, cx);
             }
+            SessionAction::StopEngineChild{key,session_id}=>self.stop_engine_child(&key,&session_id,cx),
             SessionAction::OpenNative { key, payload_session_id } => {
                 match self.native_open_request(&key,&payload_session_id) {
                     Ok(request)=>self.request_open(request,window,cx),

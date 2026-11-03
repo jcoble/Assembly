@@ -47,10 +47,15 @@ public sealed partial class AdapterEffectsTests
         {
             using var scope = f.Db.OpenSnapshot(default); var row = f.Rows.UserDeliveryOfClient(scope, f.Session.SessionId, id)!;
             Assert.Equal(source.SessionId, row.From); Assert.Equal(label, row.SenderLabel); Assert.NotNull(row.Acknowledgment);
+            var persisted = Assert.Single(f.Rows.RowsAfter(f.Session.SessionId, 0), value => value.Kind == "user" &&
+                value.Payload.TryGetProperty("clientId", out var client) && client.GetString() == id);
+            Assert.Equal(f.Runtime.Machine, persisted.Payload.GetProperty("fromMachine").GetString());
         }
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}"""); await agent.CloseAsync();
         await f.RestartAsync();
         using var reopened = f.Db.OpenSnapshot(default); Assert.Equal(label, f.Rows.UserDeliveryOfClient(reopened, f.Session.SessionId, "source-steer")!.SenderLabel);
+        Assert.All(f.Rows.RowsAfter(f.Session.SessionId, 0).Where(value => value.Kind == "user"),
+            value => Assert.Equal(f.Runtime.Machine, value.Payload.GetProperty("fromMachine").GetString()));
         Assert.Equal(1, f.Launcher.Launches); Assert.Equal(2, f.Rows.RowsAfter(f.Session.SessionId, 0).Count(row => row.Kind == "user"));
     }
 

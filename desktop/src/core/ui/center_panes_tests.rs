@@ -191,3 +191,17 @@ fn sessions_claiming_the_same_file_reuse_one_document_and_pin_only_file_preview(
     });
     assert_eq!(open_probe("file:s2:a", cx), Some(first));
 }
+
+#[gpui::test]
+fn finding_an_existing_pane_does_not_activate_it_or_create_a_missing_pane(cx: &mut TestAppContext) {
+    let (dock, cx) = open(cx);
+    let first = open_probe("target", cx).unwrap();
+    open_probe("outgoing", cx).unwrap();
+    let before = center(&dock, cx);
+    cx.update(|_, cx| {
+        let target = CenterPanes::find::<Probe>("target", cx).unwrap();
+        assert_eq!(PanelId::from(target.entity_id()), first);
+        assert!(CenterPanes::find::<Probe>("missing", cx).is_none());
+    });
+    assert_eq!(center(&dock, cx), before);
+}

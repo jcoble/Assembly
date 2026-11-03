@@ -98,14 +98,45 @@ internal static class Schema
     /// together, blocks joined by a space).
     /// </summary>
     public const string Rail = $"""
-        WITH sessions AS (
+        WITH local_source AS (
+          SELECT machine_id FROM engine_meta WHERE singleton=1),
+        source_candidates AS (
+          SELECT s.session_id, local.machine_id AS source_machine, 0 AS source_generation, NULL AS source_route
+          FROM session_info s CROSS JOIN local_source local
+          WHERE s.machine IS NULL AND NOT EXISTS (
+            SELECT 1 FROM engine_session other WHERE other.id=s.session_id AND other.machine<>local.machine_id)
+          UNION ALL
+          SELECT s.session_id, m.machine, m.generation, m.name
+          FROM session_info s JOIN engine_mirror m ON m.name=s.machine AND m.state='live'
+          JOIN engine_mirror_row owner ON owner.machine=m.machine AND owner.generation=m.generation
+            AND owner.entity_kind='session' AND owner.entity_id=s.session_id
+          WHERE m.generation>0 AND length(m.machine)>0 AND length(m.name)>0
+            AND json_type(owner.row_json,'$.id')='text' AND json_type(owner.row_json,'$.machine')='text'
+            AND json_extract(owner.row_json,'$.id')=s.session_id AND json_extract(owner.row_json,'$.machine')=m.machine
+            AND json_extract(owner.row_json,'$.holder')='local' AND json_extract(owner.row_json,'$.state')<>'foreign'
+            AND NOT EXISTS (SELECT 1 FROM engine_session other WHERE other.id=s.session_id AND other.machine<>m.machine)),
+        rail_sources AS (
+          SELECT session_id, MIN(source_machine) AS source_machine, MIN(source_generation) AS source_generation,
+            MIN(source_route) AS source_route
+          FROM source_candidates GROUP BY session_id HAVING COUNT(*)=1),
+        engine_needs AS (
+          SELECT n.id, n.machine, 0 AS generation, n.session_id
+          FROM engine_needs_me n JOIN local_source local ON local.machine_id=n.machine WHERE n.state='open'
+          UNION ALL
+          SELECT n.entity_id, n.machine, n.generation, json_extract(n.row_json,'$.sessionId')
+          FROM engine_mirror_row n JOIN engine_mirror m ON m.machine=n.machine AND m.generation=n.generation AND m.state='live'
+          WHERE n.entity_kind='needs_me' AND json_type(n.row_json,'$.id')='text' AND json_type(n.row_json,'$.machine')='text'
+            AND json_type(n.row_json,'$.sessionId')='text' AND json_extract(n.row_json,'$.id')=n.entity_id
+            AND json_extract(n.row_json,'$.machine')=n.machine AND json_extract(n.row_json,'$.state')='open'),
+        sessions AS (
           SELECT s.session_id, s.agent, s.repo_url,
             CASE WHEN s.repo_url LIKE 'https://github.com/%' THEN rtrim(substr(s.repo_url, 20), '/')
                  ELSE substr(rtrim(s.repo_url, '/'), length(rtrim(rtrim(s.repo_url, '/'), replace(rtrim(s.repo_url, '/'), '/', ''))) + 1) END AS label,
             CASE WHEN s.settled_at IS NOT NULL THEN 'settled' WHEN s.completed_at IS NOT NULL THEN 'done' ELSE 'working' END AS section,
             CASE WHEN s.settled_at IS NOT NULL THEN 2 WHEN s.completed_at IS NOT NULL THEN 1 ELSE 0 END AS section_index,
-            s.title, s.machine, s.updated_at, s.completed_at, s.read_seq
-          FROM session_info s
+            s.title, s.machine, s.updated_at, s.completed_at, s.read_seq,
+            source.source_machine, source.source_generation, source.source_route
+          FROM session_info s LEFT JOIN rail_sources source ON source.session_id=s.session_id
           WHERE (s.parent_session_id IS NULL OR s.helper = 1)
             AND ($providers IS NULL OR s.agent IN (SELECT value FROM json_each($providers)))
             AND ($locations IS NULL OR iif(s.machine IS NULL, 'local', 'remote') IN (SELECT value FROM json_each($locations)))
@@ -113,16 +144,14 @@ internal static class Schema
                    IN (SELECT value FROM json_each($statuses)))
             AND ($filter IS NULL OR instr(lower(COALESCE(s.title, '') || char(10) || s.repo_url), lower($filter)) > 0)),
         totals AS (
-          SELECT COALESCE(SUM(EXISTS (SELECT 1 FROM rows a INDEXED BY rows_summary
-            WHERE a.session_id = p.session_id AND {SummaryKinds} AND a.kind = 'ask' AND json_extract(a.payload, '$.state') = 'open'
-              AND NOT EXISTS (SELECT 1 FROM rows b INDEXED BY rows_summary WHERE b.session_id = a.session_id AND {SummaryKinds}
-                              AND b.kind = 'ask' AND b.item_id = a.item_id AND b.seq > a.seq))), 0) AS needs
-          FROM sessions p),
+          SELECT COUNT(*) AS needs FROM sessions p JOIN engine_needs n ON n.session_id=p.session_id
+            AND n.machine=p.source_machine AND n.generation=p.source_generation),
         section_headers AS (
           SELECT 'section:' || section AS session_id, 'section' AS kind, section, '' AS agent, '' AS repo_url,
             CASE section WHEN 'working' THEN 'Working' WHEN 'done' THEN 'Done' ELSE 'Settled' END AS group_label,
             COUNT(*) AS count, NULL AS machines, NULL AS title, NULL AS machine, 0 AS updated_at, NULL AS completed_at,
-            0 AS read_seq, section_index, '' AS order_group, '' AS order_repo, 0 AS header, '' AS name
+            0 AS read_seq, section_index, '' AS order_group, '' AS order_repo, 0 AS header, '' AS name,
+            NULL AS source_machine, NULL AS source_generation, NULL AS source_route
           FROM sessions WHERE $status_group = 1 GROUP BY section, section_index),
         project_headers AS (
           SELECT 'project:' || iif($status_group = 1, section, '') || '::' || repo_url AS session_id,
@@ -130,7 +159,7 @@ internal static class Schema
             COUNT(*) AS count, group_concat(DISTINCT coalesce(machine, 'local')) AS machines, NULL AS title, NULL AS machine,
             0 AS updated_at, NULL AS completed_at, 0 AS read_seq,
             iif($status_group = 1, section_index, 0) AS section_index, label AS order_group, repo_url AS order_repo, 1 AS header,
-            '' AS name
+            '' AS name, NULL AS source_machine, NULL AS source_generation, NULL AS source_route
           FROM sessions WHERE $project_group = 1
             AND NOT ($status_group = 1 AND section IN (SELECT value FROM json_each($folded)))
           GROUP BY iif($status_group = 1, section, ''), iif($status_group = 1, section_index, 0), repo_url, label),
@@ -139,7 +168,8 @@ internal static class Schema
             title, machine, updated_at, completed_at, read_seq,
             iif($status_group = 1, section_index, 0) AS section_index,
             iif($project_group = 1, label, '') AS order_group, iif($project_group = 1, repo_url, '') AS order_repo,
-            2 AS header, lower(COALESCE(NULLIF(trim(title), ''), label)) AS name
+            2 AS header, lower(COALESCE(NULLIF(trim(title), ''), label)) AS name,
+            source_machine, source_generation, source_route
           FROM sessions p
           WHERE NOT ($status_group = 1 AND section IN (SELECT value FROM json_each($folded)))
             AND NOT ($project_group = 1 AND (iif($status_group = 1, section, '') || '::' || repo_url)
@@ -185,16 +215,33 @@ internal static class Schema
           WHERE n IN (SELECT n FROM candidates)
             OR ($anchor IS NOT NULL AND NOT EXISTS (SELECT 1 FROM candidates))
           ORDER BY n LIMIT $limit),
+        engine_sessions AS (
+          SELECT e.id, e.machine, 0 AS generation, e.parent_id, e.model, r.worktree
+          FROM engine_session e JOIN local_source local ON local.machine_id=e.machine
+          JOIN page p ON p.kind='session' AND p.session_id=e.id AND p.source_machine=e.machine AND p.source_generation=0
+          LEFT JOIN engine_run r ON r.id=e.run_id AND r.machine=e.machine
+          WHERE e.holder='local' AND e.state<>'foreign'
+          UNION ALL
+          SELECT e.entity_id, e.machine, e.generation,
+            CASE WHEN json_type(e.row_json,'$.parentId')='text' THEN json_extract(e.row_json,'$.parentId') END,
+            CASE WHEN json_type(e.row_json,'$.model')='text' THEN json_extract(e.row_json,'$.model') END,
+            CASE WHEN json_type(r.row_json,'$.worktree')='text' THEN json_extract(r.row_json,'$.worktree') END
+          FROM engine_mirror_row e JOIN page p ON p.kind='session' AND p.session_id=e.entity_id
+            AND p.source_machine=e.machine AND p.source_generation=e.generation
+          JOIN engine_mirror m ON m.machine=e.machine AND m.generation=e.generation AND m.state='live'
+          LEFT JOIN engine_mirror_row r ON r.machine=e.machine AND r.generation=e.generation AND r.entity_kind='run'
+            AND r.entity_id=json_extract(e.row_json,'$.runId') AND json_type(r.row_json,'$.id')='text'
+            AND json_type(r.row_json,'$.machine')='text' AND json_extract(r.row_json,'$.id')=r.entity_id
+            AND json_extract(r.row_json,'$.machine')=r.machine
+          WHERE e.entity_kind='session' AND json_type(e.row_json,'$.id')='text' AND json_type(e.row_json,'$.machine')='text'
+            AND json_extract(e.row_json,'$.id')=e.entity_id
+            AND json_extract(e.row_json,'$.machine')=e.machine AND json_extract(e.row_json,'$.holder')='local'
+            AND json_extract(e.row_json,'$.state')<>'foreign'),
         family AS (
           SELECT p.*,
             (SELECT json_extract(t.payload, '$.state') FROM rows t INDEXED BY rows_summary
              WHERE p.kind = 'session' AND t.session_id = p.session_id AND {SummaryKinds} AND t.kind = 'turn'
              ORDER BY t.item_id DESC, t.seq DESC LIMIT 1) AS turn,
-            (SELECT MIN(a.seq) FROM rows a INDEXED BY rows_summary
-             WHERE p.kind = 'session' AND a.session_id = p.session_id AND {SummaryKinds} AND a.kind = 'ask'
-               AND json_extract(a.payload, '$.state') = 'open'
-               AND NOT EXISTS (SELECT 1 FROM rows b INDEXED BY rows_summary WHERE b.session_id = a.session_id AND {SummaryKinds}
-                               AND b.kind = 'ask' AND b.item_id = a.item_id AND b.seq > a.seq)) AS ask_seq,
             EXISTS (SELECT 1 FROM rows w INDEXED BY rows_summary
              WHERE p.kind = 'session' AND w.session_id = p.session_id AND {SummaryKinds} AND w.kind = 'task'
                AND json_extract(w.payload, '$.state') IN ('running', 'requires_action')
@@ -202,24 +249,32 @@ internal static class Schema
                                AND l.kind = w.kind AND l.item_id = w.item_id AND l.seq > w.seq)) AS busy
           FROM page p)
         SELECT 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, needs, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM totals
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM totals
         UNION ALL
         SELECT 1, ROW_NUMBER() OVER (ORDER BY agent), NULL, NULL, NULL, agent, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+          NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
         FROM (SELECT DISTINCT agent FROM session_info WHERE parent_session_id IS NULL OR helper = 1)
         UNION ALL
         SELECT 2, p.n, p.session_id, p.kind, p.section, p.agent, p.repo_url, p.group_label, p.count, p.machines, CAST(p.title AS BLOB),
-          p.machine, p.updated_at, p.completed_at, (p.turn IS 'started' OR p.busy), p.ask_seq IS NOT NULL, p.turn IS 'failed',
+          p.machine, p.updated_at, p.completed_at, (p.turn IS 'started' OR p.busy), p.turn IS 'failed',
           COALESCE((SELECT e.seq FROM rows e INDEXED BY rows_summary WHERE p.kind = 'session' AND e.session_id = p.session_id
                     AND {SummaryKinds} AND e.kind = 'turn' AND json_extract(e.payload, '$.state') IN ('finished', 'failed', 'cancelled')
                     ORDER BY e.item_id DESC, e.seq DESC LIMIT 1), 0) > p.read_seq,
-          iif(p.ask_seq IS NULL, NULL, p.session_id), p.ask_seq, json_extract(b.payload, '$.branch'), b.created_at,
+          json_extract(b.payload, '$.branch'), b.created_at,
           p.section_index, p.header, p.ordering,
           (SELECT NULLIF(substr(trim(replace(group_concat(t.text, ' ' ORDER BY t.n), char(10), ' ')), 1, 160), '') FROM (
              SELECT k.key AS n, (SELECT group_concat(v.atom, '' ORDER BY v.id) FROM json_tree(k.value) v
                                  WHERE v.key = 'value' AND v.type = 'text') AS text
-             FROM json_each(m.payload, '$.blocks') k) t)
+             FROM json_each(m.payload, '$.blocks') k) t),
+          p.source_machine, p.source_generation, p.source_route, e.parent_id, s.pinned_at, s.orchestrator_at, s.position,
+          e.model, e.worktree,
+          (SELECT substr(trim(replace(replace(replace(replace(replace(replace(
+             json_extract(err.payload,'$.message'),char(9),' '),char(10),' '),char(13),' '),char(133),' '),char(8232),' '),char(8233),' ')),1,200)
+           FROM rows err WHERE p.kind='session' AND err.session_id=p.session_id AND err.kind='error' ORDER BY err.seq DESC LIMIT 1),
+          NULL, NULL, CASE WHEN e.parent_id IS NULL THEN 0 ELSE 1 END
         FROM family p
+        LEFT JOIN session_info s ON p.kind='session' AND s.session_id=p.session_id
+        LEFT JOIN engine_sessions e ON e.id=p.session_id AND e.machine=p.source_machine AND e.generation=p.source_generation
         LEFT JOIN rows b ON p.kind = 'session' AND b.session_id = p.session_id AND b.seq = (
           SELECT MAX(r.seq) FROM rows r INDEXED BY rows_item WHERE r.session_id = p.session_id AND r.item_id IS NULL AND r.kind = 'stats'
             AND COALESCE(json_extract(r.payload, '$.branch'), '') <> '')
@@ -231,7 +286,7 @@ internal static class Schema
     // The columns of every rail entry, headers and sessions alike.
     private const string RailColumns = """
         session_id, kind, section, agent, repo_url, group_label, count, machines, title, machine, updated_at, completed_at,
-        read_seq, section_index, order_group, order_repo, header, name
+        read_seq, section_index, order_group, order_repo, header, name, source_machine, source_generation, source_route
         """;
 
     // The kinds a summary reads. SQLite uses a partial index only for a query that names its condition as the index

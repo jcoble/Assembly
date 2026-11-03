@@ -16,7 +16,8 @@ struct Server {
     acks: Vec<Value>,
     sub: u64,
     already_running: bool,
-    hold_provider: Option<std::sync::mpsc::Receiver<Vec<Reply>>>,
+    hold_provider: bool,
+    held_provider: Option<Value>,
     provider_reads: usize,
     provider_version: i64,
     seq: i64,
@@ -61,6 +62,12 @@ fn fixture(server: Arc<Mutex<Server>>) -> FakeBackend {
         if frame["t"] != "call" {
             return vec![];
         }
+        if frame["feature"] == "test" && frame["method"] == "release_provider" {
+            let held=server.held_provider.take().expect("an actual provider read was held");
+            assert_eq!(frame["args"]["heldId"],held);
+            return vec![Reply::Frame(json!({"t":"result","id":held,"result":provider()})),
+                Reply::Frame(json!({"t":"result","id":id,"result":null}))];
+        }
         if frame["feature"] == "test" && frame["method"] == "invalidate_provider" {
             let after = server.seq;
             server.seq += 1;
@@ -77,8 +84,9 @@ fn fixture(server: Arc<Mutex<Server>>) -> FakeBackend {
             && frame["args"]["entityKind"] == "provider"
         {
             server.provider_reads += 1;
-            if let Some(replies) = server.hold_provider.take() {
-                return vec![Reply::Wait(replies)];
+            if std::mem::take(&mut server.hold_provider) {
+                server.held_provider=Some(id.clone());
+                return vec![];
             }
         }
         if frame["feature"] == "engine" && frame["method"] == "command" && server.drop_command {
@@ -361,8 +369,7 @@ async fn repeated_committed_invalidations_during_a_read_coalesce_and_do_not_get_
 ) {
     let server = Arc::new(Mutex::new(Server::default()));
     let (_backend, panel, cx) = opened(cx, server.clone()).await;
-    let (release, delayed) = std::sync::mpsc::channel();
-    server.lock().unwrap().hold_provider = Some(delayed);
+    server.lock().unwrap().hold_provider = true;
     invalidate_provider(cx).await;
     settled(&panel, cx, |panel| panel._provider.is_some()).await;
     invalidate_provider(cx).await;
@@ -384,11 +391,11 @@ async fn repeated_committed_invalidations_during_a_read_coalesce_and_do_not_get_
             entity_id = Some(frame["id"].clone());
         }
     }
-    release
-        .send(vec![Reply::Frame(
-            json!({"t":"result","id":entity_id.unwrap(),"result":provider()}),
-        )])
-        .unwrap();
+    // A held result does not block this socket's other calls: the real backend
+    // dispatches them independently, so later committed invalidations can arrive.
+    let release=cx.read(|cx|SocketClient::try_bulk(cx).unwrap().read(cx).call::<Value>(
+        "test","release_provider",json!({"heldId":entity_id.unwrap()}),None));
+    assert!(matches!(release.await,crate::core::socket::outcome::Outcome::Ok(_)));
     settled(&panel, cx, |panel| {
         panel._provider.is_none()
             && panel
