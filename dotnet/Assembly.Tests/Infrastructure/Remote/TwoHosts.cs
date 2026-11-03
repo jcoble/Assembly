@@ -71,12 +71,9 @@ internal sealed class TwoHosts : IAsyncDisposable
             var cutover = _machineLauncher is null ? null : new SessionCutover(Fixture.Db, Sessions, _machineLauncher, _checkouts!, Fixture.Time);
             var runtime = EngineRuntime.Start(new ObservedDatabase(Fixture.Db, () => RetentionCommitted?.Invoke()), Topics, Fixture.Time,
                 Fixture.Limits, _effects, cutover: cutover);
-            if (_machineLauncher is not null)
-            {
-                _needHub = new(RowStore.Open(Fixture.Db)); _needWork = new(Fixture.Time, TextWriter.Null);
-                _needHosts = new(_needHub, Sessions, _machineLauncher, Fixture.Time, TextWriter.Null, _needWork);
-                Needs = new(new McpGate(runtime, Fixture.Limits, Fixture.Time), runtime, _needHosts, Fixture.Time);
-            }
+            _needHub = new(RowStore.Open(Fixture.Db)); _needWork = new(Fixture.Time, TextWriter.Null);
+            _needHosts = new(_needHub, Sessions, _machineLauncher ?? new Assembly.Tests.Features.Chat.Sessions.FakeLauncher(), Fixture.Time, TextWriter.Null, _needWork);
+            Needs = new(new McpGate(runtime, Fixture.Limits, Fixture.Time), runtime, _needHosts, Fixture.Time);
             return runtime;
         }
         private readonly bool _windowCalls;
@@ -94,7 +91,7 @@ internal sealed class TwoHosts : IAsyncDisposable
             var calls = new SocketDispatcher(new CommandWriter(Fixture.Db.Writer, () => CommandCommitted?.Invoke(), what => WriteCommitted?.Invoke(what)), Topics, Fixture.Time, NullLogger.Instance, new EngineSocketStream(Runtime));
             if (_windowCalls)
             {
-                var engineCalls = Forwarder is null ? new EngineCalls(Runtime, Fixture.Time) : new EngineCalls(Runtime, Fixture.Time, Forwarder);
+                var engineCalls = Forwarder is null ? new EngineCalls(Runtime, Fixture.Time, Needs) : new EngineCalls(Runtime, Fixture.Time, Needs, Forwarder);
                 engineCalls.Register(new IdentityGate(calls, this));
             }
             else calls.Read("engine", "machine", EngineSocketJson.Default.JsonElement, EngineSocketJson.Default.MachineInfo, async (_, c) =>
@@ -150,10 +147,10 @@ internal sealed class TwoHosts : IAsyncDisposable
         public async Task Stop()
         {
             if (!_running) return;
-            if (_machineLauncher is not null) await Needs.StopWaiting();
+            await Needs.StopWaiting();
             await App.DisposeAsync();
             if (_machineCalls is not null) await _machineCalls.DisposeAsync();
-            if (_machineLauncher is not null) await Needs.DisposeAsync();
+            await Needs.DisposeAsync();
             await Runtime.DisposeAsync();
             if (_needHosts is not null) await _needHosts.DisposeAsync();
             if (_needWork is not null) await _needWork.DisposeAsync();

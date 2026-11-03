@@ -100,14 +100,15 @@ public sealed partial class ChatSocketTests
     }
 
     [Fact]
-    public async Task Answer_hands_the_answer_to_the_sessions_machine()
+    public async Task Answer_hands_the_answer_to_the_engine_door()
     {
         var session = _sessions.Create("claude", "repo");
         using var socket = await OpenAsync();
 
         await CallAsync(socket, 1, "send", "answer", $$$"""{"session":"{{{session.SessionId}}}","ask":"ask-1","answer":{"optionId":"yes"}}""");
         Assert.Equal("""{"t":"result","id":1,"result":{"ok":true}}""", await ReadAsync(socket));
-        Assert.Equal(["""answer ask-1 {"optionId":"yes"}"""], _here.Asked);
+        Assert.Equal(1, _answers.Prepared);
+        Assert.Empty(_here.Asked);
 
         _here.Refuses = true;
         await CallAsync(socket, 2, "send", "answer", $$$"""{"session":"{{{session.SessionId}}}","ask":"ask-1","answer":{"optionId":"yes"}}""");

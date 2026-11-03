@@ -19,7 +19,6 @@ internal sealed partial class RemoteMachine
         try
         {
             if (_socket is { State: WebSocketState.Open } existing) return existing;
-            _formatChecked = false;
             var socket = new ClientWebSocket();
             try
             {
@@ -351,7 +350,6 @@ internal sealed partial class RemoteMachine
             var reason = $"stores rows in format {format}; this computer reads format {RowStore.FormatVersion}";
             throw Unreachable(reason, $"{_name} {reason}");
         }
-        _formatChecked = true;
         return welcome.TryGetProperty("engine", out var engine) && engine.ValueKind == JsonValueKind.String ? engine.GetString() : null;
     }
 

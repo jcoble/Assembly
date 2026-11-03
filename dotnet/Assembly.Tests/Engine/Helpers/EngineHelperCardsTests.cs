@@ -8,6 +8,7 @@ using Assembly.Domain.Rows;
 using Assembly.Domain.Sessions;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
+using Assembly.Engine.Effects;
 using Assembly.Engine.Mirror;
 using Assembly.Engine.Messages;
 using Assembly.Engine.Sessions;
@@ -20,6 +21,44 @@ namespace Assembly.Tests.Engine.Helpers;
 
 public sealed class EngineHelperCardsTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Start_receipt_keeps_helper_working_while_the_initial_prompt_is_in_flight(bool failed)
+    {
+        await using var f = new Fixture();
+        using var live = f.Hub.Subscribe(f.Parent.SessionId, 0);
+        var helper = f.Store.Helper(f.Parent, "codex", "Initial prompt", f.Parent.SessionId);
+        Assert.Equal("running", Card(await NextCard(live)).State);
+        var queued = f.Engine.Db.Writer.Write("test.initial-prompt", scope => f.Runtime.Commands.Apply(scope,
+            new(Guid.NewGuid(), f.Runtime.Machine, new(ActorKind.Session, f.Parent.SessionId), "initial-prompt", 0, 0, 1000),
+            new SendMessage(f.Parent.SessionId, helper.SessionId, "Do the task", "prompt")));
+        Assert.True(queued.Applied);
+
+        f.CompleteEffect(helper.SessionId, "start", new(EffectDisposition.Confirmed,
+            JsonSerializer.SerializeToElement(new SessionEffectData("idle", "acp-" + helper.SessionId, null), EngineJson.Default.SessionEffectData), null));
+
+        Assert.Equal("idle", f.Engine.State("engine_session", helper.SessionId));
+        Assert.Equal(1, f.Engine.Number("SELECT in_flight FROM engine_message WHERE id='initial-prompt'"));
+        Assert.True(f.Registry.StartedWorking(f.Parent.SessionId));
+        if (failed)
+            f.CompleteEffect(helper.SessionId, "send", new(EffectDisposition.Failed,
+                JsonSerializer.SerializeToElement((string?)null), "Prompt failed before insertion"));
+        else
+        {
+            f.StartTurn(helper.SessionId, "initial-turn");
+            f.CompleteEffect(helper.SessionId, "send", new(EffectDisposition.Confirmed,
+                JsonSerializer.SerializeToElement(new MessageEffectData("next_turn", "initial-turn", null), EngineJson.Default.MessageEffectData), null));
+            Assert.True(f.Registry.StartedWorking(f.Parent.SessionId));
+            f.End(helper.SessionId, "finished");
+        }
+        Assert.False(f.Registry.StartedWorking(f.Parent.SessionId));
+        Assert.Equal("idle", Card(await NextCard(live)).State);
+        await f.Cards.DisposeAsync();
+        Assert.Equal(new[] { "running", "idle" }, f.Rows.RowsAfter(f.Parent.SessionId, 0)
+            .Where(row => row.Kind == RowKind.Subagent).Select(row => Card(row).State));
+    }
+
     [Theory]
     [InlineData("finished", null, null)]
     [InlineData("cancelled", "cancelled", null)]
@@ -175,17 +214,42 @@ public sealed class EngineHelperCardsTests
 
         public void Begin(string child, string run)
         {
-            if (Engine.State("engine_session", child) == "starting")
-                Engine.Db.Writer.Write("test.start-completed", scope => Runtime.SubmitCurrent(scope, "session", child,
-                    new SetSessionState("idle", null, null), 0));
             var queued = Engine.Db.Writer.Write("test.accept-message", scope => Runtime.Commands.Apply(scope,
                 new(Guid.NewGuid(), Runtime.Machine, new(ActorKind.Session, Parent.SessionId), Guid.NewGuid().ToString(), 0, 0, 1000),
                 new SendMessage(Parent.SessionId, child, "Accepted helper message", "prompt")));
             Assert.True(queued.Applied);
+            if (Engine.State("engine_session", child) == "starting")
+                CompleteEffect(child, "start", new(EffectDisposition.Confirmed,
+                    JsonSerializer.SerializeToElement(new SessionEffectData("idle", "acp-" + child, null), EngineJson.Default.SessionEffectData), null));
+            StartTurn(child, run);
+            CompleteEffect(child, "send", new(EffectDisposition.Confirmed,
+                JsonSerializer.SerializeToElement(new MessageEffectData("next_turn", run, null), EngineJson.Default.MessageEffectData), null));
+        }
+
+        public void StartTurn(string child, string run)
+        {
             var e = new TurnStarted(1000, run, "Accepted helper message");
             _converters.TryAdd(child, new RowConverter());
             var observed = _feed.Capture(child)!;
             Hub.Publish(child, _converters[child].Apply(e), scope => _feed.ObserveBatch(scope, observed, "acp-" + child, [e]));
+        }
+
+        public void CompleteEffect(string child, string kind, EffectReceipt receipt)
+        {
+            Engine.Db.Writer.Write("test.effect-complete", scope =>
+            {
+                var effect = scope.QueryFirst("SELECT id,version FROM engine_outbox WHERE session_id=$child AND kind=$kind AND state='pending'",
+                    r => (Id: r.Text(0), Version: r.Long(1)), new SqlArg("$child", child), new("$kind", kind));
+                var context = new CommandContext(Guid.NewGuid(), Runtime.Machine, new(ActorKind.System, "engine.worker"),
+                    effect.Id, effect.Version, 0, 1000);
+                var claimed = Runtime.Commands.Apply(scope, context, new ClaimEffect());
+                Assert.True(claimed.Applied, claimed.Error);
+                var completed = Runtime.Commands.Apply(scope, context with { CommandId = Guid.NewGuid(), ExpectedVersion = effect.Version + 1 },
+                    new CompleteEffect(receipt));
+                Assert.True(completed.Applied, completed.Error);
+                Cards.Observe(scope, child);
+                return 0;
+            });
         }
 
         public void End(string child, string terminal, string? error = null)

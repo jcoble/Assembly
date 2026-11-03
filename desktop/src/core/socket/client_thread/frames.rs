@@ -18,6 +18,22 @@ impl ClientThread {
     pub(super) fn frame(&mut self, frame: InFrame) {
         match frame {
             InFrame::Welcome { .. } => {}
+            InFrame::EngineSnapshot {
+                id,
+                machine,
+                through,
+                items,
+                more,
+                at,
+            } => self.engine_snapshot(id, machine, through, items, more, at),
+            InFrame::EngineEvents {
+                id,
+                machine,
+                after,
+                through,
+                events,
+                at,
+            } => self.engine_events(id, machine, after, through, events, at),
             InFrame::Result { id, result } => self.settle(id, Outcome::Ok(result)),
             InFrame::Error {
                 id,
@@ -29,6 +45,18 @@ impl ClientThread {
                     eprintln!("socket: {} failed: {message}", topic.topic);
                 } else if self.rows.remove(&id).is_some() {
                     eprintln!("socket: rows failed: {message}");
+                } else if self.engines.contains_key(&id) {
+                    if matches!(code.as_str(), "bad_args" | "failed")
+                        && self
+                            .engines
+                            .get(&id)
+                            .is_some_and(|feed| feed.through.is_some())
+                    {
+                        self.reset_engine(id);
+                    } else {
+                        self.engines.remove(&id);
+                        eprintln!("socket: engine message failed: {message}");
+                    }
                 } else if code == "cancelled" {
                     self.settle(id, Outcome::Aborted);
                 } else {

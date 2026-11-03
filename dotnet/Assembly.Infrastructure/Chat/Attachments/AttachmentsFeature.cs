@@ -12,7 +12,7 @@ namespace Assembly.Infrastructure.Chat.Attachments;
 /// Images over the socket (plan D4, option A): <c>attachments/begin</c> checks the type and size and opens an upload,
 /// <c>attachments/chunk</c> appends up to <see cref="ChunkBytes"/> at its offset to the upload's staging file, and
 /// <c>attachments/commit</c> checks the bytes and saves them where the session's agent runs, answering the path there.
-/// <c>attachments/read</c> reads this machine's copy back for the preview, a piece at a time. Staging files live under the
+/// <c>attachments/read</c> reads the owning machine's image for the preview, a piece at a time. Staging files live under the
 /// backend's home, one per upload, never past the size begin declared, and a socket has at most <see cref="MaxOpen"/>
 /// open. <c>attachments/drop</c>, a failed or cancelled chunk or commit, or the socket closing once its writes have run,
 /// drops the upload and its file.
@@ -29,17 +29,15 @@ internal sealed class AttachmentsFeature : IFeature
 
     private readonly SessionStore _sessions;
     private readonly MachineSet _machines;
-    private readonly AttachmentStore _store;
     private readonly string _staging;
     private readonly Lock _gate = new();
     // Each open upload, by its id.
     private readonly Dictionary<string, Upload> _uploads = [];
 
-    public AttachmentsFeature(SessionStore sessions, MachineSet machines, AttachmentStore store, string staging)
+    public AttachmentsFeature(SessionStore sessions, MachineSet machines, string staging)
     {
         _sessions = sessions;
         _machines = machines;
-        _store = store;
         _staging = staging;
         // What a backend that stopped mid-upload left: only files begin names, so a home pointed at a real folder loses
         // nothing else.
@@ -132,19 +130,10 @@ internal sealed class AttachmentsFeature : IFeature
             DropIfOpen(args.Upload, call.Connection);
             return Task.FromResult<Func<IWriteScope, Dropped>>(_ => new Dropped(true));
         }, args => OrderOf(args.Upload), bulk: true);
-        calls.Read(Feature, "read", AttachmentsJson.Default.ReadArgs, AttachmentsJson.Default.Piece, async (args, call) =>
+        calls.Read(Feature, "read", AttachmentsJson.Default.ReadArgs, AttachmentsJson.Default.AttachmentPiece, async (args, call) =>
         {
-            var type = AttachmentStore.TypeOfName(args.Name) ?? throw new CallFailed("not an attachment name");
-            var path = _store.PathOf(args.Session, args.Name);
-            if (_sessions.Get(args.Session) is null || !File.Exists(path))
-                throw new CallFailed("no such attachment");
-            await using var file = File.OpenRead(path);
-            if (args.Offset < 0 || args.Offset > file.Length)
-                throw new CallFailed("the offset is outside the attachment");
-            file.Position = args.Offset;
-            var data = new byte[Math.Min(ChunkBytes, file.Length - args.Offset)];
-            await file.ReadExactlyAsync(data, call.Cancellation);
-            return new Piece(data, file.Length, type.ContentType);
+            var session = _sessions.Get(args.Session) ?? throw new CallFailed("no such attachment");
+            return await _machines.For(session).ReadAttachmentAsync(session, args.Name, args.Offset, call.Cancellation);
         }, bulk: true);
         // Runs once the socket's queued chunks have all run, so none writes to a file after it's deleted.
         calls.Closed(connection =>
@@ -222,8 +211,6 @@ internal sealed class AttachmentsFeature : IFeature
     internal sealed record Dropped(bool Ok);
 
     internal sealed record ReadArgs([property: JsonRequired] string Session, [property: JsonRequired] string Name, long Offset = 0);
-
-    internal sealed record Piece(byte[] Data, long Size, string Mime);
 }
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
@@ -236,5 +223,5 @@ internal sealed class AttachmentsFeature : IFeature
 [JsonSerializable(typeof(AttachmentsFeature.DropArgs))]
 [JsonSerializable(typeof(AttachmentsFeature.Dropped))]
 [JsonSerializable(typeof(AttachmentsFeature.ReadArgs))]
-[JsonSerializable(typeof(AttachmentsFeature.Piece))]
+[JsonSerializable(typeof(AttachmentPiece))]
 internal sealed partial class AttachmentsJson : JsonSerializerContext;

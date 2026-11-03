@@ -1,4 +1,3 @@
-using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -11,6 +10,7 @@ using Assembly.Engine.Sessions;
 using Assembly.Engine.Contracts;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Infrastructure.Engine;
+using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Infrastructure.Http;
 using Assembly.Infrastructure.Machines;
 using Assembly.Tests.Features.Chat.Sessions;
@@ -25,19 +25,19 @@ namespace Assembly.Tests.Engine;
 public sealed class SessionCutoverDoorTests
 {
     [Fact]
-    public async Task Existing_http_and_socket_owner_create_reach_the_same_untitled_checked_start()
+    public async Task Authenticated_socket_owners_create_the_same_untitled_checked_start()
     {
         await using var h = await Host.Start();
-        using var http = new HttpClient { BaseAddress = h.Address };
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "token");
-        using var response = await http.PostAsync("/sessions", new StringContent("""{"agent":"claude","repoUrl":"https://example.com/repo"}""", Encoding.UTF8, "application/json"));
-        response.EnsureSuccessStatusCode();
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var httpId = body.RootElement.GetProperty("sessionId").GetString()!;
+        using var firstSocket = await h.Open();
+        await Send(firstSocket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","repoUrl":"https://example.com/repo"}}""");
+        var first = await Read(firstSocket);
+        Assert.Equal("result", first.GetProperty("t").GetString());
+        var firstId = first.GetProperty("result").GetProperty("sessionId").GetString()!;
         using var socket = await h.Open();
         await Send(socket, """{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"codex","repoUrl":"repo"}}""");
         var socketId = (await Read(socket)).GetProperty("result").GetProperty("sessionId").GetString()!;
-        foreach (var id in new[] { httpId, socketId })
+        Assert.NotEqual(firstId, socketId);
+        foreach (var id in new[] { firstId, socketId })
         {
             Assert.Null(h.Store.Get(id)!.Title);
             Assert.Equal("", h.F.Text("SELECT title FROM engine_session WHERE id=$id", new SqlArg("$id", id)));
@@ -111,6 +111,7 @@ public sealed class SessionCutoverDoorTests
         private readonly LiveHub _hub;
         private readonly BackgroundWork _work;
         private readonly SessionRegistry _registry;
+        private readonly NeedAnswers _needs;
         private readonly WebApplication _app;
         private Host()
         {
@@ -118,10 +119,11 @@ public sealed class SessionCutoverDoorTests
             _hub = new LiveHub(RowStore.Open(F.Db)); _work = new(F.Time, TextWriter.Null);
             _registry = new(_hub, Store, Launcher, F.Time, TextWriter.Null, _work);
             Runtime = EngineRuntime.Start(F.Db, _topics, F.Time, F.Limits, cutover: new(F.Db, Store, Launcher, Path.Combine(Home, "checkouts"), F.Time));
+            _needs = new(new(Runtime, F.Limits, F.Time), Runtime, _registry, F.Time);
             var attachments = new AttachmentStore(Path.Combine(Home, "attachments"));
             var machines = new MachineSet(new LocalMachine(_hub, Store, _registry, attachments));
             _app = ApiServer.Build(new(_hub, Store, machines, attachments, "token", Writer: F.Db.Writer, Topics: _topics,
-                Features: [new SessionsFeature(Store, machines), new EngineCalls(Runtime, F.Time)], Engine: Runtime), 0, out _);
+                Features: [new SessionsFeature(Store, machines), new EngineCalls(Runtime, F.Time, _needs)], Engine: Runtime), 0, out _);
         }
         public static async Task<Host> Start()
         {
@@ -137,7 +139,7 @@ public sealed class SessionCutoverDoorTests
         }
         public async ValueTask DisposeAsync()
         {
-            await _app.StopAsync(); await _app.DisposeAsync(); await _registry.DisposeAsync(); await _work.DisposeAsync();
+            await _needs.StopWaiting(); await _app.StopAsync(); await _app.DisposeAsync(); await _needs.DisposeAsync(); await _registry.DisposeAsync(); await _work.DisposeAsync();
             await Runtime.DisposeAsync(); _hub.Dispose(); F.Dispose(); Directory.Delete(Home, true);
         }
     }

@@ -37,6 +37,31 @@ impl SessionClient for SocketSessionClient {
         Subscription::new(move || drop(task))
     }
 
+    fn subscribe_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        mut sink: super::session_client::MessageSink,
+        cx: &App,
+    ) -> Subscription {
+        use crate::core::socket::engine_update::EngineUpdate;
+        let Some(socket) = SocketClient::try_global(cx) else {
+            return Subscription::new(|| {});
+        };
+        let mut updates = socket.read(cx).subscribe_engine_message(message, machine);
+        let task = cx.spawn(async move |cx| {
+            while let Ok(update) = updates.updates.recv().await {
+                let items = match update {
+                    EngineUpdate::Snapshot(items) | EngineUpdate::Events(items) => items,
+                };
+                for item in items {
+                    cx.update(|cx| sink(item, cx));
+                }
+            }
+        });
+        Subscription::new(move || drop(task))
+    }
+
     fn call(
         &self,
         feature: &str,
@@ -47,7 +72,8 @@ impl SessionClient for SocketSessionClient {
     ) -> Task<Result<Value, CallError>> {
         let bulk = feature == "attachments"
             || (feature == "rows" && matches!(method, "page" | "tool"))
-            || (feature == "engine" && method == "session_title_chunk");
+            || (feature == "engine"
+                && matches!(method, "session_title_chunk" | "owner_prompt_chunk"));
         let socket = if bulk {
             SocketClient::try_bulk(cx)
         } else {

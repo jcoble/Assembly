@@ -4,6 +4,7 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Domain.Sessions;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
+using Assembly.Tests.Infrastructure.Http;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
@@ -55,18 +56,22 @@ public sealed partial class RemoteMachineTests
                 refreshed.TrySetResult();
         });
 
-        await machine.SendAsync(session, "Fix the build", null, CancellationToken.None);
+        machine.Watch(session);
+        var clientId = Guid.NewGuid().ToString("N");
+        ApiTests.AssertQueuedAcceptance(await FeatureResultAsync(_box, BoxToken, "send", "send",
+            new { session = session.SessionId, text = "Fix the build", clientId }), session.SessionId, clientId);
         var agent = await _boxLauncher.NextAsync();
         await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt");
-        Assert.Equal("Fix the build", (await GetJsonAsync(_box, BoxToken, $"/sessions/{session.SessionId}")).GetProperty("title").GetString());
+        await agent.InsertAsync(prompt, "title-prompt");
+        Assert.Equal("Fix the build", (await SessionAsync(_box, BoxToken, session.SessionId)).GetProperty("title").GetString());
         if (remoteHelperTitle is not null)
         {
             var boxDb = (AppDatabase)typeof(Assembly.Desktop.Serve.DesktopBackend).GetField("_db", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(_box)!;
             SessionStore.Open(boxDb, TimeProvider.System, "checkouts").SetTitle(session.SessionId, remoteHelperTitle, "helper");
         }
         await agent.TextAsync("Hello");
-        await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
+        await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""");
         await agent.CloseAsync();
         await refreshed.Task.WaitAsync(TimeSpan.FromSeconds(10));
 

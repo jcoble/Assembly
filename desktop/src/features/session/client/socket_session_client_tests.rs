@@ -49,6 +49,8 @@ async fn the_large_calls_go_on_the_bulk_socket_and_the_rest_on_the_main_one(
         ("rows", "page", "/socket/bulk"),
         ("rows", "tool", "/socket/bulk"),
         ("engine", "session_title_chunk", "/socket/bulk"),
+        ("engine", "owner_prompt_chunk", "/socket/bulk"),
+        ("engine", "owner_prompts", "/socket"),
         ("engine", "session_title", "/socket"),
         ("send", "send", "/socket"),
         ("config", "get", "/socket"),

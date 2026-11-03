@@ -1,5 +1,5 @@
-using System.Net;
-using System.Net.Http.Headers;
+using System.Net.WebSockets;
+using Assembly.Tests.Infrastructure.Http;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Engine;
@@ -29,16 +29,16 @@ public sealed partial class OwnerPromptDoorTests
         var request = new OwnerPromptRequest(id, text, "C", [reference], epoch);
         var accepted = h.Fixture.Db.Writer.Write("send/send", await h.Door.PrepareOwnerPromptAsync(request, default));
         await h.Reopen();
-        using var hub = new LiveHub(RowStore.Open(h.Fixture.Db));
-        await using var app = ApiServer.Build(new(hub, h.Sessions, new MachineSet(h.Machine), h.Attachments, "owner-token", OwnerDoor: h.Door), 0, out _);
+        await using var app = ApiServer.Build(h.SocketServices, 0, out _);
         await app.StartAsync();
-        using var http = new HttpClient { BaseAddress = new(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single()) };
-        var route = $"/sessions/{id}/owner-prompts";
-        Assert.Equal(HttpStatusCode.Unauthorized, (await http.GetAsync(route)).StatusCode);
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "owner-token");
-        var pageBytes = await http.GetByteArrayAsync(route);
-        Assert.True(pageBytes.Length <= 65536);
-        var page = JsonSerializer.Deserialize(pageBytes, SessionsJson.Default.OwnerPromptPage)!;
+        var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+        await OwnerDeniedAsync(address);
+        using var socket = await ApiTests.OpenOwnerSocketAsync(address, "owner-token");
+        using var bulk = await ApiTests.OpenOwnerSocketAsync(address, "owner-token", "/socket/bulk");
+        var pageResult = ApiTests.Result(await OwnerCallAsync(socket, "owner_prompts", new { session = id }));
+        var pageBytes = Encoding.UTF8.GetBytes(pageResult.GetRawText());
+        Assert.True(Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(new { t = "result", id = 1, result = pageResult })) <= 65536);
+        var page = pageResult.Deserialize(SessionsJson.Default.OwnerPromptPage)!;
         Assert.Equal(h.Fixture.Machine, page.EngineMachine); Assert.NotEqual("paired-phone-id", page.EngineMachine);
         var manifest = Assert.Single(page.Items); Assert.False(manifest.TextComplete); Assert.Equal(epoch, manifest.TargetEpoch);
         Assert.Equal(pageBytes.Length, JsonReply.Encode(json => JsonSerializer.Serialize(json, page, SessionsJson.Default.OwnerPromptPage)).Length);
@@ -47,8 +47,9 @@ public sealed partial class OwnerPromptDoorTests
             using var all = new MemoryStream(); long offset = 0;
             while (true)
             {
-                var uri = $"{route}/C/content?part={part}&offset={offset}&contentSha256={manifest.ContentSha256}&machine={page.EngineMachine}";
-                var chunk = JsonSerializer.Deserialize(await http.GetByteArrayAsync(uri), SessionsJson.Default.OwnerPromptChunk)!;
+                var chunk = ApiTests.Result(await OwnerCallAsync(bulk, "owner_prompt_chunk",
+                    new { session = id, clientId = "C", part, offset, contentSha256 = manifest.ContentSha256, machine = page.EngineMachine }))
+                    .Deserialize(SessionsJson.Default.OwnerPromptChunk)!;
                 all.Write(chunk.Data);
                 if (chunk.NextOffset is not { } next) break;
                 offset = next;
@@ -61,10 +62,31 @@ public sealed partial class OwnerPromptDoorTests
         Assert.Equal(manifest.ContentSha256, full.ContentSha256);
         Assert.NotEqual(full.ContentSha256, OwnerPromptFingerprint.Prepare("paired-phone-id", new(id, exactText, manifest.ClientId, references, manifest.TargetEpoch), default).ContentSha256);
         Assert.Equal(accepted, h.Fixture.Db.Writer.Write("send/send", await h.Door.PrepareOwnerPromptAsync(new(id, exactText, "C", references, manifest.TargetEpoch), default)));
-        Assert.Equal(HttpStatusCode.Conflict, (await http.GetAsync(route + "?machine=paired-phone-id")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await http.GetAsync($"/sessions/{id}/owner-prompts/other/content?part=text&contentSha256={manifest.ContentSha256}")).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await http.GetAsync(route + "/C/content?part=text&contentSha256=" + new string('a', 64))).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await http.GetAsync(route + "?limit=invalid")).StatusCode);
+        await OwnerErrorAsync(socket, "owner_prompts", new { session = id, machine = "paired-phone-id" }, "not_found");
+        await OwnerErrorAsync(bulk, "owner_prompt_chunk", new { session = id, clientId = "other", part = "text", offset = 0, contentSha256 = manifest.ContentSha256 }, "not_found");
+        await OwnerErrorAsync(bulk, "owner_prompt_chunk", new { session = id, clientId = "C", part = "text", offset = 0, contentSha256 = new string('a', 64) }, "failed");
+        await OwnerErrorAsync(socket, "owner_prompts", new { session = id, limit = "invalid" }, "bad_args");
         Assert.Empty(h.Machine.Asked); Assert.Equal(1, h.Fixture.Count("engine_message"));
     }
+    private static Task<JsonElement> OwnerCallAsync(ClientWebSocket socket, string method, object args) =>
+        ApiTests.SocketRequestAsync(socket, 1, "engine", method, JsonSerializer.Serialize(args));
+
+    private static async Task OwnerErrorAsync(ClientWebSocket socket, string method, object args, string code)
+    {
+        var error = await OwnerCallAsync(socket, method, args);
+        Assert.Equal("error", error.GetProperty("t").GetString());
+        Assert.Equal(code, error.GetProperty("code").GetString());
+    }
+
+    private static async Task OwnerDeniedAsync(Uri address)
+    {
+        using var socket = new ClientWebSocket();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await socket.ConnectAsync(new Uri($"ws://{address.Authority}/socket"), deadline.Token);
+        await socket.SendAsync(Encoding.UTF8.GetBytes("""{"t":"hello","protocol":1}""").AsMemory(), WebSocketMessageType.Text, true, deadline.Token);
+        var received = await socket.ReceiveAsync(new ArraySegment<byte>(new byte[1024]), deadline.Token);
+        Assert.Equal(WebSocketMessageType.Close, received.MessageType);
+        Assert.Equal((WebSocketCloseStatus)4401, received.CloseStatus);
+    }
+
 }

@@ -159,5 +159,5 @@ impl Render for Header {
 }
 
 #[cfg(test)]
-#[path = "header_tests.rs"]
+#[path = "tests/header_tests.rs"]
 mod tests;

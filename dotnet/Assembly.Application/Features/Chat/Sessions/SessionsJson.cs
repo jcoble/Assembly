@@ -36,7 +36,6 @@ namespace Assembly.Application.Features.Chat.Sessions;
 [JsonSerializable(typeof(SessionsFeature.Rail))]
 [JsonSerializable(typeof(SessionsFeature.RailChange))]
 [JsonSerializable(typeof(SendFeature.SendArgs))]
-[JsonSerializable(typeof(SendFeature.Sent))]
 [JsonSerializable(typeof(SendFeature.StopArgs))]
 [JsonSerializable(typeof(SendFeature.AnswerArgs))]
 [JsonSerializable(typeof(SendFeature.StopTaskArgs))]

@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.WebSockets;
 using System.Text.Json;
 using Assembly.Tests.Features.Chat.Sessions;
@@ -10,6 +9,7 @@ using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Persistence;
 using Assembly.Infrastructure.Remote;
+using Assembly.Tests.Infrastructure.Http;
 
 namespace Assembly.Tests.Infrastructure.Remote;
 
@@ -18,7 +18,7 @@ public sealed partial class RemoteMachineTests
     [Fact]
     public async Task Composer_transport_discovery_crosses_pinned_socket_to_owner_without_rows_or_desktop_launch()
     {
-        var agents = await GetJsonAsync(_desktop!, DesktopToken, $"/agents?machine={Box}");
+        var agents = await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box });
         var target = agents.GetProperty("agents")[0].GetProperty("targetId").GetString()!;
         using var socket = await OpenSocketAsync(_desktop!);
         await SendTextAsync(socket, $$$$$"""{"t":"call","id":1,"feature":"config","method":"discover","args":{"agent":"claude","targetId":"{{{{{target}}}}}","cwd":"/tmp","machine":"{{{{{Box}}}}}"}}""");
@@ -33,22 +33,22 @@ public sealed partial class RemoteMachineTests
         Assert.Equal(JsonValueKind.Array, frame.GetProperty("result").GetProperty("modelOptions").GetProperty("a").ValueKind);
         Assert.True(agent.Disposed);
         Assert.Equal(0, _desktopLauncher.Launches);
-        Assert.Empty((await GetJsonAsync(_box, BoxToken, "/sessions")).GetProperty("sessions").EnumerateArray());
-        Assert.Empty((await GetJsonAsync(_desktop!, DesktopToken, "/sessions")).GetProperty("sessions").EnumerateArray());
+        Assert.Empty((await FeatureResultAsync(_box, BoxToken, "sessions", "page", new { limit = 200 })).GetProperty("sessions").EnumerateArray());
+        Assert.Empty((await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "page", new { limit = 200 })).GetProperty("sessions").EnumerateArray());
     }
 
     [Fact]
     public async Task Composer_transport_create_saves_initial_choices_and_cwd_then_owner_warms_and_resumes_same_id()
     {
-        var agents = await GetJsonAsync(_desktop!, DesktopToken, $"/agents?machine={Box}");
+        var agents = await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box });
         var target = agents.GetProperty("agents")[0].GetProperty("targetId").GetString()!;
         using var socket = await OpenSocketAsync(_desktop!);
         await SendTextAsync(socket, $$$$$"""{"t":"call","id":1,"feature":"sessions","method":"create","args":{"agent":"claude","repoUrl":"repo","machine":"{{{{{Box}}}}}","workingFolder":"/tmp","initialConfig":{"targetId":"{{{{{target}}}}}","choices":{"model":"b"}}}}""");
         var created = JsonDocument.Parse(await ReadTextAsync(socket)).RootElement;
         var id = created.GetProperty("result").GetProperty("sessionId").GetString()!;
-        var saved = await GetJsonAsync(_box, BoxToken, $"/sessions/{id}/config");
+        var saved = await FeatureResultAsync(_box, BoxToken, "config", "get", new { session = id });
         Assert.Equal("b", saved.GetProperty("choices").GetProperty("model").GetString());
-        Assert.Equal("/tmp", (await GetJsonAsync(_box, BoxToken, $"/sessions/{id}")).GetProperty("workingFolder").GetString());
+        Assert.Equal("/tmp", (await SessionAsync(_box, BoxToken, id)).GetProperty("root").GetString());
         await SendTextAsync(socket, $$$$$"""{"t":"call","id":2,"feature":"config","method":"warm","args":{"session":"{{{{{id}}}}}","targetId":"{{{{{target}}}}}"}}""");
         var warming = await _boxLauncher.NextAsync();
         var open = await warming.StartAsync(acpSessionId: "owner-native", configOptions: SessionWarmConfigTests.Options);
@@ -56,8 +56,9 @@ public sealed partial class RemoteMachineTests
         var warmed = JsonDocument.Parse(await ReadTextAsync(socket)).RootElement;
         Assert.Equal("result", warmed.GetProperty("t").GetString());
         Assert.True(warming.Disposed);
-        Assert.Equal("owner-native", (await GetJsonAsync(_box, BoxToken, $"/sessions/{id}")).GetProperty("acpSessionId").GetString());
-        var sending = SendAsync(id);
+        Assert.Equal("owner-native", (await SessionAsync(_box, BoxToken, id)).GetProperty("acpSessionId").GetString());
+        using var sendingSocket = await OpenSocketAsync(_desktop!);
+        var sending = ApiTests.QueueSocketTurnAsync(sendingSocket, id);
         var running = await _boxLauncher.NextAsync();
         var resumed = await running.StartAsync(acpSessionId: "owner-native", configOptions: SessionWarmConfigTests.Options);
         Assert.Equal("session/resume", resumed.GetProperty("method").GetString());
@@ -72,7 +73,7 @@ public sealed partial class RemoteMachineTests
     [Fact]
     public async Task Composer_transport_stale_advertised_owner_target_is_refused_before_launch()
     {
-        var agents = await GetJsonAsync(_desktop!, DesktopToken, $"/agents?machine={Box}");
+        var agents = await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box });
         var target = agents.GetProperty("agents")[0].GetProperty("targetId").GetString()!;
         _boxLauncher.Agents = [_boxLauncher.Agents[0] with { Air = ["replacement-air"] }];
         using var socket = await OpenSocketAsync(_desktop!);
@@ -84,33 +85,28 @@ public sealed partial class RemoteMachineTests
         Assert.Equal(0, _desktopLauncher.Launches);
     }
     [Fact]
-    public async Task Composer_transport_phone_HTTP_choices_survive_both_restarts_and_apply_before_one_prompt()
+    public async Task Composer_transport_choices_survive_both_restarts_and_apply_before_one_prompt()
     {
-        var agents = await GetJsonAsync(_desktop!, DesktopToken, $"/agents?machine={Box}");
+        var agents = await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box });
         var target = agents.GetProperty("agents")[0].GetProperty("targetId").GetString()!;
-        string id;
-        using (var http = Client(_desktop!, DesktopToken))
+        var created = await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "create", new
         {
-            var body = JsonSerializer.Serialize(new
-            {
-                agent = "claude",
-                repoUrl = "repo",
-                machine = Box,
-                workingFolder = "/tmp",
-                initialConfig = new { targetId = target, choices = new Dictionary<string, string> { ["model"] = "b", ["effort"] = "medium", ["mode"] = "full" } }
-            });
-            using var response = await http.PostAsync("/sessions", Json(body));
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            id = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("sessionId").GetString()!;
-        }
+            agent = "claude",
+            repoUrl = "repo",
+            machine = Box,
+            workingFolder = "/tmp",
+            initialConfig = new { targetId = target, choices = new Dictionary<string, string> { ["model"] = "b", ["effort"] = "medium", ["mode"] = "full" } }
+        });
+        var id = created.GetProperty("sessionId").GetString()!;
         Assert.Equal(0, _boxLauncher.Launches);
         await _desktop!.DisposeAsync(); _desktop = null;
         await _box.DisposeAsync();
         _box = await DesktopBackend.StartAsync(_boxHome, BoxToken, 0, _boxLauncher, _log);
         await StartDesktopAsync();
-        var before = await GetJsonAsync(_box, BoxToken, $"/sessions/{id}/config");
+        var before = await FeatureResultAsync(_box, BoxToken, "config", "get", new { session = id });
         Assert.Equal("medium", before.GetProperty("choices").GetProperty("effort").GetString());
-        var sending = SendAsync(id);
+        using var sendingSocket = await OpenSocketAsync(_desktop!);
+        var sending = ApiTests.QueueSocketTurnAsync(sendingSocket, id);
         var agent = await _boxLauncher.NextAsync();
         string Options(string model, string effort, string mode) => SessionWarmConfigTests.Options.Replace("\"currentValue\":\"b\"", $"\"currentValue\":\"{model}\"").TrimEnd(']')
             + "," + JsonSerializer.Serialize(new { id = "effort", type = "select", currentValue = effort, options = model == "a" ? new[] { new { value = "low" }, new { value = "high" } } : new[] { new { value = "minimal" }, new { value = "medium" } } })
@@ -121,12 +117,12 @@ public sealed partial class RemoteMachineTests
             var set = await agent.ReadAsync("session/set_config_option");
             Assert.Equal(configId, set.GetProperty("params").GetProperty("configId").GetString());
             Assert.Equal(value, set.GetProperty("params").GetProperty("value").GetString());
-            Assert.Equal(JsonValueKind.Null, (await GetJsonAsync(_box, BoxToken, $"/sessions/{id}")).GetProperty("acpSessionId").ValueKind);
+            Assert.Equal(JsonValueKind.Null, (await SessionAsync(_box, BoxToken, id)).GetProperty("acpSessionId").ValueKind);
             await agent.ReplyAsync(set, "{\"configOptions\":" + Options(model, effort, mode) + "}");
         }
         var prompt = await agent.ReadAsync("session/prompt");
         Assert.Equal("hi", prompt.GetProperty("params").GetProperty("prompt")[0].GetProperty("text").GetString());
-        Assert.Equal("after-restart", (await GetJsonAsync(_box, BoxToken, $"/sessions/{id}")).GetProperty("acpSessionId").GetString());
+        Assert.Equal("after-restart", (await SessionAsync(_box, BoxToken, id)).GetProperty("acpSessionId").GetString());
         await agent.FinishAsync(prompt, """{"stopReason":"end_turn"}""");
         await sending.WaitAsync(TimeSpan.FromSeconds(5));
         await agent.CloseAsync();
@@ -161,7 +157,7 @@ public sealed partial class RemoteMachineTests
         await agent.StartAsync();
         await discovering.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(agent.Disposed);
-        Assert.Empty((await GetJsonAsync(_box, BoxToken, "/sessions")).GetProperty("sessions").EnumerateArray());
+        Assert.Empty((await FeatureResultAsync(_box, BoxToken, "sessions", "page", new { limit = 200 })).GetProperty("sessions").EnumerateArray());
     }
 
 }

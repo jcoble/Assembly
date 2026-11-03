@@ -35,6 +35,12 @@ pub(super) enum Event {
         after: Option<i64>,
         rows: UnboundedSender<RowUpdate>,
     },
+    SubscribeEngine {
+        id: u64,
+        message: String,
+        machine: Option<String>,
+        updates: UnboundedSender<super::engine_update::EngineUpdate>,
+    },
     Unsubscribe {
         id: u64,
     },

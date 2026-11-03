@@ -50,54 +50,76 @@ public sealed partial class EngineHostTests
     public async Task Real_host_drives_core_and_reconnects(string host)
     {
         var home = Directory.CreateTempSubdirectory("assembly-engine-host-").FullName;
-        var fake = new HostEffects();
+        var launcher = new FakeLauncher();
         try
         {
-            string machineBefore, answerBefore;
+            string machineBefore, answerBefore, needId;
+            WindowCommand answer;
             long cursor;
-            var answer = new WindowCommand(Guid.NewGuid(), "need", 1, 0,
-                new ResolveNeed("answered", JsonSerializer.SerializeToElement("allow")));
-            await using (var running = await Host.Start(host, home, fake))
+            await using (var running = await Host.Start(host, home, null, launcher: launcher))
             {
                 using var socket = await running.Open();
                 using var bulk = await running.Open(bulk: true);
                 await Command(socket, "owner", new StartSession("claude", "model", home, "Owner", null, null, null));
                 await running.WaitState("sessions", "owner", "idle");
+                var ownerAgent = await OpenHostTurn(running, socket, launcher, "owner", "owner-work");
                 await Command(socket, "run", new StartRun("owner", "https://example.com/task", null, null, 60000,
                     [new("step", "Step", true, 1, false, [])]));
                 await Command(socket, "child", new StartSession("codex", "model", home, "Child", "owner", "run", null));
                 await running.WaitState("sessions", "child", "idle");
-                fake.Submit("step", new StartStep("child"), 1, new(ActorKind.Session, "owner"));
-                fake.Submit("need", new OpenNeed("child", "run", "step", "permission", "Allow?", ["allow", "deny"], "request-1", null, null));
-                await Call(socket, "command", JsonSerializer.SerializeToElement(answer, EngineSocketJson.Default.WindowCommand));
-                await running.WaitState("needs_me", "need", "answered");
-                fake.Submit("message", new SendMessage("owner", "child", "Cross-provider message", "prompt"),
+                SubmitHostFact(running, "step", new StartStep("child"), 1, new(ActorKind.Session, "owner"));
+                var childAgent = await OpenHostTurn(running, socket, launcher, "child", "child-work");
+                var opened = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                using var needs = running.Runtime.Publisher.Register(item =>
+                {
+                    if (item.Kind == "needs_me.opened") opened.TrySetResult(item.EntityId);
+                }, out _);
+                await childAgent.RequestAsync("request-1", "session/request_permission", HostPermissionRequest.ReplaceLineEndings(""));
+                needId = await opened.Task.WaitAsync(Timeout);
+                await running.WaitState("needs_me", needId, "open");
+                await AcceptHostSteering(ownerAgent, "Need id: " + needId);
+                await running.WaitState("messages", "need/" + needId, "delivered_to_turn");
+                answer = new(Guid.NewGuid(), needId, 1, 0, new ResolveNeed("answered", JsonSerializer.SerializeToElement("allow")));
+                var accepted = await Call(socket, "command", JsonSerializer.SerializeToElement(answer, EngineSocketJson.Default.WindowCommand));
+                Assert.True(accepted.GetProperty("applied").GetBoolean(), accepted.ToString());
+                var providerAnswer = await childAgent.NextMessageAsync().WaitAsync(Timeout);
+                Assert.Equal("request-1", providerAnswer.GetProperty("id").GetString());
+                Assert.Equal("allow", providerAnswer.GetProperty("result").GetProperty("outcome").GetProperty("optionId").GetString());
+                await running.WaitState("needs_me", needId, "answered");
+                await WaitHostAnswerDone(running, needId);
+                SubmitHostFact(running, "message", new SendMessage("owner", "child", "Cross-provider message", "prompt"),
                     actor: new(ActorKind.Session, "owner"));
+                await AcceptHostSteering(childAgent, "Cross-provider message");
                 await running.WaitState("messages", "message", "delivered_to_turn");
+                await FinishHostTurn(childAgent);
+                // Real provider completion forwards the child's turn reply before its terminal session fact.
+                await AcceptHostSteering(ownerAgent, null);
                 var child = await Entity(bulk, "session", "child");
-                fake.Submit("child", new SetSessionState("ended", null, null), child.GetProperty("version").GetInt64());
+                SubmitHostFact(running, "child", new SetSessionState("ended", null, null), child.GetProperty("version").GetInt64());
+                await AcceptHostSteering(ownerAgent, null);
                 await running.WaitState("messages", "child-ended/child", "delivered_to_turn");
-                var need = await Entity(bulk, "needs_me", "need");
+                var need = await Entity(bulk, "needs_me", needId);
                 Assert.Equal("answered", need.GetProperty("state").GetString());
                 answerBefore = need.GetRawText();
                 machineBefore = (await Entity(bulk, "session", "owner")).GetProperty("machine").GetString()!;
-                Assert.Equal(fake.Runtime.Machine, machineBefore);
+                Assert.Equal(running.Runtime.Machine, machineBefore);
                 var message = await Entity(bulk, "message", "message");
                 Assert.Equal("owner", message.GetProperty("fromSessionId").GetString());
                 Assert.Equal("child", message.GetProperty("toSessionId").GetString());
                 Assert.Equal("delivered_to_turn", message.GetProperty("state").GetString());
-                Assert.Single(fake.AnsweredRequestIds);
+                AssertHostAnswerExactlyOnce(running, needId);
                 Assert.Contains("child-ended/child", await running.SnapshotIds("messages"));
                 var usage = await Call(socket, "usage", new { entityKind = "session", entityId = "owner" });
                 Assert.Equal(0, usage.GetProperty("toolCalls").GetInt64());
                 cursor = await running.Cursor("needs_me");
+                await FinishHostTurn(ownerAgent);
             }
-            await using (var reopened = await Host.Start(host, home, fake))
+            await using (var reopened = await Host.Start(host, home, null, launcher: launcher))
             {
                 using var socket = await reopened.Open();
                 using var bulk = await reopened.Open(bulk: true);
                 Assert.Equal(machineBefore, (await Entity(bulk, "session", "owner")).GetProperty("machine").GetString());
-                Assert.Equal(answerBefore, (await Entity(bulk, "needs_me", "need")).GetRawText());
+                Assert.Equal(answerBefore, (await Entity(bulk, "needs_me", needId)).GetRawText());
                 var receipt = await Call(socket, "command", JsonSerializer.SerializeToElement(answer, EngineSocketJson.Default.WindowCommand));
                 Assert.True(receipt.GetProperty("applied").GetBoolean(), receipt.ToString());
                 using var replay = await reopened.Open();
@@ -106,11 +128,13 @@ public sealed partial class EngineHostTests
                 Assert.Equal("engine_events", page.GetProperty("t").GetString());
                 Assert.Equal(cursor, page.GetProperty("after").GetInt64());
                 Assert.Empty(page.GetProperty("events").EnumerateArray());
+                var ownerAgent = await OpenHostTurn(reopened, socket, launcher, "owner", "reopened-work");
                 // A fresh effect is a worker completion gate after restart, so replay assertions cannot race startup.
                 await Command(socket, "after-restart", new SendMessage(null, "owner", "Gate", "prompt"));
+                await AcceptHostSteering(ownerAgent, "Gate");
                 await reopened.WaitState("messages", "after-restart", "delivered_to_turn");
-                Assert.Single(fake.AnsweredRequestIds);
-                Assert.Empty(fake.UnexpectedReplays);
+                AssertHostAnswerExactlyOnce(reopened, needId);
+                await FinishHostTurn(ownerAgent);
             }
         }
         finally { Directory.Delete(home, true); }
@@ -221,8 +245,9 @@ public sealed partial class EngineHostTests
         private readonly CancellationTokenSource _stop = new();
         private Uri _address = null!;
         public EngineRuntime Runtime { get; private set; } = null!;
+        public Uri Address => _address;
 
-        public static async Task<Host> Start(string host, string home, IEngineEffects? effects, bool failStarted = false, IAgentLauncher? launcher = null)
+        public static async Task<Host> Start(string host, string home, IEngineEffects? effects, bool failStarted = false, IAgentLauncher? launcher = null, int port = 0)
         {
             var result = new Host();
             void Started(EngineRuntime runtime)
@@ -235,7 +260,7 @@ public sealed partial class EngineHostTests
             {
                 if (host == "desktop")
                 {
-                    result._desktop = await DesktopBackend.StartAsync(home, "engine-token", 0, launcher ?? new FakeLauncher(), TextWriter.Null,
+                    result._desktop = await DesktopBackend.StartAsync(home, "engine-token", port, launcher ?? new FakeLauncher(), TextWriter.Null,
                         engineEffects: effects, engineStarted: Started);
                     result._address = result._desktop.Address;
                 }
@@ -244,7 +269,7 @@ public sealed partial class EngineHostTests
                     var tokenFile = Path.Combine(home, "token");
                     await File.WriteAllTextAsync(tokenFile, "ASSEMBLY_TOKEN=engine-token\n");
                     var ready = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
-                    result._remote = ServeRun.RunAsync(new(0, home, tokenFile, Path.Combine(home, "agents.json")),
+                    result._remote = ServeRun.RunAsync(new(port, home, tokenFile, Path.Combine(home, "agents.json")),
                         launcher ?? new FakeLauncher(), effects, (address, runtime) => { Started(runtime); ready.TrySetResult(address); }, result._stop.Token);
                     var completed = await Task.WhenAny(ready.Task, result._remote).WaitAsync(Timeout);
                     if (completed == result._remote) await result._remote;

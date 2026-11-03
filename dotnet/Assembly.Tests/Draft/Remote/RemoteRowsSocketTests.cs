@@ -36,6 +36,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
     private int _liveHits, _sessionHttpHits;
     private SessionStore _remoteSessions = null!;
     private FakeMachine _remoteMachine = null!;
+    private Assembly.Application.Common.Engine.NeedAnswerRequest? _remoteAnswer;
     private MachineStatus _status = null!;
     private int? _welcomeFormat;
     private readonly TopicSet _localTopics = new();
@@ -61,11 +62,22 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         var calls = new SocketDispatcher(_remoteDb.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new RowsFeature(_remoteHub, _remoteStore, sessions, machines).Register(calls);
         new SessionsFeature(sessions, machines).Register(calls);
-        new SendFeature(sessions, machines, _remoteHub).Register(calls);
+        var answers = new Assembly.Tests.Infrastructure.Socket.AnswerDoor
+        {
+            Owner = OwnerDoor(sessions, machines, topics),
+            Answer = request =>
+            {
+                _remoteAnswer = request;
+                return Task.FromResult<Func<Assembly.Application.Common.Database.IWriteScope, bool>>(_ => !_remoteMachine.Refuses);
+            }
+        };
+        new Assembly.Infrastructure.Engine.EngineCalls(_ownerEngine, TimeProvider.System, _ownerAnswers).Register(calls);
+        new Assembly.Infrastructure.Engine.Titles.SessionTitleCalls(_ownerEngine, sessions).Register(calls);
+        new SendFeature(sessions, machines, _remoteHub, answers).Register(calls);
         new ConfigFeature(sessions, machines).Register(calls);
         new MachinesFeature(machines, new MachineStatus(topics, []), () => { }, TimeProvider.System).Register(calls);
-        _socket = new SocketEndpoint("token", calls, "box", TimeProvider.System);
-        _bulk = new SocketEndpoint("token", calls, "box", TimeProvider.System, bulk: true);
+        _socket = new SocketEndpoint("token", calls, "box", TimeProvider.System, engineMachine: _ownerEngine.Machine);
+        _bulk = new SocketEndpoint("token", calls, "box", TimeProvider.System, bulk: true, engineMachine: _ownerEngine.Machine);
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
@@ -107,6 +119,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _address = new Uri(_app.Urls.Single());
         _machine = new RemoteMachine("box", _address, "token", _localHub, _localSessions, TextWriter.Null,
             _status = new MachineStatus(new TopicSet(), ["box"]));
+        await _machine.CallAsync("engine", "machine", JsonSerializer.SerializeToElement(new { }), false, CancellationToken.None);
     }
 
     // Pins: remote#18, remote#8
@@ -130,13 +143,13 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _bulkRead = async socket =>
         {
             await ReadAsync(socket);
-            await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{RowStore.FormatVersion}}}""");
+            await SendAsync(socket, $$"""{"t":"welcome","protocol":1,"format":{{RowStore.FormatVersion}},"engine":"{{_ownerEngine.Machine}}"}""");
             using var call = JsonDocument.Parse(await ReadAsync(socket));
             // The catch-up has read no rows. The send's user and started rows arrive afterwards,
             // through the live subscription, even if its empty read response is still in flight.
             var batch = new RowBatch();
             batch.Rows.Add(new NewRow("run-1", null, RowKind.User,
-                JsonDocument.Parse("""{"text":"answer"}""").RootElement.Clone(), 1));
+                JsonDocument.Parse("""{"text":"answer","clientId":"rail-C"}""").RootElement.Clone(), 1));
             batch.Rows.Add(new NewRow("run-1", null, RowKind.Turn,
                 JsonDocument.Parse("""{"state":"started"}""").RootElement.Clone(), 1));
             _remoteHub.Publish("s", batch);
@@ -146,7 +159,9 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         {
             Assert.False(_localHub.HasSubscribers("s"));
             await _machine.ProbeAsync(CancellationToken.None);
-            Assert.Equal("run-1", await _machine.SendAsync(_localSessions.Get("s")!, "answer", null, CancellationToken.None));
+            var accepted = await _machine.SendOwnerPromptAsync(new("s", "answer", "rail-C", [], null), CancellationToken.None);
+            Assert.Equal("queued", accepted.State);
+            Assert.Null(accepted.RunId);
             await copied.Task.WaitAsync(Wait);
             Assert.False(_localHub.HasSubscribers("s"));
             Assert.Equal(new long[] { 1, 2 }, _localHub.RunRows("s", "run-1").Select(row => row.Seq));
@@ -270,6 +285,10 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _socket.CloseAll();
         _bulk.CloseAll();
         await _app.DisposeAsync();
+        await _ownerAnswers.DisposeAsync();
+        await _ownerEngine.DisposeAsync();
+        await _ownerHosts.DisposeAsync();
+        await _ownerWork.DisposeAsync();
         _localHub.Dispose();
         _remoteHub.Dispose();
         _localDb.Dispose();

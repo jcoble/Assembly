@@ -77,15 +77,15 @@ public sealed partial class AdapterEffectsTests
     }
 
     [Fact]
-    public async Task Legacy_steering_rpc_failure_returns_null_without_prompt_fallback()
+    public async Task Primitive_steering_rpc_failure_throws_without_prompt_fallback()
     {
         await using var f = new AdapterDeliveryFixture(); var first = f.Claim(f.Queue());
         var sending = f.Effects.ExecuteAsync(first, default); var agent = await f.Launcher.NextAsync(); await agent.StartAsync();
         var prompt = await agent.ReadAsync("session/prompt"); await agent.InsertAsync(prompt, "first-provider"); Assert.True(f.Complete(first, await sending.WaitAsync(DeliveryWait)).Applied);
-        var local = new Assembly.Infrastructure.Machines.LocalMachine(f.Hub, f.Sessions, f.Hosts, new Assembly.Infrastructure.Chat.Attachments.AttachmentStore(Path.GetTempPath()));
-        var legacy = local.SendAsync(f.Session, "legacy-steer", "legacy", default);
+        var steeringSend = f.Hosts.For(f.Session.SessionId).SteerAsync("legacy-steer", "legacy", null, default);
         var steering = await agent.ReadAsync("_session/steering"); await agent.ReplyErrorAsync(steering, -32603, "steer failed");
-        Assert.Null(await legacy.WaitAsync(DeliveryWait)); Assert.Single(f.Rows.RowsAfter(f.Session.SessionId, 0), row => row.Kind == "user");
+        var error = await Assert.ThrowsAsync<Assembly.Application.Common.Acp.JsonRpc.JsonRpcException>(() => steeringSend.WaitAsync(DeliveryWait));
+        Assert.Equal("steer failed", error.Message); Assert.Single(f.Rows.RowsAfter(f.Session.SessionId, 0), row => row.Kind == "user");
         await agent.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}"""); await agent.CloseAsync();
     }
 

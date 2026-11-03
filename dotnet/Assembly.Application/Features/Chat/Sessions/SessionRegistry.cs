@@ -27,23 +27,18 @@ public sealed partial class SessionRegistry : IAsyncDisposable
     private readonly SessionTitler? _titler;
     private readonly ISessionFeed? _feed;
     private readonly SessionMcp _mcp;
-    // Each session another session's agent started, by id, with the session whose agent started it.
-    private readonly ConcurrentDictionary<string, string> _startedBy = new();
-    // The last run a helper's prompt or message went into, before its rows reach here from another machine.
-    private readonly ConcurrentDictionary<string, string> _helperRun = new();
     private sealed record HelperProjection(Func<string, bool> Working, Action<string> TurnEnded);
     private HelperProjection? _helperProjection;
 
     public SessionRegistry(LiveHub hub, SessionStore sessionStore, IAgentLauncher launcher, TimeProvider time, TextWriter log,
-        BackgroundWork work, HelperLimits? limits = null, SessionTitler? titler = null, ISessionFeed? feed = null, SessionMcp? mcp = null)
+        BackgroundWork work, SessionTitler? titler = null, ISessionFeed? feed = null, SessionMcp? mcp = null)
     {
         _feed = feed;
         _hub = hub;
         _sessionStore = sessionStore;
         _launcher = launcher;
-        Helpers = new HelperSessions(sessionStore, this, hub, limits ?? new HelperLimits());
-        _mcp = mcp ?? new SessionMcp(_ => Task.CompletedTask, (id, _) => Helpers.Tokens.ServersFor(id),
-            Helpers.Tokens.Revoke, (_, _) => { });
+        Helpers = new HelperSessions(sessionStore, this, hub);
+        _mcp = mcp ?? new SessionMcp(_ => Task.CompletedTask, (_, _) => [], _ => { }, (_, _) => { });
         _opener = new SessionOpener(sessionStore, launcher, Adapter,
             _mcp);
         _time = time;
@@ -88,22 +83,19 @@ public sealed partial class SessionRegistry : IAsyncDisposable
         return _sessionStore.Create(agent, repoUrl, initialConfig, workingFolder, Validate);
     }
 
-    /// <summary>The Assembly MCP server's side: helper sessions, and the messages between sessions.</summary>
+    /// <summary>The existing parent-card writer used by the Engine helper projection.</summary>
     public HelperSessions Helpers { get; }
 
     public SessionHost For(string sessionId) =>
         _hosts.GetOrAdd(sessionId, id =>
         {
-            if (_sessionStore.Get(id) is { Helper: true, ParentSessionId: { } parent })
-                _startedBy[id] = parent;
             return new SessionHost(id, _hub, _sessionStore, _opener, _time, _log, _work, () => StartedWorking(id), HelperTurnEnded, _mcp.Revoke,
                 _titler, _feed);
         });
 
     /// <summary>Whether a session the session's agent started has a turn running.</summary>
     public bool StartedWorking(string sessionId) =>
-        Volatile.Read(ref _helperProjection) is { } projection ? projection.Working(sessionId) :
-            _startedBy.Any(pair => pair.Value == sessionId && Working(pair.Key));
+        Volatile.Read(ref _helperProjection)?.Working(sessionId) == true;
 
     /// <summary>Use the committed Engine child projection when this registry runs under Engine ownership.</summary>
     public void BindHelperWorking(Func<string, bool> working, Action<string> turnEnded)
@@ -116,27 +108,14 @@ public sealed partial class SessionRegistry : IAsyncDisposable
 
     private void HelperTurnEnded(string sessionId)
     {
-        if (Volatile.Read(ref _helperProjection) is { } projection) projection.TurnEnded(sessionId);
-        else Helpers.Row.TurnEnded(sessionId);
+        Volatile.Read(ref _helperProjection)?.TurnEnded(sessionId);
     }
 
     /// <summary>
-    /// A helper the session's agent started, here or on another machine, and the run its prompt or a message went
-    /// into: the session stays open while it works.
-    /// </summary>
-    public void TrackHelper(string helperId, string parentId, string runId)
-    {
-        _startedBy[helperId] = parentId;
-        _helperRun[helperId] = runId;
-    }
-
-    /// <summary>
-    /// Whether the session has a turn running: here, in the rows copied from its machine, or a helper's run that was
-    /// sent there and hasn't ended in the copied rows yet.
+    /// Whether the session has a turn running here or in the rows copied from its machine.
     /// </summary>
     public bool Working(string sessionId) =>
-        ActiveRun(sessionId) is not null || _hub.OpenRun(sessionId) is not null
-        || (_helperRun.TryGetValue(sessionId, out var run) && !_hub.RunEnded(sessionId, run));
+        ActiveRun(sessionId) is not null || _hub.OpenRun(sessionId) is not null;
 
     /// <summary>Whether the session's ACP session is open here now.</summary>
     public bool IsOpen(string sessionId) => _hosts.TryGetValue(sessionId, out var host) && host.IsOpen;

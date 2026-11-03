@@ -1,7 +1,9 @@
 // Board proof uses only host-authenticated owner calls and the real provider's configured MCP reporting tool.
 import { randomUUID } from 'node:crypto';
 
-type Frame = { t: string; id?: number; sub?: number; code?: string; message?: string; result?: any; item?: any; items?: { key: string; item: any }[] };
+type OwnerPromptAccepted = { sessionId: string; messageId: string; clientId: string; state: 'queued'; messageVersion: number; seq: number; epoch: number; runId: null };
+type Row = { sessionId: string; runId: string | null; kind: string; payload: { clientId?: string } };
+type Frame = { row?: Row; t: string; id?: number; sub?: number; code?: string; message?: string; result?: any; item?: any; items?: { key: string; item: any }[] };
 type Detail = { task: { machineId: string; taskKey: string; creatorSessionId: string; state: string }; questions: any[]; feed: any[] };
 type Page = { items: { task: Detail['task'] }[]; nextCursor: string | null };
 class Client {
@@ -83,6 +85,23 @@ async function main() {
   const session = created.sessionId as string;
   const sessionSub = await desktop.sub('sessions', session);
   requireValue(sessionSub.state.items?.some(x => x.item.sessionId === session), 'Desktop must know recovery session');
+  // This new session has no submitted turn yet. Subscribe before either prompt so delivery
+  // can be correlated even when the user row reaches us before the committed acknowledgment.
+  const rowSub = await desktop.sub('rows', session);
+  async function prompt(text: string): Promise<string> {
+    const clientId = randomUUID();
+    const accepted = await desktop.call<OwnerPromptAccepted>('send', 'send', { session, clientId, text });
+    requireValue(accepted?.sessionId === session && accepted.messageId === `prompt/${session}/${clientId}` &&
+      accepted.clientId === clientId && accepted.state === 'queued' && accepted.runId === null &&
+      Number.isSafeInteger(accepted.messageVersion) && accepted.messageVersion > 0 &&
+      Number.isSafeInteger(accepted.seq) && accepted.seq > 0 && Number.isSafeInteger(accepted.epoch) && accepted.epoch >= 0,
+      'Invalid committed owner prompt acknowledgment');
+    const delivered = await desktop.take(f => f.t === 'rows' && f.sub === rowSub.id &&
+      f.row?.sessionId === session && f.row.kind === 'user' && f.row.payload?.clientId === clientId);
+    requireValue(delivered.row?.sessionId === session && typeof delivered.row.runId === 'string' && delivered.row.runId,
+      'Delivered owner prompt has no matching session/run identity');
+    return delivered.row.runId;
+  }
   const source = await open(env.CHECK4_HOST_API!, env.CHECK4_HOST_TOKEN!);
   const sourceBoard = await source.sub('board');
   const key = 'board-proof-' + randomUUID();
@@ -105,13 +124,13 @@ async function main() {
       if (running && frame.item?.activeRunId === null) return;
     }
   }
-  const firstTurn = await desktop.call('send', 'send', { session, clientId: randomUUID(), text:
+  const firstTurn = await prompt(
     'Use the Assembly board_update MCP tool exactly twice in this order with these JSON arguments. Do not use helpers or change files. ' +
     report({ questionKey: 'choice', expectedGeneration: 0, kind: 'text', prompt: 'Which option?', recommendation: 'Simple' }) + '\n' +
     report({ questionKey: 'approval', expectedGeneration: 0, kind: 'approval', prompt: 'Approve the proposal?', recommendation: null }) +
-    '\nThen end this turn. You will receive a Board answer later.' });
+    '\nThen end this turn. You will receive a Board answer later.');
   await reported(d => d.questions.length === 2);
-  await idle(firstTurn.runId);
+  await idle(firstTurn);
   console.log('ok real provider reported two independent questions through MCP');
   const answer = { machineId, taskKey: key, questionKey: 'choice', generation: 1, answerKey: randomUUID(), answer: { kind: 'text', text: 'Simple' } };
   const accepted = await desktop.call('board', 'answer', answer);
@@ -124,13 +143,13 @@ async function main() {
   requireValue(answerTurn, 'Answer delivery has no acknowledged turn');
   await idle(answerTurn);
   const receivedKey = randomUUID();
-  const finalTurn = await desktop.call('send', 'send', { session, clientId: randomUUID(), text:
+  const finalTurn = await prompt(
     'Inspect the immediately preceding Board answer in this chat. Only if it names question choice, generation 1 and answer Simple, ' +
     'use board_update first to reask choice using ' +
     report({ questionKey: 'choice', expectedGeneration: 1, kind: 'text', prompt: 'Confirm simple?', recommendation: 'Simple' }) +
     '. Then record an answer already received in this chat for approval using ' +
     report(null, { answerReceived: { questionKey: 'approval', generation: 1, answerKey: receivedKey, answer: { kind: 'approve', text: null } },
-      summary: 'Confirmed Board answer receipt; approval recorded from chat' }) + '. End the turn.' });
+      summary: 'Confirmed Board answer receipt; approval recorded from chat' }) + '. End the turn.');
   const reasked = await reported(d => d.questions.some(q => q.questionKey === 'choice' && q.generation === 2) &&
     d.questions.some(q => q.questionKey === 'approval' && q.deliveryState === 'recorded_in_chat'));
   requireValue(reasked.questions.find(q => q.questionKey === 'choice').answer === null, 'Reasked question must be unanswered');
@@ -138,7 +157,7 @@ async function main() {
   requireValue(approval.deliveryClientId === null && approval.deliveryTurnId === null, 'Chat-recorded answer must not send');
   const stale = await desktop.response('board', 'answer', { ...answer, answerKey: randomUUID() });
   requireValue(stale.code === 'failed' && stale.message?.includes('stale_generation'), 'Old generation was not rejected');
-  await idle(finalTurn.runId);
+  await idle(finalTurn);
   console.log('ok real provider received answer; reask rejected stale answer; chat answer recorded without echo');
   // Read the owning session's actual chat through the same bulk path used by the session view.
   const bulk = await open(env.CHECK4_API!, env.CHECK4_TOKEN!, '/socket/bulk');

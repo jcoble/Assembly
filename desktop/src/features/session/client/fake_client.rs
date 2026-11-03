@@ -7,7 +7,7 @@
 #![cfg(test)]
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use gpui_kit::*;
@@ -22,7 +22,18 @@ pub struct FakeClient {
 
 #[derive(Default)]
 struct FakeState {
-    answers: VecDeque<Result<Value, CallError>>,
+    answers: VecDeque<FakeAnswer>,
+    next_message: u64,
+    message_sinks: HashMap<
+        u64,
+        (
+            String,
+            Option<String>,
+            Option<super::session_client::MessageSink>,
+        ),
+    >,
+    engine_answers: VecDeque<Result<Value, CallError>>,
+    engine_calls: Vec<(String, Value)>,
     /// Every call made, as ("feature/method", args).
     calls: Vec<(String, Value)>,
     /// Every rows subscription, as (session, after).
@@ -39,10 +50,62 @@ struct FakeState {
     reads: Vec<Value>,
 }
 
+enum FakeAnswer {
+    Value(Result<Value, CallError>),
+    OwnerAccepted,
+}
+
 impl FakeClient {
+    pub fn message_subscriptions(&self) -> usize {
+        self.state.borrow().message_sinks.len()
+    }
+
+    pub fn push_message(&self, message: &str, machine: Option<&str>, item: Value, cx: &mut App) {
+        let ids: Vec<u64> = self
+            .state
+            .borrow()
+            .message_sinks
+            .iter()
+            .filter(|(_, (m, owner, _))| m == message && owner.as_deref() == machine)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            let sink = self
+                .state
+                .borrow_mut()
+                .message_sinks
+                .get_mut(&id)
+                .and_then(|(_, _, sink)| sink.take());
+            if let Some(mut sink) = sink {
+                sink(item.clone(), cx);
+                if let Some((_, _, target)) = self.state.borrow_mut().message_sinks.get_mut(&id) {
+                    *target = Some(sink);
+                }
+            }
+        }
+    }
+
     /// The next call's answer; a call with none queued fails.
     pub fn queue_answer(&self, answer: Result<Value, CallError>) {
-        self.state.borrow_mut().answers.push_back(answer);
+        self.state
+            .borrow_mut()
+            .answers
+            .push_back(FakeAnswer::Value(answer));
+    }
+
+    pub fn queue_owner_accepted(&self) {
+        self.state
+            .borrow_mut()
+            .answers
+            .push_back(FakeAnswer::OwnerAccepted);
+    }
+
+    pub fn queue_engine_answer(&self, answer: Result<Value, CallError>) {
+        self.state.borrow_mut().engine_answers.push_back(answer);
+    }
+
+    pub fn engine_calls(&self) -> Vec<(String, Value)> {
+        self.state.borrow().engine_calls.clone()
     }
 
     /// Delivers a rows event to the open subscription, as the socket would.
@@ -125,6 +188,26 @@ impl SessionClient for FakeClient {
         })
     }
 
+    fn subscribe_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        sink: super::session_client::MessageSink,
+        _cx: &App,
+    ) -> Subscription {
+        let mut state = self.state.borrow_mut();
+        state.next_message += 1;
+        let id = state.next_message;
+        state.message_sinks.insert(
+            id,
+            (message.into(), machine.map(str::to_string), Some(sink)),
+        );
+        let state = self.state.clone();
+        Subscription::new(move || {
+            state.borrow_mut().message_sinks.remove(&id);
+        })
+    }
+
     fn call(
         &self,
         feature: &str,
@@ -145,11 +228,26 @@ impl SessionClient for FakeClient {
             state.reads.push(args);
             return Task::ready(Ok(Value::Null));
         }
-        state.calls.push((format!("{feature}/{method}"), args));
-        let answer = state
-            .answers
-            .pop_front()
-            .unwrap_or_else(|| Err(CallError::Failed("no answer queued".into())));
+        if feature == "engine" {
+            state.engine_calls.push((method.to_string(), args));
+            return Task::ready(state.engine_answers.pop_front().unwrap_or_else(|| {
+                Ok(serde_json::json!({"engineMachine":"local","items":[],"nextCreatedMs":null,"nextClientId":null}))
+            }));
+        }
+        state
+            .calls
+            .push((format!("{feature}/{method}"), args.clone()));
+        let answer = state.answers.pop_front().unwrap_or_else(|| {
+            FakeAnswer::Value(Err(CallError::Failed("no answer queued".into())))
+        });
+        let answer = match answer {
+            FakeAnswer::Value(answer) => answer,
+            FakeAnswer::OwnerAccepted => Ok(serde_json::json!({
+                "sessionId":args["session"],"clientId":args["clientId"],
+                "messageId":format!("prompt/{}/{}", args["session"].as_str().unwrap(), args["clientId"].as_str().unwrap()),
+                "state":"queued","messageVersion":2,"seq":42,"epoch":7,"runId":null
+            })),
+        };
         Task::ready(answer)
     }
 

@@ -2,7 +2,7 @@
 //! in seq order (the socket client checks the gaps); older pages go on top. Ported from rows/store.ts's `View`,
 //! `applyRow`, `prependPage`, `activeRun` and `runStartedAt`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::change::Change;
 use super::item::{Item, ItemKind};
@@ -27,6 +27,8 @@ pub struct SessionView {
     pub has_before: bool,
     /// The newest seq applied: the rows subscription's `after` on a reopen.
     pub newest: i64,
+    pub pending: HashMap<String, String>,
+    pub user_clients: HashSet<String>,
 }
 
 /// The newest turn row: its seq, run, state and when it was written.
@@ -41,6 +43,17 @@ pub struct Turn {
 impl SessionView {
     /// Applies a row newer than every row applied so far: it updates its item in place, or adds one at the end.
     pub fn apply(&mut self, row: &Row) -> Change {
+        if row.kind == "user"
+            && row.payload["from"].is_null()
+            && let Some(client) = row.payload["clientId"].as_str()
+        {
+            self.user_clients.insert(client.to_string());
+            let key = format!("pending:{client}");
+            if self.pending.remove(&key).is_some() {
+                self.items.retain(|item| item.key != key);
+                self.reindex();
+            }
+        }
         self.newest = self.newest.max(row.seq);
         let key = key_of(row);
         let at = self.index.get(&key).copied();
@@ -220,6 +233,18 @@ impl SessionView {
         for row in &rows {
             page.apply(row);
         }
+        self.user_clients.extend(page.user_clients.iter().cloned());
+        self.items.retain(|item| {
+            !item
+                .key
+                .strip_prefix("pending:")
+                .is_some_and(|client| self.user_clients.contains(client))
+        });
+        self.pending.retain(|key, _| {
+            !key.strip_prefix("pending:")
+                .is_some_and(|client| self.user_clients.contains(client))
+        });
+        self.reindex();
         let mut top: Vec<Item> = page
             .items
             .into_iter()
@@ -246,6 +271,57 @@ impl SessionView {
         }
         self.has_before = has_before;
         count
+    }
+
+    fn reindex(&mut self) {
+        self.index = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| (item.key.clone(), i))
+            .collect();
+    }
+
+    pub fn retain_pending(&mut self, clients: &HashSet<String>) {
+        let removed: HashSet<String> = self
+            .pending
+            .keys()
+            .filter(|key| {
+                !key.strip_prefix("pending:")
+                    .is_some_and(|client| clients.contains(client))
+            })
+            .cloned()
+            .collect();
+        if removed.is_empty() {
+            return;
+        }
+        self.pending.retain(|key, _| !removed.contains(key));
+        self.items.retain(|item| !removed.contains(&item.key));
+        self.reindex();
+    }
+
+    /// Local presentation only: no seq, provider row or run is invented.
+    pub fn pending_prompt(&mut self, client: &str, text: &str, state: &str, at: i64) {
+        if self.user_clients.contains(client) {
+            return;
+        }
+        let key = format!("pending:{client}");
+        self.pending.insert(key.clone(), state.to_string());
+        if self.index.contains_key(&key) {
+            return;
+        }
+        self.index.insert(key.clone(), self.items.len());
+        self.items.push(Item {
+            key,
+            run_id: None,
+            at,
+            kind: ItemKind::User {
+                text: text.to_string(),
+                at,
+                from: None,
+                sender_label: None,
+            },
+        });
     }
 
     /// The run going now: the newest turn row's while it's started; else `known` (the page's activeRunId on open,

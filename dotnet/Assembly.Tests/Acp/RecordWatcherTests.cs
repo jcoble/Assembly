@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Threading.Channels;
 using Assembly.Application.Common.Acp.Messages;
-using Assembly.Remote.Smoke;
+using Assembly.Remote.Record;
 
 namespace Assembly.Tests.Acp;
 

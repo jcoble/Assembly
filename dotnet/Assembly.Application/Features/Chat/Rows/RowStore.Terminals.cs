@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Calls;
 using Assembly.Domain.Events;
 
 namespace Assembly.Application.Features.Chat.Rows;
@@ -81,52 +82,95 @@ public sealed partial class RowStore
                 new SqlArg("$terminal", id));
     }
 
-    private StoredToolCall? ReadToolCall(string sessionId, string itemId)
+    private StoredToolCall? ReadToolCall(string sessionId, string itemId, int outputLimit, int diffLimit, CancellationToken ct)
     {
-        using var snapshot = _db.OpenSnapshot(CancellationToken.None);
-        var detail = snapshot.Query("""
-            SELECT (SELECT json_extract(payload,'$.summary') FROM rows WHERE session_id=$session AND item_id=$item AND kind='tool'
-                    ORDER BY seq DESC LIMIT 1),input,output,diff,path,output_source,acp_session_id
-            FROM tool_details WHERE session_id=$session AND item_id=$item;
-            """, row => (Call: new StoredToolCall(Text(row, 0), Text(row, 1), Text(row, 2), Text(row, 3), Text(row, 4)),
-                Source: Text(row, 5), Provider: Text(row, 6)), new SqlArg("$session", sessionId), new SqlArg("$item", itemId)).FirstOrDefault();
-        if (detail.Call is null) return null;
-        if (detail.Provider is null) return detail.Call;
-        var terminals = snapshot.Query("""
-            WITH matched AS (
-              SELECT r.acp_session_id,r.terminal_id,r.ordinal,t.command,t.cwd,t.exit_status,length(t.output) AS preview_bytes,t.output_bytes
-              FROM tool_terminal_refs r LEFT JOIN acp_terminal_details t
-                ON t.session_id=r.session_id AND t.acp_session_id=r.acp_session_id AND t.terminal_id=r.terminal_id
-              WHERE r.session_id=$session AND r.item_id=$item AND r.acp_session_id=$provider),
+        // One statement fixes the detail, newest summary, terminal identities, counts and bounded bytes together.
+        var parts = _db.Query("""
+            WITH detail AS (
+              SELECT input,output,diff,path,output_source,acp_session_id,
+                (SELECT json_extract(payload,'$.summary') FROM rows
+                 WHERE session_id=$session AND item_id=$item AND kind='tool' ORDER BY seq DESC LIMIT 1) AS summary
+              FROM tool_details WHERE session_id=$session AND item_id=$item),
+            matched AS (
+              SELECT r.acp_session_id,r.terminal_id,r.ordinal,t.command,t.cwd,t.exit_status,t.output,t.output_bytes,
+                COALESCE(length(t.output),0) AS preview_bytes
+              FROM tool_terminal_refs r JOIN detail d ON d.acp_session_id=r.acp_session_id
+              LEFT JOIN acp_terminal_details t ON t.session_id=r.session_id
+                AND t.acp_session_id=r.acp_session_id AND t.terminal_id=r.terminal_id
+              WHERE r.session_id=$session AND r.item_id=$item),
             bounded AS (
-              SELECT acp_session_id,terminal_id,ordinal,command,cwd,exit_status,output_bytes,
+              SELECT acp_session_id,terminal_id,command,cwd,exit_status,output,output_bytes,
+                ROW_NUMBER() OVER (ORDER BY ordinal,terminal_id) AS position,
                 COALESCE(SUM(preview_bytes) OVER (ORDER BY ordinal,terminal_id
-                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_bytes,
-                COALESCE(SUM(output_bytes) OVER (),0) AS total_bytes FROM matched)
-            SELECT b.acp_session_id,b.terminal_id,b.command,b.cwd,b.exit_status,
-              substr(t.output,1,max(0,$cap-b.preceding_bytes)),b.output_bytes,b.total_bytes
-            FROM bounded b LEFT JOIN acp_terminal_details t
-              ON t.session_id=$session AND t.acp_session_id=b.acp_session_id AND t.terminal_id=b.terminal_id
-            ORDER BY b.ordinal,b.terminal_id;
-            """, row => (State: new ToolTerminalState(row.Text(0), row.Text(1), Text(row, 2), Text(row, 3),
-                row.IsNull(4) ? null : JsonSerializer.Deserialize(row.Text(4), RowJsonContext.Rows.TerminalExit)),
-                Bytes: row.IsNull(5) ? null : row.Blob(5), Count: row.IsNull(6) ? (long?)null : row.Long(6), Total: row.Long(7)),
-            new SqlArg("$session", sessionId), new SqlArg("$item", itemId), new SqlArg("$provider", detail.Provider), new SqlArg("$cap", RowsFeature.ToolCap));
-        var states = terminals.Count == 0 ? null : Array.AsReadOnly(terminals.Select(t => t.State).ToArray());
-        if ((detail.Source is null or "raw" && detail.Call.Output is not null) || !terminals.Any(t => t.Count is not null))
-            return detail.Call with { Terminals = states };
+                  ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING),0) AS preceding_bytes
+              FROM matched),
+            chosen AS (
+              SELECT summary,input,output,diff,path,
+                CASE WHEN (output_source IS NULL OR output_source='raw') AND output IS NOT NULL THEN 0
+                  WHEN EXISTS(SELECT 1 FROM matched WHERE output_bytes IS NOT NULL) THEN 1 ELSE 0 END AS terminal_output,
+                COALESCE((SELECT SUM(output_bytes) FROM matched),0) AS terminal_total,
+                COALESCE(length(CAST(output AS BLOB)),0) AS output_total,
+                COALESCE(length(CAST(diff AS BLOB)),0) AS diff_total
+              FROM detail)
+            SELECT CASE WHEN COALESCE(b.position,1)=1 THEN 1 ELSE 0 END,
+              COALESCE(length(CAST(d.summary AS BLOB)),0),COALESCE(length(CAST(d.input AS BLOB)),0),COALESCE(length(CAST(d.path AS BLOB)),0),
+              CASE WHEN COALESCE(b.position,1)=1 AND length(CAST(d.summary AS BLOB))<=$field_max THEN CAST(d.summary AS BLOB) END,
+              CASE WHEN COALESCE(b.position,1)=1 AND length(CAST(d.input AS BLOB))<=$field_max THEN CAST(d.input AS BLOB) END,
+              CASE WHEN COALESCE(b.position,1)=1 AND length(CAST(d.path AS BLOB))<=$field_max THEN CAST(d.path AS BLOB) END,
+              CASE WHEN COALESCE(b.position,1)=1 AND d.terminal_output=0 AND d.output IS NOT NULL
+                THEN COALESCE(substr(CAST(d.output AS BLOB),1,$output_limit),X'') END,
+              CASE WHEN COALESCE(b.position,1)=1 AND d.diff IS NOT NULL
+                THEN COALESCE(substr(CAST(d.diff AS BLOB),1,$diff_limit),X'') END,
+              CASE WHEN d.terminal_output=1 THEN d.terminal_total ELSE d.output_total END,d.diff_total,d.terminal_output,
+              b.acp_session_id,b.terminal_id,
+              COALESCE(length(CAST(b.command AS BLOB)),0),COALESCE(length(CAST(b.cwd AS BLOB)),0),COALESCE(length(CAST(b.exit_status AS BLOB)),0),
+              CASE WHEN length(CAST(b.command AS BLOB))<=$field_max THEN CAST(b.command AS BLOB) END,
+              CASE WHEN length(CAST(b.cwd AS BLOB))<=$field_max THEN CAST(b.cwd AS BLOB) END,
+              CASE WHEN length(CAST(b.exit_status AS BLOB))<=$field_max THEN CAST(b.exit_status AS BLOB) END,
+              CASE WHEN d.terminal_output=1 THEN substr(b.output,1,max(0,$terminal_limit-b.preceding_bytes)) END
+            FROM chosen d LEFT JOIN bounded b ON 1=1 ORDER BY b.position;
+            """, row =>
+        {
+            ct.ThrowIfCancellationRequested();
+            foreach (var column in new[] { 1, 2, 3, 14, 15, 16 })
+                if (row.Long(column) > 4 * 1024 * 1024) throw new CallFailed("the answer is over 4 MB");
+            var call = row.Long(0) == 1 ? new StoredToolCall(BlobText(row, 4), BlobText(row, 5),
+                Prefix(row, 7, row.Long(9), outputLimit), Prefix(row, 8, row.Long(10), diffLimit), BlobText(row, 6),
+                row.Long(9), row.Long(10)) : null;
+            var state = row.IsNull(13) ? null : new ToolTerminalState(row.Text(12), row.Text(13), BlobText(row, 17), BlobText(row, 18),
+                row.IsNull(19) ? null : JsonSerializer.Deserialize(BlobText(row, 19)!, RowJsonContext.Rows.TerminalExit));
+            return (Call: call, State: state, Bytes: row.IsNull(20) ? null : row.Blob(20), TerminalOutput: row.Long(11) != 0);
+        }, ct, new SqlArg("$session", sessionId), new SqlArg("$item", itemId), new SqlArg("$output_limit", outputLimit),
+            new SqlArg("$diff_limit", diffLimit), new SqlArg("$terminal_limit", Math.Min(outputLimit, RowsFeature.ToolCap)),
+            new SqlArg("$field_max", 4 * 1024 * 1024));
+        if (parts.Count == 0) return null;
+        var detail = parts[0].Call!;
+        var terminalStates = parts.Where(part => part.State is not null).Select(part => part.State!).ToArray();
+        var states = terminalStates.Length == 0 ? null : Array.AsReadOnly(terminalStates);
+        if (!parts[0].TerminalOutput) return detail with { Terminals = states };
         using var preview = new MemoryStream();
-        var total = terminals[0].Total;
-        foreach (var terminal in terminals)
-        {
-            if (terminal.Bytes is { } bytes)
-                preview.Write(bytes, 0, Math.Min(bytes.Length, RowsFeature.ToolCap - (int)preview.Length));
-        }
+        foreach (var part in parts)
+            if (part.Bytes is { } bytes) preview.Write(bytes);
         var raw = preview.ToArray();
-        var length = raw.Length;
-        if (total > length)
+        var output = DecodePrefix(raw, detail.OutputBytes, Math.Min(outputLimit, RowsFeature.ToolCap), out var cut);
+        return detail with
         {
-            // Decode no incomplete suffix when the byte preview ends inside a UTF8 code point.
+            Output = output,
+            OutputTruncated = detail.OutputBytes > raw.LongLength || cut,
+            Terminals = states
+        };
+    }
+
+    private static string? BlobText(IRow row, int column) => row.IsNull(column) ? null : Encoding.UTF8.GetString(row.Blob(column));
+
+    private static string? Prefix(IRow row, int column, long total, int limit) =>
+        row.IsNull(column) ? null : DecodePrefix(row.Blob(column), total, limit, out _);
+
+    private static string DecodePrefix(byte[] raw, long total, int limit, out bool cut)
+    {
+        var length = raw.Length;
+        if (total > length && length > 0)
+        {
             var start = length - 1;
             while (start >= 0 && (raw[start] & 0xC0) == 0x80) start--;
             if (start >= 0)
@@ -136,8 +180,17 @@ public sealed partial class RowStore
                 if (length - start < needed) length = start;
             }
         }
+        cut = length < raw.Length;
         var decoded = Encoding.UTF8.GetString(raw, 0, length);
-        var (output, _) = RowsFeature.Cut(decoded);
-        return detail.Call with { Output = output, OutputBytes = total, OutputTruncated = total > length || output != decoded, Terminals = states };
+        // Terminal bytes can be malformed; replacement characters may expand beyond the transfer window.
+        if (Encoding.UTF8.GetByteCount(decoded) <= limit) return decoded;
+        cut = true;
+        var characters = 0; var bytes = 0;
+        foreach (var rune in decoded.EnumerateRunes())
+        {
+            if (bytes + rune.Utf8SequenceLength > limit) break;
+            bytes += rune.Utf8SequenceLength; characters += rune.Utf16SequenceLength;
+        }
+        return decoded[..characters];
     }
 }

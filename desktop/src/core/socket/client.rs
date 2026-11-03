@@ -209,6 +209,23 @@ impl SocketClient {
         TopicSubscription::new(id, self.events.clone(), receiver)
     }
 
+    /// One durable Engine message, with snapshot, replay and cursor acknowledgment.
+    pub fn subscribe_engine_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+    ) -> TopicSubscription<super::engine_update::EngineUpdate> {
+        let id = self.id();
+        let (updates, receiver) = unbounded();
+        let _ = self.events.send(Event::SubscribeEngine {
+            id,
+            message: message.into(),
+            machine: machine.map(Into::into),
+            updates,
+        });
+        TopicSubscription::new(id, self.events.clone(), receiver)
+    }
+
     /// Tries the socket again, at `endpoint`, when it's `Disconnected` or `Refused`; nothing otherwise. The launcher calls it, on
     /// the main thread, for each ready line (`listening on ...`) after the first, which starts the client: after
     /// restarting a backend that exited (whose token may be new), and when the Reconnect button finds the backend

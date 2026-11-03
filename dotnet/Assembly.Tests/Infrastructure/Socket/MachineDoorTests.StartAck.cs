@@ -15,6 +15,7 @@ public sealed partial class MachineDoorTests
     {
         using var socket = await Open(); var parent = Guid.NewGuid().ToString(); var child = Guid.NewGuid().ToString();
         Assert.True(Result(await Machine(socket, new RegisterForeignSession("source", "custom", "Parent"), parent)).Applied);
+        Assert.True(Result(await Ancestry(socket, new("source", parent, [new(parent, "source", "custom", "Parent", null)]))).Applied);
         var commandId = Guid.NewGuid(); var start = new StartSession("custom", null, _root, "Title\0😀", parent, null, null, ManagedCheckout: false);
         var request = new MachineCommand(commandId, "source", child, 0, 0, start);
         var query = new MachineStartAckArgs(commandId, "source", child, 0, 0, MachineStartCanonical.FromPrepared(EngineCommands.PrepareSessionTitle(start)));

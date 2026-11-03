@@ -254,7 +254,7 @@ public sealed partial class ChatSocketTests
         foreach (var file in new[] { left, other, inside })
             File.WriteAllText(file, "x");
 
-        _ = new AttachmentsFeature(_sessions, new MachineSet(_here, _box), _attachments, Staging);
+        _ = new AttachmentsFeature(_sessions, new MachineSet(_here, _box), Staging);
 
         Assert.False(File.Exists(left));
         Assert.True(File.Exists(other));
@@ -264,6 +264,7 @@ public sealed partial class ChatSocketTests
     [Fact]
     public async Task Read_answers_an_attachment_a_piece_at_a_time()
     {
+        _here.Attachments = _attachments;
         var session = _sessions.Create("claude", "repo");
         var image = Png(3 * Mb / 2);
         var name = Path.GetFileName(await _attachments.SaveAsync(session.SessionId, AttachmentImage, image, CancellationToken.None));
@@ -322,7 +323,7 @@ public sealed partial class ChatSocketTests
         return result.Clone();
     }
 
-    // Of the attachments calls, only commit reaches the session's machine.
+    // A commit reaches the session's owning machine and drops its upload even when that machine is down.
     [Fact]
     public async Task Commit_to_a_machine_thats_down_is_unreachable_and_drops_the_upload()
     {

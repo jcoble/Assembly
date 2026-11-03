@@ -30,6 +30,11 @@ impl SessionPane {
             return;
         };
         match action {
+            SessionAction::RetryPrompt { client_id } => {
+                self.composer.update(cx, |composer, cx| {
+                    composer.retry_pending(&client_id, window, cx)
+                });
+            }
             SessionAction::ToggleFold { run_id } => {
                 // A fold's work stays on the list while it shuts, and goes when it's done (ease_frame).
                 let key = format!("fold:{run_id}");

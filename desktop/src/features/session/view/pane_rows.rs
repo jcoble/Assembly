@@ -2,7 +2,8 @@
 
 use std::time::Instant;
 
-use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::SessionPane;
@@ -15,9 +16,53 @@ use crate::features::session::view::activity_card::ActivityCard;
 use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::{CHAT_COLUMN, ItemRow};
 use crate::features::session::view::plan_card::current_step;
+use crate::features::session::view::sent_message::SentMessage;
+use crate::features::session::view::session_action::SessionAction;
 use crate::features::session::view::turn_fold_row::TurnFoldRow;
 
 impl SessionPane {
+    pub(super) fn observe_prompt_row(&mut self, row: &crate::features::session::rows::row::Row) {
+        if row.kind == "user"
+            && row.payload["from"].is_null()
+            && row.payload["clientId"].is_string()
+            && let Some(run) = &row.run_id
+        {
+            self.known_run = Some(run.clone());
+        }
+    }
+
+    /// Reconciles local pending presentations with the selected owner's confirmed user rows.
+    pub(super) fn sync_pending(&mut self, cx: &mut Context<Self>) -> Vec<String> {
+        let mut changed = Vec::new();
+        if let Some(session) = &self.session {
+            self.composer.update(cx, |composer, _| {
+                for client in &self.view.user_clients {
+                    composer.delivered(session, client);
+                }
+                self.view.retain_pending(
+                    &composer
+                        .pending(session)
+                        .iter()
+                        .map(|pending| pending.client_id().to_string())
+                        .collect(),
+                );
+                for pending in composer.pending(session) {
+                    let key = format!("pending:{}", pending.client_id());
+                    if self.view.pending.get(&key) != Some(&pending.state) {
+                        changed.push(key);
+                    }
+                    self.view.pending_prompt(
+                        pending.client_id(),
+                        pending.text(),
+                        &pending.state,
+                        pending.at,
+                    );
+                }
+            });
+        }
+        changed
+    }
+
     /// For an item in an open fold's work: its key, whether the fold is opening (or shutting), and when it was toggled.
     pub(super) fn open_fold_of(&self, entry: &Entry) -> Option<(String, bool, Option<Instant>)> {
         let Entry::Item(at) = entry else { return None };
@@ -40,6 +85,56 @@ impl SessionPane {
         match entry {
             Entry::Loading => line("Loading older messages…", muted),
             Entry::Item(at) => {
+                if let Some(state) = self.view.pending.get(&self.view.items[*at].key) {
+                    let item = &self.view.items[*at];
+                    if let ItemKind::User { text, .. } = &item.kind {
+                        let (text, attached) =
+                            crate::features::session::composer::attachment::Attachment::split_lines(
+                                text,
+                            );
+                        return v_flex()
+                            .gap_1()
+                            .child(SentMessage {
+                                key: item.key.clone(),
+                                text,
+                                sender: None,
+                                sender_label: None,
+                                images: attached
+                                    .into_iter()
+                                    .map(|(path, name, _)| (path, name))
+                                    .collect(),
+                                open: self.kept.get(&item.key).is_some_and(|kept| kept.open),
+                                on_action: self.on_action.clone(),
+                            })
+                            .child(line(state.clone(), muted))
+                            .when(state.starts_with("Failed:"), |column| {
+                                let on_action = self.on_action.clone();
+                                let client_id = item
+                                    .key
+                                    .strip_prefix("pending:")
+                                    .unwrap_or_default()
+                                    .to_string();
+                                column.child(
+                                    div()
+                                        .id(SharedString::from(format!("{}:retry", item.key)))
+                                        .text_xs()
+                                        .text_color(cx.theme().link)
+                                        .cursor_pointer()
+                                        .child("Retry")
+                                        .on_click(move |_, window, cx| {
+                                            on_action(
+                                                SessionAction::RetryPrompt {
+                                                    client_id: client_id.clone(),
+                                                },
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                )
+                            })
+                            .into_any_element();
+                    }
+                }
                 // Only a row that opens in place needs its own copy, for the pane's `&mut` while it's made.
                 let opens = matches!(
                     self.view.items[*at].kind,

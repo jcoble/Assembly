@@ -1,6 +1,6 @@
 //! `Launcher` owns the backend child. It starts `Assembly.Desktop serve` with the lane's options, and one thread of
 //! its own reads the child's stdout with blocking reads (no timeout) and appends every line to `<home>/backend.log`,
-//! where the child's stderr goes too (as the old shell did). On the ready line (`listening on <address>`,
+//! where the child's stderr goes too. On the ready line (`listening on <address>`,
 //! dotnet/Assembly.Desktop/Serve/DesktopServe.cs) it reads the token file and hands the token to the window, which
 //! starts or reconnects the socket client (lane g0-socket). That thread owns the `Child` and reaps it when its
 //! output ends.
@@ -215,8 +215,8 @@ fn run(
         eprintln!("the backend's log {} can't be opened", log_path.display());
         return;
     };
-    // The backend won't start without its agents file. shell/assembly.sh writes the real one (agents-file.sh, which
-    // needs node and pnpm); a window launched on a fresh home gets an empty list, so its backend starts with no agents.
+    // The backend won't start without its agents file. scripts/app-dev.ts writes the real one via agents-file.sh;
+    // a window launched on a fresh home gets an empty list, so its backend starts with no agents.
     let agents = config.home.join("agents.json");
     // create_new leaves a file that's there (or appears meanwhile) as it is.
     let created = OpenOptions::new()

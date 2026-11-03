@@ -1,5 +1,5 @@
 # On every push to main: pinned tests unchanged without an OK, all of them run and pass, every code commit has a
-# four-way check, and the app's guard script and lint pass.
+# four-way check, and lint passes.
 name: pinned tests and four-way checks
 on:
   push:
@@ -27,11 +27,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install app packages for app pinned tests
-        run: |
-          if [ -n "$(find app/test/pinned -name '*.test.ts' 2>/dev/null)" ]; then
-            npm install -g pnpm@11.5.1 && (cd app && pnpm install --frozen-lockfile)
-          fi
       - name: Run the pinned tests
         run: scripts/run-pinned.sh
   evidence:
@@ -46,14 +41,6 @@ jobs:
           before=${{ github.event.before }}
           if [ "$before" = 0000000000000000000000000000000000000000 ]; then before=$(git rev-list --max-parents=0 HEAD | tail -1); fi
           scripts/check-evidence.sh "$before" "${{ github.sha }}"
-  guards:
-    # The app's guard script (no timers, ticks or :has() outside its allowlist) passes on main, once it exists.
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: App guards pass
-        run: |
-          if [ -f app/scripts/guards.sh ]; then bash app/scripts/guards.sh; else echo "no app/scripts/guards.sh yet"; fi
   lint:
     # Lint, format, size and unused-code checks pass on main (scripts/lint.sh, which the base lane fills in).
     runs-on: ubuntu-latest

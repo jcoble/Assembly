@@ -9,6 +9,7 @@
 # dotnet/scripts/workbox.sh serve lane/ui-check
 # Remote: Settings > Connections where the branch has it; before that, start with ASSEMBLY_REMOTE=workbox-test.
 # Connect only to Workbox Test.
+# Optional seeded data: ASSEMBLY_UI_CHECK_PROFILE must be this worktree's canonical TSK-1661 profile.
 # With the printed DISPLAY exported, type: xdotool type --clearmodifiers 'text'
 # Scroll: xdotool click 5 (down), xdotool click 4 (up).
 set -euo pipefail
@@ -40,18 +41,30 @@ stop() {
 case "${1:-}" in
   start)
     trap 'echo "ui-check: start failed at: $BASH_COMMAND (logs: $home/xvfb.log, $home/app.log)" >&2' ERR
+    profile=$home/mac
+    if [ -n "${ASSEMBLY_UI_CHECK_PROFILE:-}" ]; then
+      profile_root=$(realpath -- "$root")
+      profile_name=$(basename "$profile_root" | LC_ALL=C sed 's/[^a-zA-Z0-9-]/-/g')
+      profile_hash=$(printf '%s' "$profile_root" | sha256sum)
+      expected_profile=$HOME/assembly-dev/worktrees/$profile_name-${profile_hash:0:16}
+      [ "$ASSEMBLY_UI_CHECK_PROFILE" = "$expected_profile" ] || { echo "profile must be $expected_profile" >&2; exit 1; }
+      profile=$(realpath -m -- "$ASSEMBLY_UI_CHECK_PROFILE")
+      [ "$profile" = "$expected_profile" ] || { echo 'profile aliases are refused' >&2; exit 1; }
+    fi
     [ ! -f "$state" ] || { echo 'stop this lane first' >&2; exit 1; }
     [ "$(free -g | awk '/^Mem:/ {print $7}')" -gt 6 ] || { echo '6 GB or less available; not starting' >&2; exit 1; }
     [ -x "$DATA/target/debug/assembly-desktop" ]
     [ -x "$home/backend/Assembly.Desktop" ]
-    mkdir -p "$home/runtime" "$home/cache" "$home/data" "$home/mac"
+    mkdir -p "$home/runtime" "$home/cache" "$home/data" "$profile"
     chmod 700 "$home/runtime"
     # The backend home needs the providers; the adapters install once into this lane's DATA.
-    dotnet/scripts/agents-file.sh "$DATA/adapters" "$home/mac/agents.json"
+    dotnet/scripts/agents-file.sh "$DATA/adapters" "$profile/agents.json"
     # The backend token goes in TOKEN_FILE, where scripts/check4.sh and the other scripts read it.
-    cat > "$home/backend/lane.json" <<JSON
-{"port":$DESKTOP_PORT,"home":"$home/mac","tokenFile":"$TOKEN_FILE","remotePort":$BOX_PORT,"remoteTokenFile":"$BOX_TOKEN_FILE"}
+    lane_config=$(mktemp "$home/backend/lane.json.XXXXXX")
+    cat > "$lane_config" <<JSON
+{"port":$DESKTOP_PORT,"home":"$profile","tokenFile":"$TOKEN_FILE","remotePort":$BOX_PORT,"remoteTokenFile":"$BOX_TOKEN_FILE"}
 JSON
+    mv -- "$lane_config" "$home/backend/lane.json"
     export XDG_RUNTIME_DIR=$home/runtime XDG_CACHE_HOME=$home/cache XDG_DATA_HOME=$home/data
     export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
     export ASSEMBLY_BACKEND_DIR=$home/backend

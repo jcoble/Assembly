@@ -29,6 +29,8 @@ namespace Assembly.Application.Features.Chat.Rows;
 [JsonSerializable(typeof(SubagentPayload))]
 [JsonSerializable(typeof(RowsFeature.PageArgs))]
 [JsonSerializable(typeof(RowsFeature.ToolArgs))]
+[JsonSerializable(typeof(RowsFeature.RawToolArgs))]
+[JsonSerializable(typeof(StoredToolCall))]
 [JsonSerializable(typeof(RowsFeature.ToolDetail))]
 [JsonSerializable(typeof(RowsFeature.SessionArgs))]
 [JsonSerializable(typeof(IReadOnlyList<FileTouched>))]

@@ -19,6 +19,15 @@ pub trait SessionClient: 'static {
         cx: &App,
     ) -> Subscription;
 
+    /// A known owner prompt's pushed Engine display state.
+    fn subscribe_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        sink: MessageSink,
+        cx: &App,
+    ) -> Subscription;
+
     /// One call, by feature and method (rows/page, rows/tool, send/send, attachments/begin, …). With `key`, a newer
     /// call with the same key answers this one `Aborted` and cancels it, so a fast switch never waits on a stale load.
     fn call(
@@ -39,6 +48,8 @@ pub trait SessionClient: 'static {
 pub type ClockSink = Box<dyn FnMut(i64, &mut App)>;
 
 /// Where a rows subscription's events go, on the main thread.
+pub type MessageSink = Box<dyn FnMut(Value, &mut App)>;
+
 pub type RowsSink = Box<dyn FnMut(RowUpdate, &mut App)>;
 
 /// Why a call has no result: the backend's error codes (SocketFrames.cs), with its message, or `Aborted` (a newer

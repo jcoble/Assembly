@@ -72,7 +72,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
         _machineCalls = new MachineCalls(_runtime, _f.Time, _launcher, _root, _needs);
         _machineCalls.Register(new PeerGate(dispatcher, this));
         dispatcher.Closed(_ => _bulkClosed.TrySetResult());
-        new EngineCalls(_runtime, _f.Time).Register(dispatcher);
+        new EngineCalls(_runtime, _f.Time, _needs).Register(dispatcher);
         dispatcher.Topic("peer", TestJson.Default.Note, n => n.Text, (_, c) => [new(c.Peer is OwnerPeer && c.ReplyId == 37 ? "owner" : "missing")]);
         var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders(); builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0));
         _app = builder.Build(); _app.UseWebSockets();
@@ -135,6 +135,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     {
         using var socket = await Open(); var parent = Guid.NewGuid().ToString(); var child = Guid.NewGuid().ToString();
         Assert.True(Result(await Machine(socket, new RegisterForeignSession("source", "source-custom", "Parent"), parent)).Applied);
+        Assert.True(Result(await Ancestry(socket, new("source", parent, [new(parent, "source", "source-custom", "Parent", null)]))).Applied);
         Assert.Null(_store.Get(parent));
         var folder = managed ? (await Location(socket, parent)).GetProperty("result").GetProperty("folder").GetString()! : _root;
         var start = new StartSession("custom", null, folder, "Child", parent, null, null, managed ? "https://example.com/real.git" : null, managed);
@@ -158,6 +159,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     {
         using var socket = await Open(); var parent = Guid.NewGuid().ToString(); var child = Guid.NewGuid().ToString();
         Assert.True(Result(await Machine(socket, new RegisterForeignSession("source", "p", "T"), parent)).Applied);
+        Assert.True(Result(await Ancestry(socket, new("source", parent, [new(parent, "source", "p", "T", null)]))).Applied);
         var folder = Path.Combine(_root, "direct"); Directory.CreateDirectory(folder);
         var start = new StartSession("custom", null, folder, "Child", parent, null, null, ManagedCheckout: false);
         var id = Guid.NewGuid(); var accepted = Result(await Machine(socket, start, child, commandId: id)); Assert.True(accepted.Applied);
@@ -213,6 +215,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     {
         using var socket = await Open(); var parent = Guid.NewGuid().ToString(); var child = Guid.NewGuid().ToString();
         Assert.True(Result(await Machine(socket, new RegisterForeignSession("source", "p", "T"), parent)).Applied);
+        Assert.True(Result(await Ancestry(socket, new("source", parent, [new(parent, "source", "p", "T", null)]))).Applied);
         var before = _f.Count("engine_command_receipt");
         Assert.Throws<CallFailed>(() => _f.Db.Writer.Write("trusted-invalid-start", scope => _runtime.Commands.Apply(scope,
             new(Guid.NewGuid(), _runtime.Machine, new(ActorKind.System, "machine:source"), child, 0, 0, 1000),
@@ -226,6 +229,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     {
         using var socket = await Open(); var parent = Guid.NewGuid().ToString(); var child = Guid.NewGuid().ToString(); var sibling = Guid.NewGuid().ToString();
         Assert.True(Result(await Machine(socket, new RegisterForeignSession("source", "p", "Foreign"), parent)).Applied);
+        Assert.True(Result(await Ancestry(socket, new("source", parent, [new(parent, "source", "p", "Foreign", null)]))).Applied);
         var start = new StartSession("custom", null, _root, "Child", parent, null, null, ManagedCheckout: false);
         Assert.True(Result(await Machine(socket, start, child)).Applied);
         Assert.True(Result(await Machine(socket, start with { Title = "Sibling" }, sibling)).Applied);
@@ -268,6 +272,7 @@ public sealed partial class MachineDoorTests : IAsyncLifetime
     {
         using var socket = await Open(); var parent = Guid.NewGuid().ToString(); var child = Guid.NewGuid().ToString();
         Assert.True(Result(await Machine(socket, new RegisterForeignSession("source", "p", "T"), parent)).Applied);
+        Assert.True(Result(await Ancestry(socket, new("source", parent, [new(parent, "source", "p", "T", null)]))).Applied);
         _f.Db.Writer.Write("inject", s => s.Execute($"CREATE TRIGGER fail BEFORE INSERT ON {table} BEGIN SELECT RAISE(ABORT,'injected'); END"));
         var before = _f.Count("engine_command_receipt"); var publications = 0;
         using var engineSubscription = _topics.Subscribe("__engine_committed", null, _ => { }, (_, _) => Interlocked.Increment(ref publications));

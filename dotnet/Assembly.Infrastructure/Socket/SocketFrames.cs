@@ -9,7 +9,7 @@ internal sealed record InFrame(string? T, string? Token, int? Protocol, long? Id
     string? Topic, string? Key, long? After, string? Stream = null, CursorAt? At = null, string? Machine = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? SessionTitleParts = null);
 
-internal sealed record WelcomeFrame(int Protocol, string Machine, int Format,
+internal sealed record WelcomeFrame(int Protocol, string Machine, int Format, string? Commit,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Engine = null)
 {
     [JsonPropertyOrder(-1)]

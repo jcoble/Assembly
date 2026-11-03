@@ -115,5 +115,5 @@ pub fn chevron(turned: f32) -> Icon {
 }
 
 #[cfg(test)]
-#[path = "grow_tests.rs"]
+#[path = "tests/grow_tests.rs"]
 mod tests;

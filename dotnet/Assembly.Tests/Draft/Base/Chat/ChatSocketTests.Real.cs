@@ -40,7 +40,7 @@ public sealed partial class ChatSocketTests
             _work = new BackgroundWork(_time, _log);
             _registry = new SessionRegistry(_hub, _sessions, _launcher, _time, _log, _work);
             var calls = new SocketDispatcher(_db.Writer, new TopicSet(), _time, _calls);
-            new SendFeature(_sessions, new MachineSet(new LocalMachine(_hub, _sessions, _registry, _attachments)), _hub).Register(calls);
+            new SendFeature(_sessions, new MachineSet(new LocalMachine(_hub, _sessions, _registry, _attachments)), _hub, _answers).Register(calls);
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));

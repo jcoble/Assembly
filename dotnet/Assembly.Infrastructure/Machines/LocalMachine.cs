@@ -1,5 +1,4 @@
 using Assembly.Application.Features.Chat.Attachments;
-using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Agents;
@@ -25,33 +24,6 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Task.FromResult(sessionStore.Helper(parent, agent, title));
 
-    public async Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken)
-    {
-        var host = sessions.For(session.SessionId);
-        var fromSessionId = Assembly.Application.Features.Chat.Helpers.MessageFrame.SenderOf(text);
-        var sent = await host.SendAsync(text, clientId, null, cancellationToken, fromSessionId);
-        if (sent is SendResult.Busy)
-        {
-            var turn = host.CurrentTurn;
-            SteerResult outcome;
-            try { outcome = await host.SteerAsync(text, clientId, null, cancellationToken, fromSessionId); }
-            catch (Exception error) when (error is JsonRpcException or IOException or ObjectDisposedException) { return null; }
-            if (outcome == SteerResult.Injected) return turn.RunId;
-            if (outcome == SteerResult.PromptRequired && turn.RunId is not null)
-                await turn.Done.WaitAsync(cancellationToken);
-            else if (outcome != SteerResult.NotRunning) return null;
-            sent = await host.SendAsync(text, clientId, null, cancellationToken, fromSessionId);
-        }
-        return sent switch
-        {
-            SendResult.Inserted inserted => inserted.RunId,
-            SendResult.Unknown => host.LegacyRunOfClient(clientId, text, null, fromSessionId),
-            SendResult.AuthRequired => throw new Assembly.Application.Common.Calls.CallFailed("authentication required"),
-            SendResult.Failed failed => throw new Assembly.Application.Common.Calls.CallFailed(failed.Reason),
-            _ => null
-        };
-    }
-
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Task.FromResult(sessions.Stop(runId));
 
@@ -65,6 +37,9 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
 
     public Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken) =>
         attachments.SaveAsync(session.SessionId, type, bytes, cancellationToken);
+
+    public Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken) =>
+        attachments.ReadAsync(session.SessionId, name, offset, cancellationToken);
 
     public Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken)
     {
@@ -83,9 +58,6 @@ public sealed class LocalMachine(LiveHub hub, SessionStore sessionStore, Session
 
     public Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken cancellationToken) =>
         sessions.For(session.SessionId).WarmConfigAsync(targetId, cancellationToken);
-
-    public Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken) =>
-        Task.FromResult(sessions.For(session.SessionId).Answer(askId, answer));
 
     public void Watch(SessionInfo session)
     {

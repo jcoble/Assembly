@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# dotnet/scripts/agents-file.sh ADAPTERS OUT
+# dotnet/scripts/agents-file.sh ADAPTERS OUT [LOCAL_ASSETS]
 # Installs the latest published platform ACP bundle under ADAPTERS and writes OUT atomically.
+# An explicit local packager output uses the same validation with archive-hash provenance, never a release tag.
 set -euo pipefail
 adapters=$1 out=$2
+local_assets=${3:-}
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) target=darwin-arm64 ;;
@@ -48,8 +50,12 @@ try:
         raise ValueError("Codex entry does not match the cached bundle")
     manifest = json.load(open(os.path.join(bundle_real, "provider-manifest.json"), encoding="utf-8"))
     tag = open(os.path.join(bundle_real, "provider-tag"), encoding="utf-8").read().strip()
-    if not re.fullmatch(r"assembly-providers-[0-9]+-[0-9]+", tag) or manifest.get("target") != target:
+    published = re.fullmatch(r"assembly-providers-[0-9]+-[0-9]+", tag)
+    local = re.fullmatch(r"local-sha256-[0-9a-f]{64}", tag)
+    if not (published or local) or manifest.get("target") != target:
         raise ValueError("Cached provider identity is invalid")
+    if local and tag != "local-sha256-" + manifest.get("archive", {}).get("sha256", ""):
+        raise ValueError("Cached local archive identity is invalid")
     if manifest.get("schemaVersion") != 1 or manifest.get("entrypoints", {}).get("claude-agent-acp") != "claude-launcher.ts":
         raise ValueError("Cached manifest is invalid")
     if manifest.get("entrypoints", {}).get("codex-acp") != "node_modules/@agentclientprotocol/codex-acp/dist/index.js":
@@ -93,21 +99,33 @@ cached_fallback() {
   exit 1
 }
 
-if ! tag=$(node "$repo/scripts/package-adapters.ts" provider-tag "$target" 2>"$work/provider-selection.err"); then
+if [[ -n "$local_assets" ]]; then
+  if ! local_assets=$(cd "$local_assets" && pwd); then cached_fallback "local assets directory unavailable"; fi
+  if ! tag=$(python3 -I - "$local_assets/$asset" <<'PY' 2>"$work/provider-selection.err"
+import hashlib, sys
+with open(sys.argv[1], "rb") as archive:
+    print("local-sha256-" + hashlib.file_digest(archive, "sha256").hexdigest())
+PY
+  ); then cached_fallback "$(tail -1 "$work/provider-selection.err")"; fi
+elif ! tag=$(node "$repo/scripts/package-adapters.ts" provider-tag "$target" 2>"$work/provider-selection.err"); then
   cached_fallback "$(tail -1 "$work/provider-selection.err")"
 fi
-if [[ "$tag" == "$active_tag" ]]; then
+if [[ "$tag" == "$active_tag" && -z "$local_assets" ]]; then
   bundle=$active_bundle
 else
   download="$work/download"
   stage="$work/bundle"
   mkdir "$download" "$stage"
-  if ! gh release download "$tag" --repo jcoble/Assembly --pattern "$asset" --pattern "$manifest_file" --dir "$download" 2>"$work/provider-download.err"; then
+  if [[ -n "$local_assets" ]]; then
+    if ! cp "$local_assets/$asset" "$local_assets/$manifest_file" "$download/" 2>"$work/provider-download.err"; then
+      cached_fallback "$(tail -1 "$work/provider-download.err")"
+    fi
+  elif ! gh release download "$tag" --repo jcoble/Assembly --pattern "$asset" --pattern "$manifest_file" --dir "$download" 2>"$work/provider-download.err"; then
     cached_fallback "$(tail -1 "$work/provider-download.err")"
   fi
-  if ! python3 -I - "$download/$manifest_file" "$download/$asset" "$target" <<'PY' 2>"$work/manifest.err"
+  if ! python3 -I - "$download/$manifest_file" "$download/$asset" "$target" "$tag" <<'PY' 2>"$work/manifest.err"
 import hashlib, json, re, sys
-manifest_path, archive_path, target = sys.argv[1:]
+manifest_path, archive_path, target, tag = sys.argv[1:]
 manifest = json.load(open(manifest_path, encoding="utf-8"))
 expected_archive = "assembly-adapters-" + target + ".tar.gz"
 if manifest.get("schemaVersion") != 1 or manifest.get("target") != target or manifest.get("archive", {}).get("file") != expected_archive:
@@ -125,6 +143,8 @@ for name in ("claude-agent-acp", "codex-acp"):
 checksum = hashlib.sha256(open(archive_path, "rb").read()).hexdigest()
 if manifest.get("archive", {}).get("sha256") != checksum:
     raise ValueError("provider archive checksum mismatch")
+if tag.startswith("local-sha256-") and tag != "local-sha256-" + checksum:
+    raise ValueError("local provider archive changed during staging")
 PY
   then
     cached_fallback "$(tail -1 "$work/manifest.err")"
@@ -227,7 +247,7 @@ remove_published_bundle=
 
 # Keep only the just-active immutable tree and its immediately previous active tree. Older directories are our
 # own provider bundles and no longer have a descriptor pointing to them.
-for old_bundle in "$bundle_root"/assembly-providers-*; do
+for old_bundle in "$bundle_root"/assembly-providers-* "$bundle_root"/local-sha256-*; do
   [[ -d "$old_bundle" ]] || continue
   if [[ "$old_bundle" != "$bundle" && "$old_bundle" != "$active_bundle" ]]; then
     rm -rf "$old_bundle" || echo "could not remove inactive adapter bundle $old_bundle" >&2

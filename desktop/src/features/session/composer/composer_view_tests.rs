@@ -28,7 +28,8 @@ pub(super) fn open(
         cx.subscribe(&composer, move |_, event: &ComposerEvent, _| {
             seen.borrow_mut().push(match event {
                 ComposerEvent::Sending => "sending".to_string(),
-                ComposerEvent::Sent { session, run_id } => format!("sent {session} {run_id}"),
+                ComposerEvent::Accepted(receipt) => format!("queued {}", receipt.session_id),
+                ComposerEvent::PendingChanged => "pending".into(),
             })
         })
     });
@@ -45,18 +46,99 @@ fn type_and_send(composer: &Entity<Composer>, text: &str, cx: &mut VisualTestCon
     cx.run_until_parked();
 }
 
+#[gpui::test]
+fn reopening_recovers_exact_payload_and_original_nullable_epoch(cx: &mut TestAppContext) {
+    use base64::Engine as _;
+    let (composer, client, _, cx) = open(cx);
+    let digest = "a".repeat(64);
+    let attachments = br#"["/box/second.png","/box/first.png"]"#;
+    client.queue_engine_answer(Ok(json!({"engineMachine":"owner","items":[{
+        "clientId":"original","contentSha256":digest,"textPreview":"exact text",
+        "textComplete":true,"textUtf8Bytes":10,"attachmentJsonUtf8Bytes":attachments.len(),
+        "targetEpoch":null,"state":"held","version":9}],"nextCreatedMs":null,"nextClientId":null})));
+    client.queue_engine_answer(Ok(json!({"contentSha256":digest,"part":"attachments","offset":0,
+        "totalBytes":attachments.len(),"data":base64::engine::general_purpose::STANDARD.encode(attachments),"nextOffset":null})));
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx)
+    });
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        let pending = &composer.read(cx).pending("s1")[0];
+        assert_eq!(pending.client_id(), "original");
+        assert_eq!(pending.text(), "exact text");
+        assert_eq!(pending.request.epoch, None);
+        assert_eq!(
+            pending.request.attachment_ids,
+            ["/box/second.png", "/box/first.png"]
+        );
+        assert_eq!(pending.state, "held");
+    });
+    assert!(client.calls().is_empty(), "recovery never sends a prompt");
+    assert_eq!(client.engine_calls()[1].1["machine"], json!("owner"));
+}
+
+#[gpui::test]
+fn an_old_run_response_is_rejected_and_preserves_retry_payload(cx: &mut TestAppContext) {
+    let (composer, client, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx)
+    });
+    client.queue_answer(Ok(json!({"runId":"invented"})));
+    type_and_send(&composer, "keep me", cx);
+    assert_eq!(draft(&composer, cx), "keep me");
+    client.queue_owner_accepted();
+    composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
+    cx.run_until_parked();
+    assert_eq!(client.calls()[0].1, client.calls()[1].1);
+}
+
+#[gpui::test]
+fn failed_prompt_retry_preserves_original_epoch_and_new_typing(cx: &mut TestAppContext) {
+    let (composer, client, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s1".into()), window, cx);
+        composer.retry_ids.insert(
+            "s1".into(),
+            super::PromptRequest {
+                text: "original".into(),
+                client_id: "stable".into(),
+                attachment_ids: vec![],
+                epoch: Some(7),
+            },
+        );
+    });
+    client.queue_answer(Err(CallError::Aborted));
+    type_and_send(&composer, "original", cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer
+            .draft
+            .update(cx, |draft, cx| draft.set_value("new typing", window, cx));
+    });
+    client.queue_owner_accepted();
+    composer.update_in(cx, |composer, window, cx| {
+        composer.retry_pending("stable", window, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(client.calls()[0].1, client.calls()[1].1);
+    assert_eq!(client.calls()[1].1["epoch"], json!(7));
+    assert_eq!(draft(&composer, cx), "new typing");
+    assert_eq!(cx.update(|_, cx| composer.read(cx).pending("s1").len()), 1);
+}
+
 pub(super) fn draft(composer: &Entity<Composer>, cx: &mut VisualTestContext) -> String {
     cx.update(|_, cx| composer.read(cx).draft.read(cx).value().to_string())
 }
 
 // Pins: g0-session#22
 #[gpui::test]
-fn a_send_goes_out_for_the_session_clears_the_draft_and_says_its_run(cx: &mut TestAppContext) {
+fn a_send_goes_out_for_the_session_clears_the_draft_and_accepts_without_a_run(
+    cx: &mut TestAppContext,
+) {
     let (composer, client, (events, _heard), cx) = open(cx);
     composer.update_in(cx, |composer, window, cx| {
         composer.set_session(Some("s1".into()), window, cx)
     });
-    client.queue_answer(Ok(json!({ "runId": "r7" })));
+    client.queue_owner_accepted();
     type_and_send(&composer, " hello \n", cx);
     let calls = client.calls();
     assert_eq!(calls.len(), 1);
@@ -68,7 +150,13 @@ fn a_send_goes_out_for_the_session_clears_the_draft_and_says_its_run(cx: &mut Te
     );
     assert!(args["clientId"].as_str().is_some_and(|id| !id.is_empty()));
     assert_eq!(draft(&composer, cx), "");
-    assert_eq!(*events.borrow(), ["sending", "sent s1 r7"]);
+    assert!(events.borrow().iter().any(|event| event == "queued s1"));
+    assert_eq!(args["attachmentIds"], json!([]));
+    assert_eq!(args["epoch"], Value::Null);
+    assert_eq!(
+        cx.update(|_, cx| composer.read(cx).pending("s1")[0].state.clone()),
+        "queued"
+    );
 }
 
 // Pins: g0-session#22
@@ -135,7 +223,7 @@ fn a_send_that_fails_after_switching_sessions_goes_back_to_its_own_draft(cx: &mu
         composer.set_session(Some("s1".into()), window, cx)
     });
     assert_eq!(draft(&composer, cx), "for one");
-    assert_eq!(*events.borrow(), ["sending"]);
+    assert!(events.borrow().iter().any(|event| event == "sending"));
 }
 
 // Pins: g0-session#8
@@ -196,10 +284,10 @@ fn a_retried_send_reuses_its_client_id_and_a_new_one_gets_its_own(cx: &mut TestA
         "hello",
         "the unanswered send comes back"
     );
-    client.queue_answer(Ok(json!({ "runId": "r1" })));
+    client.queue_owner_accepted();
     composer.update_in(cx, |composer, window, cx| composer.send(window, cx));
     cx.run_until_parked();
-    client.queue_answer(Ok(json!({ "runId": "r2" })));
+    client.queue_owner_accepted();
     type_and_send(&composer, "hello", cx);
     let ids: Vec<Value> = client
         .calls()
@@ -221,7 +309,7 @@ fn finished_sends_are_let_go(cx: &mut TestAppContext) {
         composer.set_session(Some("s1".into()), window, cx)
     });
     for text in ["one", "two", "three"] {
-        client.queue_answer(Ok(json!({ "runId": "r1" })));
+        client.queue_owner_accepted();
         type_and_send(&composer, text, cx);
     }
     assert_eq!(cx.update(|_, cx| composer.read(cx)._tasks.len()), 1);
@@ -244,7 +332,7 @@ fn while_its_machine_is_offline_nothing_is_sent_or_stopped(cx: &mut TestAppConte
         "hello",
         "the draft waits for the machine"
     );
-    client.queue_answer(Ok(json!({ "runId": "r2" })));
+    client.queue_owner_accepted();
     composer.update(cx, |composer, cx| composer.set_offline(None, cx));
     type_and_send(&composer, "hello", cx);
     assert_eq!(client.calls()[0].0, "send/send");
@@ -280,4 +368,71 @@ fn connect_asks_the_backend_to_reach_the_offline_machine_once_at_a_time(cx: &mut
 fn the_draft_asks_for_follow_up_changes_once_there_are_messages() {
     assert_eq!(super::placeholder(false), "Message");
     assert_eq!(super::placeholder(true), "Ask for follow-up changes…");
+}
+
+#[gpui::test]
+fn queued_prompt_consumes_pushed_outcome_and_releases_subscription_on_switch(
+    cx: &mut TestAppContext,
+) {
+    let (composer, client, _, cx) = open(cx);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s".into()), window, cx)
+    });
+    client.queue_owner_accepted();
+    type_and_send(&composer, "original draft", cx);
+    let sent = client
+        .calls()
+        .into_iter()
+        .find(|(method, _)| method == "send/send")
+        .unwrap()
+        .1;
+    let client_id = sent["clientId"].as_str().unwrap();
+    let message = format!("prompt/s/{client_id}");
+    assert_eq!(client.message_subscriptions(), 1);
+    cx.update(|_, cx| {
+        client.push_message(
+            &message,
+            None,
+            json!({"machine":"local", "entityKind":"message", "entityId":message,
+        "version":3, "data":{"sessionId":"s", "state":"held", "reason":"needs_me"}}),
+            cx,
+        )
+    });
+    composer.read_with(cx, |composer, _| {
+        assert_eq!(composer.pending("s")[0].state, "held: needs_me");
+        assert_eq!(composer.pending("s")[0].text(), "original draft");
+    });
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("other".into()), window, cx)
+    });
+    assert_eq!(client.message_subscriptions(), 0);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("s".into()), window, cx)
+    });
+    assert_eq!(client.message_subscriptions(), 1);
+    cx.update(|_, cx| {
+        client.push_message(
+            &message,
+            None,
+            json!({"machine":"local", "entityKind":"message", "entityId":message,
+        "version":4, "data":{"sessionId":"s", "state":"failed", "reason":"model_unavailable"}}),
+            cx,
+        )
+    });
+    composer.read_with(cx, |composer, _| {
+        assert_eq!(composer.pending("s")[0].state, "failed: model_unavailable");
+        assert_eq!(composer.pending("s")[0].request.epoch, None);
+    });
+    assert_eq!(client.message_subscriptions(), 0);
+    composer.update_in(cx, |composer, window, cx| {
+        composer.set_session(Some("other".into()), window, cx)
+    });
+    assert_eq!(client.message_subscriptions(), 0);
+    // Pushed outcomes change display state without re-reading the immutable body.
+    assert!(
+        client
+            .engine_calls()
+            .iter()
+            .all(|(method, _)| method != "owner_prompt_chunk")
+    );
 }

@@ -18,6 +18,10 @@ using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Application.Features.Workflows.Contracts;
 using Assembly.Infrastructure.Mcp;
 using Assembly.Tests.Draft.Base.Chat;
+using Assembly.Engine.Mcp;
+using Assembly.Engine.Mcp.Tools;
+using Assembly.Engine.Sessions;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Tests.Draft.Board;
 
@@ -344,19 +348,30 @@ public sealed class BoardToolsTests
     public async Task TokenOwnsTaskAndHelperCannotReport()
     {
         using var f = new BoardQueryTests.Fixture();
-        var sessions = SessionStore.Open(f.Db, f.Time, "unused");
+        var checkouts = Path.GetFullPath("unused");
+        var sessions = SessionStore.Open(f.Db, f.Time, checkouts);
         var launcher = new FakeLauncher();
         using var hub = new LiveHub(RowStore.Open(f.Db));
         await using var work = new BackgroundWork(f.Time, TextWriter.Null);
-        await using var registry = new SessionRegistry(hub, sessions, launcher, f.Time, TextWriter.Null, work);
+        var tokens = new McpTokens();
+        var endpoint = new McpEndpointReady(tokens);
+        var limits = new SessionLimits(() => 1, () => 5);
+        await using var runtime = EngineRuntime.Start(f.Db, f.Topics, f.Time, limits,
+            cutover: new(f.Db, sessions, launcher, checkouts, f.Time), effectsReady: endpoint.Ready);
+        await using var registry = new SessionRegistry(hub, sessions, launcher, f.Time, TextWriter.Null, work,
+            feed: new EngineFeed(runtime, TextWriter.Null, f.Time), mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
         var machines = new MachineSet(new FakeMachine(null, sessions));
-        registry.Helpers.Delivery.Machines = machines;
         await using var tools = new BoardTools(sessions, registry, f.Transitions, f.Queries, CancellationToken.None);
+        var gate = new McpGate(runtime, limits, f.Time);
+        var sdk = new McpServerHost(tokens, new(runtime, gate, f.Time),
+            [new BoardUpdateTool(gate, tools), new StartSessionTool(gate, () => launcher.Agents.Select(a => a.Id).ToArray(), Directory.Exists),
+                new ListSessionsTool(gate)]);
         await using var app = ApiServer.Build(new ApiServices(hub, sessions, machines, new AttachmentStore("unused"),
-            "host-token", registry.Helpers, f.Db.Writer, f.Topics, [new WorkflowCalls(f.Queries, tools.AnswerAsync)], tools), 0, out _);
+            "host-token", sdk, f.Db.Writer, f.Topics, [new WorkflowCalls(f.Queries, tools.AnswerAsync)], tools, Engine: runtime), 0, out _);
+        app.Lifetime.ApplicationStopping.Register(endpoint.Stop);
         await app.StartAsync();
         var address = new Uri(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
-        registry.Helpers.Tokens.Url = new Uri(address, "/mcp").ToString();
+        endpoint.Listening(address);
         var parent = sessions.Create("codex", "project");
         registry.For(parent.SessionId).Send("start");
         var agent = await launcher.NextAsync();
@@ -369,10 +384,15 @@ public sealed class BoardToolsTests
             using var client = new HttpClient { BaseAddress = address };
             using var request = new HttpRequestMessage(HttpMethod.Post, "/mcp");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+            request.Headers.Accept.ParseAdd("application/json, text/event-stream");
             request.Content = new StringContent($$"""{"jsonrpc":"2.0","id":1,"method":"{{method}}","params":{{parameters}}}""", Encoding.UTF8, "application/json");
             using var response = await client.SendAsync(request);
             response.EnsureSuccessStatusCode();
-            return JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("result").Clone();
+            var body = await response.Content.ReadAsStringAsync();
+            if (response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+                body = body.Split('\n').Single(line => line.StartsWith("data: ", StringComparison.Ordinal))[6..];
+            using var result = JsonDocument.Parse(body);
+            return result.RootElement.GetProperty("result").Clone();
         }
         Assert.Contains("bad_args", (await Request("tools/call", """{"name":"board_update"}""", token)).GetRawText());
         var args = JsonSerializer.Serialize(f.Report(), WorkflowJson.Default.BoardUpdateArgs);

@@ -6,6 +6,42 @@ use super::change::Change;
 use super::item::ItemKind;
 use super::session_view::SessionView;
 use super::test_rows::{all, keys, live, newest_form, row};
+use crate::features::session::rows::row::Row;
+
+#[test]
+fn a_pending_prompt_has_no_run_and_its_own_user_row_replaces_it_once() {
+    let mut view = SessionView::default();
+    view.pending_prompt("c", "hello", "sending", 1);
+    view.pending_prompt("c", "hello", "queued", 1);
+    assert_eq!(view.items.len(), 1);
+    assert_eq!(view.items[0].run_id, None);
+    assert_eq!(view.active_run(None), None);
+    let own: Row = serde_json::from_value(json!({"sessionId":"s","seq":5,"runId":"real",
+        "itemId":"u","kind":"user","createdAt":2,"payload":{"text":"hello","clientId":"c"}}))
+    .unwrap();
+    view.apply(&own);
+    view.apply(&own);
+    view.pending_prompt("c", "hello", "queued", 1);
+    assert_eq!(view.items.len(), 1);
+    assert_eq!(view.items[0].run_id.as_deref(), Some("real"));
+    assert!(view.pending.is_empty());
+}
+
+#[test]
+fn a_reopen_page_reconciles_pending_by_client_not_text() {
+    let mut view = SessionView::default();
+    view.pending_prompt("ours", "same text", "queued", 1);
+    let mut user: Row = serde_json::from_value(json!({"sessionId":"s","seq":5,"runId":"real",
+        "itemId":"u","kind":"user","createdAt":2,"payload":{"text":"same text","clientId":"other"}})).unwrap();
+    view.prepend_page(vec![user.clone()], false);
+    assert_eq!(view.items.len(), 2);
+    user.seq = 6;
+    user.item_id = Some("u2".into());
+    user.payload["clientId"] = json!("ours");
+    view.prepend_page(vec![user], false);
+    assert_eq!(view.items.len(), 2);
+    assert!(view.pending.is_empty());
+}
 
 // Pins: g0-session#3
 #[test]

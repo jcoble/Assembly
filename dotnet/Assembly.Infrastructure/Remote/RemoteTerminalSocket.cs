@@ -5,6 +5,8 @@ using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Topics;
 using Assembly.Application.Features.Terminal;
+using Assembly.Application.Features.Chat.Rows;
+using Assembly.Infrastructure.Socket;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -90,7 +92,12 @@ internal sealed class RemoteTerminalSocket(string name, Uri address, string toke
                     await socket.ConnectAsync(uri, _stop.Token);
                     await SendAsync(socket, new RemoteTerminalFrame("hello", Token: token, Protocol: 1), _stop.Token);
                     var welcome = await ReceiveAsync(socket, _stop.Token);
-                    if (welcome.GetProperty("t").GetString() != "welcome") throw new CallFailed($"{name} refused the terminal connection");
+                    var protocol = welcome.TryGetProperty("protocol", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var parsedProtocol) ? parsedProtocol : 0;
+                    if (!welcome.TryGetProperty("t", out var type) || type.ValueKind != JsonValueKind.String || type.GetString() != "welcome" || protocol != SocketConnection.Protocol)
+                        throw new CallFailed($"{name} speaks protocol {protocol}; this computer speaks protocol {SocketConnection.Protocol}");
+                    var format = welcome.TryGetProperty("format", out var f) && f.ValueKind == JsonValueKind.Number && f.TryGetInt32(out var parsedFormat) ? parsedFormat : 0;
+                    if (format != RowStore.FormatVersion)
+                        throw new CallFailed($"{name} stores rows in format {format}; this computer reads format {RowStore.FormatVersion}");
                     reader = ReadAsync(socket);
                     var recovering = !_following.IsEmpty;
                     foreach (var (key, sub) in _following)

@@ -27,7 +27,7 @@ public sealed partial class ChatSocketTests
     public async Task Rows_tool_reads_a_tool_call_from_the_sessions_machine()
     {
         var session = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box");
-        _box.Tool = new StoredToolCall("ls", "-la", "a.txt", null, null);
+        _box.Tool = new StoredToolCall("ls", "-la", "a.txt", null, null, 5, 0);
         using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
@@ -48,7 +48,7 @@ public sealed partial class ChatSocketTests
         var session = _sessions.Create("claude", "repo");
         var output = new string('a', 3 * RowsFeature.ToolCap);
         var diff = new string('é', RowsFeature.ToolCap);
-        _here.Tool = new StoredToolCall("cat", null, output, diff, null);
+        _here.Tool = new StoredToolCall("cat", null, output, diff, null, Encoding.UTF8.GetByteCount(output), Encoding.UTF8.GetByteCount(diff));
         using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
@@ -112,7 +112,7 @@ public sealed partial class ChatSocketTests
     public async Task Rows_tool_whose_answer_is_over_4_MB_answers_failed()
     {
         var session = _sessions.Create("claude", "repo");
-        _here.Tool = new StoredToolCall("cat", new string('a', 5 * Mb), null, null, null);
+        _here.Tool = new StoredToolCall("cat", new string('a', 5 * Mb), null, null, null, 0, 0);
         using var socket = await OpenBulkAsync();
 
         await CallAsync(socket, 1, "rows", "tool", $$"""{"session":"{{session.SessionId}}","item":"t1"}""");
@@ -266,5 +266,33 @@ public sealed partial class ChatSocketTests
 
         Assert.Equal(["tool t9"], _here.Asked);
         Assert.Empty(_box.Asked);
+    }
+
+    [Fact]
+    public async Task Raw_tool_is_bulk_only_validates_windows_and_reads_only_the_local_owner_store()
+    {
+        var local = _sessions.Create("claude", "repo").SessionId;
+        var remote = _sessions.Add(Guid.NewGuid().ToString(), "claude", "repo", "box").SessionId;
+        var batch = new RowBatch(); batch.Details.Add(new("t", Output: "abc😀", Diff: "€tail")); _rows.Commit(local, batch);
+        using var control = await OpenAsync();
+        await CallAsync(control, 1, "rows", "toolRaw", $$"""{"session":"{{local}}","item":"t","outputMaxBytes":5,"diffMaxBytes":3}""");
+        Assert.Equal("not_found", JsonDocument.Parse(await ReadAsync(control)).RootElement.GetProperty("code").GetString());
+        using var bulk = await OpenBulkAsync();
+        await CallAsync(bulk, 2, "rows", "toolRaw", $$"""{"session":"{{local}}","item":"t","outputMaxBytes":5,"diffMaxBytes":3}""");
+        var got = JsonDocument.Parse(await ReadAsync(bulk)).RootElement.GetProperty("result");
+        Assert.Equal("abc", got.GetProperty("output").GetString()); Assert.Equal(7, got.GetProperty("outputBytes").GetInt64());
+        Assert.Equal("€", got.GetProperty("diff").GetString()); Assert.Equal(7, got.GetProperty("diffBytes").GetInt64());
+        Assert.False(got.TryGetProperty("truncated", out _)); Assert.False(got.TryGetProperty("outputTruncated", out _));
+        foreach (var bad in new[] { 0, RowsFeature.ToolCap + 1 })
+        {
+            await CallAsync(bulk, 3, "rows", "toolRaw", $$"""{"session":"{{local}}","item":"t","outputMaxBytes":{{bad}},"diffMaxBytes":1}""");
+            Assert.Equal("bad_args", JsonDocument.Parse(await ReadAsync(bulk)).RootElement.GetProperty("code").GetString());
+        }
+        foreach (var session in new[] { "missing", remote })
+        {
+            await CallAsync(bulk, 4, "rows", "toolRaw", $$"""{"session":"{{session}}","item":"t","outputMaxBytes":1,"diffMaxBytes":1}""");
+            Assert.Equal("not_found", JsonDocument.Parse(await ReadAsync(bulk)).RootElement.GetProperty("code").GetString());
+        }
+        Assert.Empty(_here.Asked); Assert.Empty(_box.Asked);
     }
 }

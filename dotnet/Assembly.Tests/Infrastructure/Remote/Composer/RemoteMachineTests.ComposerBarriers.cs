@@ -43,7 +43,7 @@ public sealed partial class RemoteMachineTests
         _boxLauncher.Launch = _ => Task.FromResult<IAgentLink>(adapter = AgentConnection.Start(
             new AgentCommand("/usr/bin/perl", ["-e", script, length.ToString(System.Globalization.CultureInfo.InvariantCulture)], "/tmp"),
             new UnclaimedPermissions(), TranscriptLog.Discard()));
-        var target = (await GetJsonAsync(_desktop!, DesktopToken, $"/agents?machine={Box}"))
+        var target = (await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box }))
             .GetProperty("agents")[0].GetProperty("targetId").GetString()!;
         using var socket = await OpenSocketAsync(_desktop!);
         await DiscoverOverSocketAsync(socket, target);
@@ -72,7 +72,7 @@ public sealed partial class RemoteMachineTests
     [Fact]
     public async Task Composer_transport_socket_cancel_reaches_the_pinned_owner_and_disposes_exact_held_ACP()
     {
-        var target = (await GetJsonAsync(_desktop!, DesktopToken, $"/agents?machine={Box}"))
+        var target = (await FeatureResultAsync(_desktop!, DesktopToken, "machines", "agents", new { machine = Box }))
             .GetProperty("agents")[0].GetProperty("targetId").GetString()!;
         using var socket = await OpenSocketAsync(_desktop!);
         await DiscoverOverSocketAsync(socket, target);
@@ -142,8 +142,8 @@ public sealed partial class RemoteMachineTests
     private async Task AssertNoDiscoveryRowsAsync()
     {
         Assert.Equal(0, _desktopLauncher.Launches);
-        Assert.Empty((await GetJsonAsync(_box, BoxToken, "/sessions")).GetProperty("sessions").EnumerateArray());
-        Assert.Empty((await GetJsonAsync(_desktop!, DesktopToken, "/sessions")).GetProperty("sessions").EnumerateArray());
+        Assert.Empty((await FeatureResultAsync(_box, BoxToken, "sessions", "page", new { limit = 200 })).GetProperty("sessions").EnumerateArray());
+        Assert.Empty((await FeatureResultAsync(_desktop!, DesktopToken, "sessions", "page", new { limit = 200 })).GetProperty("sessions").EnumerateArray());
         using var owner = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(_boxHome, "assembly.db")};Mode=ReadOnly;Pooling=False");
         owner.Open();
         using var command = owner.CreateCommand();

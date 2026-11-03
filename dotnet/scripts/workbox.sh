@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # Runs the backend on Workbox Test, from a git checkout on the Mac or the workbox.
-#   dotnet/scripts/workbox.sh smoke  [branch]   one smoke run; the transcript lands in dotnet/logs/
 #   dotnet/scripts/workbox.sh record [branch]   every recorder scenario; the transcripts land in
 #                                               dotnet/Assembly.Tests/Fixtures/acp/
 #   dotnet/scripts/workbox.sh serve  [branch]   (re)starts the API on the box's 127.0.0.1:BOX_PORT as the
@@ -21,11 +20,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 . scripts/lane-env.sh
-mode=${1:?usage: dotnet/scripts/workbox.sh smoke|record|serve|stop|remove|kill-adapter|row-log [branch]}
+mode=${1:?usage: dotnet/scripts/workbox.sh record|serve|stop|remove|kill-adapter|row-log [branch]}
 branch=${2:-$(git branch --show-current)}
 echo "lane ${LANE_NAME:-main}: box port $BOX_PORT, unit $BOX_UNIT, box data ~/$BOX_DATA" >&2
 case "$mode" in
-  smoke|record|serve) ;;
+  record|serve) ;;
   stop)
     ssh workbox-test "systemctl --user stop $BOX_UNIT && echo '$BOX_UNIT stopped'"
     exit ;;
@@ -58,7 +57,37 @@ kill -KILL $children
 BOX
     exit ;;
   row-log)
-    ssh workbox-test "PATH=\$HOME/.local/bin:\$PATH node --input-type=module-typescript - ${*:2}" < dotnet/scripts/row-log.ts
+    # The target is a session argument, never a branch. Run the matching checkout's real file so its imports resolve.
+    checkout_branch=$(git branch --show-current)
+    [ -n "$checkout_branch" ] || { echo 'row-log needs a named checkout branch' >&2; exit 1; }
+    checkout_commit=$(git rev-parse --verify 'HEAD^{commit}')
+    row_sources=(dotnet/scripts/row-log.ts scripts/features/live-rows.ts scripts/features/socket.ts)
+    git diff --quiet HEAD -- "${row_sources[@]}" || {
+      echo 'row-log sources differ from this checkout commit; commit them before using the remote checkout' >&2
+      exit 1
+    }
+    shift
+    printf -v remote_command '%q ' bash -s -- "$checkout_branch" "$checkout_commit" "$@"
+    ssh workbox-test "$remote_command" <<'BOX'
+set -euo pipefail
+checkout_branch=$1 expected_commit=$2
+shift 2
+checkout="$HOME/assembly/$checkout_branch"
+[ -d "$checkout" ] || { echo "row-log matching checkout is absent: $checkout_branch" >&2; exit 1; }
+actual_commit=$(git -C "$checkout" rev-parse --verify 'HEAD^{commit}')
+[ "$actual_commit" = "$expected_commit" ] || {
+  echo "row-log checkout $checkout_branch is stale: expected $expected_commit, found $actual_commit" >&2
+  exit 1
+}
+cd "$checkout"
+sources=(dotnet/scripts/row-log.ts scripts/features/live-rows.ts scripts/features/socket.ts)
+for source in "${sources[@]}"; do
+  git ls-files --error-unmatch -- "$source" >/dev/null || { echo "row-log source is missing: $source" >&2; exit 1; }
+done
+git diff --quiet HEAD -- "${sources[@]}" || { echo 'row-log remote sources differ from the matching commit' >&2; exit 1; }
+export PATH="$HOME/.local/bin:$PATH"
+exec node dotnet/scripts/row-log.ts "$@"
+BOX
     exit ;;
   *) echo "unknown mode: $mode" >&2; exit 2 ;;
 esac
@@ -100,10 +129,10 @@ entry=$adapters/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 # The box has pnpm but no npm.
 
 if [ "$mode" = serve ]; then
-  # Only the server reads agents.json; smoke and record start the adapter themselves.
+  # Only the server reads agents.json; record starts the adapter itself.
   mkdir -p ~/"$data"/serve
   "$dir/dotnet/scripts/agents-file.sh" "$adapters" ~/"$data"/serve/agents.json
-  # Published apart from the checkout, so a later smoke build never swaps files under the running server.
+  # Published apart from the checkout, so a later recorder build never swaps files under the running server.
   bin=~/$data/bin/$commit
   dotnet publish -v q --nologo -c Release -o "$bin" "$dir/dotnet/Assembly.Remote" >&2
   ln -sfn "$bin" ~/"$data"/bin/current
@@ -131,15 +160,8 @@ backend="$dir/dotnet/Assembly.Remote/bin/Debug/net10.0/Assembly.Remote.dll"
 stamp=$(date -u +%Y%m%d-%H%M%S)
 # The run's exit code is the result; report it after the output path.
 set +e
-if [ "$mode" = smoke ]; then
-  mkdir -p ~/"$data"/logs
-  out=~/"$data"/logs/smoke-$stamp.jsonl
-  cwd=$(mktemp -d ~/"$data"/smoke-cwd-XXXXXX)
-  dotnet "$backend" smoke --cwd "$cwd" --log "$out" -- node "$entry" >&2
-else
-  out=~/"$data"/fixtures-$stamp
-  dotnet "$backend" record --out "$out" -- node "$entry" >&2
-fi
+out=~/"$data"/fixtures-$stamp
+dotnet "$backend" record --out "$out" -- node "$entry" >&2
 code=$?
 set -e
 echo "adapter processes still running afterwards:" >&2
@@ -150,10 +172,6 @@ BOX
 read -r remote_out code <<<"$result"
 if [ "$mode" = serve ]; then
   echo "$BOX_UNIT runs $commit on Workbox Test at 127.0.0.1:$BOX_PORT; its token is in ~/$BOX_TOKEN_FILE there"
-elif [ "$mode" = smoke ]; then
-  mkdir -p dotnet/logs
-  scp -q "workbox-test:$remote_out" dotnet/logs/
-  echo "transcript: dotnet/logs/$(basename "$remote_out")"
 else
   fixtures=dotnet/Assembly.Tests/Fixtures/acp
   mkdir -p "$fixtures"

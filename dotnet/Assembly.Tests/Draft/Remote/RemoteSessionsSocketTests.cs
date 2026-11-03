@@ -13,9 +13,12 @@ public sealed partial class RemoteRowsSocketTests
     {
         await _machine.ProbeAsync(CancellationToken.None);
         var session = await _machine.CreateSessionAsync("claude", "https://github.com/o/r", CancellationToken.None);
-        Assert.Equal("run-1", await _machine.SendAsync(session, "hello", "client-1", CancellationToken.None));
-        Assert.Contains($"send {session.SessionId} hello", _remoteMachine.Asked);
-        Assert.Equal("client-1", _remoteMachine.SentClientId);
+        var accepted = await _machine.SendOwnerPromptAsync(new(session.SessionId, "hello", "client-1", [], null), CancellationToken.None);
+        Assert.Equal("queued", accepted.State);
+        Assert.Null(accepted.RunId);
+        Assert.Equal("client-1", accepted.ClientId);
+        Assert.Equal("hello", _remoteDb.QueryFirst("SELECT text FROM engine_message WHERE id=$id", row => row.Text(0),
+            default, new Assembly.Application.Common.Database.SqlArg("$id", accepted.MessageId)));
         Assert.Equal(0, _sessionHttpHits);
     }
 
@@ -29,10 +32,14 @@ public sealed partial class RemoteRowsSocketTests
         await _machine.ProbeAsync(CancellationToken.None);
         Assert.True(await _machine.StopAsync(_localSessions.Get("s")!, "running", CancellationToken.None));
         _remoteMachine.Refuses = true;
-        Assert.False(await _machine.AnswerAsync(_localSessions.Get("s")!, "gone",
+        Assert.False(await _machine.AnswerOwnerNeedAsync(_localSessions.Get("s")!, "gone",
             JsonDocument.Parse("""{"optionId":"yes"}""").RootElement, CancellationToken.None));
         Assert.Contains("stop running", _remoteMachine.Asked);
-        Assert.Contains(_remoteMachine.Asked, call => call.StartsWith("answer gone "));
+        Assert.NotNull(_remoteAnswer);
+        Assert.Equal("s", _remoteAnswer.Session);
+        Assert.Equal("gone", _remoteAnswer.Ask);
+        Assert.Equal("yes", _remoteAnswer.Answer.GetProperty("optionId").GetString());
+        Assert.DoesNotContain(_remoteMachine.Asked, call => call.StartsWith("answer "));
         Assert.Equal(0, _sessionHttpHits);
     }
 

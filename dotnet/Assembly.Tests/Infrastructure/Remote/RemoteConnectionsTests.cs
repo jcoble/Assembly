@@ -1,4 +1,6 @@
 using Assembly.Application.Common.Machines;
+using Assembly.Application.Common.Engine;
+using System.Text.Json;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
 using Assembly.Infrastructure.Persistence;
@@ -136,59 +138,6 @@ public sealed class RemoteConnectionsTests
         finally { release.TrySetResult(); }
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Faulted_outbox_still_disposes_tunnels_and_allows_later_connect(bool shutdown)
-    {
-        using var file = new TempDatabase();
-        var topics = new Topics();
-        using var db = AppDatabase.Open(file.Path, TimeProvider.System, topics);
-        using var hub = new LiveHub(RowStore.Open(db));
-        var sessions = SessionStore.Open(db, TimeProvider.System, "checkouts");
-        var machines = new MachineSet(new FakeMachine(null, sessions));
-        var status = new MachineStatus(topics, []);
-        var store = new MachineStore(db);
-        await using var stub = new MachinesSocketTests.StubRemote();
-        await stub.StartAsync();
-        var receipts = new List<TaskCompletionSource>();
-        using var log = new StringWriter();
-        await using var feature = new MachinesFeature(machines, status, () => { }, TimeProvider.System);
-        await using var connections = new RemoteConnections(store, db.Writer, machines, status, hub, sessions, topics, log,
-            feature, open: (profile, _) =>
-            {
-                var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                receipts.Add(done);
-                return Task.FromResult<(RemoteConfig, IAsyncDisposable?)>((new(profile.Name, stub.Address, "token"), new DisposalReceipt(done)));
-            });
-        store.Import(new("box", "host"));
-        await connections.ConnectionAsync("box", true, CancellationToken.None);
-        store.Import(new("other", "host"));
-        await connections.ReadyAsync("other");
-        // Inject the same completed task failure as an invalid JSON response, without waiting for a polling timer.
-        var active = (System.Collections.IEnumerable)typeof(RemoteConnections).GetField("_active",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(connections)!;
-        var entry = active.Cast<object>().Single(item => (string)item.GetType().GetProperty("Key")!.GetValue(item)! == "box");
-        var value = entry.GetType().GetProperty("Value")!.GetValue(entry)!;
-        var outbox = (RemoteOutbox)value.GetType().GetField("Item2")!.GetValue(value)!;
-        await ((CancellationTokenSource)typeof(RemoteOutbox).GetField("_stopping",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(outbox)!).CancelAsync();
-        await (Task)typeof(RemoteOutbox).GetField("_polling",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(outbox)!;
-        typeof(RemoteOutbox).GetField("_polling", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .SetValue(outbox, Task.FromException(new System.Text.Json.JsonException("invalid outbox")));
-        await Assert.ThrowsAnyAsync<Exception>(() => shutdown ? connections.DisposeAsync().AsTask()
-            : connections.ConnectionAsync("box", false, CancellationToken.None));
-        Assert.True(receipts[0].Task.IsCompleted, "faulted outbox skipped tunnel disposal");
-        if (shutdown) Assert.True(receipts[1].Task.IsCompleted, "shutdown skipped another machine");
-        else
-        {
-            await connections.ConnectionAsync("box", true, CancellationToken.None);
-            Assert.NotNull(machines.Named("box"));
-            Assert.Contains("invalid outbox", log.ToString());
-        }
-    }
-
     [Fact]
     public async Task Connecting_an_active_machine_preserves_in_flight_session_calls_and_routing()
     {
@@ -269,6 +218,15 @@ public sealed class RemoteConnectionsTests
         using var file = new TempDatabase();
         await using var first = new MachinesSocketTests.StubRemote();
         await using var second = new MachinesSocketTests.StubRemote();
+        first.Reply = (feature, method) => OwnerReply(first, "connection-first", feature, method);
+        second.Reply = (feature, method) => OwnerReply(second, "connection-second", feature, method);
+        static string? OwnerReply(MachinesSocketTests.StubRemote remote, string client, string feature, string method)
+        {
+            if (feature != "send" || method != "send") return null;
+            Interlocked.Increment(ref remote.SendHits);
+            return JsonSerializer.Serialize(new OwnerPromptAccepted("existing", "prompt/existing/" + client,
+                client, "queued", 1, 1, 0, null), SessionsJson.Default.OwnerPromptAccepted);
+        }
         await first.StartAsync();
         await second.StartAsync();
         for (var restart = 0; restart < 2; restart++)
@@ -301,7 +259,10 @@ public sealed class RemoteConnectionsTests
             var session = sessions.Get("existing")!;
             Assert.Equal("remote", (await machines.For(session).ConfigAsync(session, CancellationToken.None)).Choices["where"]);
             Assert.Equal("remote", (await machines.For(session).SetConfigAsync(session, "model", "chosen", CancellationToken.None)).Choices["where"]);
-            Assert.Equal("remote-run", await machines.For(session).SendAsync(session, "hello", null, CancellationToken.None));
+            var accepted = await Assert.IsType<RemoteMachine>(machines.For(session)).SendOwnerPromptAsync(
+                new(session.SessionId, "hello", "connection-first", [], null), CancellationToken.None);
+            Assert.Equal("queued", accepted.State);
+            Assert.Null(accepted.RunId);
             Assert.Empty(local.Asked);
             await connections.ConnectionAsync("box", false, CancellationToken.None);
             var disconnectedOpens = opens;
@@ -314,7 +275,10 @@ public sealed class RemoteConnectionsTests
             Assert.Null(machines.Named("box"));
             store.Import(new("box", "second"));
             await connections.ConnectionAsync("box", true, CancellationToken.None);
-            Assert.Equal("remote-run", await machines.For(session).SendAsync(session, "edited", null, CancellationToken.None));
+            accepted = await Assert.IsType<RemoteMachine>(machines.For(session)).SendOwnerPromptAsync(
+                new(session.SessionId, "edited", "connection-second", [], null), CancellationToken.None);
+            Assert.Equal("queued", accepted.State);
+            Assert.Null(accepted.RunId);
             Assert.True(second.SendHits > 0);
             if (restart == 0) await connections.ConnectionAsync("box", false, CancellationToken.None);
             if (restart == 1)

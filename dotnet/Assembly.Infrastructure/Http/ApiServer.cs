@@ -31,27 +31,14 @@ public static class ApiServer
         builder.Services.Configure<HostOptions>(host => host.ShutdownTimeout = ShutdownTimeout);
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, port));
 
+        services.Mcp?.AddServices(builder.Services);
         var app = builder.Build();
         // Kestrel waits for open connections when it stops, and the webview's live sockets never close on their
         // own: close them as stopping starts.
         app.Lifetime.ApplicationStopping.Register(services.Hub.CloseSubscriptions);
         app.UseWebSockets();
         app.Use(new TokenGuard(services.Token).InvokeAsync);
-        new InfoRoutes(services.Machines).Map(app);
-        new SessionRoutes(services.SessionStore, services.Machines).Map(app);
-        new RowRoutes(services.Hub, services.SessionStore, services.Machines, services.OwnerDoor).Map(app);
-        new RunRoutes(services.Hub, services.SessionStore, services.Machines, TimeProvider.System).Map(app);
-        new OutboxRoutes(services.SessionStore).Map(app);
-        new AttachmentRoutes(services.SessionStore, services.Machines, services.Attachments).Map(app);
-        new ConfigRoutes(services.SessionStore, services.Machines).Map(app);
-        if (services.Helpers is not null)
-            new McpRoutes(services.Helpers, services.Board).Map(app);
-        app.Map("/live", context =>
-        {
-            if (services.SessionStore.Get(context.Request.Query["session"].ToString()) is { } session)
-                services.Machines.Named(session.Machine)?.Watch(session);
-            return LiveSocket.HandleAsync(context, services.Hub);
-        });
+        services.Mcp?.Map(app);
         if (services is { Writer: { } writer, Topics: { } topics })
         {
             var calls = new SocketDispatcher(writer, topics, TimeProvider.System, app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Assembly.Calls"),

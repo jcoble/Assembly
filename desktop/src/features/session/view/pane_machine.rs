@@ -30,8 +30,12 @@ impl SessionPane {
         let machine = listed
             .unwrap_or_else(|| self.header.read(cx).machine().map(String::from))
             .filter(|machine| !machine.is_empty());
-        let offline = machine.filter(|name| Machines::offline(Some(name), cx));
-        self.composer
-            .update(cx, |composer, cx| composer.set_offline(offline, cx));
+        let offline = machine
+            .clone()
+            .filter(|name| Machines::offline(Some(name), cx));
+        self.composer.update(cx, |composer, cx| {
+            composer.set_machine(machine, cx);
+            composer.set_offline(offline, cx);
+        });
     }
 }

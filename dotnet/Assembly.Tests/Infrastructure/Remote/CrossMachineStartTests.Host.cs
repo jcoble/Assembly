@@ -72,7 +72,7 @@ public sealed partial class CrossMachineStartTests
             var forward = new MachineForward(machine => H.Connections.ByEngineMachine(H.Mac.Fixture.Db, machine));
             Starts = new(H.Mac.Runtime, forward, H.Connections, Limits, H.Mac.Fixture.Time);
             var calls = new SocketDispatcher(H.Mac.Fixture.Db.Writer, H.Mac.Topics, H.Mac.Fixture.Time, NullLogger.Instance, new EngineSocketStream(H.Mac.Runtime));
-            new EngineCalls(H.Mac.Runtime, H.Mac.Fixture.Time, forward, Starts).Register(calls);
+            new EngineCalls(H.Mac.Runtime, H.Mac.Fixture.Time, H.Mac.Needs, forward, Starts).Register(calls);
             var builder = WebApplication.CreateSlimBuilder(); builder.Logging.ClearProviders();
             builder.WebHost.ConfigureKestrel(server => server.Listen(IPAddress.Loopback, 0));
             _window = builder.Build(); _window.UseWebSockets();

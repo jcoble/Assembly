@@ -46,7 +46,8 @@ public sealed class TerminalDetailTests(Xunit.Abstractions.ITestOutputHelper pro
             Assert.Equal("newer", current.Output);
             var json = JsonSerializer.SerializeToElement(current);
             Assert.Equal(5, json.GetProperty("OutputBytes").GetInt64());
-            Assert.False(json.GetProperty("OutputTruncated").GetBoolean());
+            Assert.False(current.OutputTruncated);
+            Assert.False(json.TryGetProperty("OutputTruncated", out _));
             Assert.Equal("P2", json.GetProperty("Terminals")[0].GetProperty("AcpSessionId").GetString());
             Assert.Equal(0, json.GetProperty("Terminals")[0].GetProperty("ExitStatus").GetProperty("ExitCode").GetInt64());
             Apply(store, new UpdateReader(), new RowConverter(), Chunk("IQ=="), "P2");
@@ -191,7 +192,7 @@ public sealed class TerminalDetailTests(Xunit.Abstractions.ITestOutputHelper pro
             using var db = TestDatabase.Open(file.Path); var store = RowStore.Open(db);
             var result = store.ToolCall("S", "C")!;
             Assert.Equal(("{\"x\":1}", "legacy €", "diff", "file"), (result.Input, result.Output, result.Diff, result.Path));
-            Assert.Null(result.OutputBytes); Assert.Null(result.Terminals);
+            Assert.Equal(Encoding.UTF8.GetByteCount("legacy €"), result.OutputBytes); Assert.Equal(4, result.DiffBytes); Assert.Null(result.Terminals);
             Assert.Equal(Math.Max(version, 5), store.StoredFormatVersion);
             Assert.Equal(2, db.QueryFirst("SELECT count(*) FROM pragma_table_info('tool_details') WHERE name IN ('output_source','acp_session_id')", r => r.Long(0), default));
             Assert.Equal(1, db.QueryFirst("SELECT acp_session_id IS NULL AND output_source IS NULL FROM tool_details", r => r.Long(0), default));

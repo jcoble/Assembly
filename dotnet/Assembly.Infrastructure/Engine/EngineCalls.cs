@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Engine;
 using Assembly.Infrastructure.Socket;
+using Assembly.Infrastructure.Engine.Needs;
 using Assembly.Engine;
 using Assembly.Engine.Contracts;
 using Assembly.Engine.Handoffs;
@@ -21,12 +22,12 @@ public sealed record EngineUsageArgs(string EntityKind, string EntityId, string?
 public sealed record EngineEntityArgs(string EntityKind, string EntityId, string? Machine = null);
 
 /// <summary>The authenticated window's checked owner commands; identity and time are host-owned.</summary>
-public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFeature
+public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs) : IFeature
 {
     private readonly MachineForward? _forward;
     private readonly MachineStarts? _starts;
-    internal EngineCalls(EngineRuntime runtime, TimeProvider time, MachineForward forward) : this(runtime, time) => _forward = forward;
-    internal EngineCalls(EngineRuntime runtime, TimeProvider time, MachineForward forward, MachineStarts starts) : this(runtime, time, forward) => _starts = starts;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward) : this(runtime, time, needs) => _forward = forward;
+    internal EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs, MachineForward forward, MachineStarts starts) : this(runtime, time, needs, forward) => _starts = starts;
     private MachineForward Forward => _forward ?? throw new KeyNotFoundException("Unknown remote engine machine");
     private bool IsRemote(string? machine) => machine is not null && machine != runtime.Machine;
 
@@ -59,6 +60,8 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time) : IFea
                     var result = await Forward.CommandAsync(args.Machine!, args, call.Cancellation);
                     return _ => result;
                 }
+                if (args.Command is ResolveNeed { State: "answered" })
+                    return await needs.PrepareOwnerAsync(args, call.Cancellation);
                 var title = args.Command is StartSession start ? EngineCommands.PrepareSessionTitle(start) : null;
                 return scope =>
                 {

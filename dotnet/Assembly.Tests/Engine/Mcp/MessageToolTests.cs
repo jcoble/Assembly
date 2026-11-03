@@ -60,17 +60,52 @@ public sealed class MessageToolTests
 
     [Theory]
     [InlineData("missing", "not_reachable")]
-    [InlineData("foreign", "other_machine")]
+    [InlineData("local-foreign", "other_machine")]
     [InlineData("nonlocal", "other_machine")]
     [InlineData("ended", "unavailable")]
     public async Task Local_tool_refuses_targets_without_claiming_a_remote_delivery(string target, string code)
     {
         await using var h = new Harness(); h.F.SeedSession("caller");
-        h.F.SeedSession("foreign", "foreign"); h.F.SeedSession("nonlocal"); h.F.SeedSession("ended", "ended");
+        h.F.SeedSession("local-foreign", "foreign"); h.F.SeedSession("nonlocal"); h.F.SeedSession("ended", "ended");
         h.F.Db.Writer.Write("remote", s => s.Execute("UPDATE engine_session SET machine='elsewhere' WHERE id IN ('foreign','nonlocal')"));
         var result = await h.Send(target, "body");
         Assert.True(result.IsError); Assert.Equal(Refusals.Text("send_message", new(code)), Text(result));
         Assert.Equal(0, h.F.Count("engine_message")); Assert.Equal(0, h.F.Count("engine_command_receipt"));
+    }
+
+    [Fact]
+    public async Task Established_foreign_stub_queues_the_same_prepared_message_without_a_local_provider_effect()
+    {
+        await using var h = new Harness(); h.F.SeedSession("caller");
+        Assert.True(h.F.Apply(new RegisterForeignSession("remote", "codex", "Remote"), "target",
+            actor: new(ActorKind.System, "machine:remote")).Applied);
+        var result = Answer(await h.Send("target", "[message from copied]\0FULL"));
+        Assert.Equal("queued", result.GetProperty("state").GetString());
+        Assert.Equal(Encoding.UTF8.GetBytes("[message from copied]\0FULL"),
+            h.F.Db.QueryFirst("SELECT CAST(text AS BLOB) FROM engine_message", r => r.Blob(0), default));
+        Assert.Equal("caller", h.F.Text("SELECT from_session_id FROM engine_message"));
+        Assert.Equal(0, h.F.Count("engine_outbox"));
+    }
+
+    [Fact]
+    public async Task Foreign_preparation_authenticates_before_io_and_rechecks_the_caller_epoch_before_send()
+    {
+        await using var h = new Harness(); h.F.SeedSession("caller", epoch: 7);
+        var prepared = 0;
+        var tool = new SendMessageTool(h.Gate, (target, _) =>
+        {
+            prepared++;
+            Assert.True(h.F.Apply(new RegisterForeignSession("remote", "codex", "Remote"), target,
+                actor: new(ActorKind.System, "machine:remote")).Applied);
+            h.F.Db.Writer.Write("changed-owner", s => s.Execute("UPDATE engine_session SET epoch=8 WHERE id='caller'"));
+            return Task.FromResult(true);
+        });
+        const string args = """{"sessionId":"target","text":"body"}""";
+        Assert.True((await h.Call(tool, args, epoch: 0)).IsError);
+        Assert.Equal(0, prepared);
+        Assert.True((await h.Call(tool, args, epoch: 7)).IsError);
+        Assert.Equal(1, prepared);
+        Assert.Equal(0, h.F.Count("engine_message"));
     }
 
     [Theory]

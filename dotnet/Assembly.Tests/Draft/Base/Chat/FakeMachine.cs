@@ -1,3 +1,4 @@
+using Assembly.Infrastructure.Chat.Attachments;
 using Assembly.Application.Common.Agents;
 using System.Text.Json;
 using Assembly.Application.Common.Machines;
@@ -20,10 +21,9 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public string? Name => name;
     public bool Down { get; set; }
 
-    /// <summary>Turns down a send, stop or answer, as a machine does when the turn or ask can't take it.</summary>
+    /// <summary>Turns down a stop or answer, as a machine does when the turn or ask can't take it.</summary>
     public bool Refuses { get; set; }
     public List<string> Asked { get; } = [];
-    public string? SentClientId { get; private set; }
     public TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Set when a held call reaches the machine.</summary>
@@ -32,6 +32,7 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     /// <summary>The run <see cref="ActiveRun"/> answers.</summary>
     public string? Running { get; set; }
     public StoredToolCall? Tool { get; set; }
+    public AttachmentStore? Attachments { get; set; }
     /// <summary>The last image saved here.</summary>
     public byte[]? Saved { get; private set; }
 
@@ -69,12 +70,6 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
     public Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken) =>
         Remote("helper", () => store.Helper(parent, agent, title), cancellationToken);
 
-    public Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken)
-    {
-        SentClientId = clientId;
-        return Remote<string?>($"send {session.SessionId} {text}", () => Refuses ? null : "run-1", cancellationToken);
-    }
-
     public Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken) =>
         Remote($"stop {runId}", () => !Refuses, cancellationToken);
 
@@ -92,6 +87,13 @@ internal sealed class FakeMachine(string? name, SessionStore store) : IMachine
             Saved = bytes.ToArray();
             return $"/{name ?? "here"}/image.{type.Extension}";
         }, cancellationToken);
+
+    public async Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken)
+    {
+        await Remote($"read {session.SessionId} {name} {offset}", () => 0, cancellationToken);
+        return await (Attachments ?? throw new InvalidOperationException("The test machine's attachment store was not configured."))
+            .ReadAsync(session.SessionId, name, offset, cancellationToken);
+    }
 
     public Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
         Remote("config", () => Config, cancellationToken);

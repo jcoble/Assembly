@@ -28,12 +28,6 @@ public interface IMachine
     /// <summary>A helper session under <paramref name="parent"/>, which may be on another machine, in its repo.</summary>
     Task<SessionInfo> CreateHelperAsync(SessionInfo parent, string agent, string title, CancellationToken cancellationToken);
 
-    /// <summary>
-    /// Starts a turn, or sends the text into the one running, and returns the run id; null if the running turn
-    /// can't take it. A resend with the same <paramref name="clientId"/> answers the first send's run id.
-    /// </summary>
-    Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken);
-
     /// <summary>Stops the run. False if the session isn't running it.</summary>
     Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken);
 
@@ -47,6 +41,9 @@ public interface IMachine
 
     /// <summary>Stores the image where the agent can read it and returns its path there.</summary>
     Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken);
+
+    /// <summary>Reads one bounded image piece from the session's owning machine.</summary>
+    Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken);
 
     /// <summary>
     /// The session's config: the options its agent reported (before its first session, the ones the agent's
@@ -62,9 +59,6 @@ public interface IMachine
 
     /// <summary>Observes this session's native metadata without sending a prompt.</summary>
     Task<SessionConfig> WarmConfigAsync(SessionInfo session, string targetId, CancellationToken cancellationToken);
-
-    /// <summary>Answers one of the session's open asks (its card row). False if it isn't open or the answer doesn't fit.</summary>
-    Task<bool> AnswerAsync(SessionInfo session, string askId, System.Text.Json.JsonElement answer, CancellationToken cancellationToken);
 
     /// <summary>A webview opened the session: a remote machine brings its rows up to date here. Nothing to do locally.</summary>
     void Watch(SessionInfo session);

@@ -1,13 +1,10 @@
 using Assembly.Application.Common.Agents;
-using System.Net;
 using System.Security.Cryptography;
 using System.Net.WebSockets;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Assembly.Application.Features.Chat.Attachments;
 using Assembly.Infrastructure.Chat.Attachments;
-using Assembly.Application.Features.Chat.Helpers;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Machines;
@@ -29,11 +26,9 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
     private readonly string _name;
     private readonly LiveHub _hub;
     private readonly SessionStore _sessionStore;
-    private readonly HttpClient _http;
     private readonly RemoteFollower _follower;
     private readonly Action<string> _turnEnded;
     private readonly MachineStatus _status;
-    private bool _formatChecked;
     private readonly string _connectionIdentity;
     private readonly string _instanceIdentity = Guid.NewGuid().ToString("N");
 
@@ -52,8 +47,6 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         _hub = hub;
         _sessionStore = sessionStore;
         _status = status;
-        _http = new HttpClient { BaseAddress = address, Timeout = TimeSpan.FromSeconds(30) };
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         _follower = new RemoteFollower(hub, RowsAsync, ReadRowsAsync, ProbeAsync, RefreshAsync, AddSubagentSession, log);
     }
 
@@ -125,37 +118,6 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         return _sessionStore.Get(sessionId)!;
     }
 
-    /// <summary>The messages the remote's sessions have waiting for sessions here.</summary>
-    public async Task<IReadOnlyList<HelperMessage>> OutboxAsync(CancellationToken cancellationToken) =>
-        (await JsonAsync(HttpMethod.Get, "/outbox", null, cancellationToken)).GetProperty("messages").EnumerateArray()
-            .Select(message => new HelperMessage(Text(message, "messageId")!, Text(message, "from")!, Text(message, "to")!, Text(message, "text")!, null,
-                message.TryGetProperty("createdAt", out var at) ? at.GetInt64() : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())).ToList();
-
-    /// <summary>Tells the remote how delivering its message went: the run it went into, or why it couldn't.</summary>
-    public async Task DeliveredAsync(string messageId, string? runId, string? error, CancellationToken cancellationToken) =>
-        await JsonAsync(HttpMethod.Post, $"/outbox/{Uri.EscapeDataString(messageId)}",
-            runId is not null ? Body(("runId", runId)) : Body(("error", error ?? "It couldn't be delivered.")), cancellationToken);
-
-    /// <summary>Brings the remote the answer to its message.</summary>
-    public async Task AnsweredAsync(string messageId, RunAnswer answer, CancellationToken cancellationToken) =>
-        await JsonAsync(HttpMethod.Post, $"/outbox/{Uri.EscapeDataString(messageId)}/answer",
-            answer.Error is { } error
-                ? Body(("state", answer.State), ("reply", answer.Reply), ("error", error))
-                : Body(("state", answer.State), ("reply", answer.Reply)), cancellationToken);
-
-    public async Task<string?> SendAsync(SessionInfo session, string text, string? clientId, CancellationToken cancellationToken)
-    {
-        // Before the send, so a catch-up settling meanwhile can't end the row of the turn it starts; a send that fails
-        // leaves the row as it is.
-        _follower.TakeShownRunning(session.SessionId);
-        JsonElement result;
-        try { result = await CallAsync("send", "send", new SendFeature.SendArgs(session.SessionId, text, clientId), cancellationToken); }
-        catch (CallFailed error) when (error.Message == "the running turn can't take a message yet") { return null; }
-        var runId = result.GetProperty("runId").GetString();
-        _follower.Watch(session.SessionId, runId);
-        return runId;
-    }
-
     public async Task<bool> StopAsync(SessionInfo session, string runId, CancellationToken cancellationToken)
     {
         try { return (await CallAsync("send", "stop", new SendFeature.StopArgs(runId), cancellationToken)).GetProperty("ok").GetBoolean(); }
@@ -167,23 +129,97 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
 
     public async Task<StoredToolCall?> ToolCallAsync(SessionInfo session, string itemId, CancellationToken cancellationToken)
     {
-        using var response = await SendRequestAsync(HttpMethod.Get, $"/sessions/{session.SessionId}/tools/{Uri.EscapeDataString(itemId)}", null, cancellationToken);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            return null;
-        var call = await ReadJsonAsync(response, cancellationToken);
-        return new StoredToolCall(Text(call, "summary"), Text(call, "input"), Text(call, "output"), Text(call, "diff"), Text(call, "path"),
-            call.TryGetProperty("outputBytes", out var bytes) && bytes.ValueKind == JsonValueKind.Number ? bytes.GetInt64() : null,
-            call.TryGetProperty("outputTruncated", out var truncated) && truncated.ValueKind == JsonValueKind.True,
-            call.TryGetProperty("terminals", out var terminals) && terminals.ValueKind == JsonValueKind.Array
-                ? terminals.Deserialize(RowJsonContext.Rows.IReadOnlyListToolTerminalState) : null);
+        var args = JsonSerializer.SerializeToElement(new RowsFeature.RawToolArgs(session.SessionId, itemId,
+            RowsFeature.ToolCap, RowsFeature.ToolCap), RowJsonContext.Rows.RawToolArgs);
+        try
+        {
+            var value = await CallAsync("rows", "toolRaw", args, bulk: true, cancellationToken);
+            return value.Deserialize(RowJsonContext.Rows.StoredToolCall);
+        }
+        catch (CallFailed error) when (error.Message == "unknown tool") { return null; }
     }
 
     public async Task<string> SaveAttachmentAsync(SessionInfo session, ImageType type, ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-        var content = new ReadOnlyMemoryContent(bytes);
-        content.Headers.ContentType = new MediaTypeHeaderValue(type.ContentType);
-        var saved = await JsonAsync(HttpMethod.Post, $"/sessions/{session.SessionId}/attachments", content, cancellationToken);
-        return saved.GetProperty("path").GetString()!;
+        var owner = await CaptureOwnerReadAsync(null, cancellationToken);
+        await _bulkCall.WaitAsync(cancellationToken);
+        ClientWebSocket? original = null;
+        string? upload = null;
+        var completed = false;
+        try
+        {
+            var begun = await BulkCallHeldAsync("attachments", "begin", JsonSerializer.SerializeToElement(
+                new AttachmentsFeature.BeginArgs(session.SessionId, type.ContentType, bytes.Length), AttachmentsJson.Default.BeginArgs),
+                cancellationToken, owner.Identity, owner.Socket);
+            original = _bulkSocket;
+            upload = begun.GetProperty("upload").GetString()!;
+            for (var offset = 0; offset < bytes.Length; offset += AttachmentsFeature.ChunkBytes)
+            {
+                var chunk = bytes.Slice(offset, Math.Min(AttachmentsFeature.ChunkBytes, bytes.Length - offset)).ToArray();
+                RequireOriginal();
+                await BulkCallHeldAsync("attachments", "chunk", JsonSerializer.SerializeToElement(
+                    new AttachmentsFeature.ChunkArgs(upload, offset, chunk), AttachmentsJson.Default.ChunkArgs),
+                    cancellationToken, owner.Identity, owner.Socket);
+            }
+            RequireOriginal();
+            var saved = await BulkCallHeldAsync("attachments", "commit", JsonSerializer.SerializeToElement(
+                new AttachmentsFeature.CommitArgs(upload), AttachmentsJson.Default.CommitArgs),
+                cancellationToken, owner.Identity, owner.Socket);
+            var path = saved.GetProperty("path").GetString()!;
+            completed = true;
+            return path;
+        }
+        finally
+        {
+            try
+            {
+                if (!completed && upload is not null && SameOriginal())
+                {
+                    try
+                    {
+                        using var deadline = new CancellationTokenSource(Assembly.Infrastructure.Socket.SocketDispatcher.Limit, _time);
+                        using var cleanup = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, _socketStop.Token);
+                        await BulkCallHeldAsync("attachments", "drop", JsonSerializer.SerializeToElement(
+                            new AttachmentsFeature.DropArgs(upload), AttachmentsJson.Default.DropArgs),
+                            cleanup.Token, owner.Identity, owner.Socket);
+                    }
+                    catch (Exception)
+                    {
+                        // Preserve the upload's error; closing its original connection owns staging cleanup.
+                        try { original?.Abort(); } catch (ObjectDisposedException) { }
+                    }
+                }
+            }
+            finally { _bulkCall.Release(); }
+        }
+
+        bool SameOriginal() => original is { State: WebSocketState.Open } && ReferenceEquals(_bulkSocket, original);
+        void RequireOriginal()
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!SameOriginal()) throw Unreachable("machine socket changed", $"{_name}: upload connection changed");
+        }
+    }
+
+    public async Task<AttachmentPiece> ReadAttachmentAsync(SessionInfo session, string name, long offset, CancellationToken cancellationToken)
+    {
+        var type = string.IsNullOrEmpty(name) ? null : AttachmentStore.TypeOfName(name);
+        if (type is null) throw new CallFailed("not an attachment name");
+        if (offset < 0) throw new CallFailed("the offset is outside the attachment");
+        var args = JsonSerializer.SerializeToElement(new AttachmentsFeature.ReadArgs(session.SessionId, name, offset),
+            AttachmentsJson.Default.ReadArgs);
+        JsonElement value;
+        try { value = await CallAsync("attachments", "read", args, bulk: true, cancellationToken); }
+        catch (Exception error) when (error is WebSocketException or IOException)
+        {
+            throw Unreachable("machine socket closed", $"{_name}: machine socket closed", error);
+        }
+        var piece = value.Deserialize(AttachmentsJson.Default.AttachmentPiece)
+            ?? throw new CallFailed("invalid attachment reply");
+        if (piece.Size is < 1 or > AttachmentStore.MaxBytes || offset > piece.Size || piece.Data is null ||
+            piece.Data.Length != Math.Min(AttachmentsFeature.ChunkBytes, piece.Size - offset) || piece.Mime != type.ContentType)
+            throw new CallFailed("invalid attachment reply");
+        return piece;
     }
 
     public async Task<SessionConfig> ConfigAsync(SessionInfo session, CancellationToken cancellationToken) =>
@@ -228,7 +264,7 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         return target[TargetPrefix.Length..];
     }
 
-    public async Task<bool> AnswerAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
+    internal async Task<bool> AnswerOwnerNeedAsync(SessionInfo session, string askId, JsonElement answer, CancellationToken cancellationToken)
     {
         try { return (await CallAsync("send", "answer", new SendFeature.AnswerArgs(session.SessionId, askId, answer), cancellationToken)).GetProperty("ok").GetBoolean(); }
         // SendFeature.cs rejects an expired ask with this failed message.
@@ -276,67 +312,12 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    private async Task<JsonElement> JsonAsync(HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
-    {
-        using var response = await SendRequestAsync(method, path, content, cancellationToken);
-        return await ReadJsonAsync(response, cancellationToken);
-    }
-
-    // Any answer means the remote is there, unless it refused this computer's token: then nothing will work.
-    private async Task<HttpResponseMessage> SendRequestAsync(HttpMethod method, string path, HttpContent? content, CancellationToken cancellationToken)
-    {
-        HttpResponseMessage response;
-        try
-        {
-            using var request = new HttpRequestMessage(method, path) { Content = content };
-            response = await _http.SendAsync(request, cancellationToken);
-        }
-        catch (Exception error) when (error is HttpRequestException || (error is TaskCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            throw Unreachable("didn't answer", $"{_name} didn't answer: {error.Message}", error);
-        }
-        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-        {
-            response.Dispose();
-            throw Unreachable("the remote refused this computer's token", $"{_name}: the remote refused this computer's token");
-        }
-        if (_formatChecked)
-            _status.Reachable(_name);
-        return response;
-    }
-
     // Recorded before it's thrown.
     private MachineUnreachable Unreachable(string reason, string message, Exception? inner = null)
     {
         _status.Unreachable(_name, reason);
         return new MachineUnreachable(_name, message, inner);
     }
-
-    // The remote answered, so a failure here is the call's, not the machine's.
-    private async Task<JsonElement> ReadJsonAsync(HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-            throw new CallFailed($"{_name} answered {(int)response.StatusCode}: {body}");
-        using var json = JsonDocument.Parse(body);
-        return json.RootElement.Clone();
-    }
-
-    private static StringContent Body(params (string Name, string Value)[] fields)
-    {
-        using var stream = new MemoryStream();
-        using (var json = new Utf8JsonWriter(stream))
-        {
-            json.WriteStartObject();
-            foreach (var (name, value) in fields)
-                json.WriteString(name, value);
-            json.WriteEndObject();
-        }
-        return new StringContent(Encoding.UTF8.GetString(stream.ToArray()), Encoding.UTF8, "application/json");
-    }
-
-    private static string? Text(JsonElement json, string name) =>
-        json.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     public async ValueTask DisposeAsync()
     {
@@ -355,6 +336,5 @@ internal sealed partial class RemoteMachine : IMachine, IAsyncDisposable
         _socketStop.Dispose();
         _socketSend.Dispose();
         _bulkCall.Dispose();
-        _http.Dispose();
     }
 }

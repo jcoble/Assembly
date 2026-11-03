@@ -45,7 +45,7 @@ pub struct SessionPane {
     focus: FocusHandle,
     session: Option<String>,
     view: SessionView,
-    /// The run sent from here, or the page's active run on open, until its turn row arrives.
+    /// The real run from a pushed user row, or the page's active run on open, until its turn row arrives.
     known_run: Option<String>,
     /// Each finished run's fold, by run id, as of the last refresh.
     folds: HashMap<String, Fold>,
@@ -172,17 +172,20 @@ impl SessionPane {
         let header = cx.new(|_| Header::default());
         let heard = [
             cx.subscribe(&composer, |pane, _, event, cx| match event {
-                ComposerEvent::Sending => pane
-                    .timeline
-                    .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx)),
-                ComposerEvent::Sent { session, run_id }
-                    if pane.session.as_ref() == Some(session) =>
-                {
-                    pane.known_run = Some(run_id.clone());
+                ComposerEvent::Sending => {
                     pane.refresh(Change::Nothing, cx);
+                    pane.timeline
+                        .update(cx, |timeline, cx| timeline.follow(FollowEvent::Send, cx));
                 }
-                // A session left before its send answered gets its run from its rows when it's open again.
-                ComposerEvent::Sent { .. } => {}
+                // Acceptance is queued, even when newer delivered rows already arrived. Only real
+                // pushed turns and the page's activeRunId establish a running turn.
+                ComposerEvent::Accepted(receipt)
+                    if pane.session.as_ref() == Some(&receipt.session_id) =>
+                {
+                    pane.refresh(Change::Nothing, cx)
+                }
+                ComposerEvent::Accepted(_) => {}
+                ComposerEvent::PendingChanged => pane.refresh(Change::Nothing, cx),
             }),
             cx.subscribe(&timeline, |pane, _, TimelineEvent::NearTop, cx| {
                 pane.load_older(cx)
@@ -285,6 +288,7 @@ impl SessionPane {
         self.composer.update(cx, |composer, cx| {
             composer.set_session(Some(session), window, cx)
         });
+        self.tell_offline(cx);
         self.refresh(Change::Nothing, cx);
     }
 
@@ -305,6 +309,8 @@ impl SessionPane {
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
         match event {
             RowUpdate::Jump { seq } => {
+                self.composer
+                    .update(cx, |composer, cx| composer.recover_pending(cx));
                 self._page = None;
                 self.view = SessionView::default();
                 self.read_to = 0;
@@ -316,6 +322,7 @@ impl SessionPane {
                     timeline.set_entries(Vec::new(), None, cx)
                 });
                 self.load_page(seq + 1, true, cx);
+                self.refresh(Change::Nothing, cx);
             }
             RowUpdate::Row(row) => match &mut self.held {
                 Some(held) => held.push(*row),
@@ -325,6 +332,7 @@ impl SessionPane {
     }
 
     fn apply_live(&mut self, row: &Row, cx: &mut Context<Self>) {
+        self.observe_prompt_row(row);
         // What the row's reply showed before it, so the reveal goes on from there.
         let key = key_of(row);
         let before = self
@@ -457,6 +465,7 @@ impl SessionPane {
     /// Works the timeline's entries out again from the view, and tells the composer the run going now and the newest
     /// context report.
     fn refresh(&mut self, change: Change, cx: &mut Context<Self>) {
+        let pending_changed = self.sync_pending(cx);
         let active = self.view.active_run(self.known_run.as_deref());
         let folds = Fold::all(&self.view.items, &self.view.stats, active.as_deref());
         // An item changed in place is measured again, and a running turn's card on any change: a step can arrive in
@@ -475,6 +484,9 @@ impl SessionPane {
                 .map(|entry| (entry.key(items), entry))
                 .collect();
             timeline.set_entries(keyed, changed.as_deref(), cx);
+            for key in pending_changed {
+                timeline.redraw_row(&key, cx);
+            }
         });
         // The turn row's time once it's loaded (the backend's clock, as the steps' are); until then when the pane first
         // saw the run, on the backend clock if it's ticking.
@@ -565,23 +577,23 @@ fn fade_in(key: String, row: AnyElement, window: &mut Window, cx: &mut App) -> A
 const PAGE_ROWS: usize = 100;
 
 #[cfg(test)]
-#[path = "session_pane_action_tests.rs"]
+#[path = "tests/session_pane_action_tests.rs"]
 mod action_tests;
 #[cfg(test)]
-#[path = "session_pane_activity_tests.rs"]
+#[path = "tests/session_pane_activity_tests.rs"]
 mod activity_tests;
 #[cfg(test)]
-#[path = "session_pane_real_switch_tests.rs"]
+#[path = "tests/session_pane_real_switch_tests.rs"]
 mod real_switch_tests;
 #[cfg(test)]
-#[path = "session_pane_reveal_tests.rs"]
+#[path = "tests/session_pane_reveal_tests.rs"]
 mod reveal_tests;
 #[cfg(test)]
-#[path = "session_pane_switch_tests.rs"]
+#[path = "tests/session_pane_switch_tests.rs"]
 mod switch_tests;
 #[cfg(test)]
-#[path = "session_pane_tests.rs"]
+#[path = "tests/session_pane_tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "session_pane_write_tests.rs"]
+#[path = "tests/session_pane_write_tests.rs"]
 mod write_tests;

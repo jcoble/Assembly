@@ -21,7 +21,9 @@ public sealed partial class EngineHelperCards
     private static IReadOnlyList<Card> Read(IReadScope scope, string? childId = null, string? source = null) => scope.Query("""
         WITH children AS (
             SELECT c.id,c.parent_id,c.provider,CAST(c.title AS BLOB) title,c.state,c.activity_state,
-                c.epoch,c.version,0 generation,c.machine
+                c.epoch,c.version,0 generation,c.machine,
+                EXISTS(SELECT 1 FROM engine_message m WHERE m.to_session_id=c.id
+                    AND m.state='queued' AND m.in_flight=1) prompt_in_flight
             FROM engine_session c JOIN engine_session p ON p.id=c.parent_id
             JOIN session_info pi ON pi.session_id=p.id AND pi.machine IS NULL
             WHERE c.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND c.holder='local'
@@ -32,7 +34,7 @@ public sealed partial class EngineHelperCards
                 CAST(CASE WHEN json_extract(r.row_json,'$.titleComplete') IS NOT 0
                     THEN json_extract(r.row_json,'$.title') ELSE si.title END AS BLOB),
                 json_extract(r.row_json,'$.state'),json_extract(r.row_json,'$.activityState'),
-                json_extract(r.row_json,'$.epoch'),r.version,r.generation,r.machine
+                json_extract(r.row_json,'$.epoch'),r.version,r.generation,r.machine,0
             FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation AND m.state='live'
             JOIN engine_session p ON p.id=json_extract(r.row_json,'$.parentId')
                 AND p.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND p.holder='local' AND p.state<>'foreign'
@@ -47,7 +49,7 @@ public sealed partial class EngineHelperCards
             (SELECT json_extract(e.payload,'$.message') FROM rows e WHERE e.session_id=c.id AND e.kind='error'
                 AND e.run_id IS t.run_id AND e.seq<t.seq ORDER BY e.seq DESC LIMIT 1),
             (SELECT payload FROM rows old WHERE old.session_id=c.parent_id AND old.kind='subagent'
-                AND old.item_id='subagent:'||c.id ORDER BY old.seq DESC LIMIT 1)
+                AND old.item_id='subagent:'||c.id ORDER BY old.seq DESC LIMIT 1),c.prompt_in_flight
         FROM children c LEFT JOIN rows t ON t.session_id=c.id AND t.seq=(
             SELECT seq FROM rows WHERE session_id=c.id AND kind='turn' ORDER BY seq DESC LIMIT 1)
         WHERE c.title IS NOT NULL
@@ -56,7 +58,9 @@ public sealed partial class EngineHelperCards
         var id = r.Text(0); var parent = r.Text(1); var agent = r.Text(2);
         var title = new UTF8Encoding(false, true).GetString(r.Blob(3));
         var state = r.Text(4); var activity = r.Text(5);
-        var running = state is "starting" or "running" || state == "needs_me" && activity == "running";
+        // Starting the adapter releases its first prompt before the provider reports TurnStarted.
+        var running = state is "starting" or "running" || state == "needs_me" && activity == "running" ||
+            state == "idle" && r.Long(14) != 0;
         var terminal = r.IsNull(11) ? null : r.Text(11);
         var stop = !running && terminal == "cancelled" ? "cancelled" : null;
         var error = !running && terminal == "failed" ? r.IsNull(12) ? "It failed." : r.Text(12) : null;

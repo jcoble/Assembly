@@ -1,5 +1,6 @@
-// Terminal lifecycle on the case's host; remote routing through the desktop. Tokens stay in hello/headers.
+// Terminal lifecycle on the case's host; remote routing through the desktop. Tokens stay in hello.
 import assert from 'node:assert/strict';
+import { connectSocket } from './socket.ts';
 
 const env = process.env;
 type Frame = { t: string; id?: number; sub?: number; result?: any; code?: string; message?: string;
@@ -59,8 +60,11 @@ async function connect(api: string, token: string) {
 const connections: Awaited<ReturnType<typeof connect>>[] = [];
 let terminal: string | undefined;
 let host: Awaited<ReturnType<typeof connect>> | undefined;
+let control: Awaited<ReturnType<typeof connectSocket>> | undefined;
+const cancellation = new AbortController();
 const watchdog = setTimeout(() => {
   console.log('fail terminal lifecycle: no completion within 20 seconds');
+  cancellation.abort(new Error('terminal lifecycle deadline'));
   for (const connection of connections) connection.close();
   process.exit(1);
 }, 20_000);
@@ -119,12 +123,12 @@ try {
   const desktop = await connect(env.CHECK4_API!, env.CHECK4_TOKEN!);
   connections.push(desktop);
   // Create a known remote owner without starting a turn or checking out a folder.
-  const response = await fetch(`${env.CHECK4_API}/sessions`, {
-    method: 'POST', headers: { Authorization: `Bearer ${env.CHECK4_TOKEN}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO, machine: 'workbox-test' })
-  });
-  assert(response.ok, `create remote owner: HTTP ${response.status}`);
-  const remote = await response.json() as { sessionId: string };
+  control = await connectSocket(env.CHECK4_API!, env.CHECK4_TOKEN!, { signal: cancellation.signal });
+  const remote = await control.call('sessions', 'create', {
+    agent: env.CHECK4_AGENT, repoUrl: env.CHECK4_REPO, machine: 'workbox-test'
+  }) as { sessionId: string };
+  await control.close();
+  control = undefined;
   const before = (await desktop.call('list')).map((item: any) => item.id).sort();
   for (const cwd of [undefined, env.CHECK4_REPO]) {
     const answer = await desktop.request('start', { owner: `terminal-unknown-${crypto.randomUUID()}`, cwd });
@@ -149,5 +153,6 @@ try {
     catch { process.exitCode = 1; }
   }
   for (const connection of connections) connection.close();
+  await control?.close();
   clearTimeout(watchdog);
 }

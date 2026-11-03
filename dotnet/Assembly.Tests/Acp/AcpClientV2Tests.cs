@@ -3,7 +3,7 @@ using Assembly.Application.Common.Acp;
 using Assembly.Application.Common.Acp.JsonRpc;
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Infrastructure.Transcript;
-using Assembly.Remote.Smoke;
+using Assembly.Remote.Record;
 using Assembly.Tests.Core.Acp;
 
 namespace Assembly.Tests.Acp;

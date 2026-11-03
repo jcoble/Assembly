@@ -1,7 +1,6 @@
 using Assembly.Application.Common.Acp.Messages;
 using Assembly.Application.Common.Agents;
 using Assembly.Infrastructure.Agents;
-using Assembly.Remote.Smoke;
 using Assembly.Application.Common.Acp;
 using Assembly.Infrastructure.Transcript;
 

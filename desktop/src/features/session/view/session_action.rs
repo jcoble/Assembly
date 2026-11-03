@@ -15,6 +15,8 @@ pub enum SessionAction {
     Toggle { key: String },
     /// Load the first page again after it failed.
     RetryPage,
+    /// Retry a failed owner prompt with its original immutable payload.
+    RetryPrompt { client_id: String },
     /// Open or close the plan's list of steps.
     TogglePlan,
     /// Show an open tool call's whole diff, by item key.
