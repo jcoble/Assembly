@@ -69,7 +69,8 @@ public sealed partial class SessionRailTests
             UPDATE engine_session SET model='selected-model',run_id='recorded-run' WHERE id=$child;
             UPDATE session_info SET pinned_at=10,orchestrator_at=20,position=3 WHERE session_id=$child;
             """, new("$machine", _engineMachine), new("$child", child)));
-        Rows(child, (null, RowKind.Error, new ErrorPayload("First line\nSecond line\r" + new string('x', 300), "failed")));
+        Rows(child, (null, RowKind.Error, JsonSerializer.SerializeToElement(
+            new ErrorPayload("First line\nSecond line\r" + new string('x', 300), "failed"), RowJsonContext.Rows.ErrorPayload)));
         var entry = Entry(Read(), child);
         Assert.Equal(new ExpectedSource(_engineMachine, 0, null), entry.Source);
         Assert.Equal(parent, entry.ParentSessionId);

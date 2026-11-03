@@ -29,7 +29,7 @@ internal sealed partial class SourceControlFeature
             return await local(); // The existing pre-session project producers validate their own captured owner.
         if (sessionValue.ValueKind != JsonValueKind.String || sessionValue.GetString() is not { Length: > 0 } session)
             throw new CallBadArguments("A session is required.");
-        var info = sessions.Get(session) ?? throw new CallFailed("Session not found");
+        var info = sessions.Get(session) ?? throw new CallFailed("unknown session");
         var qualifiedRead = method is "status" or "diff" or "branchDiff" or "history" or "commitFiles" or "commitDiff";
         var expected = qualifiedRead && json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
             ? asserted.Deserialize(SourceControlJson.Default.ExpectedSource) : null;

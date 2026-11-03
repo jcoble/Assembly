@@ -119,6 +119,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _address = new Uri(_app.Urls.Single());
         _machine = new RemoteMachine("box", _address, "token", _localHub, _localSessions, TextWriter.Null,
             _status = new MachineStatus(new TopicSet(), ["box"]));
+        await _machine.ProbeAsync(CancellationToken.None);
         await _machine.CallAsync("engine", "machine", JsonSerializer.SerializeToElement(new { }), false, CancellationToken.None);
     }
 

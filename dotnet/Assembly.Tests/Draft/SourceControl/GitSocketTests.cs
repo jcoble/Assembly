@@ -15,6 +15,7 @@ using Assembly.Infrastructure.Chat.SourceControl;
 using Assembly.Infrastructure.Git;
 using Assembly.Application.Features.Chat.SourceControl.PullRequests;
 using Assembly.Infrastructure.Persistence;
+using Assembly.Engine.Persistence;
 using Assembly.Infrastructure.Socket;
 using TopicSet = Assembly.Infrastructure.Topics.Topics;
 
@@ -39,9 +40,10 @@ public sealed partial class GitSocketTests : IAsyncLifetime
         var topics = new TopicSet();
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System, _checkouts.FullName);
+        var machine = EngineSchema.Open(_db, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
         new WorktreesFeature(_sessions).Register(calls);
-        _operations = new(_gitWork, topics, TimeProvider.System, "test-machine");
+        _operations = new(_gitWork, topics, TimeProvider.System, machine);
         var routes = new SourceControlFeature(_sessions, _db, _operations, null, null);
         routes.Register(calls);
         new SourceControlWrites(_sessions, new GitCli(), new CheckoutWrites(), TimeProvider.System, routes).Register(calls);
@@ -52,9 +54,9 @@ public sealed partial class GitSocketTests : IAsyncLifetime
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
         _app = builder.Build();
         _app.UseWebSockets();
-        var endpoint = new SocketEndpoint("git-token", calls, "test-machine", TimeProvider.System);
+        var endpoint = new SocketEndpoint("git-token", calls, machine, TimeProvider.System);
         _app.Map("/socket", endpoint.HandleAsync);
-        var bulkEndpoint = new SocketEndpoint("git-token", calls, "test-machine", TimeProvider.System, bulk: true);
+        var bulkEndpoint = new SocketEndpoint("git-token", calls, machine, TimeProvider.System, bulk: true);
         _app.Map("/socket/bulk", bulkEndpoint.HandleAsync);
         _app.Lifetime.ApplicationStopping.Register(bulkEndpoint.CloseAll);
         _app.Lifetime.ApplicationStopping.Register(endpoint.CloseAll);
@@ -183,7 +185,13 @@ public sealed partial class GitSocketTests : IAsyncLifetime
         await CallAsync(socket, 1, feature, method, "nope");
         await AssertErrorAsync(socket, "unknown session");
         await CallAsync(socket, 2, feature, method, elsewhere.SessionId);
-        await AssertErrorAsync(socket, "this session's files are on box, which this window can't show yet");
+        if (feature == "git")
+        {
+            using var refused = JsonDocument.Parse(await ReadAsync(socket));
+            Assert.Equal("error", refused.RootElement.GetProperty("t").GetString());
+            Assert.Equal("source_changed", refused.RootElement.GetProperty("code").GetString());
+        }
+        else await AssertErrorAsync(socket, "this session's files are on box, which this window can't show yet");
         await CallAsync(socket, 3, feature, method, waiting.SessionId);
         await AssertErrorAsync(socket, "this session's folder is made on its first message");
     }

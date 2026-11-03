@@ -215,7 +215,7 @@ public sealed partial class NewProjectTests
         Assert.DoesNotContain(before.GetProperty("result").GetProperty("files").EnumerateArray(), file => file.GetProperty("path").GetString() == "local.txt");
         var staged = await h.Call(client, 2, "stage", new { session = owned.SessionId, paths = new[] { "remote ü.txt" } });
         Assert.Equal("result", staged.GetProperty("t").GetString());
-        Assert.Equal("remote ü.txt", (await git.RunAsync(h.RemoteParent, ["diff", "--cached", "--name-only"], null, null, default)).Output.Trim());
+        Assert.Equal("remote ü.txt", (await git.RunAsync(h.RemoteParent, ["diff", "--cached", "--name-only", "-z"], null, null, default)).Output.TrimEnd('\0'));
         Assert.Equal("", (await git.RunAsync(h.LocalParent, ["diff", "--cached", "--name-only"], null, null, default)).Output);
         var overrideOwner = await h.Call(client, 3, "operation_host", new { session = owned.SessionId, action = "push", machine = h.Hosts.Remote.Fixture.Machine });
         Assert.Equal("failed", overrideOwner.GetProperty("code").GetString());
