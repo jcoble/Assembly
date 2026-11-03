@@ -29,9 +29,9 @@ internal sealed class PullRequestsFeature(SessionStore sessions, PullRequestRead
         }, bulk: true);
     }
     private static void Owner(CallContext call) { if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden"); }
-    internal sealed record ListArgs(string? Session, IReadOnlyList<string>? Repositories, [property: JsonRequired] string State, string? Search, string? Cursor);
-    internal sealed record DetailArgs([property: JsonRequired] string Session, [property: JsonRequired] int Number);
-    internal sealed record FileArgs([property: JsonRequired] string Session, [property: JsonRequired] int Number, [property: JsonRequired] string Path, [property: JsonRequired] string BaseSha, [property: JsonRequired] string HeadSha);
+    internal sealed record ListArgs(string? Session, IReadOnlyList<string>? Repositories, [property: JsonRequired] string State, string? Search, string? Cursor, ExpectedSource? ExpectedSource = null);
+    internal sealed record DetailArgs([property: JsonRequired] string Session, [property: JsonRequired] int Number, ExpectedSource? ExpectedSource = null);
+    internal sealed record FileArgs([property: JsonRequired] string Session, [property: JsonRequired] int Number, [property: JsonRequired] string Path, [property: JsonRequired] string BaseSha, [property: JsonRequired] string HeadSha, ExpectedSource? ExpectedSource = null);
 }
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(PullRequestsFeature.ListArgs))]

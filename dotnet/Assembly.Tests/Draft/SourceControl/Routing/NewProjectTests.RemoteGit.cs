@@ -15,13 +15,16 @@ public sealed partial class NewProjectTests
         Assert.Equal(0, (await git.RunAsync(h.RemoteParent, ["remote", "add", "origin", source], null, null, default)).ExitCode);
         var owned = h.Hosts.Remote.Sessions.Create("fixture", "", workingFolder: h.RemoteParent);
         h.Hosts.Mac.Sessions.Add(owned.SessionId, "fixture", "", "workbox-test", workingFolder: h.LocalParent);
+        var capturedGitOrigin = h.Hosts.Mac.Fixture.Db.QueryFirst(
+            "SELECT machine,generation,name FROM engine_mirror WHERE state='live' AND name='workbox-test'",
+            row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default)!;
         using var client = await h.Open();
-        var host = (await h.Call(client, 1, "operation_host", new { session = owned.SessionId, action = "fetch" })).GetProperty("result");
+        var host = (await h.Call(client, 1, "operation_host", new { session = owned.SessionId, action = "fetch", expectedSource = capturedGitOrigin })).GetProperty("result");
         Assert.Equal(h.Hosts.Remote.Fixture.Machine, host.GetProperty("machine").GetString());
         var id = Guid.NewGuid();
         await h.Subscribe(client, id, h.Hosts.Remote.Fixture.Machine);
         var request = new GitOperationStart(host.GetProperty("instanceId").GetString()!, id, owned.SessionId, "fetch",
-            System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone());
+            System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(), ExpectedSource: capturedGitOrigin, ExpectedCheckoutRoot: h.RemoteParent);
         Assert.Equal("result", (await h.Call(client, 2, "start", request)).GetProperty("t").GetString());
         var terminal = await h.Terminal(client);
         Assert.Equal("succeeded", terminal.GetProperty("state").GetString());
@@ -39,16 +42,19 @@ public sealed partial class NewProjectTests
         await new GitWriter(new GitCli()).InitAsync(h.RemoteParent, default);
         var owned = h.Hosts.Remote.Sessions.Create("fixture", "", workingFolder: h.RemoteParent);
         h.Hosts.Mac.Sessions.Add(owned.SessionId, "fixture", "", "workbox-test", workingFolder: h.LocalParent);
+        var capturedGitOrigin = h.Hosts.Mac.Fixture.Db.QueryFirst(
+            "SELECT machine,generation,name FROM engine_mirror WHERE state='live' AND name='workbox-test'",
+            row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default)!;
         using var client = await h.Open();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var host = (await h.Call(client, 1, "operation_host", new { session = owned.SessionId, action = "fetch" })).GetProperty("result");
+        var host = (await h.Call(client, 1, "operation_host", new { session = owned.SessionId, action = "fetch", expectedSource = capturedGitOrigin })).GetProperty("result");
         var instance = host.GetProperty("instanceId").GetString()!;
         var id = Guid.NewGuid();
         await h.Subscribe(client, id, h.Hosts.Remote.Fixture.Machine);
-        var request = new GitOperationStart(instance, id, owned.SessionId, "fetch", System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone());
+        var request = new GitOperationStart(instance, id, owned.SessionId, "fetch", System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(), ExpectedSource: capturedGitOrigin, ExpectedCheckoutRoot: h.RemoteParent);
         Assert.Equal("result", (await h.Call(client, 2, "start", request)).GetProperty("t").GetString());
         await git.Entered.Task.WaitAsync(deadline.Token);
-        Assert.Equal("result", (await h.Call(client, 3, "cancel", new GitOperationArgs(id, owned.SessionId, "fetch", instance))).GetProperty("t").GetString());
+        Assert.Equal("result", (await h.Call(client, 3, "cancel", new GitOperationArgs(id, owned.SessionId, "fetch", instance, ExpectedSource: capturedGitOrigin))).GetProperty("t").GetString());
         await git.Stopped.Task.WaitAsync(deadline.Token);
         var terminal = await h.Terminal(client);
         Assert.Equal("uncertain", terminal.GetProperty("state").GetString());
@@ -75,13 +81,16 @@ public sealed partial class NewProjectTests
         await new GitWriter(new GitCli()).InitAsync(h.RemoteParent, default);
         var owned = h.Hosts.Remote.Sessions.Create("fixture", "", workingFolder: h.RemoteParent);
         h.Hosts.Mac.Sessions.Add(owned.SessionId, "fixture", "", "workbox-test", workingFolder: h.LocalParent);
+        var capturedGitOrigin = h.Hosts.Mac.Fixture.Db.QueryFirst(
+            "SELECT machine,generation,name FROM engine_mirror WHERE state='live' AND name='workbox-test'",
+            row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default)!;
         using var client = await h.Open();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var host = (await h.Call(client, 1, "operation_host", new { session = owned.SessionId, action = "fetch" })).GetProperty("result");
+        var host = (await h.Call(client, 1, "operation_host", new { session = owned.SessionId, action = "fetch", expectedSource = capturedGitOrigin })).GetProperty("result");
         var instance = host.GetProperty("instanceId").GetString()!;
         var id = Guid.NewGuid();
         await h.Subscribe(client, id, h.Hosts.Remote.Fixture.Machine);
-        await h.Call(client, 2, "start", new GitOperationStart(instance, id, owned.SessionId, "fetch", System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone()));
+        await h.Call(client, 2, "start", new GitOperationStart(instance, id, owned.SessionId, "fetch", System.Text.Json.JsonDocument.Parse("{}").RootElement.Clone(), ExpectedSource: capturedGitOrigin, ExpectedCheckoutRoot: h.RemoteParent));
         await git.Entered.Task.WaitAsync(deadline.Token);
         var actual = await h.Running(client);
         await h.Hosts.DisconnectMirror();
@@ -108,9 +117,12 @@ public sealed partial class NewProjectTests
         await File.WriteAllTextAsync(Path.Combine(h.RemoteParent, "owned.txt"), "owner");
         var owned = h.Hosts.Remote.Sessions.Create("fixture", "", workingFolder: h.RemoteParent);
         h.Hosts.Mac.Sessions.Add(owned.SessionId, "fixture", "", "workbox-test", workingFolder: h.LocalParent);
+        var capturedGitOrigin = h.Hosts.Mac.Fixture.Db.QueryFirst(
+            "SELECT machine,generation,name FROM engine_mirror WHERE state='live' AND name='workbox-test'",
+            row => new ExpectedSource(row.Text(0), row.Long(1), row.Text(2)), default)!;
         using var client = await h.Open();
         await h.Hosts.DisconnectMirror();
-        var refused = await h.Call(client, 1, "stage", new { session = owned.SessionId, paths = new[] { "owned.txt" } });
+        var refused = await h.Call(client, 1, "stage", new { session = owned.SessionId, paths = new[] { "owned.txt" }, expectedSource = capturedGitOrigin, expectedCheckoutRoot = h.RemoteParent });
         Assert.Equal("error", refused.GetProperty("t").GetString());
         Assert.Equal("source_changed", refused.GetProperty("code").GetString());
         Assert.Equal("", (await git.RunAsync(h.LocalParent, ["diff", "--cached", "--name-only"], null, null, default)).Output);
@@ -213,7 +225,7 @@ public sealed partial class NewProjectTests
         Assert.Equal("result", before.GetProperty("t").GetString());
         Assert.Contains(before.GetProperty("result").GetProperty("files").EnumerateArray(), file => file.GetProperty("path").GetString() == "remote ü.txt");
         Assert.DoesNotContain(before.GetProperty("result").GetProperty("files").EnumerateArray(), file => file.GetProperty("path").GetString() == "local.txt");
-        var staged = await h.Call(client, 2, "stage", new { session = owned.SessionId, paths = new[] { "remote ü.txt" } });
+        var staged = await h.Call(client, 2, "stage", new { session = owned.SessionId, paths = new[] { "remote ü.txt" }, expectedSource = origin, expectedCheckoutRoot = before.GetProperty("result").GetProperty("checkoutRoot").GetString() });
         Assert.Equal("result", staged.GetProperty("t").GetString());
         Assert.Equal("remote ü.txt", (await git.RunAsync(h.RemoteParent, ["diff", "--cached", "--name-only", "-z"], null, null, default)).Output.TrimEnd('\0'));
         Assert.Equal("", (await git.RunAsync(h.LocalParent, ["diff", "--cached", "--name-only"], null, null, default)).Output);

@@ -177,7 +177,7 @@ public sealed partial class AcpClient : IJsonRpcTarget, IAsyncDisposable
                 var request = parameters.Deserialize(AcpJsonContext.Default.RequestPermissionRequest)
                     ?? throw new JsonRpcException(JsonRpcException.InvalidParams, "Missing permission request.");
                 var outcome = await AskAsync(request.SessionId, PermissionOutcome.Cancelled,
-                    (policy, token) => request.ToolTitle == "mcp__assembly__board_update"
+                    (policy, token) => policy.AllowAutomaticBoardUpdates && request.ToolTitle == "mcp__assembly__board_update"
                         && request.Options.FirstOrDefault(option => option.Kind == "allow_once") is { } allow
                         ? Task.FromResult(PermissionOutcome.Selected(allow.OptionId))
                         : context is null ? policy.DecideAsync(request, token) : policy.DecideAsync(request, context, token),

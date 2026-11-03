@@ -126,8 +126,9 @@ public sealed partial class NewProjectTests
                 {
                     new FoldersFeature(remoteFolders).Register(calls);
                     var gh = new GhCli();
-                    var prs = new PullRequestWriter(remoteGit, gh, new(remoteGit, gh, h.RemoteParent, new GitTextPatch(remoteGit)));
-                    var sessionOperations = new GitSessionOperations(h.Hosts.Remote.Sessions, remoteGit, prs, remoteWrites, h.RemoteOperations);
+                    var remotePrReader = new PullRequestReader(remoteGit, gh, h.RemoteParent, new GitTextPatch(remoteGit));
+                    var prs = new PullRequestWriter(remoteGit, gh, remotePrReader);
+                    var sessionOperations = new GitSessionOperations(h.Hosts.Remote.Sessions, remoteGit, prs, remoteWrites, h.RemoteOperations, new(remoteGit, new UnavailableUtility()), remotePrReader, h.Hosts.Remote.Fixture.Db);
                     var routes = new SourceControlFeature(h.Hosts.Remote.Sessions, h.Hosts.Remote.Fixture.Db, h.RemoteOperations, null, null);
                     routes.Register(calls);
                     new SourceControlWrites(h.Hosts.Remote.Sessions, remoteGit, remoteWrites, TimeProvider.System, routes).Register(calls);
@@ -137,8 +138,9 @@ public sealed partial class NewProjectTests
                 h.Store = new(h.Hosts.Mac.Fixture.Db, TimeProvider.System);
                 var coordinator = new NewProjectCoordinator(h.Store, h.Hosts.Mac.Fixture.Db, localFolders, localWriter, localWrites, h.LocalOperations, h.Hosts.Connections);
                 var localGh = new GhCli();
-                var localPrs = new PullRequestWriter(localGit, localGh, new(localGit, localGh, h.LocalParent, new GitTextPatch(localGit)));
-                var localSessionOperations = new GitSessionOperations(h.Hosts.Mac.Sessions, localGit, localPrs, localWrites, h.LocalOperations);
+                var localPrReader = new PullRequestReader(localGit, localGh, h.LocalParent, new GitTextPatch(localGit));
+                var localPrs = new PullRequestWriter(localGit, localGh, localPrReader);
+                var localSessionOperations = new GitSessionOperations(h.Hosts.Mac.Sessions, localGit, localPrs, localWrites, h.LocalOperations, new(localGit, new UnavailableUtility()), localPrReader, h.Hosts.Mac.Fixture.Db);
                 var routes = new SourceControlFeature(h.Hosts.Mac.Sessions, h.Hosts.Mac.Fixture.Db, h.LocalOperations, h.Hosts.Mac.Forwarder, h.Hosts.Connections);
                 routes.Register(localCalls!);
                 new SourceControlWrites(h.Hosts.Mac.Sessions, localGit, localWrites, TimeProvider.System, routes).Register(localCalls!);
@@ -224,4 +226,10 @@ public sealed partial class NewProjectTests
             Directory.Delete(_root, true);
         }
     }
+}
+
+internal sealed class UnavailableUtility : Assembly.Application.Common.Agents.IUtilityModel
+{
+    public Task<Assembly.Application.Common.Agents.UtilityResult> CompleteAsync(string prompt, CancellationToken ct) =>
+        Task.FromResult(new Assembly.Application.Common.Agents.UtilityResult(Assembly.Application.Common.Agents.UtilityStatus.Unavailable, null, "fixture_unconfigured"));
 }

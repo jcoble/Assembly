@@ -87,6 +87,7 @@ public static class ServeRun
         var agents = launcher is null ? new AgentsFile(options.AgentsFile) : null;
         launcher ??= new AdapterLauncher(agents!, options.Checkouts, new UnclaimedPermissions());
         var preferences = new PreferenceStore(db);
+        var utility = new AcpUtilityModel(agents is not null ? agents : launcher.Agents, () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out);
         await using var work = new BackgroundWork(TimeProvider.System, Console.Out);
         await using var terminals = new TerminalHost(new UnixPtyStarter(), topics, TimeProvider.System,
             SessionTerminalFolders.ExistingFolder(options.Checkouts, sessionStore));
@@ -146,9 +147,7 @@ public static class ServeRun
                 {
                     agents?.BindOwner(runtime.Machine, topics);
                     sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, Console.Out, work,
-                        titler: agents is null ? null : new SessionTitler(sessionStore, store, new CliUtilityModel(
-                            AgentDescriptor.CliOf(agents, "claude"), AgentDescriptor.CliOf(agents, "codex"),
-                            () => preferences.Read("utilityModel"), TimeProvider.System, Console.Out)),
+                        titler: agents is null ? null : new SessionTitler(sessionStore, store, utility),
                         feed: new EngineFeed(runtime, Console.Out, TimeProvider.System, helperCards),
                         mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
                     sessions.BindHelperWorking(helperCards.Working, helperCards.Refresh);
@@ -207,7 +206,7 @@ public static class ServeRun
             var patches = new GitTextPatch(git);
             var prReader = new PullRequestReader(git, gh, options.Home, patches);
             var prWriter = new PullRequestWriter(git, gh, prReader);
-            var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations);
+            var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations, new(git, utility), prReader, db);
             var localFolders = new LocalProjectFolders(git);
             var projectFolders = new ProjectFolderCreation(localFolders, new GitWriter(git), checkoutWrites, gitOperations);
             var gitRoutes = new SourceControlFeature(sessionStore, db, gitOperations, null, null);

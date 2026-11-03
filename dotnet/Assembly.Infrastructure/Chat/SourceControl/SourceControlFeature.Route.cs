@@ -30,21 +30,27 @@ internal sealed partial class SourceControlFeature
         if (sessionValue.ValueKind != JsonValueKind.String || sessionValue.GetString() is not { Length: > 0 } session)
             throw new CallBadArguments("A session is required.");
         var info = sessions.Get(session) ?? throw new CallFailed("unknown session");
-        var qualifiedRead = method is "status" or "diff" or "branchDiff" or "history" or "commitFiles" or "commitDiff";
-        var expected = qualifiedRead && json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
+        var qualified = kind == CallKind.Write || method is "status" or "diff" or "branchDiff" or "branches" or "stashes" or "history" or "commitFiles" or "commitDiff" or "prs" or "pr" or "prFile" or "operation_host" or "operation";
+        var assertedSource = json.TryGetProperty("expectedSource", out var asserted) && asserted.ValueKind != JsonValueKind.Null
             ? asserted.Deserialize(SourceControlJson.Default.ExpectedSource) : null;
+        if (call.ExpectedSource is not null && assertedSource is not null && call.ExpectedSource != assertedSource)
+            throw new CallFailed("The session's owning machine changed.", "source_changed");
+        var expected = assertedSource ?? call.ExpectedSource;
         if (info.Machine is null)
         {
             if (expected is not null && (expected.Machine != operations.Machine || expected.Generation != 0 || expected.RouteMachine is not null))
                 throw new CallFailed("The session's owning machine changed.", "source_changed");
-            if (!qualifiedRead) return await local();
+            if (!qualified) return await local();
+            if (kind == CallKind.Write && method is not ("cancel" or "release"))
+            {
+                var observedRoot = json.TryGetProperty("expectedCheckoutRoot", out var root) && root.ValueKind == JsonValueKind.String ? root.GetString() : null;
+                SourceControlWrites.RequireRoot(sessions, session, observedRoot, expected is not null);
+            }
             void EnsureLocal()
             {
-                if (sessions.Get(session) is not { Machine: null } ||
-                    db.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0), default) != operations.Machine ||
-                    db.QueryFirst("SELECT machine FROM engine_session WHERE id=$id", row => row.Text(0), default,
-                        new SqlArg("$id", session)) is { } owner && owner != operations.Machine)
+                if (sessions.Get(session) is not { Machine: null })
                     throw new CallFailed("The session's owning machine changed.", "source_changed");
+                RequireLocalOwner(db, operations.Machine, session);
             }
             call.SourceGuard = new LocalReadSource(EnsureLocal);
             EnsureLocal();
@@ -52,11 +58,11 @@ internal sealed partial class SourceControlFeature
             EnsureLocal();
             return answerLocal;
         }
-        if (qualifiedRead && (expected is null || expected.RouteMachine != info.Machine))
+        if (qualified && (expected is null || expected.RouteMachine != info.Machine))
             throw new CallFailed("The session's owning machine changed.", "source_changed");
         if (forward is null || connections is null) throw new CallFailed("This host does not own that session.");
         var target = await Capture(info.Machine, session, call.Cancellation, expected);
-        if (qualifiedRead)
+        if (qualified)
         {
             call.SourceGuard = SessionRowSources.CapturedRemote(session, target.Owner.Machine, target.Live, target.EnsureCurrent);
             json = OwnerArguments(json, target.Owner.Engine);
@@ -85,6 +91,14 @@ internal sealed partial class SourceControlFeature
         try { target.EnsureCurrent(); }
         catch (Exception) when (kind == CallKind.Write) { throw new CallUncertain(target.Owner.Engine); }
         return result;
+    }
+
+    internal static void RequireLocalOwner(IAppDatabase database, string machine, string session)
+    {
+        if (database.QueryFirst("SELECT machine_id FROM engine_meta WHERE singleton=1", row => row.Text(0), default) != machine ||
+            database.QueryFirst("SELECT machine FROM engine_session WHERE id=$id", row => row.Text(0), default,
+                new SqlArg("$id", session)) is { } owner && owner != machine)
+            throw new CallFailed("The session's owning machine changed.", "source_changed");
     }
 
     private sealed class LocalReadSource(Action ensureCurrent) : IExpectedSourceGuard

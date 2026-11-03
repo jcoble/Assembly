@@ -193,6 +193,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         {
             WorkflowSchema.Open(db);
             var preferences = new PreferenceStore(db);
+            var utility = new AcpUtilityModel(agentsFile is { } configuredAgents ? configuredAgents : launcher.Agents, () => preferences.Read("utilityModel"), TimeProvider.System, log);
             var sessionLimits = new SessionLimits(
                 () => SessionLimitPreferences.Depth(preferences.Read("sessions.depthLimit")),
                 () => SessionLimitPreferences.Children(preferences.Read("sessions.childLimit")));
@@ -253,8 +254,8 @@ public sealed class DesktopBackend : IAsyncDisposable
                 {
                     agentsFile?.BindOwner(runtime.Machine, topics);
                     sessions = new SessionRegistry(hub, sessionStore, launcher, TimeProvider.System, log, work,
-                        titler: utilityClis is { } clis
-                            ? new SessionTitler(sessionStore, store, new CliUtilityModel(clis.Claude, clis.Codex, () => preferences.Read("utilityModel"), TimeProvider.System, log))
+                        titler: utilityClis is not null
+                            ? new SessionTitler(sessionStore, store, utility)
                             : null,
                         feed: new EngineFeed(runtime, log, TimeProvider.System, helperCards),
                         mcp: McpSessionCallbacks.Create(runtime, endpoint, tokens));
@@ -352,7 +353,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             var patches = new GitTextPatch(git);
             var prReader = new PullRequestReader(git, gh, home, patches);
             var prWriter = new PullRequestWriter(git, gh, prReader);
-            var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations);
+            var sessionGit = new GitSessionOperations(sessionStore, git, prWriter, checkoutWrites, gitOperations, new(git, utility), prReader, db);
             var localFolders = new LocalProjectFolders(git);
             var projectWriter = new GitWriter(git);
             var projectFolders = new ProjectFolderCreation(localFolders, projectWriter, checkoutWrites, gitOperations);

@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Calls;
+using Assembly.Application.Common.Database;
 using Assembly.Application.Common.Git;
 using Assembly.Application.Common.GitHub;
 using Assembly.Application.Features.Chat.Sessions;
@@ -12,9 +13,9 @@ using Assembly.Infrastructure.Git;
 namespace Assembly.Infrastructure.Chat.SourceControl;
 
 /// <summary>Fixed session producers run inside the existing host-owned Git operation and checkout lease.</summary>
-internal sealed class GitSessionOperations(SessionStore sessions, IGit git, PullRequestWriter prs, CheckoutWrites writes, GitOperations operations)
+internal sealed class GitSessionOperations(SessionStore sessions, IGit git, PullRequestWriter prs, CheckoutWrites writes, GitOperations operations, GitDrafts drafts, PullRequestReader reader, IAppDatabase db)
 {
-    internal static bool Supports(string? action) => action is "fetch" or "pull" or "push" or "publish" or "createPr" or "review" or "reply" or "comment" or "merge";
+    internal static bool Supports(string? action) => action is "fetch" or "pull" or "push" or "publish" or "createPr" or "review" or "reply" or "comment" or "merge" or "draftCommitMessage" or "draftPr" or "draftReview";
     internal void RequireSession(string session)
     {
         var actual = sessions.Get(session) ?? throw new CallFailed("unknown session");
@@ -24,7 +25,10 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
     {
         if (!Supports(request.Action) || request.Session is not { } session) throw new CallFailed("forbidden");
         RequireSession(session);
-        var root = SessionPaths.RootOf(sessions, session);
+        SourceControlFeature.RequireLocalOwner(db, operations.Machine, session);
+        if (request.ExpectedSource is { } source && (source.Machine != operations.Machine || source.Generation != 0 || source.RouteMachine is not null))
+            throw new CallFailed("The session's owning machine changed.", "source_changed");
+        var root = SourceControlWrites.RequireRoot(sessions, session, request.ExpectedCheckoutRoot, request.ExpectedSource is not null);
         var machine = operations.Machine;
         var sync = new GitSync(git);
         Func<string, CancellationToken, Task<JsonElement>> execute = request.Action switch
@@ -38,12 +42,26 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
             "reply" => Bind(request.Args, GitSessionOperationsJson.Default.ReplyArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.ReplyAsync(path, a.Number, a.ExpectedHead, a.CommentId, a.Body, ct)),
             "comment" => Bind(request.Args, GitSessionOperationsJson.Default.CommentArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.CommentAsync(path, a.Number, a.ExpectedHead, a.Body, ct)),
             "merge" => Bind(request.Args, GitSessionOperationsJson.Default.MergeArgs, GitSessionOperationsJson.Default.String, (a, path, ct) => prs.MergeAsync(path, a.Number, a.Method, a.ExpectedHead, a.ExpectedBase, ct)),
+            "draftCommitMessage" => async (path, ct) => JsonSerializer.SerializeToElement(await drafts.CommitMessageAsync(path, ct), GitSessionOperationsJson.Default.String),
+            "draftPr" => Bind(request.Args, GitSessionOperationsJson.Default.DraftPrArgs, GitSessionOperationsJson.Default.PullRequestDraft, async (a, path, ct) =>
+            {
+                var draft = await drafts.PullRequestAsync(path, a.Base, ct);
+                return new PullRequestDraft(draft.Title, draft.Description);
+            }),
+            "draftReview" => Bind(request.Args, GitSessionOperationsJson.Default.DraftReviewArgs, GitSessionOperationsJson.Default.ReviewDraft, async (a, path, ct) =>
+            {
+                var detail = await reader.DetailAsync(path, a.Number, ct);
+                if (detail.HeadSha != a.ExpectedHead) throw new CallFailed("The PR head changed. Refresh and try again.");
+                return await drafts.ReviewAsync(detail, ct);
+            }),
             _ => throw new CallFailed("forbidden")
         };
         return ct => writes.RunAsync(root, async () =>
         {
             ct.ThrowIfCancellationRequested();
-            if (SessionPaths.RootOf(sessions, session) != root) throw new CallFailed("The session's checkout changed. Refresh Source Control and try again.");
+            SourceControlFeature.RequireLocalOwner(db, machine, session);
+            if (SourceControlWrites.RequireRoot(sessions, session, request.ExpectedCheckoutRoot, request.ExpectedSource is not null) != root)
+                throw new CallFailed("The session's checkout changed. Refresh and try again.", "source_changed");
             try { return await execute(root, ct); }
             catch (Exception error) when (error is GhInterrupted or GhUnconfirmed)
             { throw new CallUncertain(machine, "This may have posted. Refresh before trying again."); }
@@ -58,6 +76,9 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
         catch (JsonException) { throw new CallBadArguments("Invalid Git action arguments."); }
         return async (root, ct) => JsonSerializer.SerializeToElement(await execute(args, root, ct), output);
     }
+    internal sealed record DraftPrArgs([property: JsonRequired] string Base);
+    internal sealed record DraftReviewArgs(int Number, [property: JsonRequired] string ExpectedHead);
+    internal sealed record PullRequestDraft(string Title, string Description);
     internal sealed record SyncArgs(string? ExpectedBranch, string? Remote);
     internal sealed record CreateArgs([property: JsonRequired] string Base, [property: JsonRequired] string Title,
         [property: JsonRequired] string Description, bool Draft);
@@ -76,4 +97,8 @@ internal sealed class GitSessionOperations(SessionStore sessions, IGit git, Pull
 [JsonSerializable(typeof(GitSessionOperations.MergeArgs))]
 [JsonSerializable(typeof(PullRequestCreated))]
 [JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(GitSessionOperations.DraftPrArgs))]
+[JsonSerializable(typeof(GitSessionOperations.DraftReviewArgs))]
+[JsonSerializable(typeof(GitSessionOperations.PullRequestDraft))]
+[JsonSerializable(typeof(ReviewDraft))]
 internal sealed partial class GitSessionOperationsJson : JsonSerializerContext;

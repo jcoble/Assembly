@@ -63,6 +63,19 @@ public sealed class SessionTitlerTests : IAsyncDisposable
         Assert.Null(SessionTitler.Clean(null));
     }
 
+    [Theory]
+    [InlineData(UtilityStatus.Unavailable)]
+    [InlineData(UtilityStatus.Failed)]
+    public async Task A_negative_helper_result_keeps_the_existing_prompt_title(UtilityStatus status)
+    {
+        _model.Status = status;
+        await TurnAsync("Keep this prompt title", "Completed.");
+        await _work.StopAsync(TimeSpan.FromSeconds(5));
+        var titled = _sessionStore.Get(_session.SessionId)!;
+        Assert.Equal("Keep this prompt title", titled.Title);
+        Assert.Equal("prompt", titled.TitleSource);
+    }
+
     [Fact]
     public async Task A_helper_title_replaces_the_prompt_title_once()
     {
@@ -308,6 +321,7 @@ public sealed class SessionTitlerTests : IAsyncDisposable
     private sealed class FakeModel(string? answer) : IUtilityModel
     {
         private readonly List<string> _prompts = [];
+        internal UtilityStatus? Status;
 
         public IReadOnlyList<string> Prompts
         {
@@ -318,11 +332,11 @@ public sealed class SessionTitlerTests : IAsyncDisposable
             }
         }
 
-        public Task<string?> CompleteAsync(string prompt, CancellationToken cancellationToken)
+        public Task<UtilityResult> CompleteAsync(string prompt, CancellationToken cancellationToken)
         {
             lock (_prompts)
                 _prompts.Add(prompt);
-            return Task.FromResult(answer);
+            return Task.FromResult(new UtilityResult(Status ?? (answer is null ? UtilityStatus.Failed : UtilityStatus.Succeeded), answer, answer is null ? "fixture_failure" : null));
         }
     }
 }

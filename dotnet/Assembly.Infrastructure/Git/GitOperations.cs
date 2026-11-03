@@ -9,13 +9,13 @@ using Assembly.Application.Features.Projects;
 namespace Assembly.Infrastructure.Git;
 
 public sealed record GitOperationStart(string InstanceId, Guid OperationId, string? Session,
-    string Action, JsonElement Args, string? Machine = null);
+    string Action, JsonElement Args, string? Machine = null, ExpectedSource? ExpectedSource = null, string? ExpectedCheckoutRoot = null);
 public sealed record GitOperationStatus(Guid OperationId, string InstanceId, string Machine,
     long Version, string State, JsonElement? Result, string? Error);
 public sealed record GitOperationHost(string InstanceId, string Machine);
-public sealed record GitOperationHostArgs(string? Session = null, string? Action = null, string? Machine = null);
+public sealed record GitOperationHostArgs(string? Session = null, string? Action = null, string? Machine = null, ExpectedSource? ExpectedSource = null);
 public sealed record GitOperationArgs(Guid OperationId, string? Session = null, string? Action = null,
-    string? InstanceId = null, string? Machine = null);
+    string? InstanceId = null, string? Machine = null, ExpectedSource? ExpectedSource = null);
 
 /// <summary>One backend-owned Git operation lifetime; routes select fixed producers before Start.</summary>
 public sealed partial class GitOperations : IAsyncDisposable
@@ -68,7 +68,8 @@ public sealed partial class GitOperations : IAsyncDisposable
             if (_entries.TryGetValue(request.OperationId, out var prior))
             {
                 if (prior.Request.Action != request.Action || prior.Request.Session != request.Session ||
-                    prior.Request.Machine != request.Machine || !JsonElement.DeepEquals(prior.Request.Args, request.Args))
+                    prior.Request.Machine != request.Machine || prior.Request.ExpectedSource != request.ExpectedSource ||
+                    prior.Request.ExpectedCheckoutRoot != request.ExpectedCheckoutRoot || !JsonElement.DeepEquals(prior.Request.Args, request.Args))
                     throw new CallFailed("operation_id_conflict");
                 return Snapshot(request.OperationId, prior);
             }
