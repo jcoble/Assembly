@@ -53,6 +53,7 @@ public sealed partial class RemoteRowsSocketTests : IAsyncLifetime
         _remoteHub = new LiveHub(_remoteStore, topics: topics, summaries: remoteSummaries,
             summaryChanged: session => _remoteSessions.PublishSummary(session));
         var localSummaries = SessionSummaries.Load(RowStore.Open(_localDb));
+        Assembly.Engine.Persistence.EngineSchema.Open(_localDb, TimeProvider.System.GetUtcNow().ToUnixTimeMilliseconds());
         _localHub = new LiveHub(RowStore.Open(_localDb), topics: _localTopics, summaries: localSummaries);
         var sessions = _remoteSessions = SessionStore.Open(_remoteDb, TimeProvider.System, "checkouts", remoteSummaries);
         sessions.Add("s", "claude", "https://github.com/o/r", null!);

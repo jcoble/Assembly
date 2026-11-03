@@ -93,7 +93,7 @@ public sealed class FirstSendCheckoutTests : IDisposable
     [Fact]
     public async Task Registered_local_project_route_creates_on_the_actual_engine_without_rewriting_the_registry()
     {
-        await using var hosts = new TwoHosts();
+        await using var hosts = new TwoHosts(forwardCommands: true);
         var owner = hosts.Mac;
         var projects = new ProjectStore(owner.Fixture.Db, owner.Fixture.Time);
         var roots = new ProjectRoots(projects);
@@ -262,7 +262,7 @@ public sealed class FirstSendCheckoutTests : IDisposable
                 new("$folder", inheritedFolder), new("$id", parentId));
             _sessions.ProjectEngineSession(scope, new(parentId, "profile", inheritedFolder, "Parent", null, 1000), null, inheritedFolder);
             Assert.True(_commands.Apply(scope, new(Guid.NewGuid(), _engine.Machine, new(ActorKind.System, "projects"),
-                parentId, 1, 0, 1000), new AssignProject(project.Id)).Applied);
+                parentId, 0, 0, 1000), new AssignProject(project.Id)).Applied);
             return 0;
         });
         var child = _engine.Db.Writer.Write("test.child", s => _sessions.Create(s, "profile", "child_1", inheritedFolder,

@@ -150,16 +150,20 @@ public sealed partial class RemoteRowsSocketTests
     [Fact]
     public async Task A_call_while_the_socket_is_closed_fails_unreachable_at_once()
     {
-        var call = CreateBoundRemoteSessionAsync(CancellationToken.None);
+        await using var closed = new Assembly.Infrastructure.Remote.RemoteMachine("box", _address, "token", _localHub,
+            _localSessions, TextWriter.Null, new MachineStatus(_localTopics, ["box"]));
+        var call = CreateBoundRemoteSessionAsync(CancellationToken.None, closed);
         Assert.True(call.IsCompleted);
         await Assert.ThrowsAsync<MachineUnreachable>(() => call);
         Assert.Equal(0, _sessionHttpHits);
     }
-    private async Task<SessionsFeature.Created> CreateBoundRemoteSessionAsync(CancellationToken cancellation)
+    private async Task<SessionsFeature.Created> CreateBoundRemoteSessionAsync(CancellationToken cancellation,
+        Assembly.Infrastructure.Remote.RemoteMachine? selected = null)
     {
-        var read = await _machine.CaptureOwnerReadAsync(null, cancellation);
-        var owner = await _machine.CaptureOwnerBindingAsync(read.Identity, cancellation);
-        return await _machine.CreateBoundSessionAsync(new("claude", Guid.NewGuid().ToString("N")), null,
+        var machine = selected ?? _machine;
+        var read = await machine.CaptureOwnerReadAsync(null, cancellation);
+        var owner = await machine.CaptureOwnerBindingAsync(read.Identity, cancellation);
+        return await machine.CreateBoundSessionAsync(new("claude", Guid.NewGuid().ToString("N")), null,
             owner, read.Socket, null, cancellation);
     }
 

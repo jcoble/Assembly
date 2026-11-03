@@ -47,8 +47,9 @@ public sealed partial class RemoteMachineTests
         using var hub = new LiveHub(RowStore.Open(db));
         await using var machine = new RemoteMachine(Box, _box.Address, BoxToken, hub, sessions, _log, new MachineStatus(topics, [Box]));
         await machine.ProbeAsync(CancellationToken.None);
-        var read = await machine.CaptureOwnerReadAsync(null, CancellationToken.None);
-        var owner = await machine.CaptureOwnerBindingAsync(read.Identity, CancellationToken.None);
+        var identity = await machine.ReadMirrorOwnerAsync(CancellationToken.None);
+        var read = await machine.CaptureOwnerReadAsync(identity.Info.Machine, CancellationToken.None);
+        var owner = identity.Binding;
         var accepted = await machine.CreateBoundSessionAsync(new("claude", Guid.NewGuid().ToString("N")), null,
             owner, read.Socket, null, CancellationToken.None);
         var session = sessions.Get(accepted.SessionId);
