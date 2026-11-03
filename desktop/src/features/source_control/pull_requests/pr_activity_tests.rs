@@ -97,3 +97,31 @@ fn an_age_needs_a_real_stamp() {
     assert_eq!(age_of("2026-01-01T00:00:00Z", now).as_deref(), Some("3h"));
     assert_eq!(age_of("", now), None);
 }
+
+// Pins: old PullRequestWorkspace.svelte Activity: every comment is listed; Reply is on a file comment that opened a thread.
+#[test]
+fn every_posted_comment_stays_in_the_activity_and_only_a_numbered_root_on_a_file_takes_a_reply() {
+    let comment = |id: &str, extra: serde_json::Value| {
+        let mut value = json!({"id":id,"author":"bo","body":"Hi","bodyBlocks":[],"createdAt":"2026-01-02T00:00:00Z"});
+        for (key, item) in extra.as_object().unwrap() {
+            value[key] = item.clone();
+        }
+        value
+    };
+    let pr = detail(json!({"comments":[
+        comment("1", json!({})),
+        comment("2", json!({"path":"logo.png"})),
+        comment("3", json!({"path":"a.rs","line":4,"side":"LEFT"})),
+        comment("4", json!({"path":"a.rs","line":4,"side":"LEFT","replyToId":3})),
+        comment("IC_node", json!({"path":"a.rs"})),
+    ]}));
+    let listed: Vec<_> = (activity_rows(&pr).into_iter())
+        .filter_map(|row| match row {
+            ActivityRow::Comment { comment, .. } => Some((comment.id.clone(), comment.reply_id())),
+            _ => None,
+        })
+        .collect();
+    let expected = [("1", None), ("2", Some(2)), ("3", Some(3)), ("4", None), ("IC_node", None)]
+        .map(|(id, reply)| (id.to_string(), reply));
+    assert_eq!(listed, expected);
+}

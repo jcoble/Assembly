@@ -356,3 +356,40 @@ async fn a_session_write_sends_back_the_source_and_root_its_read_showed(cx: &mut
     assert_eq!(start["expectedSource"]["machine"], "box");
     assert!(start.get("projectId").is_none());
 }
+
+#[gpui::test]
+async fn a_reply_names_its_root_comment_and_the_head_it_was_written_on(cx: &mut TestAppContext) {
+    let (backend, seen, changed, mut changes) = start_backend(
+        "succeeded",
+        json!({"error":null,"result":"https://github.com/o/r/pull/7#discussion_r9"}),
+        cx,
+    );
+    let (writes, _heard) = writes(&changed, cx);
+    let done = Arc::new(Mutex::new(Vec::<(bool, String)>::new()));
+    let heard_done = done.clone();
+    let _done = cx.update(|cx| {
+        cx.subscribe(&writes, move |_, event: &WriteDone, _| {
+            if let WriteDone::Posted { reply, url } = event {
+                heard_done.lock().unwrap().push((*reply, url.clone()));
+            }
+        })
+    });
+    let request = PostRequest::reply(identity(), 41, "Agreed".into()).unwrap();
+    cx.run_until_parked();
+    writes
+        .update(cx, |writes, cx| writes.post(&request, &identity(), cx))
+        .unwrap();
+    until("the reply", &mut changes, &changed, || {
+        cx.run_until_parked();
+        !done.lock().unwrap().is_empty()
+    })
+    .await;
+    let starts = starts(&seen);
+    assert_eq!(starts.len(), 1);
+    assert_eq!(starts[0]["args"]["action"], "reply");
+    assert_eq!(starts[0]["args"]["args"]["commentId"], 41);
+    assert_eq!(starts[0]["args"]["args"]["body"], "Agreed");
+    assert_eq!(starts[0]["args"]["args"]["expectedHead"], "a".repeat(40));
+    assert!(done.lock().unwrap()[0].0);
+    drop(backend);
+}

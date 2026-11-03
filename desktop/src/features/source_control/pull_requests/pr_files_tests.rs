@@ -1,6 +1,6 @@
 use super::super::{
     pull_request::PullRequestDetail,
-    review_draft::{ReviewDraft, ReviewIdentity},
+    review_draft::{DraftComment, ReviewDraft, ReviewIdentity},
 };
 use super::{PrFiles, PrOwner};
 use crate::core::socket::{
@@ -275,5 +275,50 @@ fn starting_another_comment_drops_the_one_not_added_to_the_review(cx: &mut TestA
         assert_eq!(draft.comments.len(), 1);
         assert_eq!(draft.comments[0].target.line, 3);
         assert_eq!(files.read(cx).adding.len(), 1);
+    });
+}
+
+#[gpui::test]
+fn posted_comments_keep_their_own_lines_and_a_file_without_lines_keeps_its_draft_comment(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let mut detail = two_line_detail();
+    detail.comments = serde_json::from_value(json!([
+        {"id":"1","author":"a","body":"","bodyBlocks":[],"createdAt":"","path":"a.rs","line":1,"side":"LEFT"},
+        {"id":"2","author":"a","body":"","bodyBlocks":[],"createdAt":"","path":"a.rs"},
+        {"id":"3","author":"a","body":"","bodyBlocks":[],"createdAt":""},
+    ]))
+    .unwrap();
+    let mut held = ReviewDraft::new(ReviewIdentity {
+        repository: "o/r".into(),
+        number: 7,
+        head: detail.head_sha.clone(),
+        base: detail.base_sha.clone(),
+    });
+    held.comments.push(DraftComment {
+        id: "held".into(),
+        target: serde_json::from_value(
+            json!({"path":"logo.png","line":4,"side":"LEFT","body":"on a file with no lines"}),
+        )
+        .unwrap(),
+    });
+    let draft = cx.new(|_| held);
+    let files = cx.new(|cx| PrFiles::new(session(), &detail, draft, cx));
+    cx.update(|cx| {
+        let (annotations, _) = files.read(cx).annotations(cx);
+        let anchored: Vec<_> = (annotations.iter())
+            .map(|annotation| {
+                let at = annotation.position().expect("a line");
+                (at.path().to_string(), at.side(), at.line())
+            })
+            .collect();
+        assert_eq!(
+            anchored,
+            [
+                ("logo.png".to_string(), DiffSide::Original, 4),
+                ("a.rs".to_string(), DiffSide::Original, 1),
+            ]
+        );
     });
 }
