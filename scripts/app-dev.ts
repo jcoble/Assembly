@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { profileFor } from './seed-dev.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backend = join(root, 'desktop/target/dev-backend');
@@ -19,18 +20,22 @@ function run(command: string, args: string[], cwd = root): void {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
-// Use the same ports and data paths as the existing Assembly launcher.
+// Main and a lane worktree keep the settings they already have. Every other checkout runs on its own, so building
+// never depends on setting anything up: its data sits in its seed-dev profile and its ports follow from that profile.
+function ownSettings(): [port: string, home: string, tokenFile: string, remotePort: string, remoteTokenFile: string, adapters: string] {
+  const home = profileFor(root).home;
+  const offset = Number.parseInt(home.slice(-8), 16) % 9000;
+  return [
+    String(20000 + offset), home, join(home, 'env'), String(30000 + offset),
+    `.config/assembly-dev-${basename(home)}/env`, join(home, 'adapters'),
+  ];
+}
 const lane = spawnSync('bash', ['-c', `
 source scripts/lane-env.sh || exit
-printf '%s\\0' "$DESKTOP_PORT" "$DATA" "$TOKEN_FILE" "$BOX_PORT" "$BOX_TOKEN_FILE"
+printf '%s\\0' "$DESKTOP_PORT" "$DATA/mac" "$TOKEN_FILE" "$BOX_PORT" "$BOX_TOKEN_FILE" "$DATA/adapters"
 `], { cwd: root, env, encoding: 'utf8' });
 if (lane.error) throw lane.error;
-if (lane.status !== 0) {
-  process.stderr.write(lane.stderr);
-  process.exit(lane.status ?? 1);
-}
-const [port, data, tokenFile, remotePort, remoteTokenFile] = lane.stdout.split('\0');
-const home = join(data, 'mac');
+const [port, home, tokenFile, remotePort, remoteTokenFile, adapters] = lane.status === 0 ? lane.stdout.split('\0') : ownSettings();
 
 run('dotnet', [
   'publish', join(root, 'dotnet/Assembly.Desktop'), '--configuration', 'Debug',
@@ -41,9 +46,12 @@ writeFileSync(join(backend, 'lane.json'), JSON.stringify({
   port: Number(port), home, tokenFile, remotePort: Number(remotePort), remoteTokenFile,
 }, null, 2) + '\n');
 mkdirSync(home, { recursive: true });
-run('bash', [
+// The backend starts with an empty list when there's no agents file, so a failed install doesn't stop the app.
+const agents = spawnSync('bash', [
   'dotnet/scripts/agents-file.sh',
-  process.env.ADAPTERS ?? join(data, 'adapters'),
+  process.env.ADAPTERS ?? adapters,
   join(home, 'agents.json'),
-]);
+], { cwd: root, env, stdio: 'inherit' });
+if (agents.error) throw agents.error;
+if (agents.status !== 0) console.warn('app:dev: agents could not be updated; opening with the ones already installed, if any');
 run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));

@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_action::GitAction;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
@@ -60,7 +61,7 @@ impl Render for RemoteDialog {
                     .failure
                     .clone()
                     .filter(|_| self.submitted)
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             )
             .children(
                 self.action
@@ -68,7 +69,7 @@ impl Render for RemoteDialog {
                     .message
                     .clone()
                     .filter(|_| self.submitted)
-                    .map(|message| div().text_sm().child(message)),
+                    .map(|message| div().text_role(TextRole::Body, cx).child(message)),
             )
             .child(
                 h_flex()

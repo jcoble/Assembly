@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::SourceControlPane;
 use crate::core::state::session_read::Shown;
 use crate::features::source_control::git_status::ChangedFile;
@@ -78,11 +79,11 @@ impl SourceControlPane {
         };
         let include_new = Rc::new(Cell::new(false));
         let pane = cx.entity().downgrade();
-        window.open_alert_dialog(cx,move|alert,_,_|{
+        window.open_alert_dialog(cx,move|alert,_,cx|{
             let toggled=include_new.clone();let chosen=include_new.clone();let target=pane.clone();
             let mut body=v_flex().gap_2().child("These changes cannot be got back.")
                 .child(v_flex().id("discard-files").max_h(px(240.)).overflow_y_scroll().children(files.iter().map(|file|{
-                    div().text_sm().child(if file.index=="?"||file.index=="A"{format!("{} (will be deleted)",file.path)}else{file.label()})
+                    div().text_role(TextRole::Body, cx).child(if file.index=="?"||file.index=="A"{format!("{} (will be deleted)",file.path)}else{file.label()})
                 })));
             if omitted>0{body=body.child(format!("and {omitted} more"));}
             if fingerprint.is_some(){body=body.child(Checkbox::new("discard-include-new").label("Also delete new files").checked(include_new.get()).on_click(move|value,_,cx|{

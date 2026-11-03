@@ -28,7 +28,7 @@ Off macOS, `assembly-glass` resolves to `assembly`, since Linux has no reliable 
 
 ## What every theme sets
 
-- `font.size` 13 (body), `mono_font.size` 12 (the design system's `code`, 12/20), `radius` 8 (`radius-sm`),
+- `font.size` 16 (the window's rem, which stays fixed; our text sizes come from `TextRole`), `mono_font.size` 12 (the design system's `code`, 12/20), `radius` 8 (`radius-sm`),
   `radius.lg` 16 (`radius-lg`, which the kit uses for dialogs and notifications), `shadow` false. The fonts stay
   unset, which is the system face and system monospace. The radii are the same in every theme, since shape is the
   app's, not a theme's.

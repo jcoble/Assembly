@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::projects::Projects;
 use crate::core::intents::open_new_project::OpenNewProject;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -41,9 +42,9 @@ impl Render for ProjectsView {
                 rows = rows.child(
                     v_flex().gap_1().p_2()
                         .child(project.title.clone())
-                        .child(div().text_sm().child(project.root_path.clone()))
-                        .child(div().text_sm().child(machine.to_string()))
-                        .children(project.repo_key.clone().map(|repo| div().text_sm().child(repo))),
+                        .child(div().text_role(TextRole::Body, cx).child(project.root_path.clone()))
+                        .child(div().text_role(TextRole::Body, cx).child(machine.to_string()))
+                        .children(project.repo_key.clone().map(|repo| div().text_role(TextRole::Body, cx).child(repo))),
                 );
             }
             (rows, data.next.is_some(), data.loading, data.failure.clone(), data.rows().is_empty())

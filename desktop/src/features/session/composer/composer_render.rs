@@ -5,6 +5,7 @@
 //! there's nothing to send, an image hasn't uploaded or the session's machine is offline
 //! (which a line above the box says; Stop is dimmed then too). Files dropped anywhere on the box light its edge. The "/" list floats just above the box, and why something failed sits above it.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Textarea;
@@ -51,7 +52,7 @@ impl Render for Composer {
                 .border_1()
                 .border_color(theme.input)
                 .bg(theme.accent)
-                .text_size(px(12.5))
+                .text_role(TextRole::Meta, cx)
                 .child(
                     Icon::new(Glyph::GitBranch)
                         .size(px(13.))
@@ -187,7 +188,7 @@ impl Render for Composer {
         let draft = Textarea::new(&self.draft)
             .appearance(false)
             .xsmall()
-            .text_size(px(13.5))
+            .text_role(TextRole::Body, cx)
             .on_paste(move |item, _, cx| {
                 composer
                     .update(cx, |composer, cx| composer.pasted(item, cx))
@@ -210,7 +211,7 @@ impl Render for Composer {
                     .px_1()
                     .pb_1()
                     .gap_2()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
                     .child(line)
                     .child(
@@ -232,7 +233,7 @@ impl Render for Composer {
                 div()
                     .px_1()
                     .pb_1()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.danger)
                     .child(error),
             )

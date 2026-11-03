@@ -316,7 +316,7 @@ impl Render for InlineField {
         };
         let value = v_flex()
             .w_full()
-            .max_w(rems(18.))
+            .max_w(px(288.))
             .min_w_0()
             .gap_1()
             .child(content)

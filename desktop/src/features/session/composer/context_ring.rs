@@ -4,6 +4,7 @@
 //! It reads as a gauge, never a spinner (the old app's TSK-1367): the kit's `ProgressCircle` holding still at its
 //! value. Replaces the meter in Composer.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::progress::ProgressCircle;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, h_flex};
@@ -30,7 +31,7 @@ impl RenderOnce for ContextRing {
             .flex_none()
             .h(px(22.))
             .gap_1p5()
-            .text_size(px(12.))
+            .text_role(TextRole::Meta, cx)
             .text_color(theme.muted_foreground.opacity(0.65))
             .tooltip(move |window, cx| Tooltip::new(detail.clone()).build(window, cx))
             .child(

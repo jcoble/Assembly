@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{create_pr_dialog, pr_queue::PrQueue};
 use crate::core::intents::open_pull_requests::OpenPullRequests;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -89,16 +90,16 @@ impl Render for PrSection {
                     )
                     .children(
                         failure.clone().map(|message| {
-                            div().px_2().text_sm().text_color(danger).child(message)
+                            div().px_2().text_role(TextRole::Body, cx).text_color(danger).child(message)
                         }),
                     )
                     .when(loading, |section| {
-                        section.child(div().px_2().text_sm().child("Reading pull requests…"))
+                        section.child(div().px_2().text_role(TextRole::Body, cx).child("Reading pull requests…"))
                     })
                     .when(
                         !loading && failure.is_none() && items.is_empty(),
                         |section| {
-                            section.child(div().px_2().text_sm().child("No open pull requests."))
+                            section.child(div().px_2().text_role(TextRole::Body, cx).child("No open pull requests."))
                         },
                     )
                     .children(items.into_iter().map(move |pr| {

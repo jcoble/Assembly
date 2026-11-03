@@ -1,6 +1,7 @@
 //! Provider config value pickers, using the kit's Select popup, keyboard navigation and selection.
 //! Retain one picker per session/config ID; provider-confirmed values remain authoritative.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use super::agent_config::ConfigOption;
@@ -169,7 +170,7 @@ impl RenderOnce for ConfigMenu {
                 .w_full()
                 .rounded(px(9.))
                 .bg(theme.accent)
-                .text_size(px(12.5))
+                .text_role(TextRole::Meta, cx)
                 .menu_width(px(240.))
                 .menu_max_h(px(280.)),
         )

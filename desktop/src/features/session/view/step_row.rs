@@ -5,6 +5,7 @@
 //! The running step's title shimmers. A tool call's line is one, in the timeline and in a running turn's activity
 //! card; a workflow run's steps can be drawn with it too. Section 11's StepRow.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::shimmer::ShimmerText;
 use gpui_kit::component::spinner::Spinner;
@@ -71,7 +72,7 @@ impl RenderOnce for StepRow {
             .id(self.id)
             .h(px(22.))
             .gap_2()
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .text_color(if failed { theme.danger } else { muted })
             .child(sign)
             .child(div().flex_none().child(title))
@@ -80,7 +81,7 @@ impl RenderOnce for StepRow {
                     .min_w_0()
                     .truncate()
                     .font_family(theme.mono_font_family.clone())
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .child(self.summary.unwrap_or_default()),
             )
             .children(
@@ -92,11 +93,11 @@ impl RenderOnce for StepRow {
                 h_flex()
                     .flex_none()
                     .gap_2()
-                    .text_size(px(12.))
+                    .text_role(TextRole::Meta, cx)
                     .children(self.tags),
             )
             .when_some(self.took_ms, |line, ms| {
-                line.child(div().flex_none().text_xs().child(worked_for(ms)))
+                line.child(div().flex_none().text_role(TextRole::Meta, cx).child(worked_for(ms)))
             })
     }
 }

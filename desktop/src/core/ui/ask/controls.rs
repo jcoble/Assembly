@@ -1,4 +1,5 @@
 //! One shared provider form renderer. The owning surface supplies option presentation and submits actual answers.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 use gpui_kit::*;
 use gpui_kit::component::{ActiveTheme as _,h_flex,v_flex};
@@ -55,7 +56,7 @@ pub fn render(key:&str,ask:&AskPayload,form:Option<&AskForm>,choices:&[(String,S
             .gap_2()
             .pl(px(23.))
             .pb_1()
-            .text_size(px(12.5))
+            .text_role(TextRole::Meta, cx)
             .when_some(ask.message.clone(), |column, message| {
                 column.child(div().text_color(theme.muted_foreground).child(message))
             });
@@ -174,7 +175,7 @@ fn inline_field(label: String, hint: Option<String>, value: Div, cx: &App) -> Di
                     div()
                         .w(px(64.))
                         .flex_none()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(muted)
                         .truncate()
                         .child(label),
@@ -182,6 +183,6 @@ fn inline_field(label: String, hint: Option<String>, value: Div, cx: &App) -> Di
                 .child(value),
         )
         .when_some(hint, |column, hint| {
-            column.child(div().pl(px(72.)).text_xs().text_color(muted).child(hint))
+            column.child(div().pl(px(72.)).text_role(TextRole::Meta, cx).text_color(muted).child(hint))
         })
 }

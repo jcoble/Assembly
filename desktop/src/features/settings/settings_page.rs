@@ -4,6 +4,7 @@
 //! the sliders, a machine call on its way) go when the sheet closes. Replaces SettingsDialog.svelte and
 //! SettingsHost.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::cell::Cell;
 
 use gpui_kit::assets::IconName;
@@ -250,7 +251,7 @@ impl SettingsPage {
             .pl(px(64.))
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(cx.theme().foreground)
                     .child("Settings"),
@@ -282,7 +283,7 @@ impl SettingsPage {
                         .px_2()
                         .pt_3()
                         .pb_1()
-                        .text_size(px(11.))
+                        .text_role(TextRole::Meta, cx)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(theme.muted_foreground)
                         .child(group.to_uppercase()),
@@ -297,7 +298,7 @@ impl SettingsPage {
                     .px_2()
                     .gap_2()
                     .rounded(px(6.))
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .cursor_pointer()
                     .text_color(theme.sidebar_foreground)
                     .hover(|row| row.bg(theme.sidebar_accent.opacity(0.6)))

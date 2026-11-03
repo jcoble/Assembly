@@ -1,10 +1,11 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::*;
 
 impl Render for SourceControlPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (muted, danger) = (theme.muted_foreground, theme.danger);
-        let line = |text: String| div().px_3().text_sm().text_color(muted).child(text);
+        let line = |text: String| div().px_3().text_role(TextRole::Body, cx).text_color(muted).child(text);
         let (shown, reading, session) = {
             let read = self.read.read(cx);
             let session = read.session().unwrap_or_default().to_string();
@@ -17,7 +18,7 @@ impl Render for SourceControlPane {
             .justify_between()
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .font_weight(FontWeight::MEDIUM)
                     .child(SOURCE_CONTROL),
             )
@@ -47,7 +48,7 @@ impl Render for SourceControlPane {
                     .px_3()
                     .gap_2()
                     .items_start()
-                    .child(div().text_sm().text_color(danger).child(message))
+                    .child(div().text_role(TextRole::Body, cx).text_color(danger).child(message))
                     .child(
                         Button::new("source-control-retry")
                             .ghost()
@@ -89,7 +90,7 @@ impl Render for SourceControlPane {
                         .child(
                             div()
                                 .min_w_0()
-                                .text_sm()
+                                .text_role(TextRole::Body, cx)
                                 .truncate()
                                 .child(status.branch_line()),
                         )
@@ -152,14 +153,14 @@ impl Render for SourceControlPane {
                     .read(cx)
                     .message
                     .clone()
-                    .map(|message| div().text_sm().child(message)),
+                    .map(|message| div().text_role(TextRole::Body, cx).child(message)),
             )
             .children(
                 self.action
                     .read(cx)
                     .failure
                     .clone()
-                    .map(|message| div().text_sm().text_color(danger).child(message)),
+                    .map(|message| div().text_role(TextRole::Body, cx).text_color(danger).child(message)),
             );
         let mut all_actions = h_flex().px_2().gap_2();
         if let Some(status) = &commit_status {

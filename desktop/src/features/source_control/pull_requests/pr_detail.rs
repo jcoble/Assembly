@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pr_files::PrFiles,
     pull_request::PullRequestDetail,
@@ -250,7 +251,7 @@ impl Render for PrDetail {
             .children(
                 self.failure
                     .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             );
         let Some(detail) = self.detail.clone() else {
             return root.into_any_element();
@@ -275,7 +276,7 @@ impl Render for PrDetail {
                             }),
                     ),
             )
-            .child(div().text_sm().child(format!(
+            .child(div().text_role(TextRole::Body, cx).child(format!(
                 "{} · {} → {}{}",
                 detail.state,
                 detail.head_branch,
@@ -284,7 +285,7 @@ impl Render for PrDetail {
             )))
             .child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(format!("{} / {}", detail.head_sha, detail.base_sha)),
             );
         let can_post = self.current_identity().is_some();

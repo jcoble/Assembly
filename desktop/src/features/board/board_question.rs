@@ -2,6 +2,7 @@
 //! takes typed text or the recommendation; an approval takes Approve or Deny. An answered one shows the answer and
 //! whether it reached the agent. A failed answer keeps its text and says why.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
@@ -50,11 +51,11 @@ pub fn question(
             .bg(fill.opacity(0.5))
             .child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child("Recommended"),
             )
-            .child(div().text_sm().child(text))
+            .child(div().text_role(TextRole::Body, cx).child(text))
     });
     let shell = v_flex()
         .id(SharedString::from(q.question_key.clone()))
@@ -64,7 +65,7 @@ pub fn question(
         .bg(fill.opacity(0.3))
         .child(
             div()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(q.prompt.clone()),
         )
@@ -76,10 +77,10 @@ pub fn question(
             _ => answer.text.clone().unwrap_or_default(),
         };
         return shell
-            .child(div().text_sm().child(format!("Answer: {said}")))
+            .child(div().text_role(TextRole::Body, cx).child(format!("Answer: {said}")))
             .child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(muted)
                     .child(delivery(&q.delivery_state).to_string()),
             )
@@ -124,7 +125,7 @@ pub fn question(
     shell
         .child(actions)
         .when_some(error, |shell, error| {
-            shell.child(div().text_xs().text_color(danger).child(error))
+            shell.child(div().text_role(TextRole::Meta, cx).text_color(danger).child(error))
         })
         .into_any_element()
 }

@@ -1,4 +1,5 @@
 //! A visible history owner owns its page and commit reads; hiding or replacing it cancels them.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     git_history::{GitCommit, GitCommitFile, GitHistory},
     graph_lanes::{EdgeKind, LaneRow, lanes},
@@ -252,12 +253,12 @@ impl CommitTimeline {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .child(commit.subject.clone()),
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(color)
                     .child(commit.author.clone()),
             )
@@ -292,20 +293,20 @@ impl CommitTimeline {
                     div()
                         .pl_4()
                         .pr_2()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(color)
                         .child(commit.committed_at.clone()),
                 )
-                .child(div().pl_4().pr_2().text_sm().child(commit.body.clone()));
+                .child(div().pl_4().pr_2().text_role(TextRole::Body, cx).child(commit.body.clone()));
             match self.files.get(&commit.sha) {
                 Some(CommitFiles::Reading) => {
-                    row = row.child(div().pl_4().text_sm().child("Reading changed files…"))
+                    row = row.child(div().pl_4().text_role(TextRole::Body, cx).child("Reading changed files…"))
                 }
                 Some(CommitFiles::Failed(error)) => {
                     row = row.child(
                         div()
                             .pl_4()
-                            .text_sm()
+                            .text_role(TextRole::Body, cx)
                             .text_color(cx.theme().danger)
                             .child(error.clone()),
                     )
@@ -372,7 +373,7 @@ impl Render for CommitTimeline {
             .size_full()
             .min_h_0()
             .child(
-                div().px_2().text_xs().text_color(muted).child(
+                div().px_2().text_role(TextRole::Meta, cx).text_color(muted).child(
                     self.filter
                         .summary(self.visible.len(), self.history.commits.len()),
                 ),
@@ -380,7 +381,7 @@ impl Render for CommitTimeline {
             .children(self.error.iter().map(|error| {
                 div()
                     .px_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(cx.theme().danger)
                     .child(error.clone())
             }))
@@ -388,7 +389,7 @@ impl Render for CommitTimeline {
                 view.child(
                     div()
                         .p_2()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(muted)
                         .child(if self.reading {
                             "Reading commits…"

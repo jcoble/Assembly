@@ -1,6 +1,7 @@
 //! `TurnFoldRow` is a finished turn's heading: "Worked for 42s · ran 3 commands · edited 2 files", muted, with the
 //! chevron after it, opening and closing the work it folds. Replaces chat/TurnFold.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::*;
 
@@ -49,7 +50,7 @@ impl RenderOnce for TurnFoldRow {
             .id(SharedString::from(format!("fold:{run_id}")))
             .h(px(22.))
             .gap_2()
-            .text_size(px(13.))
+            .text_role(TextRole::Body, cx)
             .text_color(cx.theme().muted_foreground)
             .cursor_pointer()
             .on_click(move |_, window, cx| {

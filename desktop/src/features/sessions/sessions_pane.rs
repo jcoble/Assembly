@@ -6,6 +6,7 @@
 //! session between Working and Done or settles it (`sessions/mark`). It registers under the sessions pane's name,
 //! after the placeholders.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{BasePanel, Panel, PanelEvent, panel_handle, register_panel};
@@ -30,7 +31,6 @@ use crate::core::socket::update::Update;
 use crate::core::state::machines::GlobalMachines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::preferences::Preferences;
-use crate::core::theme::text::TextRole;
 use crate::core::state::sessions::GlobalSessions;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
@@ -488,7 +488,7 @@ impl Render for SessionsPane {
                                     .gap(px(4.))
                                     .rounded_full()
                                     .bg(warning.opacity(0.12))
-                                    .text_size(px(10.5))
+                                    .text_role(TextRole::Meta, cx)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(warning)
                                     .child(div().size(px(6.)).rounded_full().bg(warning))
@@ -499,14 +499,14 @@ impl Render for SessionsPane {
             .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),
-                true => pane.child(div().px_3().py_2().text_sm().text_color(muted).child(empty)),
+                true => pane.child(div().px_3().py_2().text_role(TextRole::Body, cx).text_color(muted).child(empty)),
             })
             .when_some(self.mark_error.clone(), |pane, error| {
                 pane.child(
                     div()
                         .px_3()
                         .py_1()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(danger)
                         .child(error),
                 )
@@ -517,7 +517,7 @@ impl Render for SessionsPane {
                         .px_3()
                         .py_1()
                         .gap_2()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(danger)
                         .child(error)
                         .child(

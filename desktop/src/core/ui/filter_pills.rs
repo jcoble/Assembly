@@ -6,6 +6,7 @@
 //! each change (`FilterPillsChanged`), reads the picks from `state`, and saves them if it wants to. The old app's
 //! ten-second idle close is dropped: the window keeps no timers.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -132,7 +133,7 @@ fn pill(id: impl Into<ElementId>, picked: bool, cx: &App) -> Stateful<Div> {
         .h(px(26.))
         .px(px(12.))
         .rounded(px(999.))
-        .text_size(px(12.))
+        .text_role(TextRole::Meta, cx)
         .bg(fill)
         .text_color(text)
         .when(picked, |pill| pill.font_weight(FontWeight::MEDIUM))

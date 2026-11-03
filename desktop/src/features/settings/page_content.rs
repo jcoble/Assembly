@@ -1,6 +1,7 @@
 //! The right side of the Settings page: the shown section's title, then its rows in their cards,
 //! each row a title and one-line description with its control on the right, or its slider underneath.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::Button;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::label::Label;
@@ -49,7 +50,7 @@ impl SettingsPage {
         let Some(section) = shown else {
             return column.child(
                 div()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(theme.muted_foreground)
                     .child(format!("Nothing matches “{}”.", query.trim())),
             );
@@ -58,7 +59,7 @@ impl SettingsPage {
         let mut column = column.child(
             h_flex()
                 .h(px(32.))
-                .text_size(px(15.))
+                .text_role(TextRole::Title, cx)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(theme.foreground)
                 .child(section.label),
@@ -67,7 +68,7 @@ impl SettingsPage {
             column = column.child(
                 div()
                     .pt_2()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.danger)
                     .child(failure),
             );
@@ -95,7 +96,7 @@ impl SettingsPage {
                         .pt_5()
                         .pb_1p5()
                         .px_1()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(theme.muted_foreground)
                         .child(card),
                 )
@@ -109,10 +110,10 @@ impl SettingsPage {
         let label = v_flex()
             .gap_0p5()
             .min_w_0()
-            .child(Label::new(row.title).text_sm().text_color(theme.foreground))
+            .child(Label::new(row.title).text_role(TextRole::Body, cx).text_color(theme.foreground))
             .child(
                 Label::new(row.description)
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground),
             );
         let number = number_row(row.id).map(|number| number.key);
@@ -130,7 +131,7 @@ impl SettingsPage {
                         div()
                             .w(px(44.))
                             .text_right()
-                            .text_xs()
+                            .text_role(TextRole::Meta, cx)
                             .text_color(theme.muted_foreground)
                             .child(setting.label(value)),
                     ),
@@ -210,7 +211,7 @@ impl SettingsPage {
             .gap_1()
             .child(Input::new(&self.depth).small());
         if let Some(error) = self.depth_error {
-            control = control.child(div().text_xs().text_color(theme.danger).child(error));
+            control = control.child(div().text_role(TextRole::Meta, cx).text_color(theme.danger).child(error));
         }
         h_flex()
             .px_4()
@@ -267,7 +268,7 @@ fn menu(
 fn note(text: &'static str, cx: &App) -> impl IntoElement {
     div()
         .pt_2()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }

@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use crate::core::socket::update::Update;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
@@ -157,7 +158,7 @@ pub fn view_options(view: View, on_view: OnView, cx: &App) -> impl IntoElement {
                 .w(px(250.))
                 .p_2()
                 .gap_2()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(theme.foreground)
                 .child("Group by")
                 .child(

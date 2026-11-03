@@ -4,6 +4,7 @@
 //! machine, and says offline when the machines list does. The expanded card adds its questions (board_question), its
 //! feed (board_feed) and the session that reported it. There are no retry, pause or start controls.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -39,12 +40,12 @@ fn span(ms: i64) -> String {
     }
 }
 
-fn badge(text: &str, color: Hsla) -> Div {
+fn badge(text: &str, color: Hsla, cx: &App) -> Div {
     div()
         .flex_none()
         .px_1p5()
         .rounded(px(5.))
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .font_weight(FontWeight::MEDIUM)
         .text_color(color)
         .bg(color.opacity(0.14))
@@ -91,8 +92,8 @@ pub fn card(
         .child(
             h_flex()
                 .gap_1p5()
-                .when(needs_you, |line| line.child(badge("Needs you", warning)))
-                .child(badge(label(&task.state), color))
+                .when(needs_you, |line| line.child(badge("Needs you", warning, cx)))
+                .child(badge(label(&task.state), color, cx))
                 .child(
                     div()
                         .flex_1()
@@ -101,16 +102,16 @@ pub fn card(
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(task.title.clone()),
                 )
-                .child(div().flex_none().text_xs().text_color(muted).child(time)),
+                .child(div().flex_none().text_role(TextRole::Meta, cx).text_color(muted).child(time)),
         )
         .child(
             div()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .truncate()
                 .text_color(if offline { warning } else { muted })
                 .child(format!("{} · {machine}", task.project)),
         )
-        .child(div().text_sm().truncate().child(task.summary.clone()));
+        .child(div().text_role(TextRole::Body, cx).truncate().child(task.summary.clone()));
     let link = |id: &'static str, text: &'static str, url: Option<String>| {
         url.map(|url| {
             Button::new(id)
@@ -135,7 +136,7 @@ pub fn card(
         facts.iter().any(Option::is_some) || task.pr_url.is_some() || task.task_url.is_some();
     let facts = h_flex()
         .gap_2()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .text_color(muted)
         .children(facts.into_iter().flatten())
         .children(link("pr", "PR", task.pr_url.clone()))
@@ -181,12 +182,12 @@ fn detail(
     // The session link shows whether or not the detail could be read: it's the way back when it can't.
     let link = h_flex().child(open_session);
     if let Some(message) = pane.detail_failed.clone() {
-        let error = div().text_sm().text_color(cx.theme().danger).child(message);
+        let error = div().text_role(TextRole::Body, cx).text_color(cx.theme().danger).child(message);
         return body.child(error).child(link);
     }
     let Some(detail) = pane.state.detail.as_ref() else {
         return body
-            .child(div().text_sm().text_color(muted).child("Reading…"))
+            .child(div().text_role(TextRole::Body, cx).text_color(muted).child("Reading…"))
             .child(link);
     };
     let (questions, more_questions) = (

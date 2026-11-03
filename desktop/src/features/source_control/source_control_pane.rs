@@ -4,6 +4,7 @@
 //! against its base (scm#13, scm#18). Replaces SourceControlPanel.svelte's status lists. Staging, commits and
 //! branches use the shared Git producers.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_action::GitAction;
 use super::sync_controls::{SyncCompleted, SyncControls};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -227,7 +228,7 @@ fn lists(
             let heading = h_flex()
                 .px_2()
                 .gap_2()
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(muted)
                 .child(section.label())
@@ -279,7 +280,7 @@ fn lists(
                     .h(px(24.))
                     .px_2()
                     .gap_2()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .rounded_sm()
                     .cursor_pointer()
                     .hover(|row| row.bg(theme.list_hover))

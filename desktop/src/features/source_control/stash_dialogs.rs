@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::git_action::GitAction;
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -305,7 +306,7 @@ impl Render for StashList {
                                             .flex_1()
                                             .min_w_0()
                                             .child(div().truncate().child(stash.message))
-                                            .child(div().text_sm().child(format!(
+                                            .child(div().text_role(TextRole::Body, cx).child(format!(
                                                 "{} · {}{}",
                                                 stash.branch.unwrap_or_default(),
                                                 age,

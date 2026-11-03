@@ -3,6 +3,7 @@
 //! when it opens and again only when the call's state changes (an edit's diff once the edit finishes). A long diff
 //! shows its first lines until shown in full. Replaces chat/Tool.svelte and chat/tools/tool.ts.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -175,7 +176,7 @@ impl ToolRow {
                 .border_color(theme.border)
                 .bg(theme.group_box.opacity(0.5))
                 .font_family(theme.mono_font_family.clone())
-                .text_size(px(12.))
+                .text_role(TextRole::Meta, cx)
                 .line_height(relative(1.5))
                 .text_color(theme.muted_foreground)
                 .overflow_x_hidden()
@@ -211,7 +212,7 @@ impl ToolRow {
                 column = column.child(
                     div()
                         .id(SharedString::from(format!("{}:all-diff", self.key)))
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(theme.link)
                         .cursor_pointer()
                         .on_click(move |_, window, cx| {
@@ -224,7 +225,7 @@ impl ToolRow {
         if detail.truncated {
             column = column.child(
                 div()
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.muted_foreground)
                     .child("The backend cut this output short."),
             );

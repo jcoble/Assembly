@@ -24,7 +24,7 @@ pub const UI_FONT_SIZE: NumberSetting = NumberSetting {
     min: 11.,
     max: 18.,
     step: 1.,
-    default: 13.,
+    default: 16.,
     unit: "px",
 };
 /// Interface leading; chat keeps its own reading ratio.

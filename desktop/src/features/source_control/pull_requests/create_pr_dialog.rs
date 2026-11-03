@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::super::git_operation::GitOperation;
 use super::pull_request::PullRequestCreated;
 use crate::core::{
@@ -199,14 +200,14 @@ impl Render for CreatePrForm {
             .children(
                 self.error
                     .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             )
             .children(
                 self.operation
                     .read(cx)
                     .error
                     .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             )
             .children(self.unconfirmed.then(|| {
                 let session = self.session.clone();

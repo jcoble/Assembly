@@ -1,6 +1,7 @@
 //! The session pane as a dock panel: registered as the Chat pane, following the selected session, and its drawing: the
 //! header, the timeline, the plan card, the status line and the composer, top to bottom.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, panel_handle, register_panel,
@@ -134,7 +135,7 @@ impl Render for SessionPane {
                         .px_4()
                         .py_1()
                         .gap_2()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(cx.theme().danger)
                         .child(self.status.clone())
                         .when(self.retry_first.is_some(), |line| {

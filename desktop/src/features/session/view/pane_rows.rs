@@ -1,5 +1,6 @@
 //! The session pane's rows: each entry of the timeline drawn from the view, the folds and what each item keeps.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::time::Instant;
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
@@ -83,7 +84,7 @@ impl SessionPane {
             .now
             .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
         match entry {
-            Entry::Loading => line("Loading older messages…", muted),
+            Entry::Loading => line("Loading older messages…", muted, cx),
             Entry::Item(at) => {
                 if let Some(state) = self.view.pending.get(&self.view.items[*at].key) {
                     let item = &self.view.items[*at];
@@ -107,7 +108,7 @@ impl SessionPane {
                                 open: self.kept.get(&item.key).is_some_and(|kept| kept.open),
                                 on_action: self.on_action.clone(),
                             })
-                            .child(line(state.clone(), muted))
+                            .child(line(state.clone(), muted, cx))
                             .when(state.starts_with("Failed:"), |column| {
                                 let on_action = self.on_action.clone();
                                 let client_id = self
@@ -118,7 +119,7 @@ impl SessionPane {
                                 column.child(
                                     div()
                                         .id(SharedString::from(format!("{}:retry", item.key)))
-                                        .text_xs()
+                                        .text_role(TextRole::Meta, cx)
                                         .text_color(cx.theme().link)
                                         .cursor_pointer()
                                         .child("Retry")
@@ -306,13 +307,13 @@ impl SessionPane {
     }
 }
 
-fn line(text: impl Into<SharedString>, color: Hsla) -> AnyElement {
+fn line(text: impl Into<SharedString>, color: Hsla, cx: &App) -> AnyElement {
     div()
         .w_full()
         .max_w(CHAT_COLUMN)
         .mx_auto()
         .px_4()
-        .text_xs()
+        .text_role(TextRole::Meta, cx)
         .text_color(color)
         .child(text.into())
         .into_any_element()

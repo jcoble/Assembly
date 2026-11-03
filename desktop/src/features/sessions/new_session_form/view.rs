@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{DraftConfig, Machines, NewSessionForm, Rc};
 use crate::features::session::composer::config_menu::{
     ConfigMenu, ConfigSettings, OnSelect, inline,
@@ -117,14 +118,14 @@ impl Render for NewSessionForm {
             .p_3()
             .border_b_1()
             .border_color(theme.border)
-            .child(div().text_xs().text_color(muted).child("Machine"))
+            .child(div().text_role(TextRole::Meta, cx).text_color(muted).child("Machine"))
             .child(places)
-            .child(div().text_xs().text_color(muted).child("Agent"))
+            .child(div().text_role(TextRole::Meta, cx).text_color(muted).child("Agent"))
             .child(agents)
             .when(!self.auth_error.is_empty(), |view| {
                 view.child(
                     div()
-                        .text_sm()
+                        .text_role(TextRole::Body, cx)
                         .text_color(cx.theme().danger)
                         .child(self.auth_error.clone()),
                 )
@@ -134,7 +135,7 @@ impl Render for NewSessionForm {
             .when(self.discovering, |form| {
                 form.child(
                     div()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(muted)
                         .child("Loading agent settings…"),
                 )
@@ -142,7 +143,7 @@ impl Render for NewSessionForm {
             .when(!self.error.is_empty(), |form| {
                 form.child(
                     div()
-                        .text_xs()
+                        .text_role(TextRole::Meta, cx)
                         .text_color(theme.danger)
                         .child(self.error.clone()),
                 )

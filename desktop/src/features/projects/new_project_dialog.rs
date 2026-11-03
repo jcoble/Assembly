@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::folder_browser::{FolderBrowser, FolderChosen};
 use super::new_project::{Kind, NewProjectInput, NewProjectResult, ProjectRecord};
 use crate::core::{
@@ -340,7 +341,7 @@ impl Render for NewProjectForm {
             .children(
                 self.error
                     .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             )
             .when(self.operation.read(cx).unconfirmed, |form| {
                 form.child(
@@ -358,7 +359,7 @@ impl Render for NewProjectForm {
                     .read(cx)
                     .error
                     .clone()
-                    .map(|error| div().text_sm().text_color(danger).child(error)),
+                    .map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)),
             )
             .child(
                 h_flex()

@@ -5,6 +5,7 @@
 //! going), so dismissing it drops them all; the backend keeps mirroring. The top bar's existing popover owns its
 //! lifetime, and the palette's "Build Board" opens that same dropdown.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::collections::HashMap;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -436,10 +437,10 @@ impl Render for BoardPane {
             .pt_3()
             .pb_2()
             .gap_0p5()
-            .child(div().text_xs().text_color(muted).child("BUILD BOARD"))
+            .child(div().text_role(TextRole::Meta, cx).text_color(muted).child("BUILD BOARD"))
             .child(
                 div()
-                    .text_lg()
+                    .text_role(TextRole::Heading, cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(headline),
             )
@@ -448,7 +449,7 @@ impl Render for BoardPane {
                     "{} running · {} finished · {} in all",
                     c.running, c.terminal, c.total
                 );
-                div().text_sm().text_color(muted).child(line)
+                div().text_role(TextRole::Body, cx).text_color(muted).child(line)
             }))
             .child(
                 div().pt_1().min_w_0().child(
@@ -459,7 +460,7 @@ impl Render for BoardPane {
                         .children(filters),
                 ),
             );
-        let note = |text: String| div().px_4().py_2().text_sm().text_color(muted).child(text);
+        let note = |text: String| div().px_4().py_2().text_role(TextRole::Body, cx).text_color(muted).child(text);
         let body = match &self.failed {
             Some(message) => note(message.clone()).text_color(danger).into_any_element(),
             None if counts.is_none() => note("Reading the Board…".into()).into_any_element(),
@@ -481,7 +482,7 @@ impl Render for BoardPane {
                 .px_4()
                 .py_2()
                 .gap_2()
-                .text_sm()
+                .text_role(TextRole::Body, cx)
                 .text_color(muted)
                 .child(format!("Showing {shown} of {total}"))
                 .child(

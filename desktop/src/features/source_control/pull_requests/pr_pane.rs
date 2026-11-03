@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pr_detail::PrDetail,
     pr_queue::{PrQueue, QueueState},
@@ -440,7 +441,7 @@ impl Render for PrPane {
                         .clone()
                         .or(queue_error)
                         .or(projects_error)
-                        .map(|error| div().px_2().text_sm().text_color(danger).child(error)),
+                        .map(|error| div().px_2().text_role(TextRole::Body, cx).text_color(danger).child(error)),
                 )
                 .when(loading || projects_loading, |left| {
                     left.child("Reading pull requests…")

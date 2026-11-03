@@ -1,4 +1,5 @@
 //! One owned diff response per pick. The kit retains viewer state until a newer response replaces it.
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{branch_diff::BranchDiff, file_diff::FileDiff};
 use crate::core::intents::{
     open_branch_diff::OpenBranchDiff, open_commit_diff::OpenCommitDiff, open_diff::OpenDiff,
@@ -453,7 +454,7 @@ impl Render for ChangesPane {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_sm()
+                    .text_role(TextRole::Body, cx)
                     .text_color(muted)
                     .child(title),
             )
@@ -489,7 +490,8 @@ impl Render for ChangesPane {
             .size_full()
             .min_h_0()
             .child(header);
-        let note = |text: String| div().px_3().py_2().text_sm().child(text);
+        let (note_size, note_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Body));
+        let note = |text: String| div().px_3().py_2().text_size(note_size).line_height(note_height).child(text);
         match &mut self.shown {
             _ if self.picked.is_none() => pane,
             Shown::Reading => pane.child(note("Reading the diff…".into()).text_color(muted)),
@@ -510,7 +512,7 @@ impl Render for ChangesPane {
                             v_flex()
                                 .size_full()
                                 .min_h_0()
-                                .child(div().px_3().text_xs().text_color(muted).child(
+                                .child(div().px_3().text_role(TextRole::Meta, cx).text_color(muted).child(
                                     "Combined conflict diff — shown exactly as Git returned it.",
                                 ))
                                 .child(
@@ -526,7 +528,7 @@ impl Render for ChangesPane {
                     v_flex()
                         .flex_1()
                         .min_h_0()
-                        .child(div().px_3().text_xs().text_color(muted).child(view.label))
+                        .child(div().px_3().text_role(TextRole::Meta, cx).text_color(muted).child(view.label))
                         .child(
                             div()
                                 .flex_1()

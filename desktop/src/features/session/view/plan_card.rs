@@ -2,6 +2,7 @@
 //! list of steps under it, hanging from a rule, each with its status mark, the one in progress lit. It shuts when the
 //! turn ends. Replaces chat/tools/Plan.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::{ActiveTheme as _, Icon, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -65,7 +66,7 @@ impl RenderOnce for PlanCard {
             .mx_auto()
             .px_4()
             .pb_1()
-            .text_sm()
+            .text_role(TextRole::Body, cx)
             .child(
                 h_flex()
                     .id("plan")

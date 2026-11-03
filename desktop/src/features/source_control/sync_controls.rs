@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{git_operation::GitOperation, git_status::GitStatus};
 use crate::core::socket::{client::SocketClient, outcome::Outcome};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -252,7 +253,7 @@ impl Render for SyncControls {
             .px_2()
             .gap_1()
             .child(actions)
-            .children(error.map(|error| div().text_sm().text_color(danger).child(error)))
+            .children(error.map(|error| div().text_role(TextRole::Body, cx).text_color(danger).child(error)))
     }
 }
 #[cfg(test)]

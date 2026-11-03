@@ -1,3 +1,4 @@
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use super::{
     pull_request::{PullRequestComment, PullRequestDetail, PullRequestFile},
     review_draft::{ReviewDraft, ReviewIdentity},
@@ -333,9 +334,9 @@ impl Render for PrFiles {
                 Button::new(SharedString::from(format!("pr-file:{}",file.path))).ghost().compact().label(format!("{} +{} −{}",file.path,file.additions,file.deletions))
                     .on_click(cx.listener(move|viewer,_,_,cx|viewer.select(file.path.clone(),cx)))
             })))
-            .children((!current).then(||div().px_2().text_sm().child("This review draft is for an earlier head. Its comments are retained; refresh before posting.")))
-            .children(self.note.clone().map(|note|div().px_2().text_sm().child(note)))
-            .children(self.failure.clone().map(|error|div().px_2().text_sm().text_color(danger).child(error)))
+            .children((!current).then(||div().px_2().text_role(TextRole::Body, cx).child("This review draft is for an earlier head. Its comments are retained; refresh before posting.")))
+            .children(self.note.clone().map(|note|div().px_2().text_role(TextRole::Body, cx).child(note)))
+            .children(self.failure.clone().map(|error|div().px_2().text_role(TextRole::Body, cx).text_color(danger).child(error)))
             .child(if self.loading{div().px_2().child("Reading file versions…").into_any_element()}
                 else if self.context{div().flex_1().min_h_0().child(diff).into_any_element()}
                 else if self.selected.is_none(){div().px_2().child("Choose a file to see its changes.").into_any_element()}

@@ -2,6 +2,7 @@
 //! chip) with a spinner while it uploads, its name and size, and an × that removes it. One whose upload failed is red
 //! and says why on hover. G0 draws no thumbnail. Replaces the chips in Composer.svelte.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName as Glyph;
@@ -64,7 +65,7 @@ impl RenderOnce for AttachmentChip {
             .gap_1p5()
             .rounded(theme.radius_full())
             .bg(theme.secondary)
-            .text_xs()
+            .text_role(TextRole::Meta, cx)
             .text_color(color)
             .when_some(failed, |chip, why| {
                 chip.tooltip(move |window, cx| Tooltip::new(why.clone()).build(window, cx))

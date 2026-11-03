@@ -2,12 +2,12 @@
 //! "Attached image:" lines taken off the text) as chips that open the lightbox, and who sent it when another
 //! session did. Replaces SentText.svelte, SentImage.svelte and chat/sender.ts.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::core::state::preferences::Preferences;
-use crate::core::theme::text::TextRole;
 
 use super::session_action::{OnAction, SessionAction};
 
@@ -56,7 +56,7 @@ impl RenderOnce for SentMessage {
             let (key, on_action) = (self.key.clone(), self.on_action.clone());
             div()
                 .id(SharedString::from(format!("{}:more", self.key)))
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .text_color(theme.link)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
@@ -72,7 +72,7 @@ impl RenderOnce for SentMessage {
                 let node = div()
                     .debug_selector(|| "sent-message-sender".into())
                     .id(SharedString::from(format!("{}:sender", self.key)))
-                    .text_xs()
+                    .text_role(TextRole::Meta, cx)
                     .text_color(theme.link)
                     .child(label);
                 if let Some((machine,session_id)) = self.sender_machine.clone().filter(|machine|!machine.is_empty()).zip(self.sender.clone().filter(|id|!id.is_empty())) {
@@ -100,7 +100,7 @@ impl RenderOnce for SentMessage {
                 .rounded(theme.radius)
                 .border_1()
                 .border_color(theme.border)
-                .text_xs()
+                .text_role(TextRole::Meta, cx)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| {
                     let name = file.clone();

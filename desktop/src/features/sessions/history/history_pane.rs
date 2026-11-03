@@ -4,6 +4,7 @@
 //! as the list changes while it's shown; a line at its end loads the list's next page, Settled's too, as the sessions
 //! column's Settled does once it's opened. The ages count by the backend clock, held only while the tab is shown.
 
+use crate::core::theme::text::{TextRole, TextRoleExt as _};
 use std::collections::{HashMap, HashSet};
 
 use gpui_kit::assets::IconName;
@@ -197,7 +198,7 @@ impl Render for HistoryPane {
             .overflow_y_scroll()
             .p_2()
             .gap_px()
-            .text_size(px(13.));
+            .text_role(TextRole::Body, cx);
         let Some(sessions) = self.sessions.clone() else {
             return pane.child(note(
                 "history-note-waiting",
