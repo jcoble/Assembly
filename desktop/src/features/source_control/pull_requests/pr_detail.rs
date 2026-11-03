@@ -1,8 +1,11 @@
 //! One pull request: its read, its review draft and the page bar over Summary and Changes.
 use super::super::git_operation::GitOperation;
 use super::{
+    merge_dialog::MergeRequest,
+    post_confirm::PostRequest,
     pr_activity::change_totals,
     pr_files::PrFiles,
+    pr_writes::{PrWrites, WriteDone},
     pull_request::PullRequestDetail,
     review_draft::{ReviewDraft, ReviewIdentity},
 };
@@ -24,6 +27,8 @@ use std::time::Duration;
 
 #[path = "pr_view/composer.rs"]
 mod composer;
+#[path = "pr_view/merge_card.rs"]
+mod merge_card;
 #[path = "pr_view/summary.rs"]
 mod summary;
 
@@ -34,6 +39,11 @@ enum Page {
 }
 /// The person asked to go back to the list.
 pub struct PrBack;
+/// This pull request was merged, so an open list no longer has it.
+pub struct PrMerged {
+    pub repository: String,
+    pub number: u64,
+}
 struct ReplyTarget {
     id: u64,
     author: String,
@@ -61,6 +71,9 @@ pub struct PrDetail {
     reply_input: Option<Entity<TextareaState>>,
     drafter: Entity<GitOperation>,
     drafting_at: Option<(ReviewIdentity, u64)>,
+    /// The head a generated draft was written against; a new head makes it wrong.
+    drafted_head: Option<String>,
+    writes: Entity<PrWrites>,
     merge_method: &'static str,
     posted: Option<String>,
     merged: Option<String>,
@@ -71,8 +84,10 @@ pub struct PrDetail {
     read: Option<Task<()>>,
     _review: Option<Subscription>,
     _drafter: Subscription,
+    _writes: [Subscription; 2],
 }
 impl EventEmitter<PrBack> for PrDetail {}
+impl EventEmitter<PrMerged> for PrDetail {}
 impl PrDetail {
     pub fn new(
         session: String,
@@ -83,6 +98,13 @@ impl PrDetail {
     ) -> Self {
         let drafter = cx.new(|_| GitOperation::default());
         let drafter_heard = cx.observe(&drafter, |view: &mut Self, _, cx| view.draft_changed(cx));
+        let writes = cx.new(|cx| PrWrites::new(session.clone(), cx));
+        let writes_heard = [
+            cx.observe(&writes, |_, _, cx| cx.notify()),
+            cx.subscribe(&writes, |view: &mut Self, _, done: &WriteDone, cx| {
+                view.write_done(done, cx)
+            }),
+        ];
         let mut detail = Self {
             session,
             repository,
@@ -102,6 +124,8 @@ impl PrDetail {
             reply_input: None,
             drafter,
             drafting_at: None,
+            drafted_head: None,
+            writes,
             merge_method: "merge",
             posted: None,
             merged: None,
@@ -112,6 +136,7 @@ impl PrDetail {
             read: None,
             _review: None,
             _drafter: drafter_heard,
+            _writes: writes_heard,
         };
         if active {
             detail.refresh(cx);
@@ -146,6 +171,8 @@ impl PrDetail {
         self.read = None;
         self.revision += 1;
         let revision = self.revision;
+        // Only a read that began after the write ended can show what the write did.
+        let writes_settled = !self.writes.read(cx).busy(cx);
         self.loading = true;
         self.failure = None;
         let Some(socket) = SocketClient::try_bulk(cx) else {
@@ -177,7 +204,7 @@ impl PrDetail {
                                 view._review=Some(cx.observe(&review,|_,_,cx|cx.notify()));view.review=Some(review);
                             }
                             if let Some(files)=&view.files{files.update(cx,|files,cx|files.replace_detail(&detail,cx));}
-                            view.detail=Some(detail);view.sync_files(cx);
+                            view.detail=Some(detail);view.page_read(writes_settled,cx);view.sync_files(cx);
                         }
                     },Outcome::Failed(error)=>view.failure=Some(error.message),Outcome::Aborted=>view.failure=Some("The pull request read was cancelled.".into()),
                 }cx.notify();
@@ -260,7 +287,7 @@ impl PrDetail {
             .map_or((0, 0), |detail| change_totals(&detail.files));
         let on_changes = self.page == Page::Changes;
         let url = self.detail.as_ref().map(|detail| detail.url.clone());
-        let posting = self.drafter.read(cx).busy;
+        let posting = self.writes.read(cx).posting(cx);
         h_flex()
             .px_3()
             .py_2()
@@ -426,6 +453,7 @@ impl Render for PrDetail {
         self.sync_composer(window, cx);
         let danger = cx.theme().danger;
         let detail = self.detail.clone();
+        let post_error = self.writes.read(cx).post_error(cx);
         let page = match (&detail, self.page) {
             (Some(detail), Page::Changes) => self.changes_page(detail, cx),
             (detail, _) => self.summary_page(detail.as_ref(), cx),
@@ -434,7 +462,7 @@ impl Render for PrDetail {
             .size_full()
             .min_h_0()
             .child(self.page_bar(cx))
-            .children(self.failure.clone().map(|error| {
+            .children(self.failure.clone().into_iter().chain(post_error).map(|error| {
                 div()
                     .px_3()
                     .py_1()

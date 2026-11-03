@@ -1,11 +1,9 @@
 //! The Summary page: what the pull request is, everything that happened on it, the comment box and merge card, and
 //! the side column of threads, comments, reviews and checks.
 use super::super::{
-    merge_dialog,
-    merge_dialog::MergeRequest,
     pr_activity::{
-        ActivityRow, PrTone, activity_rows, check_summary, check_tone, check_word, checks_fact,
-        merge_method_label, mergeable_fact, pr_state, words_of,
+        ActivityRow, activity_rows, check_summary, check_tone, check_word, pr_state,
+        words_of,
     },
     pr_parts::{age_label, avatar, state_icon, tone_color},
     pull_request::{CheckTone, PullRequestComment},
@@ -13,9 +11,7 @@ use super::super::{
 use super::*;
 use crate::core::ui::markdown::view::MarkdownView;
 use gpui_kit::component::Icon;
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::gpui_base::StyledExt as _;
 
 /// Below this the side column moves under the main one.
 const TWO_COLUMNS: f32 = 1180.;
@@ -35,7 +31,7 @@ fn side_section(title: &'static str, body: impl IntoElement, cx: &App) -> impl I
         )
         .child(body)
 }
-fn quiet(text: impl Into<SharedString>, cx: &App) -> Div {
+pub(super) fn quiet(text: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
@@ -188,14 +184,14 @@ impl PrDetail {
                             .child(format!("{} #{}", detail.repository, detail.number)),
                     ),
             )
-            .child(div().text_lg().font_semibold().child(detail.title.clone()))
+            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(detail.title.clone()))
             .child(
                 h_flex()
                     .gap_1()
                     .text_sm()
                     .text_color(muted)
                     .children(avatar(&detail.author))
-                    .child(div().font_semibold().child(detail.author.clone()))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(detail.author.clone()))
                     .children(age_label(
                         "pr-opened-age".into(),
                         &detail.created_at,
@@ -221,7 +217,7 @@ impl PrDetail {
             .pt_3()
             .border_t_1()
             .border_color(border)
-            .child(div().font_semibold().child("Activity"))
+            .child(div().font_weight(FontWeight::SEMIBOLD).child("Activity"))
             .children(
                 activity_rows(detail)
                     .into_iter()
@@ -271,7 +267,7 @@ impl PrDetail {
                 .text_sm()
                 .text_color(muted)
                 .children(avatar(who))
-                .child(div().font_semibold().child(who.to_string()))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(who.to_string()))
                 .child(words.to_string())
                 .children(age(at))
                 .into_any_element()
@@ -338,7 +334,7 @@ impl PrDetail {
                             .text_sm()
                             .text_color(muted)
                             .children(avatar(&comment.author))
-                            .child(div().font_semibold().child(comment.author.clone()))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(comment.author.clone()))
                             .child(if place.is_some() {
                                 "commented on"
                             } else {
@@ -370,7 +366,7 @@ impl PrDetail {
                             .text_sm()
                             .text_color(muted)
                             .children(avatar(&review.author))
-                            .child(div().font_semibold().child(review.author.clone()))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(review.author.clone()))
                             .child(words_of(&review.state))
                             .children(age(&at)),
                     )
@@ -399,104 +395,6 @@ impl PrDetail {
         self.reply_input = None;
         cx.notify();
     }
-    fn merge_card(&self, detail: &PullRequestDetail, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (surface, success, muted, radius) = (
-            theme.secondary,
-            theme.success,
-            theme.muted_foreground,
-            theme.radius_lg,
-        );
-        let fact = |settled: bool, text: String| {
-            h_flex()
-                .gap_2()
-                .text_sm()
-                .child(
-                    div()
-                        .flex_none()
-                        .text_color(if settled { success } else { muted })
-                        .child(if settled { "✓" } else { "•" }),
-                )
-                .child(text)
-        };
-        let (checks_settled, checks) = checks_fact(&detail.checks);
-        let (merge_settled, conflicts) = mergeable_fact(&detail.mergeable);
-        let can_merge = MergeRequest::available(&detail.state, detail.is_draft, &detail.mergeable)
-            && self.current_identity().is_some();
-        let method = self.merge_method;
-        let target = cx.entity().downgrade();
-        v_flex()
-            .gap_2()
-            .p_3()
-            .rounded(radius)
-            .bg(surface)
-            .child(fact(checks_settled, checks))
-            .child(fact(merge_settled, conflicts.to_string()))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .text_sm()
-                    .child(
-                        Button::new("pr-merge")
-                            .small()
-                            .label("Merge pull request")
-                            .disabled(!can_merge)
-                            .on_click(
-                                cx.listener(|view, _, window, cx| view.preview_merge(window, cx)),
-                            ),
-                    )
-                    .child("using")
-                    .child(
-                        Button::new("pr-merge-method")
-                            .outline()
-                            .small()
-                            .dropdown_caret(true)
-                            .label(merge_method_label(method))
-                            .dropdown_menu(move |menu, _, _| {
-                                ["merge", "squash", "rebase"].into_iter().fold(
-                                    menu,
-                                    |menu, choice| {
-                                        let target = target.clone();
-                                        menu.item(
-                                            PopupMenuItem::new(merge_method_label(choice))
-                                                .checked(choice == method)
-                                                .on_click(move |_, _, cx| {
-                                                    _ = target.update(cx, |view, cx| {
-                                                        view.merge_method = choice;
-                                                        cx.notify();
-                                                    });
-                                                }),
-                                        )
-                                    },
-                                )
-                            }),
-                    ),
-            )
-            .when(detail.is_draft, |card| {
-                card.child(quiet(
-                    "Mark this draft ready for review on GitHub before merging.",
-                    cx,
-                ))
-            })
-    }
-    fn preview_merge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(detail) = self.detail.clone() else {
-            return;
-        };
-        let has_draft = self.review.as_ref().is_some_and(|review| {
-            let review = review.read(cx);
-            !review.body.trim().is_empty() || !review.comments.is_empty()
-        });
-        merge_dialog::open(
-            self.session.clone(),
-            detail,
-            self.merge_method,
-            has_draft,
-            cx.entity().downgrade(),
-            window,
-            cx,
-        );
-    }
     fn side_column(&self, detail: &PullRequestDetail, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (success, danger, warning) = (theme.success, theme.danger, theme.warning);
@@ -514,7 +412,7 @@ impl PrDetail {
                         .child(
                             div()
                                 .flex_none()
-                                .font_semibold()
+                                .font_weight(FontWeight::SEMIBOLD)
                                 .child(comment.author.clone()),
                         )
                         .child(div().min_w_0().truncate().child(comment.body.clone()))
@@ -533,7 +431,7 @@ impl PrDetail {
                 h_flex()
                     .gap_2()
                     .children(avatar(&review.author))
-                    .child(div().font_semibold().child(review.author.clone()))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(review.author.clone()))
                     .child(words_of(&review.state))
             }))
             .children(requested);

@@ -1,11 +1,9 @@
-use super::super::git_operation::GitOperation;
 use super::{
     pr_detail::PrDetail,
     review_draft::{LineComment, ReviewDraft, ReviewIdentity},
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, WindowExt as _, h_flex, v_flex};
-use gpui_kit::gpui_base::StyledExt as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
@@ -75,6 +73,9 @@ impl PostRequest {
             _ => &[],
         }
     }
+    pub fn is_reply(&self) -> bool {
+        matches!(self.action, Action::Reply(_))
+    }
     fn title(&self) -> &'static str {
         match self.action {
             Action::Review(_) => "Post this review?",
@@ -82,7 +83,7 @@ impl PostRequest {
             Action::Comment => "Post this comment?",
         }
     }
-    fn action(&self) -> &'static str {
+    pub(super) fn action(&self) -> &'static str {
         match self.action {
             Action::Review(_) => "review",
             Action::Reply(_) => "reply",
@@ -104,118 +105,52 @@ impl PostRequest {
         Ok(args)
     }
 }
+/// What will be posted, and the go-ahead. Confirming closes this; the page shows the post running and how it went.
 pub struct PostConfirm {
-    session: String,
-    request: PostRequest,
-    detail: Option<WeakEntity<PrDetail>>,
-    operation: Entity<GitOperation>,
-    submitted: bool,
-    closing: bool,
-    failure: Option<String>,
-    _operation: Subscription,
-}
-pub fn open(
-    session: String,
     request: PostRequest,
     detail: WeakEntity<PrDetail>,
-    window: &mut Window,
-    cx: &mut App,
-) {
+    failure: Option<String>,
+}
+pub fn open(request: PostRequest, detail: WeakEntity<PrDetail>, window: &mut Window, cx: &mut App) {
     let title = request.title();
-    let confirm = cx.new(|cx| PostConfirm::new(session, request, Some(detail), cx));
+    let confirm = cx.new(|_| PostConfirm {
+        request,
+        detail,
+        failure: None,
+    });
     window.open_dialog(cx, move |dialog, _, _| {
         dialog.title(title).footer(Empty).child(confirm.clone())
     });
 }
 impl PostConfirm {
-    pub fn new(
-        session: String,
-        request: PostRequest,
-        detail: Option<WeakEntity<PrDetail>>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let operation = cx.new(|_| GitOperation::default());
-        let heard = cx.observe(&operation, |view: &mut Self, _, cx| {
-            if let Some(status) = &view.operation.read(cx).status {
-                if status.state == "succeeded" {
-                    let url = status
-                        .result
-                        .as_ref()
-                        .and_then(Value::as_str)
-                        .filter(|value| {
-                            url::Url::parse(value).is_ok_and(|url| {
-                                url.scheme() == "https" && url.host_str() == Some("github.com")
-                            })
-                        });
-                    if let Some(url) = url {
-                        let url = url.to_string();
-                        let was_reply = matches!(view.request.action, Action::Reply(_));
-                        if let Some(detail) = view.detail.clone() {
-                            _ = detail
-                                .update(cx, |detail, cx| detail.post_finished(was_reply, url, cx));
-                        }
-                        view.closing = true;
-                    } else {
-                        view.failure =
-                            Some("The post was not confirmed. Refresh before trying again.".into());
-                    }
-                }
-            }
-            cx.notify();
-        });
-        Self {
-            session,
-            request,
-            detail,
-            operation,
-            submitted: false,
-            closing: false,
-            failure: None,
-            _operation: heard,
-        }
-    }
-    pub fn confirm(&mut self, current: &ReviewIdentity, cx: &mut Context<Self>) {
-        if self.submitted {
-            return;
-        }
-        match self.request.args(current) {
-            Ok(args) => {
-                self.submitted = true;
-                self.failure = None;
-                let session = self.session.clone();
-                let action = self.request.action();
-                self.operation.update(cx, |operation, cx| {
-                    operation.start(action, Some(session), args, cx)
-                });
-            }
-            Err(error) => self.failure = Some(error),
-        }
-        cx.notify();
-    }
-    pub fn uncertain(&self, cx: &App) -> bool {
-        self.operation
-            .read(cx)
-            .status
-            .as_ref()
-            .is_some_and(|status| status.state == "uncertain")
-    }
     fn current(&self, cx: &App) -> Option<ReviewIdentity> {
-        self.detail.as_ref()?.upgrade()?.read(cx).current_identity()
+        self.detail.upgrade()?.read(cx).current_identity()
+    }
+    fn free(&self, cx: &App) -> bool {
+        self.detail
+            .upgrade()
+            .is_some_and(|detail| detail.read(cx).writes_free(cx))
+    }
+    fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let request = self.request.clone();
+        let started = self
+            .detail
+            .update(cx, |detail, cx| detail.start_post(&request, cx));
+        match started {
+            Ok(Err(error)) => {
+                self.failure = Some(error);
+                cx.notify();
+            }
+            _ => window.close_dialog(cx),
+        }
     }
     fn refresh(&self, window: &mut Window, cx: &mut App) {
-        if let Some(detail) = self.detail.as_ref().and_then(WeakEntity::upgrade) {
-            detail.update(cx, |detail, cx| detail.refresh(cx));
-        }
+        _ = self.detail.update(cx, |detail, cx| detail.refresh(cx));
         window.close_dialog(cx);
     }
 }
 impl Render for PostConfirm {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.closing {
-            self.closing = false;
-            cx.defer_in(window, |_, window, cx| window.close_dialog(cx));
-        }
-        let busy = self.operation.read(cx).busy;
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let (danger, muted, border, radius) = (
             theme.danger,
@@ -224,21 +159,19 @@ impl Render for PostConfirm {
             theme.radius,
         );
         let current = self.current(cx);
-        let can_post = !self.submitted
+        let can_post = self.free(cx)
             && current
                 .as_ref()
                 .is_some_and(|current| self.request.args(current).is_ok());
-        let uncertain = self.uncertain(cx);
         let identity = &self.request.identity;
         let is_comment = matches!(self.request.action, Action::Comment);
         let head: String = identity.head.chars().take(10).collect();
         v_flex()
             .gap_2()
-            .child(
-                div()
-                    .font_semibold()
-                    .child(format!("{} #{} · head {head}", identity.repository, identity.number)),
-            )
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(format!(
+                "{} #{} · head {head}",
+                identity.repository, identity.number
+            )))
             .children(match self.request.action {
                 Action::Reply(id) => Some(format!("Reply to review comment {id}")),
                 _ => None,
@@ -261,7 +194,7 @@ impl Render for PostConfirm {
                     .child(
                         div()
                             .flex_none()
-                            .font_semibold()
+                            .font_weight(FontWeight::SEMIBOLD)
                             .child(format!("{}:{}", comment.path, comment.line)),
                     )
                     .child(comment.body.clone())
@@ -276,19 +209,7 @@ impl Render for PostConfirm {
                     .clone()
                     .map(|error| div().text_color(danger).child(error)),
             )
-            .children(
-                self.operation
-                    .read(cx)
-                    .error
-                    .clone()
-                    .map(|error| div().text_color(danger).child(error)),
-            )
-            .children(uncertain.then(|| {
-                div()
-                    .text_sm()
-                    .child("This may have posted. Refresh before trying again.")
-            }))
-            .children((current.is_none() && !self.submitted).then(|| {
+            .children(current.is_none().then(|| {
                 div()
                     .text_sm()
                     .child("Refresh the pull request before posting. Your draft is kept.")
@@ -303,7 +224,7 @@ impl Render for PostConfirm {
                             .label("Cancel")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
-                    .children((uncertain || current.is_none()).then(|| {
+                    .children(current.is_none().then(|| {
                         Button::new("post-refresh")
                             .ghost()
                             .label("Refresh this pull request")
@@ -312,19 +233,13 @@ impl Render for PostConfirm {
                     .child(
                         Button::new("post-confirm")
                             .primary()
-                            .label(if busy {
-                                "Posting…"
-                            } else if matches!(self.request.action, Action::Reply(_)) {
+                            .label(if self.request.is_reply() {
                                 "Post reply to GitHub"
                             } else {
                                 "Post to GitHub"
                             })
                             .disabled(!can_post)
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                if let Some(current) = view.current(cx) {
-                                    view.confirm(&current, cx);
-                                }
-                            })),
+                            .on_click(cx.listener(|view, _, window, cx| view.confirm(window, cx))),
                     ),
             )
     }

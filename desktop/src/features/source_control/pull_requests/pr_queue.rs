@@ -83,6 +83,18 @@ impl PrQueue {
             self.refresh(cx);
         }
     }
+    /// A merged pull request leaves the list right away, without waiting for the next read.
+    pub fn merged(&mut self, repository: &str, number: u64, cx: &mut Context<Self>) {
+        let before = self.page.items.len();
+        self.page
+            .items
+            .retain(|pr| pr.number != number || !pr.repository.eq_ignore_ascii_case(repository));
+        self.page.total = self
+            .page
+            .total
+            .saturating_sub(before - self.page.items.len());
+        cx.notify();
+    }
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         self.read = None;
         self.loading = false;
