@@ -265,7 +265,7 @@ fn stop_stops_the_running_turn_and_does_nothing_while_idle(cx: &mut TestAppConte
     cx.run_until_parked();
     assert_eq!(
         client.calls(),
-        [("send/stop".to_string(), json!({ "runId": "r7" }))]
+        [("send/stop".to_string(), json!({ "runId": "r7","session":"s1","expectedSource":{"machine":"owner","generation":0,"routeMachine":null} }))]
     );
 }
 

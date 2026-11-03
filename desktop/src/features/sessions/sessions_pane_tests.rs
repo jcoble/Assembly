@@ -241,9 +241,10 @@ async fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
             pane.filter
                 .update(cx, |input, cx| input.set_value("notes", window, cx));
             let read = pane.rail.set_filter("notes");
-            pane.send(read, cx);
+            pane.send(read.clone(), cx);
             assert_eq!(pane.rail.filter, "notes");
-        });
+            read.expect("the changed filter starts its correlated read")
+        })
     };
     let cleared = |pane: &Entity<SessionsPane>, cx: &mut VisualTestContext| {
         pane.read_with(cx, |pane, cx| {
@@ -256,8 +257,10 @@ async fn filter_clears_on_escape_and_selection(cx: &mut TestAppContext) {
     pane.update_in(cx, |pane, window, cx| pane.clear_filter(window, cx));
     cleared(&pane, cx);
     // Picking a session.
-    typed(&pane, cx);
-    answer(&pane, page(vec![test_entry("a", "/r")]), cx);
+    let (filtered, _)=typed(&pane, cx);
+    // Answer the request already sent by typing; changed() correctly coalesces while it is pending.
+    pane.update(cx,|pane,cx|pane.answer(filtered,Outcome::Ok(page(vec![test_entry("a","/r")])),cx));
+    draw(cx);
     click("session-a", cx);
     nav.opened("a",cx).await;
     assert_eq!(selected(cx).as_deref(), Some("a"));

@@ -31,8 +31,8 @@ pub(super) fn pane_key(state: &PanelState, key: &WorkspaceKey) -> Result<String,
         return Err("The saved pane is not leaf metadata.".into());
     };
     let fields: &[&str] = match state.panel_name.as_str() {
-        "Changes" => &["session", "path", "originalPath", "sha", "title", "split"],
-        "Git history" => &["session", "path"],
+        "Changes" => &["session", "path", "originalPath", "sha", "title", "split", "expectedSource"],
+        "Git history" => &["session", "path", "expectedSource"],
         "Pull requests" => &["session"],
         _ => return Err("Unknown saved center pane.".into()),
     };
@@ -42,10 +42,15 @@ pub(super) fn pane_key(state: &PanelState, key: &WorkspaceKey) -> Result<String,
         }
         if info
             .iter()
-            .any(|(field, value)| field != "split" && !value.is_null() && !value.is_string())
+            .any(|(field, value)| field != "split" && field != "expectedSource" && !value.is_null() && !value.is_string())
         {
             return Err("Saved pane text metadata must be actual strings.".into());
         }
+    }
+    // This is the pane's retained source assertion, never refreshed or treated as filesystem authority.
+    if let Some(source) = info.get("expectedSource").filter(|source| !source.is_null()) {
+        serde_json::from_value::<crate::core::socket::row_source::ExpectedRowSource>(source.clone())
+            .map_err(|_| "Invalid saved pane source assertion.".to_string())?;
     }
     match state.panel_name.as_str() {
         "Changes" => ChangesPane::workspace_key(state, &key.session_id),

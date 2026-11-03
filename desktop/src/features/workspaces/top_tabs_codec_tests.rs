@@ -9,8 +9,8 @@ impl Render for Host {fn render(&mut self,_:&mut Window,_:&mut Context<Self>)->i
 fn key()->WorkspaceKey {WorkspaceKey {machine:"actual-owner".into(),session_id:"session".into(),checkout_root:"/checkout".into()}}
 fn saved()->Value {serde_json::json!({"version":1,"files":[],"topTabs":{
     "order":["Chat","git-history:session","Changes","pull-requests"],"activeKey":"Changes","panes":[
-        {"key":"git-history:session","state":{"panel_name":"Git history","children":[],"info":{"panel":{"session":"session","path":"src/λ.rs"}}}},
-        {"key":"Changes","state":{"panel_name":"Changes","children":[],"info":{"panel":{"session":"session","path":"src/λ.rs","originalPath":null,"split":true}}}},
+        {"key":"git-history:session","state":{"panel_name":"Git history","children":[],"info":{"panel":{"session":"session","expectedSource":null,"path":"src/λ.rs"}}}},
+        {"key":"Changes","state":{"panel_name":"Changes","children":[],"info":{"panel":{"session":"session","expectedSource":null,"path":"src/λ.rs","originalPath":null,"split":true}}}},
         {"key":"pull-requests","state":{"panel_name":"Pull requests","children":[],"info":{"panel":{"session":null}}}}
     ]}})}
 #[gpui::test]

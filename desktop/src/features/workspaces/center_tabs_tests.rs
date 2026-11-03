@@ -70,3 +70,21 @@ fn registered_text_fields_cannot_hide_operational_objects() {
     let value = json!({"order":["Changes"],"activeKey":"Changes","panes":[{"key":"Changes","state":{"panel_name":"Changes","children":[],"info":{"panel":{"session":"session","title":{"permissions":"allow"}}}}}]});
     assert!(parse(&value, &key(), &json!({"files":[]})).is_err());
 }
+
+#[test]
+fn captured_git_source_assertions_roundtrip_but_malformed_or_operational_fields_refuse() {
+    for source in [Value::Null, json!({"machine":"source","generation":7,"routeMachine":"route"})] {
+        let mut pane=history();
+        pane["state"]["info"]["panel"]["expectedSource"]=source;
+        let value=json!({"order":["git-history:session"],"activeKey":"git-history:session","panes":[pane]});
+        let decoded=parse(&value,&key(),&json!({"files":[]})).unwrap().unwrap();
+        assert_eq!(serde_json::to_value(decoded).unwrap(),value);
+    }
+    for source in [json!("route"),json!({"machine":"source","generation":"7","routeMachine":"route"}),
+        json!({"machine":"source","generation":7,"routeMachine":"route","permissions":"allow"})] {
+        let mut pane=history();
+        pane["state"]["info"]["panel"]["expectedSource"]=source;
+        let value=json!({"order":["git-history:session"],"activeKey":"git-history:session","panes":[pane]});
+        assert!(parse(&value,&key(),&json!({"files":[]})).is_err());
+    }
+}

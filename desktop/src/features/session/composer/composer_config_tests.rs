@@ -69,7 +69,7 @@ fn the_agents_menus_are_read_for_the_session_with_their_values(cx: &mut TestAppC
     let (composer, client, cx) = on_s1(cx);
     assert_eq!(
         client.config_calls(),
-        [("config/get".to_string(), json!({ "session": "s1" }))]
+        [("config/get".to_string(), json!({ "session": "s1", "expectedSource":{"machine":"owner","generation":0,"routeMachine":null} }))]
     );
     assert_eq!(
         menus(&composer, cx),
@@ -94,7 +94,7 @@ fn a_pick_sets_the_value_and_the_menu_shows_what_the_agent_answers(cx: &mut Test
         client.config_calls()[1],
         (
             "config/set".to_string(),
-            json!({ "session": "s1", "configId": "model", "value": "opus" })
+            json!({ "session": "s1", "configId": "model", "value": "opus", "expectedSource":{"machine":"owner","generation":0,"routeMachine":null} })
         )
     );
     assert_eq!(menus(&composer, cx)[0].1, "opus");
@@ -350,7 +350,7 @@ fn delayed_on_s1(
     let (composer, cx) =
         cx.add_window_view(move |window, cx| Composer::new(std::rc::Rc::new(held), window, cx));
     composer.update_in(cx, |composer, window, cx| {
-        composer.set_session(Some("s1".into()), window, cx);
+        composer.set_target(Some(crate::core::engine::SessionKey{machine:"owner".into(),id:"s1".into()}),Some(crate::core::socket::row_source::ExpectedRowSource{machine:"owner".into(),generation:7,route_machine:Some("Workbox Test".into())}),window,cx);
     });
     client
         .take("get", "s1")
@@ -367,8 +367,8 @@ fn leave_and_return(
     cx: &mut VisualTestContext,
 ) -> ConfigCall {
     composer.update_in(cx, |composer, window, cx| {
-        composer.set_session(Some("s2".into()), window, cx);
-        composer.set_session(Some("s1".into()), window, cx);
+        composer.set_target(Some(crate::core::engine::SessionKey{machine:"owner".into(),id:"s2".into()}),Some(crate::core::socket::row_source::ExpectedRowSource{machine:"owner".into(),generation:7,route_machine:Some("Workbox Test".into())}),window,cx);
+        composer.set_target(Some(crate::core::engine::SessionKey{machine:"owner".into(),id:"s1".into()}),Some(crate::core::socket::row_source::ExpectedRowSource{machine:"owner".into(),generation:7,route_machine:Some("Workbox Test".into())}),window,cx);
     });
     let abandoned = client.take("get", "s2");
     cx.run_until_parked();

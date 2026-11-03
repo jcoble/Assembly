@@ -26,7 +26,7 @@ fn begin_warm(
     let warm = client.take("warm", "s1");
     assert_eq!(
         warm.args,
-        json!({"session":"s1","targetId":"advertised-owner-1","machine":"Workbox Test"})
+        json!({"session":"s1","targetId":"advertised-owner-1","machine":"Workbox Test","expectedSource":{"machine":"owner","generation":7,"routeMachine":"Workbox Test"}})
     );
     warm
 }
@@ -151,11 +151,19 @@ fn a_failed_warm_keeps_readable_cache_and_reconnect_allows_exactly_one_new_attem
         client.calls.borrow().is_empty(),
         "failure is not automatically retried"
     );
-    composer.update(cx, |composer, cx| composer.connection_changed(false, cx));
+    let (key,source)=composer.read_with(cx,|composer,_|(composer.session_key.clone(),composer.expected_source.clone()));
+    composer.update(cx,|composer,cx|composer.read_config(cx));
     let disconnected = client.take("get", "s1");
+    composer.update(cx, |composer, cx| composer.connection_changed(false, cx));
     composer.update(cx, |composer, cx| composer.connection_changed(true, cx));
     cx.run_until_parked();
     assert!(disconnected.answer.send(Ok(config("opus"))).is_err());
+    assert!(client.calls.borrow().is_empty(),"reconnect cannot revive an invalidated source or retry provider setup");
+    // Simulate the navigator's newly checked descriptor commit, never a reconnect readiness flag.
+    composer.update_in(cx,|composer,window,cx|composer.set_target(key,source,window,cx));
+    client.take("get","s1").answer.send(Ok(config("sonnet"))).unwrap();
+    cx.run_until_parked();
+    composer.update(cx,|composer,cx|composer.set_owner(Some("codex".into()),Some("Workbox Test".into()),"profile-v1".into(),cx));
     client
         .take("get", "s1")
         .answer
@@ -194,7 +202,7 @@ fn a_menu_pick_cancels_late_warm_and_sends_the_advertised_target(cx: &mut TestAp
     let pick = client.take("set", "s1");
     assert_eq!(
         pick.args,
-        json!({"session":"s1","configId":"model","value":"opus","targetId":"advertised-owner-1"})
+        json!({"session":"s1","configId":"model","value":"opus","targetId":"advertised-owner-1","expectedSource":{"machine":"owner","generation":7,"routeMachine":"Workbox Test"}})
     );
     pick.answer.send(Ok(config("opus"))).unwrap();
     cx.run_until_parked();

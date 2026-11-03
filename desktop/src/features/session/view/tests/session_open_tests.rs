@@ -305,7 +305,7 @@ fn native_stop_sends_parent_and_the_exact_persisted_provider_child_suffix(cx:&mu
         pane.on_action(SessionAction::StopNative{key,payload_session_id:"parent".into()},window,cx);
     });
     cx.run_until_parked();
-    assert_eq!(client.calls(),vec![("send/stopTask".into(),serde_json::json!({"session":"parent","task":"actual-provider-child"}))]);
+    assert_eq!(client.calls(),vec![("send/stopTask".into(),serde_json::json!({"session":"parent","task":"actual-provider-child","expectedSource":{"machine":"engine","generation":0,"routeMachine":null}}))]);
 }
 
 #[gpui::test]
