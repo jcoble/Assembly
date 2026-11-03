@@ -35,7 +35,8 @@ public sealed class FilesSocketTests : IAsyncLifetime
         _db = AppDatabase.Open(_file.Path, TimeProvider.System, topics);
         _sessions = SessionStore.Open(_db, TimeProvider.System, _checkouts.FullName);
         var calls = new SocketDispatcher(_db.Writer, topics, TimeProvider.System, NullLogger.Instance);
-        new FilesFeature(_sessions).Register(calls);
+        global::Assembly.Engine.Persistence.EngineSchema.Open(_db, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        new FilesFeature(_sessions, new FileOwner(_sessions, _db)).Register(calls);
         var builder = WebApplication.CreateSlimBuilder();
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0));
@@ -103,10 +104,10 @@ public sealed class FilesSocketTests : IAsyncLifetime
         var root = _sessions.Item(session).Root!;
         GitFolder.Fill(root, "src/Program.cs", "readme.md");
         using var socket = await OpenAsync();
-        await CallAsync(socket, 1, "search", $$"""{"session":"{{session.SessionId}}","query":"prog","cursor":0,"pageSize":10}""");
+        await CallAsync(socket, 1, "search", $$"""{"session":"{{session.SessionId}}","query":"prog","pageSize":10}""");
         var result = JsonDocument.Parse(await ReadAsync(socket)).RootElement.GetProperty("result");
-        Assert.True(result.GetProperty("complete").GetBoolean());
-        Assert.Equal("src/Program.cs", Assert.Single(result.GetProperty("matches").EnumerateArray()).GetProperty("relativePath").GetString());
+        Assert.False(result.GetProperty("more").GetBoolean());
+        Assert.Equal("src/Program.cs", Assert.Single(result.GetProperty("names").EnumerateArray()).GetProperty("relativePath").GetString());
     }
 
     // Pins: files#6, files#10

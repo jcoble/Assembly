@@ -302,6 +302,8 @@ impl Draw<'_> {
                         session_id: session.clone(),
                         path: path.clone(),
                         line: None,
+                        column: None,
+                        pinned: true,
                     }),
                 };
                 window.dispatch_action(action, cx);

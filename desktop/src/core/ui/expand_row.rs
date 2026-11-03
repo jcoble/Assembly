@@ -44,6 +44,7 @@ pub struct ExpandRow {
     build_body: Body,
     band: Band,
     open: bool,
+    toggle_on_title: bool,
     /// The body's full size, from its last layout; `None` until it's first drawn.
     body: Option<Size<Pixels>>,
     /// The row's height as last drawn, as the owner last heard it.
@@ -81,11 +82,18 @@ impl ExpandRow {
                 })
             }),
             open,
+            toggle_on_title: true,
             body: None,
             height: px(0.),
             moving: None,
             resizing: None,
         }
+    }
+
+    /// Lists can reserve toggling for their explicit chevron; chat keeps title toggling.
+    pub fn toggle_on_title(mut self, enabled: bool) -> Self {
+        self.toggle_on_title = enabled;
+        self
     }
 
     /// The owner draws the band instead, on the row's root, from how far it has grown.
@@ -113,7 +121,6 @@ impl ExpandRow {
     }
 
     /// The row's height as last drawn.
-    #[cfg(test)]
     pub(super) fn drawn_height(&self) -> Pixels {
         self.height
     }
@@ -248,8 +255,11 @@ impl Render for ExpandRow {
             .child(
                 div()
                     .id("expand-row-title")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|row, _, _, cx| row.click(cx)))
+                    .when(self.toggle_on_title, |title| {
+                        title
+                            .cursor_pointer()
+                            .on_click(cx.listener(|row, _, _, cx| row.click(cx)))
+                    })
                     .child((self.title)(grown, window, cx)),
             )
             .when_some(body, |row, body| match clip {

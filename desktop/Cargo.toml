@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 futures-channel = "=0.3.34"
-gpui-kit = { version = "=0.8.1", features = ["profiler"] }
+gpui-kit = { version = "=0.8.1", features = ["profiler", "syntect"] }
 libc = "=0.2.191"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.154", features = ["preserve_order"] }

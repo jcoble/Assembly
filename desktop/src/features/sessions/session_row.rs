@@ -15,9 +15,9 @@ use super::history::age::{age, elapsed_text};
 use super::presence::Presence;
 use super::rail_page::RailEntry;
 use super::status::Status;
-use crate::core::ui::spinner::RingSpinner;
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::TextRole;
+use crate::core::ui::spinner::RingSpinner;
 
 /// Moves a session to a group: the pane's `mark`.
 pub type OnMark = Rc<dyn Fn(String, Status, &mut App)>;

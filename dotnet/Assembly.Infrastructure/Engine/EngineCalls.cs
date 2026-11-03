@@ -12,6 +12,7 @@ using Assembly.Engine.NeedsMe;
 using Assembly.Engine.Runs;
 using Assembly.Engine.Sessions;
 using Assembly.Engine.Providers;
+using Assembly.Engine.Reading;
 
 namespace Assembly.Infrastructure.Engine;
 
@@ -20,6 +21,7 @@ public sealed record WindowCommand(Guid CommandId, string EntityId, long Expecte
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Machine = null);
 public sealed record EngineUsageArgs(string EntityKind, string EntityId, string? Machine = null);
 public sealed record EngineEntityArgs(string EntityKind, string EntityId, string? Machine = null);
+public sealed record EngineEntitiesArgs(IReadOnlyList<EngineEntityRef> Refs, string? After = null, string? Machine = null);
 
 /// <summary>The authenticated window's checked owner commands; identity and time are host-owned.</summary>
 public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAnswers needs) : IFeature
@@ -33,6 +35,8 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
 
     private static int OwnerPageBytes(long id, OwnerPromptPage page) => SocketDispatcher.Result(id,
         JsonSerializer.SerializeToElement(page, EngineSocketJson.Default.OwnerPromptPage)).Length;
+    private static int EntitiesBytes(long id, EngineEntitiesPage page) => SocketDispatcher.Result(id,
+        JsonSerializer.SerializeToElement(page, EngineSocketJson.Default.EngineEntitiesPage)).Length;
 
     public void Register(ICallRegistry calls)
     {
@@ -99,5 +103,32 @@ public sealed class EngineCalls(EngineRuntime runtime, TimeProvider time, NeedAn
                     JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.EngineEntityArgs), true, call.Cancellation))
                     .Deserialize(EngineSocketJson.Default.NullableJsonElement)
                 : runtime.Reader.Entity(args.EntityKind, args.EntityId, call.Cancellation, args.Machine), bulk: true);
+        calls.Read("engine", "entities", EngineSocketJson.Default.EngineEntitiesArgs, EngineSocketJson.Default.EngineEntitiesPage,
+            async (args, call) =>
+            {
+                if (call.Peer is not OwnerPeer) throw new CallFailed("forbidden");
+                if (call.ReplyId is not { } replyId) throw new CallFailed("reply metadata unavailable");
+                if (args.Refs is null) throw new CallFailed("bad_args");
+                if (IsRemote(args.Machine) && args.Refs.Any(item => item?.Kind is "tool_call" or "usage"))
+                {
+                    // A mixed owner-only batch is read once on its actual owner, never split across snapshots.
+                    var result = await Forward.CallAsync(args.Machine!, "engine", "entities",
+                        JsonSerializer.SerializeToElement(args with { Machine = null }, EngineSocketJson.Default.EngineEntitiesArgs),
+                        true, call.Cancellation);
+                    var page = result.Deserialize(EngineSocketJson.Default.EngineEntitiesPage)
+                        ?? throw new IOException("Invalid entity page");
+                    if (EntitiesBytes(replyId, page) > 1024 * 1024) throw new CallFailed("entity response exceeds budget", "oversize");
+                    return page;
+                }
+                try
+                {
+                    return runtime.Reader.Entities(args.Refs, args.After, call.Cancellation, args.Machine, call.Connection,
+                        page => EntitiesBytes(replyId, page));
+                }
+                catch (ArgumentException error) { throw new CallBadArguments(error.Message); }
+                catch (InvalidOperationException error) when (error.Message is
+                    "Display item exceeds the 32 KiB UTF-8 budget." or "Entity response exceeds the 1 MiB UTF-8 budget.")
+                { throw new CallFailed(error.Message, "oversize"); }
+            }, bulk: true);
     }
 }

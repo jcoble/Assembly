@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::entry::{FileEntry, FileListing};
+use super::entry::{FileEntry, FileListing, PageCursor};
 
 /// One line of the tree, in drawing order.
 #[derive(Debug)]
@@ -24,6 +24,7 @@ pub enum Row<'a> {
     /// The folder above held more than the backend answers at once.
     Truncated {
         depth: usize,
+        dir: &'a str,
     },
 }
 
@@ -60,6 +61,15 @@ impl FileTree {
         Some(dir.to_string())
     }
 
+    pub fn more(&mut self, dir: &str) -> Option<PageCursor> {
+        if self.loading.contains(dir) {
+            return None;
+        }
+        let cursor = self.loaded.get(dir)?.next_cursor.clone()?;
+        self.loading.insert(dir.to_owned());
+        Some(cursor)
+    }
+
     /// Takes a folder's answer; one for a folder no longer loading is dropped.
     pub fn loaded(&mut self, dir: &str, answer: Result<FileListing, String>) {
         if !self.loading.remove(dir) {
@@ -67,7 +77,20 @@ impl FileTree {
         }
         match answer {
             Ok(listing) => {
-                self.loaded.insert(dir.to_string(), listing);
+                if let Some(previous) = self.loaded.get_mut(dir) {
+                    let mut paths: HashSet<_> =
+                        previous.entries.iter().map(|e| e.path.clone()).collect();
+                    previous.entries.extend(
+                        listing
+                            .entries
+                            .into_iter()
+                            .filter(|e| paths.insert(e.path.clone())),
+                    );
+                    previous.truncated = listing.truncated;
+                    previous.next_cursor = listing.next_cursor;
+                } else {
+                    self.loaded.insert(dir.to_string(), listing);
+                }
             }
             Err(message) => {
                 self.failed.insert(dir.to_string(), message);
@@ -87,7 +110,7 @@ impl FileTree {
         rows
     }
 
-    fn push<'a>(&'a self, rows: &mut Vec<Row<'a>>, dir: &str, depth: usize) {
+    fn push<'a>(&'a self, rows: &mut Vec<Row<'a>>, dir: &'a str, depth: usize) {
         if self.loading.contains(dir) {
             rows.push(Row::Loading { depth });
         } else if let Some(message) = self.failed.get(dir) {
@@ -101,7 +124,7 @@ impl FileTree {
                 }
             }
             if listing.truncated {
-                rows.push(Row::Truncated { depth });
+                rows.push(Row::Truncated { depth, dir });
             }
         }
     }

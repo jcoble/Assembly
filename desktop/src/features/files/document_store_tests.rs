@@ -1,7 +1,11 @@
 use super::*;
 
 fn key(machine: &str, path: &str) -> DocumentKey {
-    DocumentKey { machine: machine.into(), checkout_root: "/checkout".into(), path: path.into() }
+    DocumentKey {
+        machine: machine.into(),
+        checkout_root: "/checkout".into(),
+        path: path.into(),
+    }
 }
 
 #[test]
@@ -25,8 +29,20 @@ fn a_stale_second_target_leaves_the_whole_batch_unchanged() {
     docs.open(a.clone(), "r1".into(), "alpha".into()).unwrap();
     docs.open(b.clone(), "r2".into(), "beta".into()).unwrap();
     let edits = [
-        DraftEdit { key: a.clone(), expected_version: 0, edits: vec![TextEdit { start: 0, end: 5, replacement: "new".into() }] },
-        DraftEdit { key: b.clone(), expected_version: 9, edits: vec![] },
+        DraftEdit {
+            key: a.clone(),
+            expected_version: 0,
+            edits: vec![TextEdit {
+                start: 0,
+                end: 5,
+                replacement: "new".into(),
+            }],
+        },
+        DraftEdit {
+            key: b.clone(),
+            expected_version: 9,
+            edits: vec![],
+        },
     ];
     assert_eq!(docs.apply_batch(&edits), Err(DraftFailure::Stale));
     assert_eq!(docs.snapshot(&a).unwrap().text, "alpha");
@@ -38,13 +54,28 @@ fn unicode_boundaries_and_owner_identity_are_preserved() {
     let mut docs = DocumentStore::default();
     let local = key("local", "a");
     let remote = key("workbox", "a");
-    docs.open(local.clone(), "r1".into(), "é\r\n".into()).unwrap();
-    docs.open(remote.clone(), "r2".into(), "remote".into()).unwrap();
-    assert_eq!(docs.apply_batch(&[DraftEdit { key: local.clone(), expected_version: 0,
-        edits: vec![TextEdit { start: 1, end: 2, replacement: "x".into() }] }]), Err(DraftFailure::InvalidRange));
+    docs.open(local.clone(), "r1".into(), "é\r\n".into())
+        .unwrap();
+    docs.open(remote.clone(), "r2".into(), "remote".into())
+        .unwrap();
+    assert_eq!(
+        docs.apply_batch(&[DraftEdit {
+            key: local.clone(),
+            expected_version: 0,
+            edits: vec![TextEdit {
+                start: 1,
+                end: 2,
+                replacement: "x".into()
+            }]
+        }]),
+        Err(DraftFailure::InvalidRange)
+    );
     assert_eq!(docs.snapshot(&local).unwrap().text, "é\r\n");
     assert_eq!(docs.snapshot(&remote).unwrap().text, "remote");
-    assert_eq!(docs.open(key("local", "../escape"), "r".into(), String::new()), Err(DraftFailure::OutsideRoot));
+    assert_eq!(
+        docs.open(key("local", "../escape"), "r".into(), String::new()),
+        Err(DraftFailure::OutsideRoot)
+    );
 }
 
 #[test]
@@ -57,7 +88,30 @@ fn dirty_budget_refusal_keeps_all_existing_drafts() {
     }
     let ninth = key("local", "ninth");
     docs.open(ninth.clone(), "r".into(), String::new()).unwrap();
-    assert_eq!(docs.replace(&ninth, 0, "new draft".into()), Err(DraftFailure::OverLimit));
+    assert_eq!(
+        docs.replace(&ninth, 0, "new draft".into()),
+        Err(DraftFailure::OverLimit)
+    );
     assert!(docs.is_dirty(&key("local", "0")));
     assert_eq!(docs.snapshot(&ninth).unwrap().text, "");
+}
+
+#[test]
+fn renderer_view_state_survives_while_a_dirty_draft_cannot_be_released() {
+    let mut docs = DocumentStore::default();
+    let key = key("m", "a");
+    docs.open(key.clone(), "r".into(), "draft".into()).unwrap();
+    docs.replace(&key, 0, "new".into()).unwrap();
+    docs.stash_view(
+        &key,
+        DocumentView {
+            selection: 1..2,
+            scroll: (20., -40.),
+        },
+    );
+    assert!(!docs.release_clean(&key));
+    assert_eq!(docs.view_state(&key).unwrap().selection, 1..2);
+    docs.saved(&key, 1, "r2".into());
+    assert!(docs.release_clean(&key));
+    assert_eq!(docs.snapshot(&key).unwrap_err(), DraftFailure::NotLoaded);
 }

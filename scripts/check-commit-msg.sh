@@ -49,4 +49,11 @@ if head -n 1 <<<"$message" | grep -Eiq '^fix([^A-Za-z0-9_]|$)'; then
     || grep -Eq '^No-test:[[:space:]]*[^[:space:]]' <<<"$(tail -n +2 <<<"$message")" \
     || stop "a fix commit changes a test (dotnet/Assembly.Tests/, scripts/*.test.sh, a tests.rs or *_tests.rs under desktop/src/, or desktop/tests/), or says why not with No-test: <reason>."
 fi
+hook_dir="$(cd "$(dirname "$0")/hooks" && pwd)"
+if [ -n "${commit:-}" ]; then
+  node "$hook_dir/test-integrity.ts" --commit "$commit"
+  node "$hook_dir/staged-policy.ts" --commit "$commit"
+else
+  node "$hook_dir/test-integrity.ts" "$1"
+fi
 exit 0

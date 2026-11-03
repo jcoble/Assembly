@@ -5,9 +5,9 @@
 //! A third client on /socket/terminal carries terminal calls and output.
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
-use std::sync::Mutex;
 use std::thread::JoinHandle;
 
 use futures_channel::mpsc::unbounded;
@@ -32,6 +32,7 @@ pub struct SocketClient {
     next_id: Arc<AtomicU64>,
     state: ConnectionState,
     engine_machine: Arc<Mutex<Option<String>>>,
+    connection_generation: Arc<Mutex<Option<u64>>>,
     /// Brings the client thread's state changes to the entity.
     _states: Task<()>,
     /// Joined on drop, after `Event::Stop`.
@@ -99,6 +100,7 @@ impl SocketClient {
         let (events, receiver) = mpsc::channel();
         let (states, mut changes) = unbounded();
         let engine_machine = Arc::new(Mutex::new(None));
+        let connection_generation = Arc::new(Mutex::new(None));
         let thread = ClientThread::spawn(
             endpoint,
             path,
@@ -107,6 +109,7 @@ impl SocketClient {
             states,
             next_id.clone(),
             engine_machine.clone(),
+            connection_generation.clone(),
         );
         cx.new(|cx| {
             let states = cx.spawn(async move |this, cx| {
@@ -125,6 +128,7 @@ impl SocketClient {
                 events,
                 next_id,
                 engine_machine,
+                connection_generation,
                 state: ConnectionState::Connecting,
                 _states: states,
                 thread: Some(thread),
@@ -136,6 +140,12 @@ impl SocketClient {
     /// A display host name or a saved-machine alias is never substituted.
     pub fn engine_machine(&self) -> Option<String> {
         self.engine_machine.lock().ok()?.clone()
+    }
+
+    /// This socket's captured open generation, absent during disconnect or handshake.
+    /// A reconnect to the same Engine still replaces this value.
+    pub fn connection_generation(&self) -> Option<u64> {
+        *self.connection_generation.lock().ok()?
     }
 
     pub fn global(cx: &App) -> Entity<Self> {
@@ -240,12 +250,19 @@ impl SocketClient {
     /// Current Engine display state on the existing connection and cursor owner.
     /// Dropping the returned subscription cancels the scope and its staged snapshot.
     pub fn subscribe_engine(
-        &self, topic: &str, key: Option<&str>, machine: Option<&str>,
+        &self,
+        topic: &str,
+        key: Option<&str>,
+        machine: Option<&str>,
     ) -> TopicSubscription<super::engine_update::EngineUpdate> {
         let id = self.id();
         let (updates, receiver) = unbounded();
         let _ = self.events.send(Event::SubscribeEngineScope {
-            id, topic: topic.into(), key: key.map(Into::into), machine: machine.map(Into::into), updates,
+            id,
+            topic: topic.into(),
+            key: key.map(Into::into),
+            machine: machine.map(Into::into),
+            updates,
         });
         TopicSubscription::new(id, self.events.clone(), receiver)
     }

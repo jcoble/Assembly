@@ -13,14 +13,24 @@ pub struct FileDiff {
 pub const CUT: &str = "This diff is too long to show in full; the rest is cut.";
 impl FileDiff {
     pub fn parts(&self) -> Vec<(&'static str, &str)> {
-        [("Staged", self.staged.as_str()), ("Working tree", self.unstaged.as_str())]
-            .into_iter().filter(|(_, patch)| !patch.trim().is_empty()).collect()
+        [
+            ("Staged", self.staged.as_str()),
+            ("Working tree", self.unstaged.as_str()),
+        ]
+        .into_iter()
+        .filter(|(_, patch)| !patch.trim().is_empty())
+        .collect()
     }
     pub fn notes(&self) -> Vec<&'static str> {
         let mut notes = Vec::new();
-        if self.binary { notes.push("Binary file, so there's no line-by-line comparison."); }
-        else if self.parts().is_empty() { notes.push("No changes."); }
-        if self.truncated { notes.push(CUT); }
+        if self.binary {
+            notes.push("Binary file, so there's no line-by-line comparison.");
+        } else if self.parts().is_empty() {
+            notes.push("No changes.");
+        }
+        if self.truncated {
+            notes.push(CUT);
+        }
         notes
     }
 }

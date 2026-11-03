@@ -11,7 +11,7 @@ public sealed class FileReadSession
     private readonly Dictionary<Key, Snapshot> snapshots = [];
     private readonly Dictionary<string, int> pending = [];
     private readonly HashSet<string> closed = [];
-    private sealed record Key(string Connection, string Root, string Path);
+    private sealed record Key(string Connection, string Root, string Path, string Scope, string Relative);
     private sealed record Snapshot(byte[] Bytes, FileChunk Metadata, long Next);
 
     public long HeldBytes
@@ -20,9 +20,9 @@ public sealed class FileReadSession
     }
 
     public async Task<FileChunk> ReadAsync(string root, string path, long offset, string? revision,
-        string connection, CancellationToken cancellationToken)
+        string connection, CancellationToken cancellationToken, string? session = null)
     {
-        var key = new Key(connection, Path.GetFullPath(root), SessionPaths.ResolveFile(root, path));
+        var key = new Key(connection, Path.GetFullPath(root), SessionPaths.ResolveFile(root, path), session ?? Path.GetFullPath(root), path);
         if (offset != 0)
         {
             lock (gate)
@@ -42,7 +42,7 @@ public sealed class FileReadSession
                 }
                 catch
                 {
-                    snapshots.Remove(key);
+                    DropScope(key);
                     throw;
                 }
             }
@@ -52,7 +52,7 @@ public sealed class FileReadSession
             cancellationToken.ThrowIfCancellationRequested();
             if (closed.Contains(connection))
                 throw new CallFailed("this file connection is closed");
-            snapshots.Remove(key);
+            DropScope(key);
             var count = snapshots.Keys.Count(item => item.Connection == connection);
             var inFlight = pending.GetValueOrDefault(connection);
             if (count + inFlight >= MaxSnapshots)
@@ -96,13 +96,30 @@ public sealed class FileReadSession
 
     public bool Release(string root, string path, string revision, string connection)
     {
-        var key = new Key(connection, Path.GetFullPath(root), SessionPaths.ResolveFile(root, path));
+        var key = new Key(connection, Path.GetFullPath(root), SessionPaths.ResolveFile(root, path), Path.GetFullPath(root), path);
         lock (gate)
         {
             if (!snapshots.TryGetValue(key, out var snapshot) || snapshot.Metadata.Revision != revision)
                 return false;
             return snapshots.Remove(key);
         }
+    }
+
+    public bool ReleaseSession(string session, string path, string revision, string connection)
+    {
+        lock (gate)
+        {
+            var keys = snapshots.Where(item => item.Key.Connection == connection && item.Key.Scope == session &&
+                item.Key.Relative == path && item.Value.Metadata.Revision == revision).Select(item => item.Key).ToArray();
+            foreach (var key in keys) snapshots.Remove(key);
+            return keys.Length > 0;
+        }
+    }
+
+    private void DropScope(Key key)
+    {
+        foreach (var previous in snapshots.Keys.Where(previous => previous.Connection == key.Connection &&
+            previous.Scope == key.Scope && previous.Relative == key.Relative).ToArray()) snapshots.Remove(previous);
     }
 
     public void Close(string connection)

@@ -156,3 +156,38 @@ fn closing_a_pane_s_tab_drops_it_and_its_key_opens_a_new_one(cx: &mut TestAppCon
     assert_eq!(center(&dock, cx).0, vec!["Chat".to_string()]);
     assert_ne!(open_probe("file:a", cx), first);
 }
+
+#[gpui::test]
+fn sessions_claiming_the_same_file_reuse_one_document_and_pin_only_file_preview(
+    cx: &mut TestAppContext,
+) {
+    let (_dock, cx) = open(cx);
+    let first = open_probe("file:s1:a", cx).unwrap();
+    let second = open_probe("file:s2:a", cx).unwrap();
+    cx.update(|_, cx| {
+        assert_eq!(
+            CenterPanes::claim_file(
+                "document:machine/root/a".into(),
+                "file:s1:a".into(),
+                first,
+                cx
+            ),
+            first
+        );
+        assert_eq!(
+            CenterPanes::claim_file(
+                "document:machine/root/a".into(),
+                "file:s2:a".into(),
+                second,
+                cx
+            ),
+            first
+        );
+        CenterPanes::set_file_preview(first, cx);
+        CenterPanes::pin_file(second, cx);
+        assert_eq!(CenterPanes::file_preview(cx), Some(first));
+        CenterPanes::pin_file(first, cx);
+        assert_eq!(CenterPanes::file_preview(cx), None);
+    });
+    assert_eq!(open_probe("file:s2:a", cx), Some(first));
+}

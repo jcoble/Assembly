@@ -7,3 +7,15 @@ public sealed record BegunSave(string Upload);
 public sealed record SaveChunk(string Upload, long Offset, byte[] Data);
 public sealed record CommitSave(string Upload);
 public sealed record DropSave(string Upload);
+
+public sealed record PageCursor(string Generation, string After);
+
+public sealed record SearchArgs(string Session, string Query, string Mode = "name", bool IncludeExcluded = false,
+    string? SearchId = null, int PageSize = 100);
+public sealed record ContentMatch(string Path, int Line, int Column, string Excerpt);
+public sealed record SearchResult(string SearchId, IReadOnlyList<NameMatch> Names, IReadOnlyList<ContentMatch> Content,
+    bool More, int Skipped, bool Truncated);
+public sealed record ReleaseSearch(string SearchId);
+
+public sealed record FileActionArgs(string Session, string Kind, string Path, string? Destination = null, string? Revision = null);
+public sealed record ActionResult(string State, string? Path, FileFault? Error);

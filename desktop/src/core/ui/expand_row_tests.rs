@@ -412,3 +412,22 @@ fn a_new_width_mid_resize_follows_at_once(cx: &mut TestAppContext) {
     cx.simulate_resize(gpui_kit::size(px(400.), px(600.)));
     assert_eq!(height_now(&row, cx), px(128.));
 }
+
+#[gpui::test]
+fn a_row_outside_the_explicit_toggle_does_not_open_it(cx: &mut TestAppContext) {
+    let (row, cx) = hosted(cx, || {
+        ExpandRow::new(
+            false,
+            |_, _, _| line("title", 28.),
+            |_, _| line("body", 60.),
+        )
+        .toggle_on_title(false)
+    });
+    click_title(cx);
+    assert!(!cx.update(|_, cx| row.read(cx).is_open()));
+    row.update(cx, |row, cx| row.set_open(true, false, cx));
+    assert!(
+        drawn("body", cx).is_some(),
+        "the owner still opens the same motion component"
+    );
+}

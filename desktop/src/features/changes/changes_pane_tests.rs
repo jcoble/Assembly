@@ -8,7 +8,7 @@ use gpui::TestAppContext;
 use gpui_kit::AppContext as _;
 use serde_json::{Value, json};
 
-use super::{ChangesPane, Picked, Shown, PatchContent};
+use super::{ChangesPane, PatchContent, Picked, Shown};
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::endpoint::Endpoint;
 use crate::core::socket::fake_backend::{FakeBackend, Reply, hello};
@@ -164,13 +164,31 @@ fn changing_presentation_retains_the_same_patch_revision(cx: &mut TestAppContext
     cx.update(gpui_kit::init);
     let pane = cx.new(|cx| ChangesPane::new(None, cx));
     pane.update(cx, |pane, cx| {
-        pane.shown = Shown::patches(vec![("Commit", "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n")], false, vec![], None, DiffMode::Unified, cx);
-        let Shown::Read { views, .. } = &pane.shown else { panic!("parsed patch") };
-        let PatchContent::Unified(state) = &views[0].content else { panic!("unified patch") };
+        pane.shown = Shown::patches(
+            vec![(
+                "Commit",
+                "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n",
+            )],
+            false,
+            vec![],
+            None,
+            DiffMode::Unified,
+            cx,
+        );
+        let Shown::Read { views, .. } = &pane.shown else {
+            panic!("parsed patch")
+        };
+        let PatchContent::Unified(state) = &views[0].content else {
+            panic!("unified patch")
+        };
         let revision = state.entity_id();
         pane.set_mode(DiffMode::Split, cx);
-        let Shown::Read { views, .. } = &pane.shown else { panic!("retained patch") };
-        let PatchContent::Unified(state) = &views[0].content else { panic!("retained unified patch") };
+        let Shown::Read { views, .. } = &pane.shown else {
+            panic!("retained patch")
+        };
+        let PatchContent::Unified(state) = &views[0].content else {
+            panic!("retained unified patch")
+        };
         assert_eq!(state.entity_id(), revision);
         assert_eq!(state.read(cx).mode(), DiffMode::Split);
         assert_eq!(state.read(cx).files()[0].additions(), 1);

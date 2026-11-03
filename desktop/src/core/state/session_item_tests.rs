@@ -35,9 +35,13 @@ fn session_checkout_paths_keep_the_owning_machine_values() {
         "sessionId":"remote-session", "agent":"codex", "repoUrl":"https://github.com/o/r",
         "machine":"Workbox Test", "updatedAt":1,
         "root":null, "checkoutRoot":"/home/test/worktrees/actual-checkout"
-    })).unwrap();
+    }))
+    .unwrap();
     assert_eq!(item.root, None);
-    assert_eq!(item.checkout_root.as_deref(), Some("/home/test/worktrees/actual-checkout"));
+    assert_eq!(
+        item.checkout_root.as_deref(),
+        Some("/home/test/worktrees/actual-checkout")
+    );
     let local = session(None, "/repo", None);
     assert_eq!(local.root, None);
     assert_eq!(local.checkout_root, None);

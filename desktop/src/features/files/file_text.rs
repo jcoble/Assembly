@@ -48,8 +48,12 @@ impl FileText {
 
     /// Exact UTF-8 bytes decoded as text, available for editing only after the coherent read completes.
     pub fn content(&self) -> Option<&str> {
-        (self.revision.is_some() && self.next.is_none() && self.loading.is_none()
-            && !self.binary && self.error.is_none()).then_some(self.raw.as_str())
+        (self.revision.is_some()
+            && self.next.is_none()
+            && self.loading.is_none()
+            && !self.binary
+            && self.error.is_none())
+        .then_some(self.raw.as_str())
     }
 
     pub fn revision(&self) -> Option<&str> {

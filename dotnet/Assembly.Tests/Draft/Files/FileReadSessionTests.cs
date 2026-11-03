@@ -74,4 +74,21 @@ public sealed class FileReadSessionTests
         reads.Close("c");
         Assert.Equal(0, reads.HeldBytes);
     }
+    [Fact]
+    public async Task View_cleanup_releases_its_snapshot_after_the_session_checkout_moves()
+    {
+        using var folder = new GitFolder();
+        await File.WriteAllTextAsync(Path.Combine(folder.Root, "a"), new string('x', FileRead.ChunkBytes + 1));
+        var reads = new FileReadSession();
+        var first = await reads.ReadAsync(folder.Root, "a", 0, null, "c", CancellationToken.None, "session");
+        var moved = folder.Root + "-moved";
+        Directory.Move(folder.Root, moved);
+        try
+        {
+            Assert.True(reads.ReleaseSession("session", "a", first.Revision, "c"));
+            Assert.Equal(0, reads.HeldBytes);
+        }
+        finally { Directory.Move(moved, folder.Root); }
+    }
+
 }

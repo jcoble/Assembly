@@ -9,8 +9,8 @@ use gpui_kit::{Pixels, SharedString, px};
 use serde_json::Value;
 
 pub use super::number_setting::NumberSetting;
-use crate::core::theme::theme_id::ThemeId;
 use crate::core::theme::text::TextRole;
+use crate::core::theme::theme_id::ThemeId;
 
 pub const THEME: &str = "appearance.theme";
 pub const UI_FONT: &str = "appearance.uiFont";

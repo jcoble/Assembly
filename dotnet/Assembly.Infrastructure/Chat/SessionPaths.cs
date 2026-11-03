@@ -22,6 +22,7 @@ public static class SessionPaths
     /// <summary>Files-specific contract; shared Git/worktree root resolution keeps its existing semantics.</summary>
     public static string ResolveFile(string root, string relative, bool allowRoot = false)
     {
+        if (allowRoot && relative == ".") return Resolve(root, "");
         if (relative.Length > 4096 || relative.Contains('\0') || Path.IsPathRooted(relative))
             throw new CallFailed("expected a relative file path of at most 4096 characters");
         if (relative.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]).Any(part => part is "." or ".."))

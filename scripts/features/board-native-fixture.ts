@@ -10,8 +10,8 @@ import { safePath, takeLauncherLock } from '../seed-dev.ts';
 
 const PROFILE = '/home/blackcolours/assembly-dev/worktrees/tsk-1649-engine-integration-fresh-f3e40988e73ec120';
 const LANE = '/home/blackcolours/assembly-dotnet-tsk-1649-engine-integration-fresh/ui-check';
-const MANIFEST = '/home/blackcolours/dev/work/reports/assembly-execution/tsk-1649-c2-board-database-source/board-proof-database.manifest.json';
-const MANIFEST_SHA = 'ce8a1afb51b3866e54fb5cb405043f8abc3cb5bbd3cc6a822b7b5b1bac135d68';
+const MANIFEST = '/home/blackcolours/dev/work/reports/assembly-execution/tsk-1649-c2-board-database-source/closed-v2/board-proof-database.manifest.json';
+const MANIFEST_SHA = 'd557c921f441f93315cc38640324466fbaf01a56c0ce80c3452f26add1ae6eff';
 const MARKER = 'fixture.board-native.tsk-1649.v1';
 const PREFIX = 'source-derived-board-native-tsk-1649-v1:';
 const LAYOUT_KEY = 'shell.dock-layout';

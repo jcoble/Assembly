@@ -8,10 +8,10 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
-use gpui_kit::*;
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::TextRole;
+use gpui_kit::component::message_scroller::{MessageScroller, MessageScrollerState};
+use gpui_kit::*;
 
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::follow::{Follow, FollowEvent, FollowStep};

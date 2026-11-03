@@ -29,14 +29,15 @@ fn an_invalid_patch_still_fails_when_backend_says_truncated() {
     assert!(parse_patch(invalid, true).is_err());
 }
 
-
 // Pins: scm#16
 #[test]
 fn a_conflict_s_combined_diff_is_shown_as_git_prints_it() {
     let patch = "diff --cc both.rs\n@@@ -1,1 -1,1 +1,5 @@@\n++<<<<<<< HEAD\n +ours\n";
     match super::supplied_patch(patch, false).unwrap() {
         super::SuppliedPatch::Combined(raw) => assert_eq!(raw, patch),
-        _ => panic!("A combined patch must retain its exact raw content, without invented two-side identities"),
+        _ => panic!(
+            "A combined patch must retain its exact raw content, without invented two-side identities"
+        ),
     }
     assert!(super::supplied_patch("diff --git a/a b/a\n@@ broken\n", false).is_err());
 }
@@ -45,8 +46,19 @@ fn a_conflict_s_combined_diff_is_shown_as_git_prints_it() {
 #[test]
 fn quoted_unicode_deleted_and_space_paths_keep_their_git_identity() {
     let patch = "diff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\n--- a/gone.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\ndiff --git a/café/naïve file.md b/café/naïve file.md\n--- a/café/naïve file.md\n+++ b/café/naïve file.md\n@@ -1 +1 @@\n-a\n+b\ndiff --git \"a/tab\\there.txt\" \"b/tab\\there.txt\"\n--- \"a/tab\\there.txt\"\n+++ \"b/tab\\there.txt\"\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/docs/a b/x.md b/docs/a b/x.md\n--- a/docs/a b/x.md\n+++ b/docs/a b/x.md\n@@ -1 +1 @@\n-a\n+b\n";
-    let files = parse_patch(patch,false).unwrap();
-    assert_eq!(files.iter().map(|file|file.path().as_ref()).collect::<Vec<&str>>(),["gone.txt","café/naïve file.md","tab\there.txt","docs/a b/x.md"]);
-    assert_eq!(files[0].deletions(),1);
+    let files = parse_patch(patch, false).unwrap();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path().as_ref())
+            .collect::<Vec<&str>>(),
+        [
+            "gone.txt",
+            "café/naïve file.md",
+            "tab\there.txt",
+            "docs/a b/x.md"
+        ]
+    );
+    assert_eq!(files[0].deletions(), 1);
     assert!(files[0].modified_path().is_none());
 }

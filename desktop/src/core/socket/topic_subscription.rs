@@ -34,6 +34,11 @@ impl<U> Drop for TopicSubscription<U> {
 impl TopicSubscription<super::engine_update::EngineUpdate> {
     /// Called only after a complete scoped page has been applied by its consumer.
     pub fn ack_engine(&self, wire: u64, through: i64, at: Option<super::engine_update::CursorAt>) {
-        let _ = self.events.send(Event::AcknowledgeEngine { handle:self.id, wire, through, at });
+        let _ = self.events.send(Event::AcknowledgeEngine {
+            handle: self.id,
+            wire,
+            through,
+            at,
+        });
     }
 }

@@ -326,7 +326,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                 [new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments")),
-                    new FilesFeature(sessionStore),
+                    new FilesFeature(sessionStore, new FileOwner(sessionStore, db)),
                     new WorktreesFeature(sessionStore),
                     new SourceControlFeature(sessionStore)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });

@@ -100,6 +100,8 @@ internal sealed record EngineEventsFrame(long Id, string Machine, long After, lo
 [JsonSerializable(typeof(StartLocation))]
 [JsonSerializable(typeof(EngineUsageArgs))]
 [JsonSerializable(typeof(EngineEntityArgs))]
+[JsonSerializable(typeof(EngineEntitiesArgs))]
+[JsonSerializable(typeof(EngineEntitiesPage))]
 [JsonSerializable(typeof(UsageTotals))]
 [JsonSerializable(typeof(JsonElement?))]
 [JsonSerializable(typeof(EngineSnapshotFrame))]

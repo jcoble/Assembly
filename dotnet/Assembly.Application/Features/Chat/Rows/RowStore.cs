@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Text;
+using Assembly.Application.Common.Calls;
 using Assembly.Application.Common.Database;
 using Assembly.Application.Features.Chat.Rows.Markdown;
 using Assembly.Domain.Markdown;
@@ -59,6 +61,90 @@ public sealed partial class RowStore
     }
 
     public int StoredFormatVersion => (int)_db.QueryFirst("PRAGMA user_version;", row => row.Long(0), CancellationToken.None);
+
+    /// <summary>Latest native cards, keyset by immutable parent-row item id; never reads operational sessions.</summary>
+    public SubagentPage Subagents(string session, string? after, int limit, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        limit = Math.Clamp(limit, 1, SubagentPage.MaxLimit);
+        // Materialize only limit+1 candidates in SQL. Bound text as bytes before crossing into managed memory;
+        // identity fields remain complete or explicitly refuse. BLOB prefixes preserve embedded NUL text.
+        var rows = _db.Query("""
+            WITH selected AS MATERIALIZED (
+                SELECT r.rowid row_key,r.item_id,r.seq FROM rows r
+                WHERE r.session_id=$session AND r.kind='subagent' AND r.item_id IS NOT NULL
+                  AND ($after IS NULL OR r.item_id COLLATE BINARY>$after)
+                  AND NOT EXISTS(SELECT 1 FROM rows newer WHERE newer.session_id=r.session_id
+                    AND newer.kind='subagent' AND newer.item_id=r.item_id AND newer.seq>r.seq)
+                  AND json_extract(r.payload,'$.helper') IS NOT 1
+                ORDER BY r.item_id COLLATE BINARY LIMIT $limit
+            ), projected AS (
+                SELECT selected.item_id,selected.seq,r.payload,
+                    length(CAST(selected.item_id AS BLOB))+
+                    COALESCE(length(CAST(json_extract(payload,'$.sessionId') AS BLOB)),0)+
+                    COALESCE(length(CAST(json_extract(payload,'$.state') AS BLOB)),0)+
+                    COALESCE(length(CAST(json_extract(payload,'$.stopReason') AS BLOB)),0)+
+                    COALESCE(length(CAST(json_extract(payload,'$.toolCallId') AS BLOB)),0)>$item_cap too_large
+                FROM selected JOIN rows r ON r.rowid=selected.row_key
+            )
+            SELECT too_large,CASE WHEN NOT too_large THEN item_id END,seq,
+                CASE WHEN NOT too_large THEN json_extract(payload,'$.sessionId') END,
+                substr(CAST(json_extract(payload,'$.title') AS BLOB),1,$preview+1),
+                substr(CAST(json_extract(payload,'$.description') AS BLOB),1,$preview+1),
+                CASE WHEN NOT too_large THEN json_extract(payload,'$.state') END,
+                CASE WHEN NOT too_large THEN json_extract(payload,'$.stopReason') END,
+                substr(CAST(json_extract(payload,'$.error') AS BLOB),1,$preview+1),
+                CASE WHEN NOT too_large THEN json_extract(payload,'$.toolCallId') END FROM projected
+            ORDER BY item_id COLLATE BINARY
+            """, r =>
+            {
+                if (r.Long(0) != 0) return (Large: true, Item: (SubagentDisplay?)null);
+                return (Large: false, Item: (SubagentDisplay?)new SubagentDisplay(r.Text(1), r.Long(2),
+                    r.IsNull(3) ? null! : r.Text(3), SubagentPreview(r, 4)!, SubagentPreview(r, 5),
+                    r.IsNull(6) ? null! : r.Text(6), Text(r, 7), SubagentPreview(r, 8), Text(r, 9)));
+            }, ct,
+            new SqlArg("$session", session), new SqlArg("$after", after), new SqlArg("$limit", limit + 1),
+            new SqlArg("$preview", SubagentPage.PreviewBytes), new SqlArg("$item_cap", SubagentPage.ItemMaxBytes));
+        List<SubagentDisplay> items = [];
+        var itemBytes = 0;
+        string? next = null;
+        for (var index = 0; index < rows.Count && index < limit; index++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var row = rows[index];
+            if (row.Large) throw SubagentTooLarge();
+            var item = row.Item!;
+            if (item.SessionId is null || item.Title is null || item.State is null)
+                throw new CallFailed("invalid subagent display", "bad_args");
+            var size = JsonSerializer.SerializeToUtf8Bytes(item, RowJsonContext.Rows.SubagentDisplay).Length;
+            if (size > SubagentPage.ItemMaxBytes) throw SubagentTooLarge();
+            var candidateNext = index + 1 < rows.Count ? item.ItemId : null;
+            var envelope = JsonSerializer.SerializeToUtf8Bytes(new SubagentPage([], candidateNext), RowJsonContext.Rows.SubagentPage).Length;
+            if (envelope + itemBytes + size + items.Count > SubagentPage.MaxBytes)
+            {
+                if (items.Count == 0) throw SubagentTooLarge();
+                break; // next already names the last included item; the unconsumed card is retried next page.
+            }
+            items.Add(item);
+            itemBytes += size;
+            next = candidateNext;
+        }
+        ct.ThrowIfCancellationRequested();
+        return new SubagentPage(items, next);
+    }
+
+    private static CallFailed SubagentTooLarge() => new("subagent display item exceeds its byte limit", "subagent_too_large");
+
+    private static string? SubagentPreview(IRow row, int column)
+    {
+        if (row.IsNull(column)) return null;
+        var bytes = row.Blob(column);
+        var count = Math.Min(bytes.Length, SubagentPage.PreviewBytes);
+        // The one lookahead byte distinguishes a complete prefix from the middle of a UTF-8 scalar.
+        if (count < bytes.Length)
+            while (count > 0 && (bytes[count] & 0xc0) == 0x80) count--;
+        return Encoding.UTF8.GetString(bytes, 0, count);
+    }
 
     /// <summary>Saves the batch for the session and returns its rows as saved, in seq order.</summary>
     public IReadOnlyList<StoredRow> Commit(string sessionId, RowBatch batch, Action<IWriteScope>? observe = null)

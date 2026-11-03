@@ -3,6 +3,8 @@
 //! goes the fade from the old theme after a switch (theme/fade.rs). It puts the theme and faces Settings saved in
 //! force from the start, and as they change.
 
+use super::intents::open_file::OpenFile;
+use crate::features::files::file_view::FileView;
 use gpui_kit::*;
 
 use super::native_views::views::NativeViews;
@@ -46,6 +48,17 @@ impl WindowRoot {
 impl Render for WindowRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .on_action(|action: &OpenFile, window, cx| {
+                FileView::open_at(
+                    action.session_id.clone(),
+                    action.path.clone(),
+                    action.line,
+                    action.column,
+                    action.pinned,
+                    window,
+                    cx,
+                )
+            })
             .size_full()
             .child(self.content.clone())
             .child(NativeViews::placer())

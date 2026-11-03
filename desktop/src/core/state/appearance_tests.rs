@@ -128,9 +128,17 @@ fn ui_line_height_defaults_to_1_45_and_clamps() {
 #[test]
 fn text_roles_scale_with_the_interface_size() {
     use crate::core::theme::text::TextRole;
-    let appearance = saved(&[(UI_FONT_SIZE.key, json!(16)), (UI_LINE_HEIGHT.key, json!(1.5))]);
-    for (role, base) in [(TextRole::Title, 13.), (TextRole::Second, 11.5),
-        (TextRole::Preview, 12.), (TextRole::Heading, 11.5), (TextRole::Chat, 13.5)] {
+    let appearance = saved(&[
+        (UI_FONT_SIZE.key, json!(16)),
+        (UI_LINE_HEIGHT.key, json!(1.5)),
+    ]);
+    for (role, base) in [
+        (TextRole::Title, 13.),
+        (TextRole::Second, 11.5),
+        (TextRole::Preview, 12.),
+        (TextRole::Heading, 11.5),
+        (TextRole::Chat, 13.5),
+    ] {
         let (size, height) = appearance.ui_text(role);
         let expected = 16. * base / 13.;
         assert!((size - px(expected)).abs() < px(0.001));
@@ -144,8 +152,14 @@ fn chat_line_height_keeps_its_reading_ratio() {
     use crate::core::theme::text::TextRole;
     let compact = saved(&[(UI_LINE_HEIGHT.key, json!(1.2))]);
     let roomy = saved(&[(UI_LINE_HEIGHT.key, json!(1.8))]);
-    assert_eq!(compact.ui_text(TextRole::Chat), roomy.ui_text(TextRole::Chat));
-    assert_ne!(compact.ui_text(TextRole::Preview), roomy.ui_text(TextRole::Preview));
+    assert_eq!(
+        compact.ui_text(TextRole::Chat),
+        roomy.ui_text(TextRole::Chat)
+    );
+    assert_ne!(
+        compact.ui_text(TextRole::Preview),
+        roomy.ui_text(TextRole::Preview)
+    );
 }
 
 #[test]

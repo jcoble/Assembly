@@ -48,7 +48,8 @@ pub struct ItemRow {
 impl RenderOnce for ItemRow {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (chat_size, chat_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
+        let (chat_size, chat_height) =
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (muted, danger) = (theme.muted_foreground, theme.danger);
         let key = self.item.key.clone();
         // Each row its own hover group, so its copy button and time show only under the pointer.

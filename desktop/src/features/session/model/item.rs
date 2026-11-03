@@ -1,7 +1,7 @@
 //! `Item` is one thing the timeline draws, keyed by its row's item (or, for a row with none, by its seq). Deltas and
 //! the final message share one item; a tool's, an ask's, a task's or a subagent's rows update its one item.
 
-use crate::features::session::rows::ask::AskPayload;
+use crate::core::ui::ask::payload::AskPayload;
 use crate::features::session::rows::markdown::Block;
 use crate::features::session::rows::subagent::SubagentPayload;
 use crate::features::session::rows::task::TaskPayload;

@@ -16,6 +16,7 @@ pub struct CenterPanes {
     dock: WeakEntity<DockArea>,
     /// The pane last opened under each key; one the dock no longer holds was closed.
     open: HashMap<String, PanelId>,
+    file_preview: Option<PanelId>,
 }
 
 impl Global for CenterPanes {}
@@ -25,6 +26,7 @@ impl CenterPanes {
         cx.set_global(CenterPanes {
             dock: dock.downgrade(),
             open: HashMap::new(),
+            file_preview: None,
         });
     }
 
@@ -52,6 +54,48 @@ impl CenterPanes {
         });
         Self::remember(key, id, cx);
         Some(id)
+    }
+
+    /// Files claims its real machine/checkout/path key after the owning backend answers.
+    /// Session aliases then bring that document forward through the existing open path.
+    pub fn claim_file(
+        document_key: String,
+        session_alias: String,
+        id: PanelId,
+        cx: &mut App,
+    ) -> PanelId {
+        let Some(panes) = cx.try_global::<Self>() else {
+            return id;
+        };
+        let existing = panes.open.get(&document_key).copied().filter(|existing| {
+            panes
+                .dock
+                .upgrade()
+                .is_some_and(|dock| dock.read(cx).panel(*existing).is_some())
+        });
+        let selected = existing.unwrap_or(id);
+        let panes = cx.global_mut::<Self>();
+        panes.open.insert(document_key, selected);
+        panes.open.insert(session_alias, selected);
+        selected
+    }
+
+    pub fn file_preview(cx: &App) -> Option<PanelId> {
+        cx.try_global::<Self>().and_then(|panes| panes.file_preview)
+    }
+
+    pub fn set_file_preview(id: PanelId, cx: &mut App) {
+        if cx.has_global::<Self>() {
+            cx.global_mut::<Self>().file_preview = Some(id);
+        }
+    }
+
+    pub fn pin_file(id: PanelId, cx: &mut App) {
+        if let Some(panes) = cx.try_global::<Self>()
+            && panes.file_preview == Some(id)
+        {
+            cx.global_mut::<Self>().file_preview = None;
+        }
     }
 
     /// The window's dock, once Frame has set it up: the session header's sessions button toggles its left side.

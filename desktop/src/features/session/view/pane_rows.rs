@@ -7,13 +7,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::SessionPane;
+use crate::core::ui::ask::form::AskForm;
 use crate::features::session::model::activity;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::item::{Item, ItemKind};
 use crate::features::session::model::markdown_text::markdown_of;
 use crate::features::session::model::turn_line::{checkout_line, turn_line};
 use crate::features::session::view::activity_card::ActivityCard;
-use crate::features::session::view::ask_row::AskForm;
 use crate::features::session::view::item_row::{CHAT_COLUMN, ItemRow};
 use crate::features::session::view::plan_card::current_step;
 use crate::features::session::view::sent_message::SentMessage;

@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::{asked, one_line, outcome, permission_choices, settled};
-use crate::features::session::rows::ask::AskPayload;
+use crate::core::ui::ask::payload::AskPayload;
 
 fn ask(state: &str, answer: Option<Value>) -> AskPayload {
     serde_json::from_value(json!({
@@ -40,23 +40,6 @@ fn a_settled_card_shows_what_it_was_answered_with() {
             Some(json!({ "action": "accept", "content": {} }))
         )),
         "Answered"
-    );
-}
-
-// Pins: g0-session#16
-#[test]
-fn submit_sends_what_was_picked_and_typed_leaving_out_the_empty_fields() {
-    use super::AskForm;
-    let mut picked = serde_json::Map::new();
-    picked.insert("zone".into(), json!("east"));
-    picked.insert("tags".into(), json!([]));
-    let texts = vec![
-        ("note".to_string(), "  hi ".to_string()),
-        ("zone_custom".to_string(), " ".to_string()),
-    ];
-    assert_eq!(
-        AskForm::content(&picked, texts),
-        json!({ "action": "accept", "content": { "zone": "east", "note": "hi" } })
     );
 }
 

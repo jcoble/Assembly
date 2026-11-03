@@ -29,10 +29,10 @@ use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::update::Update;
 use crate::core::state::machines::{GlobalMachines, Machines};
-use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::preferences::Preferences;
-use crate::core::theme::text::TextRole;
+use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::sessions::GlobalSessions;
+use crate::core::theme::text::TextRole;
 use crate::core::ui::filter_pills::{FilterGroup, FilterOption, FilterPills, FilterPillsChanged};
 
 const RAIL_TOPIC: &str = "sessionRail";

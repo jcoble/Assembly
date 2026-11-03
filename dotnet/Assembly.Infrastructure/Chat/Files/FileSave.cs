@@ -45,7 +45,7 @@ public sealed class FileSave
     }
 
     internal static async Task<SaveResult> CommitStageAsync(string root, string path, string expectedRevision,
-        string stage, CancellationToken ct)
+        string stage, CancellationToken ct, Action? validateOwner = null)
     {
         var info = new FileInfo(stage);
         if (info.Length > FileRead.MaxBytes) return Failed("too_large", "This draft is larger than 8 MiB.");
@@ -53,12 +53,13 @@ public sealed class FileSave
         var invalid = Validate(bytes);
         if (invalid is not null) return invalid;
         return await new FileSave().CommitValidatedAsync(root, path, expectedRevision, stage,
-            Convert.ToHexStringLower(SHA256.HashData(bytes)), ct);
+            Convert.ToHexStringLower(SHA256.HashData(bytes)), ct, validateOwner);
     }
 
     private async Task<SaveResult> CommitValidatedAsync(string root, string path, string expectedRevision,
-        string stage, string revision, CancellationToken ct)
+        string stage, string revision, CancellationToken ct, Action? validateOwner = null)
     {
+        validateOwner?.Invoke();
         var full = SessionPaths.ResolveFile(root, path);
         using var order = await FileMutationOrder.EnterAsync(full, ct);
         if (!File.Exists(full) || Directory.Exists(full)) return Conflict("The target file is missing.");
@@ -71,6 +72,7 @@ public sealed class FileSave
             if (SessionPaths.ResolveFile(root, path) != full || !File.Exists(full)) return Conflict("The target file is missing.");
             if (await RevisionAsync(full, ct) != expectedRevision) return Conflict("The file changed on disk.");
             ct.ThrowIfCancellationRequested();
+            validateOwner?.Invoke();
             File.Move(stage, full, overwrite: true);
             // Cancellation after the rename cannot roll back or hide the applied outcome.
             return new SaveResult("saved", revision, null);

@@ -172,7 +172,7 @@ public static class SeedSources
         var db = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = uri, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         db.Open(); return db;
     }
-    public static void ValidateSchema(SqliteConnection db, int expectedVersion = 4)
+    public static void ValidateSchema(SqliteConnection db, int expectedVersion = RowStore.FormatVersion)
     {
         using var command = db.CreateCommand(); command.CommandText = "PRAGMA user_version;";
         if (Convert.ToInt64(command.ExecuteScalar()) != expectedVersion) throw new InvalidDataException($"Only current SQLite format {expectedVersion} is supported; initialize isolated profiles through the normal launcher.");

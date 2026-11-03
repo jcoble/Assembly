@@ -17,6 +17,7 @@ fn listing(entries: Vec<FileEntry>) -> Result<FileListing, String> {
     Ok(FileListing {
         entries,
         truncated: false,
+        next_cursor: None,
     })
 }
 
@@ -36,7 +37,7 @@ fn shape(tree: &FileTree) -> Vec<String> {
             ),
             Row::Loading { depth } => format!("{}…", "  ".repeat(*depth)),
             Row::Failed { depth, message } => format!("{}! {message}", "  ".repeat(*depth)),
-            Row::Truncated { depth } => format!("{}+", "  ".repeat(*depth)),
+            Row::Truncated { depth, .. } => format!("{}+", "  ".repeat(*depth)),
         })
         .collect()
 }
@@ -102,6 +103,7 @@ fn a_truncated_folder_says_so_after_its_entries() {
         Ok(FileListing {
             entries: vec![entry("a", false)],
             truncated: true,
+            next_cursor: None,
         }),
     );
     assert_eq!(shape(&tree), ["a", "+"]);
@@ -114,4 +116,34 @@ fn an_answer_for_a_folder_nobody_is_loading_is_dropped() {
     tree.loaded("", listing(vec![entry("src", true)]));
     tree.loaded("src", listing(vec![entry("src/x", false)]));
     assert_eq!(shape(&tree), ["src/"]);
+}
+
+#[test]
+fn subsequent_directory_pages_append_unique_entries_and_keep_the_continuation() {
+    use crate::features::files::entry::PageCursor;
+    let mut tree = FileTree::default();
+    tree.start();
+    let cursor = PageCursor {
+        generation: "g".into(),
+        after: "f:a".into(),
+    };
+    tree.loaded(
+        "",
+        Ok(FileListing {
+            entries: vec![entry("a", false)],
+            truncated: true,
+            next_cursor: Some(cursor.clone()),
+        }),
+    );
+    assert_eq!(tree.more(""), Some(cursor));
+    tree.loaded(
+        "",
+        Ok(FileListing {
+            entries: vec![entry("a", false), entry("b", false)],
+            truncated: false,
+            next_cursor: None,
+        }),
+    );
+    assert_eq!(shape(&tree), ["a", "b"]);
+    assert_eq!(tree.more(""), None);
 }

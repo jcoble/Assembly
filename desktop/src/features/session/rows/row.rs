@@ -4,13 +4,13 @@
 
 use serde::Deserialize;
 
-use super::ask::AskPayload;
 use super::markdown::Block;
 use super::plan::PlanItem;
 use super::subagent::SubagentPayload;
 use super::task::TaskPayload;
 use super::tool::ToolPayload;
 use super::turn_stats::TurnStats;
+use crate::core::ui::ask::payload::AskPayload;
 
 pub use crate::core::socket::row::Row;
 

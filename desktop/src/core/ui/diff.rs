@@ -13,7 +13,11 @@ pub enum SuppliedPatch {
     Combined(String),
 }
 pub fn supplied_patch(text: &str, truncated: bool) -> Result<SuppliedPatch, String> {
-    if text.lines().any(|line| line.starts_with("diff --cc ") || line.starts_with("diff --combined ") || line.starts_with("@@@ ")) {
+    if text.lines().any(|line| {
+        line.starts_with("diff --cc ")
+            || line.starts_with("diff --combined ")
+            || line.starts_with("@@@ ")
+    }) {
         return Ok(SuppliedPatch::Combined(text.to_string()));
     }
     parse_patch(text, truncated).map(SuppliedPatch::Unified)

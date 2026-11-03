@@ -5,8 +5,8 @@
 pub mod git_status;
 pub mod source_control_pane;
 
+pub mod commit_timeline;
 pub mod git_history;
 pub mod graph_lanes;
 pub mod history_filter;
-pub mod commit_timeline;
 pub mod history_pane;

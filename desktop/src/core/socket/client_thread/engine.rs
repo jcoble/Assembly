@@ -7,14 +7,35 @@ use std::sync::atomic::Ordering;
 
 impl ClientThread {
     pub(super) fn add_engine(
-        &mut self, id: u64, topic: String, key: Option<String>, machine: Option<String>,
-        scoped: bool, updates: futures_channel::mpsc::UnboundedSender<EngineUpdate>,
+        &mut self,
+        id: u64,
+        topic: String,
+        key: Option<String>,
+        machine: Option<String>,
+        scoped: bool,
+        updates: futures_channel::mpsc::UnboundedSender<EngineUpdate>,
     ) {
-        let machine = machine.or_else(|| self.connection.as_ref().and_then(|connection| connection.engine_machine.clone()));
-        self.engines.insert(id, crate::core::socket::engine_update::EngineFeed {
-            handle: id, topic, key, scoped, machine, updates,
-            through: None, acknowledged: None, at: None, snapshot_cut: None, snapshot_items: Vec::new(),
+        let machine = machine.or_else(|| {
+            self.connection
+                .as_ref()
+                .and_then(|connection| connection.engine_machine.clone())
         });
+        self.engines.insert(
+            id,
+            crate::core::socket::engine_update::EngineFeed {
+                handle: id,
+                topic,
+                key,
+                scoped,
+                machine,
+                updates,
+                through: None,
+                acknowledged: None,
+                at: None,
+                snapshot_cut: None,
+                snapshot_items: Vec::new(),
+            },
+        );
         self.send_engine(id);
     }
 
@@ -46,13 +67,23 @@ impl ClientThread {
         feed.machine = Some(machine.clone());
         feed.snapshot_cut = Some(through);
         feed.snapshot_items.extend(items);
-        if more { return; }
+        if more {
+            return;
+        }
         let items = std::mem::take(&mut feed.snapshot_items);
         let update = if feed.scoped {
             EngineUpdate::Scoped(EnginePage {
-                wire:id, machine, through, at: at.clone(), snapshot: true, items, events: Vec::new(),
+                wire: id,
+                machine,
+                through,
+                at: at.clone(),
+                snapshot: true,
+                items,
+                events: Vec::new(),
             })
-        } else { EngineUpdate::Snapshot(items) };
+        } else {
+            EngineUpdate::Snapshot(items)
+        };
         if feed.updates.unbounded_send(update).is_err() {
             self.engines.remove(&id);
             self.send(&OutFrame::Unsub { id });
@@ -64,7 +95,11 @@ impl ClientThread {
             feed.at = at;
             feed.snapshot_cut = None;
             if !feed.scoped {
-                self.send(&OutFrame::Ack { id, stream:"engine", after:through });
+                self.send(&OutFrame::Ack {
+                    id,
+                    stream: "engine",
+                    after: through,
+                });
             }
         }
     }
@@ -109,11 +144,18 @@ impl ClientThread {
         }
         let update = if feed.scoped {
             EngineUpdate::Scoped(EnginePage {
-                wire:id, machine, through, at: at.clone(), snapshot: false, items: Vec::new(), events,
+                wire: id,
+                machine,
+                through,
+                at: at.clone(),
+                snapshot: false,
+                items: Vec::new(),
+                events,
             })
-        } else { EngineUpdate::Events(events) };
-        if feed.updates.unbounded_send(update).is_err()
-        {
+        } else {
+            EngineUpdate::Events(events)
+        };
+        if feed.updates.unbounded_send(update).is_err() {
             self.engines.remove(&id);
             self.send(&OutFrame::Unsub { id });
             return;
@@ -121,7 +163,11 @@ impl ClientThread {
         feed.through = Some(through);
         feed.at = at;
         if !feed.scoped {
-            self.send(&OutFrame::Ack { id, stream:"engine", after:through });
+            self.send(&OutFrame::Ack {
+                id,
+                stream: "engine",
+                after: through,
+            });
         }
     }
 

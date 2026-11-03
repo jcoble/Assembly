@@ -1,18 +1,22 @@
-//! `FileView` shows one file of a session's folder in a center tab, read-only, with line numbers (`files/read`). It reads
-//! the first part when first shown and the next part as the list scrolls near the end of what it holds (`FileText`).
-//! The part being read is a task the view holds, so closing the tab drops it and cancels its call. Plain text only: the
-//! kit's highlighter needs gpui-component's `tree-sitter` or `syntect` feature, which this build doesn't turn on. The tab
-//! is saved with the layout under the "File" pane's name and comes back read afresh.
+//! One source editor per opened file, backed by the bounded shared draft store and owning-host bulk file calls.
 
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::{
     BasePanel, Panel, PanelEvent, PanelId, PanelInfo, PanelState, panel_handle, register_panel,
 };
+use gpui_kit::component::input::{Editor, InputEvent};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use super::entry::FileChunk;
+use super::document_store::{DocumentKey, DocumentStore, DocumentView};
+use super::editor_surface::EditorSurface;
+use super::entry::{FileChunk, FileOwnership};
+use super::file_save::{ConfirmedFileSave, FileSaveController, SaveState};
+
+#[path = "file_view_save.rs"]
+mod saving;
 use super::file_text::FileText;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
@@ -25,6 +29,7 @@ mod tests;
 
 /// The pane's name in the saved layout.
 pub const FILE: &str = "File";
+actions!(files, [SaveDocument]);
 
 pub struct FileView {
     focus: FocusHandle,
@@ -34,7 +39,18 @@ pub struct FileView {
     /// The part being read; dropping it cancels its call.
     pub(super) loading: Option<Task<()>>,
     started: bool,
-    list: UniformListScrollHandle,
+    owner: Option<FileOwnership>,
+    document: Option<DocumentKey>,
+    editor: Option<EditorSurface>,
+    editor_events: Option<Subscription>,
+    editor_error: Option<String>,
+    active: bool,
+    jump: Option<(u32, u32)>,
+    pinned: bool,
+    save: Option<FileSaveController>,
+    saving: Option<Task<()>>,
+    upload: Option<String>,
+    last_save: Option<ConfirmedFileSave>,
     /// Redraws in the editor's face, size and line height when Settings changes them.
     _preferences: Option<Subscription>,
 }
@@ -42,6 +58,19 @@ pub struct FileView {
 impl FileView {
     /// Restores a file tab from the saved layout.
     pub fn register(cx: &mut App) {
+        let save = KeyBinding::load(
+            "secondary-s",
+            Box::new(SaveDocument),
+            Some(
+                KeyBindingContextPredicate::parse("FileEditor")
+                    .expect("file editor key context")
+                    .into(),
+            ),
+            false,
+            None,
+            cx,
+        );
+        cx.bind_keys([save.expect("the save-file binding parses")]);
         register_panel(cx, FILE, |build, _, cx| {
             let saved = match build.state().info.clone() {
                 PanelInfo::Panel(saved) => saved,
@@ -57,9 +86,7 @@ impl FileView {
 
     /// Opens the session's file at `path` in the center, or brings its tab forward.
     pub fn open(session: String, path: String, window: &mut Window, cx: &mut App) {
-        CenterPanes::open(key(&session, &path), window, cx, |_, cx| {
-            cx.new(|cx| FileView::new(session, path, cx))
-        });
+        Self::open_at(session, path, None, None, false, window, cx);
     }
 
     pub fn new(session: String, path: String, cx: &mut Context<Self>) -> Self {
@@ -70,7 +97,18 @@ impl FileView {
             text: FileText::default(),
             loading: None,
             started: false,
-            list: UniformListScrollHandle::new(),
+            owner: None,
+            document: None,
+            editor: None,
+            editor_events: None,
+            editor_error: None,
+            active: false,
+            jump: None,
+            pinned: true,
+            save: None,
+            saving: None,
+            upload: None,
+            last_save: None,
             _preferences: Preferences::try_global(cx)
                 .map(|preferences| cx.observe(&preferences, |_, _, cx| cx.notify())),
         }
@@ -97,47 +135,285 @@ impl FileView {
                         Err("The connection dropped; open the file again to retry.".into())
                     }
                 };
+                if !view.active {
+                    return;
+                }
                 if let Some(again) = view.text.loaded(offset, answer) {
                     view.load_part(again, cx);
+                } else if let Some(next) = view.text.more(usize::MAX - 200) {
+                    view.load_part(next, cx);
                 }
                 cx.notify();
             });
         }));
     }
 
-    /// One row, in the editor's text (`Preferences::editor_text`): the list measures its widest row on its own,
-    /// outside the list's styles, so the font is set here for that width to match what's drawn.
-    fn line(&self, ix: usize, gutter: Pixels, muted: Hsla, text: &EditorText) -> AnyElement {
-        let (font, size, line) = text.clone();
-        h_flex()
-            .h(line)
-            .font_family(font)
-            .text_size(size)
-            .child(
-                div()
-                    .w(gutter)
-                    .flex_none()
-                    .pr_3()
-                    .text_right()
-                    .text_color(muted)
-                    .child((ix + 1).to_string()),
-            )
-            .child(
-                div()
-                    .debug_selector(move || format!("file-line-{ix}"))
-                    .whitespace_nowrap()
-                    .child(SharedString::from(self.text.lines[ix].clone())),
-            )
-            .into_any_element()
+    fn load_owner(&mut self, cx: &mut Context<Self>) {
+        let Some(socket) = SocketClient::try_global(cx) else {
+            self.text.failed("The backend isn't running.".into());
+            return;
+        };
+        let call = socket.read(cx).call::<FileOwnership>(
+            "files",
+            "owner",
+            json!({ "session": self.session }),
+            None,
+        );
+        self.loading = Some(cx.spawn(async move |view, cx| {
+            let answer = call.await;
+            let _ = view.update(cx, |view, cx| {
+                view.loading = None;
+                if !view.active {
+                    return;
+                }
+                match answer {
+                    Outcome::Ok(owner) => {
+                        view.owner = Some(owner);
+                        view.text.start();
+                        view.load_part(0, cx);
+                    }
+                    Outcome::Failed(error) => view.text.failed(error.message),
+                    Outcome::Aborted => view
+                        .text
+                        .failed("The connection dropped; reopen this file to retry.".into()),
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    fn bind_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editor.is_some() || !self.active {
+            return;
+        }
+        let (Some(owner), Some(text), Some(revision)) =
+            (&self.owner, self.text.content(), self.text.revision())
+        else {
+            return;
+        };
+        let key = DocumentKey {
+            machine: owner.machine.clone(),
+            checkout_root: owner.checkout_root.clone(),
+            path: self.path.clone(),
+        };
+        if !cx.has_global::<DocumentStore>() {
+            cx.set_global(DocumentStore::default());
+        }
+        if let Err(error) =
+            cx.global_mut::<DocumentStore>()
+                .open(key.clone(), revision.to_owned(), text.to_owned())
+        {
+            self.editor_error = Some(format!(
+                "This file cannot be edited: {error:?}. Existing drafts are preserved."
+            ));
+            return;
+        }
+        let snapshot = cx
+            .global::<DocumentStore>()
+            .snapshot(&key)
+            .expect("opened document");
+        let current = PanelId::from(cx.entity_id());
+        let document_key = format!(
+            "document:{}",
+            serde_json::to_string(&(&key.machine, &key.checkout_root, &key.path))
+                .expect("document key")
+        );
+        let claimed = CenterPanes::claim_file(
+            document_key,
+            self::key(&self.session, &self.path),
+            current,
+            cx,
+        );
+        if claimed != current {
+            if let Some(existing) = Self::panel(claimed, cx) {
+                let incoming = cx.entity();
+                let jump = self.jump.take();
+                let pinned = self.pinned;
+                let handle = window.window_handle();
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |_, window, cx| {
+                        existing.update(cx, |view, cx| {
+                            view.pinned |= pinned;
+                            if let Some((line, column)) = jump {
+                                if let Some(editor) = &mut view.editor {
+                                    editor.jump(line, column, cx);
+                                } else {
+                                    view.jump = Some((line, column));
+                                }
+                            }
+                        });
+                        if let Some(dock) = CenterPanes::dock(cx) {
+                            dock.update(cx, |dock, cx| {
+                                dock.remove_panel(incoming, window, cx);
+                                dock.select_panel(claimed, window, cx);
+                            });
+                        }
+                    });
+                });
+            }
+            return;
+        }
+        self.document = Some(key);
+        let mut editor = EditorSurface::new(&self.path, &snapshot.text, window, cx);
+        if let Some((line, column)) = self.jump.take() {
+            editor.jump(line, column, cx);
+        } else if let Some(view) = cx
+            .global::<DocumentStore>()
+            .view_state(self.document.as_ref().expect("document"))
+        {
+            editor.state.update(cx, |state, cx| {
+                state.set_selected_range(view.selection, cx);
+                state.set_scroll_offset(point(px(view.scroll.0), px(view.scroll.1)), cx);
+            });
+        }
+        self.editor_events = Some(cx.subscribe_in(
+            &editor.state,
+            window,
+            |view, _, event: &InputEvent, window, cx| {
+                if let InputEvent::Change = event {
+                    view.editor_changed(window, cx);
+                }
+            },
+        ));
+        self.editor = Some(editor);
+        if !self.pinned {
+            if let Some(old) = CenterPanes::file_preview(cx).filter(|id| *id != current)
+                && let Some(previous) = Self::panel(old, cx)
+            {
+                let handle = window.window_handle();
+                cx.defer(move |cx| {
+                    let _ = handle.update(cx, |_, window, cx| {
+                        if previous.read(cx).replaceable(cx)
+                            && let Some(dock) = CenterPanes::dock(cx)
+                        {
+                            dock.update(cx, |dock, cx| dock.remove_panel(previous, window, cx));
+                        }
+                    });
+                });
+            }
+            CenterPanes::set_file_preview(current, cx);
+        }
+    }
+
+    fn editor_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(editor), Some(key)) = (&self.editor, &self.document) else {
+            return;
+        };
+        let value = editor.state.read(cx).value().to_string();
+        let snapshot = cx
+            .global::<DocumentStore>()
+            .snapshot(key)
+            .expect("loaded document");
+        match cx
+            .global_mut::<DocumentStore>()
+            .replace(key, snapshot.version, value)
+        {
+            Ok(_) => {
+                self.pinned = true;
+                CenterPanes::pin_file(PanelId::from(cx.entity_id()), cx);
+                self.editor_error = None;
+            }
+            Err(error) => {
+                editor
+                    .state
+                    .update(cx, |state, cx| state.set_value(snapshot.text, window, cx));
+                self.editor_error = Some(format!(
+                    "The edit was refused: {error:?}. The existing draft is preserved."
+                ));
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn open_at(
+        session: String,
+        path: String,
+        line: Option<u32>,
+        column: Option<u32>,
+        pinned: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let tab_key = key(&session, &path);
+        let id = CenterPanes::open(tab_key, window, cx, |_, cx| {
+            cx.new(|cx| {
+                let mut view = FileView::new(session, path, cx);
+                view.pinned = pinned;
+                view
+            })
+        });
+        if let Some(id) = id
+            && let Some(view) = Self::panel(id, cx)
+        {
+            view.update(cx, |view, cx| {
+                view.pinned |= pinned;
+                if let Some(line) = line {
+                    if let Some(editor) = &mut view.editor {
+                        editor.jump(line, column.unwrap_or(1), cx);
+                    } else {
+                        view.jump = Some((line, column.unwrap_or(1)));
+                    }
+                }
+                cx.notify();
+            });
+        }
+    }
+
+    fn stash_editor_view(&self, cx: &mut App) {
+        if let (Some(key), Some(editor)) = (&self.document, &self.editor) {
+            let state = editor.state.read(cx);
+            let selection = state.selected_range();
+            let scroll = state.scroll_offset();
+            cx.global_mut::<DocumentStore>().stash_view(
+                key,
+                DocumentView {
+                    selection,
+                    scroll: (f32::from(scroll.x), f32::from(scroll.y)),
+                },
+            );
+        }
+    }
+
+    fn release_read(&mut self, cx: &mut Context<Self>) {
+        if let (Some(socket), Some(revision)) = (SocketClient::try_bulk(cx), self.text.revision()) {
+            socket
+                .read(cx)
+                .call::<Value>(
+                    "files",
+                    "release",
+                    json!({ "session": self.session, "path": self.path,
+                "revision": revision }),
+                    None,
+                )
+                .ignore_reply();
+        }
+    }
+
+    fn panel(id: PanelId, cx: &App) -> Option<Entity<Self>> {
+        let dock = CenterPanes::dock(cx)?;
+        let panel = dock.read(cx).panel(id)?.clone();
+        gpui_kit::component::dock::PanelHandle::of(&panel)?
+            .view()
+            .downcast::<Self>()
+            .ok()
+    }
+
+    fn replaceable(&self, cx: &App) -> bool {
+        !self.pinned
+            && self.saving.is_none()
+            && !self.document.as_ref().is_some_and(|key| {
+                cx.try_global::<DocumentStore>()
+                    .is_some_and(|docs| docs.is_dirty(key))
+            })
     }
 }
 
-/// The editor's face, text size and line height.
-type EditorText = (SharedString, Pixels, Pixels);
-
 /// The key a file's tab opens under, so the same file opens once.
 fn key(session: &str, path: &str) -> String {
-    format!("file:{session}:{path}")
+    format!(
+        "file:{}",
+        serde_json::to_string(&(session, path)).expect("file alias")
+    )
 }
 
 impl EventEmitter<PanelEvent> for FileView {}
@@ -153,23 +429,44 @@ impl BasePanel for FileView {
         FILE
     }
 
-    /// Reads the first part the first time the tab is shown.
+    fn closable(&self, cx: &App) -> bool {
+        self.saving.is_none()
+            && !self.document.as_ref().is_some_and(|key| {
+                cx.try_global::<DocumentStore>()
+                    .is_some_and(|docs| docs.is_dirty(key))
+            })
+    }
+
+    /// Reads a complete coherent buffer only when shown.
     fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut Context<Self>) {
+        self.active = active;
         if active && !self.started {
             self.started = true;
-            let offset = self.text.start();
-            self.load_part(offset, cx);
-            cx.notify();
+            self.load_owner(cx);
         }
+        if !active {
+            self.stash_editor_view(cx);
+            self.loading = None;
+            self.release_read(cx);
+            self.editor_events = None;
+            self.editor = None;
+            if self.document.is_none() {
+                self.started = false;
+            }
+        }
+        cx.notify();
     }
 
     fn on_removed(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.loading = None;
-        if let (Some(socket), Some(revision)) = (SocketClient::try_bulk(cx), self.text.revision()) {
-            let call = socket.read(cx).call::<Value>("files", "release",
-                json!({ "session": self.session, "path": self.path, "revision": revision }), None);
-            call.ignore_reply();
+        self.stash_editor_view(cx);
+        if let Some(key) = &self.document {
+            cx.global_mut::<DocumentStore>().release_clean(key);
         }
+        self.active = false;
+        self.loading = None;
+        self.saving = None;
+        self.drop_upload(cx);
+        self.release_read(cx);
     }
 
     fn dump(&self, _: &App) -> PanelState {
@@ -194,62 +491,67 @@ impl Panel for FileView {
 }
 
 impl Render for FileView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let muted = theme.muted_foreground;
-        // Why a file isn't shown (too large, not text, refused, keeps changing) is a notice, not an alarm.
-        let note = |text: String| div().px_3().py_2().text_sm().text_color(muted).child(text);
-        let status = if let Some(error) = &self.text.error {
-            Some(note(error.clone()))
-        } else if self.text.binary {
-            Some(note("This file isn't text, so it isn't shown.".into()))
-        } else if self.text.lines.is_empty() && self.text.is_loading() {
-            Some(note("Loading…".into()))
-        } else if self.text.lines.is_empty() && self.started {
-            Some(note("This file is empty.".into()))
-        } else {
-            None
-        };
-        // The numbers' column: 8 px a digit at the 13 px it was sized for, growing with the text.
-        let digits = self.text.line_count.max(1).to_string().len() as f32;
-        let size = f32::from(Preferences::editor_text(cx).1);
-        let gutter = px(digits * 8. * size / 13. + 20.);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.bind_editor(window, cx);
+        let muted = cx.theme().muted_foreground;
+        let dirty = self.document.as_ref().is_some_and(|key| {
+            cx.try_global::<DocumentStore>()
+                .is_some_and(|docs| docs.is_dirty(key))
+        });
+        let status = self
+            .editor_error
+            .clone()
+            .or_else(|| self.text.error.clone())
+            .or_else(|| {
+                if self.text.binary {
+                    Some("This file isn't UTF-8 text.".into())
+                } else if self.editor.is_none() {
+                    Some("Loading…".into())
+                } else {
+                    None
+                }
+            });
         v_flex()
             .track_focus(&self.focus)
+            .key_context("FileEditor")
+            .on_action(cx.listener(|view, _: &SaveDocument, _, cx| view.save_document(cx)))
             .size_full()
             .child(
-                div()
+                h_flex()
                     .px_3()
                     .py_1()
+                    .gap_2()
                     .text_sm()
                     .text_color(muted)
-                    .child(self.path.clone()),
+                    .child(self.path.clone())
+                    .when(dirty, |row| row.child("Unsaved"))
+                    .child(
+                        Button::new("file-save")
+                            .label(
+                                if self
+                                    .save
+                                    .as_ref()
+                                    .is_some_and(|s| s.state == SaveState::Unknown)
+                                {
+                                    "Check save"
+                                } else {
+                                    "Save"
+                                },
+                            )
+                            .ghost()
+                            .disabled(self.saving.is_some() || self.document.is_none())
+                            .on_click(cx.listener(|view, _, _, cx| view.save_document(cx))),
+                    ),
             )
-            .children(status)
-            .when(!self.text.lines.is_empty(), |view| {
+            .children(
+                status.map(|text| div().px_3().py_2().text_sm().text_color(muted).child(text)),
+            )
+            .when_some(self.editor.as_ref(), |view, editor| {
                 view.child(
-                    uniform_list(
-                        "file-lines",
-                        self.text.lines.len(),
-                        cx.processor(move |view, range: std::ops::Range<usize>, _, cx| {
-                            // A one-row range is the list measuring its widest row, not what's shown, unless one
-                            // row is all there is.
-                            if (range.len() > 1 || view.text.lines.len() == 1)
-                                && let Some(offset) = view.text.more(range.end)
-                            {
-                                view.load_part(offset, cx);
-                            }
-                            let (muted, text) =
-                                (cx.theme().muted_foreground, Preferences::editor_text(cx));
-                            range
-                                .map(|ix| view.line(ix, gutter, muted, &text))
-                                .collect()
-                        }),
-                    )
-                    .track_scroll(&self.list)
-                    .with_width_from_item(Some(self.text.widest))
-                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                    .flex_1(),
+                    Editor::new(&editor.state)
+                        .font_family(Preferences::editor_text(cx).0)
+                        .text_size(Preferences::editor_text(cx).1)
+                        .size_full(),
                 )
             })
     }

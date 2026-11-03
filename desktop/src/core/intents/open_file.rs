@@ -9,4 +9,6 @@ pub struct OpenFile {
     pub session_id: String,
     pub path: String,
     pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub pinned: bool,
 }

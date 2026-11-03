@@ -12,7 +12,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
 
-use super::entry::FileListing;
+use super::entry::{FileListing, ObservedRoot, PageCursor};
 use super::file_tree::{FileTree, Row};
 use super::file_view::FileView;
 use crate::core::socket::client::SocketClient;
@@ -34,6 +34,9 @@ pub struct FilesPane {
     /// Whether the tree has asked for this session's root yet: only once the pane is shown.
     started: bool,
     shown: bool,
+    generation: u64,
+    lease: Option<String>,
+    observing: Option<Task<()>>,
     pub(super) selected: Option<String>,
     /// Each folder's load, by folder; dropping one cancels its call.
     pub(super) loads: HashMap<String, Task<()>>,
@@ -54,6 +57,9 @@ impl FilesPane {
             tree: FileTree::default(),
             started: false,
             shown: false,
+            generation: 0,
+            lease: None,
+            observing: None,
             selected: None,
             loads: HashMap::new(),
             list: UniformListScrollHandle::new(),
@@ -72,6 +78,8 @@ impl FilesPane {
         if session == self.session {
             return;
         }
+        self.release_watch(cx);
+        self.generation = self.generation.wrapping_add(1);
         self.session = session;
         self.tree = FileTree::default();
         self.loads.clear();
@@ -82,21 +90,90 @@ impl FilesPane {
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
-        if self.shown && self.session.is_some() && (!self.started || self.tree.root_failed()) {
+        if !self.shown || self.session.is_none() {
+            return;
+        }
+        if self.lease.is_none() {
+            if self.observing.is_some() {
+                return;
+            }
+            let Some(socket) = SocketClient::try_global(cx) else {
+                return;
+            };
+            let session = self.session.clone().expect("selected session");
+            let generation = self.generation;
+            let call = socket.read(cx).call::<ObservedRoot>(
+                "files",
+                "observe",
+                json!({ "session": session }),
+                None,
+            );
+            self.observing = Some(cx.spawn(async move |pane, cx| {
+                let answer = call.await;
+                let _ = pane.update(cx, |pane, cx| {
+                    if pane.generation != generation || !pane.shown {
+                        return;
+                    }
+                    pane.observing = None;
+                    match answer {
+                        Outcome::Ok(observed) => {
+                            pane.lease = Some(observed.lease);
+                            pane.start(cx);
+                        }
+                        Outcome::Failed(error) => {
+                            pane.tree.start();
+                            pane.tree.loaded("", Err(error.message));
+                        }
+                        Outcome::Aborted => {
+                            pane.tree.start();
+                            pane.tree.loaded(
+                                "",
+                                Err("The connection dropped; retry this folder.".into()),
+                            );
+                        }
+                    }
+                    cx.notify();
+                });
+            }));
+            return;
+        }
+        if !self.started || self.tree.root_failed() {
             self.started = true;
-            let root = self.tree.start();
-            self.load(root.to_string(), cx);
+            self.tree.start();
+            self.load(String::new(), None, cx);
         }
     }
 
-    fn load(&mut self, dir: String, cx: &mut Context<Self>) {
+    pub(super) fn is_loading(&self) -> bool {
+        self.observing.is_some() || !self.loads.is_empty()
+    }
+
+    fn release_watch(&mut self, cx: &mut Context<Self>) {
+        self.observing = None;
+        if let (Some(lease), Some(socket)) = (self.lease.take(), SocketClient::try_global(cx)) {
+            let call = socket.read(cx).call::<serde_json::Value>(
+                "files",
+                "unobserve",
+                json!({ "lease": lease }),
+                None,
+            );
+            call.ignore_reply();
+        }
+    }
+
+    fn load(&mut self, dir: String, cursor: Option<PageCursor>, cx: &mut Context<Self>) {
         let (Some(session), Some(socket)) = (self.session.clone(), SocketClient::try_global(cx))
         else {
             self.tree
                 .loaded(&dir, Err("The backend isn't running.".into()));
             return;
         };
-        let args = json!({ "session": session, "dir": dir, "includeExcluded": true });
+        if !self.shown {
+            return;
+        }
+        let generation = self.generation;
+        let args =
+            json!({ "session": session, "dir": dir, "includeExcluded": true, "cursor": cursor });
         let call = socket
             .read(cx)
             .call::<FileListing>("files", "list", args, None);
@@ -104,9 +181,18 @@ impl FilesPane {
         let task = cx.spawn(async move |pane, cx| {
             let outcome = call.await;
             let _ = pane.update(cx, |pane, cx| {
+                if pane.generation != generation || !pane.shown {
+                    return;
+                }
                 pane.loads.remove(&at);
                 let answer = match outcome {
                     Outcome::Ok(listing) => Ok(listing),
+                    Outcome::Failed(failure) if failure.message.contains("cursor_changed") => {
+                        pane.started = false;
+                        pane.loads.clear();
+                        pane.start(cx);
+                        return;
+                    }
                     Outcome::Failed(failure) => Err(failure.message),
                     Outcome::Aborted => {
                         Err("The connection dropped; open it again to retry.".into())
@@ -123,7 +209,7 @@ impl FilesPane {
     pub(super) fn clicked(&mut self, path: String, folder: bool, cx: &mut Context<Self>) {
         if folder {
             match self.tree.toggle(&path) {
-                Some(dir) => self.load(dir, cx),
+                Some(dir) => self.load(dir, None, cx),
                 None => {
                     self.loads.remove(&path);
                 }
@@ -205,10 +291,20 @@ impl FilesPane {
                         .child(message.to_string()),
                 )
                 .into_any_element(),
-            Row::Truncated { depth } => line(depth)
-                .text_color(muted)
-                .child("More entries than can be shown")
-                .into_any_element(),
+            Row::Truncated { depth, dir } => {
+                let dir = dir.to_owned();
+                line(depth)
+                    .id(ix)
+                    .text_color(muted)
+                    .cursor_pointer()
+                    .child("Load more")
+                    .on_click(cx.listener(move |pane, _, _, cx| {
+                        if let Some(cursor) = pane.tree.more(&dir) {
+                            pane.load(dir.clone(), Some(cursor), cx);
+                        }
+                    }))
+                    .into_any_element()
+            }
         }
     }
 }
@@ -234,7 +330,15 @@ impl BasePanel for FilesPane {
     /// Shown, it loads the session's root if it hasn't yet, or if that failed; hidden, it keeps what it has.
     fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.shown = active;
-        self.start(cx);
+        if !active {
+            self.generation = self.generation.wrapping_add(1);
+            self.loads.clear();
+            self.release_watch(cx);
+            self.started = false;
+        } else {
+            self.start(cx);
+        }
+        cx.notify();
     }
 }
 

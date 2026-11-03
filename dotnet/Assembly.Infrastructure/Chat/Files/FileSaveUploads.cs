@@ -5,9 +5,10 @@ namespace Assembly.Infrastructure.Chat.Files;
 /// <summary>Four bounded private staging files per connection. A failed operation or closed owner ends its upload.</summary>
 public sealed class FileSaveUploads
 {
-    private sealed class Upload(string id, string connection, string root, BeginSave args, string stage)
+    private sealed class Upload(string id, string connection, string root, BeginSave args, string stage, long? replyId)
     {
         public readonly string Id = id;
+        public readonly long? ReplyId = replyId;
         public readonly string Connection = connection;
         public readonly string Root = root;
         public readonly BeginSave Args = args;
@@ -20,7 +21,7 @@ public sealed class FileSaveUploads
     private readonly object gate = new();
     private readonly Dictionary<string, Upload> uploads = [];
 
-    public Task<BegunSave> BeginAsync(string root, BeginSave args, string connection, CancellationToken ct)
+    public Task<BegunSave> BeginAsync(string root, BeginSave args, string connection, CancellationToken ct, long? replyId = null)
     {
         ct.ThrowIfCancellationRequested();
         if (args.Size < 0 || args.Size > FileRead.MaxBytes || args.ExpectedRevision.Length != 64)
@@ -37,7 +38,7 @@ public sealed class FileSaveUploads
             {
                 if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(stage, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
-            uploads.Add(id, new Upload(id, connection, root, args, stage));
+            uploads.Add(id, new Upload(id, connection, root, args, stage, replyId));
         }
         return Task.FromResult(new BegunSave(id));
     }
@@ -67,7 +68,8 @@ public sealed class FileSaveUploads
         finally { FinishTurn(upload); }
     }
 
-    public async Task<SaveResult> CommitAsync(string id, string connection, CancellationToken ct)
+    internal async Task<SaveResult> CommitAsync(string id, string connection, CancellationToken ct,
+        Action<string, string>? validateOwner = null)
     {
         var upload = Find(id, connection);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, upload.Closing.Token);
@@ -78,7 +80,8 @@ public sealed class FileSaveUploads
         {
             if (upload.Ended || upload.Offset != upload.Args.Size) throw new CallFailed("the save upload is not complete");
             ct.ThrowIfCancellationRequested();
-            return await FileSave.CommitStageAsync(upload.Root, upload.Args.Path, upload.Args.ExpectedRevision, upload.Stage, ct);
+            return await FileSave.CommitStageAsync(upload.Root, upload.Args.Path, upload.Args.ExpectedRevision, upload.Stage, ct,
+                validateOwner is null ? null : () => validateOwner(upload.Args.Session, upload.Root));
         }
         finally { End(upload); FinishTurn(upload); }
     }
@@ -94,6 +97,19 @@ public sealed class FileSaveUploads
         }
         upload.Closing.Cancel();
         if (upload.Gate.Wait(0)) FinishTurn(upload);
+    }
+
+    internal string? OrderKey(string id)
+    {
+        lock (gate) return uploads.TryGetValue(id, out var upload)
+            ? "files:" + SessionPaths.ResolveFile(upload.Root, upload.Args.Path) : null;
+    }
+
+    internal void FailedBegin(string connection, long? replyId)
+    {
+        string? id;
+        lock (gate) id = uploads.Values.FirstOrDefault(upload => upload.Connection == connection && upload.ReplyId == replyId)?.Id;
+        if (id is not null) Drop(id, connection);
     }
 
     public void Close(string connection)

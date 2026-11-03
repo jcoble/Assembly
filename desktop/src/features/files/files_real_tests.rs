@@ -37,6 +37,7 @@ async fn selected_session(cx: &mut TestAppContext, files: &[&str]) -> (RealBacke
         SelectedSession::init(cx);
         let socket = SocketClient::start(backend.endpoint(), cx);
         let heard = cx.observe(&socket, move |_, _| _ = tell.unbounded_send(()));
+        SocketClient::start_bulk(backend.endpoint(), cx);
         (socket, heard)
     });
     until("connected", &mut changes, &changed, || {
@@ -166,7 +167,7 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
     pane.update_in(cx, |pane, window, cx| {
         BasePanel::set_active(pane, true, window, cx)
     });
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
@@ -174,7 +175,7 @@ async fn the_tree_loads_when_shown_and_opens_folders_one_at_a_time(cx: &mut Test
         );
     });
     pane.update(cx, |pane, cx| pane.clicked("src".into(), true, cx));
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
@@ -201,6 +202,9 @@ async fn search_finds_names_and_a_newer_search_replaces_the_older(cx: &mut TestA
     )
     .await;
     let (pane, cx) = cx.add_window_view(SearchPane::new);
+    pane.update_in(cx, |pane, window, cx| {
+        BasePanel::set_active(pane, true, window, cx)
+    });
     pane.update(cx, |pane, cx| {
         pane.search("lib".into(), DEBOUNCE, cx);
         pane.search("MAIN".into(), Duration::ZERO, cx);
@@ -229,7 +233,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
     pane.update_in(cx, |pane, window, cx| {
         BasePanel::set_active(pane, true, window, cx)
     });
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(
             shape(pane),
@@ -241,7 +245,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
         BasePanel::set_active(pane, false, window, cx);
         BasePanel::set_active(pane, true, window, cx);
     });
-    settled(&pane, cx, |pane| pane.loads.is_empty()).await;
+    settled(&pane, cx, |pane| !pane.is_loading()).await;
     pane.read_with(cx, |pane, _| {
         assert_eq!(shape(pane), [".git/ -", ".gitignore", "readme.md"])
     });
@@ -249,7 +253,7 @@ async fn a_folder_made_after_the_tab_was_shown_loads_when_shown_again(cx: &mut T
 
 // Pins: files#11, files#12, files#15
 #[gpui::test]
-async fn a_file_reads_its_first_part_then_the_rest_and_closing_drops_the_read(
+async fn a_file_reads_a_complete_coherent_buffer_and_closing_drops_the_read(
     cx: &mut TestAppContext,
 ) {
     let big: Vec<String> = (0..20_000)
@@ -270,18 +274,11 @@ async fn a_file_reads_its_first_part_then_the_rest_and_closing_drops_the_read(
         BasePanel::set_active(view, true, window, cx)
     });
     settled(&view, cx, |view| view.loading.is_none()).await;
-    let first = view.read_with(cx, |view, _| {
+    view.read_with(cx, |view, _| {
         assert_eq!(view.text.line_count, 20_000);
-        assert_eq!(view.text.lines[0], big[0]);
-        view.text.lines.len()
+        assert_eq!(view.text.content(), Some((big.join("\n") + "\n").as_str()));
+        assert_eq!(view.text.lines, big);
     });
-    assert!(first < 20_000, "a part, not the whole file");
-    view.update(cx, |view, cx| {
-        let offset = view.text.more(first).expect("another part");
-        view.load_part(offset, cx);
-    });
-    settled(&view, cx, |view| view.loading.is_none()).await;
-    view.read_with(cx, |view, _| assert_eq!(view.text.lines, big));
     view.update(cx, |view, cx| {
         let offset = view.text.start();
         view.load_part(offset, cx);

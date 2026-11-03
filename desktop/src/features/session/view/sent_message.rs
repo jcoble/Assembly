@@ -48,7 +48,8 @@ pub fn shown(text: &str, open: bool) -> (&str, bool) {
 impl RenderOnce for SentMessage {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let (chat_size, chat_height) = Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
+        let (chat_size, chat_height) =
+            Preferences::read(cx, |appearance| appearance.ui_text(TextRole::Chat));
         let (text, long) = shown(&self.text, self.open);
         let toggle = long.then(|| {
             let (key, on_action) = (self.key.clone(), self.on_action.clone());

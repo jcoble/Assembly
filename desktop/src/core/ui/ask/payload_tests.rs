@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::ask::AskSchema;
+use super::payload::AskSchema;
 
 // Pins: g0-session#16
 #[test]
@@ -62,7 +62,7 @@ fn a_form_with_no_fields_is_none_and_a_field_it_cannot_read_is_a_plain_text_fiel
 // Pins: g0-session#16
 #[test]
 fn each_field_answers_by_its_choices_or_as_text() {
-    use super::ask::AskInput;
+    use super::payload::AskInput;
     let schema = json!({
         "type": "object",
         "properties": {

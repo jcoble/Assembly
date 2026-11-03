@@ -75,6 +75,14 @@ internal sealed class RowsFeature : IFeature
             machine?.Watch(session);
             return Task.FromResult(PageJson(page, machine?.ActiveRun(session)));
         }, bulk: true);
+        calls.Read(Topic, "subagents", RowJsonContext.Rows.SubagentArgs, RowJsonContext.Rows.SubagentPage, (args, call) =>
+        {
+            call.Cancellation.ThrowIfCancellationRequested();
+            var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
+            var page = _store.Subagents(args.Session, args.After, args.Limit, call.Cancellation);
+            _machines.Named(session.Machine)?.Watch(session);
+            return Task.FromResult(page);
+        }, bulk: true);
         calls.Read(Topic, "after", RowJsonContext.Rows.JsonElement, RowJsonContext.Rows.JsonElement, (args, call) =>
         {
             call.Cancellation.ThrowIfCancellationRequested();
@@ -164,6 +172,8 @@ internal sealed class RowsFeature : IFeature
 
     /// <summary><c>rows/page</c>'s args: the newest items that start below <c>before</c>.</summary>
     internal sealed record PageArgs([property: JsonRequired] string Session, long Before = long.MaxValue, int Limit = 50);
+
+    internal sealed record SubagentArgs([property: JsonRequired] string Session, string? After = null, int Limit = SubagentPage.DefaultLimit);
 
     internal sealed record ToolArgs([property: JsonRequired] string Session, [property: JsonRequired] string Item);
 

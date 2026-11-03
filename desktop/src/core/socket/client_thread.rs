@@ -12,9 +12,9 @@
 //!   open, so a backend that welcomes and drops can't make it loop.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -63,6 +63,8 @@ pub(super) struct ClientThread {
     /// The window's call and subscription ids; a re-subscribe after a gap takes a fresh one.
     ids: Arc<AtomicU64>,
     engine_machine: Arc<Mutex<Option<String>>>,
+    connection_generation: Arc<Mutex<Option<u64>>>,
+    last_generation: u64,
     calls: HashMap<u64, oneshot::Sender<Outcome<Value>>>,
     /// The newest call per key.
     keys: HashMap<String, u64>,
@@ -94,6 +96,7 @@ impl ClientThread {
         states: UnboundedSender<ConnectionState>,
         ids: Arc<AtomicU64>,
         engine_machine: Arc<Mutex<Option<String>>>,
+        connection_generation: Arc<Mutex<Option<u64>>>,
     ) -> JoinHandle<()> {
         let mut client = Self {
             endpoint,
@@ -108,6 +111,8 @@ impl ClientThread {
             states,
             ids,
             engine_machine,
+            connection_generation,
+            last_generation: 0,
             calls: HashMap::new(),
             keys: HashMap::new(),
             topics: HashMap::new(),
@@ -232,19 +237,45 @@ impl ClientThread {
                 machine,
                 updates,
             } => {
-                self.add_engine(id, "messages".into(), Some(message), machine, false, updates);
+                self.add_engine(
+                    id,
+                    "messages".into(),
+                    Some(message),
+                    machine,
+                    false,
+                    updates,
+                );
             }
-            Event::SubscribeEngineScope { id, topic, key, machine, updates } => {
+            Event::SubscribeEngineScope {
+                id,
+                topic,
+                key,
+                machine,
+                updates,
+            } => {
                 self.add_engine(id, topic, key, machine, true, updates);
             }
-            Event::AcknowledgeEngine { handle, wire, through, at } => {
+            Event::AcknowledgeEngine {
+                handle,
+                wire,
+                through,
+                at,
+            } => {
                 if let Some(feed) = self.engines.get_mut(&wire)
-                    && feed.handle == handle && feed.scoped
+                    && feed.handle == handle
+                    && feed.scoped
                     && feed.through.is_some_and(|received| through <= received)
-                    && feed.acknowledged.as_ref().is_none_or(|(ack, _)| through > *ack)
+                    && feed
+                        .acknowledged
+                        .as_ref()
+                        .is_none_or(|(ack, _)| through > *ack)
                 {
                     feed.acknowledged = Some((through, at));
-                    self.send(&OutFrame::Ack { id:wire, stream:"engine", after:through });
+                    self.send(&OutFrame::Ack {
+                        id: wire,
+                        stream: "engine",
+                        after: through,
+                    });
                 }
             }
             Event::Unsubscribe { id } => {
@@ -328,6 +359,10 @@ impl ClientThread {
     }
 
     fn close(&mut self) {
+        *self
+            .connection_generation
+            .lock()
+            .expect("connection generation lock") = None;
         self.connection = None;
         *self.engine_machine.lock().expect("Engine identity lock") = None;
         // A scoped page queued before disconnect cannot acknowledge the next connection.
@@ -339,7 +374,9 @@ impl ClientThread {
                 feed.through = feed.acknowledged.as_ref().map(|(through, _)| *through);
                 feed.at = feed.acknowledged.as_ref().and_then(|(_, at)| at.clone());
                 self.ids.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
-            } else { wire };
+            } else {
+                wire
+            };
             self.engines.insert(wire, feed);
         }
         self.keys.clear();
@@ -353,7 +390,16 @@ impl ClientThread {
         match Connection::open(&self.endpoint, self.path, self.sender.clone()) {
             Ok(connection) => {
                 let machine = connection.machine.clone();
-                *self.engine_machine.lock().expect("Engine identity lock") = connection.engine_machine.clone();
+                self.last_generation = self
+                    .last_generation
+                    .checked_add(1)
+                    .expect("socket generation exhausted");
+                *self
+                    .connection_generation
+                    .lock()
+                    .expect("connection generation lock") = Some(self.last_generation);
+                *self.engine_machine.lock().expect("Engine identity lock") =
+                    connection.engine_machine.clone();
                 self.connection = Some(connection);
                 let topics: Vec<u64> = self.topics.keys().copied().collect();
                 topics.into_iter().for_each(|id| self.send_topic(id));

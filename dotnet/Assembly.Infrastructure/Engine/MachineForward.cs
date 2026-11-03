@@ -58,12 +58,12 @@ internal sealed partial class MachineForward(Func<string, RemoteMachine?> byMach
         var remote = byMachineId(machine) ?? throw new MachineUnreachable(machine, "Remote engine machine is disconnected");
         try
         {
-            return feature == "engine" && method is "session_title" or "session_title_chunk"
+            return feature == "engine" && method is "session_title" or "session_title_chunk" or "entities"
             ? await remote.ReadOwnerPromptAsync(method, args, bulk, machine, ct)
             : await remote.CallAsync(feature, method, args, bulk, ct, machine);
         }
-        catch (MachineUnreachable) when (feature == "engine" && method is "session_title" or "session_title_chunk")
-        { throw new Assembly.Application.Common.Calls.CallFailed("title_changed"); }
+        catch (MachineUnreachable) when (feature == "engine" && method is "session_title" or "session_title_chunk" or "entities")
+        { throw new Assembly.Application.Common.Calls.CallFailed(method == "entities" ? "entities_changed" : "title_changed"); }
         catch (Exception error) when (error is WebSocketException or IOException or HttpRequestException or ObjectDisposedException)
         {
             throw new MachineUnreachable(remote.Name!, $"{remote.Name}: machine socket closed", error);

@@ -1,8 +1,8 @@
 //! A file's tab is saved with the session and path it shows, and rebuilt from them.
 
 use gpui::TestAppContext;
+use gpui_kit::WeakEntity;
 use gpui_kit::component::dock::{BasePanel, PanelBuildContext, PanelRegistry};
-use gpui_kit::{WeakEntity, px};
 use serde_json::json;
 
 use super::{FILE, FileView};
@@ -29,34 +29,50 @@ fn a_file_tab_is_saved_with_its_session_and_path_and_rebuilt_from_them(cx: &mut 
     assert_eq!(cx.update(|_, cx| rebuilt.dump(cx)), state);
 }
 
-// Pins: files#11
+// Pins: files#11. The retained editor replaces the custom read-only line list.
 #[gpui::test]
-fn the_list_scrolls_far_enough_sideways_to_show_the_end_of_the_widest_line(
+fn a_coherent_file_becomes_an_editable_shared_draft_with_unicode_navigation(
     cx: &mut TestAppContext,
 ) {
+    use super::super::document_store::DocumentStore;
+    use super::super::entry::{FileChunk, FileOwnership};
     cx.update(gpui_kit::init);
-    let (view, cx) = cx.add_window_view(|_, cx| FileView::new("s1".into(), "min.js".into(), cx));
-    view.update(cx, |view, cx| {
-        view.text.lines = vec!["short".into(), "x".repeat(400), "end".into()];
-        view.text.widest = 1;
-        view.text.line_count = 3;
-        cx.notify();
+    let (view, cx) = cx.add_window_view(|_, cx| FileView::new("s1".into(), "a.rs".into(), cx));
+    view.update_in(cx, |view, window, cx| {
+        view.active = true;
+        view.owner = Some(FileOwnership {
+            machine: "actual-engine".into(),
+            checkout_root: "/checkout".into(),
+            remote_session_id: "s1".into(),
+        });
+        view.text.start();
+        view.text.loaded(
+            0,
+            Ok(FileChunk {
+                content: "é\r\nlast\n".into(),
+                size: 9,
+                revision: "r1".into(),
+                line_count: 2,
+                binary: false,
+                next_offset: None,
+            }),
+        );
+        view.bind_editor(window, cx);
+        let editor = view.editor.as_mut().expect("coherent source editor");
+        assert_eq!(editor.state.read(cx).value().as_ref(), "é\r\nlast\n");
+        editor.jump(2, 3, cx);
+        assert_eq!(editor.state.read(cx).selected_range(), 6..6);
+        editor
+            .state
+            .update(cx, |state, cx| state.set_value("newé\r\n", window, cx));
+        view.editor_changed(window, cx);
+        let key = view.document.as_ref().unwrap();
+        let docs = cx.global::<DocumentStore>();
+        assert_eq!(docs.snapshot(key).unwrap().text, "newé\r\n");
+        assert!(docs.is_dirty(key));
+        assert!(
+            !BasePanel::closable(view, cx),
+            "unsaved work cannot be silently removed"
+        );
     });
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    let line = cx
-        .debug_bounds("file-line-1")
-        .expect("the widest line is drawn");
-    let (reach, origin) = view.read_with(cx, |view, _| {
-        let handle = &view.list.0.borrow().base_handle;
-        (
-            handle.max_offset().x + handle.bounds().size.width,
-            handle.bounds().origin.x,
-        )
-    });
-    assert!(
-        origin + reach >= line.right() - px(1.),
-        "the list scrolls to {:?} but the line ends at {:?}",
-        origin + reach,
-        line.right()
-    );
 }
