@@ -15,6 +15,7 @@ pub trait SessionClient: 'static {
         &self,
         session: &str,
         after: Option<i64>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: RowsSink,
         cx: &App,
     ) -> Subscription;
@@ -61,6 +62,8 @@ pub enum CallError {
     Failed(String),
     Timeout(String),
     Unreachable { machine: String },
+    Uncertain { machine: String, message: String },
+    Refused { code: String, message: String },
     Aborted,
 }
 
@@ -72,6 +75,8 @@ impl CallError {
             | CallError::BadArgs(message)
             | CallError::Failed(message)
             | CallError::Timeout(message) => message.clone(),
+            CallError::Refused { message, .. } => message.clone(),
+            CallError::Uncertain { message, .. } => message.clone(),
             CallError::Unreachable { machine } => format!("{machine} is offline"),
             CallError::Aborted => "it was cancelled".into(),
         }

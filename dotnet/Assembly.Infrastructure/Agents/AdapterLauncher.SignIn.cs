@@ -22,9 +22,15 @@ public sealed partial class AdapterLauncher
         ct.ThrowIfCancellationRequested();
         ConfigTargetIdentity.Validate(this, descriptor, effectiveEnvironment);
         // The complete environment was captured by the caller. Do not read ambient state a second time.
+        var environment = effectiveEnvironment.ToDictionary(pair => pair.Key, pair => pair.Value, ConfigTargetIdentity.EnvironmentComparer);
+        if (descriptor.Cli is { Length: > 0 } cli)
+        {
+            var variable = AccountContext.ExecutableVariable(descriptor.VendorFamily);
+            if (variable is not null) environment[variable] = cli;
+        }
         Directory.CreateDirectory(checkouts);
         var link = AgentConnection.Start(new(descriptor.Command, descriptor.Args.ToArray(), checkouts,
-            effectiveEnvironment.ToDictionary(pair => pair.Key, pair => pair.Value, ConfigTargetIdentity.EnvironmentComparer),
+            environment,
             ReplaceEnvironment: true), policy, TranscriptLog.Discard());
         stages.Mark("adapter");
         return Task.FromResult<IAgentLink>(link);

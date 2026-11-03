@@ -141,3 +141,29 @@ fn an_unreachable_machine_says_which_machine() {
         }
     );
 }
+
+#[test]
+fn uncertainty_preserves_the_backend_message_and_captured_machine() {
+    assert_eq!(
+        call_error(failure(ErrorCode::Uncertain {
+            machine: "owner".into()
+        })),
+        CallError::Uncertain {
+            machine: "owner".into(),
+            message: "the backend's words".into()
+        }
+    );
+}
+
+#[test]
+fn an_open_target_refusal_keeps_the_exact_code_and_backend_message() {
+    assert_eq!(
+        call_error(failure(ErrorCode::Refused {
+            code: "native_history_unavailable".into()
+        })),
+        CallError::Refused {
+            code: "native_history_unavailable".into(),
+            message: "the backend's words".into()
+        }
+    );
+}

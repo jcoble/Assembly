@@ -31,6 +31,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     private readonly Dictionary<string, Task> _ordered = [];
     // Each running call's cancel, by its id.
     private readonly ConcurrentDictionary<long, CancellationTokenSource> _running = new();
+    private readonly ConcurrentDictionary<long, IExpectedSourceGuard> _replySources = new();
     // Running answers and subscription work, waited for as the socket ends.
     private readonly BackgroundWork _answers = new(time, Console.Error);
     // This socket's subscriptions, by their sub id. Only the receive loop, and then its finally, touch it.
@@ -193,7 +194,7 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
             case { T: "sub", Id: { } id, Topic: not null } sub:
                 if (_subscriptions.ContainsKey(id))
                     Send(SocketDispatcher.Frame(new ErrorFrame(id, "bad_args", $"subscription {id} is already open"), SocketJson.Default.ErrorFrame));
-                else if (calls.Subscribe(sub, id, this) is { } subscription)
+                else if (await calls.SubscribeAsync(sub, id, this) is { } subscription)
                 {
                     _subscriptions[id] = subscription;
                     _answers.Start($"subscription {id}", _ => subscription.Completion);
@@ -244,12 +245,19 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         using var stopped = stopping.Register(cancel.Cancel);
         try
         {
-            Send(await calls.AnswerAsync(call, id, this, cancel.Token));
+            var answer = await calls.AnswerAsync(call, id, this, cancel.Token);
+            Send(answer, _replySources.TryRemove(id, out var source) ? new SourceBoundReply(id, source) : null);
         }
         finally
         {
+            if (_replySources.TryRemove(id, out var abandoned)) abandoned.Dispose();
             _running.TryRemove(id, out _);
         }
+    }
+
+    internal void BindReplySource(long id, IExpectedSourceGuard source)
+    {
+        if (!_replySources.TryAdd(id, source)) throw new CallFailed("The read source was already captured.", "source_changed");
     }
 
     internal void Abort() => socket.Abort();
@@ -263,7 +271,10 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
     {
         // A page that stops reading is closed, and so is one sent a change over 4 MB; it reconnects and loads again.
         if (frame.Length > MaxFrame || Interlocked.Add(ref _waiting, frame.Length) > MaxWaiting)
+        {
             socket.Abort();
+            if (from is SourceBoundReply reply) reply.Dispose();
+        }
         else
             _outbox.Writer.TryWrite((frame, from));
     }
@@ -274,13 +285,31 @@ internal sealed class SocketConnection(WebSocket socket, SocketDispatcher calls,
         {
             try
             {
+                if (from is SourceBoundReply reply)
+                {
+                    try { reply.EnsureCurrent(); }
+                    catch (Exception error) when (error is CallFailed or OperationCanceledException)
+                    {
+                        if (socket.State == WebSocketState.Open)
+                            await socket.SendAsync(reply.Refused, WebSocketMessageType.Text, true, CancellationToken.None);
+                        continue;
+                    }
+                }
                 if (socket.State == WebSocketState.Open && from?.Closed.IsCancellationRequested != true)
-                    await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+                {
+                    if (from is IExpectedSourceGuard source) source.EnsureCurrent();
+                    await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true,
+                        from is IExpectedSourceGuard guarded ? guarded.Changed : CancellationToken.None);
+                }
             }
-            catch (Exception error) when (error is WebSocketException or ObjectDisposedException)
+            catch (Exception error) when (error is WebSocketException or ObjectDisposedException or CallFailed or OperationCanceledException)
             {
             }
-            Interlocked.Add(ref _waiting, -frame.Length);
+            finally
+            {
+                if (from is SourceBoundReply reply) reply.Dispose();
+                Interlocked.Add(ref _waiting, -frame.Length);
+            }
         }
     }
 

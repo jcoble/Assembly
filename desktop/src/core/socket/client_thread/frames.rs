@@ -43,8 +43,10 @@ impl ClientThread {
             } => {
                 if let Some(topic) = self.topics.remove(&id) {
                     eprintln!("socket: {} failed: {message}", topic.topic);
-                } else if self.rows.remove(&id).is_some() {
-                    eprintln!("socket: rows failed: {message}");
+                } else if let Some(rows) = self.rows.remove(&id) {
+                    let _ = rows
+                        .updates
+                        .unbounded_send(RowUpdate::Refused { code, message });
                 } else if self.engines.contains_key(&id) {
                     if matches!(code.as_str(), "bad_args" | "failed")
                         && self

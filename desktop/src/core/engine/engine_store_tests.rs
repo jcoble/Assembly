@@ -397,3 +397,86 @@ fn missing_parent_owner_is_unknown_even_if_a_same_source_id_happens_to_exist() {
     assert!(store.children_of(&parent).is_empty());
     assert_eq!(store.parent_of(&child), None);
 }
+
+#[test]
+fn a_checked_entity_read_refreshes_held_facts_without_fabricating_a_stream_cut() {
+    let mut store = EngineStore::default();
+    let scope = scope("owner", "sessions");
+    store
+        .snapshot(
+            scope.clone(),
+            cursor(1),
+            vec![row("owner", "session", "s", 1)],
+        )
+        .unwrap();
+    let key = EngineKey {
+        machine: "owner".into(),
+        kind: "session".into(),
+        id: "s".into(),
+    };
+    assert_eq!(
+        store
+            .apply_entity(&key, vec![row("owner", "session", "s", 2)])
+            .unwrap()
+            .unwrap()
+            .version,
+        2
+    );
+    assert_eq!(store.item(&key).unwrap().version, 2);
+    assert_eq!(store.cursor(&scope).unwrap().through, 1);
+    let unheld = EngineKey {
+        id: "unheld".into(),
+        ..key.clone()
+    };
+    assert_eq!(
+        store
+            .apply_entity(&unheld, vec![row("owner", "session", "unheld", 1)])
+            .unwrap()
+            .unwrap()
+            .version,
+        1
+    );
+    assert!(
+        store.item(&unheld).is_none(),
+        "an unleased read does not invent cache membership"
+    );
+    assert_eq!(store.cursor(&scope).unwrap().through, 1);
+    assert!(
+        store
+            .apply_entity(&key, vec![row("owner", "session", "s", 1)])
+            .is_err()
+    );
+    assert_eq!(store.item(&key).unwrap().version, 2);
+}
+
+#[test]
+fn a_checked_entity_read_requires_the_exact_requested_source_and_identity() {
+    let mut store = EngineStore::default();
+    let key = EngineKey {
+        machine: "owner".into(),
+        kind: "session".into(),
+        id: "s".into(),
+    };
+    assert!(
+        store
+            .apply_entity(&key, vec![row("another", "session", "s", 1)])
+            .is_err()
+    );
+    assert!(
+        store
+            .apply_entity(&key, vec![row("owner", "session", "other", 1)])
+            .is_err()
+    );
+    assert!(
+        store
+            .apply_entity(
+                &key,
+                vec![
+                    row("owner", "session", "s", 1),
+                    row("owner", "session", "s", 1)
+                ]
+            )
+            .is_err()
+    );
+    assert!(store.apply_entity(&key, vec![]).unwrap().is_none());
+}

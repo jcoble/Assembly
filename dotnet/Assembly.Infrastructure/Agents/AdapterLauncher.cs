@@ -10,7 +10,7 @@ namespace Assembly.Infrastructure.Agents;
 public sealed partial class AdapterLauncher(IReadOnlyList<AgentDescriptor> agents, string checkouts, IPermissionPolicy permissions,
     Func<SessionInfo, string?> checkoutFolder) : IAgentLauncher
 {
-    public IReadOnlyList<AgentDescriptor> Agents => agents;
+    public IReadOnlyList<AgentDescriptor> Agents => agents.ToArray();
 
     /// <summary>
     /// Checkouts were in <c>home/threads</c> until sessions were renamed: moves that folder to <paramref name="checkouts"/>

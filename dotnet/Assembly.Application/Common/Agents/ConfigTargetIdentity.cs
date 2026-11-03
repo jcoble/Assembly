@@ -62,9 +62,18 @@ public static class ConfigTargetIdentity
         if (current is null || current.Cli != descriptor.Cli
             || current.VendorFamily != descriptor.VendorFamily
             || ConfigTargetIdentity.Of(current, effectiveEnvironment) != ConfigTargetIdentity.Of(descriptor, effectiveEnvironment)
-            || current.Env?.Any(pair => !effectiveEnvironment.TryGetValue(pair.Key, out var value) || value != pair.Value) == true)
+            || !SameDeclaredEnvironment(current.Env, descriptor.DeclaredEnv))
             throw new CallFailed("The selected agent configuration changed. Select it again.");
         return current;
+    }
+
+    private static bool SameDeclaredEnvironment(IReadOnlyDictionary<string, string>? current,
+        IReadOnlyDictionary<string, string>? captured)
+    {
+        if ((current?.Count ?? 0) != (captured?.Count ?? 0)) return false;
+        var expected = (captured ?? new Dictionary<string, string>()).ToDictionary(
+            pair => pair.Key, pair => pair.Value, EnvironmentComparer);
+        return current is null || current.All(pair => expected.TryGetValue(pair.Key, out var value) && value == pair.Value);
     }
 
     public static (AgentDescriptor Descriptor, IReadOnlyDictionary<string, string> Environment, string TargetId) Capture(IAgentLauncher launcher, string agent, string? expected = null)
@@ -75,6 +84,8 @@ public static class ConfigTargetIdentity
         {
             Args = descriptor.Args.ToArray(),
             Air = descriptor.Air?.ToArray(),
+            CliArgs = descriptor.CliArgs?.ToArray(),
+            DeclaredEnv = descriptor.Env,
             Env = descriptor.Env?.ToDictionary(x => x.Key, x => x.Value, EnvironmentComparer)
         };
         var environment = EnvironmentOf(descriptor);

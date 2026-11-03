@@ -7,6 +7,7 @@
 pub(super) struct RowsFeed {
     pub session_id: String,
     pub last_seq: Option<i64>,
+    pub expected_source: Option<super::row_source::ExpectedRowSource>,
 }
 
 /// What to do with a row that arrived.

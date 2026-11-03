@@ -11,3 +11,5 @@ public sealed record ProviderRuntimeSaveArgs(string Machine, string Provider, st
 
 public sealed record ProviderRuntimeReply(string Machine, string Provider, string Revision,
     string ConfigurationTargetId, string AccountContext, ProviderRuntimeSettings Settings);
+
+public sealed record ProviderRuntimeChanged(string Machine, string Revision);

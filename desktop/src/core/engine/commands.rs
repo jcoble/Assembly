@@ -119,11 +119,14 @@ impl EngineFeed {
                     "The command outcome is unknown. Check the current state before sending again.",
                 )),
                 Outcome::Failed(error) => {
-                    let code = match error.code {
+                    let code = match &error.code {
+                        ErrorCode::Refused { code } => code.as_str(),
                         ErrorCode::NotFound => "not_found",
                         ErrorCode::BadArgs => "bad_args",
                         ErrorCode::Failed => "failed",
-                        ErrorCode::Timeout | ErrorCode::Unreachable { .. } => "outcome_unknown",
+                        ErrorCode::Uncertain { .. }
+                        | ErrorCode::Timeout
+                        | ErrorCode::Unreachable { .. } => "outcome_unknown",
                     };
                     Err(refused(code, &error.message))
                 }

@@ -37,6 +37,10 @@ pub(crate) mod real_backend_cancel_tests;
 #[cfg(test)]
 mod real_backend_tests;
 pub mod row;
+pub mod row_source;
+#[cfg(test)]
+#[path = "tests/row_source_tests.rs"]
+mod row_source_tests;
 pub mod row_update;
 mod rows_feed;
 #[cfg(test)]

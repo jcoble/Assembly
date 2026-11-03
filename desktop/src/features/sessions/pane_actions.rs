@@ -11,6 +11,24 @@ use crate::core::socket::client::SocketClient;
 use crate::core::socket::outcome::Outcome;
 
 impl SessionsPane {
+    /// Escape in the filter, or a pick: the filter empties and the rail reads without it.
+    pub(super) fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        let read = self.rail.set_filter("");
+        self.send(read, cx);
+    }
+
+    /// Escape edits the query once; a second Escape returns keyboard control to the list.
+    pub(super) fn escape_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.filter.read(cx).value().is_empty() {
+            let focus = self.focus_handle(cx);
+            window.focus(&focus, cx);
+        } else {
+            self.clear_filter(window, cx);
+        }
+    }
+
     /// The header's button: opens the form, or closes it while it's open.
     pub(super) fn toggle_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.creating.take().is_none() {

@@ -41,7 +41,14 @@ struct FormClient {
     auth_machines: Rc<RefCell<std::collections::VecDeque<HeldDiscovery>>>,
 }
 impl SessionClient for FormClient {
-    fn subscribe_rows(&self, _: &str, _: Option<i64>, _: RowsSink, _: &App) -> Subscription {
+    fn subscribe_rows(
+        &self,
+        _: &str,
+        _: Option<i64>,
+        _: Option<&crate::core::socket::row_source::ExpectedRowSource>,
+        _: RowsSink,
+        _: &App,
+    ) -> Subscription {
         Subscription::new(|| {})
     }
     fn subscribe_message(

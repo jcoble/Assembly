@@ -47,6 +47,7 @@ using Assembly.Application.Features.Preferences;
 using Assembly.Infrastructure.Clock;
 using Assembly.Application.Features.Terminal;
 using Assembly.Infrastructure.Terminal;
+using Assembly.Infrastructure.Updates;
 
 namespace Assembly.Desktop.Serve;
 
@@ -76,10 +77,12 @@ public sealed class DesktopBackend : IAsyncDisposable
     private readonly TurnActivity _activity;
     private readonly MachinesFeature _machinesFeature;
     private readonly TerminalHost _terminals;
+    private readonly HttpClient _cliHttp;
 
     private DesktopBackend(FileStream homeLock, AppDatabase db, LiveHub hub, SessionRegistry sessions, BackgroundWork work, RemoteConnections connections,
-        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay)
+        WebApplication app, TurnActivity activity, MachinesFeature machinesFeature, TerminalHost terminals, BoardTools board, RemoteWorkflowMirror? boardMirror, Topics topics, Topics.Subscription? boardMachines, CancellationTokenSource hostStop, Func<Task> beginStop, NeedAnswers answers, EngineHelperCards helperCards, MachineCalls ownerMachineCalls, MachineRelay relay, HttpClient cliHttp)
     {
+        _cliHttp = cliHttp;
         _beginStop = beginStop;
         _answers = answers;
         _helperCards = helperCards;
@@ -159,6 +162,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         EngineHelperCards? helperCards = null;
         MachineCalls? ownerMachineCalls = null;
         MachineRelay? relay = null;
+        HttpClient? cliHttp = null;
         var activity = new TurnActivity();
         var tokens = new McpTokens();
         var endpoint = new McpEndpointReady(tokens);
@@ -322,8 +326,11 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new WorkflowFormatTool(gate), new CheckWorkflowTool(gate, WorkflowLoader.Load), new StartWorkflowTool(gate, WorkflowLoader.Load),
                     new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
+            cliHttp = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
+            var cliUpdates = new UpdateCalls(launcher, engine.Machine, cliHttp, TimeProvider.System, hostStop.Token,
+                (machine, ct) => connections.CliLocator(db, machine, ct), new RemoteCliClient(cliHttp, TimeProvider.System));
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                [cliUpdates, new EngineCalls(engine, TimeProvider.System, answers, machineForward, starts), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine, machineForward), ownerMachineCalls, new SessionTitleCalls(engine, sessionStore, machineForward), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines, connections), new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(new RoutedTerminals(terminals, sessionStore, machines)), workflowCalls, new PreferencesFeature(db), clock, new RowsFeature(hub, store, sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines, connections)), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(home, "staging", "attachments")),
                     new FilesFeature(sessionStore, new FileOwner(sessionStore, db)),
@@ -332,7 +339,7 @@ public sealed class DesktopBackend : IAsyncDisposable
                     new SourceControlFeature(sessionStore)], board, Engine: engine), port, out _);
             app.Lifetime.ApplicationStopping.Register(() => { _ = BeginStop(); });
             await app.StartAsync();
-            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay);
+            var backend = new DesktopBackend(homeLock, db, hub, registry, work, connections, app, activity, machinesFeature, terminals, board, boardMirror, topics, boardMachines, hostStop, BeginStop, answers, helperCards, ownerMachineCalls, relay, cliHttp);
             endpoint.Listening(backend.Address);
             relay.Start();
             return backend;
@@ -358,6 +365,7 @@ public sealed class DesktopBackend : IAsyncDisposable
             if (helperCards is not null) await helperCards.DisposeAsync();
             if (sessions is not null) await sessions.DisposeAsync();
             if (work is not null) await work.DisposeAsync();
+            cliHttp?.Dispose();
             hub?.Dispose();
             activity.Hold(false);
             hostStop?.Dispose();
@@ -403,6 +411,7 @@ public sealed class DesktopBackend : IAsyncDisposable
         await _sessions.DisposeAsync();
         // After the sessions, so a stop's cancel fails fast; before the database, which a write still finishing needs.
         await _work.DisposeAsync();
+        _cliHttp.Dispose();
         _hub.Dispose();
         _activity.Hold(false);
         _db.Dispose();

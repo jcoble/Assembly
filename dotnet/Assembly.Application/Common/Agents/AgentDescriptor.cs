@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -12,8 +13,23 @@ public sealed record AgentDescriptor(
     string Id, string Name, string Command, IReadOnlyList<string> Args, IReadOnlyDictionary<string, string>? Env,
     string? Cli = null, string? VendorFamily = null,
     // Legacy configuration identity input only. Never emitted in ACP V2 initialization.
-    IReadOnlyList<string>? Air = null)
+    IReadOnlyList<string>? Air = null,
+    IReadOnlyList<string>? CliArgs = null, string? ShadowHome = null)
 {
+    private readonly IReadOnlyDictionary<string, string>? _declaredEnv = CopyEnvironment(Env);
+
+    /// <summary>The explicit configuration before a captured launch replaces Env with its effective environment.</summary>
+    [JsonIgnore]
+    public IReadOnlyDictionary<string, string>? DeclaredEnv
+    {
+        get => _declaredEnv;
+        init => _declaredEnv = CopyEnvironment(value);
+    }
+
+    private static IReadOnlyDictionary<string, string>? CopyEnvironment(IReadOnlyDictionary<string, string>? environment) =>
+        environment is null ? null : new ReadOnlyDictionary<string, string>(
+            environment.ToDictionary(pair => pair.Key, pair => pair.Value, ConfigTargetIdentity.EnvironmentComparer));
+
     /// <summary>The machine's agents, from its agents file's text: <c>[{ "id", "name", "command", "args": [], "env": {}, "cli" }]</c>.</summary>
     public static IReadOnlyList<AgentDescriptor> Parse(string json) =>
         JsonSerializer.Deserialize(json, AgentJsonContext.Default.ListAgentDescriptor)

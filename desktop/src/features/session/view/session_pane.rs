@@ -13,8 +13,6 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
-
 use super::grow::{grow, turn};
 use super::header::Header;
 use super::session_action::OnAction;
@@ -23,9 +21,7 @@ use crate::core::state::machines::GlobalMachines;
 use crate::core::theme::grow::{GROW, faded};
 use crate::core::ui::ask::form::AskForm;
 use crate::core::ui::expand_row::ExpandRow;
-use crate::features::session::client::session_client::{
-    CallError, RowUpdate, RowsSink, SessionClient,
-};
+use crate::features::session::client::session_client::{RowUpdate, RowsSink, SessionClient};
 use crate::features::session::composer::composer_view::{Composer, ComposerEvent};
 use crate::features::session::model::change::Change;
 use crate::features::session::model::entries::{Entry, entry_key};
@@ -37,13 +33,13 @@ use crate::features::session::model::reveal::Reveal;
 use crate::features::session::model::session_view::{SessionView, key_of};
 use crate::features::session::model::turn_line::latest_branch;
 use crate::features::session::rows::row::Row;
-use crate::features::session::rows::row_page::RowPage;
 use crate::features::session::rows::tool::ToolState;
 
 pub struct SessionPane {
     client: Rc<dyn SessionClient>,
     focus: FocusHandle,
     session: Option<String>,
+    row_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
     view: SessionView,
     /// The real run from a pushed user row, or the page's active run on open, until its turn row arrives.
     known_run: Option<String>,
@@ -200,6 +196,7 @@ impl SessionPane {
             client,
             focus: cx.focus_handle(),
             session: None,
+            row_source: None,
             view: SessionView::default(),
             known_run: None,
             folds: HashMap::new(),
@@ -255,6 +252,7 @@ impl SessionPane {
         self._page = None;
         self._loads.clear();
         self.view = SessionView::default();
+        self.row_source = None;
         self.read_to = 0;
         self.held = Some(Vec::new());
         self.open_folds.clear();
@@ -278,7 +276,11 @@ impl SessionPane {
         let sink: RowsSink = Box::new(move |event, cx| {
             pane.update(cx, |pane, cx| pane.on_rows(event, cx)).ok();
         });
-        self._rows = Some(self.client.subscribe_rows(&session, None, sink, cx));
+        self._rows =
+            Some(
+                self.client
+                    .subscribe_rows(&session, None, self.row_source.as_ref(), sink, cx),
+            );
         self.session = Some(session.clone());
         self.header
             .update(cx, |header, cx| header.show(Some(session.clone()), cx));
@@ -292,22 +294,18 @@ impl SessionPane {
         self.refresh(Change::Nothing, cx);
     }
 
-    /// Loads the page above what's loaded, when the timeline nears its top and one isn't already loading.
-    pub fn load_older(&mut self, cx: &mut Context<Self>) {
-        let Some(before) = self.view.oldest.filter(|_| {
-            self.view.has_before && !self.loading && self.failed_before != self.view.oldest
-        }) else {
-            return;
-        };
-        self.loading = true;
-        self.refresh(Change::Nothing, cx);
-        self.load_page(before, false, cx);
-    }
-
     /// Takes a rows event: a `Jump` drops what's held and loads the page again; a row updates its item and the
     /// timeline measures only that one again.
     fn on_rows(&mut self, event: RowUpdate, cx: &mut Context<Self>) {
         match event {
+            RowUpdate::Refused { code: _, message } => {
+                self._page = None;
+                self._rows = None;
+                self.held = None;
+                self.loading = false;
+                self.status = message.into();
+                cx.notify();
+            }
             RowUpdate::Jump { seq } => {
                 self.composer
                     .update(cx, |composer, cx| composer.recover_pending(cx));
@@ -380,74 +378,6 @@ impl SessionPane {
                 timeline.follow(FollowEvent::UserItem(key), cx)
             });
         }
-    }
-
-    /// Loads the page below `before`; `first` on open, when the page also says the run going now.
-    pub(super) fn load_page(&mut self, before: i64, first: bool, cx: &mut Context<Self>) {
-        let Some(session) = self.session.clone() else {
-            return;
-        };
-        let args = json!({ "session": session, "before": before, "limit": PAGE_ROWS });
-        let call = self.client.call(
-            "rows",
-            "page",
-            args,
-            Some(&format!("rows/page:{session}")),
-            cx,
-        );
-        self._page = Some(cx.spawn(async move |pane, cx| {
-            let answer = call.await;
-            pane.update(cx, |pane, cx| pane.on_page(answer, before, first, cx))
-                .ok();
-        }));
-    }
-
-    fn on_page(
-        &mut self,
-        answer: Result<Value, CallError>,
-        before: i64,
-        first: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.loading = false;
-        let page = answer.and_then(|page| {
-            serde_json::from_value::<RowPage>(page)
-                .map_err(|error| CallError::Failed(error.to_string()))
-        });
-        self.status = match &page {
-            Ok(_) | Err(CallError::Aborted) => SharedString::default(),
-            Err(CallError::Unreachable { machine }) => format!("{machine} is offline").into(),
-            Err(
-                CallError::NotFound(message)
-                | CallError::BadArgs(message)
-                | CallError::Failed(message)
-                | CallError::Timeout(message),
-            ) => format!("Couldn't load the session: {message}").into(),
-        };
-        let Ok(page) = page else {
-            // A failed first page keeps the live rows waiting for Try again or the next `Jump`'s page; an older one
-            // isn't asked for again by itself.
-            if first {
-                self.retry_first = Some(before);
-            } else {
-                self.failed_before = Some(before);
-            }
-            self.refresh(Change::Nothing, cx);
-            return;
-        };
-        self.failed_before = None;
-        if first {
-            self.retry_first = None;
-            // What the backend says runs now, so a run that ended while the socket was away stops counting.
-            self.known_run = page.active_run_id;
-        }
-        self.view.prepend_page(page.rows, page.has_before);
-        if first {
-            for row in self.held.take().unwrap_or_default() {
-                self.view.apply(&row);
-            }
-        }
-        self.refresh(Change::Nothing, cx);
     }
 
     /// Draws the item at `at` again, measured again, with the entries as they are.
@@ -553,6 +483,8 @@ mod actions;
 mod expand;
 #[path = "pane_machine.rs"]
 mod machine;
+#[path = "pane_pages.rs"]
+mod pages;
 #[path = "pane_read.rs"]
 mod read;
 #[path = "pane_render.rs"]

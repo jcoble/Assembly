@@ -1,4 +1,5 @@
 using Assembly.Application.Common.Database;
+using Assembly.Application.Common.Calls;
 using Assembly.Infrastructure.Engine;
 using System.Text.Json;
 using System.Collections.Concurrent;
@@ -29,6 +30,14 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
     // Includes running work and every waiter, independently of the queue tail.
     private readonly Dictionary<string, HashSet<CancellationTokenSource>> _operations = [];
     private readonly ConcurrentDictionary<string, (RemoteMachine Machine, EngineMirror Mirror, IAsyncDisposable? Tunnel, MachineStatus Status, RemoteConfig Config, SavedMachine Profile)> _active = new();
+    private sealed class CliRefresh
+    {
+        internal readonly CancellationTokenSource Stop = new();
+        internal Task Work = Task.CompletedTask;
+        internal bool Requested;
+        internal bool Running;
+    }
+    private readonly Dictionary<string, CliRefresh> _cliRefresh = [];
     private bool _disposed;
 
     public RemoteConnections(MachineStore store, IAtomicWriter writer, MachineSet machines, MachineStatus status, LiveHub hub, SessionStore sessions,
@@ -91,8 +100,82 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
             : throw new MachineUnreachable(name, $"{name}: machine socket is disconnected");
     }
 
+    internal RemoteCliProfile? CliLocator(IAppDatabase db, string machine, CancellationToken ct)
+    {
+        var name = db.QueryFirst("SELECT name FROM engine_mirror WHERE machine=$machine AND state<>'retired'",
+            row => row.Text(0), ct, new SqlArg("$machine", machine));
+        if (name is null) return null;
+        var saved = _store.GetCliLocator(name, ct);
+        return saved?.Locator.MachineId == machine ? saved : null;
+    }
+
+    private void RequestCliLocator(string name, RemoteMachine remote, EngineMirror mirror, MachineProfileSnapshot profile, CliRefresh refresh)
+    {
+        lock (_gate)
+        {
+            if (_disposed || refresh.Stop.IsCancellationRequested) return;
+            refresh.Requested = true;
+            if (refresh.Running) return;
+            refresh.Running = true;
+            refresh.Work = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    lock (_gate)
+                    {
+                        if (!refresh.Requested || refresh.Stop.IsCancellationRequested)
+                        { refresh.Running = false; return; }
+                        refresh.Requested = false;
+                    }
+                    try
+                    {
+                        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                        using var stop = CancellationTokenSource.CreateLinkedTokenSource(refresh.Stop.Token, deadline.Token);
+                        var live = await mirror.CaptureLiveBindingAsync(stop.Token);
+                        if (live is null) continue;
+                        using var ownerStop = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, live.Invalidated);
+                        var locator = await remote.ReadCliLocatorAsync(live.OwnerBinding, ownerStop.Token);
+                        if (!await mirror.IsCurrentLiveBindingAsync(live, ownerStop.Token)) continue;
+                        _writer.Write("machines.cli-locator", scope =>
+                        {
+                            ownerStop.Token.ThrowIfCancellationRequested();
+                            return !live.IsInvalidated && _active.TryGetValue(name, out var active) && ReferenceEquals(active.Machine, remote)
+                                && _store.SetCliLocator(scope, profile, locator);
+                        });
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception) { _log.WriteLine($"{name}: CLI locator unavailable"); }
+                }
+            });
+        }
+    }
+
     internal IReadOnlyList<(RemoteMachine Machine, EngineMirror Mirror)> CaptureMirrorOwners() =>
         _active.Values.Select(active => (active.Machine, active.Mirror)).ToArray();
+
+    internal async Task<(RemoteMachine Machine, EngineMirror.LiveMirrorBinding Live, Action EnsureCurrent)>
+        CaptureSessionOpenSourceAsync(IAppDatabase db, ExpectedSource source, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (source.Generation <= 0 || source.RouteMachine is not { Length: > 0 } name || db.QueryFirst("""
+                SELECT COUNT(*) FROM engine_mirror WHERE machine=$machine AND name=$name
+                    AND generation=$generation AND state='live'
+                """, row => row.Long(0), ct, new SqlArg("$machine", source.Machine), new("$name", name),
+                new("$generation", source.Generation)) != 1 || !_active.TryGetValue(name, out var captured))
+            throw new CallFailed("The selected row source changed.", "source_changed");
+        var live = await captured.Mirror.CaptureLiveBindingAsync(ct);
+        if (live is null || live.Machine != source.Machine || live.Generation != source.Generation)
+            throw new CallFailed("The selected row source changed.", "source_changed");
+        void EnsureCurrent()
+        {
+            if (live.IsInvalidated || !_active.TryGetValue(name, out var current) ||
+                !ReferenceEquals(current.Machine, captured.Machine) || !ReferenceEquals(current.Mirror, captured.Mirror) ||
+                !ReferenceEquals(_machines.Named(name), captured.Machine))
+                throw new CallFailed("The selected row source changed.", "source_changed");
+        }
+        EnsureCurrent();
+        return (captured.Machine, live, EnsureCurrent);
+    }
 
     private Task Queue(string name, bool connect, bool probe = false, CancellationToken cancel = default)
     {
@@ -122,7 +205,8 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                     }
                     var followed = _active.TryGetValue(name, out var prior) ? prior.Machine.FollowedSessions : [];
                     await CleanupAsync(name);
-                    var profile = _store.Get(name, CancellationToken.None);
+                    var capturedProfile = _store.CaptureProfile(name, stop.Token);
+                    var profile = capturedProfile?.Profile;
                     if (profile is null) { _status.Remove(name); return; }
                     _status.Profile(profile);
                     var scoped = _status.Scope(name);
@@ -138,6 +222,9 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
                         var remote = new RemoteMachine(name, opened.Config.Address, opened.Config.Token, _hub, _sessions, _log, scoped, _turnEnded, _topics,
                             connectionIdentity: $"{profile.Ssh.Length}:{profile.Ssh}{profile.Port}:{profile.TokenFile.Length}:{profile.TokenFile}");
                         var mirror = new EngineMirror(remote, _writer, TimeProvider.System, _log, _mirrored);
+                        var cli = new CliRefresh();
+                        lock (_gate) _cliRefresh[name] = cli;
+                        mirror.CaughtUp += () => RequestCliLocator(name, remote, mirror, capturedProfile!, cli);
                         _active[name] = (remote, mirror, tunnel, scoped, opened.Config with { Name = name }, profile);
                         tunnel = null;
                         _machines.Set(remote);
@@ -180,6 +267,14 @@ internal sealed partial class RemoteConnections : IAsyncDisposable
             if (_active.TryRemove(name, out var old))
             {
                 old.Status.Stop();
+                CliRefresh? cli;
+                lock (_gate) _cliRefresh.Remove(name, out cli);
+                if (cli is not null)
+                {
+                    await cli.Stop.CancelAsync();
+                    try { await cli.Work; }
+                    finally { cli.Stop.Dispose(); }
+                }
                 try { await old.Mirror.DisposeAsync(); }
                 finally
                 {

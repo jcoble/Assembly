@@ -168,6 +168,7 @@ impl TestClient {
                 id,
                 session_id: session.into(),
                 after,
+                expected_source: None,
                 rows,
             })
             .unwrap();

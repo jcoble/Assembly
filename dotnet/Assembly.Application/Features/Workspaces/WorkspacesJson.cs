@@ -5,6 +5,8 @@ namespace Assembly.Application.Features.Workspaces;
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(WorkspaceReadArgs))]
 [JsonSerializable(typeof(WorkspaceSaveArgs))]
+[JsonSerializable(typeof(WorkspaceSaveManyArgs))]
+[JsonSerializable(typeof(WorkspaceSaveManyResult))]
 [JsonSerializable(typeof(WorkspaceReadResult))]
 [JsonSerializable(typeof(WorkspaceSaveResult))]
 [JsonSerializable(typeof(WorkspaceChange))]

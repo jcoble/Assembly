@@ -9,6 +9,8 @@ public sealed record WorkspaceKey(string Machine, string SessionId, string Check
 }
 public sealed record WorkspaceReadResult(JsonElement? Snapshot, long Revision);
 public sealed record WorkspaceSaveResult(long Revision);
+public sealed record WorkspaceSaved(string Machine, string SessionId, string CheckoutRoot, long Revision);
+public sealed record WorkspaceSaveManyResult(IReadOnlyList<WorkspaceSaved> Saved);
 public sealed record WorkspaceChange(string Machine, string SessionId, string CheckoutRoot, long Revision)
 {
     [JsonIgnore] public string Key => $"{Machine}/{SessionId}/{CheckoutRoot}";
@@ -17,3 +19,4 @@ internal sealed record WorkspaceReadArgs([property: JsonRequired] string Machine
     [property: JsonRequired] string CheckoutRoot);
 internal sealed record WorkspaceSaveArgs([property: JsonRequired] string Machine, [property: JsonRequired] string SessionId,
     [property: JsonRequired] string CheckoutRoot, [property: JsonRequired] long ExpectedRevision, [property: JsonRequired] JsonElement Snapshot);
+internal sealed record WorkspaceSaveManyArgs([property: JsonRequired] IReadOnlyList<WorkspaceSaveArgs> Saves);

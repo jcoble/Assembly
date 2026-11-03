@@ -217,6 +217,7 @@ impl SocketClient {
         &self,
         session_id: &str,
         after: Option<i64>,
+        expected_source: Option<&super::row_source::ExpectedRowSource>,
     ) -> TopicSubscription<RowUpdate> {
         let id = self.id();
         let (rows, receiver) = unbounded();
@@ -225,6 +226,7 @@ impl SocketClient {
             id,
             session_id,
             after,
+            expected_source: expected_source.cloned(),
             rows,
         });
         TopicSubscription::new(id, self.events.clone(), receiver)

@@ -188,9 +188,9 @@ public static class ServeRun
                     new LinkTaskTool(gate), new GetSessionTitleTool(gate), new BoardUpdateTool(gate, board)]);
             var door = new EngineDoor(engine, sessionStore, machines, attachments, TimeProvider.System, answers);
             app = ApiServer.Build(new ApiServices(hub, sessionStore, machines, attachments, token, mcp, db.Writer, topics,
-                [new EngineCalls(engine, TimeProvider.System, answers), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine), new SessionTitleCalls(engine, sessionStore), ownerMachineCalls,
+                [new EngineCalls(engine, TimeProvider.System, answers), new Assembly.Infrastructure.Engine.Workflows.WorkflowCalls(engine), new SessionTitleCalls(engine, sessionStore), new Assembly.Infrastructure.Engine.Sessions.SessionOpenCalls(db, engine, sessionStore, machines), ownerMachineCalls,
                     new ProvidersFeature(challenges, engine.Machine), new TerminalFeature(terminals), workflowCalls,
-                    new RowsFeature(hub, store, sessionStore, machines), new SessionsFeature(sessionStore, machines),
+                    new RowsFeature(hub, store, sessionStore, machines, new Assembly.Infrastructure.Engine.Sessions.SessionRowSources(db, sessionStore, machines)), new SessionsFeature(sessionStore, machines),
                     new SendFeature(sessionStore, machines, hub, door), new ConfigFeature(sessionStore, machines), machinesFeature,
                     new AttachmentsFeature(sessionStore, machines, Path.Combine(options.Home, "staging", "attachments"))],
                 board, Engine: engine), options.Port, out _);

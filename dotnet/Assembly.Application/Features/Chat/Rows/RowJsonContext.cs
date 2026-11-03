@@ -3,10 +3,12 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Assembly.Domain.Rows;
 using Assembly.Domain.Events;
+using Assembly.Application.Common.Calls;
 
 namespace Assembly.Application.Features.Chat.Rows;
 
 /// <summary>Compile-time JSON for the row payloads, camelCase like the UI's types. Optional fields are left out when null.</summary>
+[JsonSerializable(typeof(ExpectedSource))]
 [JsonSerializable(typeof(TurnPayload))]
 [JsonSerializable(typeof(UserPayload))]
 [JsonSerializable(typeof(UserAcknowledgment))]

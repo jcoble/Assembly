@@ -215,11 +215,13 @@ impl ClientThread {
                 id,
                 session_id,
                 after,
+                expected_source,
                 rows,
             } => {
                 let feed = RowsFeed {
                     session_id,
                     last_seq: after,
+                    expected_source,
                 };
                 self.rows.insert(
                     id,
@@ -256,8 +258,9 @@ impl ClientThread {
                 self.add_engine(id, topic, key, machine, true, updates);
             }
             Event::ResnapshotEngine { handle } => {
-                if let Some(wire) = self.engines.iter().find_map(|(wire, feed)|
-                    (feed.handle == handle && feed.scoped).then_some(*wire)) {
+                if let Some(wire) = self.engines.iter().find_map(|(wire, feed)| {
+                    (feed.handle == handle && feed.scoped).then_some(*wire)
+                }) {
                     self.reset_engine(wire);
                 }
             }
@@ -436,6 +439,7 @@ impl ClientThread {
             topic: &topic,
             key: key.as_deref(),
             after: None,
+            expected_source: None,
         });
     }
 
@@ -443,12 +447,17 @@ impl ClientThread {
         let Some(rows) = self.rows.get(&id) else {
             return;
         };
-        let (session, after) = (rows.feed.session_id.clone(), rows.feed.last_seq);
+        let (session, after, source) = (
+            rows.feed.session_id.clone(),
+            rows.feed.last_seq,
+            rows.feed.expected_source.clone(),
+        );
         self.send(&OutFrame::Sub {
             id,
             topic: ROWS,
             key: Some(&session),
             after,
+            expected_source: source.as_ref(),
         });
     }
 

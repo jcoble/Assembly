@@ -34,10 +34,7 @@ public sealed class WorkspaceStore
     }
     public WorkspaceSaveResult Save(IWriteScope scope, WorkspaceKey key, long expectedRevision, JsonElement snapshot)
     {
-        Validate(key);
-        if (expectedRevision < 0 || snapshot.ValueKind == JsonValueKind.Undefined) throw new CallBadArguments("A workspace save needs a snapshot and a nonnegative revision.");
-        var json = snapshot.GetRawText();
-        if (Encoding.UTF8.GetByteCount(json) > MaxSnapshotBytes) throw new CallFailed("This workspace is larger than 3 MiB, so it was not saved.");
+        var json = ValidateSave(key, expectedRevision, snapshot);
         var revision = scope.QueryFirst($"SELECT revision FROM workspace_snapshot WHERE {Where}", row => row.Long(0), Args(key));
         if (revision != expectedRevision) throw new CallFailed("This workspace changed elsewhere; it was not saved.");
         if (revision == long.MaxValue) throw new CallFailed("This workspace revision cannot be advanced.");
@@ -53,6 +50,14 @@ public sealed class WorkspaceStore
             new SqlArg("$version", version), new SqlArg("$revision", next), new SqlArg("$updated", clock.GetUtcNow().ToUnixTimeMilliseconds()), new SqlArg("$snapshot", json));
         scope.Publish("workspaces", key.TopicKey, new WorkspaceChange(key.Machine, key.SessionId, key.CheckoutRoot, next), WorkspacesJson.Default.WorkspaceChange, keyedOnly: true);
         return new WorkspaceSaveResult(next);
+    }
+    internal static string ValidateSave(WorkspaceKey key, long expectedRevision, JsonElement snapshot)
+    {
+        Validate(key);
+        if (expectedRevision < 0 || snapshot.ValueKind == JsonValueKind.Undefined) throw new CallBadArguments("A workspace save needs a snapshot and a nonnegative revision.");
+        var json = snapshot.GetRawText();
+        if (Encoding.UTF8.GetByteCount(json) > MaxSnapshotBytes) throw new CallFailed("This workspace is larger than 3 MiB, so it was not saved.");
+        return json;
     }
     private static SqlArg[] Args(WorkspaceKey key) => [new("$machine", key.Machine), new("$session", key.SessionId), new("$root", key.CheckoutRoot)];
     private static void Validate(WorkspaceKey key)

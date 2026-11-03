@@ -174,6 +174,7 @@ impl SessionClient for FakeClient {
         &self,
         session: &str,
         after: Option<i64>,
+        _expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         sink: RowsSink,
         _cx: &App,
     ) -> Subscription {

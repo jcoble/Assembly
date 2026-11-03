@@ -9,9 +9,23 @@ public static class AccountContext
     private const string Prefix = "acct-v1:";
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
+    public static string? ConfigHomeVariable(string? vendorFamily) => vendorFamily switch
+    {
+        "codex" => "CODEX_HOME",
+        "claude" => "CLAUDE_CONFIG_DIR",
+        _ => null
+    };
+
+    public static string? ExecutableVariable(string? vendorFamily) => vendorFamily switch
+    {
+        "codex" => "CODEX_PATH",
+        "claude" => "CLAUDE_CODE_EXECUTABLE",
+        _ => null
+    };
+
     public static string Of(AgentDescriptor agent, Func<string, string?> inheritedEnvironment)
     {
-        var variable = agent.VendorFamily switch { "codex" => "CODEX_HOME", "claude" => "CLAUDE_CONFIG_DIR", _ => null };
+        var variable = ConfigHomeVariable(agent.VendorFamily);
         if (variable is null) return "";
         var raw = agent.Env?.TryGetValue(variable, out var explicitValue) == true
             ? explicitValue : inheritedEnvironment(variable) ?? "";

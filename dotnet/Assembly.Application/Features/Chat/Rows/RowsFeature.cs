@@ -39,49 +39,73 @@ internal sealed class RowsFeature : IFeature
     private readonly RowStore _store;
     private readonly SessionStore _sessions;
     private readonly MachineSet _machines;
+    private readonly IRowSourceBindings? _sources;
 
-    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines)
+    public RowsFeature(LiveHub hub, RowStore store, SessionStore sessions, MachineSet machines, IRowSourceBindings? sources = null)
     {
         _hub = hub;
         _store = store;
         _sessions = sessions;
         _machines = machines;
+        _sources = sources;
     }
 
     public void Register(ICallRegistry calls)
     {
         // Under the Topics lock, so a row saved meanwhile is in the catch-up or published after it (5.7). It reads the
         // store, never the hub, whose lock is taken before the Topics one when it publishes.
-        calls.Rows(Topic, (session, after, _) =>
+        Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state = (session, after, call) =>
         {
+            call.SourceGuard?.EnsureCurrent();
             var last = _store.LastSeq(session);
             if (after is >= 0 and var from && from <= last && _store.RowsAfter(session, from, PageLimit + 1) is { Count: <= PageLimit } rows
                 && rows.Select(RowWire.ToJson).ToList() is var json && json.Sum(row => (long)Encoding.UTF8.GetByteCount(row)) <= CatchUpBytes)
                 return (from, json);
             return (last, []);
-        }, (session, _) =>
+        };
+        Action<string, CallContext> opened = (session, call) =>
         {
+            if (call.SourceGuard is RowSourceBinding bound) { bound.EnsureCurrent(); bound.Watch(); return; }
             // A rows sub has the session's machine watch it, as rows/page and GET /sessions/{id}/rows do, so a remote
             // session's rows are copied in on a resume too, and keep coming while it's open.
             if (_sessions.Get(session) is { } info)
                 _machines.Named(info.Machine)?.Watch(info);
-        });
+        };
+        if (_sources is null) calls.Rows(Topic, state, opened);
+        else calls.Rows(Topic, state, opened, _sources);
         // Opening a session's rows has its machine watch it, as GET /sessions/{id}/rows does.
-        calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, (args, call) =>
+        calls.Read(Topic, "page", RowJsonContext.Rows.PageArgs, RowJsonContext.Rows.JsonElement, async (args, call) =>
         {
+            var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
+            if (bound?.Remote == true)
+            {
+                var remote = await bound.PageAsync(args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
+                bound.EnsureCurrent(); return remote;
+            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var page = _hub.Page(args.Session, args.Before, Math.Clamp(args.Limit, 1, PageLimit), call.Cancellation);
+            if (bound is not null)
+            {
+                bound.Watch(); bound.EnsureCurrent(); return PageJson(page, bound.ActiveRun);
+            }
             var machine = _machines.Named(session.Machine);
             machine?.Watch(session);
-            return Task.FromResult(PageJson(page, machine?.ActiveRun(session)));
+            return PageJson(page, machine?.ActiveRun(session));
         }, bulk: true);
-        calls.Read(Topic, "subagents", RowJsonContext.Rows.SubagentArgs, RowJsonContext.Rows.SubagentPage, (args, call) =>
+        calls.Read(Topic, "subagents", RowJsonContext.Rows.SubagentArgs, RowJsonContext.Rows.SubagentPage, async (args, call) =>
         {
             call.Cancellation.ThrowIfCancellationRequested();
+            var bound = await CaptureAsync(args.ExpectedSource, args.Session, call);
+            if (bound?.Remote == true)
+            {
+                var remote = await bound.SubagentsAsync(args.After, args.Limit, call.Cancellation);
+                bound.EnsureCurrent(); return remote;
+            }
             var session = _sessions.Get(args.Session) ?? throw new CallFailed("unknown session");
             var page = _store.Subagents(args.Session, args.After, args.Limit, call.Cancellation);
-            _machines.Named(session.Machine)?.Watch(session);
-            return Task.FromResult(page);
+            if (bound is not null) { bound.Watch(); bound.EnsureCurrent(); }
+            else _machines.Named(session.Machine)?.Watch(session);
+            return page;
         }, bulk: true);
         calls.Read(Topic, "after", RowJsonContext.Rows.JsonElement, RowJsonContext.Rows.JsonElement, (args, call) =>
         {
@@ -170,10 +194,26 @@ internal sealed class RowsFeature : IFeature
         return document.RootElement.Clone();
     }
 
-    /// <summary><c>rows/page</c>'s args: the newest items that start below <c>before</c>.</summary>
-    internal sealed record PageArgs([property: JsonRequired] string Session, long Before = long.MaxValue, int Limit = 50);
+    private async Task<RowSourceBinding?> CaptureAsync(ExpectedSource? expected, string session, CallContext call)
+    {
+        if (expected is not null && call.ExpectedSource is not null && expected != call.ExpectedSource)
+            throw new CallBadArguments("The row source arguments contradict the frame.");
+        expected ??= call.ExpectedSource;
+        if (expected is null) return null;
+        if (call.Peer is not OwnerPeer) throw new CallFailed("Forbidden.", "forbidden");
+        if (_sources is null) throw new CallFailed("Source-bound rows are unavailable.", "source_changed");
+        var binding = await _sources.CaptureAsync(expected, session, call.Cancellation);
+        call.SourceGuard = binding;
+        binding.EnsureCurrent();
+        return binding;
+    }
 
-    internal sealed record SubagentArgs([property: JsonRequired] string Session, string? After = null, int Limit = SubagentPage.DefaultLimit);
+    /// <summary><c>rows/page</c>'s args: the newest items that start below <c>before</c>.</summary>
+    internal sealed record PageArgs([property: JsonRequired] string Session, long Before = long.MaxValue, int Limit = 50,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
+
+    internal sealed record SubagentArgs([property: JsonRequired] string Session, string? After = null, int Limit = SubagentPage.DefaultLimit,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExpectedSource? ExpectedSource = null);
 
     internal sealed record ToolArgs([property: JsonRequired] string Session, [property: JsonRequired] string Item);
 

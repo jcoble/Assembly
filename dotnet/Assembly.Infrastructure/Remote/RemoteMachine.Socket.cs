@@ -8,6 +8,7 @@ using System.Threading.Channels;
 using Assembly.Application.Common.Machines;
 using Assembly.Application.Features.Chat.Rows;
 using Assembly.Application.Features.Chat.Sessions;
+using Assembly.Infrastructure.Engine;
 
 namespace Assembly.Infrastructure.Remote;
 
@@ -26,7 +27,9 @@ internal sealed partial class RemoteMachine
                 _sessionsSub = Interlocked.Increment(ref _nextSub);
                 await SendFrameAsync(socket, $"{{\"t\":\"sub\",\"id\":{_sessionsSub},\"topic\":\"sessions\",\"sessionTitleParts\":1}}", cancellationToken);
                 foreach (var (id, sub) in _subscriptions)
-                    await SendFrameAsync(socket, SubFrame(id, sub.Session, _hub.LastSeq(sub.Session)), cancellationToken);
+                    if (sub.Owner is null)
+                        await SendFrameAsync(socket, SubFrame(id, sub.Session, _hub.LastSeq(sub.Session)), cancellationToken);
+                    else sub.Frames.Writer.TryComplete(new CallFailed("The selected row source changed.", "source_changed"));
                 foreach (var pending in _calls.Values)
                     pending.Completion.TrySetException(new MachineUnreachable(_name, $"{_name}: machine socket closed", mayHaveBeenSent: pending.Sent));
                 _calls.Clear();
@@ -206,7 +209,7 @@ internal sealed partial class RemoteMachine
     // All followed sessions share this receive loop. A backend restart can leave SSH up, so this machine owns retry.
     private readonly CancellationTokenSource _socketStop = new();
     private readonly SemaphoreSlim _socketSend = new(1), _bulkCall = new(1);
-    private readonly Dictionary<long, (string Session, System.Threading.Channels.Channel<JsonElement> Frames)> _subscriptions = [];
+    private readonly Dictionary<long, (string Session, Channel<JsonElement> Frames, OwnerConnectionBinding? Owner)> _subscriptions = [];
     private sealed class PendingCall
     {
         internal readonly TaskCompletionSource<JsonElement> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -226,30 +229,51 @@ internal sealed partial class RemoteMachine
     private readonly TimeProvider _time = null!;
     private readonly TextWriter _log = null!;
 
-    private async IAsyncEnumerable<JsonElement> RowsAsync(string session, long after,
+    private IAsyncEnumerable<JsonElement> RowsAsync(string session, long after, CancellationToken cancellationToken) =>
+        RowsCoreAsync(session, after, null, null, cancellationToken);
+
+    internal IAsyncEnumerable<JsonElement> BoundRowsAsync(string session, long? after, OwnerConnectionBinding owner,
+        EngineMirror.LiveMirrorBinding live, CancellationToken ct) => RowsCoreAsync(session, after, owner, live, ct);
+
+    private async IAsyncEnumerable<JsonElement> RowsCoreAsync(string session, long? after, OwnerConnectionBinding? owner,
+        EngineMirror.LiveMirrorBinding? live,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        using var stopping = owner is null ? null : CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, owner.Invalidated, live!.Invalidated);
+        var ct = stopping?.Token ?? cancellationToken;
         var frames = System.Threading.Channels.Channel.CreateBounded<JsonElement>(512);
         var id = Interlocked.Increment(ref _nextSub);
-        await _socketSend.WaitAsync(cancellationToken);
+        ClientWebSocket? sentOn = null;
+        await _socketSend.WaitAsync(ct);
         try
         {
-            _subscriptions.Add(id, (session, frames));
+            if (owner is not null) { RequireOwnerBinding(owner); RequireLiveMirror(owner, live); }
+            _subscriptions.Add(id, (session, frames, owner));
             _socketRun ??= Task.Run(SocketLoopAsync, CancellationToken.None);
             if (_socket is { State: WebSocketState.Open } socket)
-                await SendFrameAsync(socket, SubFrame(id, session, after), cancellationToken);
+            {
+                sentOn = socket;
+                await SendFrameAsync(socket, SubFrame(id, session, after,
+                    owner is null ? null : new(owner.Machine, 0, null)), ct);
+            }
         }
         catch
         {
             _subscriptions.Remove(id);
-            _socket?.Abort();
+            if (owner is null) _socket?.Abort();
             throw;
         }
         finally { _socketSend.Release(); }
         try
         {
-            await foreach (var frame in frames.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var frame in frames.Reader.ReadAllAsync(ct))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (owner is not null && (owner.IsInvalidated || live!.IsInvalidated))
+                    throw new CallFailed("The selected row source changed.", "source_changed");
                 yield return frame;
+            }
         }
         finally
         {
@@ -257,7 +281,7 @@ internal sealed partial class RemoteMachine
             try
             {
                 _subscriptions.Remove(id);
-                if (_socket is { State: WebSocketState.Open } socket)
+                if (_socket is { State: WebSocketState.Open } socket && (owner is null || ReferenceEquals(socket, sentOn)))
                     try { await SendFrameAsync(socket, $"{{\"t\":\"unsub\",\"id\":{id}}}", _socketStop.Token); }
                     catch (Exception error) when (error is WebSocketException or OperationCanceledException) { socket.Abort(); }
             }
@@ -265,8 +289,9 @@ internal sealed partial class RemoteMachine
         }
     }
 
-    private static string SubFrame(long id, string session, long after) =>
-        $"{{\"t\":\"sub\",\"id\":{id},\"topic\":\"rows\",\"key\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{after}}}";
+    private static string SubFrame(long id, string session, long? after, ExpectedSource? expected = null) =>
+        $"{{\"t\":\"sub\",\"id\":{id},\"topic\":\"rows\",\"key\":{JsonSerializer.Serialize(session, RowJsonContext.Rows.String)},\"after\":{(after is null ? "null" : after.Value.ToString(System.Globalization.CultureInfo.InvariantCulture))}" +
+        (expected is null ? "}" : $",\"expectedSource\":{JsonSerializer.Serialize(expected, RowJsonContext.Rows.ExpectedSource)}}}");
 
     private async Task SocketLoopAsync()
     {
@@ -296,6 +321,10 @@ internal sealed partial class RemoteMachine
                         {
                             if (!git.Frames.Writer.TryWrite(frame)) throw new IOException("remote Git operation queue is full");
                         }
+                        else if (frame.GetProperty("t").GetString() == "error" && frame.TryGetProperty("id", out var rowsId)
+                            && _subscriptions.TryGetValue(rowsId.GetInt64(), out var refused) && refused.Owner is not null)
+                            refused.Frames.Writer.TryComplete(new CallFailed("The owning row subscription was refused.",
+                                frame.TryGetProperty("code", out var reason) ? reason.GetString() : "failed"));
                         else if (frame.TryGetProperty("id", out var callId) && _calls.Remove(callId.GetInt64(), out var pending))
                             pending.Completion.TrySetResult(frame);
                         else if (frame.TryGetProperty("sub", out var sub))

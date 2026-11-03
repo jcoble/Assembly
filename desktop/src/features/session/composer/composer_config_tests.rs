@@ -248,6 +248,7 @@ fn a_read_sent_while_a_pick_is_going_doesnt_put_the_old_value_back(cx: &mut Test
 // Writes keep running across switches; dropped reads must cancel instead.
 #[derive(Clone, Default)]
 struct DelayedConfigClient {
+    messages: crate::features::session::client::fake_client::FakeClient,
     calls: std::rc::Rc<std::cell::RefCell<std::collections::VecDeque<ConfigCall>>>,
 }
 
@@ -276,10 +277,27 @@ impl crate::features::session::client::session_client::SessionClient for Delayed
         &self,
         _: &str,
         _: Option<i64>,
+        _: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         _: crate::features::session::client::session_client::RowsSink,
         _: &gpui_kit::App,
     ) -> gpui_kit::Subscription {
         gpui_kit::Subscription::new(|| {})
+    }
+
+    fn subscribe_message(
+        &self,
+        message: &str,
+        machine: Option<&str>,
+        sink: crate::features::session::client::session_client::MessageSink,
+        cx: &gpui_kit::App,
+    ) -> gpui_kit::Subscription {
+        crate::features::session::client::session_client::SessionClient::subscribe_message(
+            &self.messages,
+            message,
+            machine,
+            sink,
+            cx,
+        )
     }
 
     fn clock(

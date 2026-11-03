@@ -60,7 +60,7 @@ public sealed class CliCheckSocketTests
             args = JsonSerializer.SerializeToElement(f.Args with { MachineId = missing ? null! : "different-machine" }, UpdatesJson.Default.CliCheckArgs)
         });
         var frame = await Read(socket); Assert.Equal("error", frame.GetProperty("t").GetString());
-        Assert.Equal("failed", frame.GetProperty("code").GetString());
+        Assert.Equal(missing ? "wrong_machine" : "configuration_unavailable", frame.GetProperty("code").GetString());
         Assert.Equal("CLI check unavailable.", frame.GetProperty("message").GetString());
         Assert.False(File.Exists(Path.Combine(f.Home, "probe-record"))); Assert.Equal(0, f.Launcher.Launches);
         socket.Abort();

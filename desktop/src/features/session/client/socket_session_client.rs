@@ -20,6 +20,7 @@ impl SessionClient for SocketSessionClient {
         &self,
         session: &str,
         after: Option<i64>,
+        expected_source: Option<&crate::core::socket::row_source::ExpectedRowSource>,
         mut sink: RowsSink,
         cx: &App,
     ) -> Subscription {
@@ -27,11 +28,28 @@ impl SessionClient for SocketSessionClient {
         let Some(socket) = SocketClient::try_global(cx) else {
             return Subscription::new(|| {});
         };
-        let mut rows = socket.read(cx).subscribe_rows(session, after);
+        let mut rows = socket
+            .read(cx)
+            .subscribe_rows(session, after, expected_source);
         // The task owns the topic subscription, so dropping it unsubscribes.
         let task = cx.spawn(async move |cx| {
+            let mut refused = false;
             while let Ok(update) = rows.updates.recv().await {
+                if matches!(&update, super::session_client::RowUpdate::Refused { .. }) {
+                    refused = true;
+                }
                 cx.update(|cx| sink(update, cx));
+            }
+            if !refused {
+                cx.update(|cx| {
+                    sink(
+                        super::session_client::RowUpdate::Refused {
+                            code: "row_stream_ended".into(),
+                            message: "The session row stream ended.".into(),
+                        },
+                        cx,
+                    )
+                });
             }
         });
         Subscription::new(move || drop(task))
@@ -114,6 +132,14 @@ fn call_error(failure: CallFailure) -> CallError {
         ErrorCode::BadArgs => CallError::BadArgs(failure.message),
         ErrorCode::Failed => CallError::Failed(failure.message),
         ErrorCode::Timeout => CallError::Timeout(failure.message),
+        ErrorCode::Refused { code } => CallError::Refused {
+            code,
+            message: failure.message,
+        },
+        ErrorCode::Uncertain { machine } => CallError::Uncertain {
+            machine,
+            message: failure.message,
+        },
         ErrorCode::Unreachable { machine } => CallError::Unreachable { machine },
     }
 }

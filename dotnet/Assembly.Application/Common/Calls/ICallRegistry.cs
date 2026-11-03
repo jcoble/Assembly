@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization.Metadata;
 using Assembly.Application.Common.Database;
+using Assembly.Application.Features.Chat.Rows;
 
 namespace Assembly.Application.Common.Calls;
 
@@ -43,4 +44,9 @@ public interface ICallRegistry
     // with the key once the subscription is registered, outside the Topics lock, so it may take other locks or start work.
     void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
         Action<string, CallContext>? opened = null);
+
+    // Registries that do not implement source-bound rows must refuse their registration, never ignore its guard.
+    void Rows(string topic, Func<string, long?, CallContext, (long Seq, IReadOnlyList<string> Rows)> state,
+        Action<string, CallContext>? opened, IRowSourceBindings sources) =>
+        throw new NotSupportedException("This registry does not support source-bound rows.");
 }

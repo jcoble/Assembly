@@ -82,7 +82,7 @@ impl EngineStore {
         // Decode the entire cut before changing held state.
         let rows: Vec<_> = values
             .into_iter()
-            .map(|value| decode(&scope, value))
+            .map(|value| decode(&scope.machine, value))
             .collect::<Result<_, _>>()?;
         let keys: HashSet<_> = rows.iter().map(|row| row.key.clone()).collect();
         if keys.len() != rows.len() {
@@ -106,6 +106,40 @@ impl EngineStore {
         self.prune_items();
         self.cursors.insert(scope, cursor);
         Ok(changed.into_iter().collect())
+    }
+
+    /// A direct checked read does not own a stream cut or create cache membership.
+    pub fn apply_entity(
+        &mut self,
+        key: &EngineKey,
+        values: Vec<Value>,
+    ) -> Result<Option<EngineItem>, EngineRefusal> {
+        if values.len() > 1 {
+            return Err(invalid("duplicate display identity"));
+        }
+        let Some(value) = values.into_iter().next() else {
+            self.unindex(key);
+            self.items.remove(key);
+            for membership in self.scopes.values_mut() {
+                membership.remove(key);
+            }
+            return Ok(None);
+        };
+        let row = decode(&key.machine, value)?;
+        if row.key != *key {
+            return Err(invalid("unrequested display identity"));
+        }
+        if self
+            .items
+            .get(key)
+            .is_some_and(|held| held.version > row.version)
+        {
+            return Err(invalid("display is behind the held version"));
+        }
+        if self.items.contains_key(key) {
+            self.install(row.clone());
+        }
+        Ok(Some(row))
     }
 
     /// Validate the event cut before making any display request or advancing its cursor.
@@ -140,7 +174,7 @@ impl EngineStore {
         }
         let rows = values
             .into_iter()
-            .map(|value| decode(scope, value))
+            .map(|value| decode(&scope.machine, value))
             .collect::<Result<Vec<_>, _>>()?;
         let mut present = HashSet::new();
         for row in &rows {
@@ -307,8 +341,8 @@ impl EngineStore {
     }
 }
 
-fn decode(scope: &EngineScope, value: Value) -> Result<EngineItem, EngineRefusal> {
-    if value["machine"].as_str() != Some(scope.machine.as_str()) {
+fn decode(machine: &str, value: Value) -> Result<EngineItem, EngineRefusal> {
+    if value["machine"].as_str() != Some(machine) {
         return Err(invalid("display row from another source"));
     }
     if serde_json::to_vec(&value)
@@ -319,7 +353,7 @@ fn decode(scope: &EngineScope, value: Value) -> Result<EngineItem, EngineRefusal
         return Err(invalid("display row exceeds 32 KiB"));
     }
     let key = EngineKey {
-        machine: scope.machine.clone(),
+        machine: machine.into(),
         kind: value["entityKind"]
             .as_str()
             .ok_or_else(|| invalid("missing display kind"))?

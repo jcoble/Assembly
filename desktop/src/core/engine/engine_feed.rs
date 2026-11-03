@@ -36,7 +36,9 @@ pub struct EngineWatch {
 
 impl EngineWatch {
     pub fn request_snapshot(&self) {
-        if self._watch.active.get() { (self._watch.resnapshot)(); }
+        if self._watch.active.get() {
+            (self._watch.resnapshot)();
+        }
     }
 }
 
@@ -97,11 +99,64 @@ impl EngineFeed {
         self.store.parent_of(child)
     }
     pub fn loaded(&self, scope: &EngineScope) -> bool {
-        self.store.cursor(scope).is_some() && self.watches.get(scope)
-            .and_then(Weak::upgrade).is_some_and(|watch| watch.active.get() && watch.coherent.get())
+        self.store.cursor(scope).is_some()
+            && self
+                .watches
+                .get(scope)
+                .and_then(Weak::upgrade)
+                .is_some_and(|watch| watch.active.get() && watch.coherent.get())
     }
     pub fn error(&self) -> Option<&EngineRefusal> {
         self.error.as_ref()
+    }
+
+    /// Read the exact source/key through the same bounded bulk connection. Unheld rows
+    /// are returned to the caller without inventing a stream cursor or cache lease.
+    pub fn ensure_item(
+        &mut self,
+        key: EngineKey,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<EngineItem>, EngineRefusal>> {
+        cx.spawn(async move |feed, cx| {
+            let rows = super::entity_batch::read(std::slice::from_ref(&key), cx).await?;
+            match feed.update(cx, |feed, cx| {
+                let old_session = feed
+                    .store
+                    .item(&key)
+                    .and_then(|item| item.value["sessionId"].as_str())
+                    .map(str::to_owned);
+                let result = feed.store.apply_entity(&key, rows)?;
+                let session = if key.kind == "session" {
+                    Some(key.id.clone())
+                } else {
+                    result
+                        .as_ref()
+                        .and_then(|item| item.value["sessionId"].as_str())
+                        .map(str::to_owned)
+                        .or(old_session)
+                };
+                let sessions = session
+                    .into_iter()
+                    .map(|id| SessionKey {
+                        machine: key.machine.clone(),
+                        id,
+                    })
+                    .collect();
+                cx.emit(EngineChanged {
+                    scopes: Vec::new(),
+                    keys: vec![key],
+                    sessions,
+                });
+                cx.notify();
+                Ok(result)
+            }) {
+                Ok(result) => result,
+                Err(_) => Err(EngineRefusal {
+                    code: "cancelled".into(),
+                    message: "The view was closed.".into(),
+                }),
+            }
+        })
     }
 
     /// Machine must be an actual Engine ID from the owning connection/mirror.
@@ -142,15 +197,20 @@ impl EngineFeed {
         let reader_wake = Rc::new(Cell::new(None::<std::task::Waker>));
         let reset = subscription.resnapshot_request();
         let resnapshot: Rc<dyn Fn()> = {
-            let (coherent, current_wire, retired_wire) = (coherent.clone(), current_wire.clone(), retired_wire.clone());
+            let (coherent, current_wire, retired_wire) =
+                (coherent.clone(), current_wire.clone(), retired_wire.clone());
             let pending = snapshot_pending.clone();
             let (revision, reader_wake) = (refresh_revision.clone(), reader_wake.clone());
             Rc::new(move || {
-                if pending.replace(true) { return; }
+                if pending.replace(true) {
+                    return;
+                }
                 coherent.set(false);
                 retired_wire.set(retired_wire.get().max(current_wire.get()));
                 revision.set(revision.get().wrapping_add(1));
-                if let Some(wake) = reader_wake.take() { wake.wake(); }
+                if let Some(wake) = reader_wake.take() {
+                    wake.wake();
+                }
                 reset();
             })
         };
@@ -158,7 +218,10 @@ impl EngineFeed {
         let disconnected = coherent.clone();
         let pending_connection = snapshot_pending.clone();
         let main_connection = cx.subscribe(&socket, move |_, _, state, _| {
-            if matches!(state, crate::core::socket::connection_state::ConnectionState::Connected { .. }) {
+            if matches!(
+                state,
+                crate::core::socket::connection_state::ConnectionState::Connected { .. }
+            ) {
                 reset_on_connect();
             } else {
                 disconnected.set(false);
@@ -192,8 +255,10 @@ impl EngineFeed {
                 let EngineUpdate::Scoped(page) = update else {
                     continue;
                 };
-                if page.machine != watched.machine || page.wire <= retired_wire.get()
-                    || (!page.snapshot && !applied_snapshot.get()) {
+                if page.machine != watched.machine
+                    || page.wire <= retired_wire.get()
+                    || (!page.snapshot && !applied_snapshot.get())
+                {
                     continue;
                 }
                 current_wire.set(page.wire);
@@ -225,11 +290,13 @@ impl EngineFeed {
                         Err(_) => return,
                     }
                 };
-                if wire <= retired_wire.get() { continue; }
+                if wire <= retired_wire.get() {
+                    continue;
+                }
                 let revision = refresh_revision.get();
                 let display = {
-                    let mut pending = std::pin::pin!(async { Some(loop {
-
+                    let mut pending = std::pin::pin!(async {
+                        Some(loop {
                             let attempted = cx.update(|cx| {
                                 bulk.as_ref()
                                     .and_then(|bulk| bulk.read(cx).connection_generation())
@@ -249,8 +316,9 @@ impl EngineFeed {
                                     // bulk generation. The original stream cut remains unapplied.
                                     loop {
                                         let current = cx.update(|cx| {
-                                            bulk.as_ref()
-                                                .and_then(|bulk| bulk.read(cx).connection_generation())
+                                            bulk.as_ref().and_then(|bulk| {
+                                                bulk.read(cx).connection_generation()
+                                            })
                                         });
                                         if current.is_some() && current != attempted {
                                             break;
@@ -261,7 +329,8 @@ impl EngineFeed {
                                     }
                                 }
                             }
-                    }) });
+                        })
+                    });
                     std::future::poll_fn(|wake| {
                         if refresh_revision.get() != revision {
                             return std::task::Poll::Ready(None);
@@ -269,12 +338,15 @@ impl EngineFeed {
                         match std::future::Future::poll(pending.as_mut(), wake) {
                             std::task::Poll::Ready(rows) => std::task::Poll::Ready(Some(rows)),
                             std::task::Poll::Pending => {
-                                if refresh_revision.get() != revision { return std::task::Poll::Ready(None); }
+                                if refresh_revision.get() != revision {
+                                    return std::task::Poll::Ready(None);
+                                }
                                 reader_wake.set(Some(wake.waker().clone()));
                                 std::task::Poll::Pending
                             }
                         }
-                    }).await
+                    })
+                    .await
                 };
                 reader_wake.take();
                 let display = match display {
@@ -282,7 +354,9 @@ impl EngineFeed {
                     Some(None) => return,
                     None => continue 'updates,
                 };
-                if wire <= retired_wire.get() { continue; }
+                if wire <= retired_wire.get() {
+                    continue;
+                }
                 let result = feed.update(cx, |feed, cx| {
                     let cursor = EngineCursor {
                         through: page.through,
@@ -296,7 +370,10 @@ impl EngineFeed {
                     };
                     let applied = match changed {
                         Ok(keys) => {
-                            if snapshot { applied_snapshot.set(true); snapshot_pending.set(false); }
+                            if snapshot {
+                                applied_snapshot.set(true);
+                                snapshot_pending.set(false);
+                            }
                             let mut sessions = Vec::new();
                             for key in &keys {
                                 let id = if key.kind == "session" {

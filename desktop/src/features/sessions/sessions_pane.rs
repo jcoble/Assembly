@@ -84,6 +84,7 @@ impl SessionsPane {
     /// Registers the column as the layout's Sessions pane. It runs after the placeholders register, since the last
     /// registration for a name wins.
     pub fn register(cx: &mut App) {
+        super::search_keys::register_search_keys(cx);
         register_panel(cx, "Sessions", |_, window, cx| {
             panel_handle(cx.new(|cx| SessionsPane::new(window, cx)))
         });
@@ -365,14 +366,6 @@ impl SessionsPane {
         self.clear_filter(window, cx);
     }
 
-    /// Escape in the filter, or a pick: the filter empties and the rail reads without it.
-    pub(super) fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.filter
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        let read = self.rail.set_filter("");
-        self.send(read, cx);
-    }
-
     /// The top line: the search field (the title or project text, which Escape clears), then view options and New
     /// session. The dock's own tab already names the column.
     fn search(
@@ -406,7 +399,7 @@ impl SessionsPane {
             .pb(px(10.))
             .gap(px(2.))
             .capture_action(
-                cx.listener(|pane, _: &Escape, window, cx| pane.clear_filter(window, cx)),
+                cx.listener(|pane, _: &Escape, window, cx| pane.escape_filter(window, cx)),
             )
             .child(field)
             .child(view_options(self.rail.view_options, on_view, cx))
@@ -513,6 +506,12 @@ impl Render for SessionsPane {
             false => empty_line(state.as_ref()),
         };
         v_flex()
+            .key_context("Sessions")
+            .on_action(cx.listener(
+                |pane, _: &super::search_keys::FocusSessionSearch, window, cx| {
+                    pane.focus_search(window, cx)
+                },
+            ))
             .track_focus(&self.focus)
             .size_full()
             .child(self.search(on_view, new_session, cx))

@@ -6,6 +6,11 @@ use super::row::Row;
 
 #[derive(Debug)]
 pub enum RowUpdate {
+    /// The existing subscription error frame, or a local terminal stream failure.
+    Refused {
+        code: String,
+        message: String,
+    },
     Row(Box<Row>),
     /// The rows before `seq` weren't sent: drop what's held and reload with `rows/page`, `before` = `seq + 1`.
     Jump {

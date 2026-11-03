@@ -8,4 +8,5 @@ namespace Assembly.Application.Features.Agents;
 [JsonSerializable(typeof(ProviderRuntimeSaveArgs))]
 [JsonSerializable(typeof(ProviderRuntimeSettings))]
 [JsonSerializable(typeof(ProviderRuntimeReply))]
+[JsonSerializable(typeof(ProviderRuntimeChanged))]
 public sealed partial class ProviderRuntimeJson : JsonSerializerContext;

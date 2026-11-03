@@ -276,6 +276,8 @@ impl SessionPane {
             CallError::NotFound(message)
             | CallError::BadArgs(message)
             | CallError::Failed(message)
+            | CallError::Refused { message, .. }
+            | CallError::Uncertain { message, .. }
             | CallError::Timeout(message) => format!("{what}: {message}").into(),
         };
         cx.notify();
