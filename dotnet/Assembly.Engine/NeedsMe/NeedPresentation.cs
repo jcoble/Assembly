@@ -47,12 +47,13 @@ internal static class NeedPresentationInputs
         (presentation.InputMode != "permission" || !presentation.FreeText) &&
         (presentation.InputMode != "form" || presentation.Schema is { ValueKind: JsonValueKind.Object });
 
-    internal static bool FitsDisplay(OpenNeed command, CommandContext context, NeedPresentation presentation, long number, string? addressee)
+    internal static bool FitsDisplay(OpenNeed command, CommandContext context, NeedPresentation presentation, long number, string? addressee, string? addresseeMachine)
     {
         var item = JsonSerializer.SerializeToNode(presentation, EngineJson.Default.NeedPresentation)!.AsObject();
         item["entityKind"] = "needs_me"; item["id"] = context.EntityId; item["version"] = 1;
         item["machine"] = context.Machine; item["sessionId"] = command.SessionId; item["runId"] = command.RunId;
         item["stepId"] = command.StepId; item["chatRowId"] = command.ChatRowId; item["addresseeSessionId"] = addressee;
+        item["addresseeMachine"] = addresseeMachine;
         item["kind"] = command.Kind; item["text"] = command.Text; item["displayNumber"] = number;
         item["optionsJson"] = JsonSerializer.Serialize(command.Options, EngineJson.Default.IReadOnlyListString);
         item["state"] = "open"; item["createdMs"] = context.NowMs; item["updatedMs"] = context.NowMs;

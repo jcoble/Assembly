@@ -3,7 +3,7 @@ use serde::Deserialize;
 use serde_json::{Value,json};
 use crate::core::{engine::{EngineRefusal,SessionKey},intents::session_open::{SessionOpenRequest,SessionOpenTarget},socket::row_source::ExpectedRowSource};
 
-pub(in crate::features::session) struct OpenTarget {
+pub(crate) struct OpenTarget {
     pub key:SessionKey,
     pub source:ExpectedRowSource,
     pub read_only:bool,
@@ -22,7 +22,7 @@ struct Read {
 #[serde(deny_unknown_fields)]
 struct Key {machine:String,id:String}
 
-pub(in crate::features::session) fn build_args(request:&SessionOpenRequest,serial:u64)->Result<Value,EngineRefusal> {
+pub(crate) fn build_args(request:&SessionOpenRequest,serial:u64)->Result<Value,EngineRefusal> {
     request.validate_shape()?;
     let kind=kind(&request.target);
     let mut args=json!({"kind":kind,"machine":request.key.machine,"session":request.key.id,"requestId":serial});
@@ -33,7 +33,7 @@ pub(in crate::features::session) fn build_args(request:&SessionOpenRequest,seria
     Ok(args)
 }
 
-pub(in crate::features::session) fn parse_response(value:Value,request:&SessionOpenRequest,serial:u64)->Result<OpenTarget,EngineRefusal> {
+pub(crate) fn parse_response(value:Value,request:&SessionOpenRequest,serial:u64)->Result<OpenTarget,EngineRefusal> {
     request.validate_shape()?;
     let read:Read=serde_json::from_value(value).map_err(|error|refused("invalid_open_target_reply",&error.to_string()))?;
     let source=&read.expected_source;

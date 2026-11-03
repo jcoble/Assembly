@@ -31,6 +31,7 @@ internal static class DisplayQueries
         if (kind == "needs_me") return """
             json_object('entityKind','needs_me','id',t.id,'version',t.version,'machine',t.machine,
                 'sessionId',t.session_id,'runId',t.run_id,'stepId',t.step_id,'addresseeSessionId',t.addressee_session_id,
+                'addresseeMachine',(SELECT s.machine FROM engine_session s WHERE s.id=t.addressee_session_id),
                 'chatRowId',t.chat_row_id,'kind',t.kind,'text',NULL,
                 'optionsJson',CASE WHEN length(CAST(t.options_json AS BLOB))<=32768 THEN t.options_json END,
                 'title',json_extract(t.presentation_json,'$.title'),'recommendation',json_extract(t.presentation_json,'$.recommendation'),

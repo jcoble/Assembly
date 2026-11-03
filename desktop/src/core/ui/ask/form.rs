@@ -12,6 +12,18 @@ pub struct AskForm {
 }
 
 impl AskForm {
+    pub fn pick(&mut self,field:String,value:String,many:bool) {
+        if many {
+            let list=self.picked.entry(field).or_insert_with(||Value::Array(Vec::new()));
+            if let Value::Array(list)=list {
+                match list.iter().position(|item|item.as_str()==Some(&value)) {
+                    Some(at)=>drop(list.remove(at)),None=>list.push(Value::String(value)),
+                }
+            }
+        } else {self.picked.insert(field,Value::String(value));}
+    }
+
+
     /// The form's inputs for an open question with fields; `None` for anything else.
     pub fn of(ask: &AskPayload, window: &mut Window, cx: &mut App) -> Option<AskForm> {
         let fields = ask.schema.as_ref().and_then(AskSchema::of)?;

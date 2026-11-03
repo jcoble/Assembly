@@ -2,7 +2,7 @@ namespace Assembly.Application.Features.Chat.Rows;
 
 /// <summary>A persisted native display card. SessionId retains its chat meaning, not an Engine identity.</summary>
 public sealed record SubagentDisplay(string ItemId, long Seq, string SessionId, string Title, string? Description,
-    string State, string? StopReason, string? Error, string? ToolCallId);
+    string State, string? StopReason, string? Error, string? ToolCallId, bool CanStop);
 
 public sealed record SubagentPage(IReadOnlyList<SubagentDisplay> Items, string? Next)
 {

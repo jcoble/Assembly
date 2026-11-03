@@ -8,17 +8,15 @@
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName as Glyph;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::Input;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::grow::chevron;
-use super::session_action::{OnAction, SessionAction};
 use crate::core::ui::ask::form::AskForm;
-use crate::core::ui::ask::payload::{AskInput, AskOption, AskPayload, AskSchema};
+use super::session_action::{OnAction, SessionAction};
+use crate::core::ui::ask::payload::{AskOption, AskPayload};
 
 #[derive(Clone)]
 pub struct AskRow {
@@ -113,30 +111,7 @@ pub fn one_line(text: &str) -> String {
     }
 }
 
-/// What a question asked, for its settled card: each field's label, its hint, and its choices joined ("" for text).
-pub fn asked(ask: &AskPayload) -> Vec<(String, Option<String>, String)> {
-    let fields = ask.schema.as_ref().and_then(AskSchema::of);
-    fields
-        .map(|fields| fields.properties)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(name, field)| {
-            let choices = match field.input() {
-                AskInput::One(choices) | AskInput::Many(choices) => choices
-                    .iter()
-                    .map(|choice| choice.title.clone().unwrap_or(choice.value.clone()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                AskInput::Text => String::new(),
-            };
-            (
-                field.title.clone().unwrap_or(name),
-                field.description.clone(),
-                choices,
-            )
-        })
-        .collect()
-}
+pub use crate::core::ui::ask::controls::asked;
 
 fn truthy(value: &Value) -> bool {
     match value {
@@ -145,6 +120,7 @@ fn truthy(value: &Value) -> bool {
         _ => true,
     }
 }
+
 
 impl AskRow {
     /// Open, the 28 px line: a chevron turned `grown` of the way, a mark, the title, and "Needs you". Settled, a muted
@@ -206,167 +182,19 @@ impl AskRow {
     }
 
     /// The message and what answers it, under the title; a settled one's message and fields, with nothing to answer.
-    pub fn controls(&self, cx: &App) -> Div {
-        let theme = cx.theme();
-        let ask_id = self.ask_id.clone();
-        let button = |id: &str, label: String, action: SessionAction| {
-            let on_action = self.on_action.clone();
-            let action = Rc::new(action);
-            Button::new(SharedString::from(format!("ask:{ask_id}:{id}")))
-                .compact()
-                .h(px(28.))
-                .px(px(12.))
-                .rounded(px(8.))
-                .label(label)
-                .on_click(move |_, window, cx| on_action(action.as_ref().clone(), window, cx))
-        };
-        let answer = |answer: Value| SessionAction::Answer {
-            ask_id: ask_id.clone(),
-            answer,
-        };
-        // The mock's `.confirm` body: the reason muted at 12.5 px under the title, in line with it.
-        let mut column = v_flex()
-            .gap_2()
-            .pl(px(23.))
-            .pb_1()
-            .text_size(px(12.5))
-            .when_some(self.ask.message.clone(), |column, message| {
-                column.child(div().text_color(theme.muted_foreground).child(message))
-            });
-        // Settled, it shows what it asked (each field and its choices) with nothing to answer.
-        if self.ask.state != "open" {
-            for (label, hint, choices) in asked(&self.ask) {
-                let value = div()
-                    .flex_1()
-                    .text_color(theme.muted_foreground)
-                    .child(choices);
-                column = column.child(inline_field(label, hint, value, cx));
-            }
-            return column;
-        }
-        // A permission's options at the card's right, as the mock's: Deny, the agent's others, then Allow, solid.
-        let Some(form) = &self.form else {
-            let mut row = h_flex().gap(px(6.)).flex_wrap().justify_end();
-            for (id, label) in permission_choices(&self.ask.options) {
-                let pick = answer(json!({ "optionId": id }));
-                let solid = label == "Allow";
-                let choice = button(&id, label, pick);
-                row = row.child(match solid {
-                    true => choice.primary().font_weight(FontWeight::SEMIBOLD),
-                    false => choice.outline().h(px(26.)).px(px(10.)),
-                });
-            }
-            return column.child(row);
-        };
-        let fields = self.ask.schema.as_ref().and_then(AskSchema::of);
-        for (name, field) in fields.map(|fields| fields.properties).unwrap_or_default() {
-            let label = field.title.clone().unwrap_or_else(|| name.clone());
-            let value = match field.input() {
-                AskInput::Text => match form.texts.iter().find(|(text, _)| *text == name) {
-                    Some((_, input)) => {
-                        let on_action = self.on_action.clone();
-                        let submit = SessionAction::SubmitAsk {
-                            ask_id: ask_id.clone(),
-                        };
-                        div()
-                            .flex_1()
-                            .capture_key_down(move |event, window, cx| {
-                                if event.keystroke.key == "enter" && !event.is_held {
-                                    on_action(submit.clone(), window, cx);
-                                }
-                            })
-                            .child(Input::new(input).h(px(26.)).rounded(theme.radius_full()))
-                    }
-                    None => div(),
-                },
-                AskInput::One(choices) | AskInput::Many(choices) => {
-                    let many = matches!(field.input(), AskInput::Many(_));
-                    let mut row = h_flex().flex_1().gap_1().flex_wrap();
-                    for choice in choices {
-                        let picked = match form.picked.get(&name) {
-                            Some(Value::Array(list)) => {
-                                list.iter().any(|it| it.as_str() == Some(&choice.value))
-                            }
-                            Some(Value::String(value)) => *value == choice.value,
-                            _ => false,
-                        };
-                        let pick = SessionAction::Pick {
-                            ask_id: ask_id.clone(),
-                            field: name.clone(),
-                            value: choice.value.clone(),
-                            many,
-                        };
-                        let text = choice.title.clone().unwrap_or(choice.value.clone());
-                        let chip = button(&format!("{name}:{}", choice.value), text, pick);
-                        row = row.child(if picked {
-                            chip.primary()
-                        } else {
-                            chip.secondary()
-                        });
-                    }
-                    row
-                }
-            };
-            column = column.child(inline_field(label, field.description.clone(), value, cx));
-        }
-        column.child(
-            h_flex()
-                .gap_2()
-                .child(
-                    button(
-                        "submit",
-                        "Send".into(),
-                        SessionAction::SubmitAsk {
-                            ask_id: ask_id.clone(),
-                        },
-                    )
-                    .primary(),
-                )
-                .child(
-                    button(
-                        "skip",
-                        "Skip".into(),
-                        answer(json!({ "action": "decline" })),
-                    )
-                    .ghost(),
-                )
-                .child(
-                    button(
-                        "cancel",
-                        "Cancel".into(),
-                        answer(json!({ "action": "cancel" })),
-                    )
-                    .ghost(),
-                ),
-        )
+    pub fn controls(&self,cx:&App)->Div {
+        use crate::core::ui::ask::controls::{self,ControlAction};
+        let choices=permission_choices(&self.ask.options).into_iter().map(|(id,label)|{let solid=label=="Allow";(id,label,solid)}).collect::<Vec<_>>();
+        let ask_id=self.ask_id.clone();let on_action=self.on_action.clone();
+        controls::render(&self.ask_id,&self.ask,self.form.as_ref(),&choices,Rc::new(move|action,window,cx| {
+            let action=match action {
+                ControlAction::Answer(answer)=>SessionAction::Answer{ask_id:ask_id.clone(),answer},
+                ControlAction::Pick{field,value,many}=>SessionAction::Pick{ask_id:ask_id.clone(),field,value,many},
+                ControlAction::Submit=>SessionAction::SubmitAsk{ask_id:ask_id.clone()},
+            };on_action(action,window,cx);
+        }),cx)
     }
 }
-
-/// An inline field's editing row: its label in a 64 px column, beside the input or choices, and its hint under them.
-fn inline_field(label: String, hint: Option<String>, value: Div, cx: &App) -> Div {
-    let muted = cx.theme().muted_foreground;
-    v_flex()
-        .gap_1()
-        .child(
-            h_flex()
-                .min_h(px(28.))
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(64.))
-                        .flex_none()
-                        .text_xs()
-                        .text_color(muted)
-                        .truncate()
-                        .child(label),
-                )
-                .child(value),
-        )
-        .when_some(hint, |column, hint| {
-            column.child(div().pl(px(72.)).text_xs().text_color(muted).child(hint))
-        })
-}
-
 #[cfg(test)]
 #[path = "tests/ask_row_tests.rs"]
 mod tests;

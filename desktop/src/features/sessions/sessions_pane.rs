@@ -23,12 +23,11 @@ use super::new_session_form::NewSessionForm;
 use super::rail_page::{Rail, RailPage, Request};
 use super::view_options::{OnView, VIEW_KEY, View, saved_view, view_options};
 use crate::core::clock::backend_clock::BackendClock;
-use crate::core::clock::tick::Tick;
 use crate::core::socket::client::SocketClient;
 use crate::core::socket::connection_state::ConnectionState;
 use crate::core::socket::outcome::Outcome;
 use crate::core::socket::update::Update;
-use crate::core::state::machines::{GlobalMachines, Machines};
+use crate::core::state::machines::GlobalMachines;
 use crate::core::state::selected_session::SelectedSession;
 use crate::core::state::preferences::Preferences;
 use crate::core::theme::text::TextRole;
@@ -45,6 +44,7 @@ const LOCATION: usize = 2;
 
 pub struct SessionsPane {
     focus: FocusHandle,
+    pub(super) drops:Entity<crate::core::ui::row_drop_down::RowDropDowns>,
     /// The new-session form while it's open, with the subscription that closes it once it's made a session.
     pub(super) creating: Option<(Entity<NewSessionForm>, Subscription)>,
     /// The marks on their way, each until its answer, by `next_mark`.
@@ -74,7 +74,10 @@ pub struct SessionsPane {
     /// The last frame drew a running row, so the next tick redraws its running time.
     pub(super) running_drawn: Rc<Cell<bool>>,
     _heard: Vec<Subscription>,
-    engine_watches: HashMap<crate::core::engine::EngineScope,crate::core::engine::EngineWatch>,
+    pub(super) source_pass:Option<Task<()>>,
+    pub(super) source_serial:u64,
+    pub(super) source_cut:Option<(Entity<SocketClient>,u64,Vec<Option<String>>)>,
+    pub(super) engine_watches: HashMap<crate::core::engine::EngineScope,crate::core::engine::EngineWatch>,
     /// The `sessionRail` feed and the backend clock, once the backend's first ready line started the socket.
     feed: Option<(Task<()>, Entity<BackendClock>, Subscription)>,
     /// The socket's and the machines list's observers.
@@ -125,7 +128,9 @@ impl SessionsPane {
             }
             cx.notify();
         });
+        let (drops,dropdowns)=Self::dropdowns(cx);
         let mut heard = vec![
+            dropdowns,
             engine_changed,
             cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
             cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
@@ -169,6 +174,7 @@ impl SessionsPane {
         }
         let mut pane = SessionsPane {
             focus: cx.focus_handle(),
+            drops,
             creating: None,
             marking: HashMap::new(),
             next_mark: 0,
@@ -186,59 +192,14 @@ impl SessionsPane {
             running_drawn: Rc::default(),
             _heard: heard,
             engine_watches: HashMap::new(),
+            source_pass:None,
+            source_serial:0,
+            source_cut:None,
             feed: None,
             _backend: Vec::new(),
         };
         pane.follow_backend(cx);
         pane
-    }
-
-    /// Once the backend's first ready line has started the socket: subscribes to `sessionRail`, whose state (now and
-    /// after each reconnect) and every change read the rail again, holds the backend clock for the ages, and redraws
-    /// as the connection and the machines change.
-    fn follow_backend(&mut self, cx: &mut Context<Self>) {
-        let Some(socket) = SocketClient::try_global(cx) else {
-            return cx.notify();
-        };
-        if self.feed.is_none() {
-            let mut changes = socket.read(cx).subscribe(RAIL_TOPIC, None);
-            let feed = cx.spawn(async move |pane, cx| {
-                while changes.updates.recv().await.is_ok() {
-                    let heard = pane.update(cx, |pane, cx| {
-                        let read = pane.rail.changed();
-                        pane.send(read, cx);
-                    });
-                    if heard.is_err() {
-                        return;
-                    }
-                }
-            });
-            let clock = cx.new(|cx| {
-                let mut clock = BackendClock::new();
-                clock.hold(cx);
-                clock
-            });
-            let ticks = cx.subscribe(&clock, |pane, _, tick: &Tick, cx| pane.tick(tick.now, cx));
-            self.feed = Some((feed, clock, ticks));
-            let mut preferences = socket.read(cx).subscribe("preferences", None);
-            self.restoring = Some(cx.spawn(async move |pane, cx| {
-                let first = preferences.updates.recv().await.ok();
-                if let Some(first) = first.as_ref() {
-                    let (providers, locations, statuses) = saved_filters(first).unwrap_or_default();
-                    let view = saved_view(first);
-                    pane.update(cx, |pane, cx| {
-                        pane.restore(providers, locations, statuses, view, cx)
-                    })
-                    .ok();
-                }
-            }));
-        }
-        let mut backend = vec![cx.observe(&socket, |_, _, cx| cx.notify())];
-        backend.extend(
-            Machines::try_global(cx).map(|machines| cx.observe(&machines, |_, _, cx| cx.notify())),
-        );
-        self._backend = backend;
-        cx.notify();
     }
 
     /// Whether the column follows the backend's rail topic.

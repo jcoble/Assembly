@@ -90,20 +90,7 @@ impl SessionPane {
                 let Some(form) = self.forms.get_mut(&ask_id) else {
                     return;
                 };
-                if many {
-                    let list = form
-                        .picked
-                        .entry(field)
-                        .or_insert_with(|| Value::Array(Vec::new()));
-                    if let Value::Array(list) = list {
-                        match list.iter().position(|it| it.as_str() == Some(&value)) {
-                            Some(at) => drop(list.remove(at)),
-                            None => list.push(Value::String(value)),
-                        }
-                    }
-                } else {
-                    form.picked.insert(field, Value::String(value));
-                }
+                form.pick(field,value,many);
                 self.refresh_ask(&ask_id, cx);
             }
             SessionAction::SubmitAsk { ask_id } => {

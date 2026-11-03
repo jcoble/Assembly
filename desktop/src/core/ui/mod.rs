@@ -17,3 +17,5 @@ pub mod row_drop_down;
 mod row_drop_down_tests;
 
 pub mod markdown;
+
+pub mod activity;

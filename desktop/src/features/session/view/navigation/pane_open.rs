@@ -53,11 +53,8 @@ impl SessionPane {
     }
     pub(super) fn native_stop_task(&self,key:&str,payload_session_id:&str)->Result<String,EngineRefusal> {
         let(_,reference,card)=self.native_card(key,payload_session_id)?;
-        if !card.can_stop||card.state=="idle"||reference.seq<=0 {
-            return Err(refused("native_card_changed","This native child can no longer be stopped."));
-        }
-        reference.item_id.as_deref().and_then(|item|item.strip_prefix("subagent:")).filter(|task|!task.is_empty())
-            .map(str::to_owned).ok_or_else(||refused("native_card_changed","The native card has no persisted Stop target."))
+        reference.item_id.as_deref().and_then(|item|card.stop_target(item,reference.seq))
+            .map(str::to_owned).ok_or_else(||refused("native_card_changed","The native card has no current persisted Stop target."))
     }
     pub fn request_open(&mut self,request:SessionOpenRequest,window:&mut Window,cx:&mut Context<Self>) {
         self.cancel_preparation(refused("cancelled","The open was superseded by a newer request."),cx);

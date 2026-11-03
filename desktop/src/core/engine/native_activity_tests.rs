@@ -181,3 +181,15 @@ async fn native_pushes_coalesce_behind_one_opaque_complete_pass_and_never_instal
     until("one coalesced following pass",&mut changes,&changed,||cx.update(|cx|feed.read(cx).subagents_of(&parent("a")).first().is_some_and(|card|card.seq==13))).await;
     assert!(watch.loaded());assert_eq!(pages.lock().unwrap().len(),3);
 }
+
+#[test]
+fn persisted_can_stop_is_explicit_and_legacy_running_state_never_grants_it() {
+    let legacy = item("subagent:actual-child", 10, "running");
+    assert!(!legacy.can_stop);
+    let mut value = serde_json::to_value(&legacy).unwrap();
+    value["canStop"] = json!(true);
+    let allowed: SubagentItem = serde_json::from_value(value.clone()).unwrap();
+    assert!(allowed.can_stop);
+    value["canStop"] = json!(false);
+    assert!(!serde_json::from_value::<SubagentItem>(value).unwrap().can_stop);
+}

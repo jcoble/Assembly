@@ -14,13 +14,13 @@ public sealed class SubagentPageTests
     public void Latest_native_rows_are_paged_by_immutable_card_id_in_binary_order()
     {
         using var fixture = new EngineFixture(); var store = RowStore.Open(fixture.Db);
-        Add(store, "parent", "a", "running"); Add(store, "parent", "B", "running"); Add(store, "parent", "a", "idle");
+        Add(store, "parent", "a", "running"); Add(store, "parent", "B", "running", canStop: true); Add(store, "parent", "a", "idle");
         var first = store.Subagents("parent", null, 1, default);
-        Assert.Equal("B", Assert.Single(first.Items).ItemId); Assert.NotNull(first.Next); Assert.NotEqual("B", first.Next);
+        Assert.Equal("B", Assert.Single(first.Items).ItemId); Assert.True(first.Items[0].CanStop); Assert.NotNull(first.Next); Assert.NotEqual("B", first.Next);
         var second = store.Subagents("parent", first.Next, 1, default);
         var card = Assert.Single(second.Items);
         Assert.Equal(("a", 3L, "parent", "idle"), (card.ItemId, card.Seq, card.SessionId, card.State));
-        Assert.Null(second.Next);
+        Assert.Null(second.Next); Assert.False(card.CanStop);
         Add(store, "parent", "😀", "running"); Add(store, "parent", "\uE000", "running");
         Assert.Equal(["B", "a", "\uE000", "😀"], store.Subagents("parent", null, 4, default).Items.Select(item => item.ItemId));
         Assert.Equal(0, fixture.Number("SELECT COUNT(*) FROM engine_session"));
@@ -43,11 +43,13 @@ public sealed class SubagentPageTests
     public void Updates_during_paging_keep_one_cut_before_new_versions_helper_flags_and_cards()
     {
         using var fixture = new EngineFixture(); var store = RowStore.Open(fixture.Db);
-        Add(store, "p", "a", "running"); Add(store, "p", "b", "running");
+        Add(store, "p", "a", "running"); Add(store, "p", "b", "running", canStop: true);
         var first = store.Subagents("p", null, 1, default);
         Add(store, "p", "a", "idle"); Add(store, "p", "b", "idle", helper: true); Add(store, "p", "c", "running");
         var next = store.Subagents("p", first.Next, 1, default);
         Assert.Equal(("b", 2L, "running"), (next.Items[0].ItemId, next.Items[0].Seq, next.Items[0].State));
+        Assert.True(next.Items[0].CanStop); // The persisted capability shares the page cut, not the latest state.
+        Assert.False(first.Items[0].CanStop); // Running alone never grants stop capability.
         Assert.Null(next.Next); Assert.Equal("a", Assert.Single(first.Items).ItemId);
         var refreshed = store.Subagents("p", null, 50, default);
         Assert.Equal([("a", 3L, "idle"), ("c", 5L, "running")], refreshed.Items.Select(item => (item.ItemId, item.Seq, item.State)));
@@ -144,7 +146,7 @@ public sealed class SubagentPageTests
         using var owner = new EngineFixture(); using var replica = new EngineFixture();
         var source = RowStore.Open(owner.Db); var copy = RowStore.Open(replica.Db);
         Add(source, "p", "a", "running"); Add(source, "p", "a", "idle", description: "native detail");
-        Add(source, "p", "b", "running");
+        Add(source, "p", "b", "running", canStop: true);
         foreach (var row in source.RowsAfter("p", 0)) Assert.True(copy.Copy(row));
         var expected = source.Subagents("p", null, 1, default); var actual = copy.Subagents("p", null, 1, default);
         Assert.Equal(expected.Items, actual.Items); Assert.Equal(expected.Next, actual.Next);
@@ -153,6 +155,8 @@ public sealed class SubagentPageTests
         var ownerNext = source.Subagents("p", expected.Next, 1, default);
         var replicaNext = copy.Subagents("p", actual.Next, 1, default);
         Assert.Equal(ownerNext.Items, replicaNext.Items); Assert.Equal(ownerNext.Next, replicaNext.Next);
+        Assert.True(replicaNext.Items[0].CanStop);
+        Assert.False(copy.Subagents("p", null, 50, default).Items.Single(item => item.ItemId == "b").CanStop);
         Assert.Equal(("b", 3L, "running"), (replicaNext.Items[0].ItemId, replicaNext.Items[0].Seq, replicaNext.Items[0].State));
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         Assert.ThrowsAny<OperationCanceledException>(() => copy.Subagents("p", null, 50, cancelled.Token));
@@ -161,9 +165,9 @@ public sealed class SubagentPageTests
     }
 
     private static void Add(RowStore store, string parent, string item, string state, bool? helper = null,
-        string title = "Native title", string? description = null, string? error = null)
+        string title = "Native title", string? description = null, string? error = null, bool canStop = false)
     {
-        var payload = new SubagentPayload(parent, title, description, state, null, error, false, "launch-tool", Helper: helper);
+        var payload = new SubagentPayload(parent, title, description, state, null, error, canStop, "launch-tool", Helper: helper);
         var batch = new RowBatch();
         batch.Rows.Add(new NewRow(null, item, RowKind.Subagent, JsonSerializer.SerializeToElement(payload, RowJsonContext.Rows.SubagentPayload), 1000));
         store.Commit(parent, batch);

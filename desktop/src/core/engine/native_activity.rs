@@ -12,6 +12,8 @@ use crate::core::socket::{client::SocketClient,connection_state::ConnectionState
 pub struct SubagentItem {
     pub item_id:String,pub seq:i64,pub session_id:String,pub title:String,pub description:Option<String>,
     pub state:String,pub stop_reason:Option<String>,pub error:Option<String>,pub tool_call_id:Option<String>,
+    #[serde(default)]
+    pub can_stop: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase",deny_unknown_fields)]

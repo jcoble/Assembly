@@ -259,17 +259,19 @@ public static class NeedTransitions
                 : Refused(c, "provider_request_conflict", existing);
         }
         if (providerQuestion && !ProviderQuestionMatches(s, c, command, requireOpen: true)) return Refused(c, "bad_args");
+        string? addresseeMachine = null;
         if (session.ParentId is { } parentId)
         {
             var parent = FindSession(s, parentId);
             if (parent is null || (parent.State == "foreign") == (parent.Machine == c.Machine)) return Refused(c, "bad_args");
+            addresseeMachine = parent.Machine;
         }
         if (c.ExpectedVersion != 0) return Refused(c, "version_conflict");
         if (session.State is not ("idle" or "running" or "needs_me")) return Refused(c, "invalid_transition");
         if (!ValidLinks(s, command, session)) return Refused(c, "bad_args");
         var number = s.QueryFirst("SELECT next_need_number FROM engine_meta WHERE singleton=1", row => row.Long(0));
         if (number < 1 || number == long.MaxValue || command.Presentation is not null &&
-            !NeedPresentationInputs.FitsDisplay(command, c, presentation!, number, session.ParentId))
+            !NeedPresentationInputs.FitsDisplay(command, c, presentation!, number, session.ParentId, addresseeMachine))
             return Refused(c, "bad_args");
         number = NeedPresentationInputs.AllocateNumber(s);
         s.Execute("""

@@ -22,6 +22,8 @@ impl SessionsPane {
     /// page if the end is in view.
     pub(super) fn follow_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let entries = list_entries(&self.rail);
+        let keys=entries.iter().filter_map(|entry|match entry {ListEntry::Session(row)=>Some(super::drop_down::rail_details_key(row)),_=>None}).collect::<std::collections::HashSet<_>>();
+        self.drops.update(cx,|drops,cx|drops.retain_keys(|key|keys.contains(key),cx));
         if entries != *self.entries {
             let (old, count) = changed_lines(&self.entries, &entries);
             // A splice moves a place inside the changed lines to their start, so the line at the top stays in view
@@ -76,6 +78,7 @@ impl SessionsPane {
     ) -> impl FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static {
         let entries = self.entries.clone();
         let now = self.now;
+        let drops=self.drops.clone();
         let running_drawn = self.running_drawn.clone();
         let pane = cx.entity().downgrade();
         let on_mark: OnMark = {
@@ -165,7 +168,32 @@ impl SessionsPane {
                         running_drawn.set(true);
                     }
                     let context = row(&entry, cx);
-                    SessionRow::new(*entry, context).into_any_element()
+                    let key=super::drop_down::rail_details_key(&entry);
+                    let toggle_key=key.clone();let toggles=drops.clone();
+                    let native_route=entry.machine.clone();
+                    let parent=entry.source.as_ref().map(|source|crate::core::engine::SessionKey{machine:source.machine.clone(),id:entry.session_id.clone()});
+                    let toggle_details:Rc<dyn Fn(&mut App)>=Rc::new(move|cx| {
+                        cx.stop_propagation();
+                        let Some(parent)=parent.clone()else{return;};
+                        if toggles.read(cx).is_open(&toggle_key){toggles.update(cx,|drops,cx|drops.shut(cx));return;}
+                        let details=cx.new(|cx|super::drop_down::rail_details::RailDetails::new(parent,native_route.clone(),cx));
+                        toggles.update(cx,|drops,cx|drops.toggle(toggle_key.clone(),move|_,_|details.clone().into_any_element(),cx));
+                    });
+                    let clicked=toggle_details.clone();
+                    let toggle=gpui_kit::component::button::Button::new(SharedString::from(format!("details:{key}")))
+                        .child(crate::core::ui::row_drop_down::chevron(key.clone(),drops.clone()))
+                        .on_click(move|_,_,cx|clicked(cx));
+                    let keys=drops.clone();let key_for_header=key.clone();
+                    let header=gpui_kit::component::h_flex().id(SharedString::from(format!("rail-header:{key}")))
+                        .on_key_down(move|event,_,cx| {
+                            let code=event.keystroke.key.as_str();
+                            if code=="right" {
+                                if !keys.read(cx).is_open(&key_for_header){toggle_details(cx);}cx.stop_propagation();
+                            }else if matches!(code,"left"|"escape") {
+                                keys.update(cx,|drops,cx|{drops.handle_key(key_for_header.clone(),code,|_,_|Empty.into_any_element(),cx);});cx.stop_propagation();
+                            }
+                        }).child(toggle).child(div().flex_1().min_w_0().child(SessionRow::new(*entry, context)));
+                    gpui_kit::component::v_flex().child(header).children(drops.read(cx).expand_row(&key)).into_any_element()
                 }
             }
         }

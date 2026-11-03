@@ -101,14 +101,15 @@ public sealed partial class RowStore
                 CASE WHEN NOT too_large THEN json_extract(payload,'$.state') END,
                 CASE WHEN NOT too_large THEN json_extract(payload,'$.stopReason') END,
                 substr(CAST(json_extract(payload,'$.error') AS BLOB),1,$preview+1),
-                CASE WHEN NOT too_large THEN json_extract(payload,'$.toolCallId') END FROM projected
+                CASE WHEN NOT too_large THEN json_extract(payload,'$.toolCallId') END,
+                json_type(payload,'$.canStop')='true' FROM projected
             ORDER BY item_id COLLATE BINARY
             """, r =>
             {
                 if (r.Long(0) != 0) return (Large: true, Item: (SubagentDisplay?)null);
                 return (Large: false, Item: (SubagentDisplay?)new SubagentDisplay(r.Text(1), r.Long(2),
                     r.IsNull(3) ? null! : r.Text(3), SubagentPreview(r, 4)!, SubagentPreview(r, 5),
-                    r.IsNull(6) ? null! : r.Text(6), Text(r, 7), SubagentPreview(r, 8), Text(r, 9)));
+                    r.IsNull(6) ? null! : r.Text(6), Text(r, 7), SubagentPreview(r, 8), Text(r, 9), !r.IsNull(10) && r.Long(10) != 0));
             },
             new SqlArg("$session", session), new SqlArg("$after", cursor?.After), new SqlArg("$cut", cut), new SqlArg("$limit", limit + 1),
             new SqlArg("$preview", SubagentPage.PreviewBytes), new SqlArg("$item_cap", SubagentPage.ItemMaxBytes));

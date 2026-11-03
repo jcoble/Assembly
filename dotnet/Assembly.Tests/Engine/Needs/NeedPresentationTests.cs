@@ -148,6 +148,51 @@ public sealed class NeedPresentationTests
         Assert.Equal(2, f.Number("SELECT next_need_number FROM engine_meta"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Typed_presentation_budget_counts_encoded_actual_addressee_owner_before_effects(bool escapedOwner)
+    {
+        using var f = new EngineFixture();
+        var owner = "owner-" + new string(escapedOwner ? 'λ' : 'x', 3000);
+        var registered = f.Apply(new global::Assembly.Engine.Sessions.RegisterForeignSession(owner, "codex", "Recorded parent"),
+            "parent", actor: new(ActorKind.System, "machine:" + owner));
+        Assert.True(registered.Applied, registered.Error);
+        f.SeedSession("child", parentId: "parent");
+        var text = new string('q', 16000);
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(owner) + System.Text.Encoding.UTF8.GetByteCount(text) < 32 * 1024);
+        var ownerJson = JsonSerializer.SerializeToUtf8Bytes(owner, EngineJson.Default.String);
+        if (escapedOwner) Assert.True(ownerJson.Length > System.Text.Encoding.UTF8.GetByteCount(owner) + 2);
+        var events = f.Count("engine_event");
+        var effects = f.Count("engine_outbox");
+        var messages = f.Count("engine_message");
+        var number = f.Number("SELECT next_need_number FROM engine_meta");
+        var version = f.Number("SELECT version FROM engine_session WHERE id='child'");
+        var command = new OpenNeed("child", null, null, "question", text, [], null, null, null,
+            Presentation: new("Question", null, "text", null, [], true));
+        var result = f.Apply(command, "budget-need", actor: new(ActorKind.System, "adapter"));
+        if (escapedOwner)
+        {
+            Assert.False(result.Applied);
+            Assert.Equal("bad_args", result.Error);
+            Assert.Equal(0, f.Count("engine_needs_me"));
+            Assert.Equal(events, f.Count("engine_event"));
+            Assert.Equal(effects, f.Count("engine_outbox"));
+            Assert.Equal(messages, f.Count("engine_message"));
+            Assert.Equal(number, f.Number("SELECT next_need_number FROM engine_meta"));
+            Assert.Equal(version, f.Number("SELECT version FROM engine_session WHERE id='child'"));
+            Assert.Equal("idle", f.State("engine_session", "child"));
+        }
+        else
+        {
+            Assert.True(result.Applied, result.Error);
+            var display = Display(f, "budget-need");
+            Assert.Equal(owner, display.GetProperty("addresseeMachine").GetString());
+            Assert.Equal(text, display.GetProperty("text").GetString());
+            Assert.True(JsonSerializer.SerializeToUtf8Bytes(display, EngineJson.Default.JsonElement).Length <= 32 * 1024);
+        }
+    }
+
     private static AskPayload Permission() => new("permission", "open", "Inspect command", "Run the recorded command?", null,
         [new("once", "Allow this time", "allow_once"), new("deny", "Decline", "reject_once")], null, null);
 

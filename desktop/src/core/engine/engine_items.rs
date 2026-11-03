@@ -29,6 +29,7 @@ pub struct NeedItem {
     pub run_id: Option<String>,
     pub step_id: Option<String>,
     pub addressee_session_id: Option<String>,
+    pub addressee_machine: Option<String>,
     pub chat_row_id: Option<String>,
     pub kind: String,
     pub text: Option<String>,
@@ -50,6 +51,7 @@ struct NeedFields {
     run_id: Option<String>,
     step_id: Option<String>,
     addressee_session_id: Option<String>,
+    addressee_machine: Option<String>,
     chat_row_id: Option<String>,
     kind: String,
     text: Option<String>,
@@ -64,6 +66,12 @@ struct NeedFields {
     answered_origin: Option<CommandOrigin>,
 }
 impl NeedItem {
+    pub fn addressee(&self) -> Option<SessionKey> {
+        let machine = self.addressee_machine.as_ref().filter(|value| !value.is_empty())?;
+        let id = self.addressee_session_id.as_ref().filter(|value| !value.is_empty())?;
+        Some(SessionKey { machine: machine.clone(), id: id.clone() })
+    }
+
     pub fn of(item: &EngineItem) -> Option<Self> {
         if item.key.kind != "needs_me"
             || item.value["entityKind"] != "needs_me"
@@ -84,6 +92,7 @@ impl NeedItem {
             run_id: row.run_id,
             step_id: row.step_id,
             addressee_session_id: row.addressee_session_id,
+            addressee_machine: row.addressee_machine,
             chat_row_id: row.chat_row_id,
             kind: row.kind,
             text: row.text,

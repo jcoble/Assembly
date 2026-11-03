@@ -16,3 +16,15 @@ fn submit_sends_what_was_picked_and_typed_leaving_out_the_empty_fields() {
         json!({ "action": "accept", "content": { "zone": "east", "note": "hi" } })
     );
 }
+
+#[test]
+fn picking_form_values_preserves_actual_ids_and_multi_choice_order() {
+    let mut form=super::form::AskForm{picked:serde_json::Map::new(),texts:Vec::new()};
+    form.pick("actual-field".into(),"provider:z".into(),true);
+    form.pick("actual-field".into(),"provider:a".into(),true);
+    assert_eq!(form.picked["actual-field"],serde_json::json!(["provider:z","provider:a"]));
+    form.pick("actual-field".into(),"provider:z".into(),true);
+    assert_eq!(form.picked["actual-field"],serde_json::json!(["provider:a"]));
+    form.pick("other-field".into(),"Exact supplied value".into(),false);
+    assert_eq!(form.picked["other-field"],"Exact supplied value");
+}

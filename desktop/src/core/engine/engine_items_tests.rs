@@ -119,3 +119,13 @@ fn engine_session_projection_keeps_recorded_working_folder_and_operational_field
     assert_eq!(session.parent_machine.as_deref(), Some("parent-owner"));
     assert_eq!(session.key.machine, "owner");
 }
+
+#[test]
+fn need_addressee_requires_its_actual_exported_owner() {
+    let mut row=item("child-owner");row.value["addresseeSessionId"]=json!("same");
+    assert!(NeedItem::of(&row).unwrap().addressee().is_none());
+    row.value["addresseeMachine"]=json!("parent-owner");
+    assert_eq!(NeedItem::of(&row).unwrap().addressee(),Some(super::SessionKey{machine:"parent-owner".into(),id:"same".into()}));
+    row.value["addresseeMachine"]=json!("");
+    assert!(NeedItem::of(&row).unwrap().addressee().is_none());
+}

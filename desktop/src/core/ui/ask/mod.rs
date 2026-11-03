@@ -8,3 +8,5 @@ mod payload_tests;
 pub mod presentation;
 #[cfg(test)]
 mod presentation_tests;
+
+pub mod controls;
