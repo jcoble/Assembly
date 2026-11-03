@@ -29,7 +29,12 @@ pub struct FileTouched {
     pub removed: i64,
 }
 
+#[derive(Clone,PartialEq)]
+struct ContextScope {
+    session:String,key:Option<crate::core::engine::SessionKey>,source:Option<crate::core::socket::row_source::ExpectedRowSource>,valid:bool,
+}
 pub struct ContextPane {
+    context_scope:Option<ContextScope>,read_serial:u64,
     focus: FocusHandle,
     client: Rc<dyn SessionClient>,
     /// The kit shows this tab; only then does a pick read.
@@ -60,6 +65,7 @@ impl ContextPane {
 
     pub fn new(client: Rc<dyn SessionClient>, cx: &mut Context<Self>) -> Self {
         Self {
+            context_scope:None,read_serial:0,
             focus: cx.focus_handle(),
             client,
             active: false,
@@ -77,6 +83,7 @@ impl ContextPane {
     /// Reads the selected session's files and attachments, if the tab is shown. A hidden tab drops the last session's
     /// lists, so the frame before it's shown again never draws them.
     fn read(&mut self, cx: &mut Context<Self>) {
+        self.read_serial+=1;let serial=self.read_serial;self.context_scope=None;
         (
             self.files,
             self.attachments,
@@ -89,14 +96,16 @@ impl ContextPane {
         if !self.active {
             return;
         }
-        let Some(session) = SelectedSession::global(cx)
-            .read(cx)
-            .session_id()
-            .map(String::from)
-        else {
-            return;
-        };
-        let args = json!({ "session": session });
+        let selected=SelectedSession::global(cx);
+        let selected=selected.read(cx);
+        let Some(session)=selected.session_id().map(str::to_owned)else{return;};
+        let scope=ContextScope{session:session.clone(),key:selected.key().cloned(),source:selected.source().cloned(),valid:true};
+        if (scope.key.is_some()&&scope.source.is_none())||scope.source.as_ref().is_some_and(|source|scope.key.as_ref().is_none_or(|key|key.machine!=source.machine||key.id!=session)) {
+            self.files=Listing::Failed("The selected session source is unavailable.".into());self.attachments=Listing::Failed("The selected session source is unavailable.".into());return;
+        }
+        self.context_scope=Some(scope.clone());
+        let mut args=json!({"session":session});
+        if let Some(source)=&scope.source{args["expectedSource"]=json!(source);}
         let files = self
             .client
             .call("rows", "files", args.clone(), Some("rows/files"), cx);
@@ -104,10 +113,16 @@ impl ContextPane {
             self.client
                 .call("rows", "attachments", args, Some("rows/attachments"), cx);
         self._read = Some(cx.spawn(async move |pane, cx| {
-            let files = touched(files.await);
+            let files = files.await;
             let attachments = attachments.await;
+            let refused=matches!(&files,Err(CallError::Refused{code,..}) if code=="source_changed")||matches!(&attachments,Err(CallError::Refused{code,..}) if code=="source_changed");
             pane.update(cx, |pane, cx| {
-                pane.files = files;
+                if pane.read_serial!=serial||pane.context_scope.as_ref()!=Some(&scope){return;}
+                if refused {
+                    if let Some(held)=pane.context_scope.as_mut(){held.valid=false;}
+                    if let Some(source)=&scope.source{crate::features::session::view::session_pane::SessionPane::refuse_image_source(&scope.session,source,"The Context session source changed.".into(),cx);}
+                }
+                pane.files = touched(files);
                 (pane.attachments, pane.machine, pane.more) = match attachments {
                     Ok(answer) => attached(&answer),
                     Err(error) => (Listing::Failed(error.reason()), None, false),
@@ -142,7 +157,7 @@ impl BasePanel for ContextPane {
         self.active = active;
         match active {
             true => self.read(cx),
-            false => self._read = None,
+            false => {self._read=None;self._open=None;self.context_scope=None;self.read_serial+=1;}
         }
     }
 }
