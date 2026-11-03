@@ -1,5 +1,5 @@
 using Assembly.Application.Common.Agents;
-using System.Reflection;
+using Assembly.Infrastructure.Socket;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -69,13 +69,9 @@ internal sealed class InfoRoutes(MachineSet machines)
         {
             json.WriteStartObject();
             json.WriteNumber("formatVersion", RowStore.FormatVersion);
-            json.WriteString("commit", Commit);
+            json.WriteString("commit", BackendBuild.Commit);
             json.WriteEndObject();
         });
-
-    // The SDK stamps the git commit into the informational version: 1.0.0+<sha>.
-    private static readonly string? Commit = typeof(InfoRoutes).Assembly
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+') is [_, var sha] ? sha : null;
 
     private Task MachinesAsync(HttpContext context) =>
         JsonReply.WriteAsync(context, StatusCodes.Status200OK, json =>
