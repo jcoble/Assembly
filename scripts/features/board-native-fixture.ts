@@ -162,7 +162,13 @@ async function apply(options: Options): Promise<void> {
   requireBackendLock(); requireOffline();
   const launcher = JSON.parse(readFileSync(safePath(join(PROFILE, 'launcher.lock')), 'utf8'));
   if (launcher.launcher !== process.ppid || launcher.purpose !== 'dev-seed') throw new Error('The parent does not own the existing seed launcher guard.');
-  if (sha(readFileSync(safePath(MANIFEST))) !== MANIFEST_SHA) throw new Error('Accepted11 manifest changed; refuse another source.');
+  const manifestBytes = readFileSync(safePath(MANIFEST));
+  if (sha(manifestBytes) !== MANIFEST_SHA) throw new Error('Accepted11 manifest changed; refuse another source.');
+  const manifest = JSON.parse(manifestBytes.toString('utf8'));
+  // DevSeed.SessionId: compact [origin, key] JSON, UTF-8 SHA256. This pinned manifest has eleven ASCII ACP keys.
+  const acceptedCreators = new Set(manifest.sources.map((source: { sessionKey: string }) =>
+    'seed-' + sha(JSON.stringify([manifest.originId, source.sessionKey]))));
+  if (!acceptedCreators.has(options.creator)) throw new Error('Creator is not one of the eleven pinned accepted11 seed sessions.');
   const path = safePath(join(PROFILE, 'assembly.db'));
   if (!lstatSync(path).isFile() || lstatSync(path).nlink !== 1) throw new Error('Database must be the existing unaliased private profile file.');
   const db = new DatabaseSync(path, { timeout: 0 });

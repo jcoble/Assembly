@@ -18,11 +18,11 @@ mod client_thread_tests;
 mod connection;
 pub mod connection_state;
 pub mod endpoint;
-pub mod error_code;
-mod event;
-pub mod engine_update;
 #[cfg(test)]
 mod engine_tests;
+pub mod engine_update;
+pub mod error_code;
+mod event;
 #[cfg(test)]
 pub(crate) mod fake_backend;
 mod in_frame;

@@ -32,6 +32,7 @@ public static class Refusals
             "session_gone" => "Your session has ended in Assembly; this call was not applied.",
             "other_machine" => "That session is on another machine; Assembly can't reach it from here yet.",
             "recording_failed" => "Assembly could not record this call, so it did not run it.",
+            "remote_start_failed" when tool == "start_session" => Value("message"),
             "run_has_pr" => "That run already has a different PR; report on that one.",
             "proof_required" => "report: a succeeded step needs at least one proofUrls entry.",
             "reason_required" => "report: a failed step needs a summary saying why.",

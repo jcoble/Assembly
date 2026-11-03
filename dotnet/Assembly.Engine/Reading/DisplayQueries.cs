@@ -36,7 +36,7 @@ internal static class DisplayQueries
             fields = fields.Select(field => field == "'text',t.text"
                 ? "'text',CASE WHEN t.framed=0 THEN substr(t.text,1,256) ELSE '' END" : field);
             return $"json_object('entityKind','{kind}',{string.Join(",", fields)}," +
-                "'framed',t.framed,'clientId',t.client_id,'providerTurnId',t.provider_turn_id," +
+                "'framed',t.framed,'clientId',t.client_id,'providerTurnId',t.provider_turn_id,'inFlight',t.in_flight," +
                 "'textComplete',CASE WHEN t.framed=0 AND length(CAST(substr(t.text,1,256) AS BLOB))=length(CAST(t.text AS BLOB)) THEN 1 ELSE 0 END," +
                 "'textUtf8Bytes',length(CAST(t.text AS BLOB)),'attachmentJsonUtf8Bytes',length(CAST(t.attachment_ids_json AS BLOB))," +
                 "'attachmentCount',json_array_length(t.attachment_ids_json),'ownerContentSha256',t.owner_content_sha256," +

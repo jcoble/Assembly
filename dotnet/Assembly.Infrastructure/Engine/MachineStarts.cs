@@ -248,6 +248,10 @@ internal sealed partial class MachineStarts
             }));
         }
         catch (ForeignAncestryRefused error) { throw Refused(error.Result.Error!); }
+        catch (CallFailed error)
+        {
+            throw new McpRefused(new("remote_start_failed", new Dictionary<string, string> { ["message"] = error.Message }));
+        }
     }
 
     private long Now => _time.GetUtcNow().ToUnixTimeMilliseconds();

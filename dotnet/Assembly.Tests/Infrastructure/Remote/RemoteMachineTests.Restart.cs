@@ -32,7 +32,7 @@ public sealed partial class RemoteMachineTests
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
-        await Until(async () => await HelperStateAsync(parent, helperId) == "running");
+        await UntilRestartStateAsync(parent, helperId, "running");
 
         // The desktop stops as if before it copied any of the helper's rows, and the helper finishes on the box meanwhile.
         await _desktop!.DisposeAsync();
@@ -40,7 +40,7 @@ public sealed partial class RemoteMachineTests
         await box.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
         await StartDesktopAsync();
 
-        await UntilRestartIdleAsync(parent, helperId);
+        await UntilRestartStateAsync(parent, helperId, "idle");
     }
 
     [Fact]
@@ -53,7 +53,7 @@ public sealed partial class RemoteMachineTests
         ShowRunning(Path.Combine(_desktopHome, "assembly.db"), parent, helperId);
         await StartDesktopAsync();
 
-        await UntilRestartIdleAsync(parent, helperId);
+        await UntilRestartStateAsync(parent, helperId, "idle");
     }
 
     [Fact]
@@ -79,7 +79,7 @@ public sealed partial class RemoteMachineTests
 
         await box.UpdateAsync("""{"sessionUpdate":"state_update","state":"idle","stopReason":"end_turn"}""",
             secondPrompt.GetProperty("params").GetProperty("sessionId").GetString()!);
-        await UntilRestartIdleAsync(parent, helperId);
+        await UntilRestartStateAsync(parent, helperId, "idle");
         Assert.Single(await RowsAsync(_desktop!, DesktopToken, parent), row => row.GetProperty("seq").GetInt64() > before
             && row.GetProperty("itemId").GetString() == $"subagent:{helperId}" && row.GetProperty("payload").GetProperty("state").GetString() == "idle");
     }
@@ -112,7 +112,7 @@ public sealed partial class RemoteMachineTests
         await flaky.StartAsync();
         _desktop = await DesktopOnAsync(flaky, _desktopHome);
 
-        await UntilRestartIdleAsync(parent, helperId);
+        await UntilRestartStateAsync(parent, helperId, "idle");
         Assert.True(flaky.VersionHits >= 2);
     }
 
@@ -127,7 +127,7 @@ public sealed partial class RemoteMachineTests
         // Someone opens the helper's session before its follower settles; it stays open.
         using var watching = await OpenLiveAsync(_desktop!, DesktopToken, helperId, 0);
 
-        await UntilRestartIdleAsync(parent, helperId);
+        await UntilRestartStateAsync(parent, helperId, "idle");
         Assert.Equal(WebSocketState.Open, watching.State);
     }
 
@@ -148,9 +148,9 @@ public sealed partial class RemoteMachineTests
         var box = await _boxLauncher.NextAsync();
         await box.StartAsync(acpSessionId: "acp-helper");
         var helperPrompt = await box.ReadAsync("session/prompt");
-        await Until(async () => await HelperStateAsync(parent, helperId) == "running");
+        await UntilRestartStateAsync(parent, helperId, "running");
         await box.FinishAsync(helperPrompt, """{"stopReason":"end_turn"}""");
-        await UntilRestartIdleAsync(parent, helperId);
+        await UntilRestartStateAsync(parent, helperId, "idle");
         return (parent, helperId, box);
     }
 
@@ -206,15 +206,15 @@ public sealed partial class RemoteMachineTests
             ? row.GetProperty("payload").GetProperty("state").GetString()
             : null;
 
-    private async Task UntilRestartIdleAsync(string parent, string helperId)
+    private async Task UntilRestartStateAsync(string parent, string helperId, string expected)
     {
-        try { await Until(async () => await HelperStateAsync(parent, helperId) == "idle"); }
+        try { await Until(async () => await HelperStateAsync(parent, helperId) == expected); }
         catch (OperationCanceledException)
         {
             // Diagnostics cannot change the wait's deadline, assertion, or original exception.
             try
             {
-                Console.Error.WriteLine("restart idle diagnostic: " + RestartProducerErrors());
+                Console.Error.WriteLine($"restart helper diagnostic expected={expected}: " + RestartProducerErrors());
                 RestartDatabaseStatus("owner", _boxHome, parent, helperId);
                 RestartDatabaseStatus("desktop", _desktopHome, parent, helperId);
             }
@@ -286,6 +286,15 @@ public sealed partial class RemoteMachineTests
               WHERE entity_kind='session' AND entity_id=$helper
                 AND machine=(SELECT machine_id FROM engine_meta WHERE singleton=1)
               ORDER BY seq DESC LIMIT 3;
+            SELECT EXISTS(SELECT 1 FROM engine_message m WHERE m.to_session_id=$helper
+                AND m.state='queued' AND m.in_flight=1
+                AND m.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1));
+            -- DisplayQueries does not publish in_flight; NULL is unknown, never proof of false.
+            SELECT r.version,json_extract(r.row_json,'$.state'),NULL
+              FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation
+              WHERE r.entity_kind='message' AND json_extract(r.row_json,'$.toSessionId')=$helper
+                AND m.name=$box AND m.state='live'
+              ORDER BY r.version DESC,r.entity_id LIMIT 3;
             """;
         command.Parameters.AddWithValue("$helper", helperId);
         command.Parameters.AddWithValue("$parent", parent);
@@ -308,7 +317,8 @@ public sealed partial class RemoteMachineTests
                     var value = reader.GetString(column);
                     fields.Add(value is "session" or "mirror" or "starting" or "running" or "idle" or
                         "needs_me" or "lost" or "ended" or "foreign" or "handing_off" or "moved" or
-                        "waiting" or "completed" or "failed" or "cancelled" or "finished" or "started" or
+                        "waiting" or "queued" or "next_turn" or "steer_injected" or "expired" or
+                        "completed" or "failed" or "cancelled" or "finished" or "started" or
                         "snapshotting" or "live" or "retired" or "session.changed" ? value : "other");
                 }
                 Console.Error.WriteLine($"restart idle diagnostic {label} section={section}: {string.Join(',', fields)}");

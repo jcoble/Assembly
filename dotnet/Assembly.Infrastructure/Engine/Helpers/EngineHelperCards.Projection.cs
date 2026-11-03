@@ -34,7 +34,12 @@ public sealed partial class EngineHelperCards
                 CAST(CASE WHEN json_extract(r.row_json,'$.titleComplete') IS NOT 0
                     THEN json_extract(r.row_json,'$.title') ELSE si.title END AS BLOB),
                 json_extract(r.row_json,'$.state'),json_extract(r.row_json,'$.activityState'),
-                json_extract(r.row_json,'$.epoch'),r.version,r.generation,r.machine,0
+                json_extract(r.row_json,'$.epoch'),r.version,r.generation,r.machine,
+                EXISTS(SELECT 1 FROM engine_mirror_row message
+                    WHERE message.machine=r.machine AND message.generation=r.generation AND message.entity_kind='message'
+                        AND json_extract(message.row_json,'$.toSessionId')=r.entity_id
+                        AND json_extract(message.row_json,'$.state')='queued'
+                        AND json_extract(message.row_json,'$.inFlight')=1)
             FROM engine_mirror_row r JOIN engine_mirror m ON m.machine=r.machine AND m.generation=r.generation AND m.state='live'
             JOIN engine_session p ON p.id=json_extract(r.row_json,'$.parentId')
                 AND p.machine=(SELECT machine_id FROM engine_meta WHERE singleton=1) AND p.holder='local' AND p.state<>'foreign'
