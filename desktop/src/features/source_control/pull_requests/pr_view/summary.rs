@@ -141,7 +141,6 @@ impl PrDetail {
         };
         let theme = cx.theme();
         let border = theme.border;
-        let muted = theme.muted_foreground;
         let heading = PrHeading::of_detail(detail).view(cx);
         let body = if detail.body.trim().is_empty() {
             quiet("No description.", cx).into_any_element()
