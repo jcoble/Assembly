@@ -7,7 +7,6 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::SessionPane;
-use crate::core::ui::ask::form::AskForm;
 use crate::features::session::model::activity;
 use crate::features::session::model::entries::Entry;
 use crate::features::session::model::item::{Item, ItemKind};
@@ -145,7 +144,8 @@ impl SessionPane {
                     .then(|| self.view.items[*at].clone())
                     .and_then(|item| self.expand_of(&item, None, cx));
                 let item = &self.view.items[*at];
-                if self.line_moved(item) {
+                // An open ask is answered in the composer's box; its line comes once it's settled.
+                if self.line_moved(item) || open_ask(item) {
                     return div().into_any_element();
                 }
                 let mut shown = item.clone();
@@ -212,21 +212,6 @@ impl SessionPane {
         }
     }
 
-    /// Makes an open question's form the first time its card is drawn: its text fields need the window.
-    pub(super) fn make_form(&mut self, entry: &Entry, window: &mut Window, cx: &mut App) {
-        let Entry::Item(at) = entry else { return };
-        let Some(ItemKind::Ask { ask_id, ask }) = self.view.items.get(*at).map(|item| &item.kind)
-        else {
-            return;
-        };
-        if ask.state != "open" || self.forms.contains_key(ask_id) {
-            return;
-        }
-        if let Some(form) = AskForm::of(ask, window, cx) {
-            self.forms.insert(ask_id.clone(), form);
-        }
-    }
-
     /// The space under a row: 5 between a turn's steps and under a shut turn's line (the mock's 27 px `.tl` pitch; a
     /// reply adds its own 9 over it), 14 after a reply or a card, 24 after a turn's stats line. A row with a meta line
     /// (a prompt, a final reply) has that line, shown on hover, as its space.
@@ -243,7 +228,7 @@ impl SessionPane {
             Entry::Loading => return px(8.),
             Entry::Working => return px(14.),
         };
-        if self.has_meta(item) {
+        if self.has_meta(item) || open_ask(item) {
             return px(0.);
         }
         px(match &item.kind {
@@ -316,4 +301,8 @@ fn line(text: impl Into<SharedString>, color: Hsla) -> AnyElement {
         .text_color(color)
         .child(text.into())
         .into_any_element()
+}
+
+fn open_ask(item: &Item) -> bool {
+    matches!(&item.kind, ItemKind::Ask { ask, .. } if ask.state == "open")
 }

@@ -192,7 +192,9 @@ impl Render for Composer {
                     )
                 })
         };
-        let capsule = inside
+        let capsule = v_flex()
+            .children(self.answer.clone())
+            .child(inside)
             .rounded(px(12.))
             .bg(surface)
             .border_1()

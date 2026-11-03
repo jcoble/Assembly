@@ -3,6 +3,8 @@
 //! it offers is lost. Both open upward, away from the window's edge, and a narrow composer folds them into one ⋯ menu.
 //! Each choice is the agent's own config id and value, set through the same call the composer always used.
 
+use std::rc::Rc;
+
 use gpui_kit::assets::IconName as Glyph;
 use gpui_kit::component::button::{Button, ButtonRounded, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
@@ -13,10 +15,11 @@ use gpui_kit::*;
 use super::config_labels::{
     approval_description, approval_label, effort_label, model_effort_label, model_label,
 };
-use super::config_menu::OnSelect;
 use crate::features::session::composer::agent_config::ConfigOption;
 
 const CHIP_HEIGHT: Pixels = px(28.);
+
+pub type OnSelect = Rc<dyn Fn(&str, &str, &mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct ConfigPills {

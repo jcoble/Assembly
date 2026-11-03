@@ -41,11 +41,11 @@ fn approval_words_ignore_case_and_fall_back_to_the_provider() {
 }
 
 #[test]
-fn a_model_uses_the_providers_label_else_its_id_in_title_case() {
+fn a_model_uses_the_providers_label_else_its_raw_id() {
     let models = option(&[("claude-sonnet-5-5", "Sonnet 5.5", None)]);
     assert_eq!(model_label(&models, "claude-sonnet-5-5"), "Sonnet 5.5");
-    assert_eq!(model_label(&models, "claude-opus-5-5"), "Claude Opus 5 5");
-    assert_eq!(model_label(&models, "gpt-5-sol"), "GPT-5 Sol");
+    assert_eq!(model_label(&models, "claude-opus-5-5"), "claude-opus-5-5");
+    assert_eq!(model_label(&models, "gpt-5-sol"), "gpt-5-sol");
 }
 
 #[test]

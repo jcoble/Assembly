@@ -5,6 +5,7 @@
 
 use gpui_kit::{Pixels, px};
 
+use crate::core::ui::ask::payload::AskPayload;
 use crate::features::session::model::item::{Item, ItemKind};
 
 /// Narrower than this the controls would squeeze the placeholder away, so the box keeps two rows at rest.
@@ -81,14 +82,31 @@ pub fn slot(running: bool, content: bool, can_steer: bool) -> Slot {
 #[path = "shape_tests.rs"]
 mod tests;
 
+/// The ask the box answers next and how many of its kind wait: approvals before questions, oldest first.
+pub fn next_answer(items: &[Item]) -> Option<(&str, &AskPayload, usize)> {
+    let open = |permission: bool| {
+        items.iter().filter_map(move |item| match &item.kind {
+            ItemKind::Ask { ask_id, ask }
+                if ask.state == "open" && (ask.kind == "permission") == permission =>
+            {
+                Some((ask_id.as_str(), ask))
+            }
+            _ => None,
+        })
+    };
+    [true, false].into_iter().find_map(|permission| {
+        let (ask_id, ask) = open(permission).next()?;
+        Some((ask_id, ask, open(permission).count()))
+    })
+}
+
 /// What the agent is waiting on, which holds the draft until it has an answer.
 pub fn pending_answer(items: &[Item]) -> Option<Lock> {
-    items.iter().rev().find_map(|item| match &item.kind {
-        ItemKind::Ask { ask, .. } if ask.state == "open" => Some(if ask.kind == "permission" {
+    next_answer(items).map(|(_, ask, _)| {
+        if ask.kind == "permission" {
             Lock::Approval
         } else {
             Lock::Input
-        }),
-        _ => None,
+        }
     })
 }

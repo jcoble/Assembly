@@ -28,3 +28,26 @@ fn picking_form_values_preserves_actual_ids_and_multi_choice_order() {
     form.pick("other-field".into(),"Exact supplied value".into(),false);
     assert_eq!(form.picked["other-field"],"Exact supplied value");
 }
+
+#[test]
+fn a_required_choice_starts_on_its_first_and_an_empty_required_field_is_named() {
+    use super::form::AskForm;
+    use super::payload::AskPayload;
+    let ask: AskPayload = serde_json::from_value(json!({
+        "kind": "question", "state": "open", "options": [],
+        "schema": { "required": ["zone", "note"], "properties": {
+            "zone": { "type": "string", "enum": ["east", "west"] },
+            "note": { "type": "string", "title": "Note" },
+            "tag": { "type": "string", "enum": ["a", "b"] },
+        } },
+    }))
+    .unwrap();
+    let mut picked = serde_json::Map::new();
+    picked.insert("zone".into(), json!("east"));
+    let empty = vec![("note".to_string(), "  ".to_string())];
+    assert_eq!(AskForm::missing(&ask, &picked, &empty).as_deref(), Some("Note"));
+    let typed = vec![("note".to_string(), "hi".to_string())];
+    assert_eq!(AskForm::missing(&ask, &picked, &typed), None);
+    picked.insert("zone".into(), json!(""));
+    assert_eq!(AskForm::missing(&ask, &picked, &typed).as_deref(), Some("zone"));
+}

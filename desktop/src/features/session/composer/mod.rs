@@ -2,6 +2,8 @@
 //! pills and its "/" commands. `capsule/` holds the box's own pieces.
 
 pub mod agent_config;
+#[path = "capsule/answer_panel.rs"]
+pub mod answer_panel;
 pub mod attachment;
 #[path = "capsule/attachment_card.rs"]
 pub mod attachment_card;
@@ -10,8 +12,6 @@ mod attachment_tests;
 pub mod composer_view;
 #[path = "capsule/config_labels.rs"]
 pub mod config_labels;
-#[path = "capsule/config_menu.rs"]
-pub mod config_menu;
 #[path = "capsule/config_pills.rs"]
 pub mod config_pills;
 pub mod context_meter;

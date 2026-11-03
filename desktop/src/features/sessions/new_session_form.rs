@@ -80,6 +80,8 @@ impl NewSessionForm {
     ) -> Self {
         let project_chooser = cx.new(|cx| crate::features::projects::project_chooser::ProjectChooser::new(None, window, cx));
         let start_composer = cx.new(|cx| crate::features::session::composer::composer_view::Composer::new_start_draft(client.clone(), window, cx));
+        let slots = start_slots::start_slots(cx.weak_entity());
+        start_composer.update(cx, |composer, cx| composer.set_start_slots(slots, cx));
         let project_choice = cx.subscribe_in(&project_chooser, window, |form: &mut Self, _, event, window, cx| {
             match event {
                 crate::features::projects::project_chooser::ProjectChooserEvent::Picked { project, .. } => {
@@ -534,6 +536,8 @@ mod first_send;
 mod location;
 #[path = "new_session_form/project.rs"]
 mod project;
+#[path = "new_session_form/start_slots.rs"]
+mod start_slots;
 #[path = "new_session_form/view.rs"]
 mod view;
 
