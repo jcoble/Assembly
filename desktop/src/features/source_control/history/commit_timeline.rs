@@ -37,8 +37,24 @@ pub struct CommitTimeline {
     read: Option<Task<()>>,
     file_reads: HashMap<String, Task<()>>,
     list: ListState,
+    /// Drawn in Source control's own scroller: no graph, and more only on Load more.
+    inline: bool,
+    pages: u32,
 }
 impl CommitTimeline {
+    /// The list as Source control draws it inside its one scroller.
+    pub fn new_inline(
+        session: String,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut timeline = Self::build(session, None, expected_source, active, true, cx);
+        if active {
+            timeline.refresh(cx);
+        }
+        timeline
+    }
     pub fn new(
         session: String,
         path: Option<String>,
@@ -46,15 +62,31 @@ impl CommitTimeline {
         active: bool,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut timeline = Self::build(session, path, expected_source, active, false, cx);
+        if active {
+            timeline.refresh(cx);
+        }
+        timeline
+    }
+    fn build(
+        session: String,
+        path: Option<String>,
+        expected_source: Option<crate::core::socket::row_source::ExpectedRowSource>,
+        active: bool,
+        inline: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let list = ListState::new(0, ListAlignment::Top, px(200.));
-        let watching = list.clone();
-        let weak = cx.entity().downgrade();
-        list.set_scroll_handler(move |_, _, cx| {
-            if watching.is_scrolled_to_end() == Some(true) {
-                _ = weak.update(cx, |timeline, cx| timeline.load_more(cx));
-            }
-        });
-        let mut timeline = Self {
+        if !inline {
+            let watching = list.clone();
+            let weak = cx.entity().downgrade();
+            list.set_scroll_handler(move |_, _, cx| {
+                if watching.is_scrolled_to_end() == Some(true) {
+                    _ = weak.update(cx, |timeline, cx| timeline.load_more(cx));
+                }
+            });
+        }
+        Self {
             session,
             expected_source,
             path,
@@ -70,11 +102,9 @@ impl CommitTimeline {
             read: None,
             file_reads: HashMap::new(),
             list,
-        };
-        if active {
-            timeline.refresh(cx);
+            inline,
+            pages: 0,
         }
-        timeline
     }
     pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
         self.active = active;
@@ -114,6 +144,7 @@ impl CommitTimeline {
         self.files.clear();
         self.expanded.clear();
         self.history = GitHistory::default();
+        self.pages = 0;
         self.sync_rows();
         if self.active {
             self.request(None, cx);
@@ -149,6 +180,7 @@ impl CommitTimeline {
                 timeline.read = None;
                 match outcome {
                     Outcome::Ok(page) => {
+                        timeline.pages += 1;
                         timeline.history.append(page);
                         timeline.graph = lanes(&timeline.history.commits);
                         timeline.sync_rows();
@@ -366,6 +398,9 @@ impl CommitTimeline {
 }
 impl Render for CommitTimeline {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.inline {
+            return self.render_inline(cx);
+        }
         let weak = cx.entity().downgrade();
         let muted = cx.theme().muted_foreground;
         v_flex()
@@ -420,6 +455,7 @@ impl Render for CommitTimeline {
                         .on_click(cx.listener(|timeline, _, _, cx| timeline.load_more(cx))),
                 )
             })
+            .into_any_element()
     }
 }
 fn graph(row: &LaneRow, cx: &App) -> impl IntoElement {
@@ -470,6 +506,8 @@ fn graph(row: &LaneRow, cx: &App) -> impl IntoElement {
                 .bg(color),
         )
 }
+#[path = "commit_timeline_inline.rs"]
+mod inline;
 #[cfg(test)]
 #[path = "commit_timeline_tests.rs"]
 mod tests;

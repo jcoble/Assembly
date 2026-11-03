@@ -1,4 +1,4 @@
-use super::{PrTarget, PullRequestPage};
+use super::{CheckTone, PrTarget, PullRequestPage, PullRequestSummary};
 
 #[test]
 fn a_pasted_link_selects_only_an_actual_project_repository() {
@@ -58,4 +58,17 @@ fn an_empty_queue_does_not_remove_the_structural_target_needed_for_backend_check
     assert_eq!(target.repository, "actual/checkout");
     assert_eq!(target.number, 7);
     assert!(PrTarget::from_url("https://github.com/actual/checkout/pull/7", &[]).is_err());
+}
+#[test]
+fn a_row_says_its_checks_only_when_the_backend_did() {
+    let pr = |checks: Option<&str>, summary: Option<&str>| PullRequestSummary {
+        checks: checks.map(String::from),
+        check_summary: summary.map(String::from),
+        ..PullRequestSummary::default()
+    };
+    assert_eq!(pr(None, None).check_line(), None);
+    assert_eq!(pr(Some("none"), Some("ignored")).check_line(), Some(("no checks".into(), CheckTone::Quiet)));
+    assert_eq!(pr(Some("failing"), None).check_line(), Some(("checks failing".into(), CheckTone::Failing)));
+    assert_eq!(pr(Some("passing"), Some("3 of 3 passed")).check_line(), Some(("3 of 3 passed".into(), CheckTone::Passing)));
+    assert_eq!(pr(Some("pending"), None).check_line(), Some(("checks pending".into(), CheckTone::Pending)));
 }

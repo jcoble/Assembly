@@ -15,6 +15,36 @@ pub struct PullRequestSummary {
     pub author: String,
     pub head_branch: String,
     pub base_branch: String,
+    /// `passing`, `failing`, `pending` or `none`, when the backend knows.
+    pub checks: Option<String>,
+    pub check_summary: Option<String>,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CheckTone {
+    Passing,
+    Failing,
+    Pending,
+    Quiet,
+}
+impl PullRequestSummary {
+    /// The row's check text and how it reads; nothing when the backend didn't say.
+    pub fn check_line(&self) -> Option<(String, CheckTone)> {
+        let checks = self.checks.as_deref();
+        let tone = match checks {
+            Some("passing") => CheckTone::Passing,
+            Some("failing") => CheckTone::Failing,
+            Some("pending") => CheckTone::Pending,
+            _ => CheckTone::Quiet,
+        };
+        if checks == Some("none") {
+            return Some(("no checks".into(), tone));
+        }
+        let text = self
+            .check_summary
+            .clone()
+            .or_else(|| checks.map(|checks| format!("checks {checks}")))?;
+        Some((text, tone))
+    }
 }
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
