@@ -28,6 +28,7 @@ pub type OnSession = Rc<dyn Fn(String, Option<String>, &mut Window, &mut App)>;
 #[derive(Clone)]
 pub struct RowContext {
     pub selected: bool,
+    pub needs_you: bool,
     /// Its machine didn't answer last time (`Machines::offline`).
     pub offline: bool,
     /// The backend clock's last tick, for its age or running time.
@@ -98,12 +99,13 @@ impl RenderOnce for SessionRow {
         };
         let RowContext {
             selected,
+            needs_you,
             offline,
             now,
             on_open,
             on_mark,
         } = self.context;
-        let presence = Presence::of(&entry);
+        let presence = Presence::of(&entry,needs_you);
         let (running, accent, faint) = (
             entry.running,
             theme.caret,

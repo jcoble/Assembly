@@ -52,12 +52,9 @@ pub struct RailEntry {
     pub updated_at: i64,
     pub completed_at: Option<i64>,
     pub running: bool,
-    pub needs_you: bool,
     pub failed: bool,
     pub unread: bool,
     pub ordering: String,
-    pub ask_session: Option<String>,
-    pub ask_seq: Option<i64>,
     /// The newest branch a turn's stats recorded: what it was then, not the checkout now.
     pub branch: Option<String>,
     pub branch_at: Option<i64>,
@@ -67,6 +64,19 @@ pub struct RailEntry {
     pub header: usize,
     /// A parent's newest assistant text, cut to 160 characters by the backend.
     pub preview: Option<String>,
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub depth: u32,
+    pub pinned_at: Option<i64>,
+    pub orchestrator_at: Option<i64>,
+    pub position: Option<i64>,
+    pub model: Option<String>,
+    pub worktree: Option<String>,
+    pub last_error: Option<String>,
+    pub resume_command: Option<String>,
+    pub last_seen_ms: Option<i64>,
+    /// Recorded candidate identity only; opening still resolves and validates the current route.
+    pub source: Option<crate::core::socket::row_source::ExpectedRowSource>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -329,7 +339,7 @@ pub fn test_entry(id: &str, repo_url: &str) -> RailEntry {
     serde_json::from_value(json!({ "sessionId": id, "kind": "session", "section": "working", "agent": "claude",
         "repoUrl": repo_url, "group": repo_url, "count": 0, "machines": [],
         "title": null, "machine": null, "updatedAt": 1, "completedAt": null, "running": false,
-        "needsYou": false, "failed": false, "unread": false, "ordering": id, "askSession": null, "askSeq": null,
+        "failed": false, "unread": false, "ordering": id,
         "branch": null, "branchAt": null, "icon": "icons/bot.svg", "sectionIndex": 0, "header": 2 }))
     .unwrap()
 }

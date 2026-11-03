@@ -70,6 +70,7 @@ impl RenderOnce for ItemRow {
                 text,
                 at,
                 from,
+                from_machine,
                 sender_label,
             } => {
                 let (text, attached) = Attachment::split_lines(&text);
@@ -87,6 +88,7 @@ impl RenderOnce for ItemRow {
                         key: key.clone(),
                         text,
                         sender: from,
+                        sender_machine:from_machine,
                         sender_label,
                         images,
                         open: self.kept.open,

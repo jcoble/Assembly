@@ -10,35 +10,30 @@ fn entry() -> RailEntry {
 #[test]
 fn a_row_shows_needs_you_first_then_working_failed_done_and_unread() {
     let all = RailEntry {
-        needs_you: true,
         running: true,
         failed: true,
         completed_at: Some(5),
         unread: true,
         ..entry()
     };
-    assert_eq!(Presence::of(&all), Presence::NeedsYou);
-    let all = RailEntry {
-        needs_you: false,
-        ..all
-    };
-    assert_eq!(Presence::of(&all), Presence::Working);
+    assert_eq!(Presence::of(&all,true), Presence::NeedsYou);
+    assert_eq!(Presence::of(&all,false), Presence::Working);
     let all = RailEntry {
         running: false,
         ..all
     };
-    assert_eq!(Presence::of(&all), Presence::Failed);
+    assert_eq!(Presence::of(&all,false), Presence::Failed);
     let all = RailEntry {
         failed: false,
         ..all
     };
-    assert_eq!(Presence::of(&all), Presence::Done);
+    assert_eq!(Presence::of(&all,false), Presence::Done);
     let all = RailEntry {
         completed_at: None,
         ..all
     };
-    assert_eq!(Presence::of(&all), Presence::Unread);
-    assert_eq!(Presence::of(&entry()), Presence::Idle);
+    assert_eq!(Presence::of(&all,false), Presence::Unread);
+    assert_eq!(Presence::of(&entry(),false), Presence::Idle);
     assert_eq!(Presence::NeedsYou.word(), Some("Needs you"));
     assert_eq!(Presence::Unread.word(), None);
 }
@@ -52,9 +47,9 @@ fn a_session_on_a_machine_that_isnt_answering_keeps_its_state_and_says_offline()
         branch: Some("lane/rail".into()),
         ..entry()
     };
-    assert_eq!(Presence::of(&running), Presence::Working);
+    assert_eq!(Presence::of(&running,false), Presence::Working);
     assert_eq!(
-        status_words(Presence::of(&running), true),
+        status_words(Presence::of(&running,false), true),
         ["offline", "Working"]
     );
     assert_eq!(details(&running), "Workbox Test · lane/rail");
@@ -85,11 +80,11 @@ fn a_finished_row_that_isnt_marked_still_names_its_state() {
         machine: Some("workbox-test".into()),
         ..entry()
     };
-    assert_eq!(Presence::of(&finished), Presence::Idle);
-    assert_eq!(status_words(Presence::of(&finished), false), ["Idle"]);
+    assert_eq!(Presence::of(&finished,false), Presence::Idle);
+    assert_eq!(status_words(Presence::of(&finished,false), false), ["Idle"]);
     let unread = RailEntry {
         unread: true,
         ..finished
     };
-    assert_eq!(status_words(Presence::of(&unread), false), ["Idle"]);
+    assert_eq!(status_words(Presence::of(&unread,false), false), ["Idle"]);
 }

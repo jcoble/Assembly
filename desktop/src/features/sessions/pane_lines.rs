@@ -96,9 +96,9 @@ impl SessionsPane {
             let Some(entry) = entries.get(at).cloned() else {
                 return Empty.into_any_element();
             };
-            let row = |entry: &super::rail_page::RailEntry, cx: &App| RowContext {
-                selected: SelectedSession::global(cx).read(cx).session_id()
-                    == Some(&entry.session_id),
+            let row = |entry: &super::rail_page::RailEntry, cx: &mut App| RowContext {
+                selected: entry.source.as_ref().is_some_and(|source|SelectedSession::global(cx).read(cx).key().is_some_and(|key|key.machine==source.machine&&key.id==entry.session_id)),
+                needs_you: super::sessions_pane::engine_rows::needs_you(entry,cx),
                 offline: Machines::offline(entry.machine.as_deref(), cx),
                 now,
                 on_open: on_open.clone(),

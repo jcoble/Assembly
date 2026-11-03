@@ -28,6 +28,7 @@ fn items() -> Vec<Item> {
                 text: "go".into(),
                 at: 1,
                 from: None,
+                from_machine:None,
                 sender_label: None,
             },
         ),

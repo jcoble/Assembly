@@ -162,9 +162,8 @@ impl SessionPane {
                     self.request_open(crate::core::intents::session_open::SessionOpenRequest{key,request_id:uuid::Uuid::new_v4().to_string(),target:crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx);
                 }else{self.status="The helper's source-qualified session is unavailable.".into();cx.notify();}
             }
-            SessionAction::OpenSession { session_id: _ } => {
-                // A legacy sender label carries no owning Engine ID; its bare ID cannot authorize navigation.
-                self.status="The sender's source-qualified session reference is unavailable.".into();cx.notify();
+            SessionAction::OpenSender {key} => {
+                self.request_open(crate::core::intents::session_open::SessionOpenRequest{key,request_id:uuid::Uuid::new_v4().to_string(),target:crate::core::intents::session_open::SessionOpenTarget::Engine},window,cx);
             }
             SessionAction::ShowImage { name } => {
                 self.status = SharedString::default();

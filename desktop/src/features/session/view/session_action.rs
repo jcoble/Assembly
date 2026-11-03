@@ -38,7 +38,7 @@ pub enum SessionAction {
     StopEngineChild { key:String,session_id:String },
     StopNative { key: String, payload_session_id: String },
     /// Opens another session: a subagent's, a parent, or the one that sent a prompt (lane g0-host's intent).
-    OpenSession { session_id: String },
+    OpenSender { key:crate::core::engine::SessionKey },
     /// A persisted card reference. Payload identity is correlation, never the resolved child identity.
     OpenNative { key: String, payload_session_id: String },
     /// Engine helper cards resolve only through the source-qualified canonical parent/child edge.

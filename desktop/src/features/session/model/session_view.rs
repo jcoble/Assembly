@@ -215,11 +215,13 @@ impl SessionView {
             RowBody::User {
                 text,
                 from,
+                from_machine,
                 sender_label,
             } => ItemKind::User {
                 text,
                 at: row.created_at,
                 from,
+                from_machine,
                 sender_label,
             },
             RowBody::Error { message, code } => ItemKind::Error { message, code },
@@ -368,6 +370,7 @@ impl SessionView {
                 text: text.to_string(),
                 at,
                 from: None,
+                from_machine:None,
                 sender_label: None,
             },
         });

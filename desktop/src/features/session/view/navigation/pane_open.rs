@@ -85,7 +85,8 @@ impl SessionPane {
                 pane.on_rows(RowUpdate::Refused{code:"source_changed".into(),message:"The captured session connection changed.".into()},cx);
             }
         })).collect();
-        self.pending_open=Some(PendingOpen{checked_engine:None,classify_online:false,serial,request,request_id,discovered_source:None,cut,target:None,stage:None,rows:None,read:None,page:None,connections,window:window.window_handle(),workspace:None,workspace_queued:false,committed:false,workspace_events:Vec::new()});
+        let classify_online=request.as_ref().is_some_and(|request|matches!(&request.target,SessionOpenTarget::Engine));
+        self.pending_open=Some(PendingOpen{checked_engine:None,classify_online,serial,request,request_id,discovered_source:None,cut,target:None,stage:None,rows:None,read:None,page:None,connections,window:window.window_handle(),workspace:None,workspace_queued:false,committed:false,workspace_events:Vec::new()});
     }
     pub(super) fn start_target_read(&mut self,serial:u64,cx:&mut Context<Self>) {
         if !self.preparation_current(serial,cx){self.refuse_replaced_preparation(serial,cx);return;}

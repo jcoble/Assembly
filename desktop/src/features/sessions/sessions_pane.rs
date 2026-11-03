@@ -74,6 +74,7 @@ pub struct SessionsPane {
     /// The last frame drew a running row, so the next tick redraws its running time.
     pub(super) running_drawn: Rc<Cell<bool>>,
     _heard: Vec<Subscription>,
+    engine_watches: HashMap<crate::core::engine::EngineScope,crate::core::engine::EngineWatch>,
     /// The `sessionRail` feed and the backend clock, once the backend's first ready line started the socket.
     feed: Option<(Task<()>, Entity<BackendClock>, Subscription)>,
     /// The socket's and the machines list's observers.
@@ -117,7 +118,15 @@ impl SessionsPane {
                 cx,
             )
         });
+        let engine=crate::core::engine::EngineFeed::global(cx);
+        let engine_changed=cx.subscribe(&engine,|pane,_,changed:&crate::core::engine::EngineChanged,cx| {
+            if changed.scopes.iter().any(|scope|scope.topic=="needs_me")||changed.keys.iter().any(|key|key.kind=="needs_me") {
+                let read=pane.rail.changed();pane.send(read,cx);
+            }
+            cx.notify();
+        });
         let mut heard = vec![
+            engine_changed,
             cx.observe(&SelectedSession::global(cx), |_, _, cx| cx.notify()),
             cx.observe_global::<GlobalSessions>(|pane, cx| pane.follow_backend(cx)),
             cx.observe_global::<GlobalMachines>(|pane, cx| pane.follow_backend(cx)),
@@ -176,6 +185,7 @@ impl SessionsPane {
             now: None,
             running_drawn: Rc::default(),
             _heard: heard,
+            engine_watches: HashMap::new(),
             feed: None,
             _backend: Vec::new(),
         };
@@ -266,23 +276,6 @@ impl SessionsPane {
             pane.update(cx, |pane, cx| pane.answer(id, outcome, cx))
                 .ok();
         }));
-        cx.notify();
-    }
-
-    pub(super) fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
-        self.lines.scroll_to(ListOffset::default());
-        self.from_start = true;
-        self.save_view(view, cx);
-        let read = self.rail.set_view(view);
-        self.send(Some(read), cx);
-    }
-
-    /// Takes a read's answer, and sends the read it asks for next. The selection is left alone: a session that left
-    /// the current view stays open.
-    pub(super) fn answer(&mut self, id: u64, outcome: Outcome<RailPage>, cx: &mut Context<Self>) {
-        let next = self.rail.finish(id, outcome);
-        self.show_providers(cx);
-        self.send(next, cx);
         cx.notify();
     }
 
@@ -593,3 +586,6 @@ fn needs_words(needs: usize) -> Option<String> {
 #[cfg(test)]
 #[path = "sessions_pane_tests.rs"]
 mod tests;
+
+#[path="drop_down/rail_engine.rs"]
+pub(super) mod engine_rows;

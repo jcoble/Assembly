@@ -27,6 +27,8 @@ pub enum RowBody {
     User {
         text: String,
         from: Option<String>,
+        #[serde(rename="fromMachine",default)]
+        from_machine: Option<String>,
         #[serde(rename = "senderLabel", default)]
         sender_label: Option<String>,
     },

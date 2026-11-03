@@ -6,7 +6,7 @@ use serde_json::json;
 
 #[test]
 fn sender_identity_and_captured_label_survive_live_page_and_reopen() {
-    let serialized = r#"[{"sessionId":"t","seq":1,"runId":"run","itemId":null,"kind":"user","createdAt":1,"payload":{"text":"body","from":"peer/x","clientId":"c","senderLabel":"Captured title (peer/x)"}}]"#;
+    let serialized = r#"[{"sessionId":"t","seq":1,"runId":"run","itemId":null,"kind":"user","createdAt":1,"payload":{"text":"body","from":"peer/x","fromMachine":"actual-sender-owner","clientId":"c","senderLabel":"Captured title (peer/x)"}}]"#;
     let rows: Vec<Row> = serde_json::from_str(serialized).unwrap();
     let live = live(SessionView::default(), &rows);
     let mut page = SessionView::default();
@@ -17,12 +17,13 @@ fn sender_identity_and_captured_label_survive_live_page_and_reopen() {
     );
     for view in [&live, &page, &reopened] {
         let ItemKind::User {
-            from, sender_label, ..
+            from, from_machine, sender_label, ..
         } = &view.items[0].kind
         else {
             panic!("user");
         };
         assert_eq!(from.as_deref(), Some("peer/x"));
+        assert_eq!(from_machine.as_deref(),Some("actual-sender-owner"));
         assert_eq!(sender_label.as_deref(), Some("Captured title (peer/x)"));
     }
     let old = super::test_rows::live(
@@ -36,6 +37,6 @@ fn sender_identity_and_captured_label_survive_live_page_and_reopen() {
         )],
     );
     assert!(
-        matches!(&old.items[0].kind, ItemKind::User { from: Some(id), sender_label: None, .. } if id == "peer/x")
+        matches!(&old.items[0].kind, ItemKind::User { from: Some(id), from_machine:None, sender_label: None, .. } if id == "peer/x")
     );
 }

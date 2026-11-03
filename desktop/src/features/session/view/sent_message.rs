@@ -25,6 +25,7 @@ pub struct SentMessage {
     pub text: String,
     /// The session that sent it, when another one did.
     pub sender: Option<String>,
+    pub sender_machine:Option<String>,
     pub sender_label: Option<String>,
     /// The attached images its lines name, as (path, name); a click reads one and opens it full size.
     pub images: Vec<(String, String)>,
@@ -74,12 +75,12 @@ impl RenderOnce for SentMessage {
                     .text_xs()
                     .text_color(theme.link)
                     .child(label);
-                if let Some(session_id) = self.sender.clone() {
+                if let Some((machine,session_id)) = self.sender_machine.clone().filter(|machine|!machine.is_empty()).zip(self.sender.clone().filter(|id|!id.is_empty())) {
                     let on_action = self.on_action.clone();
                     node.cursor_pointer().on_click(move |_, window, cx| {
                         on_action(
-                            SessionAction::OpenSession {
-                                session_id: session_id.clone(),
+                            SessionAction::OpenSender {
+                                key:crate::core::engine::SessionKey{machine:machine.clone(),id:session_id.clone()},
                             },
                             window,
                             cx,
