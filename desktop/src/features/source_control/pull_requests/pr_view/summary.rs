@@ -2,10 +2,9 @@
 //! the side column of threads, comments, reviews and checks.
 use super::super::{
     pr_activity::{
-        ActivityRow, activity_rows, check_summary, check_tone, check_word, pr_state,
-        words_of,
+        ActivityRow, activity_rows, check_summary, check_tone, check_word, words_of,
     },
-    pr_parts::{age_label, avatar, state_icon, tone_color},
+    pr_parts::{PrHeading, age_label, avatar, loading_line},
     pull_request::{CheckTone, PullRequestComment},
 };
 use super::*;
@@ -50,19 +49,6 @@ fn link_notice(id: &'static str, text: &'static str, url: String, cx: &App) -> i
                 .label("View it on GitHub")
                 .on_click(move |_, _, cx| cx.dispatch_action(&OpenUrl { url: url.clone() })),
         )
-}
-fn branches(head: &str, base: &str, cx: &App) -> impl IntoElement {
-    let muted = cx.theme().muted_foreground;
-    h_flex()
-        .gap_1()
-        .min_w_0()
-        .child(div().truncate().child(head.to_string()))
-        .child(
-            Icon::new(IconName::ArrowRight)
-                .size(px(11.))
-                .text_color(muted),
-        )
-        .child(div().truncate().child(base.to_string()))
 }
 impl PrDetail {
     pub(super) fn summary_page(
@@ -149,57 +135,14 @@ impl PrDetail {
             .pl(if wide { px(88.) } else { px(20.) });
         let Some(detail) = detail else {
             return column
-                .when(self.loading, |column| {
-                    column.child(quiet("Loading pull request…", cx))
-                })
+                .children(self.row.as_ref().map(|row| PrHeading::of_row(row).view(cx)))
+                .when(self.loading, |column| column.child(loading_line(cx)))
                 .into_any_element();
         };
         let theme = cx.theme();
-        let (state, tone) = pr_state(&detail.state, detail.is_draft);
-        let color = tone_color(tone, cx);
         let border = theme.border;
         let muted = theme.muted_foreground;
-        let heading = v_flex()
-            .gap_2()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .text_sm()
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .px_2()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(color)
-                            .text_color(color)
-                            .child(
-                                Icon::new(state_icon(&detail.state, detail.is_draft)).size(px(13.)),
-                            )
-                            .child(state),
-                    )
-                    .child(
-                        div()
-                            .text_color(muted)
-                            .child(format!("{} #{}", detail.repository, detail.number)),
-                    ),
-            )
-            .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(detail.title.clone()))
-            .child(
-                h_flex()
-                    .gap_1()
-                    .text_sm()
-                    .text_color(muted)
-                    .children(avatar(&detail.author))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(detail.author.clone()))
-                    .children(age_label(
-                        "pr-opened-age".into(),
-                        &detail.created_at,
-                        " ago",
-                    ))
-                    .child("·")
-                    .child(branches(&detail.head_branch, &detail.base_branch, cx)),
-            );
+        let heading = PrHeading::of_detail(detail).view(cx);
         let body = if detail.body.trim().is_empty() {
             quiet("No description.", cx).into_any_element()
         } else {
@@ -226,9 +169,7 @@ impl PrDetail {
             );
         column
             .child(heading)
-            .when(self.loading, |column| {
-                column.child(quiet("Loading pull request…", cx))
-            })
+            .when(self.loading, |column| column.child(loading_line(cx)))
             .children(
                 self.posted
                     .clone()

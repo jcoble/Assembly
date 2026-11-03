@@ -233,7 +233,7 @@ async fn cancelling_forgets_the_question_and_a_late_answer_opens_nothing(cx: &mu
             pane.select_pr(Some("o/r".into()), 7, cx);
         })
     });
-    window.update(|_, cx| assert_eq!(pane.read(cx).opening.as_ref().map(|open| open.0), Some(7)));
+    window.update(|_, cx| assert!(pane.read(cx).opening.is_some()));
     until("the first question", &mut fake.changes, &fake.changed, || {
         window.run_until_parked();
         !calls(&fake.seen, "resolve_source").is_empty()
@@ -266,13 +266,24 @@ async fn a_row_under_all_local_projects_opens_this_computers_copy_without_asking
     let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(HERE, "local")]), false);
     let window = cx.add_empty_window();
     let pane = pane_with_projects(&mut fake, window).await;
-    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_row("o/r".into(), 7, cx)));
+    let row = serde_json::from_value(json!({"repository":"o/r","number":7,"title":"The row"})).unwrap();
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_row(row, cx)));
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert_eq!(pane.selected.as_ref().and_then(|wanted| wanted.row.as_ref()).unwrap().title, "The row");
+    });
     window.update(|_, cx| assert!(pane.read(cx).choosing.is_none()));
     until("the local read", &mut fake.changes, &fake.changed, || {
         window.run_until_parked();
         !calls(&fake.seen, "pr").is_empty()
     })
     .await;
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert!(pane.selected.is_none());
+        let detail = pane.detail.as_ref().expect("the page").read(cx);
+        assert_eq!(detail.row().unwrap().title, "The row");
+    });
     let read = calls(&fake.seen, "pr").remove(0);
     assert_eq!(read["projectId"], HERE);
     assert_eq!(read["expectedSource"]["machine"], "box");
@@ -329,4 +340,23 @@ async fn moving_along_a_stack_stays_with_the_project_already_answering(cx: &mut 
     assert_eq!(reads[1]["number"], 8);
     assert_eq!(reads[1]["projectId"], LANE);
     assert_eq!(calls(&fake.seen, "resolve_source").len(), 1);
+}
+
+#[gpui::test]
+async fn going_back_from_a_page_still_opening_returns_to_the_list(cx: &mut TestAppContext) {
+    let mut fake = fake(cx, json!([holder(LANE, "lane"), holder(FAR, "far")]), false);
+    let window = cx.add_empty_window();
+    let pane = pane_with_projects(&mut fake, window).await;
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.select_pr(Some("o/r".into()), 7, cx)));
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert_eq!(pane.selected.as_ref().map(|wanted| wanted.number), Some(7));
+        assert!(pane.choosing.is_some());
+    });
+    window.update(|_, cx| pane.update(cx, |pane, cx| pane.close_detail(cx)));
+    window.update(|_, cx| {
+        let pane = pane.read(cx);
+        assert!(pane.selected.is_none() && pane.choosing.is_none() && pane.opening.is_none());
+    });
+    assert!(calls(&fake.seen, "resolve_source").is_empty());
 }

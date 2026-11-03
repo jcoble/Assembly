@@ -87,3 +87,23 @@ async fn the_queue_reads_only_when_open_pages_by_cursor_and_changes_scope_once(
     cx.run_until_parked();
     assert_eq!(seen.lock().unwrap().len(), 3);
 }
+
+#[gpui::test]
+fn a_merged_pull_request_leaves_the_list_and_only_that_one(cx: &mut TestAppContext) {
+    let queue = cx.new(|_| PrQueue::new(None, vec!["o/r".into()]));
+    queue.update(cx, |queue, cx| {
+        queue.page = serde_json::from_value(json!({"items":[
+            {"repository":"o/r","number":1,"title":"Merged"},
+            {"repository":"other/r","number":1,"title":"Same number elsewhere"},
+            {"repository":"o/r","number":2,"title":"Still open"},
+        ],"cursor":null,"total":3}))
+        .unwrap();
+        queue.merged("O/R", 1, cx);
+    });
+    cx.update(|cx| {
+        let page = &queue.read(cx).page;
+        let left: Vec<_> = page.items.iter().map(|pr| pr.title.as_str()).collect();
+        assert_eq!(left, ["Same number elsewhere", "Still open"]);
+        assert_eq!(page.total, 2);
+    });
+}
