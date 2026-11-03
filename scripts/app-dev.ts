@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -44,7 +43,7 @@ writeFileSync(join(backend, 'lane.json'), JSON.stringify({
 mkdirSync(home, { recursive: true });
 run('bash', [
   'dotnet/scripts/agents-file.sh',
-  process.env.ADAPTERS ?? join(homedir(), 'spike-dotnet/adapters'),
+  process.env.ADAPTERS ?? join(data, 'adapters'),
   join(home, 'agents.json'),
 ]);
 run('cargo', ['run', '--locked', '--', ...process.argv.slice(2)], join(root, 'desktop'));
