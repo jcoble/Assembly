@@ -152,9 +152,7 @@ impl SessionsPane {
                         },
                         move |_, window, cx| {
                             new_pane
-                                .update(cx, |pane, cx| {
-                                    pane.open_form(window, cx);
-                                })
+                                .update(cx, |pane, cx| pane.show_draft(window, cx))
                                 .ok();
                         },
                     )

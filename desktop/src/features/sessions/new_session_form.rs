@@ -13,6 +13,8 @@ use crate::features::session::composer::draft_config::{self, Catalogue, DraftCon
 use crate::features::settings::sign_in_panel::{self, SignInTarget};
 
 pub struct NewSessionForm {
+    /// Drawn as the Chat pane's draft, not in a dialog.
+    centered: bool,
     chooser_open: bool,
     chooser_focus: FocusHandle,
     project_chooser: Entity<crate::features::projects::project_chooser::ProjectChooser>,
@@ -67,6 +69,15 @@ pub struct NewSessionForm {
 pub struct Created;
 
 impl EventEmitter<Created> for NewSessionForm {}
+
+/// What a draft in the Chat pane asks of whoever holds it.
+pub enum DraftEvent {
+    Discard,
+    /// Its start failed, so it has to show again.
+    Failed,
+}
+
+impl EventEmitter<DraftEvent> for NewSessionForm {}
 
 impl NewSessionForm {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -163,7 +174,7 @@ impl NewSessionForm {
                 })
             });
         let mut form = NewSessionForm {
-            chooser_open:false, chooser_focus:cx.focus_handle(),
+            centered:false, chooser_open:false, chooser_focus:cx.focus_handle(),
             project_chooser, start_composer, _project_choice: project_choice, _start_requested: start_requested,
             location_source: None, inspection: None, location_read: None, location_generation: 0, attempt: None,
             selected_project: None,

@@ -46,7 +46,7 @@ pub struct SessionsPane {
     focus: FocusHandle,
     pub(super) drops:Entity<crate::core::ui::row_drop_down::RowDropDowns>,
     /// The new-session form while it's open, with the subscription that closes it once it's made a session.
-    pub(super) creating: Option<(Entity<NewSessionForm>, Subscription)>,
+    pub(super) creating: Option<(Entity<NewSessionForm>, [Subscription; 2])>,
     /// The marks on their way, each until its answer, by `next_mark`.
     pub(super) marking: HashMap<u64, Task<()>>,
     pub(super) next_mark: u64,
@@ -439,19 +439,14 @@ impl Render for SessionsPane {
         let (muted, danger) = (cx.theme().muted_foreground, cx.theme().danger);
         let (warning, border) = (cx.theme().warning, cx.theme().border.opacity(0.6));
         let state = SocketClient::try_global(cx).map(|socket| socket.read(cx).state().clone());
-        let creating = self.creating.is_some();
         let pane = cx.entity().downgrade();
         let on_view: OnView = Rc::new(move |view, _: &mut Window, cx: &mut App| {
             pane.update(cx, |pane, cx| pane.set_view(view, cx)).ok();
         });
         let new_session = header_button(Button::new("new-session"), cx)
-            .icon(if creating {
-                IconName::X
-            } else {
-                IconName::Plus
-            })
-            .tooltip(if creating { "Cancel" } else { "New session" })
-            .on_click(cx.listener(|pane, _, window, cx| pane.toggle_form(window, cx)));
+            .icon(IconName::Plus)
+            .tooltip("New session")
+            .on_click(cx.listener(|pane, _, window, cx| pane.show_draft(window, cx)));
         self.follow_entries(window, cx);
         self.running_drawn.set(false);
         let list = list(self.lines.clone(), self.line_renderer(cx)).flex_1();
@@ -497,7 +492,6 @@ impl Render for SessionsPane {
                             )
                     })),
             )
-            .children(self.creating.as_ref().map(|(form, _)| form.clone()))
             .map(|pane| match self.entries.is_empty() {
                 false => pane.child(list),
                 true => pane.child(div().px_3().py_2().text_sm().text_color(muted).child(empty)),

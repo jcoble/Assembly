@@ -387,6 +387,30 @@ fn selecting_a_valid_agent_replaces_the_previous_agents_identity_error(cx: &mut 
     });
 }
 
+#[gpui::test]
+fn a_failed_start_asks_to_show_again_so_its_text_and_error_are_seen(cx: &mut TestAppContext) {
+    use super::DraftEvent;
+    cx.update(gpui_kit::init);
+    cx.update(SelectedSession::init);
+    let client = FormClient::default();
+    let (form, cx) = cx.add_window_view(move |window, cx| NewSessionForm::with_client(Rc::new(client), window, cx));
+    cx.run_until_parked();
+    assert!(form.read_with(cx, |form, _| !form.centered), "a project's dialog stays compact");
+    let failed = Rc::new(RefCell::new(0));
+    let count = failed.clone();
+    let _failed = cx.update(|_, cx| {
+        cx.subscribe(&form, move |_, event: &DraftEvent, _| {
+            if matches!(event, DraftEvent::Failed) {
+                *count.borrow_mut() += 1;
+            }
+        })
+    });
+    form.update(cx, |form, cx| form.start_error("Couldn't start.", cx));
+    cx.run_until_parked();
+    assert_eq!(*failed.borrow(), 1);
+    form.read_with(cx, |form, _| assert_eq!(form.error.as_ref(), "Couldn't start."));
+}
+
 #[path = "new_session_form/generation_tests.rs"]
 mod generation_tests;
 
